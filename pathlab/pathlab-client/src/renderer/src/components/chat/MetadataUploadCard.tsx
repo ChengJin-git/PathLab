@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
   FileSpreadsheet, UploadCloud, AlertCircle, CheckCircle,
-  Loader2, Download, AlertTriangle, FileIcon
+  Download, AlertTriangle
 } from 'lucide-react'
 import { downloadCSVTemplate, UploadSplitsResponse } from '../../api'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
@@ -55,11 +55,27 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
   const uploadMode = config.upload_mode || 'classification'
   const onSuccessCalledRef = useRef(false)
 
+  // On mount, reconnect to an existing background task for this dataset (survives navigation)
+  useEffect(() => {
+    if (bgTaskId || onSuccessCalledRef.current) return
+    const datasetName = config.dataset_name
+    if (!datasetName) return
+
+    const existingTask = tasks.find(t =>
+      t.type === 'metadata_upload' && t.title === `Metadata: ${datasetName}`
+    )
+    if (existingTask) {
+      setBgTaskId(existingTask.id)
+    }
+  }, [tasks, bgTaskId, config.dataset_name])
+
   // Find the background task for this card (if running)
   const bgTask = bgTaskId ? tasks.find(t => t.id === bgTaskId) : null
-  const isUploading = bgTask?.status === 'running'
+  const bgTaskRunning = bgTask?.status === 'running'
   const bgTaskError = bgTask?.status === 'error' ? bgTask.items[0]?.error : null
   const bgTaskSuccess = bgTask?.status === 'success'
+  // Task was submitted (running or completed) — used to hide drop zone
+  const taskSubmitted = !!bgTaskId && !!bgTask && !bgTaskError
 
   // Check if we already have a persisted result in config
   const uploadResult: UploadSplitsResponse | null = config.upload_result
@@ -198,14 +214,8 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
     })
   }
 
-  // Determine upload button state text
-  const getStatusText = () => {
-    if (bgTask?.status === 'running') {
-      const item = bgTask.items[0]
-      return item?.name || 'Processing...'
-    }
-    return null
-  }
+  // Get the file name shown in "submitted" state (from local state or from background task title)
+  const submittedFileName = selectedFile?.name || (bgTask ? bgTask.title.replace('Metadata: ', '') : null)
 
   // --- Render ---
   // Already completed (persisted result from config)
@@ -286,8 +296,6 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
     }
   }
 
-  const statusText = getStatusText()
-
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden w-full max-w-2xl mb-4">
       {/* Header */}
@@ -302,7 +310,7 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
       </div>
 
       <div className="p-5 space-y-4">
-        {/* Background task error */}
+        {/* Background task error — show error + drop zone for retry */}
         {bgTaskError && (
           <div className="bg-red-50 border border-red-100 rounded-lg p-3 flex items-start gap-2">
             <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
@@ -310,12 +318,28 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
           </div>
         )}
 
-        {/* Drop zone - always show so user can select file while dataset is being created */}
-        {!isUploading && (
+        {/* Submitted state — task is running in background, show calm confirmation */}
+        {taskSubmitted && bgTaskRunning && (
+          <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 flex items-start gap-3">
+            <CheckCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <h4 className="text-sm font-semibold text-blue-800">File Submitted</h4>
+              {submittedFileName && (
+                <p className="text-xs text-blue-600 mt-0.5">{submittedFileName}</p>
+              )}
+              <p className="text-xs text-blue-500 mt-1">
+                Processing in the background. The dataset will be ready to bind metadata afterward. You can switch to other pages.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Drop zone — show when no task submitted yet, or on error (retry) */}
+        {!taskSubmitted && (
           <div
             className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors cursor-pointer ${
               isDragging ? 'border-primary-500 bg-primary-50' : 'border-gray-200 hover:border-gray-300'
-            } ${selectedFile ? 'bg-gray-50' : ''}`}
+            }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
@@ -328,36 +352,24 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
               onChange={handleInputChange}
               className="hidden"
             />
-            {selectedFile ? (
-              <div className="space-y-2">
-                <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto">
-                  <FileIcon className="w-5 h-5 text-blue-600" />
-                </div>
-                <div>
-                  <p className="font-medium text-gray-900 text-sm">{selectedFile.name}</p>
-                  <p className="text-xs text-gray-500">{(selectedFile.size / 1024).toFixed(1)} KB</p>
-                </div>
+            <div className="space-y-2">
+              <UploadCloud className="w-8 h-8 text-gray-400 mx-auto" />
+              <div>
+                <p className="text-sm font-medium text-gray-900">Drag & Drop CSV / Excel File</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  or click to browse. Required columns: <code className="bg-gray-100 px-1 rounded">filename</code>
+                  {uploadMode === 'classification'
+                    ? <>, <code className="bg-gray-100 px-1 rounded">label</code></>
+                    : <>, <code className="bg-gray-100 px-1 rounded">event_time</code>, <code className="bg-gray-100 px-1 rounded">event_status</code></>
+                  }
+                </p>
               </div>
-            ) : (
-              <div className="space-y-2">
-                <UploadCloud className="w-8 h-8 text-gray-400 mx-auto" />
-                <div>
-                  <p className="text-sm font-medium text-gray-900">Drag & Drop CSV / Excel File</p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    or click to browse. Required columns: <code className="bg-gray-100 px-1 rounded">filename</code>
-                    {uploadMode === 'classification'
-                      ? <>, <code className="bg-gray-100 px-1 rounded">label</code></>
-                      : <>, <code className="bg-gray-100 px-1 rounded">event_time</code>, <code className="bg-gray-100 px-1 rounded">event_status</code></>
-                    }
-                  </p>
-                </div>
-              </div>
-            )}
+            </div>
           </div>
         )}
 
-        {/* Download template */}
-        {!isUploading && (
+        {/* Download template — only when drop zone is visible */}
+        {!taskSubmitted && (
           <div className="flex justify-end pr-1">
             <button
               onClick={handleDownloadTemplate}
@@ -375,21 +387,6 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
             <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
             <p className="text-xs text-red-700">{validationError}</p>
           </div>
-        )}
-
-        {/* Status indicator (background task running) */}
-        {isUploading && statusText && (
-          <div className="flex items-center justify-center gap-2 py-3">
-            <Loader2 className="w-4 h-4 animate-spin text-primary-600" />
-            <p className="text-sm text-gray-600">{statusText}</p>
-          </div>
-        )}
-
-        {/* Progress hint */}
-        {isUploading && (
-          <p className="text-xs text-gray-400 text-center">
-            正在后台处理中，你可以切换到其他页面，上传会继续进行...
-          </p>
         )}
       </div>
     </div>
