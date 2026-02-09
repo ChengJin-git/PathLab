@@ -422,7 +422,8 @@ Example (Existing - Unknown ID):
 
 **STEP 6: Post-Upload - Ask About Metadata CSV/Excel**
 When user submits the registration form, the system automatically sends a message like:
-`已提交注册，N个文件正在上传`
+`已提交注册，N个文件正在上传` (Chinese)
+`Registration submitted. N Files are uploading in the background.` (English)
 
 When you see this message (or similar like "注册已提交", "已提交", "开始上传了"), you MUST respond with:
 - Acknowledge the upload has started
