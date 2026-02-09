@@ -167,6 +167,14 @@ class WSISlide(Base):
     ai_results = relationship("AIResult", back_populates="wsi_slide", cascade="all, delete-orphan")
     training_task_associations = relationship("TrainingTaskWSI", back_populates="wsi_slide", cascade="all, delete-orphan")
 
+    # Composite indexes for common query patterns (PostgreSQL)
+    __table_args__ = (
+        # Speeds up get_datasets() filtered by user_id and grouped by dataset_id
+        Index('idx_wsi_user_dataset', 'user_id', 'dataset_id'),
+        # Speeds up sorted dataset listings (e.g., newest first within dataset)
+        Index('idx_wsi_dataset_created', 'dataset_id', 'created_at'),
+    )
+
     def to_dict(self):
         """Convert to dictionary for API responses
 

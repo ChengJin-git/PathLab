@@ -1,22 +1,20 @@
 # PathLab Database Layer
 
-SQLite-based data persistence layer for PathLab platform. **零配置，开箱即用。**
-
-> 📌 无论是网页端（调试模式）还是本地端（打包模式），都使用相同的 SQLite 数据库。
+PostgreSQL-based data persistence layer for PathLab platform.
 
 ## Overview
 
 This directory contains the database layer implementation using:
-- **SQLite**: Zero configuration embedded database (no service installation)
+- **PostgreSQL**: Production-grade relational database with MVCC concurrency
 - **SQLAlchemy 2.0+**: Async ORM for Python
-- **aiosqlite**: Asynchronous SQLite driver
+- **asyncpg**: High-performance asynchronous PostgreSQL driver
 
 ## Core Features
 
-- ✅ **Zero configuration**: No need to install PostgreSQL or any database service
-- ✅ **Automatic creation**: Database and tables are automatically created on first startup
-- ✅ **Platform aware**: Automatically selects platform-specific data directory
-- ✅ **Development friendly**: Single-file database, easy backup and debugging
+- ✅ **MVCC concurrency**: Full concurrent reads and writes without lock contention
+- ✅ **Automatic creation**: Tables are automatically created on first startup
+- ✅ **Connection pooling**: AsyncAdaptedQueuePool with pool_size=20, max_overflow=10
+- ✅ **Multi-user support**: Supports ~10+ concurrent users comfortably
 
 ## Directory Structure
 
@@ -24,20 +22,19 @@ This directory contains the database layer implementation using:
 backend/database/
 ├── README.md                   # This file
 ├── __init__.py                 # Package exports
-├── database.py                 # SQLite connection management (async engine)
+├── database.py                 # PostgreSQL connection management (async engine)
 ├── models.py                   # SQLAlchemy ORM models
 └── repositories.py             # Data access layer (Repository pattern)
 ```
 
-## Database Storage Location
+## Database Connection
 
-The database file is automatically stored in the platform-specific directory:
+Configure via `DATABASE_URL` environment variable:
 
-| Platform | Path |
-|------|------|
-| **Linux** | `~/.local/share/PathLab/pathlab.db` |
-| **macOS** | `~/Library/Application Support/PathLab/pathlab.db` |
-| **Windows** | `%APPDATA%/PathLab/pathlab.db` |
+```bash
+# Default (local development)
+DATABASE_URL=postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab
+```
 
 ## Database Schema
 
@@ -115,21 +112,13 @@ async def list_wsi(db: AsyncSession = Depends(get_db)):
 
 ## Schema Changes
 
-The SQLite schema is automatically created on first startup. To modify:
+The PostgreSQL schema is automatically created on first startup via `Base.metadata.create_all`. To modify:
 
 ### Method 1: Update models.py (recommended)
 
 1. Update the model definitions in `models.py`
-2. Delete the database file (development only)
+2. Drop and recreate tables (development only), or use manual migration
 3. Restart the service
-
-```bash
-# Linux
-rm ~/.local/share/PathLab/pathlab.db
-
-# Restart the service
-cd server && python main.py
-```
 
 ### Method 2: Manual migration (preserve data)
 
@@ -148,7 +137,7 @@ import asyncio
 asyncio.run(add_new_column())
 ```
 
-**Note**: SQLite's `ALTER TABLE` functionality is limited, and does not support column changes/deletions.
+**Note**: PostgreSQL supports full `ALTER TABLE` operations including column type changes and deletions.
 
 ## Repository Pattern
 
@@ -228,42 +217,33 @@ async with async_session() as db:
 
 ## Troubleshooting
 
-### Database locked
+### Connection pool exhaustion
 
 ```
-sqlite3.OperationalError: database is locked
+QueuePool limit of size 20 overflow 10 reached, connection timed out
 ```
 
-**Solution**: Ensure no other processes are using the database
-```bash
-# Find processes using the database
-fuser ~/.local/share/PathLab/pathlab.db
-```
+**Solution**: Check for long-held connections (e.g., SSE streams not releasing sessions properly).
+Use `safe_session()` for SSE endpoints to ensure proper cleanup on client disconnect.
 
 ### Reset the database
 
-Delete the database file to reset:
-
-```bash
-# Linux
-rm ~/.local/share/PathLab/pathlab.db
-
-# macOS
-rm ~/Library/Application\ Support/PathLab/pathlab.db
-
-# Windows
-del %APPDATA%\PathLab\pathlab.db
+```sql
+-- Connect to PostgreSQL and drop/recreate
+DROP DATABASE pathlab;
+CREATE DATABASE pathlab OWNER pathlab;
 ```
 
 ## Best Practices
 
 1. **Update models.py** after schema changes
 2. **Use transactions** for data integrity
-3. **Backup database** before major changes: `cp pathlab.db pathlab.db.bak`
-4. **Monitor query performance** with `echo=True` during development
+3. **Use `safe_session()`** for SSE endpoints (protects against uvicorn cancellation)
+4. **Use `scoped_db()`** for AI service operations (short-lived sessions)
+5. **Monitor query performance** with `echo=True` during development
 
 ## References
 
 - [SQLAlchemy Documentation](https://docs.sqlalchemy.org/en/20/)
-- [aiosqlite Documentation](https://aiosqlite.omnilib.dev/)
-- [SQLite Documentation](https://www.sqlite.org/docs.html)
+- [asyncpg Documentation](https://magicstack.github.io/asyncpg/)
+- [PostgreSQL Documentation](https://www.postgresql.org/docs/)
