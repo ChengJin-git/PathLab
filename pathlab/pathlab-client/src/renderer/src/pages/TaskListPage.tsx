@@ -42,6 +42,7 @@ export default function TaskListPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null)
+  const [deletedTaskIds, setDeletedTaskIds] = useState<Set<string>>(new Set())
   const { rawTrainingTasks, subscribeTrainingSSE } = useBackgroundTask()
 
   // Subscribe to training SSE when this page is mounted
@@ -64,12 +65,14 @@ export default function TaskListPage() {
   }
 
   // Sync training tasks from BackgroundTaskContext SSE (avoids duplicate SSE connection)
+  // Filter out tasks that have been deleted locally
   useEffect(() => {
     if (rawTrainingTasks !== null) {
-      setTasks(rawTrainingTasks)
+      const filteredTasks = rawTrainingTasks.filter(t => !deletedTaskIds.has(t.task_id))
+      setTasks(filteredTasks)
       setLoading(false)
     }
-  }, [rawTrainingTasks])
+  }, [rawTrainingTasks, deletedTaskIds])
 
   const handleDeleteTask = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation() // Prevent card click
@@ -135,6 +138,13 @@ export default function TaskListPage() {
 
       // All deletions successful - update local state immediately
       setTasks(prev => prev.filter(t => !taskIdsToDelete.includes(t.task_id)))
+
+      // Mark these tasks as deleted so they won't reappear from SSE updates
+      setDeletedTaskIds(prev => {
+        const newSet = new Set(prev)
+        taskIdsToDelete.forEach(id => newSet.add(id))
+        return newSet
+      })
 
       // Clean up state
       if (isBatchDelete) {

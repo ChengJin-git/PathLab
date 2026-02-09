@@ -1035,7 +1035,9 @@ class WSIClassificationTrainer(BaseTrainer):
                 metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
             await logger.info(log_msg, metadata=metadata)
 
-            progress = progress_base + int(epoch / epochs * progress_range)
+            # Calculate progress using (epoch-1) to ensure we never reach progress_base + progress_range
+            # This keeps training progress smoothly increasing but always < 90%
+            progress = progress_base + int((epoch - 1) / epochs * progress_range)
             await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
 
             # Update learning rate

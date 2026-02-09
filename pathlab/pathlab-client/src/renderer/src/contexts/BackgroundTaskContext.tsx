@@ -358,6 +358,9 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
               displayProgress = Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
             } else if (task.status === 'completed') {
               displayProgress = 100
+            } else {
+              // For non-patch tasks, cap at 100% for safety
+              displayProgress = Math.min(task.progress, 100)
             }
 
             // Use appropriate prefix based on task type

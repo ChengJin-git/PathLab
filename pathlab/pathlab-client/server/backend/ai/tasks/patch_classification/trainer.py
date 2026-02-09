@@ -551,7 +551,8 @@ class PatchClassificationTrainer(BaseTrainer):
             )
 
             # Update progress: training from 66% to 90%, saving from 90% to 100%
-            progress = 66 + int(epoch / epochs * 24)
+            # Use (epoch-1) to ensure progress smoothly increases but never reaches 90%
+            progress = 66 + int((epoch - 1) / epochs * 24)
             await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
 
             # Update learning rate
@@ -826,13 +827,12 @@ class PatchClassificationTrainer(BaseTrainer):
                 else:
                     epochs_without_improvement += 1
 
-                # Progress update (66-100% for all folds including saving)
-                # Each fold gets (100-66)/num_folds = 34/num_folds percent
-                # Within each fold: 70% for training, 30% for saving
-                fold_total_range = 34 / num_folds
-                fold_progress_base = 66 + int(fold_idx * fold_total_range)
-                fold_training_range = int(fold_total_range * 0.7)
-                progress = fold_progress_base + int(epoch / epochs * fold_training_range)
+                # Progress update: training uses 66-90% (24% total), saving uses 90-100%
+                # Each fold gets equal share of the 24% training range
+                # Use (epoch-1) to ensure smooth progress that never reaches the fold's upper limit
+                fold_training_range = 24 / num_folds
+                fold_progress_base = 66 + fold_idx * fold_training_range
+                progress = int(fold_progress_base + (epoch - 1) / epochs * fold_training_range)
                 await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
 
                 # Update learning rate

@@ -373,7 +373,7 @@ export default function TaskDetailPage() {
   // For cancelled/failed tasks, show the mapped progress at the time of cancellation/failure
   const displayProgress = isPatchLevel && task.status !== 'completed'
     ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
-    : task.progress
+    : Math.min(task.progress, 100)  // Cap at 100% for safety
 
   return (
     <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6 pb-12">
