@@ -105,7 +105,7 @@ export default function ListPage() {
   const [optimisticallyDeletedDatasetIds, setOptimisticallyDeletedDatasetIds] = useState<Set<string>>(new Set())
 
   const visibleDatasets = useMemo(() => {
-    return datasets.filter(d => !optimisticallyDeletedDatasetIds.has(d.dataset_id))
+    return datasets.filter(d => !d.dataset_id || !optimisticallyDeletedDatasetIds.has(d.dataset_id))
   }, [datasets, optimisticallyDeletedDatasetIds])
 
   // Load datasets on mount

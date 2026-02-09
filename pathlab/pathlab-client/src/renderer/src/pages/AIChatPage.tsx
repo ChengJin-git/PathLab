@@ -1844,6 +1844,16 @@ export default function AIChatPage() {
     }
 
     showToast('info', 'Registration started in background')
+
+    // Auto-send message to trigger AI's STEP 6 response (METADATA_UPLOAD card)
+    const autoMessage = `已提交注册，${fileCount}个文件正在上传`
+    setInput(autoMessage)
+    setTimeout(() => {
+      const form = document.querySelector('form')
+      if (form) {
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      }
+    }, 100)
   }
 
   // Handle metadata upload success (persist upload_result to message history)

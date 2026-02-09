@@ -3,7 +3,8 @@ import {
   FileSpreadsheet, UploadCloud, AlertCircle, CheckCircle,
   Loader2, Download, AlertTriangle, FileIcon
 } from 'lucide-react'
-import { fetchDatasets, uploadDatasetSplits, downloadCSVTemplate, UploadSplitsResponse } from '../../api'
+import { downloadCSVTemplate, UploadSplitsResponse } from '../../api'
+import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
 import * as XLSX from 'xlsx'
 
 // --- Parsing Logic ---
@@ -42,74 +43,53 @@ export interface MetadataUploadCardProps {
 }
 
 export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploadCardProps) {
-  // State
-  const [resolvedDatasetId, setResolvedDatasetId] = useState<string | null>(config.dataset_id || null)
-  const [resolving, setResolving] = useState(!config.dataset_id)
-  const [resolveError, setResolveError] = useState<string | null>(null)
+  const { tasks, addMetadataUploadTask, getMetadataUploadResult } = useBackgroundTask()
 
+  // Local UI state only
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
-  const [isUploading, setIsUploading] = useState(false)
-  const [uploadResult, setUploadResult] = useState<UploadSplitsResponse | null>(
-    config.upload_result ? config.upload_result as any : null
-  )
-  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [bgTaskId, setBgTaskId] = useState<string | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const pollRef = useRef<NodeJS.Timeout | null>(null)
   const uploadMode = config.upload_mode || 'classification'
+  const onSuccessCalledRef = useRef(false)
 
-  // Resolve dataset_name to dataset_id (poll until found)
+  // Find the background task for this card (if running)
+  const bgTask = bgTaskId ? tasks.find(t => t.id === bgTaskId) : null
+  const isUploading = bgTask?.status === 'running'
+  const bgTaskError = bgTask?.status === 'error' ? bgTask.items[0]?.error : null
+  const bgTaskSuccess = bgTask?.status === 'success'
+
+  // Check if we already have a persisted result in config
+  const uploadResult: UploadSplitsResponse | null = config.upload_result
+    ? (config.upload_result as unknown as UploadSplitsResponse)
+    : null
+
+  // On mount or when background task completes, check for completed result and call onSuccess
   useEffect(() => {
-    if (config.dataset_id) {
-      setResolvedDatasetId(config.dataset_id)
-      setResolving(false)
-      return
-    }
-    if (config.upload_result) {
-      setResolving(false)
-      return
-    }
-    if (!config.dataset_name) {
-      setResolving(false)
-      setResolveError('No dataset specified')
-      return
-    }
+    if (onSuccessCalledRef.current || uploadResult) return
 
-    let attempts = 0
-    const maxAttempts = 60 // poll for up to 5 minutes (every 5s)
+    const datasetName = config.dataset_name
+    if (!datasetName) return
 
-    const poll = async () => {
-      attempts++
-      try {
-        const data = await fetchDatasets()
-        const found = data.items.find(d =>
-          d.dataset_name === config.dataset_name && d.dataset_id
-        )
-        if (found && found.dataset_id) {
-          setResolvedDatasetId(found.dataset_id)
-          setResolving(false)
-          return
-        }
-      } catch (err) {
-        console.error('Failed to poll datasets:', err)
+    const completedResult = getMetadataUploadResult(datasetName)
+    if (completedResult) {
+      onSuccessCalledRef.current = true
+      onSuccess?.(completedResult.result, completedResult.datasetId)
+    }
+  }, [config.dataset_name, getMetadataUploadResult, onSuccess, uploadResult])
+
+  // When background task transitions to success, call onSuccess
+  useEffect(() => {
+    if (bgTaskSuccess && !onSuccessCalledRef.current && config.dataset_name) {
+      const completedResult = getMetadataUploadResult(config.dataset_name)
+      if (completedResult) {
+        onSuccessCalledRef.current = true
+        onSuccess?.(completedResult.result, completedResult.datasetId)
       }
-
-      if (attempts >= maxAttempts) {
-        setResolving(false)
-        setResolveError('Could not find the dataset. Please wait for the upload to complete and try again.')
-        return
-      }
-
-      pollRef.current = setTimeout(poll, 5000)
     }
-
-    poll()
-    return () => {
-      if (pollRef.current) clearTimeout(pollRef.current)
-    }
-  }, [config.dataset_id, config.dataset_name, config.upload_result])
+  }, [bgTaskSuccess, config.dataset_name, getMetadataUploadResult, onSuccess])
 
   // Validate file columns
   const validateFile = useCallback(async (file: File): Promise<string | null> => {
@@ -148,10 +128,22 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
     }
   }, [uploadMode])
 
-  // Handle file selection
+  // Convert Excel to CSV File object for background task
+  const convertToCSV = async (file: File): Promise<File> => {
+    const fileName = file.name.toLowerCase()
+    if (fileName.endsWith('.csv')) return file
+
+    const arrayBuffer = await file.arrayBuffer()
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' })
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]]
+    const csvContent = XLSX.utils.sheet_to_csv(worksheet)
+    const blob = new Blob([csvContent], { type: 'text/csv' })
+    return new File([blob], file.name.replace(/\.(xlsx|xls)$/i, '.csv'), { type: 'text/csv' })
+  }
+
+  // Handle file selection → validate → convert → start background task
   const handleFileSelect = async (file: File) => {
     setValidationError(null)
-    setUploadError(null)
 
     const error = await validateFile(file)
     if (error) {
@@ -159,6 +151,22 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
       return
     }
     setSelectedFile(file)
+
+    // Convert to CSV and start background task immediately
+    try {
+      const csvFile = await convertToCSV(file)
+      const taskId = addMetadataUploadTask({
+        csvFile,
+        datasetName: config.dataset_name!,
+        datasetId: config.dataset_id,
+        uploadMode: config.upload_mode || 'classification',
+        dataLevel: config.data_level || 'file'
+      })
+      setBgTaskId(taskId)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to start upload'
+      onError?.(msg)
+    }
   }
 
   // File input change
@@ -183,39 +191,6 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
     if (file) handleFileSelect(file)
   }
 
-  // Convert Excel to CSV File object for API
-  const convertToCSV = async (file: File): Promise<File> => {
-    const fileName = file.name.toLowerCase()
-    if (fileName.endsWith('.csv')) return file
-
-    const arrayBuffer = await file.arrayBuffer()
-    const workbook = XLSX.read(arrayBuffer, { type: 'array' })
-    const worksheet = workbook.Sheets[workbook.SheetNames[0]]
-    const csvContent = XLSX.utils.sheet_to_csv(worksheet)
-    const blob = new Blob([csvContent], { type: 'text/csv' })
-    return new File([blob], file.name.replace(/\.(xlsx|xls)$/i, '.csv'), { type: 'text/csv' })
-  }
-
-  // Upload handler
-  const handleUpload = async () => {
-    if (!selectedFile || !resolvedDatasetId) return
-    setIsUploading(true)
-    setUploadError(null)
-
-    try {
-      const csvFile = await convertToCSV(selectedFile)
-      const result = await uploadDatasetSplits(resolvedDatasetId, csvFile)
-      setUploadResult(result)
-      onSuccess?.(result, resolvedDatasetId)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Upload failed'
-      setUploadError(msg)
-      onError?.(msg)
-    } finally {
-      setIsUploading(false)
-    }
-  }
-
   // Download template
   const handleDownloadTemplate = () => {
     downloadCSVTemplate(uploadMode).catch(err => {
@@ -223,8 +198,17 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
     })
   }
 
+  // Determine upload button state text
+  const getStatusText = () => {
+    if (bgTask?.status === 'running') {
+      const item = bgTask.items[0]
+      return item?.name || 'Processing...'
+    }
+    return null
+  }
+
   // --- Render ---
-  // Already completed (persisted result)
+  // Already completed (persisted result from config)
   if (uploadResult) {
     return (
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden w-full max-w-2xl mb-4">
@@ -269,6 +253,41 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
     )
   }
 
+  // Background task completed successfully — show result from context
+  if (bgTaskSuccess && config.dataset_name) {
+    const completedResult = getMetadataUploadResult(config.dataset_name)
+    if (completedResult) {
+      const result = completedResult.result
+      return (
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden w-full max-w-2xl mb-4">
+          <div className="px-5 py-4 bg-gradient-to-r from-green-50 to-emerald-50 border-b border-gray-100 flex items-center gap-2">
+            <FileSpreadsheet className="w-4 h-4 text-green-600" />
+            <h3 className="font-semibold text-gray-900">Metadata Upload</h3>
+          </div>
+          <div className="p-5 space-y-3">
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
+              <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <h4 className="text-sm font-semibold text-green-800">Metadata Uploaded Successfully</h4>
+                <p className="text-xs text-green-700 mt-1 leading-relaxed">
+                  Updated <span className="font-medium">{result.updated_count}</span> files
+                  {result.auto_val_count > 0 && (
+                    <>, auto-assigned <span className="font-medium">{result.auto_val_count}</span> to validation</>
+                  )}
+                  {result.not_found_count > 0 && (
+                    <>, <span className="font-medium text-amber-700">{result.not_found_count}</span> files not found in dataset</>
+                  )}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+  }
+
+  const statusText = getStatusText()
+
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden w-full max-w-2xl mb-4">
       {/* Header */}
@@ -283,111 +302,94 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
       </div>
 
       <div className="p-5 space-y-4">
-        {/* Resolving dataset */}
-        {resolving && (
-          <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span>Looking for dataset "{config.dataset_name}"...</span>
-          </div>
-        )}
-
-        {/* Resolve error */}
-        {resolveError && (
+        {/* Background task error */}
+        {bgTaskError && (
           <div className="bg-red-50 border border-red-100 rounded-lg p-3 flex items-start gap-2">
             <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-red-700">{resolveError}</p>
+            <p className="text-xs text-red-700">{bgTaskError}</p>
           </div>
         )}
 
-        {/* Drop zone - only show when dataset is resolved */}
-        {!resolving && !resolveError && (
-          <>
-            <div
-              className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors cursor-pointer ${
-                isDragging ? 'border-primary-500 bg-primary-50' : 'border-gray-200 hover:border-gray-300'
-              } ${selectedFile ? 'bg-gray-50' : ''}`}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv,.xlsx,.xls"
-                onChange={handleInputChange}
-                className="hidden"
-              />
-              {selectedFile ? (
-                <div className="space-y-2">
-                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto">
-                    <FileIcon className="w-5 h-5 text-blue-600" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-gray-900 text-sm">{selectedFile.name}</p>
-                    <p className="text-xs text-gray-500">{(selectedFile.size / 1024).toFixed(1)} KB</p>
-                  </div>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setSelectedFile(null); setValidationError(null) }}
-                    className="text-xs text-red-600 hover:text-red-700 underline"
-                  >
-                    Remove
-                  </button>
+        {/* Drop zone - always show so user can select file while dataset is being created */}
+        {!isUploading && (
+          <div
+            className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors cursor-pointer ${
+              isDragging ? 'border-primary-500 bg-primary-50' : 'border-gray-200 hover:border-gray-300'
+            } ${selectedFile ? 'bg-gray-50' : ''}`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              onChange={handleInputChange}
+              className="hidden"
+            />
+            {selectedFile ? (
+              <div className="space-y-2">
+                <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto">
+                  <FileIcon className="w-5 h-5 text-blue-600" />
                 </div>
-              ) : (
-                <div className="space-y-2">
-                  <UploadCloud className="w-8 h-8 text-gray-400 mx-auto" />
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">Drag & Drop CSV / Excel File</p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      or click to browse. Required columns: <code className="bg-gray-100 px-1 rounded">filename</code>
-                      {uploadMode === 'classification'
-                        ? <>, <code className="bg-gray-100 px-1 rounded">label</code></>
-                        : <>, <code className="bg-gray-100 px-1 rounded">event_time</code>, <code className="bg-gray-100 px-1 rounded">event_status</code></>
-                      }
-                    </p>
-                  </div>
+                <div>
+                  <p className="font-medium text-gray-900 text-sm">{selectedFile.name}</p>
+                  <p className="text-xs text-gray-500">{(selectedFile.size / 1024).toFixed(1)} KB</p>
                 </div>
-              )}
-            </div>
-
-            {/* Download template */}
-            <div className="flex justify-end pr-1">
-              <button
-                onClick={handleDownloadTemplate}
-                className="flex items-center gap-1.5 text-xs text-primary-600 hover:text-primary-700 hover:underline"
-              >
-                <Download className="w-3 h-3" />
-                Download {uploadMode === 'survival' ? 'Survival' : 'Classification'} Template
-              </button>
-            </div>
-
-            {/* Validation error */}
-            {validationError && (
-              <div className="bg-red-50 border border-red-100 rounded-lg p-3 flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-                <p className="text-xs text-red-700">{validationError}</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <UploadCloud className="w-8 h-8 text-gray-400 mx-auto" />
+                <div>
+                  <p className="text-sm font-medium text-gray-900">Drag & Drop CSV / Excel File</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    or click to browse. Required columns: <code className="bg-gray-100 px-1 rounded">filename</code>
+                    {uploadMode === 'classification'
+                      ? <>, <code className="bg-gray-100 px-1 rounded">label</code></>
+                      : <>, <code className="bg-gray-100 px-1 rounded">event_time</code>, <code className="bg-gray-100 px-1 rounded">event_status</code></>
+                    }
+                  </p>
+                </div>
               </div>
             )}
+          </div>
+        )}
 
-            {/* Upload error */}
-            {uploadError && (
-              <div className="bg-red-50 border border-red-100 rounded-lg p-3 flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-                <p className="text-xs text-red-700">{uploadError}</p>
-              </div>
-            )}
-
-            {/* Upload button */}
+        {/* Download template */}
+        {!isUploading && (
+          <div className="flex justify-end pr-1">
             <button
-              onClick={handleUpload}
-              disabled={isUploading || !selectedFile || !resolvedDatasetId}
-              className="w-full py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              onClick={handleDownloadTemplate}
+              className="flex items-center gap-1.5 text-xs text-primary-600 hover:text-primary-700 hover:underline"
             >
-              {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
-              {isUploading ? 'Uploading...' : 'Upload Metadata'}
+              <Download className="w-3 h-3" />
+              Download {uploadMode === 'survival' ? 'Survival' : 'Classification'} Template
             </button>
-          </>
+          </div>
+        )}
+
+        {/* Validation error */}
+        {validationError && (
+          <div className="bg-red-50 border border-red-100 rounded-lg p-3 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-red-700">{validationError}</p>
+          </div>
+        )}
+
+        {/* Status indicator (background task running) */}
+        {isUploading && statusText && (
+          <div className="flex items-center justify-center gap-2 py-3">
+            <Loader2 className="w-4 h-4 animate-spin text-primary-600" />
+            <p className="text-sm text-gray-600">{statusText}</p>
+          </div>
+        )}
+
+        {/* Progress hint */}
+        {isUploading && (
+          <p className="text-xs text-gray-400 text-center">
+            正在后台处理中，你可以切换到其他页面，上传会继续进行...
+          </p>
         )}
       </div>
     </div>
