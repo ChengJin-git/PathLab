@@ -40,13 +40,10 @@ class Config:
     MAX_TIMESTAMP_DIFF_SECONDS = 300  # 5 minutes - tolerance for timestamp validation
 
     # Database operations
-    # Unified timeout for SQLite lock waiting. Used by:
-    # - SQLite PRAGMA busy_timeout (database.py)
-    # - asyncio.timeout in scoped_db (trainer.py) and ScopedLogger (pipeline.py)
-    # - SQLAlchemy connect_args timeout (database.py)
-    # All three must use the same value to avoid race conditions where
-    # asyncio cancels an operation before SQLite gives up waiting for the lock.
-    SQLITE_LOCK_TIMEOUT_SECONDS = 120
+    # Timeout for database operations (used by scoped_db, ScopedLogger, etc.)
+    # With PostgreSQL, this guards against long-running queries or connection issues,
+    # rather than SQLite write-lock contention.
+    DB_OPERATION_TIMEOUT = 90  # seconds
 
     # GPU/VRAM settings
     DEFAULT_MIN_VRAM_MB = 2000  # 2GB - minimum VRAM for task execution

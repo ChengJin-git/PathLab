@@ -6,9 +6,8 @@ that prevent connection hogging during long-running training tasks.
 
 Problem:
 - Training endpoints hold database connections for hours via Depends(get_db)
-- SQLite in WAL mode allows only one writer at a time
 - Long-held connections block other operations (Gateway, delete, rerun)
-- This causes system-wide deadlocks when multiple tasks run concurrently
+- This causes connection pool exhaustion when multiple tasks run concurrently
 
 Solution:
 - Create short-lived sessions only when needed for specific DB operations
@@ -102,14 +101,14 @@ class ScopedSession:
         The session is automatically committed on success, rolled back on error,
         and closed when the context exits.
 
-        Includes timeout protection to prevent indefinite blocking when
-        SQLite database is locked by another process or task.
+        Includes timeout protection to prevent indefinite blocking on
+        long-running database operations.
 
         Follows the same pattern as safe_session() in database.py:
         - The main operation is NOT shielded (allows timeout/cancellation to work)
         - Only cleanup (rollback/close) is shielded to ensure proper resource release
         """
-        timeout = Config.SQLITE_LOCK_TIMEOUT_SECONDS
+        timeout = Config.DB_OPERATION_TIMEOUT
         session = self._session_maker()
         training_logger = TrainingLogger(self.task_id, session, self.log_dir)
         try:
@@ -120,8 +119,7 @@ class ScopedSession:
             with anyio.CancelScope(shield=True):
                 await session.rollback()
             logger.error(
-                f"[{self.task_id}] Database operation timed out after {timeout}s. "
-                "SQLite lock contention detected."
+                f"[{self.task_id}] Database operation timed out after {timeout}s."
             )
             raise
         except Exception:
@@ -136,7 +134,7 @@ class ScopedSession:
 
 class ScopedTrainingLogger:
     """
-    TrainingLogger with batched async writes to reduce SQLite lock contention.
+    TrainingLogger with batched async writes to reduce database load.
 
     Key features:
     - Logs immediately to file for real-time file access
@@ -144,7 +142,7 @@ class ScopedTrainingLogger:
     - Reduces database write frequency from "per log" to "per batch"
     - SSE log stream still works since database eventually gets updated
 
-    This prevents frequent SQLite write lock acquisition that blocks other operations.
+    This reduces database write frequency and connection usage during training.
     """
 
     # Batch settings
@@ -276,7 +274,7 @@ class ScopedTrainingLogger:
     async def _flush_to_db(self):
         """Flush queued log entries to database in a single transaction.
 
-        Includes timeout protection to prevent indefinite blocking on SQLite locks.
+        Includes timeout protection to prevent indefinite blocking on database operations.
         Tracks consecutive failures for exponential backoff in _flush_loop().
 
         Follows the same pattern as safe_session() in database.py:
@@ -296,7 +294,7 @@ class ScopedTrainingLogger:
 
         from backend.database.models import TrainingLog
 
-        timeout = Config.SQLITE_LOCK_TIMEOUT_SECONDS
+        timeout = Config.DB_OPERATION_TIMEOUT
         session = self._session_maker()
         try:
             async with asyncio.timeout(timeout):
@@ -319,8 +317,7 @@ class ScopedTrainingLogger:
             self._consecutive_failures += 1
             logger.error(
                 f"[{self.task_id}] Log flush timed out after {timeout}s "
-                f"(consecutive failures: {self._consecutive_failures}). "
-                "SQLite lock contention detected."
+                f"(consecutive failures: {self._consecutive_failures})."
             )
             # Re-queue entries on failure
             for entry in reversed(batch):

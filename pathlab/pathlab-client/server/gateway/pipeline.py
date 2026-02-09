@@ -57,7 +57,7 @@ class ScopedLogger:
     Helper to create short-lived DB sessions for logging and status updates.
     Ensures that we don't hold a DB connection open during long-running HTTP calls.
 
-    Includes timeout protection to prevent indefinite blocking on SQLite locks.
+    Includes timeout protection to prevent indefinite blocking on database operations.
     """
 
     def __init__(self, task_id: str):
@@ -69,10 +69,10 @@ class ScopedLogger:
     async def session(self):
         """Yields (logger, db_session) and handles commit/close.
 
-        Includes timeout protection to prevent indefinite blocking when
-        SQLite database is locked by another process (e.g., AI Service).
+        Includes timeout protection to prevent indefinite blocking on
+        long-running database operations.
         """
-        timeout = Config.SQLITE_LOCK_TIMEOUT_SECONDS
+        timeout = Config.DB_OPERATION_TIMEOUT
         try:
             # Wrap the entire session operation with a timeout
             async with asyncio.timeout(timeout):
@@ -89,12 +89,10 @@ class ScopedLogger:
         except asyncio.TimeoutError:
             # Log to console since we can't use the database
             logger.error(
-                f"[{self.task_id}] Database operation timed out after {timeout}s. "
-                "This may indicate SQLite lock contention between Gateway and AI Service."
+                f"[{self.task_id}] Database operation timed out after {timeout}s."
             )
             raise Exception(
-                f"Database operation timed out after {timeout}s. "
-                "SQLite lock contention detected. Please retry the operation."
+                f"Database operation timed out after {timeout}s. Please retry the operation."
             )
 
 

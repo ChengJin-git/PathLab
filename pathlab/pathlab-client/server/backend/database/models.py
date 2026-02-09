@@ -6,7 +6,7 @@ Following industry best practices from Cytomine and DSA platforms.
 
 from datetime import datetime, timezone
 from typing import Optional
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime, ForeignKey, JSON, Index, Boolean
+from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, DateTime, ForeignKey, JSON, Index, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from backend.database.utils.json_utils import sanitize_for_json
@@ -15,12 +15,12 @@ Base = declarative_base()
 
 
 def utc_now() -> datetime:
-    """Get current UTC time as timezone-aware datetime.
+    """Get current UTC time as naive datetime (UTC assumed).
 
-    This replaces the deprecated datetime.utcnow() which returns naive datetime.
-    Returns timezone-aware datetime in UTC.
+    Returns timezone-naive datetime in UTC, compatible with PostgreSQL
+    TIMESTAMP WITHOUT TIME ZONE columns via asyncpg.
     """
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class DataGroup(Base):
@@ -86,7 +86,7 @@ class Dataset(Base):
     name = Column(String(255), nullable=False)  # Display name (stored only, never sent in URL/params)
     description = Column(Text)  # Optional description
 
-    # Owner - links to users table (UUID as string for SQLite compatibility)
+    # Owner - links to users table (UUID stored as string)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
     # Reference to DataGroup - defines data_type, aggregation_level, task_type
@@ -132,7 +132,7 @@ class WSISlide(Base):
     label = Column(String(100), index=True)
     wsi_path = Column(Text, nullable=False)
 
-    # Owner - links to users table (UUID as string for SQLite compatibility)
+    # Owner - links to users table (UUID stored as string)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
     # Patient metadata
@@ -151,7 +151,7 @@ class WSISlide(Base):
     width = Column(Integer)
     height = Column(Integer)
     magnification = Column(Integer)
-    file_size = Column(Integer)  # File size in bytes
+    file_size = Column(BigInteger)  # File size in bytes (BigInteger for files > 2GB)
 
     # Associated files for special formats (MRXS, TMAP)
     # JSON format: {"format_type": "mrxs"|"tmap"|"standard", "data_folder": str, "dt_files": [str]}
@@ -215,7 +215,7 @@ class AITask(Base):
     status = Column(String(20), nullable=False, index=True)  # pending, running, completed, failed
     progress = Column(Integer, default=0)  # 0-100
 
-    # Owner - links to users table (UUID as string for SQLite compatibility)
+    # Owner - links to users table (UUID stored as string)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
     # Task parameters (JSON)
@@ -261,7 +261,7 @@ class AIResult(Base):
     wsi_id = Column(String(255), ForeignKey("wsi_slides.wsi_id"), nullable=False, index=True)
     task_id = Column(String(255), ForeignKey("ai_tasks.task_id"), index=True)
 
-    # Owner - links to users table (UUID as string for SQLite compatibility)
+    # Owner - links to users table (UUID stored as string)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
     # Prediction results
@@ -494,7 +494,7 @@ class TrainingTask(Base):
     # Reference to DataGroup - defines data_type, aggregation_level, task_type
     group_id = Column(String(255), ForeignKey("data_groups.group_id"), nullable=False, index=True)
 
-    # Owner - links to users table (UUID as string for SQLite compatibility)
+    # Owner - links to users table (UUID stored as string)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
     # Status tracking
@@ -585,7 +585,7 @@ class TrainedModel(Base):
     task_id = Column(String(255), ForeignKey("training_tasks.task_id"), nullable=False, index=True)
     model_name = Column(String(500), nullable=False)
 
-    # Owner - links to users table (UUID as string for SQLite compatibility)
+    # Owner - links to users table (UUID stored as string)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
     # Model files
@@ -700,7 +700,7 @@ class DatasetPermission(Base):
     # The dataset this permission applies to
     dataset_id = Column(String(255), ForeignKey("datasets.dataset_id", ondelete="CASCADE"), nullable=False, index=True)
 
-    # The user who is granted the permission (UUID as string)
+    # The user who is granted the permission
     user_id = Column(String(255), nullable=False, index=True)
 
     # The admin who granted this permission (UUID as string)

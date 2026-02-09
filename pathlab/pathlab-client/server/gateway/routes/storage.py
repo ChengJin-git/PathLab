@@ -1132,7 +1132,22 @@ async def delete_unavailable_files(
                     failed_count += 1
                     continue
 
-                # Delete the WSI record (this will cascade delete related records)
+                # Delete all associated child records before deleting the WSI
+                # (PostgreSQL enforces FK constraints strictly)
+                try:
+                    await db.execute(
+                        sql_delete(TrainingTaskWSI).where(TrainingTaskWSI.wsi_id == wsi_id)
+                    )
+                    await db.execute(
+                        sql_delete(AIResult).where(AIResult.wsi_id == wsi_id)
+                    )
+                    await db.execute(
+                        sql_delete(AITask).where(AITask.wsi_id == wsi_id)
+                    )
+                except Exception as assoc_error:
+                    logger.warning(f"Failed to delete associated data for {wsi_id}: {assoc_error}")
+
+                # Delete the WSI record
                 success = await WSIRepository.delete(db, wsi_id)
                 if success:
                     await db.commit()

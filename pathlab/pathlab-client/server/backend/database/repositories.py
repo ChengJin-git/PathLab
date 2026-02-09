@@ -116,7 +116,73 @@ class DataGroupRepository:
 
     @staticmethod
     async def delete(db: AsyncSession, group_id: str) -> bool:
-        """Delete data group (cascades to datasets and training tasks)"""
+        """Delete data group and all associated records.
+
+        Deletion order (PostgreSQL FK-safe):
+        1. Leaf records of WSI slides (ai_results, ai_tasks, training_task_wsi)
+        2. WSI slides belonging to datasets in this group
+        3. Datasets in this group (dataset_permissions auto-cascade via DB)
+        4. Leaf records of training tasks (training_task_wsi, trained_models, training_logs)
+        5. Training tasks in this group
+        6. The data group itself
+        """
+        # Get all dataset_ids in this group
+        ds_query = await db.execute(
+            select(Dataset.dataset_id).where(Dataset.group_id == group_id)
+        )
+        dataset_ids = [row[0] for row in ds_query.fetchall()]
+
+        if dataset_ids:
+            # Get all wsi_ids in these datasets
+            wsi_query = await db.execute(
+                select(WSISlide.wsi_id).where(WSISlide.dataset_id.in_(dataset_ids))
+            )
+            wsi_ids = [row[0] for row in wsi_query.fetchall()]
+
+            if wsi_ids:
+                # Delete WSI children: ai_results, ai_tasks, training_task_wsi
+                await db.execute(
+                    delete(AIResult).where(AIResult.wsi_id.in_(wsi_ids))
+                )
+                await db.execute(
+                    delete(AITask).where(AITask.wsi_id.in_(wsi_ids))
+                )
+                await db.execute(
+                    delete(TrainingTaskWSI).where(TrainingTaskWSI.wsi_id.in_(wsi_ids))
+                )
+
+            # Delete WSI slides
+            await db.execute(
+                delete(WSISlide).where(WSISlide.dataset_id.in_(dataset_ids))
+            )
+            # Delete datasets (dataset_permissions has ondelete=CASCADE, DB handles it)
+            await db.execute(
+                delete(Dataset).where(Dataset.group_id == group_id)
+            )
+
+        # Get all training_task_ids in this group
+        tt_query = await db.execute(
+            select(TrainingTask.task_id).where(TrainingTask.group_id == group_id)
+        )
+        task_ids = [row[0] for row in tt_query.fetchall()]
+
+        if task_ids:
+            # Delete training task children
+            await db.execute(
+                delete(TrainingTaskWSI).where(TrainingTaskWSI.task_id.in_(task_ids))
+            )
+            await db.execute(
+                delete(TrainedModel).where(TrainedModel.task_id.in_(task_ids))
+            )
+            await db.execute(
+                delete(TrainingLog).where(TrainingLog.task_id.in_(task_ids))
+            )
+            # Delete training tasks
+            await db.execute(
+                delete(TrainingTask).where(TrainingTask.group_id == group_id)
+            )
+
+        # Delete the data group itself
         result = await db.execute(
             delete(DataGroup).where(DataGroup.group_id == group_id)
         )
@@ -225,7 +291,37 @@ class DatasetRepository:
 
     @staticmethod
     async def delete(db: AsyncSession, dataset_id: str) -> bool:
-        """Delete dataset (cascades to WSI slides)"""
+        """Delete dataset and all associated records.
+
+        Deletion order (PostgreSQL FK-safe):
+        1. Leaf records of WSI slides (ai_results, ai_tasks, training_task_wsi)
+        2. WSI slides in this dataset
+        3. The dataset itself (dataset_permissions auto-cascade via DB ondelete=CASCADE)
+        """
+        # Get all wsi_ids in this dataset
+        wsi_query = await db.execute(
+            select(WSISlide.wsi_id).where(WSISlide.dataset_id == dataset_id)
+        )
+        wsi_ids = [row[0] for row in wsi_query.fetchall()]
+
+        if wsi_ids:
+            # Delete WSI children: ai_results first (FK to ai_tasks), then ai_tasks, then training_task_wsi
+            await db.execute(
+                delete(AIResult).where(AIResult.wsi_id.in_(wsi_ids))
+            )
+            await db.execute(
+                delete(AITask).where(AITask.wsi_id.in_(wsi_ids))
+            )
+            await db.execute(
+                delete(TrainingTaskWSI).where(TrainingTaskWSI.wsi_id.in_(wsi_ids))
+            )
+
+        # Delete WSI slides
+        await db.execute(
+            delete(WSISlide).where(WSISlide.dataset_id == dataset_id)
+        )
+
+        # Delete the dataset (dataset_permissions has ondelete=CASCADE, DB handles it)
         result = await db.execute(
             delete(Dataset).where(Dataset.dataset_id == dataset_id)
         )
@@ -254,12 +350,12 @@ class WSIRepository:
         Get multiple WSI slides by IDs in a single query (batch operation).
 
         This is optimized for validating large numbers of WSI IDs - avoids N+1 query problem.
-        For datasets exceeding batch_size, queries are batched to avoid SQLite limitations.
+        For datasets exceeding batch_size, queries are batched for memory efficiency.
 
         Args:
             db: Database session
             wsi_ids: List of WSI IDs to fetch
-            batch_size: Number of IDs per batch (default 500, SQLite limit is 999)
+            batch_size: Number of IDs per batch (default 500)
 
         Returns:
             Dict mapping wsi_id to WSISlide for found slides
@@ -269,7 +365,7 @@ class WSIRepository:
 
         result_dict: Dict[str, WSISlide] = {}
 
-        # Batch query to avoid SQLite variable limit (999)
+        # Batch query for memory efficiency with large ID lists
         for i in range(0, len(wsi_ids), batch_size):
             batch_ids = wsi_ids[i:i + batch_size]
             result = await db.execute(
@@ -298,7 +394,7 @@ class WSIRepository:
         Args:
             db: Database session
             wsi_ids: List of WSI IDs to fetch
-            batch_size: Number of IDs per batch (default 500, SQLite limit is 999)
+            batch_size: Number of IDs per batch (default 500)
 
         Returns:
             Dict mapping wsi_id to WSISlide for found slides
@@ -308,7 +404,7 @@ class WSIRepository:
 
         result_dict: Dict[str, WSISlide] = {}
 
-        # Batch query to avoid SQLite variable limit (999)
+        # Batch query for memory efficiency with large ID lists
         for i in range(0, len(wsi_ids), batch_size):
             batch_ids = wsi_ids[i:i + batch_size]
             result = await db.execute(
@@ -473,7 +569,7 @@ class WSIRepository:
         count = 0
         for wsi_id, split_val in updates:
             # We can optimize this with a single update statement using a CASE/binding
-            # but for SQLite simplicity relative to list size, individual updates are acceptable
+            # but for simplicity relative to list size, individual updates are acceptable
             # or we could do `UPDATE wsi_slides SET split = :split WHERE wsi_id = :wsi_id` in a batch.
             
             # Simple check + update
@@ -1992,7 +2088,7 @@ class TrainingTaskRepository:
         Create a new training task with associated WSI slides.
         Automatically extracts classes from WSI labels.
 
-        For large datasets (10k+ WSIs), uses bulk inserts to avoid SQLite issues.
+        For large datasets (10k+ WSIs), uses bulk inserts for performance.
 
         Args:
             prefetched_wsis: Optional list of already-fetched WSISlide objects.
@@ -2003,9 +2099,9 @@ class TrainingTaskRepository:
             wsis = prefetched_wsis
         else:
             # Extract unique classes from WSI labels
-            # For large datasets, query in batches to avoid SQLite limitations
+            # For large datasets, query in batches for memory efficiency
             wsis = []
-            batch_size = 500  # SQLite variable limit is 999, stay well below
+            batch_size = 500
             for i in range(0, len(wsi_ids), batch_size):
                 batch_ids = wsi_ids[i:i + batch_size]
                 wsi_list = await db.execute(
@@ -2512,14 +2608,19 @@ class TrainingTaskRepository:
         if not task:
             return False
 
-        # Delete associated WSI records (should cascade automatically, but being explicit)
+        # Delete associated WSI records
         await db.execute(
             delete(TrainingTaskWSI).where(TrainingTaskWSI.task_id == task_id)
         )
 
-        # Delete associated trained models (should cascade automatically, but being explicit)
+        # Delete associated trained models
         await db.execute(
             delete(TrainedModel).where(TrainedModel.task_id == task_id)
+        )
+
+        # Delete associated training logs
+        await db.execute(
+            delete(TrainingLog).where(TrainingLog.task_id == task_id)
         )
 
         # Delete the training task itself
@@ -3292,7 +3393,23 @@ class OrphanedRecordsRepository:
 
         deleted_counts = {}
 
-        # 1. Delete orphaned AI Tasks
+        # 1. Delete orphaned AI Results FIRST (before AI Tasks, due to FK: ai_results.task_id → ai_tasks.task_id)
+        if "ai_results" in categories:
+            orphaned_query = await db.execute(
+                select(AIResult.id)
+                .outerjoin(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
+                .where(WSISlide.wsi_id == None)
+            )
+            orphaned_ids = [row[0] for row in orphaned_query.fetchall()]
+            if orphaned_ids:
+                result = await db.execute(
+                    delete(AIResult).where(AIResult.id.in_(orphaned_ids))
+                )
+                deleted_counts["ai_results"] = result.rowcount
+            else:
+                deleted_counts["ai_results"] = 0
+
+        # 2. Delete orphaned AI Tasks (after AI Results are cleaned up)
         if "ai_tasks" in categories:
             # Get IDs of orphaned tasks first
             orphaned_query = await db.execute(
@@ -3308,22 +3425,6 @@ class OrphanedRecordsRepository:
                 deleted_counts["ai_tasks"] = result.rowcount
             else:
                 deleted_counts["ai_tasks"] = 0
-
-        # 2. Delete orphaned AI Results
-        if "ai_results" in categories:
-            orphaned_query = await db.execute(
-                select(AIResult.id)
-                .outerjoin(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
-                .where(WSISlide.wsi_id == None)
-            )
-            orphaned_ids = [row[0] for row in orphaned_query.fetchall()]
-            if orphaned_ids:
-                result = await db.execute(
-                    delete(AIResult).where(AIResult.id.in_(orphaned_ids))
-                )
-                deleted_counts["ai_results"] = result.rowcount
-            else:
-                deleted_counts["ai_results"] = 0
 
         # 3. Delete orphaned TrainingTaskWSI
         if "training_task_wsi" in categories:

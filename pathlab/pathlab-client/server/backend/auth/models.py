@@ -20,8 +20,12 @@ from backend.database.models import Base
 
 
 def utc_now() -> datetime:
-    """Get current UTC time as timezone-aware datetime."""
-    return datetime.now(timezone.utc)
+    """Get current UTC time as naive datetime (UTC assumed).
+
+    Returns timezone-naive datetime in UTC, compatible with PostgreSQL
+    TIMESTAMP WITHOUT TIME ZONE columns via asyncpg.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class User(SQLAlchemyBaseUserTableUUID, Base):

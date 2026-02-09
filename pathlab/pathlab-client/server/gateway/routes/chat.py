@@ -409,7 +409,7 @@ async def submit_feedback(
     if req.task_helpfulness and req.task_helpfulness not in ["helpful", "not_helpful"]:
         raise HTTPException(status_code=400, detail="task_helpfulness must be 'helpful' or 'not_helpful'")
 
-    # Upsert feedback (convert UUID to string for SQLite compatibility)
+    # Upsert feedback (convert UUID to string for storage)
     feedback = await FeedbackRepository.upsert_feedback(
         db=db,
         message_id=message_id,

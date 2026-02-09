@@ -71,10 +71,10 @@ async def scoped_db(session_maker):
     - The main operation is NOT shielded (allows timeout/cancellation to work)
     - Only cleanup (rollback/close) is shielded to ensure proper resource release
 
-    Includes timeout protection to prevent indefinite blocking when
-    SQLite database is locked by another process or task.
+    Includes timeout protection to prevent indefinite blocking on
+    long-running database operations.
     """
-    timeout = Config.SQLITE_LOCK_TIMEOUT_SECONDS
+    timeout = Config.DB_OPERATION_TIMEOUT
     session = session_maker()
     try:
         async with asyncio.timeout(timeout):
@@ -84,8 +84,7 @@ async def scoped_db(session_maker):
         with anyio.CancelScope(shield=True):
             await session.rollback()
         _scoped_db_logger.error(
-            f"Database operation timed out after {timeout}s. "
-            "SQLite lock contention detected."
+            f"Database operation timed out after {timeout}s."
         )
         raise
     except Exception:

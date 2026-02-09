@@ -1,73 +1,42 @@
 """
 Database Connection and Session Management
 
-SQLite database using SQLAlchemy 2.0+ and aiosqlite.
-Zero-configuration local database for PathLab Client.
+PostgreSQL database using SQLAlchemy 2.0+ and asyncpg.
+Supports multi-user concurrent access for PathLab platform.
 
-Key optimizations for SQLite concurrency:
-1. WAL (Write-Ahead Logging) mode - allows concurrent reads with a single writer
-2. Busy timeout - wait for locks instead of failing immediately
+Key features:
+1. PostgreSQL MVCC - full concurrent reads and writes without lock contention
+2. asyncpg - high-performance async PostgreSQL driver
 3. AsyncAdaptedQueuePool - proper async connection pooling
 """
 
 import os
-import sys
-import asyncio
-from pathlib import Path
 from typing import AsyncGenerator
-from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 from .models import Base
-from backend.common.config import Config
-
-
-def get_database_path() -> Path:
-    """
-    Get the database file path based on the operating system.
-
-    - Windows: %APPDATA%/PathLab/pathlab.db
-    - macOS: ~/Library/Application Support/PathLab/pathlab.db
-    - Linux: ~/.local/share/PathLab/pathlab.db
-    """
-    if sys.platform == "win32":
-        base_dir = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-    elif sys.platform == "darwin":
-        base_dir = Path.home() / "Library" / "Application Support"
-    else:
-        base_dir = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
-
-    data_dir = base_dir / "PathLab"
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    return data_dir / "pathlab.db"
 
 
 def get_database_url() -> str:
     """
-    Get SQLite database URL.
-    Uses environment variable if set, otherwise uses platform-specific path.
+    Get PostgreSQL database URL.
+    Uses DATABASE_URL environment variable, with a sensible default for local development.
     """
     if db_url := os.environ.get("DATABASE_URL"):
         return db_url
 
-    db_path = get_database_path()
-    return f"sqlite+aiosqlite:///{db_path}"
+    # Default: local PostgreSQL for development
+    return "postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab"
 
 
 # Database URL
 DATABASE_URL = get_database_url()
 
-# Create async engine for SQLite with proper pooling
+# Create async engine for PostgreSQL with proper pooling
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,  # Set to True for SQL query logging
     future=True,
-    # SQLite-specific settings
-    connect_args={
-        "check_same_thread": False,
-        "timeout": Config.SQLITE_LOCK_TIMEOUT_SECONDS,
-    },
     # Use async-adapted queue pool for better connection management
     # Pool must be large enough for multi-user concurrent access:
     # - Each user may open 2-3 SSE streams (training tasks, storage tasks, training logs)
@@ -82,22 +51,6 @@ engine = create_async_engine(
     pool_pre_ping=True,  # Verify connections before use
     pool_recycle=3600,  # Recycle connections after 1 hour
 )
-
-
-# Set up SQLite pragmas for better concurrency
-@event.listens_for(engine.sync_engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    """Configure SQLite for better concurrency and performance."""
-    cursor = dbapi_connection.cursor()
-    # WAL mode allows concurrent reads while writing
-    cursor.execute("PRAGMA journal_mode=WAL")
-    # Busy timeout in milliseconds - uses centralized constant from Config
-    cursor.execute(f"PRAGMA busy_timeout={Config.SQLITE_LOCK_TIMEOUT_SECONDS * 1000}")
-    # Synchronous=NORMAL is safe with WAL and faster than FULL
-    cursor.execute("PRAGMA synchronous=NORMAL")
-    # Increase cache size (negative = KB, positive = pages)
-    cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
-    cursor.close()
 
 
 # Create async session factory
@@ -181,9 +134,17 @@ async def init_db():
     Initialize database: create all tables.
 
     This should be called on application startup.
-    SQLite database is created automatically if it doesn't exist.
+    PostgreSQL tables are created automatically if they don't exist.
     """
-    print(f"[Database] Using SQLite: {DATABASE_URL}")
+    # Mask password in URL for logging
+    import re
+    safe_url = re.sub(r'://([^:]+):([^@]+)@', r'://\1:***@', DATABASE_URL)
+    print(f"[Database] Using PostgreSQL: {safe_url}")
+    # Import all models to register them in Base.metadata BEFORE create_all.
+    # User model lives in backend.auth.models but shares the same Base.
+    # Without this import, the "users" table won't be created.
+    import backend.auth.models  # noqa: F401
+
     async with engine.begin() as conn:
         # Create all tables
         await conn.run_sync(Base.metadata.create_all)

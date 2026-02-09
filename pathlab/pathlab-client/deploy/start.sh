@@ -84,6 +84,13 @@ echo -e "${YELLOW}[3/4]${NC} 启动后端服务..."
 
 cd "$SERVER_DIR"
 
+# Load .env if exists (DATABASE_URL, JWT_SECRET, etc.)
+if [ -f "$SERVER_DIR/.env" ]; then
+    set -a
+    source "$SERVER_DIR/.env"
+    set +a
+fi
+
 # Set environment and start
 export PATHLAB_DEBUG=1
 export GATEWAY_PORT=6100

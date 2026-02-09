@@ -361,7 +361,7 @@ async def extract_features(req: FeatureExtractionRequest):
     """Extract features using WSI Classification Trainer.
 
     Uses ScopedSession pattern - creates short-lived DB sessions for each operation
-    to prevent SQLite lock contention during long-running feature extraction.
+    to prevent connection pool exhaustion during long-running feature extraction.
     """
     scoped_session = ScopedSession(req.task_id)
     scoped_logger = ScopedTrainingLogger(req.task_id)
@@ -442,7 +442,7 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
     WSI Classification Training Unified Entry.
 
     Uses ScopedSession pattern - creates short-lived DB sessions for each operation
-    to prevent SQLite lock contention during long-running training.
+    to prevent connection pool exhaustion during long-running training.
     """
     scoped_session = ScopedSession(req.task_id)
     scoped_logger = ScopedTrainingLogger(req.task_id)
@@ -608,7 +608,7 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
     WSI Survival Training Unified Entry.
 
     Uses ScopedSession pattern - creates short-lived DB sessions for each operation
-    to prevent SQLite lock contention during long-running training.
+    to prevent connection pool exhaustion during long-running training.
     """
     scoped_session = ScopedSession(req.task_id)
     scoped_logger = ScopedTrainingLogger(req.task_id)
@@ -722,7 +722,7 @@ async def train_patch_classification(req: PatchClassificationTrainRequest) -> Tr
     Patch Classification Training Unified Entry.
 
     Uses ScopedSession pattern - creates short-lived DB sessions for each operation
-    to prevent SQLite lock contention during long-running training.
+    to prevent connection pool exhaustion during long-running training.
     """
     from backend.ai.tasks import PatchClassificationTrainer
 

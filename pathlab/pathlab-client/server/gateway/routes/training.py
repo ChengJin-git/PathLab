@@ -64,7 +64,7 @@ async def create_training_task(
     Requires pathologist/admin role OR temporary elevated permission for all involved datasets.
     Automatically extracts classes from selected WSI labels.
 
-    Uses short-lived database sessions to avoid SQLite lock contention when other
+    Uses short-lived database sessions to avoid connection pool exhaustion when other
     training tasks are running.
     """
     try:
