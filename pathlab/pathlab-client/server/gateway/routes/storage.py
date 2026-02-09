@@ -1883,6 +1883,10 @@ async def stream_storage_tasks(user: User = Depends(get_user_from_token_param)):
 
     async def event_generator():
         """Generate SSE events with storage task updates"""
+        consecutive_errors = 0
+        last_data_hash = None
+        BASE_INTERVAL = 5  # seconds between polls (increased from 2s)
+
         try:
             while True:
                 # Use safe_session to ensure proper connection cleanup on cancel
@@ -1895,15 +1899,26 @@ async def stream_storage_tasks(user: User = Depends(get_user_from_token_param)):
 
                         result_tasks = [task.to_dict() for task in tasks]
 
-                        # Send SSE event
+                        # Change detection: only send if data changed
                         data = json.dumps({"items": result_tasks})
-                        yield f"data: {data}\n\n"
+                        import hashlib
+                        data_hash = hashlib.md5(data.encode()).hexdigest()
+                        if data_hash != last_data_hash:
+                            yield f"data: {data}\n\n"
+                            last_data_hash = data_hash
+
+                        consecutive_errors = 0  # Reset on success
                     except Exception as e:
-                        logger.error(f"Error fetching storage tasks in SSE: {e}")
+                        consecutive_errors += 1
+                        logger.error(f"Error fetching storage tasks in SSE (consecutive={consecutive_errors}): {e}")
                         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-                # Wait 2 seconds before next update
-                await asyncio.sleep(2)
+                # Exponential backoff on consecutive errors: 5s → 10s → 20s → 30s (cap)
+                if consecutive_errors > 0:
+                    backoff = min(BASE_INTERVAL * (2 ** consecutive_errors), 30)
+                    await asyncio.sleep(backoff)
+                else:
+                    await asyncio.sleep(BASE_INTERVAL)
 
         except asyncio.CancelledError:
             # Client disconnected

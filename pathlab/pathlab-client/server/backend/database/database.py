@@ -69,12 +69,16 @@ engine = create_async_engine(
         "timeout": Config.SQLITE_LOCK_TIMEOUT_SECONDS,
     },
     # Use async-adapted queue pool for better connection management
-    # Reduced pool size to prevent connection starvation under SQLite's single-writer constraint.
-    # With 3 processes sharing the same SQLite DB, fewer connections per process means faster
-    # detection of contention (via pool_timeout) instead of silently accumulating blocked connections.
+    # Pool must be large enough for multi-user concurrent access:
+    # - Each user may open 2-3 SSE streams (training tasks, storage tasks, training logs)
+    # - Each SSE stream holds a DB connection briefly every poll cycle
+    # - API requests also need connections concurrently
+    # With pool_size=20 + max_overflow=10 = 30 total connections,
+    # this supports ~10 concurrent users comfortably.
     poolclass=AsyncAdaptedQueuePool,
-    pool_size=5,  # Number of connections to keep (reduced from 10)
-    max_overflow=5,  # Additional connections when busy (reduced from 20)
+    pool_size=20,  # Base connections to keep in pool
+    max_overflow=10,  # Additional connections when all base connections are busy
+    pool_timeout=10,  # Fail fast (10s) instead of blocking 30s when pool is exhausted
     pool_pre_ping=True,  # Verify connections before use
     pool_recycle=3600,  # Recycle connections after 1 hour
 )

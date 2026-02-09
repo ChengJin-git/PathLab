@@ -9,7 +9,7 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, ReactNode, useRef, useEffect, useMemo } from 'react'
-import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask, cancelStorageTask, startMigration, getMigrationStatus, getAuthToken, TrainingTaskDetail, fetchDatasets, uploadDatasetSplits, UploadSplitsResponse } from '../api'
+import { uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask, getDiskSpace, checkUploadSpace, cancelQueueTask, cancelStorageTask, startMigration, getMigrationStatus, getAuthToken, getCurrentUser, TrainingTaskDetail, fetchDatasets, uploadDatasetSplits, UploadSplitsResponse } from '../api'
 import { API_BASE } from '../config'
 import { useAuth } from './AuthContext'
 
@@ -417,9 +417,14 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
       }
     }
 
-    eventSource.onerror = (error) => {
-      console.error('Training SSE connection error:', error)
-      // Don't close - EventSource will auto-reconnect
+    eventSource.onerror = () => {
+      console.error('Training SSE connection error')
+      if (eventSource.readyState === EventSource.CLOSED) {
+        // Connection was rejected by server (possibly 401 auth failure).
+        // Verify auth status - if 401, apiFetch will dispatch SESSION_EXPIRED_EVENT → redirect to login.
+        getCurrentUser().catch(() => {})
+      }
+      // If readyState is CONNECTING, EventSource will auto-reconnect
     }
 
     return () => {
@@ -493,9 +498,13 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
       }
     }
 
-    eventSource.onerror = (error) => {
-      console.error('Analysis SSE connection error:', error)
-      // Don't close - EventSource will auto-reconnect
+    eventSource.onerror = () => {
+      console.error('Analysis SSE connection error')
+      if (eventSource.readyState === EventSource.CLOSED) {
+        // Connection was rejected by server (possibly 401 auth failure).
+        // Verify auth status - if 401, apiFetch will dispatch SESSION_EXPIRED_EVENT → redirect to login.
+        getCurrentUser().catch(() => {})
+      }
     }
 
     return () => {
@@ -625,9 +634,13 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
       }
     }
 
-    eventSource.onerror = (error) => {
-      console.error('Storage SSE connection error:', error)
-      // Don't close - EventSource will auto-reconnect
+    eventSource.onerror = () => {
+      console.error('Storage SSE connection error')
+      if (eventSource.readyState === EventSource.CLOSED) {
+        // Connection was rejected by server (possibly 401 auth failure).
+        // Verify auth status - if 401, apiFetch will dispatch SESSION_EXPIRED_EVENT → redirect to login.
+        getCurrentUser().catch(() => {})
+      }
     }
 
     return () => {

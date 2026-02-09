@@ -291,6 +291,10 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
 
     async def event_generator():
         """Generate SSE events with task updates"""
+        consecutive_errors = 0
+        last_data_hash = None
+        BASE_INTERVAL = 5  # seconds between polls
+
         try:
             while True:
                 # Use safe_session to ensure proper connection management even on cancel
@@ -318,15 +322,26 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                                 task_dict["progress"] = file_progress[task.task_id]
                             result_tasks.append(task_dict)
 
-                        # Send SSE event
+                        # Change detection: only send if data changed
                         data = json.dumps({"items": result_tasks})
-                        yield f"data: {data}\n\n"
+                        import hashlib
+                        data_hash = hashlib.md5(data.encode()).hexdigest()
+                        if data_hash != last_data_hash:
+                            yield f"data: {data}\n\n"
+                            last_data_hash = data_hash
+
+                        consecutive_errors = 0  # Reset on success
                     except Exception as e:
-                        logger.error(f"Error fetching training tasks in SSE: {e}")
+                        consecutive_errors += 1
+                        logger.error(f"Error fetching training tasks in SSE (consecutive={consecutive_errors}): {e}")
                         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-                # Wait 5 seconds before next update (increased from 2s to reduce DB load)
-                await asyncio.sleep(5)
+                # Exponential backoff on consecutive errors: 5s → 10s → 20s → 30s (cap)
+                if consecutive_errors > 0:
+                    backoff = min(BASE_INTERVAL * (2 ** consecutive_errors), 30)
+                    await asyncio.sleep(backoff)
+                else:
+                    await asyncio.sleep(BASE_INTERVAL)
 
         except asyncio.CancelledError:
             # Client disconnected
@@ -568,6 +583,10 @@ async def stream_training_logs(
                     yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
             # Continuously poll for new logs and task status
+            consecutive_errors = 0
+            last_data_hash = None
+            BASE_INTERVAL = 3  # seconds between polls
+
             while True:
                 task_completed = False
                 cached_wsi_ids = []
@@ -598,14 +617,19 @@ async def stream_training_logs(
                             if file_prog is not None:
                                 task_dict["progress"] = file_prog
 
-                        # Always send task status update (even if no new logs)
-                        # This ensures progress bar and status are updated in real-time
+                        # Build data payload
                         data = json.dumps({
                             "logs": [log.to_dict() for log in new_logs] if new_logs else [],
                             "last_sequence": new_logs[-1].sequence if new_logs else last_sequence,
                             "task": task_dict
                         })
-                        yield f"data: {data}\n\n"
+
+                        # Change detection: only send if data changed
+                        import hashlib
+                        data_hash = hashlib.md5(data.encode()).hexdigest()
+                        if data_hash != last_data_hash:
+                            yield f"data: {data}\n\n"
+                            last_data_hash = data_hash
 
                         if new_logs:
                             last_sequence = new_logs[-1].sequence
@@ -616,8 +640,11 @@ async def stream_training_logs(
                             task_completed = True
                             cached_wsi_ids = wsi_ids
                             cached_task_dict = task.to_dict()
+
+                        consecutive_errors = 0  # Reset on success
                     except Exception as e:
-                        logger.error(f"Error polling logs for task {task_id}: {e}")
+                        consecutive_errors += 1
+                        logger.error(f"Error polling logs for task {task_id} (consecutive={consecutive_errors}): {e}")
                         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
                 # Handle task completion outside session to avoid holding DB
@@ -648,8 +675,12 @@ async def stream_training_logs(
                             yield f"data: {json.dumps({'error': str(e)})}\n\n"
                     return  # Use return instead of break to properly exit generator
 
-                # Poll every 3 seconds (increased from 1s to reduce DB load)
-                await asyncio.sleep(3)
+                # Exponential backoff on consecutive errors: 3s → 6s → 12s → 24s → 30s (cap)
+                if consecutive_errors > 0:
+                    backoff = min(BASE_INTERVAL * (2 ** consecutive_errors), 30)
+                    await asyncio.sleep(backoff)
+                else:
+                    await asyncio.sleep(BASE_INTERVAL)
 
         except asyncio.CancelledError:
             # Client disconnected

@@ -61,6 +61,15 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         doc="SHA256 hash of password for secure login. NULL for legacy users."
     )
 
+    # Single-device login enforcement: regenerated on each login to invalidate old sessions.
+    # JWT tokens include this nonce; if the token's nonce doesn't match the DB, the session is rejected.
+    session_nonce: Mapped[Optional[str]] = mapped_column(
+        String(36),  # UUID4 string length
+        nullable=True,
+        default=None,
+        doc="Random UUID regenerated on each login. Old tokens with mismatched nonce are rejected."
+    )
+
     # Agreement acceptance tracking
     agreement_accepted_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,

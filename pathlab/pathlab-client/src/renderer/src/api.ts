@@ -274,6 +274,13 @@ async function handleResponse<T>(response: Response, context?: string): Promise<
 const AUTH_TOKEN_KEY = 'pathlab_auth_token'
 
 /**
+ * Custom event fired when a 401 response is received while the user had a valid token.
+ * This indicates the session was invalidated (e.g., logged in on another device).
+ * AuthContext listens for this event to show a user-friendly notification and redirect to login.
+ */
+export const SESSION_EXPIRED_EVENT = 'pathlab:session-expired'
+
+/**
  * Get stored auth token (internal use)
  */
 function _getAuthToken(): string | null {
@@ -291,6 +298,8 @@ async function apiFetch<T>(
   context?: string,
   skipAuth: boolean = false
 ): Promise<T> {
+  // Check if user had a token before the request (for session expiry detection)
+  const hadToken = !!_getAuthToken()
   try {
     // Add auth header if token exists and not skipping auth
     let headers = { ...(options?.headers || {}) } as Record<string, string>
@@ -302,10 +311,14 @@ async function apiFetch<T>(
     }
 
     const response = await fetch(url, { ...options, headers })
-    return handleResponse<T>(response, context)
+    return await handleResponse<T>(response, context)
   } catch (error) {
-    // If it's already an ApiError, rethrow it
+    // If it's already an ApiError, check for session expiry (401 while authenticated)
     if (error instanceof ApiError) {
+      if (error.status === 401 && hadToken) {
+        clearAuthToken()
+        window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT))
+      }
       throw error
     }
 
@@ -566,8 +579,9 @@ export async function getCurrentUser(): Promise<UserInfoResponse> {
     const user = await apiFetch<AuthUser>(`${API_BASE}/auth/me`, undefined, 'Failed to get user info')
     return { is_logged_in: true, user }
   } catch (error) {
-    // If token is invalid, clear it
-    if (error instanceof ApiError && error.isAuthError()) {
+    // Token clearing and session-expired event are handled by apiFetch for 401 responses.
+    // For other auth errors (403), clear token here.
+    if (error instanceof ApiError && error.status === 403) {
       clearAuthToken()
     }
     return { is_logged_in: false }
