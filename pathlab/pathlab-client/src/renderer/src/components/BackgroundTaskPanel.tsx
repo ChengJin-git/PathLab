@@ -129,6 +129,7 @@ const TaskCard: React.FC<{
     const [showCancelConfirm, setShowCancelConfirm] = React.useState(false)
     const isServerTask = task.isServerTask === true
     const isTrainingTask = task.type === 'training'
+    const isExternalValidationTask = task.type === 'external_validation'
 
     const typeLabel = getTypeLabel(task)
 
@@ -353,7 +354,7 @@ const TaskCard: React.FC<{
                 />
               </div>
             )}
-            {task.items.length > 0 && !(task.items.length === 1 && (task.items[0].name === task.title || isTrainingTask) && isServerTask) && (
+            {task.items.length > 0 && !(task.items.length === 1 && (task.items[0].name === task.title || isTrainingTask || isExternalValidationTask) && isServerTask) && (
               <div className="max-h-40 overflow-y-auto mt-1">
                 {task.items.map(item => <TaskItemRow key={item.id} item={item} />)}
               </div>

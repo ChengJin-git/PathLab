@@ -202,10 +202,24 @@ export default function ResultsViewerPage() {
   const [validationError, setValidationError] = useState<string | null>(null)
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
 
+  // Completed external validation tasks (for restoring results on page return)
+  interface CompletedExtValTask {
+    task_id: string
+    model_id: string | null
+    model_task_id: string | null
+    dataset_id: string | null
+    total_wsi: number
+    results_count: number
+    has_analysis: boolean
+    created_at: string | null
+  }
+  const [completedExtValTasks, setCompletedExtValTasks] = useState<CompletedExtValTask[]>([])
+
   useEffect(() => {
     loadTasks()
     loadTrainedModels()
     loadValidationDatasets()
+    loadCompletedExtValTasks()
   }, [])
 
   useEffect(() => {
@@ -239,6 +253,63 @@ export default function ResultsViewerPage() {
     }
   }, [selectedTaskId, tasks])
 
+  // Auto-restore external validation results when model+dataset selection matches a completed task
+  useEffect(() => {
+    if (pageMode !== 'external-validation' || !selectedModelId || !datasetId) return
+    // Don't override an actively running validation
+    if (validationProgress && validationProgress.status !== 'completed' && validationProgress.status !== 'failed') return
+
+    const matchingTask = completedExtValTasks.find(
+      t => t.model_id === selectedModelId && t.dataset_id === datasetId && t.has_analysis
+    )
+    if (matchingTask) {
+      // Restore validationProgress to completed state so rendering logic works
+      const model = trainedModels.find(m => m.model_id === selectedModelId)
+      setValidationProgress({
+        validation_id: matchingTask.task_id,
+        status: 'completed',
+        progress: 100,
+        total_wsi: matchingTask.total_wsi,
+        processed_wsi: matchingTask.total_wsi,
+        model_id: selectedModelId,
+        model_task_id: model?.task_id || matchingTask.model_task_id || '',
+        dataset_id: datasetId,
+        error: null,
+        results_count: matchingTask.results_count,
+      })
+      // Load analysis results for this task
+      ;(async () => {
+        try {
+          const response = await fetch(
+            `${API_BASE}/results/tasks/${matchingTask.task_id}/analysis`,
+            authFetchOptions()
+          )
+          if (response.ok) {
+            const data = await response.json()
+            const analysesList: AnalysisSummary[] = data.analyses || []
+            if (analysesList.length > 0) {
+              // Use the most recent analysis
+              setCurrentResult({
+                task_id: matchingTask.task_id,
+                analysis_id: analysesList[0].analysis_id,
+                analysis_dir: '',
+                summary: analysesList[0],
+                chart_paths: analysesList[0].chart_paths || {},
+                metrics: analysesList[0].metrics || {},
+              })
+            }
+          }
+        } catch (error) {
+          console.error('Failed to load external validation analysis:', error)
+        }
+      })()
+    } else if (!validationProgress || validationProgress.model_id !== selectedModelId || validationProgress.dataset_id !== datasetId) {
+      // No matching completed task and selection changed — clear stale results
+      setValidationProgress(null)
+      setCurrentResult(null)
+    }
+  }, [pageMode, selectedModelId, datasetId, completedExtValTasks])
+
   // Track completed analysis tasks to refresh UI when analysis finishes
   const completedAnalysisIdsRef = useRef<Set<string>>(new Set())
 
@@ -254,14 +325,44 @@ export default function ResultsViewerPage() {
       if (!completedAnalysisIdsRef.current.has(analysisId)) {
         completedAnalysisIdsRef.current.add(analysisId)
 
-        // Reset pending state if this was our pending analysis
-        if (currentResult?._pending) {
-          setCurrentResult(null)
-        }
-
-        // Refresh analyses list for the selected task
-        if (selectedTaskId) {
-          loadAnalyses(selectedTaskId)
+        // Check if this is an external validation analysis
+        if (task.analysisType === 'external' && task.trainingTaskId) {
+          // Load analysis results for the external validation task
+          const extTaskId = task.trainingTaskId
+          ;(async () => {
+            try {
+              const response = await fetch(
+                `${API_BASE}/results/tasks/${extTaskId}/analysis`,
+                authFetchOptions()
+              )
+              if (response.ok) {
+                const data = await response.json()
+                const analysesList: AnalysisSummary[] = data.analyses || []
+                if (analysesList.length > 0) {
+                  setCurrentResult({
+                    task_id: extTaskId,
+                    analysis_id: analysesList[0].analysis_id,
+                    analysis_dir: '',
+                    summary: analysesList[0],
+                    chart_paths: analysesList[0].chart_paths || {},
+                    metrics: analysesList[0].metrics || {},
+                  })
+                }
+              }
+            } catch (error) {
+              console.error('Failed to load external validation analysis:', error)
+            }
+          })()
+          // Also refresh the completed extval tasks list for future visits
+          loadCompletedExtValTasks()
+        } else {
+          // Internal analysis — existing logic
+          if (currentResult?._pending) {
+            setCurrentResult(null)
+          }
+          if (selectedTaskId) {
+            loadAnalyses(selectedTaskId)
+          }
         }
       }
     }
@@ -307,6 +408,18 @@ export default function ResultsViewerPage() {
       setValidationDatasets(data.items || [])
     } catch (error) {
       console.error('Failed to load validation datasets:', error)
+    }
+  }
+
+  const loadCompletedExtValTasks = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/results/external-validation/completed`, authFetchOptions())
+      if (response.ok) {
+        const data = await response.json()
+        setCompletedExtValTasks(data.items || [])
+      }
+    } catch (error) {
+      console.error('Failed to load completed external validation tasks:', error)
     }
   }
 
