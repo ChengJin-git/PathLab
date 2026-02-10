@@ -2213,6 +2213,7 @@ async def _run_external_validation(
     model_task_type: str,  # "classification", "wsi_classification", "survival_prediction", "wsi_survival"
     dataset_id: str,
     wsi_ids: List[str],
+    assigned_device: str = None,  # GPU device assigned by task queue (e.g., "cuda:0")
 ):
     """Background task to run external validation.
 
@@ -2266,7 +2267,7 @@ async def _run_external_validation(
             with open(config_path, 'r') as f:
                 config = json.load(f)
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = assigned_device if assigned_device else ("cuda" if torch.cuda.is_available() else "cpu")
         from backend.ai.aggregators import get_aggregator
 
         # Check if k-fold model
