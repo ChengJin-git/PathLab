@@ -1,7 +1,9 @@
-import { useState, useMemo } from 'react'
-import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, Key, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, AlertTriangle, Construction } from 'lucide-react'
+import { useState, useMemo, useEffect } from 'react'
+import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, Key, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, AlertTriangle, Construction, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
+import { Input } from '../ui/input'
+import { Select } from '../ui/select'
 import { UserListItem } from '../../api'
 
 export interface UsersTabProps {
@@ -53,10 +55,38 @@ export function UsersTab({
   // Batch selection state
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set())
 
-  // Users that can be batch selected (not admin, not current user)
+  // Search and Pagination State
+  const [searchQuery, setSearchQuery] = useState('')
+  const [itemsPerPage, setItemsPerPage] = useState(10)
+  const [currentPage, setCurrentPage] = useState(1)
+
+  // Reset page when search or items per page changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, itemsPerPage])
+
+  // Filtered users
+  const filteredUsers = useMemo(() => {
+    if (!searchQuery.trim()) return users
+    const query = searchQuery.toLowerCase()
+    return users.filter(user => 
+      user.email.toLowerCase().includes(query) || 
+      (user.nickname && user.nickname.toLowerCase().includes(query))
+    )
+  }, [users, searchQuery])
+
+  // Paginated users
+  const paginatedUsers = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage
+    return filteredUsers.slice(start, start + itemsPerPage)
+  }, [filteredUsers, currentPage, itemsPerPage])
+
+  const totalPages = Math.ceil((filteredUsers.length || 1) / itemsPerPage)
+
+  // Users that can be batch selected (not admin, not current user) - from current page
   const selectableUsers = useMemo(() => {
-    return users.filter(user => user.role !== 'admin' && user.id !== currentUserId)
-  }, [users, currentUserId])
+    return paginatedUsers.filter(user => user.role !== 'admin' && user.id !== currentUserId)
+  }, [paginatedUsers, currentUserId])
 
   const allSelectableSelected = selectableUsers.length > 0 && selectableUsers.every(u => selectedUserIds.has(u.id))
   const someSelected = selectedUserIds.size > 0
@@ -68,9 +98,15 @@ export function UsersTab({
 
   const toggleSelectAll = () => {
     if (allSelectableSelected) {
-      setSelectedUserIds(new Set())
+      // Deselect current page items
+      const newSet = new Set(selectedUserIds)
+      selectableUsers.forEach(u => newSet.delete(u.id))
+      setSelectedUserIds(newSet)
     } else {
-      setSelectedUserIds(new Set(selectableUsers.map(u => u.id)))
+      // Select current page items
+      const newSet = new Set(selectedUserIds)
+      selectableUsers.forEach(u => newSet.add(u.id))
+      setSelectedUserIds(newSet)
     }
   }
 
@@ -117,7 +153,16 @@ export function UsersTab({
           <Users className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700 flex-shrink-0" />
           User Management
         </h2>
-        <div className="flex flex-wrap gap-2 self-end sm:self-auto">
+        <div className="flex flex-wrap gap-2 self-end sm:self-auto items-center">
+          <div className="relative w-full sm:w-64 mr-2">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
+            <Input 
+              placeholder="Search user..." 
+              className="pl-9 h-9"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
           {/* Maintenance Mode Toggle */}
           <Button
             variant={maintenanceMode ? "destructive" : "outline"}
@@ -196,6 +241,7 @@ export function UsersTab({
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
         </div>
       ) : (
+        <>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -224,7 +270,7 @@ export function UsersTab({
               </tr>
             </thead>
             <tbody>
-              {users.map((user) => {
+              {paginatedUsers.map((user) => {
                 const isSelectable = canSelectUser(user)
                 const isSelected = selectedUserIds.has(user.id)
                 return (
@@ -316,16 +362,63 @@ export function UsersTab({
                   </tr>
                 )
               })}
-              {users.length === 0 && (
+              {filteredUsers.length === 0 && (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-gray-500">
-                    No users found
+                    {searchQuery ? 'No users matching search' : 'No users found'}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+
+        {!loadingUsers && filteredUsers.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-4 px-2">
+            <div className="flex items-center gap-2 text-sm text-gray-600">
+              <span className="whitespace-nowrap">Rows per page:</span>
+              <div className="w-[70px]">
+                <Select
+                  value={itemsPerPage.toString()}
+                  onChange={(v) => setItemsPerPage(Number(v))}
+                  options={[
+                    { value: '5', label: '5' },
+                    { value: '10', label: '10' },
+                    { value: '20', label: '20' }
+                  ]}
+                  className="h-8"
+                />
+              </div>
+              <span className="hidden sm:inline text-gray-300">|</span>
+              <span className="whitespace-nowrap">
+                Page {currentPage} of {totalPages || 1}
+              </span>
+              <span className="text-gray-400 whitespace-nowrap hidden sm:inline">({filteredUsers.length} total)</span>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline" 
+                size="sm"
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="h-8 w-8 p-0"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages || totalPages === 0}
+                className="h-8 w-8 p-0"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+        </>
       )}
     </Card>
   )

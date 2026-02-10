@@ -312,6 +312,9 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
       }
 
       ws.onerror = (error) => {
+        // Guard: Only cleanup if this is still the active WebSocket
+        // If wsRef has been cleared or replaced by a new session, skip cleanup
+        if (wsRef.current !== ws) return
         console.error('[ASR] WebSocket error:', error)
         const errorMsg = 'Failed to connect to voice service. Please try again.'
         setLastError(errorMsg)
@@ -320,6 +323,10 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
       }
 
       ws.onclose = (event) => {
+        // Guard: Only cleanup if this is still the active WebSocket
+        // When cleanup() is called from stopRecording/error, it clears wsRef.current first,
+        // so this guard prevents the async onclose from destroying a NEW recording session's resources
+        if (wsRef.current !== ws) return
         // Only log as error if it's an abnormal closure
         if (event.code !== 1000 && event.code !== 1001) {
           console.warn('[ASR] WebSocket closed unexpectedly:', event.code, event.reason)
@@ -405,6 +412,8 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
 
       // Handle AudioWorklet errors
       pcmNode.onprocessorerror = (event) => {
+        // Guard: Only cleanup if this processor is still the active one
+        if (processorRef.current !== pcmNode) return
         console.error('[ASR] AudioWorklet processor error:', event)
         onError?.('Audio processing error occurred')
         cleanup()
