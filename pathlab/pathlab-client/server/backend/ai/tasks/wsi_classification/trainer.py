@@ -357,6 +357,18 @@ class WSIClassificationTrainer(BaseTrainer):
 
             results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
 
+        # Bulk update feature_extracted flag for all processed WSIs
+        processed_wsi_ids = [r["wsi_id"] for r in results]
+        if processed_wsi_ids:
+            try:
+                async with scoped_db(session_maker) as db:
+                    await WSIRepository.bulk_update_feature_extracted(db, processed_wsi_ids)
+            except Exception as e:
+                await logger.warning(
+                    f"Failed to update feature_extracted flags (non-fatal): {e}",
+                    metadata={"count": len(processed_wsi_ids)}
+                )
+
         return self._build_feature_response(results)
 
     def _extract_wsi_features(

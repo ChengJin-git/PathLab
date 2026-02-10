@@ -157,6 +157,9 @@ class WSISlide(Base):
     # JSON format: {"format_type": "mrxs"|"tmap"|"standard", "data_folder": str, "dt_files": [str]}
     associated_files = Column(JSON, nullable=True)
 
+    # Feature extraction status
+    feature_extracted = Column(Boolean, default=False, nullable=False, server_default="false", index=True)
+
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)

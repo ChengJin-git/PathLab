@@ -415,6 +415,16 @@ class DatasetRepository:
         )
         return result.scalar() or 0
 
+    @staticmethod
+    async def get_feature_extracted_count(db: AsyncSession, dataset_id: str) -> int:
+        """Get the count of WSIs with feature_extracted=True in a dataset."""
+        result = await db.execute(
+            select(func.count(WSISlide.id))
+            .where(WSISlide.dataset_id == dataset_id)
+            .where(WSISlide.feature_extracted == True)  # noqa: E712
+        )
+        return result.scalar() or 0
+
 
 class WSIRepository:
     """Repository for WSI Slide operations"""
@@ -1525,6 +1535,34 @@ class WSIRepository:
             results.extend(no_case_result.scalars().all())
 
         return results
+
+    @staticmethod
+    async def bulk_update_feature_extracted(
+        db: AsyncSession, wsi_ids: List[str], extracted: bool = True
+    ) -> int:
+        """Bulk update feature_extracted flag for multiple WSIs.
+
+        Args:
+            db: Database session
+            wsi_ids: List of WSI IDs to update
+            extracted: Value to set (default True)
+
+        Returns:
+            Number of rows updated
+        """
+        if not wsi_ids:
+            return 0
+        total_updated = 0
+        batch_size = 500
+        for i in range(0, len(wsi_ids), batch_size):
+            batch = wsi_ids[i:i + batch_size]
+            result = await db.execute(
+                update(WSISlide)
+                .where(WSISlide.wsi_id.in_(batch))
+                .values(feature_extracted=extracted)
+            )
+            total_updated += result.rowcount
+        return total_updated
 
 
 class AITaskRepository:

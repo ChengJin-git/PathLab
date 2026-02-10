@@ -1825,6 +1825,9 @@ async def get_datasets_for_validation(
     List all datasets available for external validation selection.
     Returns dataset metadata including aggregation_level, task_type, data_type,
     slide/case counts, distinct label count, and WSI IDs (for overlap detection).
+
+    WSI datasets are only included if ALL their WSIs have feature_extracted=True
+    in the database. Patch datasets are exempt from this check.
     """
     datasets = await DatasetRepository.get_all(db)
     result = []
@@ -1843,6 +1846,13 @@ async def get_datasets_for_validation(
         wsi_ids = await DatasetRepository.get_wsi_ids(db, dataset_id)
         if not wsi_ids:
             continue  # Skip empty datasets
+
+        # For WSI datasets, require ALL WSIs to have pre-extracted features.
+        # Patch datasets are exempt (models process images directly).
+        if dg.data_type != "patch":
+            extracted_count = await DatasetRepository.get_feature_extracted_count(db, dataset_id)
+            if extracted_count < len(wsi_ids):
+                continue  # Skip datasets with missing features
 
         # Get distinct label count (for classification matching)
         distinct_label_count = await DatasetRepository.get_distinct_label_count(db, dataset_id)
