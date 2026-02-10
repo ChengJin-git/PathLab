@@ -300,7 +300,9 @@ class AIResult(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     wsi_id = Column(String(255), ForeignKey("wsi_slides.wsi_id"), nullable=False, index=True)
-    task_id = Column(String(255), ForeignKey("ai_tasks.task_id"), index=True)
+    # NOTE: No ForeignKey constraint - task_id can reference either ai_tasks.task_id
+    # (for inference tasks) or training_tasks.task_id (for training tasks).
+    task_id = Column(String(255), index=True)
 
     # Owner - links to users table (UUID stored as string)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
