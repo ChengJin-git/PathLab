@@ -40,13 +40,13 @@ export function UsersTab({
   onDeleteUser
 }: UsersTabProps) {
   return (
-    <Card className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-          <Users className="w-6 h-6 mr-3 text-gray-700" />
+    <Card className="p-4 sm:p-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+        <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
+          <Users className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700 font-shrink-0" />
           User Management
         </h2>
-        <div className="flex gap-2">
+        <div className="flex gap-2 self-end sm:self-auto">
           <Button onClick={onShowCreateUser} className="gap-2">
             <UserPlus className="w-4 h-4" />
             Create User

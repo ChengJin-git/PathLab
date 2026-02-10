@@ -1781,10 +1781,10 @@ export default function SettingsPage() {
 
         {/* System Information - Show on all tabs except storage and feedback */}
         {activeTab !== 'storage' && activeTab !== 'feedback' && (
-          <Card className="p-6">
+          <Card className="p-4 sm:p-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-                <Info className="w-6 h-6 mr-3 text-gray-700" />
+              <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
+                <Info className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700" />
                 System Information
               </h2>
               <button
@@ -1894,9 +1894,9 @@ export default function SettingsPage() {
 
         {/* About - Show on all tabs except storage, users, and feedback */}
         {activeTab !== 'storage' && activeTab !== 'users' && activeTab !== 'feedback' && (
-          <Card className="p-6">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-              <BookOpen className="w-6 h-6 mr-3 text-gray-700" />
+          <Card className="p-4 sm:p-6">
+            <h2 className="text-lg sm:text-xl font-semibold text-gray-900 mb-4 flex items-center">
+              <BookOpen className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700" />
               About
             </h2>
 
