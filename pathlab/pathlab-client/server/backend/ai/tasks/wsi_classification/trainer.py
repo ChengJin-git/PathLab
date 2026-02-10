@@ -400,6 +400,17 @@ class WSIClassificationTrainer(BaseTrainer):
             if len(probe_dataset) > 0:
                 # Get a single sample for VRAM measurement
                 sample_batch, _ = next(iter(probe_loader))
+
+                # Guard: collate may return empty tensor if all patches failed to load
+                if sample_batch.numel() == 0:
+                    logging.getLogger(__name__).warning(
+                        f"All patches failed to load for VRAM probe (coords exist but patches unreadable). "
+                        f"Returning empty features for {wsi_path}"
+                    )
+                    del probe_loader, probe_dataset
+                    torch.cuda.empty_cache()
+                    return torch.empty(0, extractor.output_dim)
+
                 try:
                     check_vram_before_batch_processing(
                         extractor=extractor,
