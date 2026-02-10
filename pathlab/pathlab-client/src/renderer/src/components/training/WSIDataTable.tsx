@@ -11,7 +11,7 @@ import { TaskType } from '../../constants/training'
 
 export interface WSIItem {
   wsi_id: string
-  wsi_path: string
+  file_extension: string
   original_filename: string
   label?: string
   case_id?: string
@@ -57,7 +57,7 @@ export interface WSIDataTableProps {
   handleDeleteClick: (wsiId: string, label?: string, filename?: string) => void
 
   // Helpers
-  getFileType: (path: string, size: number) => 'WSI' | 'Patch'
+  getFileType: (fileExtension: string, size: number) => 'WSI' | 'Patch'
 }
 
 export function WSIDataTable({
@@ -294,7 +294,7 @@ function TableContent({
   isPatchDataset: boolean
   handleEditClick: (item: WSIItem) => void
   handleDeleteClick: (wsiId: string, label?: string, filename?: string) => void
-  getFileType: (path: string, size: number) => 'WSI' | 'Patch'
+  getFileType: (fileExtension: string, size: number) => 'WSI' | 'Patch'
   setSelectedIds: (ids: Set<string>) => void
 }) {
   if (hasMultiSlideCases && paginatedCases) {
@@ -359,10 +359,10 @@ function SlideRow({
   isPatchDataset: boolean
   handleEditClick: (item: WSIItem) => void
   handleDeleteClick: (wsiId: string, label?: string, filename?: string) => void
-  getFileType: (path: string, size: number) => 'WSI' | 'Patch'
+  getFileType: (fileExtension: string, size: number) => 'WSI' | 'Patch'
   nested?: boolean
 }) {
-  const fileType = getFileType(item.wsi_path, item.file_size)
+  const fileType = getFileType(item.file_extension, item.file_size)
 
   return (
     <tr
@@ -532,7 +532,7 @@ function CaseRow({
   toggleExpansion: () => void
   handleEditClick: (item: WSIItem) => void
   handleDeleteClick: (wsiId: string, label?: string, filename?: string) => void
-  getFileType: (path: string, size: number) => 'WSI' | 'Patch'
+  getFileType: (fileExtension: string, size: number) => 'WSI' | 'Patch'
 }) {
   const isNoCase = caseId === '__no_case__'
   const isMultiSlide = slides.length > 1
@@ -568,7 +568,7 @@ function CaseRow({
   }
 
   // Get file types for the case
-  const types = new Set(slides.map((s) => getFileType(s.wsi_path, s.file_size)))
+  const types = new Set(slides.map((s) => getFileType(s.file_extension, s.file_size)))
   const typeLabel = types.has('WSI') && types.has('Patch') ? 'Mixed' : types.values().next().value || 'WSI'
 
   return (

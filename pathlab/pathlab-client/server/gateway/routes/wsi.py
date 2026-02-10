@@ -45,17 +45,24 @@ router = APIRouter(prefix="/wsi", tags=["WSI Management"])
 
 @router.get("")
 async def list_wsi(
-    skip: int = 0,
-    limit: int = 0,
     dataset_id: Optional[str] = Query(None, description="Filter by dataset UUID"),
     data_level: Optional[str] = Query(None, description="Filter by data type: 'wsi' for WSI files, 'patch' for image files"),
+    search: Optional[str] = Query(None, description="Search across filename, case_id, label, source, wsi_id"),
+    page: int = Query(1, ge=1, description="Page number (1-based) for case-level pagination"),
+    page_size: int = Query(10, ge=0, le=10000, description="Number of case groups per page. 0 = return all (no pagination)."),
     user: User = Depends(current_active_user),
     user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db)
 ):
-    """List all WSI slides with pagination. If limit=0, return all records.
-    If dataset_id is provided, filter by dataset.
-    If data_level is provided, filter by file type (wsi or patch).
+    """List WSI slides with server-side case-level pagination.
+
+    When dataset_id is provided, pagination is case-level:
+    - Each distinct case_id is one page unit
+    - All files without case_id form one __no_case__ group (always last)
+    - Response includes total_cases, has_multi_slide_cases metadata
+
+    When dataset_id is NOT provided, falls back to file-level pagination
+    (page/page_size converted to skip/limit).
 
     Data visibility:
     - Admin users can see all WSI slides
@@ -69,37 +76,100 @@ async def list_wsi(
         permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
         elevated_dataset_ids = [p.dataset_id for p in permissions if p.is_valid()]
 
-    if dataset_id is not None:
-        wsi_slides = await WSIRepository.get_by_dataset(
-            db, dataset_id, skip=skip, limit=limit,
-            user_id=user_id_filter, data_type=data_level,
-            elevated_dataset_ids=elevated_dataset_ids
-        )
-        total = await WSIRepository.count_by_dataset(
-            db, dataset_id, user_id=user_id_filter, data_type=data_level,
-            elevated_dataset_ids=elevated_dataset_ids
-        )
-    else:
-        wsi_slides = await WSIRepository.get_all_with_dataset(
-            db, skip=skip, limit=limit,
-            user_id=user_id_filter, data_type=data_level,
-            elevated_dataset_ids=elevated_dataset_ids
-        )
-        total = await WSIRepository.count(
-            db, user_id=user_id_filter, data_type=data_level,
-            elevated_dataset_ids=elevated_dataset_ids
-        )
-    # Add can_delete flag to each item
-    # User can delete if: admin OR owns the WSI
     user_id_str = str(user.id)
     is_admin = user.is_admin()
-    items = []
-    for wsi in wsi_slides:
-        item = wsi.to_dict()
-        # can_delete: True if admin or user owns the WSI
-        item["can_delete"] = is_admin or (wsi.user_id == user_id_str)
-        items.append(item)
-    return {"items": items, "total": total}
+
+    if dataset_id is not None:
+        if page_size == 0:
+            # ---- No pagination: return ALL files in this dataset ----
+            wsi_slides = await WSIRepository.get_by_dataset(
+                db, dataset_id, skip=0, limit=0,
+                user_id=user_id_filter, data_type=data_level,
+                elevated_dataset_ids=elevated_dataset_ids,
+            )
+            total = await WSIRepository.count_by_dataset(
+                db, dataset_id, user_id=user_id_filter, data_type=data_level,
+                elevated_dataset_ids=elevated_dataset_ids,
+            )
+            items = []
+            for wsi in wsi_slides:
+                item = wsi.to_summary_dict()
+                item["can_delete"] = is_admin or (wsi.user_id == user_id_str)
+                items.append(item)
+            return {
+                "items": items,
+                "total": total,
+                "total_cases": 0,
+                "page": 1,
+                "page_size": 0,
+                "has_multi_slide_cases": False,
+            }
+
+        # ---- Case-level pagination (dataset view) ----
+        case_meta = await WSIRepository.count_cases_by_dataset(
+            db, dataset_id, search=search,
+            user_id=user_id_filter, data_type=data_level,
+            elevated_dataset_ids=elevated_dataset_ids,
+        )
+        wsi_slides = await WSIRepository.get_by_dataset_case_paginated(
+            db, dataset_id, page=page, page_size=page_size,
+            search=search, user_id=user_id_filter, data_type=data_level,
+            elevated_dataset_ids=elevated_dataset_ids,
+        )
+
+        items = []
+        for wsi in wsi_slides:
+            item = wsi.to_summary_dict()
+            item["can_delete"] = is_admin or (wsi.user_id == user_id_str)
+            items.append(item)
+
+        return {
+            "items": items,
+            "total": case_meta["total_files"],
+            "total_cases": case_meta["total_cases"],
+            "page": page,
+            "page_size": page_size,
+            "has_multi_slide_cases": case_meta["has_multi_slide_cases"],
+        }
+    else:
+        if page_size == 0:
+            # ---- No pagination: return ALL files ----
+            wsi_slides = await WSIRepository.get_all_with_dataset(
+                db, skip=0, limit=0,
+                user_id=user_id_filter, data_type=data_level,
+                elevated_dataset_ids=elevated_dataset_ids
+            )
+            total = await WSIRepository.count(
+                db, user_id=user_id_filter, data_type=data_level,
+                elevated_dataset_ids=elevated_dataset_ids
+            )
+        else:
+            # ---- File-level pagination (all-datasets view) ----
+            skip = (page - 1) * page_size
+            wsi_slides = await WSIRepository.get_all_with_dataset(
+                db, skip=skip, limit=page_size,
+                user_id=user_id_filter, data_type=data_level,
+                elevated_dataset_ids=elevated_dataset_ids
+            )
+            total = await WSIRepository.count(
+                db, user_id=user_id_filter, data_type=data_level,
+                elevated_dataset_ids=elevated_dataset_ids
+            )
+
+        items = []
+        for wsi in wsi_slides:
+            item = wsi.to_summary_dict()
+            item["can_delete"] = is_admin or (wsi.user_id == user_id_str)
+            items.append(item)
+
+        return {
+            "items": items,
+            "total": total,
+            "total_cases": 0,
+            "page": page,
+            "page_size": page_size,
+            "has_multi_slide_cases": False,
+        }
 
 
 @router.get("/datasets")

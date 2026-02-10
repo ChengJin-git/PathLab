@@ -99,7 +99,7 @@ export interface DataSelectionStepProps {
 
   // Helpers
   formatBytes: (bytes: number) => string
-  getFileType: (path: string, size: number) => 'WSI' | 'Patch'
+  getFileType: (fileExtension: string, size: number) => 'WSI' | 'Patch'
 
   // Navigation
   canProceed: boolean

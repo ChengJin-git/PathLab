@@ -836,7 +836,7 @@ export interface WSISummary {
   dataset_name: string | null
   case_id: string | null
   label: string | null
-  wsi_path: string
+  file_extension: string  // e.g. ".svs", ".png" - for file type determination (wsi_path no longer exposed)
   age: number | null
   gender: string | null
   source: string | null
@@ -845,14 +845,15 @@ export interface WSISummary {
   event_status: number | null
   // Split assignment (from CSV upload)
   split: string | null  // "train", "val", "test"
-  mpp: number | null
-  vendor: string | null
-  width: number | null
-  height: number | null
-  magnification: number | null
   file_size: number | null
   created_at: string | null
-  updated_at: string | null
+  // Detail-only fields (present in to_dict() but not in to_summary_dict())
+  mpp?: number | null
+  vendor?: string | null
+  width?: number | null
+  height?: number | null
+  magnification?: number | null
+  updated_at?: string | null
   // Permission flag - whether user can delete this WSI
   can_delete?: boolean
 }
@@ -879,11 +880,15 @@ export interface AIResult {
 }
 
 /**
- * WSI List response
+ * WSI List response (server-side case-level pagination)
  */
 export interface WSIListResponse {
   items: WSISummary[]
   total: number
+  total_cases: number
+  page: number
+  page_size: number
+  has_multi_slide_cases: boolean
 }
 
 /**
@@ -1335,19 +1340,36 @@ export async function checkDuplicateFilenames(filenames: string[]): Promise<Chec
   )
 }
 
-// Cache for fetchWSIList (keyed by datasetId + dataLevel)
+// Cache for fetchWSIList (keyed by datasetId + dataLevel) — only used for non-paginated requests
 const wsiListCache = createKeyedCache<WSIListResponse>(DEFAULT_CACHE_TTL)
 
 /**
- * Fetch WSI list from database via Gateway API (with caching)
+ * Pagination options for fetchWSIList.
+ * When provided, the request uses server-side case-level pagination (no caching).
+ * When omitted, all items are returned with caching (page_size=0).
+ */
+export interface WSIListPaginationOptions {
+  page: number
+  page_size: number
+  search?: string
+}
+
+/**
+ * Fetch WSI list from database via Gateway API.
+ *
+ * Without `options`: returns ALL items (page_size=0) with caching.
+ * With `options`: returns a single page of case-grouped items (no caching).
+ *
  * @param datasetId - Optional dataset UUID to filter by
  * @param dataLevel - Optional filter: "wsi" for WSI files, "patch" for image files
+ * @param options - Optional pagination/search params for server-side pagination
  * @throws {ApiError} If the request fails
  */
-export async function fetchWSIList(datasetId?: string, dataLevel?: string): Promise<WSIListResponse> {
-  const cacheKey = `${datasetId || '__all__'}:${dataLevel || '__all__'}`
-
-  // Build URL manually to avoid issues with new URL() constructor
+export async function fetchWSIList(
+  datasetId?: string,
+  dataLevel?: string,
+  options?: WSIListPaginationOptions
+): Promise<WSIListResponse> {
   const params = new URLSearchParams()
   if (datasetId) {
     params.set('dataset_id', datasetId)
@@ -1355,8 +1377,23 @@ export async function fetchWSIList(datasetId?: string, dataLevel?: string): Prom
   if (dataLevel) {
     params.set('data_level', dataLevel)
   }
+
+  if (options) {
+    // Paginated request — no caching
+    params.set('page', String(options.page))
+    params.set('page_size', String(options.page_size))
+    if (options.search) {
+      params.set('search', options.search)
+    }
+    const url = `${API_BASE}/wsi?${params.toString()}`
+    return apiFetch<WSIListResponse>(url, undefined, 'Failed to load WSI list from database')
+  }
+
+  // Non-paginated request — return all items with caching
+  params.set('page_size', '0')
+  const cacheKey = `${datasetId || '__all__'}:${dataLevel || '__all__'}`
   const queryString = params.toString()
-  const url = queryString ? `${API_BASE}/wsi?${queryString}` : `${API_BASE}/wsi`
+  const url = `${API_BASE}/wsi?${queryString}`
 
   return wsiListCache.get(cacheKey, () =>
     apiFetch<WSIListResponse>(url, undefined, 'Failed to load WSI list from database')
@@ -3970,25 +4007,22 @@ export function getThumbnailUrl(wsi_id: string, size: number = 256): string {
 }
 
 /**
- * Determine if a file is a WSI or Patch based on path and file size
- * @param wsiPath - The file path
+ * Determine if a file is a WSI or Patch based on file extension and file size.
+ *
+ * @param fileExtension - File extension (e.g. ".svs", ".png")
  * @param fileSize - The file size in bytes
  * @returns 'WSI' or 'Patch'
  */
-export function getFileType(wsiPath: string | null, fileSize: number | null): 'WSI' | 'Patch' {
-  if (!wsiPath) return 'WSI'
-  const path = wsiPath.toLowerCase()
+export function getFileType(fileExtension: string | null, fileSize: number | null): 'WSI' | 'Patch' {
+  if (!fileExtension) return 'WSI'
+  const ext = fileExtension.toLowerCase()
 
   // Patch/image file extensions
   const patchExtensions = ['.png', '.jpg', '.jpeg', '.bmp']
-
-  // Check if it's a patch image format
-  if (patchExtensions.some(ext => path.endsWith(ext))) {
-    return 'Patch'
-  }
+  if (patchExtensions.includes(ext)) return 'Patch'
 
   // For .tif/.tiff files, check file size (100 MB threshold)
-  if (path.endsWith('.tif') || path.endsWith('.tiff')) {
+  if (ext === '.tif' || ext === '.tiff') {
     const SIZE_THRESHOLD = 100 * 1024 * 1024 // 100 MB
     return (fileSize || 0) >= SIZE_THRESHOLD ? 'WSI' : 'Patch'
   }

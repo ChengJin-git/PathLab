@@ -286,6 +286,9 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     if (config.epochs && (config.epochs < 1 || config.epochs > 1000)) {
       errors.push({ field: 'epochs', message: 'Epochs must be between 1 and 1000' })
     }
+    if (config.batch_size && (config.batch_size < 1 || config.batch_size > 512)) {
+      errors.push({ field: 'batch_size', message: 'Batch size must be between 1 and 512' })
+    }
     setValidationErrors(errors)
     return errors.length === 0
   }
@@ -789,6 +792,17 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 onChange={(e) => updateConfig('epochs', parseInt(e.target.value))}
                 disabled={isFormDisabled}
                 className={`w-full px-2 py-1.5 border rounded text-sm ${getFieldError('epochs') ? 'border-red-300' : 'border-gray-200'
+                  } ${disabledInputClass}`}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Batch Size</label>
+              <input
+                type="number"
+                value={config.batch_size ?? (config.data_level === 'wsi' ? 1 : TRAINING_DEFAULTS.batchSize)}
+                onChange={(e) => updateConfig('batch_size', parseInt(e.target.value))}
+                disabled={isFormDisabled}
+                className={`w-full px-2 py-1.5 border rounded text-sm ${getFieldError('batch_size') ? 'border-red-300' : 'border-gray-200'
                   } ${disabledInputClass}`}
               />
             </div>

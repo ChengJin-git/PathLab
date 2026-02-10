@@ -1270,6 +1270,211 @@ class WSIRepository:
         result = await db.execute(query)
         return result.scalar_one()
 
+    # ------------------------------------------------------------------
+    # Search helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_search_filter(search: Optional[str]):
+        """Build ILIKE filter across searchable columns.
+
+        Matches original_filename, case_id, label, source, wsi_id.
+        Returns None when *search* is empty/None.
+        """
+        if not search or not search.strip():
+            return None
+        from sqlalchemy import or_
+        pattern = f"%{search.strip()}%"
+        return or_(
+            WSISlide.original_filename.ilike(pattern),
+            WSISlide.case_id.ilike(pattern),
+            WSISlide.label.ilike(pattern),
+            WSISlide.source.ilike(pattern),
+            WSISlide.wsi_id.ilike(pattern),
+        )
+
+    # ------------------------------------------------------------------
+    # Case-level pagination helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def count_cases_by_dataset(
+        db: AsyncSession,
+        dataset_id: str,
+        search: Optional[str] = None,
+        user_id: Optional[str] = None,
+        data_type: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None,
+    ) -> dict:
+        """Count distinct case groups for case-level pagination.
+
+        A "case" is a distinct non-NULL case_id.  Files with NULL case_id
+        form a single ``__no_case__`` group.
+
+        Returns dict with keys:
+            named_case_count  – number of distinct non-NULL case_ids
+            no_case_count     – number of files without case_id
+            total_cases       – named_case_count + (1 if no_case_count > 0 else 0)
+            total_files       – total matching file count
+            has_multi_slide_cases – whether any case_id has more than one file
+        """
+        from sqlalchemy import or_, case, literal_column
+
+        # ---- shared WHERE filters ----
+        filters = []
+        if dataset_id == "Uncategorized":
+            filters.append(WSISlide.dataset_id.is_(None))
+        else:
+            filters.append(WSISlide.dataset_id == dataset_id)
+
+        if user_id is not None:
+            has_elevated = elevated_dataset_ids and dataset_id in elevated_dataset_ids
+            if not has_elevated:
+                filters.append(WSISlide.user_id == user_id)
+
+        dt_filter = WSIRepository._build_data_type_filter(data_type)
+        if dt_filter is not None:
+            filters.append(dt_filter)
+
+        search_filter = WSIRepository._build_search_filter(search)
+        if search_filter is not None:
+            filters.append(search_filter)
+
+        # named_case_count
+        q_named = select(func.count(func.distinct(WSISlide.case_id))).where(
+            WSISlide.case_id.isnot(None), *filters
+        )
+        named_case_count = (await db.execute(q_named)).scalar_one()
+
+        # no_case_count (files without case_id)
+        q_no_case = select(func.count(WSISlide.id)).where(
+            WSISlide.case_id.is_(None), *filters
+        )
+        no_case_count = (await db.execute(q_no_case)).scalar_one()
+
+        # total files
+        q_total = select(func.count(WSISlide.id)).where(*filters)
+        total_files = (await db.execute(q_total)).scalar_one()
+
+        total_cases = named_case_count + (1 if no_case_count > 0 else 0)
+
+        # has_multi_slide_cases: any non-NULL case_id with count > 1
+        q_multi = (
+            select(func.count())
+            .select_from(
+                select(WSISlide.case_id)
+                .where(WSISlide.case_id.isnot(None), *filters)
+                .group_by(WSISlide.case_id)
+                .having(func.count(WSISlide.id) > 1)
+                .subquery()
+            )
+        )
+        multi_count = (await db.execute(q_multi)).scalar_one()
+        has_multi_slide_cases = multi_count > 0
+
+        return {
+            "named_case_count": named_case_count,
+            "no_case_count": no_case_count,
+            "total_cases": total_cases,
+            "total_files": total_files,
+            "has_multi_slide_cases": has_multi_slide_cases,
+        }
+
+    @staticmethod
+    async def get_by_dataset_case_paginated(
+        db: AsyncSession,
+        dataset_id: str,
+        page: int = 1,
+        page_size: int = 10,
+        search: Optional[str] = None,
+        user_id: Optional[str] = None,
+        data_type: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None,
+    ) -> List[WSISlide]:
+        """Fetch files for a *page* of case groups.
+
+        Ordering: named cases alphabetically by case_id first, then the
+        ``__no_case__`` group (NULL case_id files) last.
+
+        Each named case_id counts as 1 page unit; ALL files without case_id
+        together count as 1 page unit (consistent with frontend grouping).
+
+        Returns the list of WSISlide objects belonging to the cases on the
+        requested page (with dataset relationship loaded).
+        """
+        from sqlalchemy import or_
+
+        # ---- shared WHERE filters ----
+        filters = []
+        if dataset_id == "Uncategorized":
+            filters.append(WSISlide.dataset_id.is_(None))
+        else:
+            filters.append(WSISlide.dataset_id == dataset_id)
+
+        if user_id is not None:
+            has_elevated = elevated_dataset_ids and dataset_id in elevated_dataset_ids
+            if not has_elevated:
+                filters.append(WSISlide.user_id == user_id)
+
+        dt_filter = WSIRepository._build_data_type_filter(data_type)
+        if dt_filter is not None:
+            filters.append(dt_filter)
+
+        search_filter = WSIRepository._build_search_filter(search)
+        if search_filter is not None:
+            filters.append(search_filter)
+
+        # Step 1: Get paginated named case_ids
+        offset = (page - 1) * page_size
+        q_case_ids = (
+            select(WSISlide.case_id)
+            .where(WSISlide.case_id.isnot(None), *filters)
+            .group_by(WSISlide.case_id)
+            .order_by(WSISlide.case_id)
+            .offset(offset)
+            .limit(page_size)
+        )
+        case_ids_result = await db.execute(q_case_ids)
+        page_case_ids = [row[0] for row in case_ids_result.all()]
+
+        results: List[WSISlide] = []
+
+        # Step 2: Fetch files for the named cases
+        if page_case_ids:
+            q_files = (
+                select(WSISlide)
+                .options(selectinload(WSISlide.dataset))
+                .where(WSISlide.case_id.in_(page_case_ids), *filters)
+                .order_by(WSISlide.case_id, desc(WSISlide.created_at))
+            )
+            file_result = await db.execute(q_files)
+            results.extend(file_result.scalars().all())
+
+        # Step 3: Check if __no_case__ group falls on this page
+        # __no_case__ is always the LAST case unit.
+        # Count named cases first to know if __no_case__ is on this page.
+        q_named_count = select(func.count(func.distinct(WSISlide.case_id))).where(
+            WSISlide.case_id.isnot(None), *filters
+        )
+        named_count = (await db.execute(q_named_count)).scalar_one()
+
+        # __no_case__ index (0-based) = named_count
+        no_case_index = named_count
+        page_start = offset
+        page_end = offset + page_size  # exclusive
+        if page_start <= no_case_index < page_end:
+            # __no_case__ is on this page – fetch all uncased files
+            q_no_case = (
+                select(WSISlide)
+                .options(selectinload(WSISlide.dataset))
+                .where(WSISlide.case_id.is_(None), *filters)
+                .order_by(desc(WSISlide.created_at))
+            )
+            no_case_result = await db.execute(q_no_case)
+            results.extend(no_case_result.scalars().all())
+
+        return results
+
 
 class AITaskRepository:
     """Repository for AI Task operations"""

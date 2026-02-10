@@ -33,8 +33,18 @@ from .models import User
 logger = logging.getLogger(__name__)
 
 
-# Secret key for JWT tokens - use environment variable or generate a secure default
-JWT_SECRET = os.getenv("JWT_SECRET", "pathlab-jwt-secret-change-in-production-12345")
+# Secret key for JWT tokens - use environment variable or generate a random secret
+_jwt_secret_env = os.getenv("JWT_SECRET")
+if _jwt_secret_env:
+    JWT_SECRET = _jwt_secret_env
+else:
+    import secrets
+    JWT_SECRET = secrets.token_urlsafe(64)
+    logger.warning(
+        "JWT_SECRET not set in environment — generated a random secret. "
+        "Sessions will be invalidated on server restart. "
+        "Set JWT_SECRET environment variable for persistent sessions."
+    )
 
 
 async def get_user_db(session: AsyncSession = Depends(get_db)):

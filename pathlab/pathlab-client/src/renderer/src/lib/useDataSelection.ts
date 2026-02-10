@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { fetchDatasets, fetchWSIList, DatasetSummary } from '../api'
+import { fetchDatasets, fetchWSIList, DatasetSummary, getFileType } from '../api'
 import { DataLevel, TaskType } from '../constants/training'
 import { WSIItem } from '../types/training'
 
@@ -60,7 +60,7 @@ export interface UseDataSelectionReturn {
   // Additional computed values
   isPatchDataset: boolean
   totalCases: number
-  getFileType: (wsiPath: string | null, fileSize: number | null) => 'WSI' | 'Patch'
+  getFileType: (fileExtension: string | null, fileSize: number | null) => 'WSI' | 'Patch'
 
   // Pre-defined splits
   hasPreDefinedSplits: boolean
@@ -187,24 +187,11 @@ export function useDataSelection({
     )
   }, [items, searchQuery])
 
-  // Helper to determine file type
-  const getFileType = (wsiPath: string | null, fileSize: number | null): 'WSI' | 'Patch' => {
-    if (!wsiPath) return 'WSI'
-    const path = wsiPath.toLowerCase()
-    const patchExtensions = ['.png', '.jpg', '.jpeg', '.bmp']
-    if (patchExtensions.some((ext) => path.endsWith(ext))) return 'Patch'
-    if (path.endsWith('.tif') || path.endsWith('.tiff')) {
-      const SIZE_THRESHOLD = 100 * 1024 * 1024
-      return (fileSize || 0) >= SIZE_THRESHOLD ? 'WSI' : 'Patch'
-    }
-    return 'WSI'
-  }
-
   // Check if this is a patch dataset
   const isPatchDataset = useMemo(() => {
     if (filteredItems.length === 0) return false
     const patchCount = filteredItems.filter(
-      (item) => getFileType(item.wsi_path || null, item.file_size || null) === 'Patch'
+      (item) => getFileType(item.file_extension || null, item.file_size || null) === 'Patch'
     ).length
     return patchCount > filteredItems.length / 2
   }, [filteredItems])

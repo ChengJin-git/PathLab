@@ -72,10 +72,10 @@ def _get_deepzoom_generator():
     return _ADeepZoomGenerator
 
 def _load_slide(file_path: str):
-    """Load WSI file using Aslide"""
+    """Load WSI file using Aslide (delegates to shared slide_utils)"""
     try:
-        from Aslide.aslide import Slide
-        slide = Slide(str(file_path))
+        from backend.common.slide_utils import load_slide
+        slide = load_slide(file_path)
         logger.info(f"Opened WSI with Aslide: {file_path}")
         return slide
     except Exception as e:
@@ -287,8 +287,8 @@ async def get_thumbnail(
         else:
             # WSI file: use ASlide to get thumbnail
             try:
-                from Aslide.aslide import Slide
-                slide = Slide(str(file_path))
+                # Use _load_slide to ensure color correction is applied
+                slide = _load_slide(str(file_path))
 
                 # Get the thumbnail from the lowest resolution level
                 # ASlide's Slide object should have get_thumbnail or similar
@@ -1108,8 +1108,7 @@ async def get_heatmap_thumbnail(
                 thumbnail.thumbnail((thumb_width, thumb_height), Image.Resampling.LANCZOS)
         else:
             # WSI file
-            from Aslide.aslide import Slide
-            aslide = Slide(str(file_path))
+            aslide = _load_slide(str(file_path))
             lowest_level = len(aslide.level_dimensions) - 1
             level_dims = aslide.level_dimensions[lowest_level]
             region = aslide.read_region((0, 0), lowest_level, level_dims)

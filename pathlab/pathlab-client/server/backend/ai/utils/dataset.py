@@ -59,8 +59,9 @@ def get_torchvision_transforms(image_size: int = 224, mode: str = "eval") -> Cal
 
 
 def _load_slide(wsi_path: str):
-    from Aslide.aslide import Slide
-    return Slide(str(wsi_path))
+    """Load WSI file using Aslide (delegates to shared slide_utils)"""
+    from backend.common.slide_utils import load_slide
+    return load_slide(wsi_path)
 
 
 class WSIPatchDataset(Dataset):

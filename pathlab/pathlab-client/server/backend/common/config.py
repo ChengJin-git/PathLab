@@ -60,6 +60,12 @@ class Config:
     # Task cleanup
     CLEANUP_OLD_TASKS_DAYS = 7  # Days to keep old finished tasks
 
+    # Aslide color correction supported formats (case-insensitive check)
+    COLOR_CORRECTION_FORMATS: frozenset = frozenset({
+        '.sdpc', '.dyqx', '.dyj', '.kfb',
+        '.mds', '.mdsx', '.tmap',
+    })
+
     @classmethod
     def _get_app_data_dir(cls) -> Path:
         """Get application data directory based on OS."""

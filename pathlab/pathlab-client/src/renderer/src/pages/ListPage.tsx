@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask } from '../api'
+import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, invalidateWSIListCache, getFileType } from '../api'
 import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -32,8 +32,13 @@ export default function ListPage() {
   const [error, setError] = useState<string | undefined>()
   const [totalCount, setTotalCount] = useState<number>(0)
 
+  // Server-side pagination metadata
+  const [totalCases, setTotalCases] = useState<number>(0)
+  const [hasMultiSlideCases, setHasMultiSlideCases] = useState(false)
+
   // Search and Filter state
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
@@ -124,12 +129,20 @@ export default function ListPage() {
     }
   }, [datasets, initialDatasetId, selectedDatasetName])
 
-  // Load files when a dataset is selected
+  // Debounce search input → debouncedSearch (300ms)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+
+  // Load files when dataset, page, or debounced search changes
   useEffect(() => {
     if (selectedDatasetId) {
-      loadWSIList(selectedDatasetId)
+      loadWSIList(selectedDatasetId, currentPage, debouncedSearch)
     }
-  }, [selectedDatasetId])
+  }, [selectedDatasetId, currentPage, debouncedSearch])
 
   const loadDatasets = async () => {
     setDatasetsLoading(true)
@@ -144,13 +157,19 @@ export default function ListPage() {
     }
   }
 
-  const loadWSIList = async (datasetId: string) => {
+  const loadWSIList = async (datasetId: string, page: number = 1, search: string = '') => {
     setLoading(true)
     setError(undefined)
     try {
-      const d = await fetchWSIList(datasetId)
+      const d = await fetchWSIList(datasetId, undefined, {
+        page,
+        page_size: itemsPerPage,
+        search: search || undefined,
+      })
       setItems(d.items || [])
       setTotalCount(d.total ?? d.items?.length ?? 0)
+      setTotalCases(d.total_cases ?? 0)
+      setHasMultiSlideCases(d.has_multi_slide_cases ?? false)
     } catch (e) {
       setError(String(e))
     } finally {
@@ -170,7 +189,10 @@ export default function ListPage() {
     setSelectedDatasetType('classification')
     setItems([])
     setTotalCount(0)
+    setTotalCases(0)
+    setHasMultiSlideCases(false)
     setSearchQuery('')
+    setDebouncedSearch('')
     setCurrentPage(1)
     setSelectedIds(new Set())
   }
@@ -181,12 +203,14 @@ export default function ListPage() {
     setSelectedDatasetType(dataset.dataset_type)
     setCurrentPage(1)
     setSearchQuery('')
+    setDebouncedSearch('')
   }
 
   // Reload current dataset files (for use after edits/deletes)
   const reloadCurrentDataset = async () => {
     if (selectedDatasetId) {
-      await loadWSIList(selectedDatasetId)
+      invalidateWSIListCache()
+      await loadWSIList(selectedDatasetId, currentPage, debouncedSearch)
     }
   }
 
@@ -199,28 +223,7 @@ export default function ListPage() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
-  // Helper function to determine file type (WSI or Patch)
-  const getFileType = (wsiPath: string | null, fileSize: number | null): 'WSI' | 'Patch' => {
-    if (!wsiPath) return 'WSI'
-    const path = wsiPath.toLowerCase()
 
-    // Patch/image file extensions
-    const patchExtensions = ['.png', '.jpg', '.jpeg', '.bmp']
-
-    // Check if it's a patch image format
-    if (patchExtensions.some(ext => path.endsWith(ext))) {
-      return 'Patch'
-    }
-
-    // For .tif/.tiff files, check file size (100 MB threshold)
-    if (path.endsWith('.tif') || path.endsWith('.tiff')) {
-      const SIZE_THRESHOLD = 100 * 1024 * 1024 // 100 MB
-      return (fileSize || 0) >= SIZE_THRESHOLD ? 'WSI' : 'Patch'
-    }
-
-    // Default to WSI for other formats
-    return 'WSI'
-  }
 
   // Helper function to guess dataset content type based on average file size
   const getDatasetItemType = (totalSize: number, fileCount: number): 'slides' | 'images' => {
@@ -641,26 +644,12 @@ export default function ListPage() {
     }
   }
 
-  // Filter logic
-  const filteredItems = items.filter(it => {
-    const query = searchQuery.toLowerCase().trim()
-    if (!query) return true
-
-    return (
-      it.wsi_id?.toLowerCase().includes(query) ||
-      it.label?.toLowerCase().includes(query) ||
-      it.original_filename?.toLowerCase().includes(query) ||
-      it.case_id?.toLowerCase().includes(query) ||
-      it.source?.toLowerCase().includes(query)
-    )
-  })
-
-  // Group items by case_id
+  // Group items by case_id (for display within current page)
   const groupedByCaseId = React.useMemo(() => {
-    const groups = new Map<string, typeof filteredItems>()
+    const groups = new Map<string, typeof items>()
     const NO_CASE = '__no_case__'
 
-    filteredItems.forEach(item => {
+    items.forEach(item => {
       const caseId = item.case_id || NO_CASE
       if (!groups.has(caseId)) {
         groups.set(caseId, [])
@@ -668,58 +657,34 @@ export default function ListPage() {
       groups.get(caseId)!.push(item)
     })
 
-    // Convert to array and sort: cases with multiple slides first, then by case_id
+    // Convert to array and sort: named cases alphabetically, __no_case__ last
     const sortedGroups = Array.from(groups.entries()).sort((a, b) => {
-      // Put "no case" group at the end
       if (a[0] === NO_CASE) return 1
       if (b[0] === NO_CASE) return -1
-      // Sort by number of slides (descending), then by case_id
-      if (b[1].length !== a[1].length) return b[1].length - a[1].length
       return a[0].localeCompare(b[0])
     })
 
     return sortedGroups
-  }, [filteredItems])
+  }, [items])
 
   // Check if this is a patch dataset (majority of files are patches)
   const isPatchDataset = React.useMemo(() => {
-    if (filteredItems.length === 0) return false
-    const patchCount = filteredItems.filter(item => getFileType(item.wsi_path, item.file_size) === 'Patch').length
-    return patchCount > filteredItems.length / 2
-  }, [filteredItems])
+    if (items.length === 0) return false
+    const patchCount = items.filter(item => getFileType(item.file_extension, item.file_size) === 'Patch').length
+    return patchCount > items.length / 2
+  }, [items])
 
-  // Check if we should use grouping UI
-  // Conditions:
-  // 1. Must have at least one multi-slide case
-  // 2. Must NOT be a patch dataset (check if majority of files are patches)
-  // 3. Must have at least one valid case_id (not all items without case_id)
-  const hasMultiSlideCases = React.useMemo(() => {
-    // Check if any item has a valid case_id
-    const hasAnyCaseId = filteredItems.some(item => item.case_id && item.case_id.trim() !== '')
-    if (!hasAnyCaseId) return false
-
-    if (isPatchDataset) return false
-
-    // Check if there are any multi-slide cases
-    return groupedByCaseId.some(([caseId, slides]) => caseId !== '__no_case__' && slides.length > 1)
-  }, [filteredItems, groupedByCaseId, isPatchDataset])
-
-  // Pagination logic - paginate by cases when grouping, by slides otherwise
-  const totalCases = groupedByCaseId.length
+  // Server-side pagination: totalPages based on server-provided totalCases (or totalCount for non-grouped)
   const totalPages = hasMultiSlideCases
     ? Math.ceil(totalCases / itemsPerPage)
-    : Math.ceil(filteredItems.length / itemsPerPage)
+    : Math.ceil(totalCount / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
 
-  // Get paginated cases or items
-  const paginatedCases = hasMultiSlideCases
-    ? groupedByCaseId.slice(startIndex, startIndex + itemsPerPage)
-    : null
-  const paginatedItems = hasMultiSlideCases
-    ? [] // Not used when grouping
-    : filteredItems.slice(startIndex, startIndex + itemsPerPage)
+  // All current-page items are already the "paginated" items (server-side pagination)
+  const paginatedCases = hasMultiSlideCases ? groupedByCaseId : null
+  const paginatedItems = hasMultiSlideCases ? [] : items
 
-  // Batch selection logic
+  // Batch selection logic — operates on current page items
   const pageSlides = useMemo(() => {
     if (hasMultiSlideCases && paginatedCases) {
       return paginatedCases.flatMap(([, slides]) => slides)
@@ -728,11 +693,11 @@ export default function ListPage() {
   }, [hasMultiSlideCases, paginatedCases, paginatedItems])
 
   const allPageSelected = pageSlides.length > 0 && pageSlides.every(s => selectedIds.has(s.wsi_id))
-  
-  const allFilteredSelected = filteredItems.length > 0 && filteredItems.every(s => selectedIds.has(s.wsi_id))
+
+  // With server-side pagination, "select all filtered" only covers current page items
+  const allFilteredSelected = items.length > 0 && items.every(s => selectedIds.has(s.wsi_id))
 
   const handleSelectPage = () => {
-    // If all items are selected (Global Select All), unchecking the master checkbox should clear ALL selection
     if (allFilteredSelected) {
       setSelectedIds(new Set())
       return
@@ -747,11 +712,6 @@ export default function ListPage() {
     setSelectedIds(newSelected)
   }
 
-  const handleSelectAllFiltered = () => {
-     setSelectedIds(new Set(filteredItems.map(i => i.wsi_id)))
-  }
-
-
   // Toggle case expansion
   const toggleCaseExpansion = (caseId: string) => {
     setExpandedCases(prev => {
@@ -764,15 +724,6 @@ export default function ListPage() {
       return next
     })
   }
-
-  // Ensure current page is valid after items change
-  useEffect(() => {
-    if (currentPage > totalPages && totalPages > 0) {
-      setCurrentPage(totalPages)
-    } else if (totalPages === 0 && currentPage !== 1) {
-      setCurrentPage(1)
-    }
-  }, [filteredItems.length, totalPages, currentPage])
 
   return (
     <div className="w-full space-y-6 h-full flex flex-col">
@@ -1152,7 +1103,7 @@ export default function ListPage() {
       {/* Table - only show when a dataset is selected */}
       {selectedDatasetId && !loading && !error && items.length > 0 && (
         <>
-          {filteredItems.length === 0 ? (
+          {items.length === 0 ? (
             <Card className="p-12 flex flex-col items-center justify-center bg-gray-50/50 border-dashed border-2 border-gray-200 rounded-2xl">
               <Search className="w-12 h-12 text-gray-300 mb-4" />
               <h3 className="text-lg font-medium text-gray-900">No matching files</h3>
@@ -1232,25 +1183,12 @@ export default function ListPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 bg-white/40">
-                     {/* Batch Selection Banner */}
-                      {allPageSelected && !allFilteredSelected && (
+                     {/* Batch Selection Banner — current page items only (server-side pagination) */}
+                      {allPageSelected && (
                         <tr className="bg-blue-50/50">
                           <td colSpan={100} className="px-4 py-2 text-center text-xs sm:text-sm text-gray-700 border-b border-blue-100">
                             <span className="font-medium">All {pageSlides.length} items on this page are selected.</span>
-                            <button 
-                              onClick={handleSelectAllFiltered}
-                              className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none"
-                            >
-                              Select all {filteredItems.length} items in list
-                            </button>
-                          </td>
-                        </tr>
-                      )}
-                      {allFilteredSelected && filteredItems.length > pageSlides.length && (
-                          <tr className="bg-blue-50/50">
-                          <td colSpan={100} className="px-4 py-2 text-center text-xs sm:text-sm text-gray-700 border-b border-blue-100">
-                            <span className="font-medium">All {filteredItems.length} items in list are selected.</span>
-                            <button 
+                            <button
                               onClick={() => setSelectedIds(new Set())}
                               className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none"
                             >
@@ -1299,7 +1237,7 @@ export default function ListPage() {
                               </td>
                               <td className="px-3 sm:px-6 py-4 sm:py-5">
                                 {(() => {
-                                  const fileType = getFileType(it.wsi_path, it.file_size)
+                                  const fileType = getFileType(it.file_extension, it.file_size)
                                   return fileType === 'WSI' ? (
                                     <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">WSI</span>
                                   ) : (
@@ -1406,7 +1344,7 @@ export default function ListPage() {
                               <td className="px-3 sm:px-6 py-4 sm:py-5">
                                 {(() => {
                                   // eslint-disable-next-line
-                                  const types = new Set(slides.map(s => getFileType(s.wsi_path, s.file_size)))
+                                  const types = new Set(slides.map(s => getFileType(s.file_extension, s.file_size)))
                                   if (types.has('WSI') && types.has('Patch')) {
                                     return <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">Mixed</span>
                                   }
@@ -1518,7 +1456,7 @@ export default function ListPage() {
                                   </td>
                                   <td className="px-3 sm:px-6 py-3 sm:py-4">
                                     {(() => {
-                                      const fileType = getFileType(it.wsi_path, it.file_size)
+                                      const fileType = getFileType(it.file_extension, it.file_size)
                                       return fileType === 'WSI' ? (
                                         <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">WSI</span>
                                       ) : (
@@ -1612,7 +1550,7 @@ export default function ListPage() {
                             </td>
                             <td className="px-3 sm:px-6 py-4 sm:py-5">
                               {(() => {
-                                const fileType = getFileType(it.wsi_path, it.file_size)
+                                const fileType = getFileType(it.file_extension, it.file_size)
                                 return fileType === 'WSI' ? (
                                   <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">
                                     WSI
@@ -1733,13 +1671,13 @@ export default function ListPage() {
                       Showing <span className="text-gray-900">{totalCases === 0 ? 0 : startIndex + 1}</span> to{' '}
                       <span className="text-gray-900">{Math.min(startIndex + itemsPerPage, totalCases)}</span>{' '}
                       of <span className="text-gray-900">{totalCases}</span> cases
-                      <span className="text-gray-400 font-normal ml-1 whitespace-nowrap">({filteredItems.length} slides total)</span>
+                      <span className="text-gray-400 font-normal ml-1 whitespace-nowrap">({totalCount} slides total)</span>
                     </>
                   ) : (
                     <>
-                      Showing <span className="text-gray-900">{filteredItems.length === 0 ? 0 : startIndex + 1}</span> to{' '}
-                      <span className="text-gray-900">{Math.min(startIndex + itemsPerPage, filteredItems.length)}</span>{' '}
-                      of <span className="text-gray-900">{filteredItems.length}</span> {filteredItems.length !== items.length && <span className="text-gray-400 font-normal ml-1 whitespace-nowrap">(filtered)</span>} files
+                      Showing <span className="text-gray-900">{totalCount === 0 ? 0 : startIndex + 1}</span> to{' '}
+                      <span className="text-gray-900">{Math.min(startIndex + itemsPerPage, totalCount)}</span>{' '}
+                      of <span className="text-gray-900">{totalCount}</span> files
                     </>
                   )}
                 </div>

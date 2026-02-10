@@ -175,12 +175,20 @@ class WSISlide(Base):
         Index('idx_wsi_dataset_created', 'dataset_id', 'created_at'),
     )
 
-    def to_dict(self):
-        """Convert to dictionary for API responses
+    def _get_file_extension(self) -> str:
+        """Extract file extension from wsi_path or original_filename."""
+        import os
+        if self.original_filename:
+            return os.path.splitext(self.original_filename)[1].lower()
+        if self.wsi_path:
+            return os.path.splitext(self.wsi_path)[1].lower()
+        return ''
 
-        Note: original_filename is included for display purposes.
-        The wsi_id (UUID) is still used for all API operations and URL routing.
-        Returns dataset_id (UUID) and dataset_name (display name from related Dataset).
+    def to_dict(self):
+        """Convert to dictionary for API responses.
+
+        Note: wsi_path is NOT included to avoid exposing server filesystem paths.
+        Use file_extension for file type determination on the frontend.
         """
         return {
             "wsi_id": self.wsi_id,
@@ -189,7 +197,7 @@ class WSISlide(Base):
             "dataset_name": self.dataset.name if self.dataset else None,
             "case_id": self.case_id,
             "label": self.label,
-            "wsi_path": self.wsi_path,
+            "file_extension": self._get_file_extension(),
             "user_id": self.user_id,
             "age": self.age,
             "gender": self.gender,
@@ -206,6 +214,31 @@ class WSISlide(Base):
             "associated_files": self.associated_files,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
+        }
+
+
+    def to_summary_dict(self):
+        """Lightweight dict for list/pagination API responses.
+
+        Excludes heavy or detail-only fields: user_id, mpp, vendor, width,
+        height, magnification, associated_files, updated_at.
+        """
+        return {
+            "wsi_id": self.wsi_id,
+            "original_filename": self.original_filename,
+            "dataset_id": self.dataset_id,
+            "dataset_name": self.dataset.name if self.dataset else None,
+            "case_id": self.case_id,
+            "label": self.label,
+            "file_extension": self._get_file_extension(),
+            "age": self.age,
+            "gender": self.gender,
+            "source": self.source,
+            "event_time": self.event_time,
+            "event_status": self.event_status,
+            "split": self.split,
+            "file_size": self.file_size,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
         }
 
 
