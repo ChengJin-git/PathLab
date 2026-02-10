@@ -126,7 +126,7 @@ export function UsersTab({
             title={maintenanceMode ? "Disable maintenance mode" : "Enable maintenance mode"}
           >
             <Construction className="w-4 h-4" />
-            {maintenanceMode ? "End Maintenance" : "Maintenance"}
+            {maintenanceMode ? "End Maintenance Mode" : "Maintenance Mode"}
           </Button>
           <Button onClick={onShowCreateUser} className="gap-2">
             <UserPlus className="w-4 h-4" />
