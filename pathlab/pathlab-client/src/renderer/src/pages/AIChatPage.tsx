@@ -692,6 +692,9 @@ export default function AIChatPage() {
   // Ref to track latest voiceSessionActive value for use in callbacks (avoids stale closure)
   const voiceSessionActiveRef = useRef(false)
   voiceSessionActiveRef.current = voiceSessionActive
+  // Ref to track current input value for voice transcript appending
+  const inputRef = useRef('')
+  inputRef.current = input
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -708,8 +711,17 @@ export default function AIChatPage() {
     // Clear the partial text immediately to hide the temporary bubble
     setRealtimePartialText('')
 
-    // Set the input and submit
-    setInput(transcript)
+    // Get current input value from ref to support appending
+    const currentInput = inputRef.current.trim()
+
+    // If there's existing text, append with a space; otherwise just use the transcript
+    const newInput = currentInput
+      ? `${currentInput} ${transcript.trim()}`
+      : transcript.trim()
+
+    // Set the combined input and submit
+    setInput(newInput)
+
     // Mark that we should restart voice after LLM response
     // Use ref to get the latest value, not the stale closure value
     shouldRestartVoiceRef.current = voiceSessionActiveRef.current

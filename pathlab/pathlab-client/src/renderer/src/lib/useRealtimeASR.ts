@@ -121,14 +121,16 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
   const isMountedRef = useRef(true)
 
   const cleanup = useCallback(() => {
-    // Clear debounce flag
+    // Clear debounce flag - IMPORTANT: Always reset to allow future starts
     startingRef.current = false
+
     // Clear max recording timeout
     if (maxTimeoutRef.current) {
       clearTimeout(maxTimeoutRef.current)
       maxTimeoutRef.current = null
     }
-    // Stop audio processing
+
+    // Stop audio processing - disconnect in correct order
     if (processorRef.current) {
       // Signal the AudioWorklet to stop processing
       try {
@@ -139,16 +141,28 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
       } catch { /* ignore */ }
       processorRef.current = null
     }
+
     if (sourceRef.current) {
       try {
         sourceRef.current.disconnect()
       } catch { /* ignore */ }
       sourceRef.current = null
     }
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      audioContextRef.current.close().catch(() => { /* ignore */ })
-      audioContextRef.current = null
+
+    // Close AudioContext properly to free resources
+    if (audioContextRef.current) {
+      const ctx = audioContextRef.current
+      audioContextRef.current = null // Clear ref first to prevent reuse
+
+      if (ctx.state !== 'closed') {
+        // Close asynchronously but don't wait
+        ctx.close().catch((err) => {
+          console.warn('[ASR] AudioContext close error:', err)
+        })
+      }
     }
+
+    // Stop media stream tracks
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach(track => {
         try {
@@ -157,23 +171,35 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
       })
       mediaStreamRef.current = null
     }
+
     if (isMountedRef.current) {
       setMediaStream(null)
     }
-    // Close WebSocket
+
+    // Close WebSocket connection
     if (wsRef.current) {
-      if (wsRef.current.readyState === WebSocket.OPEN) {
-        // Send session.finish before closing
+      const ws = wsRef.current
+      wsRef.current = null // Clear ref first to prevent reuse
+
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        // Send session.finish before closing (only if open)
+        if (ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify({
+              event_id: 'event_finish',
+              type: 'session.finish'
+            }))
+          } catch { /* ignore */ }
+        }
+
+        // Close the connection
         try {
-          wsRef.current.send(JSON.stringify({
-            event_id: 'event_finish',
-            type: 'session.finish'
-          }))
+          ws.close()
         } catch { /* ignore */ }
       }
-      wsRef.current.close()
-      wsRef.current = null
     }
+
+    // Update UI state
     if (isMountedRef.current) {
       setIsRecording(false)
       setIsConnecting(false)
@@ -187,7 +213,10 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
 
   const startRecording = useCallback(async () => {
     // Edge case: Prevent rapid consecutive clicks
-    if (isRecording || isConnecting || startingRef.current) return
+    if (isRecording || isConnecting || startingRef.current) {
+      console.log('[ASR] Already recording or connecting, ignoring start request')
+      return
+    }
     startingRef.current = true
 
     setIsConnecting(true)
@@ -217,22 +246,24 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
           switch (data.type) {
             case 'session.created':
               // Session ready, send config update
-              ws.send(JSON.stringify({
-                event_id: 'event_session_update',
-                type: 'session.update',
-                session: {
-                  input_audio_format: 'pcm',
-                  sample_rate: 16000,
-                  input_audio_transcription: {
-                    // Auto language detection
-                  },
-                  turn_detection: {
-                    type: 'server_vad',
-                    threshold: vadThreshold,
-                    silence_duration_ms: silenceDurationMs
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                  event_id: 'event_session_update',
+                  type: 'session.update',
+                  session: {
+                    input_audio_format: 'pcm',
+                    sample_rate: 16000,
+                    input_audio_transcription: {
+                      // Auto language detection
+                    },
+                    turn_detection: {
+                      type: 'server_vad',
+                      threshold: vadThreshold,
+                      silence_duration_ms: silenceDurationMs
+                    }
                   }
-                }
-              }))
+                }))
+              }
               break
 
             case 'session.updated':
@@ -282,23 +313,43 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
 
       ws.onerror = (error) => {
         console.error('[ASR] WebSocket error:', error)
-        onError?.('WebSocket connection error')
+        const errorMsg = 'Failed to connect to voice service. Please try again.'
+        setLastError(errorMsg)
+        onError?.(errorMsg)
         cleanup()
       }
 
-      ws.onclose = () => {
-        console.log('[ASR] WebSocket closed')
+      ws.onclose = (event) => {
+        // Only log as error if it's an abnormal closure
+        if (event.code !== 1000 && event.code !== 1001) {
+          console.warn('[ASR] WebSocket closed unexpectedly:', event.code, event.reason)
+        } else {
+          console.log('[ASR] WebSocket closed normally')
+        }
         cleanup()
       }
 
-      // Wait for connection
+      // Wait for connection with proper error handling
       await new Promise<void>((resolve, reject) => {
+        const connectionTimeout = setTimeout(() => {
+          reject(new Error('Connection timeout - please check your network'))
+        }, 10000)
+
         ws.onopen = () => {
+          clearTimeout(connectionTimeout)
           console.log('[ASR] WebSocket connected')
           resolve()
         }
-        // Add timeout
-        setTimeout(() => reject(new Error('Connection timeout')), 10000)
+
+        // If error occurs during connection, reject the promise
+        const originalOnError = ws.onerror
+        ws.onerror = (error) => {
+          clearTimeout(connectionTimeout)
+          if (originalOnError) {
+            originalOnError.call(ws, error)
+          }
+          reject(new Error('WebSocket connection failed'))
+        }
       })
 
       // Start audio capture
@@ -312,6 +363,14 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
       })
       mediaStreamRef.current = stream
       setMediaStream(stream)
+
+      // Edge case: Check if we were stopped during async operations
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        console.log('[ASR] Connection closed during setup, aborting')
+        // Clean up the stream we just created
+        stream.getTracks().forEach(track => track.stop())
+        throw new Error('Connection closed during setup')
+      }
 
       // Create audio context and load AudioWorklet processor
       const audioContext = new AudioContext({ sampleRate: 16000 })
@@ -329,6 +388,12 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
       } catch (workletError) {
         console.error('[ASR] Failed to load AudioWorklet module:', workletError)
         throw new Error('Failed to initialize audio processor. Please refresh the page.')
+      }
+
+      // Edge case: Check again if we were stopped during async operations
+      if (!audioContextRef.current) {
+        console.log('[ASR] AudioContext cleared during setup, aborting')
+        throw new Error('AudioContext cleared during setup')
       }
 
       const source = audioContext.createMediaStreamSource(stream)
