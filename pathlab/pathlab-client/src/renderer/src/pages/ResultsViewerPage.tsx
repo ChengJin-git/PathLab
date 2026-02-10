@@ -7,7 +7,7 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KFoldLossCurveData, type KMCurveData } from '../components/charts/AnalysisCharts'
-import { getTrainedModels, TrainedModel, getAuthToken, startExternalValidation as apiStartExternalValidation } from '../api'
+import { getTrainedModels, TrainedModel, getAuthToken, startExternalValidation as apiStartExternalValidation, fetchDatasetsForValidation, ValidationDataset } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import {
   CLASSIFICATION_METRICS,
@@ -54,7 +54,7 @@ interface ValidationProgress {
   processed_wsi: number
   model_id: string
   model_task_id: string
-  data_task_id: string
+  dataset_id: string
   error: string | null
   results_count?: number
 }
@@ -64,6 +64,7 @@ interface TrainingTask {
   name: string
   model_type: string
   data_level: string  // "wsi" or "patch"
+  aggregation_level: string  // "file" or "case"
   status: string
   created_at: string | null
   has_analysis: boolean
@@ -72,6 +73,10 @@ interface TrainingTask {
   has_model: boolean
   has_ai_results: boolean
   ai_results_count: number
+  total_wsi_count: number  // Total WSI count (file-level)
+  total_case_count: number  // Total case count (case-level)
+  display_count: number  // Count based on aggregation level
+  wsi_ids: string[]  // WSI IDs for overlap detection
   model_id: string | null
   is_kfold: boolean  // Whether this task was trained with K-Fold cross-validation
 }
@@ -189,7 +194,8 @@ export default function ResultsViewerPage() {
   const [pageMode, setPageMode] = useState<PageMode>('internal-analysis')
   const [trainedModels, setTrainedModels] = useState<TrainedModel[]>([])
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
-  const [dataTaskId, setDataTaskId] = useState<string | null>(null)
+  const [datasetId, setDatasetId] = useState<string | null>(null)
+  const [validationDatasets, setValidationDatasets] = useState<ValidationDataset[]>([])
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false)
   const [isDataDropdownOpen, setIsDataDropdownOpen] = useState(false)
   const [validationProgress, setValidationProgress] = useState<ValidationProgress | null>(null)
@@ -199,6 +205,7 @@ export default function ResultsViewerPage() {
   useEffect(() => {
     loadTasks()
     loadTrainedModels()
+    loadValidationDatasets()
   }, [])
 
   useEffect(() => {
@@ -294,6 +301,15 @@ export default function ResultsViewerPage() {
     }
   }
 
+  const loadValidationDatasets = async () => {
+    try {
+      const data = await fetchDatasetsForValidation()
+      setValidationDatasets(data.items || [])
+    } catch (error) {
+      console.error('Failed to load validation datasets:', error)
+    }
+  }
+
   const loadAnalyses = async (taskId: string) => {
     try {
       const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`, authFetchOptions())
@@ -307,21 +323,15 @@ export default function ResultsViewerPage() {
   }
 
   const startExternalValidation = async () => {
-    if (!selectedModelId || !dataTaskId) return
+    if (!selectedModelId || !datasetId) return
 
     const selectedModel = trainedModels.find(m => m.model_id === selectedModelId)
     if (!selectedModel) return
 
-    // Check if model's task and data task are the same
-    if (selectedModel.task_id === dataTaskId) {
-      setValidationError('Cannot validate on the same dataset used for training')
-      return
-    }
-
     setValidationError(null)
     try {
       // Use the API function which supports all parameters including bootstrap CI
-      const result = await apiStartExternalValidation(selectedModelId, dataTaskId)
+      const result = await apiStartExternalValidation(selectedModelId, datasetId)
       // Task submitted successfully - show pending status
       // Progress will be tracked via SSE in the Background Task Panel
       setValidationProgress({
@@ -332,7 +342,7 @@ export default function ResultsViewerPage() {
         processed_wsi: 0,
         model_id: selectedModelId,
         model_task_id: selectedModel.task_id,
-        data_task_id: dataTaskId,
+        dataset_id: datasetId,
         error: null,
       })
       // Start polling to track this specific task's progress
@@ -365,7 +375,7 @@ export default function ResultsViewerPage() {
             processed_wsi: progress.processed_wsi,
             model_id: progress.model_id,
             model_task_id: progress.model_task_id,
-            data_task_id: progress.data_task_id,
+            dataset_id: progress.dataset_id,
             error: progress.error,
             results_count: progress.results_count,
           })
@@ -401,7 +411,7 @@ export default function ResultsViewerPage() {
 
   const selectedModel = trainedModels.find(m => m.model_id === selectedModelId)
   const modelTask = selectedModel ? tasks.find(t => t.task_id === selectedModel.task_id) : null
-  const dataTask = tasks.find(t => t.task_id === dataTaskId)
+  const selectedDataset = validationDatasets.find(ds => ds.dataset_id === datasetId)
 
   const runAnalysis = async () => {
     if (!selectedTaskId || selectedMetrics.length === 0) return
@@ -697,8 +707,8 @@ export default function ResultsViewerPage() {
                   }`}
                 >
                   <div className="flex flex-col items-start">
-                    <span className={dataTask ? 'text-gray-900 font-medium' : 'text-gray-400'}>
-                      {dataTask ? dataTask.name : (selectedModelId ? 'Select dataset...' : 'Select model first')}
+                    <span className={selectedDataset ? 'text-gray-900 font-medium' : 'text-gray-400'}>
+                      {selectedDataset ? selectedDataset.name : (selectedModelId ? 'Select dataset...' : 'Select model first')}
                     </span>
                   </div>
                   <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${isDataDropdownOpen ? 'rotate-180' : ''}`} />
@@ -706,48 +716,59 @@ export default function ResultsViewerPage() {
 
                 {isDataDropdownOpen && selectedModel && modelTask && (
                   <div className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-64 overflow-y-auto">
-                    {/* Filter datasets by: 1. Not the training dataset 2. Same data_level 3. Same task type (classification vs survival) */}
-                    {tasks.filter(t => {
-                      // Exclude model's training dataset
-                      if (t.task_id === selectedModel.task_id) return false
-                      // Must match data_level (WSI <-> WSI, Patch <-> Patch)
-                      const modelDataLevel = modelTask.data_level || 'wsi'
-                      const taskDataLevel = t.data_level || 'wsi'
-                      if (modelDataLevel !== taskDataLevel) return false
+                    {/* Filter datasets by: 1. Same data_type 2. Matching task type 3. Class count match (classification) 4. No WSI overlap */}
+                    {validationDatasets.filter(ds => {
+                      // Must match data_type (WSI <-> WSI, Patch <-> Patch)
+                      const modelDataType = modelTask.data_level || 'wsi'
+                      if (ds.data_type !== modelDataType) return false
                       // Must match task type (Classification <-> Classification, Survival <-> Survival)
                       const modelIsSurvival = isSurvivalTask(modelTask.model_type)
-                      const taskIsSurvival = isSurvivalTask(t.model_type)
-                      if (modelIsSurvival !== taskIsSurvival) return false
+                      const datasetIsSurvival = ds.task_type === 'survival' || ds.task_type === 'survival_prediction'
+                      if (modelIsSurvival !== datasetIsSurvival) return false
+                      // For classification: must match class count (not class names)
+                      if (!modelIsSurvival) {
+                        const modelClassCount = selectedModel.classes?.length || 0
+                        if (modelClassCount !== ds.distinct_label_count) return false
+                      }
+                      // Exclude datasets with WSI overlap (prevent data leakage)
+                      const modelWsiIds = new Set(modelTask.wsi_ids || [])
+                      if (modelWsiIds.size > 0 && ds.wsi_ids?.some(id => modelWsiIds.has(id))) return false
                       return true
-                    }).map(task => (
+                    }).map(dataset => (
                       <button
-                        key={task.task_id}
-                        onClick={() => { setDataTaskId(task.task_id); setIsDataDropdownOpen(false); }}
+                        key={dataset.dataset_id}
+                        onClick={() => { setDatasetId(dataset.dataset_id); setIsDataDropdownOpen(false); }}
                         className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
-                          dataTaskId === task.task_id ? 'bg-gray-100' : ''
+                          datasetId === dataset.dataset_id ? 'bg-gray-100' : ''
                         }`}
                       >
                         <div>
-                          <div className="font-medium text-gray-900">{task.name}</div>
-                          <div className="text-xs text-gray-500">{task.ai_results_count} slides • {task.data_level?.toUpperCase() || 'WSI'}</div>
+                          <div className="font-medium text-gray-900">{dataset.name}</div>
+                          <div className="text-xs text-gray-500">
+                            {dataset.display_count || 0} {dataset.aggregation_level === 'case' ? 'cases' : 'slides'} • {dataset.data_type?.toUpperCase() || 'WSI'}
+                          </div>
                         </div>
-                        {dataTaskId === task.task_id && <CheckCircle2 className="w-4 h-4 text-gray-600" />}
+                        {datasetId === dataset.dataset_id && <CheckCircle2 className="w-4 h-4 text-gray-600" />}
                       </button>
                     ))}
-                    {tasks.filter(t => {
-                      if (t.task_id === selectedModel.task_id) return false
-                      const modelDataLevel = modelTask.data_level || 'wsi'
-                      const taskDataLevel = t.data_level || 'wsi'
-                      if (modelDataLevel !== taskDataLevel) return false
+                    {validationDatasets.filter(ds => {
+                      const modelDataType = modelTask.data_level || 'wsi'
+                      if (ds.data_type !== modelDataType) return false
                       const modelIsSurvival = isSurvivalTask(modelTask.model_type)
-                      const taskIsSurvival = isSurvivalTask(t.model_type)
-                      if (modelIsSurvival !== taskIsSurvival) return false
+                      const datasetIsSurvival = ds.task_type === 'survival' || ds.task_type === 'survival_prediction'
+                      if (modelIsSurvival !== datasetIsSurvival) return false
+                      if (!modelIsSurvival) {
+                        const modelClassCount = selectedModel.classes?.length || 0
+                        if (modelClassCount !== ds.distinct_label_count) return false
+                      }
+                      const modelWsiIds = new Set(modelTask.wsi_ids || [])
+                      if (modelWsiIds.size > 0 && ds.wsi_ids?.some(id => modelWsiIds.has(id))) return false
                       return true
                     }).length === 0 && (
                       <div className="px-4 py-8 text-center text-gray-500">
                         <p className="font-medium">No compatible datasets</p>
                         <p className="text-xs mt-1">
-                          Looking for: {modelTask.data_level?.toUpperCase() || 'WSI'} level, {isSurvivalTask(modelTask.model_type) ? 'Survival' : 'Classification'} type
+                          Looking for: {modelTask.data_level?.toUpperCase() || 'WSI'} level, {isSurvivalTask(modelTask.model_type) ? 'Survival' : 'Classification'} type, matching class count, no WSI overlap
                         </p>
                       </div>
                     )}
@@ -759,7 +780,7 @@ export default function ResultsViewerPage() {
             {/* Run Validation Button */}
             <Button
               onClick={startExternalValidation}
-              disabled={!selectedModelId || !dataTaskId || (selectedModel?.task_id === dataTaskId) || (validationProgress?.status === 'running')}
+              disabled={!selectedModelId || !datasetId || (validationProgress?.status === 'running')}
               className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 gap-2 shadow-lg shadow-orange-600/20"
             >
               {validationProgress?.status === 'running' ? (

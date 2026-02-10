@@ -364,6 +364,57 @@ class DatasetRepository:
         await db.flush()
         return result.rowcount > 0
 
+    @staticmethod
+    async def get_wsi_ids(db: AsyncSession, dataset_id: str) -> List[str]:
+        """Get all WSI IDs in a dataset."""
+        result = await db.execute(
+            select(WSISlide.wsi_id).where(WSISlide.dataset_id == dataset_id)
+        )
+        return [row[0] for row in result.all()]
+
+    @staticmethod
+    async def get_wsi_case_ids(db: AsyncSession, dataset_id: str) -> Dict[str, str]:
+        """Get case_id mapping for all WSIs in a dataset.
+
+        Returns:
+            Dict mapping wsi_id to case_id. If case_id is None, uses wsi_id as fallback.
+        """
+        result = await db.execute(
+            select(WSISlide.wsi_id, WSISlide.case_id)
+            .where(WSISlide.dataset_id == dataset_id)
+        )
+        case_id_map: Dict[str, str] = {}
+        for row in result.all():
+            wsi_id, case_id = row[0], row[1]
+            case_id_map[wsi_id] = case_id if case_id else wsi_id
+        return case_id_map
+
+    @staticmethod
+    async def get_aggregation_level(db: AsyncSession, dataset_id: str) -> Optional[str]:
+        """Get the aggregation_level of a dataset via its DataGroup.
+
+        Returns:
+            'case' or 'file', or None if dataset not found.
+        """
+        result = await db.execute(
+            select(DataGroup.aggregation_level)
+            .join(Dataset, Dataset.group_id == DataGroup.group_id)
+            .where(Dataset.dataset_id == dataset_id)
+            .limit(1)
+        )
+        row = result.first()
+        return row[0] if row else None
+
+    @staticmethod
+    async def get_distinct_label_count(db: AsyncSession, dataset_id: str) -> int:
+        """Get the count of distinct non-null labels in a dataset."""
+        result = await db.execute(
+            select(func.count(func.distinct(WSISlide.label)))
+            .where(WSISlide.dataset_id == dataset_id)
+            .where(WSISlide.label.isnot(None))
+        )
+        return result.scalar() or 0
+
 
 class WSIRepository:
     """Repository for WSI Slide operations"""
@@ -2658,6 +2709,28 @@ class TrainingTaskRepository:
             .where(TrainingTaskWSI.task_id == task_id)
         )
         return [row[0] for row in result.all()]
+
+    @staticmethod
+    async def get_wsi_ids_batch(db: AsyncSession, task_ids: List[str]) -> Dict[str, List[str]]:
+        """Get all WSI IDs for multiple tasks in a single query (batch operation).
+
+        Args:
+            db: Database session
+            task_ids: List of task IDs to get WSI IDs for
+
+        Returns:
+            Dict mapping task_id to list of wsi_ids. Tasks with no WSIs will have empty list.
+        """
+        if not task_ids:
+            return {}
+        result = await db.execute(
+            select(TrainingTaskWSI.task_id, TrainingTaskWSI.wsi_id)
+            .where(TrainingTaskWSI.task_id.in_(task_ids))
+        )
+        wsi_ids_by_task: Dict[str, List[str]] = {tid: [] for tid in task_ids}
+        for row in result.all():
+            wsi_ids_by_task[row[0]].append(row[1])
+        return wsi_ids_by_task
 
     @staticmethod
     async def get_wsi_counts_batch(db: AsyncSession, task_ids: List[str]) -> Dict[str, int]:

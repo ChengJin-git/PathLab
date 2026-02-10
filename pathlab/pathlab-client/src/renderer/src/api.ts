@@ -1162,15 +1162,44 @@ export interface InferenceTaskResponse {
 }
 
 /**
- * Start external validation - use a trained model on data from a different task
+ * Dataset info for external validation selection
+ */
+export interface ValidationDataset {
+  dataset_id: string
+  name: string
+  data_type: string
+  aggregation_level: string
+  task_type: string
+  total_wsi_count: number
+  total_case_count: number
+  display_count: number
+  distinct_label_count: number
+  wsi_ids: string[]
+}
+
+/**
+ * Fetch datasets available for external validation selection
+ * @returns List of datasets with metadata for filtering
+ * @throws {ApiError} If the request fails
+ */
+export async function fetchDatasetsForValidation(): Promise<{ items: ValidationDataset[]; total: number }> {
+  return apiFetch<{ items: ValidationDataset[]; total: number }>(
+    `${API_BASE}/results/datasets-for-validation`,
+    {},
+    'Failed to fetch datasets for validation'
+  )
+}
+
+/**
+ * Start external validation - use a trained model on data from a dataset
  * @param modelId - TrainedModel ID
- * @param dataTaskId - Task ID whose WSIs will be used for validation
+ * @param datasetId - Dataset ID whose WSIs will be used for validation
  * @returns Task response with task_id for tracking progress
  * @throws {ApiError} If the request fails
  */
 export async function startExternalValidation(
   modelId: string,
-  dataTaskId: string,
+  datasetId: string,
   metrics?: string[],
   charts?: string[],
   computeBootstrapCI?: boolean
@@ -1182,7 +1211,7 @@ export async function startExternalValidation(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model_id: modelId,
-        data_task_id: dataTaskId,
+        dataset_id: datasetId,
         metrics: metrics,
         charts: charts,
         compute_bootstrap_ci: computeBootstrapCI

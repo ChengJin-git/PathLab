@@ -24,8 +24,8 @@ from sqlalchemy.orm import selectinload
 
 from backend.ai.schemas.base import TaskStatus
 from backend.database import get_db, safe_session
-from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedModel, TrainingTaskWSI, DataGroup
-from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository, TrainedModelRepository, DataGroupRepository
+from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedModel, TrainingTaskWSI, DataGroup, Dataset
+from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository, TrainedModelRepository, DataGroupRepository, DatasetRepository
 from backend.common.config import Config
 from backend.storage import StorageManager
 from backend.auth import current_active_user, User, get_user_from_header_or_param, get_user_from_token_param
@@ -475,15 +475,47 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
     uploads_dir = Config.get_uploads_dir()
     results = {}
 
-    # Step 0: Get data_type (via DataGroup) for all tasks
+    # Step 0: Get data_type and aggregation_level (via DataGroup) for all tasks
     task_types_query = (
-        select(TrainingTask.task_id, DataGroup.data_type)
+        select(TrainingTask.task_id, DataGroup.data_type, DataGroup.aggregation_level)
         .join(DataGroup, TrainingTask.group_id == DataGroup.group_id)
         .where(TrainingTask.task_id.in_(task_ids))
     )
     task_types_result = await db.execute(task_types_query)
-    # data_type is 'wsi' or 'patch' (previously called data_level in some contexts)
-    task_data_types = {row[0]: row[1] for row in task_types_result.all()}
+    # data_type is 'wsi' or 'patch', aggregation_level is 'file' or 'case'
+    task_data_types = {}
+    task_aggregation_levels = {}
+    for row in task_types_result.all():
+        task_data_types[row[0]] = row[1]
+        task_aggregation_levels[row[0]] = row[2]
+
+    # Step 0.5: Get total WSI count for all tasks (for external validation display)
+    total_wsi_count_query = (
+        select(
+            TrainingTaskWSI.task_id,
+            func.count(TrainingTaskWSI.wsi_id).label('count')
+        )
+        .where(TrainingTaskWSI.task_id.in_(task_ids))
+        .group_by(TrainingTaskWSI.task_id)
+    )
+    total_wsi_count_result = await db.execute(total_wsi_count_query)
+    total_wsi_by_task = {row[0]: row[1] for row in total_wsi_count_result.all()}
+
+    # Step 0.6: For case-level tasks, count distinct case_ids
+    case_level_task_ids = [tid for tid in task_ids if task_aggregation_levels.get(tid) == "case"]
+    total_case_by_task = {}
+    if case_level_task_ids:
+        total_case_count_query = (
+            select(
+                TrainingTaskWSI.task_id,
+                func.count(func.distinct(WSISlide.case_id)).label('count')
+            )
+            .join(WSISlide, TrainingTaskWSI.wsi_id == WSISlide.wsi_id)
+            .where(TrainingTaskWSI.task_id.in_(case_level_task_ids))
+            .group_by(TrainingTaskWSI.task_id)
+        )
+        total_case_count_result = await db.execute(total_case_count_query)
+        total_case_by_task = {row[0]: row[1] for row in total_case_count_result.all()}
 
     # Step 1: Find which tasks have test sets defined
     tasks_with_test_set_query = (
@@ -577,12 +609,20 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
         ai_results_count = ai_results_by_task.get(task_id, 0)
         has_ai_results = ai_results_count > 0
 
+        # Get total WSI count and case count for this task
+        total_wsi_count = total_wsi_by_task.get(task_id, 0)
+        total_case_count = total_case_by_task.get(task_id, 0)
+        aggregation_level = task_aggregation_levels.get(task_id, "file")
+
         results[task_id] = {
             "has_features": has_features,
             "has_model": has_model,
             "model_id": model_id,
             "has_ai_results": has_ai_results,
             "ai_results_count": ai_results_count,
+            "total_wsi_count": total_wsi_count,
+            "total_case_count": total_case_count,
+            "aggregation_level": aggregation_level,
         }
 
     return results
@@ -601,6 +641,9 @@ async def _check_task_resources(task_id: str, db: AsyncSession) -> dict:
         "model_id": None,
         "has_ai_results": False,
         "ai_results_count": 0,
+        "total_wsi_count": 0,
+        "total_case_count": 0,
+        "aggregation_level": "file",
     })
 
 
@@ -639,6 +682,9 @@ async def get_analysis_tasks(
     task_ids = [task.task_id for task in tasks]
     all_resources = await _check_task_resources_batch(task_ids, db)
 
+    # Batch get WSI IDs for all tasks (for frontend WSI overlap detection)
+    all_wsi_ids_by_task = await TrainingTaskRepository.get_wsi_ids_batch(db, task_ids)
+
     for task in tasks:
         resources = all_resources.get(task.task_id, {
             "has_features": False,
@@ -646,6 +692,9 @@ async def get_analysis_tasks(
             "model_id": None,
             "has_ai_results": False,
             "ai_results_count": 0,
+            "total_wsi_count": 0,
+            "total_case_count": 0,
+            "aggregation_level": "file",
         })
 
         # Get data_type and task_type from DataGroup relationship
@@ -675,11 +724,19 @@ async def get_analysis_tasks(
             split_config = task.preprocessing_config.get("split_config", {})
             is_kfold = split_config.get("strategy") == "k_fold"
 
+        # Determine display count based on aggregation_level
+        aggregation_level = resources.get("aggregation_level", "file")
+        if aggregation_level == "case":
+            display_count = resources["total_case_count"]
+        else:
+            display_count = resources["total_wsi_count"]
+
         task_list.append({
             "task_id": task.task_id,
             "name": task.task_name or task.task_id,
             "model_type": task_type,
             "data_level": data_type,  # For frontend filtering (data_type: 'wsi' or 'patch')
+            "aggregation_level": aggregation_level,  # 'file' or 'case'
             "status": task.status,
             "created_at": task.created_at.isoformat() + 'Z' if task.created_at else None,
             "has_analysis": has_analysis,
@@ -689,6 +746,10 @@ async def get_analysis_tasks(
             "model_id": resources["model_id"],
             "has_ai_results": resources["has_ai_results"],
             "ai_results_count": resources["ai_results_count"],
+            "total_wsi_count": resources["total_wsi_count"],
+            "total_case_count": resources["total_case_count"],
+            "display_count": display_count,  # Count based on aggregation level
+            "wsi_ids": all_wsi_ids_by_task.get(task.task_id, []),  # For WSI overlap detection
             "is_kfold": is_kfold,
             "source": "database"
         })
@@ -1755,10 +1816,67 @@ async def _run_inference_wsi_survival(
     }
 
 
+@router.get("/datasets-for-validation")
+async def get_datasets_for_validation(
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    List all datasets available for external validation selection.
+    Returns dataset metadata including aggregation_level, task_type, data_type,
+    slide/case counts, distinct label count, and WSI IDs (for overlap detection).
+    """
+    datasets = await DatasetRepository.get_all(db)
+    result = []
+    for ds in datasets:
+        dg = ds.data_group
+        if not dg:
+            continue
+
+        # Skip external_validation datasets - only show real datasets
+        if dg.task_type == "external_validation":
+            continue
+
+        dataset_id = ds.dataset_id
+
+        # Get WSI IDs
+        wsi_ids = await DatasetRepository.get_wsi_ids(db, dataset_id)
+        if not wsi_ids:
+            continue  # Skip empty datasets
+
+        # Get distinct label count (for classification matching)
+        distinct_label_count = await DatasetRepository.get_distinct_label_count(db, dataset_id)
+
+        # Get case count for case-level datasets
+        total_wsi_count = len(wsi_ids)
+        total_case_count = total_wsi_count
+        if dg.aggregation_level == "case":
+            case_map = await DatasetRepository.get_wsi_case_ids(db, dataset_id)
+            total_case_count = len(set(case_map.values()))
+
+        # Determine display count based on aggregation_level
+        display_count = total_case_count if dg.aggregation_level == "case" else total_wsi_count
+
+        result.append({
+            "dataset_id": dataset_id,
+            "name": ds.name,
+            "data_type": dg.data_type,
+            "aggregation_level": dg.aggregation_level,
+            "task_type": dg.task_type,
+            "total_wsi_count": total_wsi_count,
+            "total_case_count": total_case_count,
+            "display_count": display_count,
+            "distinct_label_count": distinct_label_count,
+            "wsi_ids": wsi_ids,
+        })
+
+    return {"items": result, "total": len(result)}
+
+
 class ExternalValidationRequest(BaseModel):
-    """Request for external validation - use a trained model on data from a task."""
+    """Request for external validation - use a trained model on a dataset."""
     model_id: str  # TrainedModel ID from the models table
-    data_task_id: str   # Task whose WSIs will be used for validation
+    dataset_id: str   # Dataset whose WSIs will be used for validation
     # Analysis options
     metrics: Optional[List[str]] = None  # Metrics to compute (default: accuracy, precision, recall, f1, auc)
     charts: Optional[List[str]] = None  # Charts to generate (default: confusion_matrix, roc_curve)
@@ -1773,7 +1891,7 @@ async def start_external_validation(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Start external validation: use a trained model to run inference on WSIs from data_task_id.
+    Start external validation: use a trained model to run inference on WSIs from a dataset.
     Requires pathologist/admin role OR temporary elevated permission for the dataset.
     Users can only validate with models/data they own.
 
@@ -1802,39 +1920,22 @@ async def start_external_validation(
     if not model_task:
         raise HTTPException(status_code=404, detail=f"Model's training task not found: {trained_model.task_id}")
 
-    # Validate data task
-    data_task = await TrainingTaskRepository.get_by_id(db, req.data_task_id)
-    if not data_task:
-        raise HTTPException(status_code=404, detail=f"Data task not found: {req.data_task_id}")
+    # Validate target dataset exists
+    target_dataset = await DatasetRepository.get_by_id(db, req.dataset_id)
+    if not target_dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset not found: {req.dataset_id}")
 
-    # Check ownership of the data task
-    if not check_data_ownership(data_task.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to use this data task")
+    # Check ownership of the dataset
+    if target_dataset.user_id and not check_data_ownership(target_dataset.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to use this dataset")
 
-    # Check GPU permission for the data task's datasets
-    # Get all dataset_ids involved in the data task
-    data_wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, req.data_task_id)
-    if data_wsi_ids:
-        # Batch fetch all WSIs to avoid N+1 query problem
-        wsi_map = await WSIRepository.get_by_ids(db, data_wsi_ids)
-
-        # Extract unique dataset_ids
-        dataset_ids_to_check = set(
-            wsi.dataset_id for wsi in wsi_map.values()
-            if wsi.dataset_id
+    # Check GPU permission for the target dataset
+    has_permission = await check_dataset_gpu_permission(user, req.dataset_id, db)
+    if not has_permission and not user.can_use_gpu():
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have GPU permission for this dataset. Contact admin for temporary access."
         )
-
-        # Check GPU permission for each unique dataset
-        for dataset_id in dataset_ids_to_check:
-            has_permission = await check_dataset_gpu_permission(user, dataset_id, db)
-            if not has_permission:
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"You don't have GPU permission for dataset. Contact admin for temporary access."
-                )
-    elif not user.can_use_gpu():
-        # No WSIs found, fall back to role check
-        raise HTTPException(status_code=403, detail="GPU operations require pathologist or admin role")
 
     # ========================================================================
     # COMPATIBILITY VALIDATION
@@ -1842,11 +1943,11 @@ async def start_external_validation(
 
     # Get data_type and task_type from DataGroup relationships
     model_data_group = model_task.data_group
-    data_task_data_group = data_task.data_group
+    target_data_group = target_dataset.data_group
 
     # 1. Validate data_type compatibility (WSI model <-> WSI data, Patch model <-> Patch data)
     model_data_type = model_data_group.data_type if model_data_group else "wsi"
-    target_data_type = data_task_data_group.data_type if data_task_data_group else "wsi"
+    target_data_type = target_data_group.data_type if target_data_group else "wsi"
     if model_data_type != target_data_type:
         raise HTTPException(
             status_code=400,
@@ -1863,7 +1964,7 @@ async def start_external_validation(
         return task_type in ("survival_prediction", "wsi_survival", "survival")
 
     model_task_type = model_data_group.task_type if model_data_group else "classification"
-    target_task_type = data_task_data_group.task_type if data_task_data_group else "classification"
+    target_task_type = target_data_group.task_type if target_data_group else "classification"
 
     model_is_classification = is_classification_task(model_task_type)
     target_is_classification = is_classification_task(target_task_type)
@@ -1886,18 +1987,34 @@ async def start_external_validation(
                    f"Please select a survival dataset."
         )
 
-    # 3. Prevent validating on the same dataset used for training
-    if req.data_task_id == trained_model.task_id:
+    # 3. Validate class count matching (for classification tasks)
+    if model_is_classification and target_is_classification:
+        model_class_count = len(trained_model.classes) if trained_model.classes else 0
+        dataset_label_count = await DatasetRepository.get_distinct_label_count(db, req.dataset_id)
+        if model_class_count != dataset_label_count:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Class count mismatch: Model predicts {model_class_count} classes, "
+                       f"but dataset has {dataset_label_count} distinct labels. "
+                       f"Please select a dataset with {model_class_count} classes."
+            )
+
+    # Get WSI IDs from target dataset
+    wsi_ids = await DatasetRepository.get_wsi_ids(db, req.dataset_id)
+    if not wsi_ids:
+        raise HTTPException(status_code=400, detail=f"No WSI IDs found for dataset: {req.dataset_id}")
+
+    # 4. Prevent validating on data that overlaps with training data (WSI-level check)
+    model_wsi_ids = set(await TrainingTaskRepository.get_wsi_ids(db, trained_model.task_id))
+    data_wsi_ids = set(wsi_ids)
+    overlapping_wsi_ids = model_wsi_ids & data_wsi_ids
+    if overlapping_wsi_ids:
         raise HTTPException(
             status_code=400,
-            detail=f"Cannot validate model on its own training dataset. "
-                   f"Please select a different dataset for external validation."
+            detail=f"Data leakage detected: {len(overlapping_wsi_ids)} WSI(s) in the selected dataset "
+                   f"were also used in the model's training data. "
+                   f"Please select a dataset with no overlapping slides for external validation."
         )
-
-    # Get WSI IDs from data task
-    wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, req.data_task_id)
-    if not wsi_ids:
-        raise HTTPException(status_code=400, detail=f"No WSI IDs found for data task: {req.data_task_id}")
 
     # Check if inference results already exist for this model + data combination
     # Look for existing extval_*_result.json files in the WSI ai_results directories
@@ -1965,7 +2082,7 @@ async def start_external_validation(
             task_id=existing_validation_id,
             model_task_id=trained_model.task_id,
             model_id=req.model_id,
-            data_task_id=req.data_task_id,
+            dataset_id=req.dataset_id,
             metrics=analysis_metrics,
             charts=analysis_charts,
             bootstrap_ci_metrics=bootstrap_ci_metrics,
@@ -1985,7 +2102,7 @@ async def start_external_validation(
     # Get or create DataGroup for external validation
     # Use the same data_type as the target dataset, with "external_validation" task_type
     # and the target dataset's aggregation level
-    target_aggregation_level = data_task_data_group.aggregation_level if data_task_data_group else "file"
+    target_aggregation_level = target_data_group.aggregation_level if target_data_group else "file"
     validation_data_group = await DataGroupRepository.get_or_create(
         db,
         data_type=target_data_type,
@@ -1997,9 +2114,9 @@ async def start_external_validation(
     from backend.database.models import TrainingTask
     validation_task = TrainingTask(
         task_id=validation_id,
-        task_name=f"External Validation: {trained_model.model_name} → {data_task.task_name or req.data_task_id}",
+        task_name=f"External Validation: {trained_model.model_name} → {target_dataset.name or req.dataset_id}",
         group_id=validation_data_group.group_id,
-        task_description=f"Validate model '{trained_model.model_name}' on dataset '{data_task.task_name}'",
+        task_description=f"Validate model '{trained_model.model_name}' on dataset '{target_dataset.name}'",
         status=TaskStatus.PENDING,
         progress=0,
         classes=trained_model.classes,
@@ -2009,7 +2126,7 @@ async def start_external_validation(
         model_config={
             "model_id": req.model_id,
             "model_task_id": trained_model.task_id,
-            "data_task_id": req.data_task_id,
+            "dataset_id": req.dataset_id,
             "total_wsi": len(wsi_ids),
             # Store analysis options for auto-triggered analysis
             "analysis_metrics": analysis_metrics,
@@ -2023,7 +2140,7 @@ async def start_external_validation(
 
     logger.info(f"Created external validation task: {validation_id}")
     logger.info(f"  - Model: {trained_model.model_name} ({req.model_id})")
-    logger.info(f"  - Target dataset: {data_task.task_name} ({req.data_task_id})")
+    logger.info(f"  - Target dataset: {target_dataset.name} ({req.dataset_id})")
     logger.info(f"  - WSI count: {len(wsi_ids)}")
     logger.info(f"  - Bootstrap CI: {req.compute_bootstrap_ci}")
 
@@ -2034,7 +2151,7 @@ async def start_external_validation(
         "model_id": req.model_id,
         "model_classes": trained_model.classes,
         "model_task_type": model_task_type,  # Pass model's task type for survival vs classification handling
-        "data_task_id": req.data_task_id,
+        "dataset_id": req.dataset_id,
         "wsi_ids": wsi_ids,
     }
     await task_queue.submit(
@@ -2048,7 +2165,7 @@ async def start_external_validation(
         "task_id": validation_id,
         "status": TaskStatus.PENDING,
         "total_wsi": len(wsi_ids),
-        "message": f"External validation queued. Use model '{trained_model.model_name}' on {len(wsi_ids)} WSIs from '{data_task.task_name or req.data_task_id}'",
+        "message": f"External validation queued. Use model '{trained_model.model_name}' on {len(wsi_ids)} WSIs from '{target_dataset.name or req.dataset_id}'",
     }
 
 
@@ -2082,7 +2199,7 @@ async def get_validation_progress(
         "processed_wsi": model_config.get("processed_wsi", 0),
         "model_id": model_config.get("model_id"),
         "model_task_id": model_config.get("model_task_id"),
-        "data_task_id": model_config.get("data_task_id"),
+        "dataset_id": model_config.get("dataset_id"),
         "error": task.error_message,
         "results_count": model_config.get("results_count"),
     }
@@ -2094,14 +2211,14 @@ async def _run_external_validation(
     model_id: str,
     model_classes: List[str],
     model_task_type: str,  # "classification", "wsi_classification", "survival_prediction", "wsi_survival"
-    data_task_id: str,
+    dataset_id: str,
     wsi_ids: List[str],
 ):
     """Background task to run external validation.
 
     This function is called by the task queue and updates progress in the database.
     Supports both classification and survival models.
-    Supports case-level inference based on the test dataset's data_level.
+    Supports case-level inference based on the target dataset's aggregation_level.
     """
     import torch
     import torch.nn.functional as F
@@ -2215,14 +2332,14 @@ async def _run_external_validation(
         wsi_case_map: Dict[str, str] = {}
 
         async for db in get_db():
-            # Get aggregation_level from test dataset
-            aggregation_level = await TrainingTaskRepository.get_dataset_aggregation_level(db, data_task_id)
+            # Get aggregation_level from target dataset
+            aggregation_level = await DatasetRepository.get_aggregation_level(db, dataset_id)
             is_case_level = aggregation_level == "case"
-            logger.info(f"External validation: test dataset aggregation_level = {aggregation_level}, is_case_level = {is_case_level}")
+            logger.info(f"External validation: target dataset aggregation_level = {aggregation_level}, is_case_level = {is_case_level}")
 
             if is_case_level:
                 # Get case_id mapping for case-level inference
-                wsi_case_map = await TrainingTaskRepository.get_wsi_case_ids(db, data_task_id)
+                wsi_case_map = await DatasetRepository.get_wsi_case_ids(db, dataset_id)
                 logger.info(f"External validation: loaded case_id mapping for {len(wsi_case_map)} WSIs")
 
             if is_survival:
@@ -2247,8 +2364,42 @@ async def _run_external_validation(
                         labels[wsi_id] = classes.index(wsi.label)
             break
 
-        # Load features from data task
-        features_dir = uploads_dir / "training" / data_task_id / "features"
+        # Build features directory for this validation task by symlinking features
+        # from all training task directories that contain features for the target WSIs.
+        # Features are stored per-task at: uploads_dir / "training" / {task_id} / "features" / {wsi_id}.pt
+        # Since we're selecting by dataset_id, we search across all training task directories.
+        features_dir = uploads_dir / "training" / task_id / "features"
+        features_dir.mkdir(parents=True, exist_ok=True)
+
+        training_base = uploads_dir / "training"
+        wsi_id_set = set(wsi_ids)
+        found_wsi_ids = set()
+
+        def _build_feature_symlinks():
+            """Search all training task feature dirs and symlink found features."""
+            if not training_base.exists():
+                return
+            for task_dir in training_base.iterdir():
+                if not task_dir.is_dir():
+                    continue
+                task_features = task_dir / "features"
+                if not task_features.is_dir():
+                    continue
+                for wsi_id in wsi_id_set - found_wsi_ids:
+                    src = task_features / f"{wsi_id}.pt"
+                    dst = features_dir / f"{wsi_id}.pt"
+                    if src.exists() and not dst.exists():
+                        try:
+                            dst.symlink_to(src.resolve())
+                            found_wsi_ids.add(wsi_id)
+                        except OSError:
+                            pass
+                if found_wsi_ids == wsi_id_set:
+                    break  # All features found
+
+        await asyncio.to_thread(_build_feature_symlinks)
+        logger.info(f"External validation: found features for {len(found_wsi_ids)}/{len(wsi_ids)} WSIs across training tasks")
+
         ai_results_root = uploads_dir / "ai_results"
 
         results_saved = 0
@@ -2425,7 +2576,7 @@ async def _run_external_validation(
                                 "wsi_id": wsi_id,
                                 "case_id": case_id,
                                 "task_id": model_task_id,
-                                "validation_source": data_task_id,
+                                "validation_source": dataset_id,
                                 "validation_task_id": task_id,
                                 "task_type": "survival",
                                 "aggregation_level": "case",
@@ -2443,7 +2594,7 @@ async def _run_external_validation(
                                 "wsi_id": wsi_id,
                                 "case_id": case_id,
                                 "task_id": model_task_id,
-                                "validation_source": data_task_id,
+                                "validation_source": dataset_id,
                                 "validation_task_id": task_id,
                                 "task_type": "classification",
                                 "aggregation_level": "case",
@@ -2605,7 +2756,7 @@ async def _run_external_validation(
                         result_data = {
                             "wsi_id": wsi_id,
                             "task_id": model_task_id,
-                            "validation_source": data_task_id,
+                            "validation_source": dataset_id,
                             "validation_task_id": task_id,
                             "task_type": "survival",
                             "aggregation_level": "file",
@@ -2628,7 +2779,7 @@ async def _run_external_validation(
                         result_data = {
                             "wsi_id": wsi_id,
                             "task_id": model_task_id,
-                            "validation_source": data_task_id,
+                            "validation_source": dataset_id,
                             "validation_task_id": task_id,
                             "task_type": "classification",
                             "aggregation_level": "file",
@@ -2695,7 +2846,7 @@ async def _run_external_validation(
             task_id=task_id,
             model_task_id=model_task_id,
             model_id=model_id,
-            data_task_id=data_task_id,
+            dataset_id=dataset_id,
         )
 
     except Exception as e:
@@ -2708,7 +2859,7 @@ async def _auto_trigger_external_validation_analysis(
     task_id: str,
     model_task_id: str,
     model_id: str,
-    data_task_id: str,
+    dataset_id: str,
     metrics: Optional[List[str]] = None,
     charts: Optional[List[str]] = None,
     bootstrap_ci_metrics: Optional[List[str]] = None,
@@ -2727,7 +2878,7 @@ async def _auto_trigger_external_validation_analysis(
         task_id: The external validation task ID
         model_task_id: The original training task ID of the model
         model_id: The trained model ID
-        data_task_id: The target dataset task ID
+        dataset_id: The target dataset ID
         metrics: Optional list of metrics to compute (default: accuracy, precision, recall, f1, auc)
         charts: Optional list of charts to generate (default: confusion_matrix, roc_curve)
         bootstrap_ci_metrics: Optional list of metrics to compute 95% CI for
@@ -2761,15 +2912,15 @@ async def _auto_trigger_external_validation_analysis(
             # Build title for the analysis
             model_config = task.model_config or {}
             source_name = model_id
-            target_name = data_task_id
+            target_name = dataset_id
 
             try:
                 model = await TrainedModelRepository.get_by_id(db, model_id)
                 if model:
                     source_name = model.model_name or model_id
-                data_task = await TrainingTaskRepository.get_by_id(db, data_task_id)
-                if data_task:
-                    target_name = data_task.task_name or data_task_id
+                target_ds = await DatasetRepository.get_by_id(db, dataset_id)
+                if target_ds:
+                    target_name = target_ds.name or dataset_id
             except Exception:
                 pass
 
@@ -2924,18 +3075,19 @@ async def run_task_analysis(
         # Extract source and target from task_name or model_config
         model_config = task.model_config or {}
         model_id = model_config.get("model_id", "")
-        data_task_id = model_config.get("data_task_id", "")
+        dataset_id = model_config.get("dataset_id", "")
 
-        # Try to get model name from trained_models table
+        # Try to get model name and dataset name
         source_name = model_id
-        target_name = data_task_id
+        target_name = dataset_id
         try:
             model = await TrainedModelRepository.get_by_id(db, model_id)
             if model:
                 source_name = model.model_name or model_id
-            data_task = await TrainingTaskRepository.get_by_id(db, data_task_id)
-            if data_task:
-                target_name = data_task.task_name or data_task_id
+            if dataset_id:
+                target_ds = await DatasetRepository.get_by_id(db, dataset_id)
+                if target_ds:
+                    target_name = target_ds.name or dataset_id
         except Exception:
             pass
 
@@ -5075,7 +5227,7 @@ async def _run_external_validation_analysis(task, request, db, progress_callback
 
     # Get model_config to find metadata
     model_config = task.model_config or {}
-    data_task_id = model_config.get("data_task_id")
+    dataset_id = model_config.get("dataset_id")
 
     # First pass: detect task type from result files
     ai_results_dir = Config.get_uploads_dir() / "ai_results"
@@ -5116,7 +5268,7 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     p_ci_end = progress_config.get("ci_end", 95)
 
     task_id = task.task_id
-    data_task_id = model_config.get("data_task_id")
+    dataset_id = model_config.get("dataset_id")
     model_task_id = model_config.get("model_task_id")
 
     risks = []
@@ -5305,7 +5457,7 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
         "metrics": metrics,
         "requested_metrics": request.metrics,
         "requested_charts": request.charts,
-        "data_task_id": data_task_id,
+        "dataset_id": dataset_id,
         "model_id": model_config.get("model_id"),
         "model_task_id": model_task_id,
         "aggregation_level": aggregation_level,
@@ -5369,7 +5521,7 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
     probs_list = []
     wsi_results = []
 
-    data_task_id = model_config.get("data_task_id")
+    dataset_id = model_config.get("dataset_id")
     model_task_id = model_config.get("model_task_id")
 
     # Metadata from result files (populated from first result)
@@ -5516,7 +5668,7 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
         "requested_charts": request.charts,
         "metrics": metrics_result["metrics"],
         "class_metrics": metrics_result["class_metrics"],
-        "data_task_id": data_task_id,
+        "dataset_id": dataset_id,
         "model_id": model_config.get("model_id"),
         "model_task_id": model_task_id,
         "aggregation_level": aggregation_level,
