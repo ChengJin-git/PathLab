@@ -757,6 +757,9 @@ export default function AIChatPage() {
       console.error('[VoiceSession] Error:', error)
       showToastRef.current('error', `Voice input error: ${error}`)
       setVoiceSessionActive(false)
+      setRealtimePartialText('')
+      // Don't restart voice after error
+      shouldRestartVoiceRef.current = false
     },
     silenceDurationMs: 800,  // Wait 800ms of silence before considering speech ended
     maxRecordingSeconds: 120  // 2 minute max per session
@@ -858,14 +861,21 @@ export default function AIChatPage() {
       }, 100)
     }
 
-    if (state?.autoStartRecording && !realtimeIsRecording && !voiceSessionActive) {
-      // Clear the autoStartRecording flag so it doesn't trigger again
+    if (state?.autoStartRecording) {
+      console.log('[VoiceSession] Auto-start recording triggered from navigation')
+
+      // Clear the autoStartRecording flag immediately to prevent re-triggering
+      // when useEffect runs again due to location change from navigate()
       navigate(location.pathname, { replace: true, state: { ...state, autoStartRecording: false } })
-      // Start voice session with realtime ASR
-      setVoiceSessionActive(true)
-      startRealtimeRecording()
+
+      // Start voice session with realtime ASR after a short delay to ensure everything is ready
+      setTimeout(() => {
+        console.log('[VoiceSession] Starting auto-recording')
+        setVoiceSessionActive(true)
+        startRealtimeRecording()
+      }, 100)
     }
-  }, [location.state, realtimeIsRecording, voiceSessionActive, startRealtimeRecording, navigate])
+  }, [location, startRealtimeRecording, navigate])
 
   const loadConversations = async () => {
     try {
@@ -1120,10 +1130,13 @@ export default function AIChatPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if ((!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isGenerating) return
+    // Use inputRef.current to get the latest value, avoiding stale closure issues
+    // when form is submitted programmatically (e.g., from voice transcription)
+    const currentInputValue = inputRef.current.trim()
+    if ((!currentInputValue && imageAttachments.length === 0 && fileAttachments.length === 0) || isGenerating) return
 
     // Build user message content with optional file info
-    let messageContent = input.trim()
+    let messageContent = currentInputValue
 
     // Append file attachment info to message content for AI to analyze
     if (fileAttachments.length > 0) {
@@ -1301,7 +1314,8 @@ export default function AIChatPage() {
       }, 100)
 
       // Check if we should restart voice session after LLM response
-      if (shouldRestartVoiceRef.current && voiceSessionActive) {
+      // Use voiceSessionActiveRef.current to get the latest value, avoiding stale closure
+      if (shouldRestartVoiceRef.current && voiceSessionActiveRef.current) {
         shouldRestartVoiceRef.current = false
 
         // Get the latest messages to check for VOICE_CONTROL block
@@ -1670,20 +1684,36 @@ export default function AIChatPage() {
     }
   }
 
-  // Stop AI generation
+  // Stop AI generation and voice recording
   const handleStopGeneration = useCallback(() => {
+    // Stop AI generation
     abortControllerRef.current?.abort()
-  }, [])
 
-  // Toggle voice session (continuous realtime ASR mode)
-  const toggleVoiceSession = useCallback(() => {
+    // Also stop voice recording if active
     if (voiceSessionActive || realtimeIsRecording) {
-      // Stop voice session
       setVoiceSessionActive(false)
       stopRealtimeRecording()
       setRealtimePartialText('')
+      // Don't restart voice after stopping
+      shouldRestartVoiceRef.current = false
+    }
+  }, [voiceSessionActive, realtimeIsRecording, stopRealtimeRecording])
+
+  // Toggle voice session (continuous realtime ASR mode)
+  const toggleVoiceSession = useCallback(() => {
+    console.log('[VoiceSession] Toggle called, current state:', { voiceSessionActive, realtimeIsRecording })
+
+    if (voiceSessionActive || realtimeIsRecording) {
+      // Stop voice session
+      console.log('[VoiceSession] Stopping voice session')
+      setVoiceSessionActive(false)
+      stopRealtimeRecording()
+      setRealtimePartialText('')
+      // Clear the restart flag when manually stopping
+      shouldRestartVoiceRef.current = false
     } else {
       // Start voice session
+      console.log('[VoiceSession] Starting voice session')
       setVoiceSessionActive(true)
       startRealtimeRecording()
     }
