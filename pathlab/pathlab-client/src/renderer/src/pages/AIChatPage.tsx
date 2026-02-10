@@ -87,6 +87,43 @@ interface FileAttachment {
   preview: string[] // first few rows for preview
 }
 
+/**
+ * Strip persistence-only fields from config blocks before sending message content to the AI API.
+ * This prevents the AI from seeing and copying fields like submitted_task_id into new responses,
+ * which would cause new config cards to initialize as already submitted.
+ */
+function sanitizeConfigBlocksForAI(content: string): string {
+  // Fields to strip per config block type
+  const PERSISTENCE_FIELDS: Record<string, string[]> = {
+    TASK_CONFIG: ['submitted_task_id'],
+    INFERENCE_CONFIG: ['submitted_task_id'],
+    ANALYSIS_CONFIG: ['submitted_analysis_id', 'external_validation_task_id'],
+    DATASET_REGISTRATION: ['submitted_task_id', 'submitted_file_count', 'submitted_dataset_name', 'submitted_mode'],
+  }
+
+  let sanitized = content
+  for (const [blockType, fields] of Object.entries(PERSISTENCE_FIELDS)) {
+    const regex = new RegExp(`\\[${blockType}\\]([\\s\\S]*?)\\[\\/${blockType}\\]`, 'g')
+    sanitized = sanitized.replace(regex, (match, json) => {
+      try {
+        const config = JSON.parse(json.trim())
+        let changed = false
+        for (const field of fields) {
+          if (field in config) {
+            delete config[field]
+            changed = true
+          }
+        }
+        if (!changed) return match
+        return `[${blockType}]\n${JSON.stringify(config, null, 2)}\n[/${blockType}]`
+      } catch {
+        return match
+      }
+    })
+  }
+  return sanitized
+}
+
 // Scenario cards for guided experience
 const SCENARIO_CARDS = [
   {
@@ -1167,13 +1204,16 @@ export default function AIChatPage() {
 
     try {
       // Build chat messages for API (with multimodal support)
+      // Sanitize config blocks to strip persistence-only fields (e.g., submitted_task_id)
+      // so the AI doesn't copy them into new responses
       const chatMessages: ChatMessage[] = messages
         .concat([userMessage])
         .map(m => {
+          const sanitizedContent = sanitizeConfigBlocksForAI(m.content)
           // If message has images, use multimodal format
           if (m.images && m.images.length > 0) {
             const content: ChatMessageContent = [
-              { type: 'text' as const, text: m.content },
+              { type: 'text' as const, text: sanitizedContent },
               ...m.images.map(imgBase64 => ({
                 type: 'image_url' as const,
                 image_url: { url: imgBase64 }
@@ -1182,7 +1222,7 @@ export default function AIChatPage() {
             return { role: m.role, content }
           }
           // Text-only message
-          return { role: m.role, content: m.content }
+          return { role: m.role, content: sanitizedContent }
         })
 
       let hasReceivedContent = false
@@ -1558,10 +1598,12 @@ export default function AIChatPage() {
 
     try {
       // Build chat messages for API (with multimodal support)
+      // Sanitize config blocks to strip persistence-only fields (same as handleSubmit)
       const chatMessages: ChatMessage[] = newMessages.map(m => {
+        const sanitizedContent = sanitizeConfigBlocksForAI(m.content)
         if (m.images && m.images.length > 0) {
           const content: ChatMessageContent = [
-            { type: 'text' as const, text: m.content },
+            { type: 'text' as const, text: sanitizedContent },
             ...m.images.map(imgBase64 => ({
               type: 'image_url' as const,
               image_url: { url: imgBase64 }
@@ -1569,7 +1611,7 @@ export default function AIChatPage() {
           ]
           return { role: m.role, content }
         }
-        return { role: m.role, content: m.content }
+        return { role: m.role, content: sanitizedContent }
       })
 
       let hasReceivedContent = false
