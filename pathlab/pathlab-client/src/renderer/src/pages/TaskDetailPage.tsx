@@ -21,7 +21,7 @@ interface LogEntry {
 interface TaskDetail {
   task_id: string
   task_name: string
-  task_type: 'classification' | 'survival_prediction' | 'segmentation'
+  task_type: 'classification' | 'survival_prediction' | 'segmentation' | 'external_validation'
   data_level: 'wsi' | 'patch'
   task_description: string
   status: 'pending' | 'running' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
@@ -61,6 +61,11 @@ interface TaskDetail {
     epochs?: number
     optimizer?: string
     batch_size?: number
+    // External validation specific fields
+    model_id?: string
+    model_task_id?: string
+    dataset_id?: string
+    total_wsi?: number
   }
   classes?: string[]
   error_message?: string
@@ -366,12 +371,14 @@ export default function TaskDetailPage() {
   }
 
   const isPatchLevel = task.data_level === 'patch'
+  const isExternalValidation = task.task_type === 'external_validation'
 
   // Calculate display progress for patch-level tasks
   // (map 66% - 100% backend progress to 0% - 100% UI progress)
   // For completed tasks, always show 100%
   // For cancelled/failed tasks, show the mapped progress at the time of cancellation/failure
-  const displayProgress = isPatchLevel && task.status !== 'completed'
+  // External validation tasks use 0-100 directly regardless of data_level
+  const displayProgress = isPatchLevel && !isExternalValidation && task.status !== 'completed'
     ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
     : Math.min(task.progress, 100)  // Cap at 100% for safety
 
@@ -520,7 +527,25 @@ export default function TaskDetailPage() {
 
         {/* Stage Progress */}
         <div className="space-y-3">
-          {!isPatchLevel ? (
+          {isExternalValidation ? (
+            /* External validation: single "Testing" stage */
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center space-x-2">
+                <span className={
+                  (task.status === 'completed') ? 'text-green-600' :
+                  (task.status === 'running' || task.status === 'training') ? 'text-blue-600' :
+                  (task.status === 'failed') ? 'text-red-600' : 'text-gray-400'
+                }>
+                  { (task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
+                    (task.status === 'running' || task.status === 'training') ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                    (task.status === 'failed') ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
+                </span>
+                <span className={(task.status === 'completed' || task.status === 'running' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
+                  Testing on Target Dataset
+                </span>
+              </div>
+            </div>
+          ) : !isPatchLevel ? (
             <>
               <div className="flex items-center justify-between text-sm">
                 <div className="flex items-center space-x-2">
@@ -575,25 +600,28 @@ export default function TaskDetailPage() {
             </div>
           )}
 
-          <div className="flex items-center justify-between text-sm">
-            <div className="flex items-center space-x-2">
-              <span className={
-                (task.status === 'completed') ? 'text-green-600' :
-                (task.status === 'training') ? 'text-purple-600' :
-                (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? 'text-red-600' : 'text-gray-400'
-              }>
-                { (task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
-                  (task.status === 'training') ? <Loader2 className="w-4 h-4 animate-spin" /> :
-                  (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
-              </span>
-              <span className={(task.status === 'completed' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
-                Model Training
-              </span>
+          {/* Model Training / Testing stage - skip for external validation (already shown above) */}
+          {!isExternalValidation && (
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center space-x-2">
+                <span className={
+                  (task.status === 'completed') ? 'text-green-600' :
+                  (task.status === 'training') ? 'text-purple-600' :
+                  (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? 'text-red-600' : 'text-gray-400'
+                }>
+                  { (task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
+                    (task.status === 'training') ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                    (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
+                </span>
+                <span className={(task.status === 'completed' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
+                  Model Training
+                </span>
+              </div>
+              {task.status === 'training' && task.current_epoch && (
+                <span className="text-gray-600">Epoch {task.current_epoch}/{task.model_config.epochs}</span>
+              )}
             </div>
-            {task.status === 'training' && task.current_epoch && (
-              <span className="text-gray-600">Epoch {task.current_epoch}/{task.model_config.epochs}</span>
-            )}
-          </div>
+          )}
         </div>
       </Card>
 
@@ -711,89 +739,165 @@ export default function TaskDetailPage() {
           Configuration
         </h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
-            <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-              <Activity className="w-3.5 h-3.5 text-blue-600" />
-              Preprocessing
-            </h4>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Saturation Threshold</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.preprocessing_config.sthresh ?? 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Mask Threshold</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.preprocessing_config.mthresh ?? 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Use Otsu</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.preprocessing_config.use_otsu !== undefined
-                    ? (task.preprocessing_config.use_otsu ? 'Yes' : 'No')
-                    : 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Extractor</span>
-                <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
-                  {task.preprocessing_config.feature_extractor || 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Feature Batch Size</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.preprocessing_config.feature_batch_size ?? 'N/A'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
-            <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-              <Brain className="w-3.5 h-3.5 text-purple-600" />
-              Model & Training
-            </h4>
-            <div className="space-y-3">
-              {task.data_level === 'wsi' && (
+        {isExternalValidation ? (
+          /* External validation: show source model & target dataset info */
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
+              <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <Brain className="w-3.5 h-3.5 text-purple-600" />
+                Source Model
+              </h4>
+              <div className="space-y-3">
                 <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Aggregator</span>
-                  <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
-                    {task.model_config.aggregator?.toUpperCase() || 'N/A'}
+                  <span className="text-gray-500 font-medium">Model ID</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm font-mono text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.model_id}>
+                    {task.model_config.model_id || 'N/A'}
                   </span>
                 </div>
-              )}
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Learning Rate</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.model_config.learning_rate ?? 'N/A'}
-                </span>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Training Task</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm font-mono text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.model_task_id}>
+                    {task.model_config.model_task_id || 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Feature Extractor</span>
+                  <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
+                    {task.preprocessing_config.feature_extractor || 'N/A'}
+                  </span>
+                </div>
+                {task.data_level === 'wsi' && (
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">Aggregator</span>
+                    <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
+                      {task.model_config.aggregator?.toUpperCase() || 'N/A'}
+                    </span>
+                  </div>
+                )}
               </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Epochs</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.model_config.epochs ?? 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Optimizer</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm uppercase">
-                  {task.model_config.optimizer || 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Training Batch Size</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.model_config.batch_size ?? 'N/A'}
-                </span>
+            </div>
+
+            <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
+              <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <Activity className="w-3.5 h-3.5 text-blue-600" />
+                Target Dataset
+              </h4>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Dataset ID</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm font-mono text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.dataset_id}>
+                    {task.model_config.dataset_id || 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Total WSIs</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.model_config.total_wsi ?? task.wsi_count ?? 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Data Level</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm uppercase">
+                    {task.data_level || 'N/A'}
+                  </span>
+                </div>
+                {task.classes && task.classes.length > 0 && (
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">Classes</span>
+                    <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                      {task.classes.length}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
-        </div>
+        ) : (
+          /* Regular training task: show preprocessing & training config */
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
+              <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <Activity className="w-3.5 h-3.5 text-blue-600" />
+                Preprocessing
+              </h4>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Saturation Threshold</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.preprocessing_config.sthresh ?? 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Mask Threshold</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.preprocessing_config.mthresh ?? 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Use Otsu</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.preprocessing_config.use_otsu !== undefined
+                      ? (task.preprocessing_config.use_otsu ? 'Yes' : 'No')
+                      : 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Extractor</span>
+                  <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
+                    {task.preprocessing_config.feature_extractor || 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Feature Batch Size</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.preprocessing_config.feature_batch_size ?? 'N/A'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
+              <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <Brain className="w-3.5 h-3.5 text-purple-600" />
+                Model & Training
+              </h4>
+              <div className="space-y-3">
+                {task.data_level === 'wsi' && (
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">Aggregator</span>
+                    <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
+                      {task.model_config.aggregator?.toUpperCase() || 'N/A'}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Learning Rate</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.model_config.learning_rate ?? 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Epochs</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.model_config.epochs ?? 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Optimizer</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm uppercase">
+                    {task.model_config.optimizer || 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Training Batch Size</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.model_config.batch_size ?? 'N/A'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Cancel Confirmation Modal */}

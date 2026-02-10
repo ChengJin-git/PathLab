@@ -521,23 +521,25 @@ export default function TaskListPage() {
                     ) : (
                       <div className="flex flex-col gap-0.5 w-full col-span-2 md:col-span-1">
                         <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">
-                          {task.status === 'running' ? 'Patching' :
-                            task.status === 'extracting' ? 'Extracting' :
-                              task.status === 'training' ? 'Training' : 'Progress'}
+                          {task.task_type === 'external_validation'
+                            ? (task.status === 'running' || task.status === 'training' ? 'Testing' : 'Progress')
+                            : (task.status === 'running' ? 'Patching' :
+                              task.status === 'extracting' ? 'Extracting' :
+                                task.status === 'training' ? 'Training' : 'Progress')}
                         </span>
                         <div className="flex items-center gap-2 w-full mt-1">
                           <div className="w-full bg-gray-100 rounded-full h-1.5 sm:h-2 overflow-hidden flex-1">
                             <div
                               className="bg-gray-900 h-full rounded-full transition-all duration-300"
                               style={{
-                                width: `${task.data_level === 'patch' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
+                                width: `${task.data_level === 'patch' && task.task_type !== 'external_validation' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
                                   ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
                                   : task.progress}%`
                               }}
                             />
                           </div>
                           <span className="text-[11px] sm:text-sm font-bold text-gray-900 w-8 sm:w-10 text-right">
-                            {task.data_level === 'patch' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
+                            {task.data_level === 'patch' && task.task_type !== 'external_validation' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
                               ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
                               : task.progress}%
                           </span>

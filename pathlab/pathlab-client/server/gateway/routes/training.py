@@ -296,7 +296,13 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                         result_tasks = []
                         for task in tasks:
                             task_dict = task.to_dict()
-                            task_dict["wsi_count"] = wsi_counts.get(task.task_id, 0)
+                            # For external validation tasks, WSIs aren't in TrainingTaskWSI junction table
+                            # so use model_config.total_wsi as the count
+                            junction_count = wsi_counts.get(task.task_id, 0)
+                            if junction_count == 0 and task_dict.get("task_type") == "external_validation":
+                                task_dict["wsi_count"] = (task.model_config or {}).get("total_wsi", 0)
+                            else:
+                                task_dict["wsi_count"] = junction_count
                             # Overlay file progress if available (more up-to-date than DB)
                             if task.task_id in file_progress:
                                 task_dict["progress"] = file_progress[task.task_id]
@@ -358,7 +364,11 @@ async def get_training_task(
 
     result = task.to_dict()
     result["wsi_ids"] = wsi_ids
-    result["wsi_count"] = len(wsi_ids)
+    # For external validation tasks, WSIs aren't in TrainingTaskWSI junction table
+    if len(wsi_ids) == 0 and result.get("task_type") == "external_validation":
+        result["wsi_count"] = (task.model_config or {}).get("total_wsi", 0)
+    else:
+        result["wsi_count"] = len(wsi_ids)
 
     # Overlay real-time progress from shared file (if available)
     # This ensures the initial load shows the most up-to-date progress
@@ -541,7 +551,11 @@ async def stream_training_logs(
                     if task:
                         task_dict = task.to_dict()
                         task_dict["wsi_ids"] = wsi_ids
-                        task_dict["wsi_count"] = len(wsi_ids)
+                        # For external validation tasks, WSIs aren't in junction table
+                        if len(wsi_ids) == 0 and task_dict.get("task_type") == "external_validation":
+                            task_dict["wsi_count"] = (task.model_config or {}).get("total_wsi", 0)
+                        else:
+                            task_dict["wsi_count"] = len(wsi_ids)
                         # Overlay real-time progress from shared file
                         from backend.common.progress_store import get_progress
                         file_prog = get_progress(task.task_id)
@@ -590,7 +604,11 @@ async def stream_training_logs(
                         if task:
                             task_dict = task.to_dict()
                             task_dict["wsi_ids"] = wsi_ids
-                            task_dict["wsi_count"] = len(wsi_ids)
+                            # For external validation tasks, WSIs aren't in junction table
+                            if len(wsi_ids) == 0 and task_dict.get("task_type") == "external_validation":
+                                task_dict["wsi_count"] = (task.model_config or {}).get("total_wsi", 0)
+                            else:
+                                task_dict["wsi_count"] = len(wsi_ids)
                             # Overlay real-time progress from shared file
                             from backend.common.progress_store import get_progress
                             file_prog = get_progress(task.task_id)
@@ -641,7 +659,11 @@ async def stream_training_logs(
                             # Build final task dict with wsi_ids and wsi_count
                             final_task_dict = cached_task_dict.copy()
                             final_task_dict["wsi_ids"] = cached_wsi_ids
-                            final_task_dict["wsi_count"] = len(cached_wsi_ids)
+                            # For external validation tasks, WSIs aren't in junction table
+                            if len(cached_wsi_ids) == 0 and final_task_dict.get("task_type") == "external_validation":
+                                final_task_dict["wsi_count"] = final_task_dict.get("model_config", {}).get("total_wsi", 0)
+                            else:
+                                final_task_dict["wsi_count"] = len(cached_wsi_ids)
 
                             data = json.dumps({
                                 "logs": [log.to_dict() for log in final_logs] if final_logs else [],

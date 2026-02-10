@@ -2126,6 +2126,7 @@ async def start_external_validation(
         task_id=validation_id,
         task_name=f"External Validation: {trained_model.model_name} → {target_dataset.name or req.dataset_id}",
         group_id=validation_data_group.group_id,
+        user_id=str(user.id),
         task_description=f"Validate model '{trained_model.model_name}' on dataset '{target_dataset.name}'",
         status=TaskStatus.PENDING,
         progress=0,
@@ -2138,6 +2139,7 @@ async def start_external_validation(
             "model_task_id": trained_model.task_id,
             "dataset_id": req.dataset_id,
             "total_wsi": len(wsi_ids),
+            "aggregator": trained_model.aggregator,  # Store aggregator name for task list display
             # Store analysis options for auto-triggered analysis
             "analysis_metrics": analysis_metrics,
             "analysis_charts": analysis_charts,
@@ -2236,6 +2238,10 @@ async def _run_external_validation(
     import numpy as np
     from sqlalchemy import update as sql_update
     from backend.database.models import TrainingTask
+    from gateway.pipeline import ScopedLogger
+
+    # ScopedLogger writes to training_logs table so SSE log stream works
+    logger_manager = ScopedLogger(task_id)
 
     # Determine if this is a survival task
     is_survival = model_task_type in ("survival_prediction", "wsi_survival")
@@ -2262,8 +2268,11 @@ async def _run_external_validation(
             break
 
     try:
-        # Mark as running
+        # Mark as running and log start
         await update_task_progress(TaskStatus.RUNNING, 0)
+        async with logger_manager.session() as (tl, _db):
+            await tl.info(f"Starting external validation for task: {task_id}")
+            await tl.info(f"Model: {model_id} | Dataset: {dataset_id} | WSIs: {len(wsi_ids)} | Type: {'survival' if is_survival else 'classification'}")
 
         uploads_dir = Config.get_uploads_dir()
 
@@ -2334,6 +2343,12 @@ async def _run_external_validation(
                     bin_edges = np.array(bin_edges) if not isinstance(bin_edges, np.ndarray) else bin_edges
 
         has_raw_attention = hasattr(models[0], 'forward_with_raw_attention')
+
+        async with logger_manager.session() as (tl, _db):
+            if is_kfold:
+                await tl.info(f"Loaded k-fold model ({num_folds} folds) on device: {device}, aggregator: {aggregator_name}")
+            else:
+                await tl.info(f"Loaded model on device: {device}, aggregator: {aggregator_name}")
 
         # Use classes from TrainedModel directly (for classification)
         classes = model_classes
@@ -2410,6 +2425,12 @@ async def _run_external_validation(
 
         await asyncio.to_thread(_build_feature_symlinks)
         logger.info(f"External validation: found features for {len(found_wsi_ids)}/{len(wsi_ids)} WSIs across training tasks")
+
+        async with logger_manager.session() as (tl, _db):
+            await tl.info(f"Found features for {len(found_wsi_ids)}/{len(wsi_ids)} WSIs")
+            if len(found_wsi_ids) < len(wsi_ids):
+                missing = len(wsi_ids) - len(found_wsi_ids)
+                await tl.warning(f"{missing} WSIs missing features, will be skipped")
 
         ai_results_root = uploads_dir / "ai_results"
 
@@ -2490,6 +2511,9 @@ async def _run_external_validation(
 
                 total = len(case_ids)
                 logger.info(f"External validation case-level: {total} cases from {len(valid_wsi_ids)} WSIs")
+
+                async with logger_manager.session() as (tl, _db):
+                    await tl.info(f"Running case-level inference: {total} cases from {len(valid_wsi_ids)} WSIs")
 
                 # Run inference per case using DataLoader
                 for idx, batch in enumerate(dataloader):
@@ -2683,6 +2707,9 @@ async def _run_external_validation(
 
                 total = len(valid_wsi_ids)
 
+                async with logger_manager.session() as (tl, _db):
+                    await tl.info(f"Running slide-level inference: {total} WSIs")
+
                 for idx, batch in enumerate(dataloader):
                     if is_survival:
                         features, time_val, status_val, wsi_id = batch
@@ -2851,6 +2878,9 @@ async def _run_external_validation(
         kfold_msg = f" (k-fold: {num_folds} folds averaged)" if is_kfold else ""
         logger.info(f"External validation {task_id} completed: {results_saved} results (type: {'survival' if is_survival else 'classification'}){case_level_msg}{kfold_msg}")
 
+        async with logger_manager.session() as (tl, _db):
+            await tl.info(f"External validation completed: {results_saved} results saved{case_level_msg}{kfold_msg}")
+
         # Auto-trigger analysis after inference completes (Option C)
         # This makes External Validation a one-click complete operation
         await _auto_trigger_external_validation_analysis(
@@ -2863,6 +2893,11 @@ async def _run_external_validation(
     except Exception as e:
         import traceback
         logger.error(f"External validation {task_id} failed: {e}\n{traceback.format_exc()}")
+        try:
+            async with logger_manager.session() as (tl, _db):
+                await tl.error(f"External validation failed: {e}")
+        except Exception:
+            pass  # Don't let logging failure mask the original error
         await update_task_progress(TaskStatus.FAILED, 0, error_msg=str(e))
 
 
