@@ -246,6 +246,14 @@ async def secure_login(
             detail="LOGIN_BAD_CREDENTIALS"
         )
 
+    # Check maintenance mode - only admin can log in during maintenance
+    if Config.get_maintenance_mode() and user.role != "admin":
+        logger.warning(f"Login attempt during maintenance mode for non-admin user: {request.username}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="MAINTENANCE_MODE"
+        )
+
     # Check if user is active
     if not user.is_active:
         logger.warning(f"Login attempt for inactive user: {request.username}")
@@ -508,6 +516,156 @@ async def revoke_user_agreement(
 
     logger.info(f"Admin {admin.email} revoked agreement for user {user.email}")
     return user
+
+
+# ============================================================================
+# Batch User Operations (Admin only)
+# ============================================================================
+
+class BatchUserIdsRequest(BaseModel):
+    """Request model for batch user operations."""
+    user_ids: List[str]
+
+
+@router.post("/auth/users/batch/activate", tags=["User Management"])
+async def batch_activate_users(
+    request: BatchUserIdsRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Batch activate multiple users (admin only).
+    Admin users and the current admin cannot be modified.
+    """
+    import uuid
+    updated = 0
+    for user_id in request.user_ids:
+        try:
+            user_uuid = uuid.UUID(user_id)
+        except ValueError:
+            continue  # Skip invalid UUIDs
+
+        result = await db.execute(select(User).where(User.id == user_uuid))
+        user = result.scalar_one_or_none()
+
+        if user and user.role != "admin" and user.id != admin.id:
+            user.is_active = True
+            updated += 1
+
+    await db.commit()
+    logger.info(f"Admin {admin.email} batch activated {updated} users")
+    return {"updated": updated}
+
+
+@router.post("/auth/users/batch/deactivate", tags=["User Management"])
+async def batch_deactivate_users(
+    request: BatchUserIdsRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Batch deactivate multiple users (admin only).
+    Admin users and the current admin cannot be modified.
+    """
+    import uuid
+    updated = 0
+    for user_id in request.user_ids:
+        try:
+            user_uuid = uuid.UUID(user_id)
+        except ValueError:
+            continue
+
+        result = await db.execute(select(User).where(User.id == user_uuid))
+        user = result.scalar_one_or_none()
+
+        if user and user.role != "admin" and user.id != admin.id:
+            user.is_active = False
+            updated += 1
+
+    await db.commit()
+    logger.info(f"Admin {admin.email} batch deactivated {updated} users")
+    return {"updated": updated}
+
+
+@router.post("/auth/users/batch/delete", tags=["User Management"])
+async def batch_delete_users(
+    request: BatchUserIdsRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Batch delete multiple users (admin only).
+    Admin users and the current admin cannot be deleted.
+    """
+    import uuid
+    deleted = 0
+    for user_id in request.user_ids:
+        try:
+            user_uuid = uuid.UUID(user_id)
+        except ValueError:
+            continue
+
+        result = await db.execute(select(User).where(User.id == user_uuid))
+        user = result.scalar_one_or_none()
+
+        if user and user.role != "admin" and user.id != admin.id:
+            await db.delete(user)
+            deleted += 1
+
+    await db.commit()
+    logger.info(f"Admin {admin.email} batch deleted {deleted} users")
+    return {"deleted": deleted}
+
+
+# ============================================================================
+# Maintenance Mode (Admin only)
+# ============================================================================
+
+class MaintenanceModeRequest(BaseModel):
+    """Request model for setting maintenance mode."""
+    enabled: bool
+
+
+@router.get("/auth/maintenance-mode", tags=["User Management"])
+async def get_maintenance_mode():
+    """
+    Get current maintenance mode status.
+    Available to authenticated users.
+    """
+    enabled = Config.get_maintenance_mode()
+    return {"enabled": enabled}
+
+
+@router.post("/auth/maintenance-mode", tags=["User Management"])
+async def set_maintenance_mode(
+    request: MaintenanceModeRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Set maintenance mode (admin only).
+    When enabled, all non-admin users are deactivated and cannot log in.
+    When disabled, users remain in their current state (manual reactivation needed).
+    """
+    # Save maintenance mode state
+    Config.set_maintenance_mode(request.enabled)
+
+    affected_users = 0
+
+    if request.enabled:
+        # Deactivate all non-admin users
+        result = await db.execute(select(User).where(User.role != "admin"))
+        users = result.scalars().all()
+        for user in users:
+            if user.is_active:
+                user.is_active = False
+                affected_users += 1
+        await db.commit()
+        logger.info(f"Admin {admin.email} enabled maintenance mode, deactivated {affected_users} users")
+    else:
+        logger.info(f"Admin {admin.email} disabled maintenance mode")
+
+    return {"enabled": request.enabled, "affected_users": affected_users}
 
 
 # Avatar management routes

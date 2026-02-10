@@ -730,6 +730,95 @@ export async function revokeUserAgreement(userId: string): Promise<AuthUser> {
 }
 
 // ============================================================================
+// Batch User Operations (Admin only)
+// ============================================================================
+
+/**
+ * Batch activate users (admin only)
+ * @param userIds - Array of user IDs to activate
+ * @throws {ApiError} If request fails or not authorized
+ */
+export async function batchActivateUsers(userIds: string[]): Promise<{ updated: number }> {
+  return apiFetch<{ updated: number }>(
+    `${API_BASE}/auth/users/batch/activate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_ids: userIds })
+    },
+    'Failed to batch activate users'
+  )
+}
+
+/**
+ * Batch deactivate users (admin only)
+ * @param userIds - Array of user IDs to deactivate
+ * @throws {ApiError} If request fails or not authorized
+ */
+export async function batchDeactivateUsers(userIds: string[]): Promise<{ updated: number }> {
+  return apiFetch<{ updated: number }>(
+    `${API_BASE}/auth/users/batch/deactivate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_ids: userIds })
+    },
+    'Failed to batch deactivate users'
+  )
+}
+
+/**
+ * Batch delete users (admin only)
+ * @param userIds - Array of user IDs to delete
+ * @throws {ApiError} If request fails or not authorized
+ */
+export async function batchDeleteUsers(userIds: string[]): Promise<{ deleted: number }> {
+  return apiFetch<{ deleted: number }>(
+    `${API_BASE}/auth/users/batch/delete`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_ids: userIds })
+    },
+    'Failed to batch delete users'
+  )
+}
+
+// ============================================================================
+// Maintenance Mode (Admin only)
+// ============================================================================
+
+/**
+ * Get maintenance mode status
+ * @throws {ApiError} If request fails
+ */
+export async function getMaintenanceMode(): Promise<{ enabled: boolean }> {
+  return apiFetch<{ enabled: boolean }>(
+    `${API_BASE}/auth/maintenance-mode`,
+    undefined,
+    'Failed to get maintenance mode status'
+  )
+}
+
+/**
+ * Set maintenance mode (admin only)
+ * When enabled, all non-admin users are deactivated and cannot log in.
+ * @param enabled - Whether to enable maintenance mode
+ * @throws {ApiError} If request fails or not authorized
+ */
+export async function setMaintenanceMode(enabled: boolean): Promise<{ enabled: boolean; affected_users: number }> {
+  return apiFetch<{ enabled: boolean; affected_users: number }>(
+    `${API_BASE}/auth/maintenance-mode`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled })
+    },
+    'Failed to set maintenance mode'
+  )
+}
+
+// ============================================================================
 // Dataset Permission APIs (Temporary Elevated Access Management)
 // ============================================================================
 

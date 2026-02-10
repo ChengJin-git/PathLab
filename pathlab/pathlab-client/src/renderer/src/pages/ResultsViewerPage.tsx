@@ -760,7 +760,7 @@ export default function ResultsViewerPage() {
             <Button
               onClick={startExternalValidation}
               disabled={!selectedModelId || !dataTaskId || (selectedModel?.task_id === dataTaskId) || (validationProgress?.status === 'running')}
-              className="w-full bg-gray-800 hover:bg-gray-900 text-white py-3 gap-2"
+              className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 gap-2 shadow-lg shadow-orange-600/20"
             >
               {validationProgress?.status === 'running' ? (
                 <>

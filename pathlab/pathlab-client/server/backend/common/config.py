@@ -290,6 +290,18 @@ class Config:
         (uploads_dir / "metadata").mkdir(exist_ok=True)
         (uploads_dir / "progress").mkdir(exist_ok=True)  # Shared progress files (AI ↔ Gateway)
 
+    # ========== Maintenance Mode ==========
+    @classmethod
+    def get_maintenance_mode(cls) -> bool:
+        """Get current maintenance mode status."""
+        config_data = cls._read_config()
+        return config_data.get("maintenance_mode", False)
+
+    @classmethod
+    def set_maintenance_mode(cls, enabled: bool) -> None:
+        """Set maintenance mode status."""
+        cls._write_config({"maintenance_mode": enabled})
+
 
 # Create singleton instance
 config = Config()

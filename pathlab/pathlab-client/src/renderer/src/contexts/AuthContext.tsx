@@ -149,7 +149,10 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       const errorLower = errorMessage.toLowerCase()
 
       // Handle specific error codes from secure login endpoint
-      if (errorLower.includes('login_user_not_active') ||
+      if (errorLower.includes('maintenance_mode')) {
+        // System is in maintenance mode - non-admin users cannot log in
+        errorMessage = 'System is under maintenance. Please try again later or contact administrator.'
+      } else if (errorLower.includes('login_user_not_active') ||
           errorLower.includes('inactive') ||
           errorLower.includes('not active') ||
           errorLower.includes('deactivated')) {
@@ -157,9 +160,6 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       } else if (errorLower.includes('login_timestamp_expired')) {
         // Timestamp expired - this shouldn't happen normally, may indicate clock sync issue
         errorMessage = 'Login request expired. Please check your system clock and try again.'
-      } else if (errorLower.includes('password migration failed')) {
-        // Migration endpoint failed (shouldn't happen if password is correct)
-        errorMessage = 'Password migration failed. Please contact administrator.'
       } else if (errorLower.includes('bad credentials') ||
                  errorLower.includes('login_bad_credentials')) {
         errorMessage = 'Invalid username or password'

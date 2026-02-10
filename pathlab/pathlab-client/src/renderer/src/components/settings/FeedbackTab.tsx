@@ -106,10 +106,10 @@ export function FeedbackTab({
           <div className="hidden xl:block w-px h-10 bg-gray-200 mx-2"></div>
 
           {/* Date Range + Export */}
-          <div className="flex flex-col sm:flex-row gap-3 items-end w-full xl:w-auto">
+          <div className="flex flex-col sm:flex-row flex-wrap gap-3 items-end w-full xl:w-auto">
             <div>
               <Label className="text-xs font-semibold text-gray-500 mb-1.5 block">Date Range</Label>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <input
                   type="date"
                   value={exportDateFrom}

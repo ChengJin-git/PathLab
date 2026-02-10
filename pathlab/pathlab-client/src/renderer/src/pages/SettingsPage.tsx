@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bot, ClipboardList, Database, Info, BookOpen, HardDrive, RefreshCw, ArrowLeft, Users, MessageSquare } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, detectOrphanedRecords, cleanupOrphanedRecords, OrphanedRecordsInfo, OrphanedRecordsCleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus, scanDirectory, ScanDirectoryResponse, checkExternalFiles, CheckExternalFilesResponse, startBatchImportTask, startDeleteExternalTask, startUnbindDatasetTask, getExternalDatasets, getExternalDatasetsCachedSync, invalidateExternalDatasetsCache, ExternalDatasetInfo } from '../api'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, detectOrphanedRecords, cleanupOrphanedRecords, OrphanedRecordsInfo, OrphanedRecordsCleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus, scanDirectory, ScanDirectoryResponse, checkExternalFiles, CheckExternalFilesResponse, startBatchImportTask, startDeleteExternalTask, startUnbindDatasetTask, getExternalDatasets, getExternalDatasetsCachedSync, invalidateExternalDatasetsCache, ExternalDatasetInfo, batchActivateUsers, batchDeactivateUsers, batchDeleteUsers, getMaintenanceMode, setMaintenanceMode as setMaintenanceModeApi } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
@@ -81,6 +81,7 @@ export default function SettingsPage() {
   const [showCreateUser, setShowCreateUser] = useState(false)
   const [createForm, setCreateForm] = useState<{ username: string; password: string; nickname: string; role: string }>({ username: '', password: '', nickname: '', role: 'pathologist' })
   const [creatingUser, setCreatingUser] = useState(false)
+  const [maintenanceMode, setMaintenanceMode] = useState(false)
 
   // Dataset Permission Management State
   const [permissionUser, setPermissionUser] = useState<UserListItem | null>(null)  // User being managed
@@ -1381,6 +1382,91 @@ export default function SettingsPage() {
     }
   }
 
+  // Load maintenance mode status when users tab is active
+  const loadMaintenanceMode = useCallback(async () => {
+    try {
+      const result = await getMaintenanceMode()
+      setMaintenanceMode(result.enabled)
+    } catch (err) {
+      console.error('Failed to load maintenance mode:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (activeTab === 'users') {
+      loadMaintenanceMode()
+    }
+  }, [activeTab, loadMaintenanceMode])
+
+  // Batch user operations
+  const handleBatchActivate = async (userIds: string[]) => {
+    if (userIds.length === 0) return
+    try {
+      await batchActivateUsers(userIds)
+      loadUsers()
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Failed to batch activate users')
+    }
+  }
+
+  const handleBatchDeactivate = async (userIds: string[]) => {
+    if (userIds.length === 0) return
+    try {
+      await batchDeactivateUsers(userIds)
+      loadUsers()
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Failed to batch deactivate users')
+    }
+  }
+
+  const handleBatchDelete = (userIds: string[]) => {
+    if (userIds.length === 0) return
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Users',
+      message: `Are you sure you want to delete ${userIds.length} user${userIds.length > 1 ? 's' : ''}? This action cannot be undone.`,
+      confirmVariant: 'danger',
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        try {
+          await batchDeleteUsers(userIds)
+          loadUsers()
+        } catch (err) {
+          setUsersError(err instanceof Error ? err.message : 'Failed to batch delete users')
+        } finally {
+          setConfirmDialog((prev) => ({ ...prev, isOpen: false }))
+        }
+      }
+    })
+  }
+
+  const handleToggleMaintenanceMode = () => {
+    const newMode = !maintenanceMode
+    const title = newMode ? 'Enable Maintenance Mode' : 'Disable Maintenance Mode'
+    const message = newMode
+      ? 'This will deactivate all non-admin users and prevent them from logging in. Are you sure?'
+      : 'This will re-enable normal login for all users. Are you sure?'
+
+    setConfirmDialog({
+      isOpen: true,
+      title,
+      message,
+      confirmVariant: newMode ? 'danger' : 'info',
+      confirmText: newMode ? 'Enable' : 'Disable',
+      onConfirm: async () => {
+        try {
+          const result = await setMaintenanceModeApi(newMode)
+          setMaintenanceMode(result.enabled)
+          loadUsers() // Refresh user list to show updated active status
+        } catch (err) {
+          setUsersError(err instanceof Error ? err.message : 'Failed to toggle maintenance mode')
+        } finally {
+          setConfirmDialog((prev) => ({ ...prev, isOpen: false }))
+        }
+      }
+    })
+  }
+
   // Dataset Permission Management Functions
   const openPermissionModal = async (user: UserListItem) => {
     setPermissionUser(user)
@@ -1703,6 +1789,7 @@ export default function SettingsPage() {
             loadingUsers={loadingUsers}
             usersError={usersError}
             currentUserId={currentUser?.id}
+            maintenanceMode={maintenanceMode}
             onShowCreateUser={() => setShowCreateUser(true)}
             onLoadUsers={loadUsers}
             onEditUser={(user) => {
@@ -1745,6 +1832,10 @@ export default function SettingsPage() {
                 }
               })
             }}
+            onBatchActivate={handleBatchActivate}
+            onBatchDeactivate={handleBatchDeactivate}
+            onBatchDelete={handleBatchDelete}
+            onToggleMaintenanceMode={handleToggleMaintenanceMode}
           />
         )}
 
