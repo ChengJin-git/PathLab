@@ -1994,11 +1994,14 @@ export default function SettingsPage() {
             <div className="space-y-3 text-sm text-gray-600">
               <p>
                 <strong className="text-gray-900">PathLab</strong> is an AI-powered pathology analysis platform
-                for whole slide image (WSI) classification and analysis.
+                for pathology image analysis.
               </p>
               <p>
                 The platform integrates state-of-the-art deep learning models with an intuitive
                 AI assistant to help researchers set up and run pathology analysis tasks.
+              </p>
+              <p>
+                Proudly developed by <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer">SmartLab</a>.
               </p>
             </div>
           </Card>
