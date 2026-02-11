@@ -562,7 +562,7 @@ export const KMCurveChart = memo(function KMCurveChart({ data, title, compact }:
         z: 2
       },
       {
-        name: 'High Risk (Risk >= Median)',
+        name: 'High Risk Group',
         type: 'line',
         step: 'end',
         data: highRiskData,
