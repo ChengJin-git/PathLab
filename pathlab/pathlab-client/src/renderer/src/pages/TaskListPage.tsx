@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask } from '../api'
-import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles } from 'lucide-react'
+import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles, User } from 'lucide-react'
 import { TASK_LIST_STATUS_BADGES, isActiveStatus } from '../constants/status'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
+import { useAuth } from '../contexts/AuthContext'
 
 interface Task {
   task_id: string
@@ -21,10 +22,12 @@ interface Task {
   wsi_count?: number
   preprocessing_config?: any
   model_config?: any
+  username?: string | null  // Username of task creator (only for admin users)
 }
 
 export default function TaskListPage() {
   const navigate = useNavigate()
+  const { isAdmin } = useAuth()
 
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
@@ -550,9 +553,20 @@ export default function TaskListPage() {
                 </div>
 
                 <div className="flex xl:flex-col items-center xl:items-end justify-between xl:justify-center gap-3 sm:gap-4 xl:w-32 xl:border-l xl:border-gray-100 xl:pl-6 pt-3 sm:pt-4 xl:pt-0 border-t xl:border-t-0 border-gray-50/50 mt-1 sm:mt-2 xl:mt-0">
-                  <div className="flex flex-col text-[10px] sm:text-xs text-gray-400 text-left xl:text-right">
-                    <span className="font-medium text-gray-500">{task.updated_at ? new Date(task.updated_at).toLocaleDateString() : 'N/A'}</span>
-                    <span className="text-[9px] sm:text-[10px] text-gray-300 uppercase tracking-wide">Updated</span>
+                  <div className="flex flex-col gap-2 text-[10px] sm:text-xs text-gray-400 text-left xl:text-right">
+                    <div className="flex flex-col">
+                      <span className="font-medium text-gray-500">{task.updated_at ? new Date(task.updated_at).toLocaleDateString() : 'N/A'}</span>
+                      <span className="text-[9px] sm:text-[10px] text-gray-300 uppercase tracking-wide">Updated</span>
+                    </div>
+                    {isAdmin && task.username && (
+                      <div className="flex flex-col">
+                        <div className="flex items-center gap-1 justify-start xl:justify-end">
+                          <User className="w-3 h-3 text-gray-400" />
+                          <span className="font-medium text-gray-500 truncate max-w-[100px]" title={task.username}>{task.username}</span>
+                        </div>
+                        <span className="text-[9px] sm:text-[10px] text-gray-300 uppercase tracking-wide">Creator</span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-1">

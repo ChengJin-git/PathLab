@@ -627,6 +627,59 @@ async def cleanup_orphaned_records(
         raise HTTPException(status_code=500, detail=f"Failed to cleanup orphaned records: {str(e)}")
 
 
+@router.post("/reset-derived-data")
+async def reset_derived_data(
+    background_tasks: BackgroundTasks,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Start a reset derived data background task.
+    This is a DESTRUCTIVE operation used for forcing a complete data reset.
+    Admin only operation.
+
+    Deletes:
+    - All coordinates, masks, features, AI results, training data, models, logs, metadata
+
+    Preserves:
+    - Original WSI files in wsi_files/
+
+    Returns the task ID immediately while processing continues in the background.
+    Progress can be monitored via SSE at /storage/tasks/stream
+    """
+    try:
+        # Generate task ID
+        task_id = f"reset_{uuid.uuid4().hex[:16]}"
+
+        # Create task record (8 directories to delete)
+        task = await StorageTaskRepository.create(
+            db,
+            task_id=task_id,
+            user_id=str(user.id),
+            task_type='reset_derived_data',
+            total_items=8,  # 8 directories to delete
+            params={}
+        )
+        await db.commit()
+
+        # Start background task
+        background_tasks.add_task(
+            _run_reset_derived_data_task,
+            task_id,
+            str(user.id)
+        )
+
+        return {
+            "task_id": task_id,
+            "message": "Reset derived data task started",
+            "total_items": 8
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to start reset derived data task: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start reset derived data task: {str(e)}")
+
+
 def _scan_directory_for_wsi(directory: str) -> list:
     """
     Scan a directory for WSI and patch files (non-recursive).
@@ -1406,6 +1459,56 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
             )
             await db.commit()
 
+
+async def _run_reset_derived_data_task(task_id: str, user_id: str):
+    """
+    Background task for resetting all derived data.
+    Updates progress in database as it processes directories.
+    """
+    async with async_session() as db:
+        try:
+            # Update task status to processing
+            await StorageTaskRepository.update_status(db, task_id, 'processing', progress=0)
+            await db.commit()
+
+            # Define progress callback to update database
+            def progress_callback(progress: int):
+                """Synchronous callback to update progress - will be called from sync context"""
+                # We can't use async here since it's called from sync code
+                # Instead, we'll update progress after the operation completes
+                pass
+
+            # Run the reset operation in thread pool
+            result = await asyncio.to_thread(
+                storage_manager.reset_derived_data,
+                progress_callback=None  # We'll update progress manually
+            )
+
+            # Update task with final results
+            await StorageTaskRepository.update_status(
+                db, task_id, 'completed',
+                progress=100,
+                processed_items=8,
+                success_count=len(result.get('deleted_dirs', [])),
+                failed_count=len(result.get('failed', [])),
+                results=[{
+                    "deleted_dirs": result.get('deleted_dirs', []),
+                    "failed": result.get('failed', []),
+                    "total_size": result.get('total_size', 0),
+                    "summary": result.get('summary', '')
+                }]
+            )
+            await db.commit()
+
+            logger.info(f"Reset derived data task {task_id} completed: {result.get('summary', '')}")
+
+        except Exception as e:
+            logger.error(f"Reset derived data task {task_id} failed: {e}")
+            await StorageTaskRepository.update_status(
+                db, task_id, 'failed',
+                error_message=str(e)
+            )
+            await db.commit()
 
 
 async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):

@@ -70,6 +70,9 @@ export interface StorageTabProps {
   detectOrphanedRecordsHandler: (clearCleanupResult?: boolean) => Promise<void>
   handleRecordsCleanup: (e: React.MouseEvent) => Promise<void>
 
+  // Reset Derived Data
+  handleResetDerivedData: () => Promise<void>
+
   // Batch Scan & Register
   batchScanPath: string
   setBatchScanPath: (path: string) => void
@@ -81,7 +84,7 @@ export interface StorageTabProps {
   setBatchDatasetMode: (mode: 'existing' | 'new') => void
   batchSelectedDatasetId: string
   setBatchSelectedDatasetId: (id: string) => void
-  batchNewDatasetNameRef: React.RefObject<HTMLInputElement | null>
+  batchNewDatasetNameRef: React.RefObject<HTMLInputElement>
   batchRegistering: boolean
   batchImportTaskId: string | null
   batchDatasets: DatasetSummary[]
@@ -178,6 +181,9 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
     recordsCleanupResult,
     detectOrphanedRecordsHandler,
     handleRecordsCleanup,
+
+    // Reset Derived Data
+    handleResetDerivedData,
 
     // Batch Scan & Register
     batchScanPath,
@@ -366,6 +372,52 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
           anyStorageOpInProgress={anyStorageOpInProgress}
         />
       </div>
+
+      {/* Reset Derived Data - Dangerous Operation */}
+      <Card className="p-4 sm:p-6 mb-6 border-2 border-red-200 bg-red-50/30">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+          <div>
+            <h2 className="text-lg sm:text-lg font-semibold text-red-900 flex items-center gap-2 mb-2">
+              <AlertCircle className="w-5 h-5 text-red-700" />
+              Reset All Derived Data
+            </h2>
+            <p className="text-xs text-red-700">
+              Warning: This will delete ALL processed data while keeping original WSI files.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleResetDerivedData}
+            disabled={anyStorageOpInProgress}
+            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors self-end sm:self-auto"
+          >
+            <Trash2 className="w-4 h-4" />
+            Reset All Data
+          </button>
+        </div>
+
+        <div className="bg-white rounded-lg p-4 border border-red-200">
+          <div className="text-sm text-gray-700 space-y-2">
+            <p className="font-medium text-red-900">This operation will DELETE:</p>
+            <ul className="list-disc list-inside space-y-1 text-xs ml-2">
+              <li>All coordinates files</li>
+              <li>All mask files</li>
+              <li>All feature caches</li>
+              <li>All AI analysis results</li>
+              <li>All training data and tasks</li>
+              <li>All trained models</li>
+              <li>All logs and metadata</li>
+            </ul>
+            <p className="font-medium text-green-900 mt-3">This operation will PRESERVE:</p>
+            <ul className="list-disc list-inside space-y-1 text-xs ml-2">
+              <li>Original WSI files (in wsi_files/)</li>
+            </ul>
+            <p className="text-xs text-red-700 mt-3 font-medium">
+              This operation CANNOT be undone. Check Background Tasks panel for progress.
+            </p>
+          </div>
+        </div>
+      </Card>
 
       {/* Batch Scan & Register WSI Files */}
       <BatchRegisterCard

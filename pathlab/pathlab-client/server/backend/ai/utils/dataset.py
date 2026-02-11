@@ -132,7 +132,11 @@ class WSIPatchDataset(Dataset):
 
     def _ensure_slide(self):
         if self._slide is None:
+            import os
+            pid = os.getpid()
+            logger.info(f"[WSIPatchDataset] Opening slide in pid={pid}: {self.wsi_path}")
             self._slide = _load_slide(self.wsi_path)
+            logger.info(f"[WSIPatchDataset] Slide opened OK in pid={pid}: {self.wsi_path}")
         return self._slide
 
     def __getitem__(self, idx: int):

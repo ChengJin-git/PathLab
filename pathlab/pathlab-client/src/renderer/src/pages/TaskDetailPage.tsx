@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw, AlertCircle, Activity, ClipboardList, Layers, Brain, StopCircle } from 'lucide-react'
+import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw, AlertCircle, Activity, ClipboardList, Layers, Brain, StopCircle, User } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
 import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask } from '../api'
 import { TASK_DETAIL_STATUS_BADGES, isActiveStatus } from '../constants/status'
+import { useAuth } from '../contexts/AuthContext'
 
 interface LogEntry {
   id: number
@@ -30,6 +31,7 @@ interface TaskDetail {
   updated_at: string
   wsi_count: number
   wsi_ids?: string[]
+  username?: string | null  // Username of task creator (only for admin users)
   preprocessing_config: {
     // Note: tile_size and stride removed - auto-determined by PrePATH-style tiling
     feature_extractor?: string
@@ -118,6 +120,7 @@ export default function TaskDetailPage() {
   const { task_id } = useParams<{ task_id: string }>()
   const navigate = useNavigate()
   const location = useLocation()
+  const { isAdmin } = useAuth()
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
   const [task, setTask] = useState<TaskDetail | null>(null)
   const [logs, setLogs] = useState<LogEntry[]>([])
@@ -450,7 +453,7 @@ export default function TaskDetailPage() {
 
       {/* Task Info Grid */}
       <Card className="p-4 sm:p-6 overflow-hidden border-gray-100 shadow-sm">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
+        <div className={`grid grid-cols-2 ${isAdmin && task.username ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-4 sm:gap-6`}>
           <div className="min-w-0">
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Task ID</div>
             <div className="flex items-center gap-1.5 overflow-hidden">
@@ -501,6 +504,15 @@ export default function TaskDetailPage() {
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Updated</div>
             <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDate(task.updated_at)}</div>
           </div>
+          {isAdmin && task.username && (
+            <div>
+              <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Creator</div>
+              <div className="flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-gray-400" />
+                <div className="text-xs sm:text-sm font-bold text-gray-700 truncate" title={task.username}>{task.username}</div>
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 

@@ -1049,6 +1049,7 @@ export interface TrainingTask {
   updated_at: string | null
   started_at: string | null
   finished_at: string | null
+  username?: string | null  // Username of task creator (only for admin users)
 }
 
 /**
@@ -3494,6 +3495,32 @@ export async function cleanupOrphanedRecords(categories?: string[]): Promise<Orp
       body: JSON.stringify({ categories })
     },
     'Failed to cleanup orphaned records'
+  )
+}
+
+/**
+ * Response from starting a reset derived data task
+ */
+export interface StartResetDerivedDataResponse {
+  task_id: string
+  message: string
+  total_items: number
+}
+
+/**
+ * Start a reset derived data background task
+ * This is a DESTRUCTIVE operation that deletes all processed data
+ * @returns Task info with task_id for tracking
+ * @throws {ApiError} If the request fails
+ */
+export async function resetDerivedData(): Promise<StartResetDerivedDataResponse> {
+  return apiFetch<StartResetDerivedDataResponse>(
+    `${API_BASE}/storage/reset-derived-data`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    },
+    'Failed to start reset derived data task'
   )
 }
 

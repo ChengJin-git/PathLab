@@ -544,7 +544,12 @@ class WSITiler:
         filter_params: Optional[Dict] = None
     ):
         """
-        Save coordinates and metadata to HDF5 file in PrePATH-compatible format.
+        Save coordinates and metadata to HDF5 file using atomic write pattern.
+
+        Writes to a .h5.partial temporary file first, then renames to .h5.
+        This ensures that if the process is interrupted during saving,
+        the incomplete file is clearly identifiable and won't be mistaken
+        for a valid cache entry.
 
         All parameters are always saved to ensure cache consistency.
         Default values are used when seg_params or filter_params are None.
@@ -564,7 +569,10 @@ class WSITiler:
         seg_params = seg_params or {}
         filter_params = filter_params or {}
 
-        with h5py.File(save_path, 'w') as f:
+        # Write to .partial file first, then atomically rename
+        partial_path = save_path.parent / f"{save_path.stem}.h5.partial"
+
+        with h5py.File(partial_path, 'w') as f:
             # Create coords dataset
             dset = f.create_dataset('coords', data=coords_array)
 
@@ -597,6 +605,9 @@ class WSITiler:
             dset.attrs['a_t'] = filter_params.get('a_t', 100)
             dset.attrs['a_h'] = filter_params.get('a_h', 16)
             dset.attrs['max_n_holes'] = filter_params.get('max_n_holes', 8)
+
+        # Atomically rename to final path
+        partial_path.rename(save_path)
 
         logger.info(f"Saved {len(coordinates)} coordinates to {save_path}")
 
@@ -797,6 +808,8 @@ def check_coords_cache_valid(
 
     Returns:
         Tuple of (coordinates, coords_file_path) if valid cache exists, None otherwise.
+        If a .h5.partial file is found, it indicates a previous extraction was
+        interrupted — the partial file is deleted and None is returned.
     """
     from backend.ai.tasks.feature_cache import compute_params_hash
 
@@ -811,6 +824,15 @@ def check_coords_cache_valid(
     )
 
     coords_file = coords_dir / params_hash / f"{wsi_id}_coords.h5"
+
+    # Check for incomplete extraction artifact
+    partial_path = coords_file.parent / f"{wsi_id}_coords.h5.partial"
+    if partial_path.exists():
+        logger.warning(f"Found incomplete coordinates file: {partial_path}, deleting")
+        try:
+            partial_path.unlink()
+        except OSError as e:
+            logger.warning(f"Failed to delete partial file {partial_path}: {e}")
 
     if not coords_file.exists():
         return None
@@ -908,6 +930,15 @@ def get_or_compute_coordinates(
     cache_dir = coords_dir / params_hash
     cache_dir.mkdir(parents=True, exist_ok=True)
     coords_file = cache_dir / f"{wsi_id}_coords.h5"
+
+    # Check for incomplete extraction artifact
+    partial_path = coords_file.parent / f"{wsi_id}_coords.h5.partial"
+    if partial_path.exists():
+        logger.warning(f"Found incomplete coordinates file: {partial_path}, deleting")
+        try:
+            partial_path.unlink()
+        except OSError as e:
+            logger.warning(f"Failed to delete partial file {partial_path}: {e}")
 
     # Get native MPP from slide for MPP-aware tiling
     native_mpp = get_native_mpp(slide)

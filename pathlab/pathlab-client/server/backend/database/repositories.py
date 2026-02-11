@@ -2643,14 +2643,50 @@ class TrainingTaskRepository:
         return result.scalar_one()
 
     @staticmethod
-    async def get_by_id(db: AsyncSession, task_id: str) -> Optional[TrainingTask]:
-        """Get training task by task_id with data_group relationship loaded"""
-        result = await db.execute(
-            select(TrainingTask)
-            .options(selectinload(TrainingTask.data_group))
-            .where(TrainingTask.task_id == task_id)
-        )
-        return result.scalar_one_or_none()
+    async def get_by_id(db: AsyncSession, task_id: str, include_username: bool = False):
+        """Get training task by task_id with data_group relationship loaded.
+
+        Args:
+            db: Database session
+            task_id: Training task ID
+            include_username: If True, joins with User table to include username (for admin view).
+                              Returns dict instead of TrainingTask object.
+
+        Returns:
+            If include_username=False: Optional[TrainingTask]
+            If include_username=True: Optional[Dict] with username field added
+        """
+        if not include_username:
+            # Original behavior - return TrainingTask object
+            result = await db.execute(
+                select(TrainingTask)
+                .options(selectinload(TrainingTask.data_group))
+                .where(TrainingTask.task_id == task_id)
+            )
+            return result.scalar_one_or_none()
+        else:
+            # Admin view - join with User table to get username
+            from backend.auth.models import User as AuthUser
+            from sqlalchemy import cast, String
+
+            result = await db.execute(
+                select(TrainingTask, AuthUser.email, AuthUser.nickname)
+                .options(selectinload(TrainingTask.data_group))
+                .outerjoin(AuthUser, TrainingTask.user_id == cast(AuthUser.id, String))
+                .where(TrainingTask.task_id == task_id)
+            )
+            row = result.one_or_none()
+            if not row:
+                return None
+
+            task = row[0]  # TrainingTask object
+            email = row[1]  # User.email (username)
+            nickname = row[2]  # User.nickname
+
+            task_dict = task.to_dict()
+            # Use nickname if available, otherwise use email (username)
+            task_dict["username"] = nickname or email or None
+            return task_dict
 
     @staticmethod
     async def get_by_ids(db: AsyncSession, task_ids: List[str]) -> Dict[str, TrainingTask]:
@@ -2670,7 +2706,7 @@ class TrainingTaskRepository:
         return {task.task_id: task for task in tasks}
 
     @staticmethod
-    async def get_all(db: AsyncSession, limit: int = 100, offset: int = 0, user_id: Optional[str] = None) -> List[TrainingTask]:
+    async def get_all(db: AsyncSession, limit: int = 100, offset: int = 0, user_id: Optional[str] = None, include_username: bool = False):
         """Get all training tasks with data_group relationship loaded.
 
         Args:
@@ -2679,13 +2715,50 @@ class TrainingTaskRepository:
             offset: Number of records to skip
             user_id: Optional user ID filter. If provided, only returns tasks belonging to this user.
                      If None, returns all tasks (for admin users).
+            include_username: If True, joins with User table to include username (for admin view).
+                              Returns list of dicts instead of TrainingTask objects.
+
+        Returns:
+            If include_username=False: List[TrainingTask]
+            If include_username=True: List[Dict] with username field added
         """
-        query = select(TrainingTask).options(selectinload(TrainingTask.data_group))
-        if user_id is not None:
-            query = query.where(TrainingTask.user_id == user_id)
-        query = query.order_by(desc(TrainingTask.created_at)).limit(limit).offset(offset)
-        result = await db.execute(query)
-        return result.scalars().all()
+        if not include_username:
+            # Original behavior - return TrainingTask objects
+            query = select(TrainingTask).options(selectinload(TrainingTask.data_group))
+            if user_id is not None:
+                query = query.where(TrainingTask.user_id == user_id)
+            query = query.order_by(desc(TrainingTask.created_at)).limit(limit).offset(offset)
+            result = await db.execute(query)
+            return result.scalars().all()
+        else:
+            # Admin view - join with User table to get username
+            from backend.auth.models import User as AuthUser
+            from sqlalchemy import cast, String
+
+            query = (
+                select(TrainingTask, AuthUser.email, AuthUser.nickname)
+                .options(selectinload(TrainingTask.data_group))
+                .outerjoin(AuthUser, TrainingTask.user_id == cast(AuthUser.id, String))
+            )
+            if user_id is not None:
+                query = query.where(TrainingTask.user_id == user_id)
+            query = query.order_by(desc(TrainingTask.created_at)).limit(limit).offset(offset)
+            result = await db.execute(query)
+            rows = result.all()
+
+            # Convert to dict with username
+            tasks_with_username = []
+            for row in rows:
+                task = row[0]  # TrainingTask object
+                email = row[1]  # User.email (username)
+                nickname = row[2]  # User.nickname
+
+                task_dict = task.to_dict()
+                # Use nickname if available, otherwise use email (username)
+                task_dict["username"] = nickname or email or None
+                tasks_with_username.append(task_dict)
+
+            return tasks_with_username
 
     @staticmethod
     async def count(db: AsyncSession, user_id: Optional[str] = None) -> int:

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bot, ClipboardList, Database, Info, BookOpen, HardDrive, RefreshCw, ArrowLeft, Users, MessageSquare } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, detectOrphanedRecords, cleanupOrphanedRecords, OrphanedRecordsInfo, OrphanedRecordsCleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus, scanDirectory, ScanDirectoryResponse, checkExternalFiles, CheckExternalFilesResponse, startBatchImportTask, startDeleteExternalTask, startUnbindDatasetTask, getExternalDatasets, getExternalDatasetsCachedSync, invalidateExternalDatasetsCache, ExternalDatasetInfo, batchActivateUsers, batchDeactivateUsers, batchDeleteUsers, getMaintenanceMode, setMaintenanceMode as setMaintenanceModeApi } from '../api'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, detectOrphanedRecords, cleanupOrphanedRecords, OrphanedRecordsInfo, OrphanedRecordsCleanupResult, resetDerivedData, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus, scanDirectory, ScanDirectoryResponse, checkExternalFiles, CheckExternalFilesResponse, startBatchImportTask, startDeleteExternalTask, startUnbindDatasetTask, getExternalDatasets, getExternalDatasetsCachedSync, invalidateExternalDatasetsCache, ExternalDatasetInfo, batchActivateUsers, batchDeactivateUsers, batchDeleteUsers, getMaintenanceMode, setMaintenanceMode as setMaintenanceModeApi } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
@@ -1115,6 +1115,42 @@ export default function SettingsPage() {
     }
   }
 
+  const handleResetDerivedData = async () => {
+    // Show confirmation dialog
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Reset All Derived Data?',
+      message: 'This will DELETE ALL processed data (coordinates, masks, features, AI results, training data, models, logs) while keeping original WSI files. This operation CANNOT be undone. Are you absolutely sure?',
+      confirmText: 'Yes, Reset All Data',
+      cancelText: 'Cancel',
+      variant: 'danger',
+      onConfirm: async () => {
+        setStorageError(null)
+        setResetDataResult(null)
+        try {
+          // Start background task
+          const response = await resetDerivedData()
+          console.log('Reset derived data task started:', response.task_id)
+
+          // Task will be tracked by BackgroundTaskContext automatically via SSE
+          // No need to manually track progress here
+
+          // Show success message
+          setStorageError(null)
+
+          // Note: We don't refresh stats here because the task is running in background
+          // User can manually refresh after task completes
+        } catch (err) {
+          console.error('Failed to start reset derived data task:', err)
+          setStorageError(err instanceof Error ? err.message : 'Failed to start reset derived data task')
+        }
+      },
+      onCancel: () => {
+        // Do nothing
+      }
+    })
+  }
+
   const formatBytes = (bytes: number): string => {
     if (bytes === 0) return '0 Bytes'
     const k = 1024
@@ -1733,6 +1769,7 @@ export default function SettingsPage() {
             recordsCleanupResult={recordsCleanupResult}
             detectOrphanedRecordsHandler={detectOrphanedRecordsHandler}
             handleRecordsCleanup={handleRecordsCleanup}
+            handleResetDerivedData={handleResetDerivedData}
             batchScanPath={batchScanPath}
             setBatchScanPath={setBatchScanPath}
             batchScanResult={batchScanResult}

@@ -234,22 +234,38 @@ async def create_training_task(
 async def list_training_tasks(
     skip: int = 0,
     limit: int = 100,
+    user: User = Depends(current_active_user),
     user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db)
 ):
-    """List training tasks. Users see only their own tasks, admin sees all."""
-    tasks = await TrainingTaskRepository.get_all(db, limit, skip, user_id=user_id_filter)
+    """List training tasks. Users see only their own tasks, admin sees all (with username)."""
+    # Admin users get username information
+    include_username = user.is_admin()
+
+    tasks = await TrainingTaskRepository.get_all(db, limit, skip, user_id=user_id_filter, include_username=include_username)
     total = await TrainingTaskRepository.count(db, user_id=user_id_filter)
 
     # Batch get WSI counts for all tasks (avoids N+1 query)
-    task_ids = [task.task_id for task in tasks]
+    if include_username:
+        # tasks is already a list of dicts
+        task_ids = [task["task_id"] for task in tasks]
+    else:
+        # tasks is a list of TrainingTask objects
+        task_ids = [task.task_id for task in tasks]
+
     wsi_counts = await TrainingTaskRepository.get_wsi_counts_batch(db, task_ids)
 
     # Add WSI count to each task
     result_tasks = []
     for task in tasks:
-        task_dict = task.to_dict()
-        task_dict["wsi_count"] = wsi_counts.get(task.task_id, 0)
+        if include_username:
+            # task is already a dict with username
+            task_dict = task
+        else:
+            # task is a TrainingTask object
+            task_dict = task.to_dict()
+
+        task_dict["wsi_count"] = wsi_counts.get(task_dict["task_id"], 0)
         result_tasks.append(task_dict)
 
     return {"items": result_tasks, "total": total}
@@ -349,30 +365,44 @@ async def get_training_task(
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get training task details. Users can only view their own tasks, admin can view all."""
-    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    """Get training task details. Users can only view their own tasks, admin can view all (with username)."""
+    # Admin users get username information
+    include_username = user.is_admin()
+
+    task = await TrainingTaskRepository.get_by_id(db, task_id, include_username=include_username)
     if not task:
         raise HTTPException(status_code=404, detail="Training task not found")
 
     # Check ownership
-    if not check_data_ownership(task.user_id, user):
+    task_user_id = task["user_id"] if include_username else task.user_id
+    if not check_data_ownership(task_user_id, user):
         raise HTTPException(status_code=403, detail="You don't have permission to view this task")
 
     # Get associated WSI IDs
     wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
 
-    result = task.to_dict()
+    if include_username:
+        # task is already a dict with username
+        result = task
+    else:
+        # task is a TrainingTask object
+        result = task.to_dict()
+
     result["wsi_ids"] = wsi_ids
     # For external validation tasks, WSIs aren't in TrainingTaskWSI junction table
     if len(wsi_ids) == 0 and result.get("task_type") == "external_validation":
-        result["wsi_count"] = (task.model_config or {}).get("total_wsi", 0)
+        # Get model_config from dict or object depending on include_username
+        model_config = task["model_config"] if include_username else task.model_config
+        result["wsi_count"] = (model_config or {}).get("total_wsi", 0)
     else:
         result["wsi_count"] = len(wsi_ids)
 
     # Overlay real-time progress from shared file (if available)
     # This ensures the initial load shows the most up-to-date progress
     from backend.common.progress_store import get_progress
-    file_prog = get_progress(task.task_id)
+    # Get task_id from dict or object depending on include_username
+    task_id_for_progress = task["task_id"] if include_username else task.task_id
+    file_prog = get_progress(task_id_for_progress)
     if file_prog is not None:
         result["progress"] = file_prog
 
