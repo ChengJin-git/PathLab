@@ -297,10 +297,10 @@ export function InstallPWA() {
                             </div>
                             <h3 className="text-lg font-bold text-gray-900">PathLab 支持安装为应用</h3>
                             <p className="text-sm text-gray-500 mt-2 max-w-[280px] leading-relaxed">
-                                当前浏览器暂不支持此功能，你可以继续使用网页版，体验完全一致;
-                                <br />
-                                或者换用 <a href="https://sj.qq.com/appdetail/com.android.chrome/" target="_blank" rel="noopener noreferrer">Chrome</a>、
-                                <a href="https://sj.qq.com/appdetail/com.tencent.pcgame.msedgepc/" target="_blank" rel="noopener noreferrer">Edge</a> 等浏览器安装。
+                                当前浏览器暂不支持此功能，你可以继续使用网页版，体验完全一致。
+                            </p>
+                            <p className="text-xs text-gray-400 mt-1.5 max-w-[280px] leading-relaxed">
+                                或者换用 <a href="https://sj.qq.com/appdetail/com.android.chrome/" target="_blank" rel="noopener noreferrer" className="text-blue-500 underline">Chrome</a>、<a href="https://sj.qq.com/appdetail/com.tencent.pcgame.msedgepc/" target="_blank" rel="noopener noreferrer" className="text-blue-500 underline">Edge</a> 等浏览器安装
                             </p>
                         </div>
 
