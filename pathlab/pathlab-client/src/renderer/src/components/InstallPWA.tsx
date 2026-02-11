@@ -206,10 +206,10 @@ export function InstallPWA() {
                         </div>
 
                         <h2 className="text-xl font-bold text-white mb-3 text-center">
-                            请在浏览器中打开
+                            PathLab 支持安装为应用
                         </h2>
                         <p className="text-white/70 text-sm text-center mb-6 max-w-[280px]">
-                            {browserName} 内置浏览器不支持安装应用，请点击右上角菜单，选择在浏览器中打开
+                            {browserName} 内置浏览器不支持安装，请点击右上角菜单，选择在浏览器中打开
                         </p>
 
                         {/* Step-by-step guide */}
@@ -351,11 +351,11 @@ export function InstallPWA() {
                         <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-50 to-cyan-50 border border-gray-200 flex items-center justify-center mb-3 shadow-sm">
                             <img src="/images/pwa-icon.png" alt="PathLab" className="w-12 h-12 object-contain" />
                         </div>
-                        <h3 className="text-lg font-bold text-gray-900">Install PathLab</h3>
+                        <h3 className="text-lg font-bold text-gray-900">PathLab 支持安装为应用</h3>
                         <p className="text-sm text-gray-500 mt-1 max-w-[260px]">
                             {isIOS
-                                ? 'Add PathLab to your Home Screen for the best experience'
-                                : 'Install PathLab on your device for quick access'}
+                                ? '将 PathLab 添加到主屏幕，获得最佳体验'
+                                : '将 PathLab 安装到设备，方便快速访问'}
                         </p>
                     </div>
 
