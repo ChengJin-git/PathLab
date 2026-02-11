@@ -73,6 +73,7 @@ export interface StatusBadgeConfig {
  */
 export const TASK_DETAIL_STATUS_BADGES: Record<string, StatusBadgeConfig> = {
   pending: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Pending' },
+  resuming: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Resuming' },
   running: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Running' },
   extracting: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Extracting Features' },
   training: { bg: 'bg-purple-100', text: 'text-purple-800', label: 'Training Model' },
@@ -87,6 +88,7 @@ export const TASK_DETAIL_STATUS_BADGES: Record<string, StatusBadgeConfig> = {
  */
 export const TASK_LIST_STATUS_BADGES: Record<string, { color: string; label: string }> = {
   pending: { color: 'bg-gray-100 text-gray-800', label: 'Pending' },
+  resuming: { color: 'bg-yellow-100 text-yellow-800', label: 'Resuming' },
   running: { color: 'bg-blue-100 text-blue-800', label: 'Patching' },
   extracting: { color: 'bg-purple-100 text-purple-800', label: 'Extracting' },
   training: { color: 'bg-orange-100 text-orange-800', label: 'Training' },

@@ -420,6 +420,10 @@ class TaskQueueManager:
             logger.info(f"Task {queued_task.task_id} completed successfully on GPU {queued_task.assigned_gpu}")
         except Exception as e:
             logger.error(f"Task {queued_task.task_id} failed on GPU {queued_task.assigned_gpu}: {e}")
+            # Safety net: ensure task is marked as failed in DB if the pipeline's own
+            # error handler also failed (e.g., DB lock timeout). Without this, the task
+            # would stay in 'resuming' or 'pending' state permanently.
+            await self._ensure_task_failed(queued_task.task_id, queued_task.task_type, str(e))
         finally:
             # Cleanup and notify waiting tasks
             self._running_tasks.pop(queued_task.task_id, None)
@@ -433,6 +437,53 @@ class TaskQueueManager:
             await self._notify_vram_released()
 
             self._queue.task_done()
+
+    async def _ensure_task_failed(self, task_id: str, task_type: TaskType, error_msg: str):
+        """
+        Safety net: check if the task is still in a non-terminal state after an exception,
+        and force-update it to 'failed' if so.
+
+        This handles the case where the pipeline's own error handler also failed
+        (e.g., DB connection issue), leaving the task stuck in 'resuming'/'pending'/'running'.
+        """
+        NON_TERMINAL = {'pending', 'queued', 'running', 'resuming', 'preprocessing', 'extracting', 'training'}
+        try:
+            from backend.database import async_session
+            from backend.ai.schemas.base import TaskStatus
+
+            async with async_session() as db:
+                if task_type == TaskType.TRAINING:
+                    from backend.database.repositories import TrainingTaskRepository
+                    task = await TrainingTaskRepository.get_by_id(db, task_id)
+                    if task and task.status in NON_TERMINAL:
+                        logger.warning(
+                            f"Safety net: task {task_id} still in '{task.status}' after exception, "
+                            f"forcing to 'failed'"
+                        )
+                        await TrainingTaskRepository.update_status(
+                            db, task_id, TaskStatus.FAILED,
+                            error_message=f"Task failed (safety net): {error_msg}"
+                        )
+                elif task_type == TaskType.INFERENCE:
+                    from backend.database.repositories import AITaskRepository
+                    task = await AITaskRepository.get_by_id(db, task_id)
+                    if task and task.status in NON_TERMINAL:
+                        logger.warning(
+                            f"Safety net: task {task_id} still in '{task.status}' after exception, "
+                            f"forcing to 'failed'"
+                        )
+                        await AITaskRepository.update_status(
+                            db, task_id, TaskStatus.FAILED,
+                            error_message=f"Task failed (safety net): {error_msg}"
+                        )
+                await db.commit()
+        except Exception as fallback_err:
+            # Last resort: if even the safety net fails, just log it.
+            # The task will be picked up on next restart via resume_interrupted_tasks().
+            logger.error(
+                f"Safety net also failed for task {task_id}: {fallback_err}. "
+                f"Task may remain in non-terminal state until next restart."
+            )
 
     def get_status(self) -> Dict[str, Any]:
         """

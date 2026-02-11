@@ -25,7 +25,7 @@ interface TaskDetail {
   task_type: 'classification' | 'survival' | 'segmentation' | 'external_validation'
   data_type: 'wsi' | 'patch'
   task_description: string
-  status: 'pending' | 'running' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
+  status: 'pending' | 'running' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled' | 'resuming'
   progress: number
   created_at: string
   updated_at: string
@@ -422,7 +422,7 @@ export default function TaskDetailPage() {
                 Rerun
               </Button>
             )}
-            {['pending', 'running', 'preprocessing', 'extracting', 'training'].includes(task.status) && (
+            {['pending', 'running', 'preprocessing', 'extracting', 'training', 'resuming'].includes(task.status) && (
               <Button
                 variant="outline"
                 onClick={() => setShowCancelConfirm(true)}

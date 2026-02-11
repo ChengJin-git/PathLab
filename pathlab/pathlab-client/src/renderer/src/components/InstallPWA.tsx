@@ -26,13 +26,15 @@ function detectInAppBrowser(ua: string): string | null {
 
 /**
  * Whitelist: browsers known to support real PWA installation (not just shortcuts).
- * Returns true only for Chrome, Edge, Samsung Internet, and Opera on Android.
+ * Returns true only for Chrome, Edge, Firefox, Samsung Internet, and Opera on Android.
  * All other Android browsers (Xiaomi, Huawei, OPPO, Vivo, UC, QQ Browser, etc.)
  * will be treated as unsupported and shown a "use Chrome" guide.
  */
 function isRealPWABrowser(ua: string): boolean {
     // Edge (contains "Edg/" in UA, must check before Chrome since Edge UA also contains "Chrome")
     if (/Edg\//i.test(ua)) return true
+    // Firefox
+    if (/Firefox|FxiOS/i.test(ua)) return true
     // Samsung Internet
     if (/SamsungBrowser/i.test(ua)) return true
     // Opera
