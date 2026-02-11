@@ -283,6 +283,7 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
     """
     # Capture user info before SSE stream starts
     user_id_filter = None if user.is_admin() else str(user.id)
+    include_username = user.is_admin()
 
     async def event_generator():
         """Generate SSE events with task updates"""
@@ -297,10 +298,13 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                 async with safe_session() as db:
                     try:
                         # Fetch training tasks filtered by user
-                        tasks = await TrainingTaskRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter)
+                        tasks = await TrainingTaskRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter, include_username=include_username)
 
                         # Batch get WSI counts for all tasks (avoids N+1 query)
-                        task_ids = [task.task_id for task in tasks]
+                        if include_username:
+                            task_ids = [task["task_id"] for task in tasks]
+                        else:
+                            task_ids = [task.task_id for task in tasks]
                         wsi_counts = await TrainingTaskRepository.get_wsi_counts_batch(db, task_ids)
 
                         # Read real-time progress from shared files (no HTTP, no DB lock)
@@ -310,17 +314,26 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                         # Add WSI count and overlay file-based progress
                         result_tasks = []
                         for task in tasks:
-                            task_dict = task.to_dict()
+                            if include_username:
+                                # task is already a dict with username
+                                task_dict = task
+                                task_id = task["task_id"]
+                                model_config = task.get("model_config") or {}
+                            else:
+                                # task is a TrainingTask object
+                                task_dict = task.to_dict()
+                                task_id = task.task_id
+                                model_config = task.model_config or {}
                             # For external validation tasks, WSIs aren't in TrainingTaskWSI junction table
                             # so use model_config.total_wsi as the count
-                            junction_count = wsi_counts.get(task.task_id, 0)
+                            junction_count = wsi_counts.get(task_id, 0)
                             if junction_count == 0 and task_dict.get("task_type") == "external_validation":
-                                task_dict["wsi_count"] = (task.model_config or {}).get("total_wsi", 0)
+                                task_dict["wsi_count"] = model_config.get("total_wsi", 0)
                             else:
                                 task_dict["wsi_count"] = junction_count
                             # Overlay file progress if available (more up-to-date than DB)
-                            if task.task_id in file_progress:
-                                task_dict["progress"] = file_progress[task.task_id]
+                            if task_id in file_progress:
+                                task_dict["progress"] = file_progress[task_id]
                             result_tasks.append(task_dict)
 
                         # Change detection: only send if data changed
