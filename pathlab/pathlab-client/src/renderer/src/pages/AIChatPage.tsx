@@ -18,7 +18,7 @@ import {
   type ChatMessageContent,
   type MessageFeedback
 } from '../api'
-import { useRealtimeASR } from '../lib/useRealtimeASR'
+import { useVoiceSession } from '../lib/useVoiceSession'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import * as XLSX from 'xlsx'
@@ -45,7 +45,7 @@ import { TaskHistoryCard, parseTaskHistoryConfig, removeTaskHistoryConfigBlock, 
 import { CancelTaskCard, parseCancelTaskConfig, removeCancelTaskBlock } from '../components/chat/CancelTaskCard'
 import { DatasetRegistrationCard, parseDatasetRegistrationConfig, removeDatasetRegistrationBlock } from '../components/chat/DatasetRegistrationCard'
 import { MetadataUploadCard, parseMetadataUploadConfig, removeMetadataUploadBlock } from '../components/chat/MetadataUploadCard'
-import { shouldContinueVoice, removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
+import { removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
 import {
   TaskConfigSkeleton,
   OptionButtonsSkeleton,
@@ -664,10 +664,6 @@ export default function AIChatPage() {
   // Helpfulness feedback state: messageId -> helpfulness type (for task submission feedback)
   const [helpfulnessFeedbacks, setHelpfulnessFeedbacks] = useState<Map<number, 'helpful' | 'not_helpful'>>(new Map())
 
-  // Voice session state (realtime ASR with VAD)
-  const [voiceSessionActive, setVoiceSessionActive] = useState(false)
-  const [realtimePartialText, setRealtimePartialText] = useState('')
-
   // Voice command submit trigger: when this changes, trigger submit on TaskConfigCard
   const [submitTaskTrigger, setSubmitTaskTrigger] = useState<number>(0)
   // Voice command cancel trigger: when this changes, trigger cancel on CancelTaskCard
@@ -682,16 +678,11 @@ export default function AIChatPage() {
   const scrollRestoredRef = useRef(false)
   // Ref for aborting AI generation
   const abortControllerRef = useRef<AbortController | null>(null)
-  // Ref to track if we should auto-restart voice after LLM response
-  const shouldRestartVoiceRef = useRef(false)
   // Ref to access latest messages in callbacks
   const messagesRef = useRef<Message[]>([])
   messagesRef.current = messages
   // Ref to skip loading conversation when we just created it (to avoid overwriting in-progress messages)
   const skipConversationLoadRef = useRef(false)
-  // Ref to track latest voiceSessionActive value for use in callbacks (avoids stale closure)
-  const voiceSessionActiveRef = useRef(false)
-  voiceSessionActiveRef.current = voiceSessionActive
   // Ref to track current input value for voice transcript appending
   const inputRef = useRef('')
   inputRef.current = input
@@ -703,67 +694,45 @@ export default function AIChatPage() {
   // Toast helper function (defined early for use in hook callbacks)
   const showToastRef = useRef<(type: 'error' | 'success' | 'info', message: string) => void>(() => { })
 
-  // Auto-submit handler for realtime ASR
-  // Uses voiceSessionActiveRef to avoid stale closure issues with WebSocket callbacks
-  const handleVoiceTranscriptComplete = useCallback((transcript: string) => {
-    if (!transcript.trim()) return
-
-    // Clear the partial text immediately to hide the temporary bubble
-    setRealtimePartialText('')
-
-    // Get current input value from ref to support appending
-    const currentInput = inputRef.current.trim()
-
-    // If there's existing text, append with a space; otherwise just use the transcript
-    const newInput = currentInput
-      ? `${currentInput} ${transcript.trim()}`
-      : transcript.trim()
-
-    // Set the combined input and submit
-    setInput(newInput)
-
-    // Mark that we should restart voice after LLM response
-    // Use ref to get the latest value, not the stale closure value
-    shouldRestartVoiceRef.current = voiceSessionActiveRef.current
-
-    // Auto-submit after a brief delay to ensure input is set
-    setTimeout(() => {
-      const form = document.getElementById('chat-form') as HTMLFormElement
-      if (form) {
-        form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }))
-      }
-    }, 50)
-  }, []) // No dependencies needed - uses refs for latest values
-
-  // Realtime ASR hook for continuous voice mode
+  // Voice session hook – single source of truth for all voice state
   const {
-    isRecording: realtimeIsRecording,
-    isConnecting: realtimeIsConnecting,
+    voiceState,
+    partialText: realtimePartialText,
     mediaStream: realtimeMediaStream,
-    startRecording: startRealtimeRecording,
-    stopRecording: stopRealtimeRecording
-  } = useRealtimeASR({
-    onTranscriptComplete: handleVoiceTranscriptComplete,
-    onPartialTranscript: (text) => {
-      setRealtimePartialText(text)
-    },
-    onSpeechStart: () => {
-      console.log('[VoiceSession] Speech started')
-    },
-    onSpeechEnd: () => {
-      console.log('[VoiceSession] Speech ended (VAD triggered)')
+    toggle: toggleVoiceSession,
+    stop: stopVoiceSession,
+    notifyResponseComplete: notifyVoiceResponseComplete,
+  } = useVoiceSession({
+    onTranscript: (transcript) => {
+      // Get current input value from ref to support appending
+      const currentInput = inputRef.current.trim()
+      const newInput = currentInput
+        ? `${currentInput} ${transcript}`
+        : transcript
+
+      // Set input state AND ref simultaneously to avoid race condition
+      setInput(newInput)
+      inputRef.current = newInput
+
+      // Auto-submit: dispatch form submit after React has the new input
+      setTimeout(() => {
+        const form = document.getElementById('chat-form') as HTMLFormElement
+        if (form) {
+          form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }))
+        }
+      }, 50)
     },
     onError: (error) => {
-      console.error('[VoiceSession] Error:', error)
       showToastRef.current('error', `Voice input error: ${error}`)
-      setVoiceSessionActive(false)
-      setRealtimePartialText('')
-      // Don't restart voice after error
-      shouldRestartVoiceRef.current = false
     },
-    silenceDurationMs: 800,  // Wait 800ms of silence before considering speech ended
-    maxRecordingSeconds: 120  // 2 minute max per session
+    silenceDurationMs: 800,
+    maxRecordingSeconds: 120,
   })
+
+  // Derived booleans for UI convenience
+  const voiceSessionActive = voiceState !== 'idle'
+  const realtimeIsRecording = voiceState === 'recording'
+  const realtimeIsConnecting = voiceState === 'connecting'
 
   // Pre-compute CSV content mapping: assistant message ID -> most recent CSV from any previous user message
   // Uses O(n) single pass: track the most recent CSV as we iterate forward
@@ -865,17 +834,15 @@ export default function AIChatPage() {
       console.log('[VoiceSession] Auto-start recording triggered from navigation')
 
       // Clear the autoStartRecording flag immediately to prevent re-triggering
-      // when useEffect runs again due to location change from navigate()
       navigate(location.pathname, { replace: true, state: { ...state, autoStartRecording: false } })
 
-      // Start voice session with realtime ASR after a short delay to ensure everything is ready
+      // Start voice session after a short delay to ensure everything is ready
       setTimeout(() => {
         console.log('[VoiceSession] Starting auto-recording')
-        setVoiceSessionActive(true)
-        startRealtimeRecording()
+        toggleVoiceSession()
       }, 100)
     }
-  }, [location, startRealtimeRecording, navigate])
+  }, [location, toggleVoiceSession, navigate])
 
   const loadConversations = async () => {
     try {
@@ -1287,8 +1254,8 @@ export default function AIChatPage() {
           )
         )
       }
-      // On error, don't restart voice
-      shouldRestartVoiceRef.current = false
+      // On error, stop voice session
+      stopVoiceSession()
     } finally {
       setIsLoading(false)
       setIsGenerating(false)
@@ -1313,32 +1280,14 @@ export default function AIChatPage() {
         }
       }, 100)
 
-      // Check if we should restart voice session after LLM response
-      // Use voiceSessionActiveRef.current to get the latest value, avoiding stale closure
-      if (shouldRestartVoiceRef.current && voiceSessionActiveRef.current) {
-        shouldRestartVoiceRef.current = false
-
-        // Get the latest messages to check for VOICE_CONTROL block
-        // Use a timeout to ensure messages state is updated
-        setTimeout(() => {
-          const latestMessages = messagesRef.current
-          const lastMessage = latestMessages[latestMessages.length - 1]
-
-          if (lastMessage?.role === 'assistant') {
-            // Use AI's intelligent decision via VOICE_CONTROL block
-            const continueVoice = shouldContinueVoice(lastMessage.content)
-
-            if (continueVoice) {
-              // AI decided user may have more to say - continue voice session
-              startRealtimeRecording()
-            } else {
-              // AI decided conversation turn is complete - end voice session
-              setVoiceSessionActive(false)
-              stopRealtimeRecording()
-            }
-          }
-        }, 100)
-      }
+      // Notify voice session that LLM response is complete.
+      // The hook will parse VOICE_CONTROL and decide whether to restart recording.
+      setTimeout(() => {
+        const latestMessages = messagesRef.current
+        const lastMessage = latestMessages[latestMessages.length - 1]
+        const aiContent = lastMessage?.role === 'assistant' ? lastMessage.content : ''
+        notifyVoiceResponseComplete(aiContent)
+      }, 150)
     }
   }
 
@@ -1686,38 +1635,9 @@ export default function AIChatPage() {
 
   // Stop AI generation and voice recording
   const handleStopGeneration = useCallback(() => {
-    // Stop AI generation
     abortControllerRef.current?.abort()
-
-    // Also stop voice recording if active
-    if (voiceSessionActive || realtimeIsRecording) {
-      setVoiceSessionActive(false)
-      stopRealtimeRecording()
-      setRealtimePartialText('')
-      // Don't restart voice after stopping
-      shouldRestartVoiceRef.current = false
-    }
-  }, [voiceSessionActive, realtimeIsRecording, stopRealtimeRecording])
-
-  // Toggle voice session (continuous realtime ASR mode)
-  const toggleVoiceSession = useCallback(() => {
-    console.log('[VoiceSession] Toggle called, current state:', { voiceSessionActive, realtimeIsRecording })
-
-    if (voiceSessionActive || realtimeIsRecording) {
-      // Stop voice session
-      console.log('[VoiceSession] Stopping voice session')
-      setVoiceSessionActive(false)
-      stopRealtimeRecording()
-      setRealtimePartialText('')
-      // Clear the restart flag when manually stopping
-      shouldRestartVoiceRef.current = false
-    } else {
-      // Start voice session
-      console.log('[VoiceSession] Starting voice session')
-      setVoiceSessionActive(true)
-      startRealtimeRecording()
-    }
-  }, [voiceSessionActive, realtimeIsRecording, startRealtimeRecording, stopRealtimeRecording])
+    stopVoiceSession()
+  }, [stopVoiceSession])
 
   // Handle option button selection - auto-send message
   const handleOptionSelect = (text: string) => {
