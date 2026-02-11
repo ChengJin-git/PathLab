@@ -176,11 +176,12 @@ export default function TaskDetailPage() {
         }
 
         // Update task status (always present in SSE data)
-        // Preserve wsi_ids from initial load since SSE doesn't include them
+        // Preserve wsi_ids and username from initial load since SSE doesn't include them
         if (data.task) {
           setTask(prev => ({
             ...data.task,
-            wsi_ids: data.task.wsi_ids || prev?.wsi_ids
+            wsi_ids: data.task.wsi_ids || prev?.wsi_ids,
+            username: data.task.username || prev?.username
           }))
         }
 

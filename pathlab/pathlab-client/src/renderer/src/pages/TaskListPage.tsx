@@ -478,6 +478,12 @@ export default function TaskListPage() {
                         )}
                       </div>
                     </div>
+                    {isAdmin && task.username && (
+                      <div className="flex items-center gap-1 text-[10px] sm:text-xs text-gray-400">
+                        <User className="w-3 h-3 text-gray-300 flex-shrink-0" />
+                        <span className="text-gray-400 truncate max-w-[150px]" title={task.username}>{task.username}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -558,15 +564,6 @@ export default function TaskListPage() {
                       <span className="font-medium text-gray-500">{task.updated_at ? new Date(task.updated_at).toLocaleDateString() : 'N/A'}</span>
                       <span className="text-[9px] sm:text-[10px] text-gray-300 uppercase tracking-wide">Updated</span>
                     </div>
-                    {isAdmin && task.username && (
-                      <div className="flex flex-col">
-                        <div className="flex items-center gap-1 justify-start xl:justify-end">
-                          <User className="w-3 h-3 text-gray-400" />
-                          <span className="font-medium text-gray-500 truncate max-w-[100px]" title={task.username}>{task.username}</span>
-                        </div>
-                        <span className="text-[9px] sm:text-[10px] text-gray-300 uppercase tracking-wide">Creator</span>
-                      </div>
-                    )}
                   </div>
 
                   <div className="flex items-center gap-1">
