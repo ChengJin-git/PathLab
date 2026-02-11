@@ -145,7 +145,7 @@ export default function NewTaskPage() {
 
   // Auto-adjust default parameters when taskType changes (System-wide defaults: Cls=50, Survival=30)
   useEffect(() => {
-    if (wizard.taskType === 'survival_prediction') {
+    if (wizard.taskType === 'survival') {
       trainingConfig.setEpochs(30)
     } else {
       trainingConfig.setEpochs(50)
@@ -437,7 +437,7 @@ export default function NewTaskPage() {
       const result = await createTrainingTask({
         task_name: wizard.taskName,
         task_type: wizard.taskType,
-        data_level: wizard.dataLevel,
+        data_type: wizard.dataLevel,
         task_description: wizard.taskDescription,
         wsi_ids: Array.from(dataSelection.selectedIds),
         preprocessing: {
@@ -516,7 +516,7 @@ export default function NewTaskPage() {
       if (classes.length < 2) {
         errors.push('Classification tasks require at least 2 different classes. Please assign different labels to your slides.')
       }
-    } else if (wizard.taskType === 'survival_prediction') {
+    } else if (wizard.taskType === 'survival') {
       const eventCount = splitValidation.classDistribution['__event__'] || 0
       const censoredCount = splitValidation.classDistribution['__censored__'] || 0
       if (eventCount === 0 || censoredCount === 0) {

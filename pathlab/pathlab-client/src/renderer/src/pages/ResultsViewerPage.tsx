@@ -7,7 +7,7 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KFoldLossCurveData, type KMCurveData } from '../components/charts/AnalysisCharts'
-import { getTrainedModels, TrainedModel, getAuthToken, startExternalValidation as apiStartExternalValidation } from '../api'
+import { getTrainedModels, TrainedModel, getAuthToken, startExternalValidation as apiStartExternalValidation, fetchDatasetsForValidation, ValidationDataset } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import {
   CLASSIFICATION_METRICS,
@@ -54,7 +54,7 @@ interface ValidationProgress {
   processed_wsi: number
   model_id: string
   model_task_id: string
-  data_task_id: string
+  dataset_id: string
   error: string | null
   results_count?: number
 }
@@ -62,8 +62,9 @@ interface ValidationProgress {
 interface TrainingTask {
   task_id: string
   name: string
-  model_type: string
-  data_level: string  // "wsi" or "patch"
+  task_type: string
+  data_type: string  // "wsi" or "patch"
+  aggregation_level: string  // "file" or "case"
   status: string
   created_at: string | null
   has_analysis: boolean
@@ -72,6 +73,10 @@ interface TrainingTask {
   has_model: boolean
   has_ai_results: boolean
   ai_results_count: number
+  total_wsi_count: number  // Total WSI count (file-level)
+  total_case_count: number  // Total case count (case-level)
+  display_count: number  // Count based on aggregation level
+  wsi_ids: string[]  // WSI IDs for overlap detection
   model_id: string | null
   is_kfold: boolean  // Whether this task was trained with K-Fold cross-validation
 }
@@ -118,7 +123,7 @@ interface BootstrapCIResult {
 interface AnalysisSummary {
   analysis_id: string
   task_id: string
-  task_type?: string  // 'classification' or 'survival_prediction'
+  task_type?: string  // 'classification' or 'survival'
   timestamp: string
   description: string | null
   num_samples: number
@@ -147,7 +152,7 @@ interface AnalysisResult {
 
 // Helper to check if task is survival type
 const isSurvivalTask = (modelType: string | undefined): boolean => {
-  return modelType === 'wsi_survival' || modelType === 'survival_prediction'
+  return modelType === 'wsi_survival' || modelType === 'survival'
 }
 
 export default function ResultsViewerPage() {
@@ -189,16 +194,32 @@ export default function ResultsViewerPage() {
   const [pageMode, setPageMode] = useState<PageMode>('internal-analysis')
   const [trainedModels, setTrainedModels] = useState<TrainedModel[]>([])
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
-  const [dataTaskId, setDataTaskId] = useState<string | null>(null)
+  const [datasetId, setDatasetId] = useState<string | null>(null)
+  const [validationDatasets, setValidationDatasets] = useState<ValidationDataset[]>([])
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false)
   const [isDataDropdownOpen, setIsDataDropdownOpen] = useState(false)
   const [validationProgress, setValidationProgress] = useState<ValidationProgress | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
 
+  // Completed external validation tasks (for restoring results on page return)
+  interface CompletedExtValTask {
+    task_id: string
+    model_id: string | null
+    model_task_id: string | null
+    dataset_id: string | null
+    total_wsi: number
+    results_count: number
+    has_analysis: boolean
+    created_at: string | null
+  }
+  const [completedExtValTasks, setCompletedExtValTasks] = useState<CompletedExtValTask[]>([])
+
   useEffect(() => {
     loadTasks()
     loadTrainedModels()
+    loadValidationDatasets()
+    loadCompletedExtValTasks()
   }, [])
 
   useEffect(() => {
@@ -222,7 +243,7 @@ export default function ResultsViewerPage() {
   useEffect(() => {
     const task = tasks.find(t => t.task_id === selectedTaskId)
     if (task) {
-      if (isSurvivalTask(task.model_type)) {
+      if (isSurvivalTask(task.task_type)) {
         setSelectedMetrics(['c_index', 'integrated_brier_score'])
         setSelectedCharts(['km_curve', 'loss_curve'])
       } else {
@@ -231,6 +252,63 @@ export default function ResultsViewerPage() {
       }
     }
   }, [selectedTaskId, tasks])
+
+  // Auto-restore external validation results when model+dataset selection matches a completed task
+  useEffect(() => {
+    if (pageMode !== 'external-validation' || !selectedModelId || !datasetId) return
+    // Don't override an actively running validation
+    if (validationProgress && validationProgress.status !== 'completed' && validationProgress.status !== 'failed') return
+
+    const matchingTask = completedExtValTasks.find(
+      t => t.model_id === selectedModelId && t.dataset_id === datasetId && t.has_analysis
+    )
+    if (matchingTask) {
+      // Restore validationProgress to completed state so rendering logic works
+      const model = trainedModels.find(m => m.model_id === selectedModelId)
+      setValidationProgress({
+        validation_id: matchingTask.task_id,
+        status: 'completed',
+        progress: 100,
+        total_wsi: matchingTask.total_wsi,
+        processed_wsi: matchingTask.total_wsi,
+        model_id: selectedModelId,
+        model_task_id: model?.task_id || matchingTask.model_task_id || '',
+        dataset_id: datasetId,
+        error: null,
+        results_count: matchingTask.results_count,
+      })
+      // Load analysis results for this task
+      ;(async () => {
+        try {
+          const response = await fetch(
+            `${API_BASE}/results/tasks/${matchingTask.task_id}/analysis`,
+            authFetchOptions()
+          )
+          if (response.ok) {
+            const data = await response.json()
+            const analysesList: AnalysisSummary[] = data.analyses || []
+            if (analysesList.length > 0) {
+              // Use the most recent analysis
+              setCurrentResult({
+                task_id: matchingTask.task_id,
+                analysis_id: analysesList[0].analysis_id,
+                analysis_dir: '',
+                summary: analysesList[0],
+                chart_paths: analysesList[0].chart_paths || {},
+                metrics: analysesList[0].metrics || {},
+              })
+            }
+          }
+        } catch (error) {
+          console.error('Failed to load external validation analysis:', error)
+        }
+      })()
+    } else if (!validationProgress || validationProgress.model_id !== selectedModelId || validationProgress.dataset_id !== datasetId) {
+      // No matching completed task and selection changed — clear stale results
+      setValidationProgress(null)
+      setCurrentResult(null)
+    }
+  }, [pageMode, selectedModelId, datasetId, completedExtValTasks])
 
   // Track completed analysis tasks to refresh UI when analysis finishes
   const completedAnalysisIdsRef = useRef<Set<string>>(new Set())
@@ -247,14 +325,44 @@ export default function ResultsViewerPage() {
       if (!completedAnalysisIdsRef.current.has(analysisId)) {
         completedAnalysisIdsRef.current.add(analysisId)
 
-        // Reset pending state if this was our pending analysis
-        if (currentResult?._pending) {
-          setCurrentResult(null)
-        }
-
-        // Refresh analyses list for the selected task
-        if (selectedTaskId) {
-          loadAnalyses(selectedTaskId)
+        // Check if this is an external validation analysis
+        if (task.analysisType === 'external' && task.trainingTaskId) {
+          // Load analysis results for the external validation task
+          const extTaskId = task.trainingTaskId
+          ;(async () => {
+            try {
+              const response = await fetch(
+                `${API_BASE}/results/tasks/${extTaskId}/analysis`,
+                authFetchOptions()
+              )
+              if (response.ok) {
+                const data = await response.json()
+                const analysesList: AnalysisSummary[] = data.analyses || []
+                if (analysesList.length > 0) {
+                  setCurrentResult({
+                    task_id: extTaskId,
+                    analysis_id: analysesList[0].analysis_id,
+                    analysis_dir: '',
+                    summary: analysesList[0],
+                    chart_paths: analysesList[0].chart_paths || {},
+                    metrics: analysesList[0].metrics || {},
+                  })
+                }
+              }
+            } catch (error) {
+              console.error('Failed to load external validation analysis:', error)
+            }
+          })()
+          // Also refresh the completed extval tasks list for future visits
+          loadCompletedExtValTasks()
+        } else {
+          // Internal analysis — existing logic
+          if (currentResult?._pending) {
+            setCurrentResult(null)
+          }
+          if (selectedTaskId) {
+            loadAnalyses(selectedTaskId)
+          }
         }
       }
     }
@@ -294,6 +402,27 @@ export default function ResultsViewerPage() {
     }
   }
 
+  const loadValidationDatasets = async () => {
+    try {
+      const data = await fetchDatasetsForValidation()
+      setValidationDatasets(data.items || [])
+    } catch (error) {
+      console.error('Failed to load validation datasets:', error)
+    }
+  }
+
+  const loadCompletedExtValTasks = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/results/external-validation/completed`, authFetchOptions())
+      if (response.ok) {
+        const data = await response.json()
+        setCompletedExtValTasks(data.items || [])
+      }
+    } catch (error) {
+      console.error('Failed to load completed external validation tasks:', error)
+    }
+  }
+
   const loadAnalyses = async (taskId: string) => {
     try {
       const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`, authFetchOptions())
@@ -307,21 +436,15 @@ export default function ResultsViewerPage() {
   }
 
   const startExternalValidation = async () => {
-    if (!selectedModelId || !dataTaskId) return
+    if (!selectedModelId || !datasetId) return
 
     const selectedModel = trainedModels.find(m => m.model_id === selectedModelId)
     if (!selectedModel) return
 
-    // Check if model's task and data task are the same
-    if (selectedModel.task_id === dataTaskId) {
-      setValidationError('Cannot validate on the same dataset used for training')
-      return
-    }
-
     setValidationError(null)
     try {
       // Use the API function which supports all parameters including bootstrap CI
-      const result = await apiStartExternalValidation(selectedModelId, dataTaskId)
+      const result = await apiStartExternalValidation(selectedModelId, datasetId)
       // Task submitted successfully - show pending status
       // Progress will be tracked via SSE in the Background Task Panel
       setValidationProgress({
@@ -332,7 +455,7 @@ export default function ResultsViewerPage() {
         processed_wsi: 0,
         model_id: selectedModelId,
         model_task_id: selectedModel.task_id,
-        data_task_id: dataTaskId,
+        dataset_id: datasetId,
         error: null,
       })
       // Start polling to track this specific task's progress
@@ -365,7 +488,7 @@ export default function ResultsViewerPage() {
             processed_wsi: progress.processed_wsi,
             model_id: progress.model_id,
             model_task_id: progress.model_task_id,
-            data_task_id: progress.data_task_id,
+            dataset_id: progress.dataset_id,
             error: progress.error,
             results_count: progress.results_count,
           })
@@ -401,7 +524,7 @@ export default function ResultsViewerPage() {
 
   const selectedModel = trainedModels.find(m => m.model_id === selectedModelId)
   const modelTask = selectedModel ? tasks.find(t => t.task_id === selectedModel.task_id) : null
-  const dataTask = tasks.find(t => t.task_id === dataTaskId)
+  const selectedDataset = validationDatasets.find(ds => ds.dataset_id === datasetId)
 
   const runAnalysis = async () => {
     if (!selectedTaskId || selectedMetrics.length === 0) return
@@ -634,7 +757,7 @@ export default function ResultsViewerPage() {
                   <div className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-80 overflow-y-auto">
                     {trainedModels.map(model => {
                       const trainTask = tasks.find(t => t.task_id === model.task_id)
-                      const isSurvival = trainTask?.model_type === 'survival' || model.aggregator === 'survival'
+                      const isSurvival = isSurvivalTask(trainTask?.task_type) || model.aggregator === 'survival'
                       const metrics = model.val_metrics as Record<string, number> | undefined
                       const metricValue = isSurvival
                         ? metrics?.c_index
@@ -697,8 +820,8 @@ export default function ResultsViewerPage() {
                   }`}
                 >
                   <div className="flex flex-col items-start">
-                    <span className={dataTask ? 'text-gray-900 font-medium' : 'text-gray-400'}>
-                      {dataTask ? dataTask.name : (selectedModelId ? 'Select dataset...' : 'Select model first')}
+                    <span className={selectedDataset ? 'text-gray-900 font-medium' : 'text-gray-400'}>
+                      {selectedDataset ? selectedDataset.name : (selectedModelId ? 'Select dataset...' : 'Select model first')}
                     </span>
                   </div>
                   <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${isDataDropdownOpen ? 'rotate-180' : ''}`} />
@@ -706,48 +829,59 @@ export default function ResultsViewerPage() {
 
                 {isDataDropdownOpen && selectedModel && modelTask && (
                   <div className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-64 overflow-y-auto">
-                    {/* Filter datasets by: 1. Not the training dataset 2. Same data_level 3. Same task type (classification vs survival) */}
-                    {tasks.filter(t => {
-                      // Exclude model's training dataset
-                      if (t.task_id === selectedModel.task_id) return false
-                      // Must match data_level (WSI <-> WSI, Patch <-> Patch)
-                      const modelDataLevel = modelTask.data_level || 'wsi'
-                      const taskDataLevel = t.data_level || 'wsi'
-                      if (modelDataLevel !== taskDataLevel) return false
+                    {/* Filter datasets by: 1. Same data_type 2. Matching task type 3. Class count match (classification) 4. No WSI overlap */}
+                    {validationDatasets.filter(ds => {
+                      // Must match data_type (WSI <-> WSI, Patch <-> Patch)
+                      const modelDataType = modelTask.data_type || 'wsi'
+                      if (ds.data_type !== modelDataType) return false
                       // Must match task type (Classification <-> Classification, Survival <-> Survival)
-                      const modelIsSurvival = isSurvivalTask(modelTask.model_type)
-                      const taskIsSurvival = isSurvivalTask(t.model_type)
-                      if (modelIsSurvival !== taskIsSurvival) return false
+                      const modelIsSurvival = isSurvivalTask(modelTask.task_type)
+                      const datasetIsSurvival = ds.task_type === 'survival'
+                      if (modelIsSurvival !== datasetIsSurvival) return false
+                      // For classification: must match class count (not class names)
+                      if (!modelIsSurvival) {
+                        const modelClassCount = selectedModel.classes?.length || 0
+                        if (modelClassCount !== ds.distinct_label_count) return false
+                      }
+                      // Exclude datasets with WSI overlap (prevent data leakage)
+                      const modelWsiIds = new Set(modelTask.wsi_ids || [])
+                      if (modelWsiIds.size > 0 && ds.wsi_ids?.some(id => modelWsiIds.has(id))) return false
                       return true
-                    }).map(task => (
+                    }).map(dataset => (
                       <button
-                        key={task.task_id}
-                        onClick={() => { setDataTaskId(task.task_id); setIsDataDropdownOpen(false); }}
+                        key={dataset.dataset_id}
+                        onClick={() => { setDatasetId(dataset.dataset_id); setIsDataDropdownOpen(false); }}
                         className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
-                          dataTaskId === task.task_id ? 'bg-gray-100' : ''
+                          datasetId === dataset.dataset_id ? 'bg-gray-100' : ''
                         }`}
                       >
                         <div>
-                          <div className="font-medium text-gray-900">{task.name}</div>
-                          <div className="text-xs text-gray-500">{task.ai_results_count} slides • {task.data_level?.toUpperCase() || 'WSI'}</div>
+                          <div className="font-medium text-gray-900">{dataset.name}</div>
+                          <div className="text-xs text-gray-500">
+                            {dataset.display_count || 0} {dataset.aggregation_level === 'case' ? 'cases' : 'slides'} • {dataset.data_type?.toUpperCase() || 'WSI'}
+                          </div>
                         </div>
-                        {dataTaskId === task.task_id && <CheckCircle2 className="w-4 h-4 text-gray-600" />}
+                        {datasetId === dataset.dataset_id && <CheckCircle2 className="w-4 h-4 text-gray-600" />}
                       </button>
                     ))}
-                    {tasks.filter(t => {
-                      if (t.task_id === selectedModel.task_id) return false
-                      const modelDataLevel = modelTask.data_level || 'wsi'
-                      const taskDataLevel = t.data_level || 'wsi'
-                      if (modelDataLevel !== taskDataLevel) return false
-                      const modelIsSurvival = isSurvivalTask(modelTask.model_type)
-                      const taskIsSurvival = isSurvivalTask(t.model_type)
-                      if (modelIsSurvival !== taskIsSurvival) return false
+                    {validationDatasets.filter(ds => {
+                      const modelDataType = modelTask.data_type || 'wsi'
+                      if (ds.data_type !== modelDataType) return false
+                      const modelIsSurvival = isSurvivalTask(modelTask.task_type)
+                      const datasetIsSurvival = ds.task_type === 'survival'
+                      if (modelIsSurvival !== datasetIsSurvival) return false
+                      if (!modelIsSurvival) {
+                        const modelClassCount = selectedModel.classes?.length || 0
+                        if (modelClassCount !== ds.distinct_label_count) return false
+                      }
+                      const modelWsiIds = new Set(modelTask.wsi_ids || [])
+                      if (modelWsiIds.size > 0 && ds.wsi_ids?.some(id => modelWsiIds.has(id))) return false
                       return true
                     }).length === 0 && (
                       <div className="px-4 py-8 text-center text-gray-500">
                         <p className="font-medium">No compatible datasets</p>
                         <p className="text-xs mt-1">
-                          Looking for: {modelTask.data_level?.toUpperCase() || 'WSI'} level, {isSurvivalTask(modelTask.model_type) ? 'Survival' : 'Classification'} type
+                          Looking for: {modelTask.data_type?.toUpperCase() || 'WSI'} level, {isSurvivalTask(modelTask.task_type) ? 'Survival' : 'Classification'} type, matching class count, no WSI overlap
                         </p>
                       </div>
                     )}
@@ -759,8 +893,8 @@ export default function ResultsViewerPage() {
             {/* Run Validation Button */}
             <Button
               onClick={startExternalValidation}
-              disabled={!selectedModelId || !dataTaskId || (selectedModel?.task_id === dataTaskId) || (validationProgress?.status === 'running')}
-              className="w-full bg-gray-800 hover:bg-gray-900 text-white py-3 gap-2"
+              disabled={!selectedModelId || !datasetId || (validationProgress?.status === 'running')}
+              className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 gap-2 shadow-lg shadow-orange-600/20"
             >
               {validationProgress?.status === 'running' ? (
                 <>
@@ -861,12 +995,12 @@ export default function ResultsViewerPage() {
                       <Card className="p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-4">
                           Metrics
-                          {modelTask && isSurvivalTask(modelTask.model_type) && (
+                          {modelTask && isSurvivalTask(modelTask.task_type) && (
                             <span className="ml-2 text-xs font-normal text-emerald-600"></span>
                           )}
                         </h3>
                         <div className="space-y-3">
-                          {(isSurvivalTask(modelTask?.model_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
+                          {(isSurvivalTask(modelTask?.task_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
                             <div key={metric.id} className="flex items-start gap-3 group">
                               <input
                                 type="checkbox"
@@ -921,12 +1055,12 @@ export default function ResultsViewerPage() {
                       <Card className="p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-4">
                           Charts
-                          {modelTask && isSurvivalTask(modelTask.model_type) && (
+                          {modelTask && isSurvivalTask(modelTask.task_type) && (
                             <span className="ml-2 text-xs font-normal text-emerald-600"></span>
                           )}
                         </h3>
                         <div className="space-y-3">
-                          {(isSurvivalTask(modelTask?.model_type) ? EXTERNAL_VALIDATION_SURVIVAL_CHARTS : EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS).map(chart => (
+                          {(isSurvivalTask(modelTask?.task_type) ? EXTERNAL_VALIDATION_SURVIVAL_CHARTS : EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS).map(chart => (
                             <label key={chart.id} className="flex items-start gap-3 cursor-pointer group">
                               <input
                                 type="checkbox"
@@ -1104,7 +1238,7 @@ export default function ResultsViewerPage() {
                     {selectedTask && (
                       <div className="flex items-center gap-2 flex-wrap">
                         <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-[10px] uppercase tracking-wider font-bold px-2">
-                          {selectedTask.model_type}
+                          {selectedTask.task_type}
                         </Badge>
                         {selectedTask.feature_extractor && (
                           <Badge variant="secondary" className="bg-purple-50 text-purple-700 hover:bg-purple-100 text-[10px] uppercase tracking-wider font-bold px-2">
@@ -1160,7 +1294,7 @@ export default function ResultsViewerPage() {
                                       ? 'bg-white/20 text-white'
                                       : 'bg-indigo-50 text-indigo-700'
                                   }`}>
-                                    {task.model_type}
+                                    {task.task_type}
                                   </span>
                                   {task.feature_extractor && (
                                     <span className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full transition-colors duration-200 ${
@@ -1218,12 +1352,12 @@ export default function ResultsViewerPage() {
             <Card className="p-4 sm:p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">
                 Metrics
-                {selectedTask && isSurvivalTask(selectedTask.model_type) && (
+                {selectedTask && isSurvivalTask(selectedTask.task_type) && (
                   <span className="ml-2 text-xs font-normal text-emerald-600"></span>
                 )}
               </h3>
               <div className="space-y-3">
-                {(isSurvivalTask(selectedTask?.model_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
+                {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
                   <div key={metric.id} className="flex items-start gap-3 group">
                     <input
                       type="checkbox"
@@ -1280,7 +1414,7 @@ export default function ResultsViewerPage() {
                 Charts
               </h3>
               <div className="space-y-3">
-                {(isSurvivalTask(selectedTask?.model_type) ? SURVIVAL_CHARTS : CLASSIFICATION_CHARTS).map(chart => (
+                {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_CHARTS : CLASSIFICATION_CHARTS).map(chart => (
                   <label key={chart.id} className="flex items-start gap-3 cursor-pointer group">
                     <input
                       type="checkbox"
@@ -1546,7 +1680,7 @@ interface AnalysisDetailsProps {
 function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts, isExternal = false }: AnalysisDetailsProps) {
   // Use task_id from analysis object if available, fallback to prop
   const effectiveTaskId = analysis.task_id || taskId
-  const isSurvival = analysis.task_type === 'survival_prediction' || analysis.task_type === 'wsi_survival'
+  const isSurvival = analysis.task_type === 'wsi_survival' || analysis.task_type === 'survival'
   // Color scheme helpers: orange for external, indigo for internal (survival always emerald)
   const accentBg = isExternal ? 'bg-orange-600' : 'bg-indigo-600'
   const accentText = isExternal ? 'text-orange-600' : 'text-indigo-600'

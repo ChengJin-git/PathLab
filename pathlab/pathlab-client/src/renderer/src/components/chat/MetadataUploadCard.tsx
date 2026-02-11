@@ -12,7 +12,7 @@ export interface MetadataUploadConfig {
   dataset_id?: string
   dataset_name?: string
   upload_mode?: 'classification' | 'survival'
-  data_level?: 'file' | 'case'
+  aggregation_level?: 'file' | 'case'
   // Persisted after successful upload
   upload_result?: {
     updated_count: number
@@ -176,7 +176,7 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
         datasetName: config.dataset_name!,
         datasetId: config.dataset_id,
         uploadMode: config.upload_mode || 'classification',
-        dataLevel: config.data_level || 'file'
+        dataLevel: config.aggregation_level || 'file'
       })
       setBgTaskId(taskId)
     } catch (err) {

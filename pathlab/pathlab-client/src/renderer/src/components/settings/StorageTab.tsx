@@ -70,6 +70,9 @@ export interface StorageTabProps {
   detectOrphanedRecordsHandler: (clearCleanupResult?: boolean) => Promise<void>
   handleRecordsCleanup: (e: React.MouseEvent) => Promise<void>
 
+  // Reset Derived Data
+  handleResetDerivedData: () => Promise<void>
+
   // Batch Scan & Register
   batchScanPath: string
   setBatchScanPath: (path: string) => void
@@ -81,7 +84,7 @@ export interface StorageTabProps {
   setBatchDatasetMode: (mode: 'existing' | 'new') => void
   batchSelectedDatasetId: string
   setBatchSelectedDatasetId: (id: string) => void
-  batchNewDatasetNameRef: React.RefObject<HTMLInputElement | null>
+  batchNewDatasetNameRef: React.RefObject<HTMLInputElement>
   batchRegistering: boolean
   batchImportTaskId: string | null
   batchDatasets: DatasetSummary[]
@@ -179,6 +182,9 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
     detectOrphanedRecordsHandler,
     handleRecordsCleanup,
 
+    // Reset Derived Data
+    handleResetDerivedData,
+
     // Batch Scan & Register
     batchScanPath,
     setBatchScanPath,
@@ -242,10 +248,10 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
   return (
     <>
       {/* Storage Location Configuration - Always visible, doesn't depend on stats */}
-      <Card className="p-6 mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-            <Database className="w-6 h-6 mr-3 text-gray-700" />
+      <Card className="p-4 sm:p-6 mb-6">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+          <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
+            <Database className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700 font-shrink-0" />
             Storage Location
           </h2>
           {storageConfig?.source && (
@@ -289,11 +295,11 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
       </Card>
 
       {/* Storage Stats - Shows loading/error state inside the card */}
-      <Card className="p-6 mb-6">
-        <div className="flex items-center justify-between mb-6">
+      <Card className="p-4 sm:p-6 mb-6">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-3">
-            <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-              <HardDrive className="w-6 h-6 mr-3 text-gray-700" />
+            <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
+              <HardDrive className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700 font-shrink-0" />
               Storage Overview
             </h2>
           </div>
@@ -366,6 +372,52 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
           anyStorageOpInProgress={anyStorageOpInProgress}
         />
       </div>
+
+      {/* Reset Derived Data - Dangerous Operation */}
+      <Card className="p-4 sm:p-6 mb-6 border-2 border-red-200 bg-red-50/30">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+          <div>
+            <h2 className="text-lg sm:text-lg font-semibold text-red-900 flex items-center gap-2 mb-2">
+              <AlertCircle className="w-5 h-5 text-red-700" />
+              Reset All Derived Data
+            </h2>
+            <p className="text-xs text-red-700">
+              Warning: This will delete ALL processed data while keeping original WSI files.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleResetDerivedData}
+            disabled={anyStorageOpInProgress}
+            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors self-end sm:self-auto"
+          >
+            <Trash2 className="w-4 h-4" />
+            Reset All Data
+          </button>
+        </div>
+
+        <div className="bg-white rounded-lg p-4 border border-red-200">
+          <div className="text-sm text-gray-700 space-y-2">
+            <p className="font-medium text-red-900">This operation will DELETE:</p>
+            <ul className="list-disc list-inside space-y-1 text-xs ml-2">
+              <li>All coordinates files</li>
+              <li>All mask files</li>
+              <li>All feature caches</li>
+              <li>All AI analysis results</li>
+              <li>All training data and tasks</li>
+              <li>All trained models</li>
+              <li>All logs and metadata</li>
+            </ul>
+            <p className="font-medium text-green-900 mt-3">This operation will PRESERVE:</p>
+            <ul className="list-disc list-inside space-y-1 text-xs ml-2">
+              <li>Original WSI files (in wsi_files/)</li>
+            </ul>
+            <p className="text-xs text-red-700 mt-3 font-medium">
+              This operation CANNOT be undone. Check Background Tasks panel for progress.
+            </p>
+          </div>
+        </div>
+      </Card>
 
       {/* Batch Scan & Register WSI Files */}
       <BatchRegisterCard
@@ -512,9 +564,9 @@ const OrphanedFilesCard: React.FC<OrphanedFilesCardProps> = ({
   formatBytes,
   anyStorageOpInProgress
 }) => (
-  <Card className="p-6">
-    <div className="flex items-center justify-between mb-4">
-      <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+  <Card className="p-4 sm:p-6">
+    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+      <h2 className="text-lg sm:text-lg font-semibold text-gray-900 flex items-center gap-2">
         <svg className="w-5 h-5 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
         </svg>
@@ -524,7 +576,7 @@ const OrphanedFilesCard: React.FC<OrphanedFilesCardProps> = ({
         type="button"
         onClick={() => detectOrphaned()}
         disabled={anyStorageOpInProgress || isCleaningUp}
-        className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors self-end sm:self-auto"
       >
         <Search className="w-4 h-4" />
         {loadingOrphaned ? 'Scanning...' : 'Scan'}
@@ -607,9 +659,9 @@ const OrphanedRecordsCard: React.FC<OrphanedRecordsCardProps> = ({
   handleRecordsCleanup,
   anyStorageOpInProgress
 }) => (
-  <Card className="p-6">
-    <div className="flex items-center justify-between mb-4">
-      <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+  <Card className="p-4 sm:p-6">
+    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+      <h2 className="text-lg sm:text-lg font-semibold text-gray-900 flex items-center gap-2">
         <Database className="w-5 h-5 text-gray-700" />
         Orphaned Records
       </h2>
@@ -617,7 +669,7 @@ const OrphanedRecordsCard: React.FC<OrphanedRecordsCardProps> = ({
         type="button"
         onClick={() => detectOrphanedRecordsHandler()}
         disabled={anyStorageOpInProgress || isCleaningUpRecords}
-        className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors self-end sm:self-auto"
       >
         <Search className="w-4 h-4" />
         {loadingOrphanedRecords ? 'Scanning...' : 'Scan'}
@@ -760,10 +812,10 @@ const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
   handleUnbindSelectedDatasets,
   navigate
 }) => (
-  <Card className="p-6 mt-6">
-    <div className="flex items-center justify-between mb-4">
-      <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
-        <FolderSearch className="w-6 h-6 text-gray-700" />
+  <Card className="p-4 sm:p-6 mt-6">
+    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+      <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center gap-2">
+        <FolderSearch className="w-5 h-5 sm:w-6 sm:h-6 text-gray-700" />
         Batch Register WSI Files
       </h2>
     </div>

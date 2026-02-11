@@ -104,7 +104,7 @@ class TissueSegmenter:
     def __init__(
         self,
         seg_level: int = -1,
-        sthresh: int = 5,
+        sthresh: int = 8,
         mthresh: int = 7,
         close: int = 4,
         use_otsu: bool = False,
@@ -112,8 +112,8 @@ class TissueSegmenter:
     ):
         """
         Args:
-            seg_level: Pyramid level for segmentation (-1 = auto select ~64x downsample)
-            sthresh: Binary threshold value (default: 5, low threshold for maximum tissue detection)
+            seg_level: Pyramid level for segmentation (-1 = auto select ~32x downsample)
+            sthresh: Binary threshold value (default: 8, low threshold for maximum tissue detection)
             mthresh: Median filter kernel size (default: 7)
             close: Morphological closing kernel size (default: 4)
             use_otsu: Use Otsu's method instead of binary threshold
@@ -193,12 +193,12 @@ class TissueSegmenter:
         return tissue_contours, hole_contours
 
     def _get_seg_level(self, slide) -> int:
-        """Get appropriate segmentation level (~64x downsample)"""
+        """Get appropriate segmentation level (~32x downsample)"""
         if self.seg_level >= 0:
             return min(self.seg_level, len(slide.level_dimensions) - 1)
 
-        # Auto-select level closest to 64x downsample
-        target_downsample = 64
+        # Auto-select level closest to 32x downsample
+        target_downsample = 32
         level_downsamples = slide.level_downsamples
 
         best_level = 0
@@ -544,7 +544,12 @@ class WSITiler:
         filter_params: Optional[Dict] = None
     ):
         """
-        Save coordinates and metadata to HDF5 file in PrePATH-compatible format.
+        Save coordinates and metadata to HDF5 file using atomic write pattern.
+
+        Writes to a .h5.partial temporary file first, then renames to .h5.
+        This ensures that if the process is interrupted during saving,
+        the incomplete file is clearly identifiable and won't be mistaken
+        for a valid cache entry.
 
         All parameters are always saved to ensure cache consistency.
         Default values are used when seg_params or filter_params are None.
@@ -564,7 +569,10 @@ class WSITiler:
         seg_params = seg_params or {}
         filter_params = filter_params or {}
 
-        with h5py.File(save_path, 'w') as f:
+        # Write to .partial file first, then atomically rename
+        partial_path = save_path.parent / f"{save_path.stem}.h5.partial"
+
+        with h5py.File(partial_path, 'w') as f:
             # Create coords dataset
             dset = f.create_dataset('coords', data=coords_array)
 
@@ -597,6 +605,9 @@ class WSITiler:
             dset.attrs['a_t'] = filter_params.get('a_t', 100)
             dset.attrs['a_h'] = filter_params.get('a_h', 16)
             dset.attrs['max_n_holes'] = filter_params.get('max_n_holes', 8)
+
+        # Atomically rename to final path
+        partial_path.rename(save_path)
 
         logger.info(f"Saved {len(coordinates)} coordinates to {save_path}")
 
@@ -797,6 +808,8 @@ def check_coords_cache_valid(
 
     Returns:
         Tuple of (coordinates, coords_file_path) if valid cache exists, None otherwise.
+        If a .h5.partial file is found, it indicates a previous extraction was
+        interrupted — the partial file is deleted and None is returned.
     """
     from backend.ai.tasks.feature_cache import compute_params_hash
 
@@ -811,6 +824,15 @@ def check_coords_cache_valid(
     )
 
     coords_file = coords_dir / params_hash / f"{wsi_id}_coords.h5"
+
+    # Check for incomplete extraction artifact
+    partial_path = coords_file.parent / f"{wsi_id}_coords.h5.partial"
+    if partial_path.exists():
+        logger.warning(f"Found incomplete coordinates file: {partial_path}, deleting")
+        try:
+            partial_path.unlink()
+        except OSError as e:
+            logger.warning(f"Failed to delete partial file {partial_path}: {e}")
 
     if not coords_file.exists():
         return None
@@ -829,8 +851,16 @@ def check_coords_cache_valid(
         seg_params, filter_params, contour_fn, use_padding,
         seg_level=seg_level,
     ):
-        logger.info(f"[Coords cache hit] {len(coords_array)} coordinates from {coords_file}")
-        return [tuple(coord) for coord in coords_array], coords_file
+        if len(coords_array) > 0:
+            logger.info(f"[Coords cache hit] {len(coords_array)} coordinates from {coords_file}")
+            return [tuple(coord) for coord in coords_array], coords_file
+        else:
+            # Cached file has 0 coordinates - treat as cache miss so adaptive fallback can try
+            logger.warning(
+                f"[Coords cache] Cached file has 0 coordinates for {wsi_id}, "
+                f"treating as cache miss for adaptive seg_level fallback"
+            )
+            return None
 
     logger.info("Cached coordinates have different parameters (hash collision?)")
     return None
@@ -901,6 +931,15 @@ def get_or_compute_coordinates(
     cache_dir.mkdir(parents=True, exist_ok=True)
     coords_file = cache_dir / f"{wsi_id}_coords.h5"
 
+    # Check for incomplete extraction artifact
+    partial_path = coords_file.parent / f"{wsi_id}_coords.h5.partial"
+    if partial_path.exists():
+        logger.warning(f"Found incomplete coordinates file: {partial_path}, deleting")
+        try:
+            partial_path.unlink()
+        except OSError as e:
+            logger.warning(f"Failed to delete partial file {partial_path}: {e}")
+
     # Get native MPP from slide for MPP-aware tiling
     native_mpp = get_native_mpp(slide)
     logger.info(f"Slide native MPP: {native_mpp}, params_hash: {params_hash}")
@@ -920,8 +959,15 @@ def get_or_compute_coordinates(
                 seg_params, filter_params, contour_fn, use_padding,
                 seg_level=seg_level,
             ):
-                logger.info(f"[Coords cache hit] {len(coords_array)} coordinates from {coords_file}")
-                return [tuple(coord) for coord in coords_array], coords_file
+                if len(coords_array) > 0:
+                    logger.info(f"[Coords cache hit] {len(coords_array)} coordinates from {coords_file}")
+                    return [tuple(coord) for coord in coords_array], coords_file
+                else:
+                    # Cached file has 0 coordinates - recompute with adaptive fallback
+                    logger.warning(
+                        f"[Coords cache hit] Cached file has 0 coordinates for {wsi_id}, "
+                        f"recomputing with adaptive seg_level fallback"
+                    )
             else:
                 logger.warning("Cached coordinates have different parameters (hash collision?), recomputing")
         else:
@@ -940,6 +986,9 @@ def get_or_compute_coordinates(
         filter_params=filter_params
     )
 
+    # Resolve the actual segmentation level (auto-selection resolves -1 to a concrete level)
+    initial_seg_level = segmenter._get_seg_level(slide)
+
     # Get level downsample factor for MPP calculation
     level_downsample = slide.level_downsamples[level] if level < len(slide.level_downsamples) else 1.0
 
@@ -953,10 +1002,64 @@ def get_or_compute_coordinates(
         level_downsample=level_downsample,
     )
 
+    # Don't save yet - may need adaptive fallback to lower seg_levels
     coordinates = tiler.compute_coordinates(
-        slide, save_path=coords_file,
+        slide, save_path=None,
         seg_params=seg_params, filter_params=filter_params
     )
+
+    # Adaptive seg_level fallback: if no coordinates found, try lower seg_levels
+    # Lower levels have higher resolution, making it easier to detect small tissue regions
+    if len(coordinates) == 0 and initial_seg_level > 0:
+        logger.warning(
+            f"No coordinates found at seg_level={initial_seg_level} for {wsi_id}, "
+            f"trying lower levels adaptively..."
+        )
+        for fallback_level in range(initial_seg_level - 1, -1, -1):
+            logger.info(f"[Adaptive fallback] Trying seg_level={fallback_level} for {wsi_id}")
+
+            fallback_seg_params = dict(seg_params or {})
+            fallback_seg_params['seg_level'] = fallback_level
+
+            fallback_segmenter = TissueSegmenter(
+                **fallback_seg_params,
+                filter_params=filter_params
+            )
+
+            fallback_tiler = WSITiler(
+                level=level,
+                segmenter=fallback_segmenter,
+                contour_fn=contour_fn,
+                use_padding=use_padding,
+                native_mpp=native_mpp,
+                level_downsample=level_downsample,
+            )
+
+            coordinates = fallback_tiler.compute_coordinates(
+                slide, save_path=None,
+                seg_params=seg_params, filter_params=filter_params
+            )
+
+            if len(coordinates) > 0:
+                logger.info(
+                    f"[Adaptive fallback] Found {len(coordinates)} coordinates at "
+                    f"seg_level={fallback_level} for {wsi_id} "
+                    f"(original auto-selected level={initial_seg_level})"
+                )
+                break
+
+        if len(coordinates) == 0:
+            logger.error(
+                f"No tissue coordinates found at any seg_level (0 to {initial_seg_level}) "
+                f"for {wsi_id}. The slide may not contain detectable tissue."
+            )
+
+    # Save coordinates using original tiler (preserves original seg_level for cache consistency)
+    tiler._save_coordinates(
+        coordinates, coords_file,
+        seg_params=seg_params, filter_params=filter_params
+    )
+
     return coordinates, coords_file
 
 
@@ -976,7 +1079,7 @@ def visualize_segmentation(
         slide: ASlide Slide object
         tissue_contours: List of tissue contours (at level 0)
         hole_contours: List of hole contours (at level 0)
-        vis_level: Visualization level (-1 = auto select ~64x)
+        vis_level: Visualization level (-1 = auto select ~32x)
         line_thickness: Line thickness for drawing contours
         color: Color for tissue contours (RGB)
         hole_color: Color for hole contours (RGB)
@@ -986,7 +1089,7 @@ def visualize_segmentation(
     """
     # Auto-select visualization level
     if vis_level < 0:
-        target_downsample = 64
+        target_downsample = 32
         level_downsamples = slide.level_downsamples
         vis_level = 0
         min_diff = abs(level_downsamples[0] - target_downsample)

@@ -4,11 +4,15 @@ Data Access Layer (Repository Pattern)
 Provides high-level database operations for all models.
 """
 
+import logging
 from datetime import datetime
 from typing import List, Optional, Dict
 from sqlalchemy import select, update, delete, func, desc, insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+logger = logging.getLogger(__name__)
 
 from .models import DataGroup, Dataset, WSISlide, AITask, AIResult, ChatConversation, ChatMessage, MessageFeedback, ExportTask, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, DatasetPermission, StorageTask, utc_now
 from backend.ai.utils.data_splitter import split_wsi_dataset, split_case_dataset
@@ -77,7 +81,12 @@ class DataGroupRepository:
         name: str = None,
         description: str = None
     ) -> DataGroup:
-        """Get existing data group by combination or create new one with UUID"""
+        """Get existing data group by combination or create new one with UUID.
+
+        Race-condition safe under PostgreSQL READ COMMITTED:
+        Uses SAVEPOINT + IntegrityError catch to handle concurrent inserts
+        that both pass the existence check (UNIQUE constraint on data_type+aggregation_level+task_type).
+        """
         import uuid
         existing = await DataGroupRepository.get_by_combination(
             db, data_type, aggregation_level, task_type
@@ -90,9 +99,20 @@ class DataGroupRepository:
             name = f"{data_type.upper()} {aggregation_level.capitalize()}-level {task_type.capitalize()}"
 
         group_id = str(uuid.uuid4())
-        return await DataGroupRepository.create(
-            db, group_id, name, data_type, aggregation_level, task_type, description
-        )
+        try:
+            async with db.begin_nested():
+                return await DataGroupRepository.create(
+                    db, group_id, name, data_type, aggregation_level, task_type, description
+                )
+        except IntegrityError:
+            # Another concurrent request created the same combination — re-query
+            logger.debug(f"DataGroup concurrent insert detected for ({data_type}, {aggregation_level}, {task_type}), re-querying")
+            existing = await DataGroupRepository.get_by_combination(
+                db, data_type, aggregation_level, task_type
+            )
+            if existing:
+                return existing
+            raise  # Should not happen — re-raise if still not found
 
     @staticmethod
     async def get_all(db: AsyncSession) -> List[DataGroup]:
@@ -116,7 +136,73 @@ class DataGroupRepository:
 
     @staticmethod
     async def delete(db: AsyncSession, group_id: str) -> bool:
-        """Delete data group (cascades to datasets and training tasks)"""
+        """Delete data group and all associated records.
+
+        Deletion order (PostgreSQL FK-safe):
+        1. Leaf records of WSI slides (ai_results, ai_tasks, training_task_wsi)
+        2. WSI slides belonging to datasets in this group
+        3. Datasets in this group (dataset_permissions auto-cascade via DB)
+        4. Leaf records of training tasks (training_task_wsi, trained_models, training_logs)
+        5. Training tasks in this group
+        6. The data group itself
+        """
+        # Get all dataset_ids in this group
+        ds_query = await db.execute(
+            select(Dataset.dataset_id).where(Dataset.group_id == group_id)
+        )
+        dataset_ids = [row[0] for row in ds_query.fetchall()]
+
+        if dataset_ids:
+            # Get all wsi_ids in these datasets
+            wsi_query = await db.execute(
+                select(WSISlide.wsi_id).where(WSISlide.dataset_id.in_(dataset_ids))
+            )
+            wsi_ids = [row[0] for row in wsi_query.fetchall()]
+
+            if wsi_ids:
+                # Delete WSI children: ai_results, ai_tasks, training_task_wsi
+                await db.execute(
+                    delete(AIResult).where(AIResult.wsi_id.in_(wsi_ids))
+                )
+                await db.execute(
+                    delete(AITask).where(AITask.wsi_id.in_(wsi_ids))
+                )
+                await db.execute(
+                    delete(TrainingTaskWSI).where(TrainingTaskWSI.wsi_id.in_(wsi_ids))
+                )
+
+            # Delete WSI slides
+            await db.execute(
+                delete(WSISlide).where(WSISlide.dataset_id.in_(dataset_ids))
+            )
+            # Delete datasets (dataset_permissions has ondelete=CASCADE, DB handles it)
+            await db.execute(
+                delete(Dataset).where(Dataset.group_id == group_id)
+            )
+
+        # Get all training_task_ids in this group
+        tt_query = await db.execute(
+            select(TrainingTask.task_id).where(TrainingTask.group_id == group_id)
+        )
+        task_ids = [row[0] for row in tt_query.fetchall()]
+
+        if task_ids:
+            # Delete training task children
+            await db.execute(
+                delete(TrainingTaskWSI).where(TrainingTaskWSI.task_id.in_(task_ids))
+            )
+            await db.execute(
+                delete(TrainedModel).where(TrainedModel.task_id.in_(task_ids))
+            )
+            await db.execute(
+                delete(TrainingLog).where(TrainingLog.task_id.in_(task_ids))
+            )
+            # Delete training tasks
+            await db.execute(
+                delete(TrainingTask).where(TrainingTask.group_id == group_id)
+            )
+
+        # Delete the data group itself
         result = await db.execute(
             delete(DataGroup).where(DataGroup.group_id == group_id)
         )
@@ -181,13 +267,29 @@ class DatasetRepository:
         group_id: str,
         user_id: str = None
     ) -> Dataset:
-        """Get existing dataset by name or create new one with UUID"""
+        """Get existing dataset by name or create new one with UUID.
+
+        Note: Dataset name does not have a UNIQUE constraint (different users may
+        share dataset names). Under PostgreSQL READ COMMITTED, concurrent calls with
+        the same name may create duplicate datasets. This is acceptable as
+        get_by_name returns the first match, and duplicates are rare in practice.
+        A SAVEPOINT is still used to handle any unexpected IntegrityError gracefully.
+        """
         import uuid
         existing = await DatasetRepository.get_by_name(db, name)
         if existing:
             return existing
         dataset_id = str(uuid.uuid4())
-        return await DatasetRepository.create(db, dataset_id, name, group_id=group_id, user_id=user_id)
+        try:
+            async with db.begin_nested():
+                return await DatasetRepository.create(db, dataset_id, name, group_id=group_id, user_id=user_id)
+        except IntegrityError:
+            # Unlikely but handle gracefully — re-query
+            logger.debug(f"Dataset concurrent insert detected for name='{name}', re-querying")
+            existing = await DatasetRepository.get_by_name(db, name)
+            if existing:
+                return existing
+            raise
 
     @staticmethod
     async def get_all(db: AsyncSession) -> List[Dataset]:
@@ -225,12 +327,103 @@ class DatasetRepository:
 
     @staticmethod
     async def delete(db: AsyncSession, dataset_id: str) -> bool:
-        """Delete dataset (cascades to WSI slides)"""
+        """Delete dataset and all associated records.
+
+        Deletion order (PostgreSQL FK-safe):
+        1. Leaf records of WSI slides (ai_results, ai_tasks, training_task_wsi)
+        2. WSI slides in this dataset
+        3. The dataset itself (dataset_permissions auto-cascade via DB ondelete=CASCADE)
+        """
+        # Get all wsi_ids in this dataset
+        wsi_query = await db.execute(
+            select(WSISlide.wsi_id).where(WSISlide.dataset_id == dataset_id)
+        )
+        wsi_ids = [row[0] for row in wsi_query.fetchall()]
+
+        if wsi_ids:
+            # Delete WSI children: ai_results first (FK to ai_tasks), then ai_tasks, then training_task_wsi
+            await db.execute(
+                delete(AIResult).where(AIResult.wsi_id.in_(wsi_ids))
+            )
+            await db.execute(
+                delete(AITask).where(AITask.wsi_id.in_(wsi_ids))
+            )
+            await db.execute(
+                delete(TrainingTaskWSI).where(TrainingTaskWSI.wsi_id.in_(wsi_ids))
+            )
+
+        # Delete WSI slides
+        await db.execute(
+            delete(WSISlide).where(WSISlide.dataset_id == dataset_id)
+        )
+
+        # Delete the dataset (dataset_permissions has ondelete=CASCADE, DB handles it)
         result = await db.execute(
             delete(Dataset).where(Dataset.dataset_id == dataset_id)
         )
         await db.flush()
         return result.rowcount > 0
+
+    @staticmethod
+    async def get_wsi_ids(db: AsyncSession, dataset_id: str) -> List[str]:
+        """Get all WSI IDs in a dataset."""
+        result = await db.execute(
+            select(WSISlide.wsi_id).where(WSISlide.dataset_id == dataset_id)
+        )
+        return [row[0] for row in result.all()]
+
+    @staticmethod
+    async def get_wsi_case_ids(db: AsyncSession, dataset_id: str) -> Dict[str, str]:
+        """Get case_id mapping for all WSIs in a dataset.
+
+        Returns:
+            Dict mapping wsi_id to case_id. If case_id is None, uses wsi_id as fallback.
+        """
+        result = await db.execute(
+            select(WSISlide.wsi_id, WSISlide.case_id)
+            .where(WSISlide.dataset_id == dataset_id)
+        )
+        case_id_map: Dict[str, str] = {}
+        for row in result.all():
+            wsi_id, case_id = row[0], row[1]
+            case_id_map[wsi_id] = case_id if case_id else wsi_id
+        return case_id_map
+
+    @staticmethod
+    async def get_aggregation_level(db: AsyncSession, dataset_id: str) -> Optional[str]:
+        """Get the aggregation_level of a dataset via its DataGroup.
+
+        Returns:
+            'case' or 'file', or None if dataset not found.
+        """
+        result = await db.execute(
+            select(DataGroup.aggregation_level)
+            .join(Dataset, Dataset.group_id == DataGroup.group_id)
+            .where(Dataset.dataset_id == dataset_id)
+            .limit(1)
+        )
+        row = result.first()
+        return row[0] if row else None
+
+    @staticmethod
+    async def get_distinct_label_count(db: AsyncSession, dataset_id: str) -> int:
+        """Get the count of distinct non-null labels in a dataset."""
+        result = await db.execute(
+            select(func.count(func.distinct(WSISlide.label)))
+            .where(WSISlide.dataset_id == dataset_id)
+            .where(WSISlide.label.isnot(None))
+        )
+        return result.scalar() or 0
+
+    @staticmethod
+    async def get_feature_extracted_count(db: AsyncSession, dataset_id: str) -> int:
+        """Get the count of WSIs with feature_extracted=True in a dataset."""
+        result = await db.execute(
+            select(func.count(WSISlide.id))
+            .where(WSISlide.dataset_id == dataset_id)
+            .where(WSISlide.feature_extracted == True)  # noqa: E712
+        )
+        return result.scalar() or 0
 
 
 class WSIRepository:
@@ -254,12 +447,12 @@ class WSIRepository:
         Get multiple WSI slides by IDs in a single query (batch operation).
 
         This is optimized for validating large numbers of WSI IDs - avoids N+1 query problem.
-        For datasets exceeding batch_size, queries are batched to avoid SQLite limitations.
+        For datasets exceeding batch_size, queries are batched for memory efficiency.
 
         Args:
             db: Database session
             wsi_ids: List of WSI IDs to fetch
-            batch_size: Number of IDs per batch (default 500, SQLite limit is 999)
+            batch_size: Number of IDs per batch (default 500)
 
         Returns:
             Dict mapping wsi_id to WSISlide for found slides
@@ -269,7 +462,7 @@ class WSIRepository:
 
         result_dict: Dict[str, WSISlide] = {}
 
-        # Batch query to avoid SQLite variable limit (999)
+        # Batch query for memory efficiency with large ID lists
         for i in range(0, len(wsi_ids), batch_size):
             batch_ids = wsi_ids[i:i + batch_size]
             result = await db.execute(
@@ -298,7 +491,7 @@ class WSIRepository:
         Args:
             db: Database session
             wsi_ids: List of WSI IDs to fetch
-            batch_size: Number of IDs per batch (default 500, SQLite limit is 999)
+            batch_size: Number of IDs per batch (default 500)
 
         Returns:
             Dict mapping wsi_id to WSISlide for found slides
@@ -308,7 +501,7 @@ class WSIRepository:
 
         result_dict: Dict[str, WSISlide] = {}
 
-        # Batch query to avoid SQLite variable limit (999)
+        # Batch query for memory efficiency with large ID lists
         for i in range(0, len(wsi_ids), batch_size):
             batch_ids = wsi_ids[i:i + batch_size]
             result = await db.execute(
@@ -473,7 +666,7 @@ class WSIRepository:
         count = 0
         for wsi_id, split_val in updates:
             # We can optimize this with a single update statement using a CASE/binding
-            # but for SQLite simplicity relative to list size, individual updates are acceptable
+            # but for simplicity relative to list size, individual updates are acceptable
             # or we could do `UPDATE wsi_slides SET split = :split WHERE wsi_id = :wsi_id` in a batch.
             
             # Simple check + update
@@ -1023,8 +1216,8 @@ class WSIRepository:
                 "user_id": row.dataset_user_id,  # Dataset owner
                 "group_id": row.group_id,
                 "data_type": row.data_type,  # wsi or patch (for frontend display)
-                "data_level": row.aggregation_level,  # file or case (frontend expects data_level)
-                "dataset_type": row.task_type or "classification",  # classification, survival (frontend expects dataset_type)
+                "aggregation_level": row.aggregation_level,  # file or case
+                "task_type": row.task_type or "classification",  # classification, survival
                 "file_count": row.file_count,
                 "total_size": row.total_size or 0,
                 "has_predefined_splits": has_predefined_splits,
@@ -1137,6 +1330,239 @@ class WSIRepository:
 
         result = await db.execute(query)
         return result.scalar_one()
+
+    # ------------------------------------------------------------------
+    # Search helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_search_filter(search: Optional[str]):
+        """Build ILIKE filter across searchable columns.
+
+        Matches original_filename, case_id, label, source, wsi_id.
+        Returns None when *search* is empty/None.
+        """
+        if not search or not search.strip():
+            return None
+        from sqlalchemy import or_
+        pattern = f"%{search.strip()}%"
+        return or_(
+            WSISlide.original_filename.ilike(pattern),
+            WSISlide.case_id.ilike(pattern),
+            WSISlide.label.ilike(pattern),
+            WSISlide.source.ilike(pattern),
+            WSISlide.wsi_id.ilike(pattern),
+        )
+
+    # ------------------------------------------------------------------
+    # Case-level pagination helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def count_cases_by_dataset(
+        db: AsyncSession,
+        dataset_id: str,
+        search: Optional[str] = None,
+        user_id: Optional[str] = None,
+        data_type: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None,
+    ) -> dict:
+        """Count distinct case groups for case-level pagination.
+
+        A "case" is a distinct non-NULL case_id.  Files with NULL case_id
+        form a single ``__no_case__`` group.
+
+        Returns dict with keys:
+            named_case_count  – number of distinct non-NULL case_ids
+            no_case_count     – number of files without case_id
+            total_cases       – named_case_count + (1 if no_case_count > 0 else 0)
+            total_files       – total matching file count
+            has_multi_slide_cases – whether any case_id has more than one file
+        """
+        from sqlalchemy import or_, case, literal_column
+
+        # ---- shared WHERE filters ----
+        filters = []
+        if dataset_id == "Uncategorized":
+            filters.append(WSISlide.dataset_id.is_(None))
+        else:
+            filters.append(WSISlide.dataset_id == dataset_id)
+
+        if user_id is not None:
+            has_elevated = elevated_dataset_ids and dataset_id in elevated_dataset_ids
+            if not has_elevated:
+                filters.append(WSISlide.user_id == user_id)
+
+        dt_filter = WSIRepository._build_data_type_filter(data_type)
+        if dt_filter is not None:
+            filters.append(dt_filter)
+
+        search_filter = WSIRepository._build_search_filter(search)
+        if search_filter is not None:
+            filters.append(search_filter)
+
+        # named_case_count
+        q_named = select(func.count(func.distinct(WSISlide.case_id))).where(
+            WSISlide.case_id.isnot(None), *filters
+        )
+        named_case_count = (await db.execute(q_named)).scalar_one()
+
+        # no_case_count (files without case_id)
+        q_no_case = select(func.count(WSISlide.id)).where(
+            WSISlide.case_id.is_(None), *filters
+        )
+        no_case_count = (await db.execute(q_no_case)).scalar_one()
+
+        # total files
+        q_total = select(func.count(WSISlide.id)).where(*filters)
+        total_files = (await db.execute(q_total)).scalar_one()
+
+        total_cases = named_case_count + (1 if no_case_count > 0 else 0)
+
+        # has_multi_slide_cases: any non-NULL case_id with count > 1
+        q_multi = (
+            select(func.count())
+            .select_from(
+                select(WSISlide.case_id)
+                .where(WSISlide.case_id.isnot(None), *filters)
+                .group_by(WSISlide.case_id)
+                .having(func.count(WSISlide.id) > 1)
+                .subquery()
+            )
+        )
+        multi_count = (await db.execute(q_multi)).scalar_one()
+        has_multi_slide_cases = multi_count > 0
+
+        return {
+            "named_case_count": named_case_count,
+            "no_case_count": no_case_count,
+            "total_cases": total_cases,
+            "total_files": total_files,
+            "has_multi_slide_cases": has_multi_slide_cases,
+        }
+
+    @staticmethod
+    async def get_by_dataset_case_paginated(
+        db: AsyncSession,
+        dataset_id: str,
+        page: int = 1,
+        page_size: int = 10,
+        search: Optional[str] = None,
+        user_id: Optional[str] = None,
+        data_type: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None,
+    ) -> List[WSISlide]:
+        """Fetch files for a *page* of case groups.
+
+        Ordering: named cases alphabetically by case_id first, then the
+        ``__no_case__`` group (NULL case_id files) last.
+
+        Each named case_id counts as 1 page unit; ALL files without case_id
+        together count as 1 page unit (consistent with frontend grouping).
+
+        Returns the list of WSISlide objects belonging to the cases on the
+        requested page (with dataset relationship loaded).
+        """
+        from sqlalchemy import or_
+
+        # ---- shared WHERE filters ----
+        filters = []
+        if dataset_id == "Uncategorized":
+            filters.append(WSISlide.dataset_id.is_(None))
+        else:
+            filters.append(WSISlide.dataset_id == dataset_id)
+
+        if user_id is not None:
+            has_elevated = elevated_dataset_ids and dataset_id in elevated_dataset_ids
+            if not has_elevated:
+                filters.append(WSISlide.user_id == user_id)
+
+        dt_filter = WSIRepository._build_data_type_filter(data_type)
+        if dt_filter is not None:
+            filters.append(dt_filter)
+
+        search_filter = WSIRepository._build_search_filter(search)
+        if search_filter is not None:
+            filters.append(search_filter)
+
+        # Step 1: Get paginated named case_ids
+        offset = (page - 1) * page_size
+        q_case_ids = (
+            select(WSISlide.case_id)
+            .where(WSISlide.case_id.isnot(None), *filters)
+            .group_by(WSISlide.case_id)
+            .order_by(WSISlide.case_id)
+            .offset(offset)
+            .limit(page_size)
+        )
+        case_ids_result = await db.execute(q_case_ids)
+        page_case_ids = [row[0] for row in case_ids_result.all()]
+
+        results: List[WSISlide] = []
+
+        # Step 2: Fetch files for the named cases
+        if page_case_ids:
+            q_files = (
+                select(WSISlide)
+                .options(selectinload(WSISlide.dataset))
+                .where(WSISlide.case_id.in_(page_case_ids), *filters)
+                .order_by(WSISlide.case_id, desc(WSISlide.created_at))
+            )
+            file_result = await db.execute(q_files)
+            results.extend(file_result.scalars().all())
+
+        # Step 3: Check if __no_case__ group falls on this page
+        # __no_case__ is always the LAST case unit.
+        # Count named cases first to know if __no_case__ is on this page.
+        q_named_count = select(func.count(func.distinct(WSISlide.case_id))).where(
+            WSISlide.case_id.isnot(None), *filters
+        )
+        named_count = (await db.execute(q_named_count)).scalar_one()
+
+        # __no_case__ index (0-based) = named_count
+        no_case_index = named_count
+        page_start = offset
+        page_end = offset + page_size  # exclusive
+        if page_start <= no_case_index < page_end:
+            # __no_case__ is on this page – fetch all uncased files
+            q_no_case = (
+                select(WSISlide)
+                .options(selectinload(WSISlide.dataset))
+                .where(WSISlide.case_id.is_(None), *filters)
+                .order_by(desc(WSISlide.created_at))
+            )
+            no_case_result = await db.execute(q_no_case)
+            results.extend(no_case_result.scalars().all())
+
+        return results
+
+    @staticmethod
+    async def bulk_update_feature_extracted(
+        db: AsyncSession, wsi_ids: List[str], extracted: bool = True
+    ) -> int:
+        """Bulk update feature_extracted flag for multiple WSIs.
+
+        Args:
+            db: Database session
+            wsi_ids: List of WSI IDs to update
+            extracted: Value to set (default True)
+
+        Returns:
+            Number of rows updated
+        """
+        if not wsi_ids:
+            return 0
+        total_updated = 0
+        batch_size = 500
+        for i in range(0, len(wsi_ids), batch_size):
+            batch = wsi_ids[i:i + batch_size]
+            result = await db.execute(
+                update(WSISlide)
+                .where(WSISlide.wsi_id.in_(batch))
+                .values(feature_extracted=extracted)
+            )
+            total_updated += result.rowcount
+        return total_updated
 
 
 class AITaskRepository:
@@ -1555,6 +1981,36 @@ class FeedbackRepository:
     """Repository for Message Feedback operations"""
 
     @staticmethod
+    async def _update_feedback_fields(
+        existing: MessageFeedback,
+        feedback_type: Optional[str],
+        task_helpfulness: Optional[str],
+        related_task_id: Optional[str],
+        time_to_action_seconds: Optional[float],
+        message_content: Optional[str],
+        context_messages: Optional[List[dict]],
+        task_type: Optional[str],
+        task_title: Optional[str],
+    ) -> None:
+        """Apply non-None fields to an existing feedback record."""
+        if feedback_type is not None:
+            existing.feedback_type = feedback_type
+        if task_helpfulness is not None:
+            existing.task_helpfulness = task_helpfulness
+        if related_task_id is not None:
+            existing.related_task_id = related_task_id
+        if time_to_action_seconds is not None:
+            existing.time_to_action_seconds = time_to_action_seconds
+        if message_content is not None:
+            existing.message_content = message_content
+        if context_messages is not None:
+            existing.context_messages = context_messages
+        if task_type is not None:
+            existing.task_type = task_type
+        if task_title is not None:
+            existing.task_title = task_title
+
+    @staticmethod
     async def upsert_feedback(
         db: AsyncSession,
         message_id: int,
@@ -1572,6 +2028,10 @@ class FeedbackRepository:
         Create or update feedback for a message.
         Uses upsert logic: if feedback exists, update it; otherwise, create new.
         Preserves message content and task info for admin review even if conversation is deleted.
+
+        Race-condition safe under PostgreSQL READ COMMITTED:
+        Uses SAVEPOINT + IntegrityError catch to handle concurrent inserts
+        (UNIQUE constraint on message_id + user_id).
         """
         # Check if feedback already exists
         result = await db.execute(
@@ -1583,27 +2043,16 @@ class FeedbackRepository:
 
         if existing:
             # Update existing feedback
-            if feedback_type is not None:
-                existing.feedback_type = feedback_type
-            if task_helpfulness is not None:
-                existing.task_helpfulness = task_helpfulness
-            if related_task_id is not None:
-                existing.related_task_id = related_task_id
-            if time_to_action_seconds is not None:
-                existing.time_to_action_seconds = time_to_action_seconds
-            if message_content is not None:
-                existing.message_content = message_content
-            if context_messages is not None:
-                existing.context_messages = context_messages
-            if task_type is not None:
-                existing.task_type = task_type
-            if task_title is not None:
-                existing.task_title = task_title
+            await FeedbackRepository._update_feedback_fields(
+                existing, feedback_type, task_helpfulness, related_task_id,
+                time_to_action_seconds, message_content, context_messages,
+                task_type, task_title,
+            )
             await db.flush()
             await db.refresh(existing)
             return existing
         else:
-            # Create new feedback
+            # Create new feedback — use SAVEPOINT for concurrent insert safety
             feedback = MessageFeedback(
                 message_id=message_id,
                 user_id=user_id,
@@ -1616,10 +2065,31 @@ class FeedbackRepository:
                 task_type=task_type,
                 task_title=task_title
             )
-            db.add(feedback)
-            await db.flush()
-            await db.refresh(feedback)
-            return feedback
+            try:
+                async with db.begin_nested():
+                    db.add(feedback)
+                    await db.flush()
+                    await db.refresh(feedback)
+                    return feedback
+            except IntegrityError:
+                # Another concurrent request created feedback for same message+user
+                logger.debug(f"Feedback concurrent insert for message_id={message_id}, user_id={user_id}, falling back to update")
+                result = await db.execute(
+                    select(MessageFeedback)
+                    .where(MessageFeedback.message_id == message_id)
+                    .where(MessageFeedback.user_id == user_id)
+                )
+                existing = result.scalar_one_or_none()
+                if existing:
+                    await FeedbackRepository._update_feedback_fields(
+                        existing, feedback_type, task_helpfulness, related_task_id,
+                        time_to_action_seconds, message_content, context_messages,
+                        task_type, task_title,
+                    )
+                    await db.flush()
+                    await db.refresh(existing)
+                    return existing
+                raise  # Should not happen
 
     @staticmethod
     async def get_feedback(
@@ -1992,7 +2462,7 @@ class TrainingTaskRepository:
         Create a new training task with associated WSI slides.
         Automatically extracts classes from WSI labels.
 
-        For large datasets (10k+ WSIs), uses bulk inserts to avoid SQLite issues.
+        For large datasets (10k+ WSIs), uses bulk inserts for performance.
 
         Args:
             prefetched_wsis: Optional list of already-fetched WSISlide objects.
@@ -2003,9 +2473,9 @@ class TrainingTaskRepository:
             wsis = prefetched_wsis
         else:
             # Extract unique classes from WSI labels
-            # For large datasets, query in batches to avoid SQLite limitations
+            # For large datasets, query in batches for memory efficiency
             wsis = []
-            batch_size = 500  # SQLite variable limit is 999, stay well below
+            batch_size = 500
             for i in range(0, len(wsi_ids), batch_size):
                 batch_ids = wsi_ids[i:i + batch_size]
                 wsi_list = await db.execute(
@@ -2027,8 +2497,8 @@ class TrainingTaskRepository:
                     f"Found {len(classes)} class(es): {classes}. "
                     f"Please assign different labels to your slides."
                 )
-        elif task_type == "survival_prediction":
-            # Survival prediction tasks require both event (status=1) and censored (status=0) samples
+        elif task_type == "survival":
+            # Survival tasks require both event (status=1) and censored (status=0) samples
             event_statuses = set(wsi.event_status for wsi in wsis if wsi.event_status is not None and wsi.event_time is not None)
             if len(event_statuses) < 2:
                 event_count = sum(1 for wsi in wsis if wsi.event_status == 1 and wsi.event_time is not None)
@@ -2173,14 +2643,50 @@ class TrainingTaskRepository:
         return result.scalar_one()
 
     @staticmethod
-    async def get_by_id(db: AsyncSession, task_id: str) -> Optional[TrainingTask]:
-        """Get training task by task_id with data_group relationship loaded"""
-        result = await db.execute(
-            select(TrainingTask)
-            .options(selectinload(TrainingTask.data_group))
-            .where(TrainingTask.task_id == task_id)
-        )
-        return result.scalar_one_or_none()
+    async def get_by_id(db: AsyncSession, task_id: str, include_username: bool = False):
+        """Get training task by task_id with data_group relationship loaded.
+
+        Args:
+            db: Database session
+            task_id: Training task ID
+            include_username: If True, joins with User table to include username (for admin view).
+                              Returns dict instead of TrainingTask object.
+
+        Returns:
+            If include_username=False: Optional[TrainingTask]
+            If include_username=True: Optional[Dict] with username field added
+        """
+        if not include_username:
+            # Original behavior - return TrainingTask object
+            result = await db.execute(
+                select(TrainingTask)
+                .options(selectinload(TrainingTask.data_group))
+                .where(TrainingTask.task_id == task_id)
+            )
+            return result.scalar_one_or_none()
+        else:
+            # Admin view - join with User table to get username
+            from backend.auth.models import User as AuthUser
+            from sqlalchemy import cast, String
+
+            result = await db.execute(
+                select(TrainingTask, AuthUser.email, AuthUser.nickname)
+                .options(selectinload(TrainingTask.data_group))
+                .outerjoin(AuthUser, TrainingTask.user_id == cast(AuthUser.id, String))
+                .where(TrainingTask.task_id == task_id)
+            )
+            row = result.one_or_none()
+            if not row:
+                return None
+
+            task = row[0]  # TrainingTask object
+            email = row[1]  # User.email (username)
+            nickname = row[2]  # User.nickname
+
+            task_dict = task.to_dict()
+            # Use nickname if available, otherwise use email (username)
+            task_dict["username"] = nickname or email or None
+            return task_dict
 
     @staticmethod
     async def get_by_ids(db: AsyncSession, task_ids: List[str]) -> Dict[str, TrainingTask]:
@@ -2200,7 +2706,7 @@ class TrainingTaskRepository:
         return {task.task_id: task for task in tasks}
 
     @staticmethod
-    async def get_all(db: AsyncSession, limit: int = 100, offset: int = 0, user_id: Optional[str] = None) -> List[TrainingTask]:
+    async def get_all(db: AsyncSession, limit: int = 100, offset: int = 0, user_id: Optional[str] = None, include_username: bool = False):
         """Get all training tasks with data_group relationship loaded.
 
         Args:
@@ -2209,13 +2715,50 @@ class TrainingTaskRepository:
             offset: Number of records to skip
             user_id: Optional user ID filter. If provided, only returns tasks belonging to this user.
                      If None, returns all tasks (for admin users).
+            include_username: If True, joins with User table to include username (for admin view).
+                              Returns list of dicts instead of TrainingTask objects.
+
+        Returns:
+            If include_username=False: List[TrainingTask]
+            If include_username=True: List[Dict] with username field added
         """
-        query = select(TrainingTask).options(selectinload(TrainingTask.data_group))
-        if user_id is not None:
-            query = query.where(TrainingTask.user_id == user_id)
-        query = query.order_by(desc(TrainingTask.created_at)).limit(limit).offset(offset)
-        result = await db.execute(query)
-        return result.scalars().all()
+        if not include_username:
+            # Original behavior - return TrainingTask objects
+            query = select(TrainingTask).options(selectinload(TrainingTask.data_group))
+            if user_id is not None:
+                query = query.where(TrainingTask.user_id == user_id)
+            query = query.order_by(desc(TrainingTask.created_at)).limit(limit).offset(offset)
+            result = await db.execute(query)
+            return result.scalars().all()
+        else:
+            # Admin view - join with User table to get username
+            from backend.auth.models import User as AuthUser
+            from sqlalchemy import cast, String
+
+            query = (
+                select(TrainingTask, AuthUser.email, AuthUser.nickname)
+                .options(selectinload(TrainingTask.data_group))
+                .outerjoin(AuthUser, TrainingTask.user_id == cast(AuthUser.id, String))
+            )
+            if user_id is not None:
+                query = query.where(TrainingTask.user_id == user_id)
+            query = query.order_by(desc(TrainingTask.created_at)).limit(limit).offset(offset)
+            result = await db.execute(query)
+            rows = result.all()
+
+            # Convert to dict with username
+            tasks_with_username = []
+            for row in rows:
+                task = row[0]  # TrainingTask object
+                email = row[1]  # User.email (username)
+                nickname = row[2]  # User.nickname
+
+                task_dict = task.to_dict()
+                # Use nickname if available, otherwise use email (username)
+                task_dict["username"] = nickname or email or None
+                tasks_with_username.append(task_dict)
+
+            return tasks_with_username
 
     @staticmethod
     async def count(db: AsyncSession, user_id: Optional[str] = None) -> int:
@@ -2277,6 +2820,28 @@ class TrainingTaskRepository:
             .where(TrainingTaskWSI.task_id == task_id)
         )
         return [row[0] for row in result.all()]
+
+    @staticmethod
+    async def get_wsi_ids_batch(db: AsyncSession, task_ids: List[str]) -> Dict[str, List[str]]:
+        """Get all WSI IDs for multiple tasks in a single query (batch operation).
+
+        Args:
+            db: Database session
+            task_ids: List of task IDs to get WSI IDs for
+
+        Returns:
+            Dict mapping task_id to list of wsi_ids. Tasks with no WSIs will have empty list.
+        """
+        if not task_ids:
+            return {}
+        result = await db.execute(
+            select(TrainingTaskWSI.task_id, TrainingTaskWSI.wsi_id)
+            .where(TrainingTaskWSI.task_id.in_(task_ids))
+        )
+        wsi_ids_by_task: Dict[str, List[str]] = {tid: [] for tid in task_ids}
+        for row in result.all():
+            wsi_ids_by_task[row[0]].append(row[1])
+        return wsi_ids_by_task
 
     @staticmethod
     async def get_wsi_counts_batch(db: AsyncSession, task_ids: List[str]) -> Dict[str, int]:
@@ -2512,14 +3077,19 @@ class TrainingTaskRepository:
         if not task:
             return False
 
-        # Delete associated WSI records (should cascade automatically, but being explicit)
+        # Delete associated WSI records
         await db.execute(
             delete(TrainingTaskWSI).where(TrainingTaskWSI.task_id == task_id)
         )
 
-        # Delete associated trained models (should cascade automatically, but being explicit)
+        # Delete associated trained models
         await db.execute(
             delete(TrainedModel).where(TrainedModel.task_id == task_id)
+        )
+
+        # Delete associated training logs
+        await db.execute(
+            delete(TrainingLog).where(TrainingLog.task_id == task_id)
         )
 
         # Delete the training task itself
@@ -2684,7 +3254,18 @@ class TrainedModelRepository:
 
     @staticmethod
     async def set_default(db: AsyncSession, model_id: str) -> Optional[TrainedModel]:
-        """Set a model as default (unset all others)"""
+        """Set a model as default (unset all others).
+
+        Race-condition safe under PostgreSQL READ COMMITTED:
+        Uses SELECT FOR UPDATE to lock all TrainedModel rows before the
+        two UPDATE statements, preventing interleaving with concurrent
+        set_default calls that could leave multiple models as default.
+        """
+        # Lock all TrainedModel rows to prevent concurrent set_default interleaving
+        await db.execute(
+            select(TrainedModel).with_for_update()
+        )
+
         # First, unset all default flags
         await db.execute(
             update(TrainedModel).values(is_default=False)
@@ -2893,7 +3474,8 @@ class DatasetPermissionRepository:
     async def get_valid_by_user(db: AsyncSession, user_id: str) -> List[DatasetPermission]:
         """Get all valid (non-expired) permissions for a user"""
         from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
+        # Use naive UTC datetime for PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         result = await db.execute(
             select(DatasetPermission)
             .where(DatasetPermission.user_id == user_id)
@@ -2925,7 +3507,8 @@ class DatasetPermissionRepository:
             True if user has valid permission at or above the required level
         """
         from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
+        # Use naive UTC datetime for PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         result = await db.execute(
             select(DatasetPermission)
             .where(DatasetPermission.dataset_id == dataset_id)
@@ -2966,7 +3549,8 @@ class DatasetPermissionRepository:
     async def delete_expired(db: AsyncSession) -> int:
         """Delete all expired permissions. Returns count of deleted records."""
         from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
+        # Use naive UTC datetime for PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         result = await db.execute(
             delete(DatasetPermission)
             .where(DatasetPermission.expires_at.isnot(None))
@@ -3292,7 +3876,23 @@ class OrphanedRecordsRepository:
 
         deleted_counts = {}
 
-        # 1. Delete orphaned AI Tasks
+        # 1. Delete orphaned AI Results FIRST (before AI Tasks, due to FK: ai_results.task_id → ai_tasks.task_id)
+        if "ai_results" in categories:
+            orphaned_query = await db.execute(
+                select(AIResult.id)
+                .outerjoin(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
+                .where(WSISlide.wsi_id == None)
+            )
+            orphaned_ids = [row[0] for row in orphaned_query.fetchall()]
+            if orphaned_ids:
+                result = await db.execute(
+                    delete(AIResult).where(AIResult.id.in_(orphaned_ids))
+                )
+                deleted_counts["ai_results"] = result.rowcount
+            else:
+                deleted_counts["ai_results"] = 0
+
+        # 2. Delete orphaned AI Tasks (after AI Results are cleaned up)
         if "ai_tasks" in categories:
             # Get IDs of orphaned tasks first
             orphaned_query = await db.execute(
@@ -3308,22 +3908,6 @@ class OrphanedRecordsRepository:
                 deleted_counts["ai_tasks"] = result.rowcount
             else:
                 deleted_counts["ai_tasks"] = 0
-
-        # 2. Delete orphaned AI Results
-        if "ai_results" in categories:
-            orphaned_query = await db.execute(
-                select(AIResult.id)
-                .outerjoin(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
-                .where(WSISlide.wsi_id == None)
-            )
-            orphaned_ids = [row[0] for row in orphaned_query.fetchall()]
-            if orphaned_ids:
-                result = await db.execute(
-                    delete(AIResult).where(AIResult.id.in_(orphaned_ids))
-                )
-                deleted_counts["ai_results"] = result.rowcount
-            else:
-                deleted_counts["ai_results"] = 0
 
         # 3. Delete orphaned TrainingTaskWSI
         if "training_task_wsi" in categories:

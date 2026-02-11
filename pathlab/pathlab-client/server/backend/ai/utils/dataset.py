@@ -59,8 +59,9 @@ def get_torchvision_transforms(image_size: int = 224, mode: str = "eval") -> Cal
 
 
 def _load_slide(wsi_path: str):
-    from Aslide.aslide import Slide
-    return Slide(str(wsi_path))
+    """Load WSI file using Aslide (delegates to shared slide_utils)"""
+    from backend.common.slide_utils import load_slide
+    return load_slide(wsi_path)
 
 
 class WSIPatchDataset(Dataset):
@@ -131,7 +132,11 @@ class WSIPatchDataset(Dataset):
 
     def _ensure_slide(self):
         if self._slide is None:
+            import os
+            pid = os.getpid()
+            logger.info(f"[WSIPatchDataset] Opening slide in pid={pid}: {self.wsi_path}")
             self._slide = _load_slide(self.wsi_path)
+            logger.info(f"[WSIPatchDataset] Slide opened OK in pid={pid}: {self.wsi_path}")
         return self._slide
 
     def __getitem__(self, idx: int):

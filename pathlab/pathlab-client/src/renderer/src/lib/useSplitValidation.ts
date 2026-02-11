@@ -52,7 +52,7 @@ export function useSplitValidation({
       })
 
       caseMap.forEach((caseData) => {
-        if (taskType === 'survival_prediction') {
+        if (taskType === 'survival') {
           const hasSurvivalData = caseData.event_time != null && caseData.event_status != null
           if (hasSurvivalData) {
             const key = caseData.event_status === 1 ? '__event__' : '__censored__'
@@ -68,7 +68,7 @@ export function useSplitValidation({
     } else {
       // Slide-level: each slide counts individually
       selectedItems.forEach((item) => {
-        if (taskType === 'survival_prediction') {
+        if (taskType === 'survival') {
           const hasSurvivalData = item.event_time != null && item.event_status != null
           if (hasSurvivalData) {
             const key = item.event_status === 1 ? '__event__' : '__censored__'
@@ -88,7 +88,7 @@ export function useSplitValidation({
 
   // Calculate maximum allowed k for k-fold based on class distribution
   const kFoldValidation = useMemo((): KFoldValidation => {
-    const isSurvival = taskType === 'survival_prediction'
+    const isSurvival = taskType === 'survival'
 
     if (isSurvival) {
       const eventCount = classDistribution['__event__'] || 0
@@ -180,7 +180,7 @@ export function useSplitValidation({
 
   // Calculate validation for random 7:1:2 split
   const randomSplitValidation = useMemo((): RandomSplitValidation => {
-    const isSurvival = taskType === 'survival_prediction'
+    const isSurvival = taskType === 'survival'
     const minRequiredPerClass = 10
 
     if (isSurvival) {

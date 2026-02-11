@@ -26,7 +26,7 @@ export interface CSVActionConfig {
   dataset_name?: string
   dataset_id?: string
   upload_mode?: 'classification' | 'survival'
-  data_level?: 'case' | 'file'
+  aggregation_level?: 'case' | 'file'
   generate_split?: boolean
   corrections?: CSVCorrection[]
   validation?: CSVValidation
@@ -289,7 +289,7 @@ export function CSVActionCard({ config, csvContent, fileName, onSuccess, onError
             state: {
               datasetName: config.dataset_name,
               uploadMode: config.upload_mode || 'classification',
-              dataLevel: config.data_level || 'file',
+              dataLevel: config.aggregation_level || 'file',
               csvContent: finalCSV,
               csvFileName: fileName.replace(/\.xlsx?$/i, '.csv'),
               fromAIChat: true

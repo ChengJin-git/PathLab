@@ -11,7 +11,7 @@ import json
 import time
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Callable
 from datetime import datetime, timezone
 import logging
 
@@ -1833,6 +1833,126 @@ class StorageManager:
             "deleted_files": deleted_files,
             "deleted_dirs": deleted_dirs,
             "deleted_empty_dirs": deleted_empty_dirs,
+            "failed": failed,
+            "total_size": total_size,
+            "summary": summary
+        }
+
+    def reset_derived_data(self, progress_callback: Optional[Callable[[int], None]] = None) -> Dict[str, Any]:
+        """
+        Delete all derived data files, keeping only original WSI files.
+        This is a destructive operation used for forcing a complete data reset.
+
+        Deletes:
+        - coordinates/
+        - masks/
+        - features/
+        - ai_results/
+        - training/
+        - models/
+        - logs/
+        - metadata/
+
+        Preserves:
+        - wsi_files/ (original image files)
+
+        Args:
+            progress_callback: Optional callback function to report progress (0-100)
+
+        Returns:
+            {
+                "deleted_files": List[str],
+                "deleted_dirs": List[str],
+                "failed": List[Tuple[str, str]],
+                "total_size": int,
+                "summary": str
+            }
+        """
+        deleted_files = []
+        deleted_dirs = []
+        failed = []
+        total_size = 0
+
+        # Directories to delete (all except wsi_files)
+        dirs_to_delete = [
+            (self.coords_dir, "coordinates"),
+            (self.masks_dir, "masks"),
+            (self.features_dir, "features"),
+            (self.ai_results_dir, "ai_results"),
+            (self.training_dir, "training"),
+            (self.models_dir, "models"),
+            (self.logs_dir, "logs"),
+            (self.metadata_dir, "metadata"),
+        ]
+
+        logger.warning("Starting reset of all derived data - this will delete all processed files!")
+
+        total_dirs = len(dirs_to_delete)
+        for idx, (dir_path, dir_name) in enumerate(dirs_to_delete):
+            if dir_path.exists() and dir_path.is_dir():
+                try:
+                    # Calculate size before deletion
+                    size = self._get_dir_size(dir_path)
+
+                    # Delete the entire directory
+                    shutil.rmtree(dir_path)
+                    deleted_dirs.append(str(dir_path))
+                    total_size += size
+
+                    logger.info(f"Deleted {dir_name} directory: {dir_path} ({size / (1024**2):.2f} MB)")
+
+                    # Recreate empty directory to maintain structure
+                    dir_path.mkdir(parents=True, exist_ok=True)
+                    logger.info(f"Recreated empty {dir_name} directory: {dir_path}")
+
+                except Exception as e:
+                    failed.append((str(dir_path), str(e)))
+                    logger.error(f"Failed to delete {dir_name} directory {dir_path}: {e}")
+
+            # Report progress after each directory (0-90% for directory deletion)
+            if progress_callback:
+                progress = int(((idx + 1) / total_dirs) * 90)
+                progress_callback(progress)
+
+        # Clear all caches since data has been reset
+        self._stats_cache = None
+        self._orphan_cache = None
+        self._dir_mtime_cache.clear()
+        self._orphan_dir_mtime_cache.clear()
+
+        # Delete persistent cache files
+        try:
+            cache_file = self._get_cache_file_path()
+            if cache_file.exists():
+                cache_file.unlink()
+                logger.info(f"Deleted storage stats cache file: {cache_file}")
+        except Exception as e:
+            logger.warning(f"Failed to delete storage stats cache file: {e}")
+
+        try:
+            orphan_cache_file = self._get_orphan_cache_file_path()
+            if orphan_cache_file.exists():
+                orphan_cache_file.unlink()
+                logger.info(f"Deleted orphan cache file: {orphan_cache_file}")
+        except Exception as e:
+            logger.warning(f"Failed to delete orphan cache file: {e}")
+
+        # Report final progress (100%)
+        if progress_callback:
+            progress_callback(100)
+
+        summary = (
+            f"Derived data reset complete: "
+            f"{len(deleted_dirs)} directories deleted, "
+            f"{len(failed)} failed, {total_size / (1024**2):.2f} MB freed. "
+            f"Original WSI files preserved."
+        )
+
+        logger.warning(summary)
+
+        return {
+            "deleted_files": deleted_files,
+            "deleted_dirs": deleted_dirs,
             "failed": failed,
             "total_size": total_size,
             "summary": summary

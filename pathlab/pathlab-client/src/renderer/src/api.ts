@@ -274,6 +274,13 @@ async function handleResponse<T>(response: Response, context?: string): Promise<
 const AUTH_TOKEN_KEY = 'pathlab_auth_token'
 
 /**
+ * Custom event fired when a 401 response is received while the user had a valid token.
+ * This indicates the session was invalidated (e.g., logged in on another device).
+ * AuthContext listens for this event to show a user-friendly notification and redirect to login.
+ */
+export const SESSION_EXPIRED_EVENT = 'pathlab:session-expired'
+
+/**
  * Get stored auth token (internal use)
  */
 function _getAuthToken(): string | null {
@@ -291,6 +298,8 @@ async function apiFetch<T>(
   context?: string,
   skipAuth: boolean = false
 ): Promise<T> {
+  // Check if user had a token before the request (for session expiry detection)
+  const hadToken = !!_getAuthToken()
   try {
     // Add auth header if token exists and not skipping auth
     let headers = { ...(options?.headers || {}) } as Record<string, string>
@@ -302,10 +311,14 @@ async function apiFetch<T>(
     }
 
     const response = await fetch(url, { ...options, headers })
-    return handleResponse<T>(response, context)
+    return await handleResponse<T>(response, context)
   } catch (error) {
-    // If it's already an ApiError, rethrow it
+    // If it's already an ApiError, check for session expiry (401 while authenticated)
     if (error instanceof ApiError) {
+      if (error.status === 401 && hadToken) {
+        clearAuthToken()
+        window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT))
+      }
       throw error
     }
 
@@ -566,8 +579,9 @@ export async function getCurrentUser(): Promise<UserInfoResponse> {
     const user = await apiFetch<AuthUser>(`${API_BASE}/auth/me`, undefined, 'Failed to get user info')
     return { is_logged_in: true, user }
   } catch (error) {
-    // If token is invalid, clear it
-    if (error instanceof ApiError && error.isAuthError()) {
+    // Token clearing and session-expired event are handled by apiFetch for 401 responses.
+    // For other auth errors (403), clear token here.
+    if (error instanceof ApiError && error.status === 403) {
       clearAuthToken()
     }
     return { is_logged_in: false }
@@ -716,6 +730,95 @@ export async function revokeUserAgreement(userId: string): Promise<AuthUser> {
 }
 
 // ============================================================================
+// Batch User Operations (Admin only)
+// ============================================================================
+
+/**
+ * Batch activate users (admin only)
+ * @param userIds - Array of user IDs to activate
+ * @throws {ApiError} If request fails or not authorized
+ */
+export async function batchActivateUsers(userIds: string[]): Promise<{ updated: number }> {
+  return apiFetch<{ updated: number }>(
+    `${API_BASE}/auth/users/batch/activate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_ids: userIds })
+    },
+    'Failed to batch activate users'
+  )
+}
+
+/**
+ * Batch deactivate users (admin only)
+ * @param userIds - Array of user IDs to deactivate
+ * @throws {ApiError} If request fails or not authorized
+ */
+export async function batchDeactivateUsers(userIds: string[]): Promise<{ updated: number }> {
+  return apiFetch<{ updated: number }>(
+    `${API_BASE}/auth/users/batch/deactivate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_ids: userIds })
+    },
+    'Failed to batch deactivate users'
+  )
+}
+
+/**
+ * Batch delete users (admin only)
+ * @param userIds - Array of user IDs to delete
+ * @throws {ApiError} If request fails or not authorized
+ */
+export async function batchDeleteUsers(userIds: string[]): Promise<{ deleted: number }> {
+  return apiFetch<{ deleted: number }>(
+    `${API_BASE}/auth/users/batch/delete`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_ids: userIds })
+    },
+    'Failed to batch delete users'
+  )
+}
+
+// ============================================================================
+// Maintenance Mode (Admin only)
+// ============================================================================
+
+/**
+ * Get maintenance mode status
+ * @throws {ApiError} If request fails
+ */
+export async function getMaintenanceMode(): Promise<{ enabled: boolean }> {
+  return apiFetch<{ enabled: boolean }>(
+    `${API_BASE}/auth/maintenance-mode`,
+    undefined,
+    'Failed to get maintenance mode status'
+  )
+}
+
+/**
+ * Set maintenance mode (admin only)
+ * When enabled, all non-admin users are deactivated and cannot log in.
+ * @param enabled - Whether to enable maintenance mode
+ * @throws {ApiError} If request fails or not authorized
+ */
+export async function setMaintenanceMode(enabled: boolean): Promise<{ enabled: boolean; affected_users: number }> {
+  return apiFetch<{ enabled: boolean; affected_users: number }>(
+    `${API_BASE}/auth/maintenance-mode`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled })
+    },
+    'Failed to set maintenance mode'
+  )
+}
+
+// ============================================================================
 // Dataset Permission APIs (Temporary Elevated Access Management)
 // ============================================================================
 
@@ -822,7 +925,7 @@ export interface WSISummary {
   dataset_name: string | null
   case_id: string | null
   label: string | null
-  wsi_path: string
+  file_extension: string  // e.g. ".svs", ".png" - for file type determination (wsi_path no longer exposed)
   age: number | null
   gender: string | null
   source: string | null
@@ -831,14 +934,15 @@ export interface WSISummary {
   event_status: number | null
   // Split assignment (from CSV upload)
   split: string | null  // "train", "val", "test"
-  mpp: number | null
-  vendor: string | null
-  width: number | null
-  height: number | null
-  magnification: number | null
   file_size: number | null
   created_at: string | null
-  updated_at: string | null
+  // Detail-only fields (present in to_dict() but not in to_summary_dict())
+  mpp?: number | null
+  vendor?: string | null
+  width?: number | null
+  height?: number | null
+  magnification?: number | null
+  updated_at?: string | null
   // Permission flag - whether user can delete this WSI
   can_delete?: boolean
 }
@@ -865,11 +969,15 @@ export interface AIResult {
 }
 
 /**
- * WSI List response
+ * WSI List response (server-side case-level pagination)
  */
 export interface WSIListResponse {
   items: WSISummary[]
   total: number
+  total_cases: number
+  page: number
+  page_size: number
+  has_multi_slide_cases: boolean
 }
 
 /**
@@ -929,7 +1037,7 @@ export interface TrainingTask {
   task_id: string
   task_name: string
   task_type: string
-  data_level: string
+  data_type: string
   task_description: string | null
   status: string
   progress: number
@@ -941,6 +1049,7 @@ export interface TrainingTask {
   updated_at: string | null
   started_at: string | null
   finished_at: string | null
+  username?: string | null  // Username of task creator (only for admin users)
 }
 
 /**
@@ -1054,15 +1163,44 @@ export interface InferenceTaskResponse {
 }
 
 /**
- * Start external validation - use a trained model on data from a different task
+ * Dataset info for external validation selection
+ */
+export interface ValidationDataset {
+  dataset_id: string
+  name: string
+  data_type: string
+  aggregation_level: string
+  task_type: string
+  total_wsi_count: number
+  total_case_count: number
+  display_count: number
+  distinct_label_count: number
+  wsi_ids: string[]
+}
+
+/**
+ * Fetch datasets available for external validation selection
+ * @returns List of datasets with metadata for filtering
+ * @throws {ApiError} If the request fails
+ */
+export async function fetchDatasetsForValidation(): Promise<{ items: ValidationDataset[]; total: number }> {
+  return apiFetch<{ items: ValidationDataset[]; total: number }>(
+    `${API_BASE}/results/datasets-for-validation`,
+    {},
+    'Failed to fetch datasets for validation'
+  )
+}
+
+/**
+ * Start external validation - use a trained model on data from a dataset
  * @param modelId - TrainedModel ID
- * @param dataTaskId - Task ID whose WSIs will be used for validation
+ * @param datasetId - Dataset ID whose WSIs will be used for validation
  * @returns Task response with task_id for tracking progress
  * @throws {ApiError} If the request fails
  */
 export async function startExternalValidation(
   modelId: string,
-  dataTaskId: string,
+  datasetId: string,
   metrics?: string[],
   charts?: string[],
   computeBootstrapCI?: boolean
@@ -1074,7 +1212,7 @@ export async function startExternalValidation(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model_id: modelId,
-        data_task_id: dataTaskId,
+        dataset_id: datasetId,
         metrics: metrics,
         charts: charts,
         compute_bootstrap_ci: computeBootstrapCI
@@ -1321,28 +1459,60 @@ export async function checkDuplicateFilenames(filenames: string[]): Promise<Chec
   )
 }
 
-// Cache for fetchWSIList (keyed by datasetId + dataLevel)
+// Cache for fetchWSIList (keyed by datasetId + dataLevel) — only used for non-paginated requests
 const wsiListCache = createKeyedCache<WSIListResponse>(DEFAULT_CACHE_TTL)
 
 /**
- * Fetch WSI list from database via Gateway API (with caching)
+ * Pagination options for fetchWSIList.
+ * When provided, the request uses server-side case-level pagination (no caching).
+ * When omitted, all items are returned with caching (page_size=0).
+ */
+export interface WSIListPaginationOptions {
+  page: number
+  page_size: number
+  search?: string
+}
+
+/**
+ * Fetch WSI list from database via Gateway API.
+ *
+ * Without `options`: returns ALL items (page_size=0) with caching.
+ * With `options`: returns a single page of case-grouped items (no caching).
+ *
  * @param datasetId - Optional dataset UUID to filter by
  * @param dataLevel - Optional filter: "wsi" for WSI files, "patch" for image files
+ * @param options - Optional pagination/search params for server-side pagination
  * @throws {ApiError} If the request fails
  */
-export async function fetchWSIList(datasetId?: string, dataLevel?: string): Promise<WSIListResponse> {
-  const cacheKey = `${datasetId || '__all__'}:${dataLevel || '__all__'}`
-
-  // Build URL manually to avoid issues with new URL() constructor
+export async function fetchWSIList(
+  datasetId?: string,
+  dataLevel?: string,
+  options?: WSIListPaginationOptions
+): Promise<WSIListResponse> {
   const params = new URLSearchParams()
   if (datasetId) {
     params.set('dataset_id', datasetId)
   }
   if (dataLevel) {
-    params.set('data_level', dataLevel)
+    params.set('data_type', dataLevel)
   }
+
+  if (options) {
+    // Paginated request — no caching
+    params.set('page', String(options.page))
+    params.set('page_size', String(options.page_size))
+    if (options.search) {
+      params.set('search', options.search)
+    }
+    const url = `${API_BASE}/wsi?${params.toString()}`
+    return apiFetch<WSIListResponse>(url, undefined, 'Failed to load WSI list from database')
+  }
+
+  // Non-paginated request — return all items with caching
+  params.set('page_size', '0')
+  const cacheKey = `${datasetId || '__all__'}:${dataLevel || '__all__'}`
   const queryString = params.toString()
-  const url = queryString ? `${API_BASE}/wsi?${queryString}` : `${API_BASE}/wsi`
+  const url = `${API_BASE}/wsi?${queryString}`
 
   return wsiListCache.get(cacheKey, () =>
     apiFetch<WSIListResponse>(url, undefined, 'Failed to load WSI list from database')
@@ -1366,8 +1536,8 @@ export interface DatasetSummary {
   file_count: number
   total_size: number
   data_type: 'wsi' | 'patch'  // Data type: WSI collection or Patch collection
-  dataset_type: 'classification' | 'survival' // Task type: classification or survival
-  data_level: 'case' | 'file'  // Aggregation level: case-level or file-level dataset
+  task_type: 'classification' | 'survival' // Task type: classification or survival
+  aggregation_level: 'case' | 'file'  // Aggregation level: case-level or file-level dataset
   // Permission flag - whether user can delete this dataset
   can_delete?: boolean
   // Pre-defined split information (from CSV upload)
@@ -1391,7 +1561,7 @@ export interface DatasetsListResponse {
 export async function fetchDatasets(dataLevel?: string): Promise<DatasetsListResponse> {
   const params = new URLSearchParams()
   if (dataLevel) {
-    params.append('data_level', dataLevel)
+    params.append('data_type', dataLevel)
   }
   const queryString = params.toString()
   const url = queryString ? `${API_BASE}/wsi/datasets?${queryString}` : `${API_BASE}/wsi/datasets`
@@ -1445,7 +1615,7 @@ export async function updateDatasetType(
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dataset_type: datasetType })
+      body: JSON.stringify({ task_type: datasetType })
     },
     'Failed to update dataset type'
   )
@@ -1457,7 +1627,7 @@ export async function updateDatasetType(
 export interface UpdateDatasetDataLevelResponse {
   message: string
   dataset_id: string
-  new_data_level: 'case' | 'file'
+  new_aggregation_level: 'case' | 'file'
 }
 
 /**
@@ -1475,7 +1645,7 @@ export async function updateDatasetDataLevel(
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data_level: dataLevel })
+      body: JSON.stringify({ aggregation_level: dataLevel })
     },
     'Failed to update dataset data level'
   )
@@ -1641,7 +1811,7 @@ export async function uploadWSIFile(
   options?: {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
-    data_level?: 'case' | 'file'  // Aggregation level for new dataset
+    aggregation_level?: 'case' | 'file'  // Aggregation level for new dataset
     label?: string
     case_id?: string
     age?: number
@@ -1667,8 +1837,8 @@ export async function uploadWSIFile(
   if (options?.dataset_name) {
     formData.append('dataset_name', options.dataset_name)
   }
-  if (options?.data_level) {
-    formData.append('data_level', options.data_level)
+  if (options?.aggregation_level) {
+    formData.append('aggregation_level', options.aggregation_level)
   }
   if (options?.label) {
     formData.append('label', options.label)
@@ -1773,7 +1943,7 @@ export async function uploadWSIByPath(
   options?: {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
-    data_level?: 'case' | 'file'  // Aggregation level for new dataset
+    aggregation_level?: 'case' | 'file'  // Aggregation level for new dataset
     label?: string
     case_id?: string
     wsi_id?: string
@@ -1796,7 +1966,7 @@ export async function uploadWSIByPath(
         wsi_path,
         dataset_id: options?.dataset_id,
         dataset_name: options?.dataset_name,
-        data_level: options?.data_level,
+        aggregation_level: options?.aggregation_level,
         label: options?.label,
         case_id: options?.case_id,
         wsi_id: options?.wsi_id,
@@ -2471,8 +2641,8 @@ export interface SplitConfig {
 
 export interface TrainingTaskConfig {
   task_name: string
-  task_type: 'classification' | 'survival_prediction' | 'segmentation'
-  data_level: 'wsi' | 'patch'
+  task_type: 'classification' | 'survival' | 'segmentation'
+  data_type: 'wsi' | 'patch'
   task_description: string
   wsi_ids: string[]
   preprocessing: {
@@ -3328,6 +3498,32 @@ export async function cleanupOrphanedRecords(categories?: string[]): Promise<Orp
   )
 }
 
+/**
+ * Response from starting a reset derived data task
+ */
+export interface StartResetDerivedDataResponse {
+  task_id: string
+  message: string
+  total_items: number
+}
+
+/**
+ * Start a reset derived data background task
+ * This is a DESTRUCTIVE operation that deletes all processed data
+ * @returns Task info with task_id for tracking
+ * @throws {ApiError} If the request fails
+ */
+export async function resetDerivedData(): Promise<StartResetDerivedDataResponse> {
+  return apiFetch<StartResetDerivedDataResponse>(
+    `${API_BASE}/storage/reset-derived-data`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    },
+    'Failed to start reset derived data task'
+  )
+}
+
 // Batch scan and register APIs (Admin only)
 
 export interface ScannedWSIFile {
@@ -3378,7 +3574,7 @@ export interface BatchRegisterRequest {
   files: BatchRegisterFileInfo[]
   dataset_id?: string
   dataset_name?: string
-  data_level?: 'case' | 'file'  // Default: 'file' - how to organize data
+  aggregation_level?: 'case' | 'file'  // Default: 'file' - how to organize data
   task_type?: 'classification' | 'survival'  // Default: 'classification'
   default_label?: string  // For classification (default: 'External Import')
   default_event_time?: number  // For survival
@@ -3730,7 +3926,7 @@ export interface AvailableHeatmap {
   aggregator?: string | null  // MIL aggregator type (e.g., abmil, clam_sb, transmil)
   created_at: number
   attention_file: string
-  data_level?: 'wsi' | 'patch'  // WSI-level attention or patch-level CAM
+  data_type?: 'wsi' | 'patch'  // WSI-level attention or patch-level CAM
   cam_size?: [number, number]   // CAM size for patch-level
   is_best_fold?: boolean | null  // Whether this is the best fold (for k-fold training)
   is_kfold?: boolean  // Whether this task was trained with K-Fold cross-validation
@@ -3956,25 +4152,22 @@ export function getThumbnailUrl(wsi_id: string, size: number = 256): string {
 }
 
 /**
- * Determine if a file is a WSI or Patch based on path and file size
- * @param wsiPath - The file path
+ * Determine if a file is a WSI or Patch based on file extension and file size.
+ *
+ * @param fileExtension - File extension (e.g. ".svs", ".png")
  * @param fileSize - The file size in bytes
  * @returns 'WSI' or 'Patch'
  */
-export function getFileType(wsiPath: string | null, fileSize: number | null): 'WSI' | 'Patch' {
-  if (!wsiPath) return 'WSI'
-  const path = wsiPath.toLowerCase()
+export function getFileType(fileExtension: string | null, fileSize: number | null): 'WSI' | 'Patch' {
+  if (!fileExtension) return 'WSI'
+  const ext = fileExtension.toLowerCase()
 
   // Patch/image file extensions
   const patchExtensions = ['.png', '.jpg', '.jpeg', '.bmp']
-
-  // Check if it's a patch image format
-  if (patchExtensions.some(ext => path.endsWith(ext))) {
-    return 'Patch'
-  }
+  if (patchExtensions.includes(ext)) return 'Patch'
 
   // For .tif/.tiff files, check file size (100 MB threshold)
-  if (path.endsWith('.tif') || path.endsWith('.tiff')) {
+  if (ext === '.tif' || ext === '.tiff') {
     const SIZE_THRESHOLD = 100 * 1024 * 1024 // 100 MB
     return (fileSize || 0) >= SIZE_THRESHOLD ? 'WSI' : 'Patch'
   }

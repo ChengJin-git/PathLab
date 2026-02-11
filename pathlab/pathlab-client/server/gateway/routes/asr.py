@@ -194,7 +194,7 @@ async def asr_realtime_websocket(
             "OpenAI-Beta": "realtime=v1"
         }
         logger.info(f"Connecting to DashScope ASR: {url}")
-        ws = await websockets.connect(url, additional_headers=headers)
+        ws = await websockets.connect(url, additional_headers=headers, open_timeout=30)
         logger.info("Connected to DashScope realtime ASR")
         return ws
 
@@ -229,7 +229,7 @@ async def asr_realtime_websocket(
                     headers["Authorization"] = f"Bearer {local_asr_api_key}"
 
                 logger.info(f"Connecting to local ASR: {url}")
-                upstream_ws = await websockets.connect(url, additional_headers=headers)
+                upstream_ws = await websockets.connect(url, additional_headers=headers, open_timeout=30)
                 source_name = "Local ASR"
                 logger.info(f"Connected to local ASR with model: {effective_model}")
             except Exception as local_err:

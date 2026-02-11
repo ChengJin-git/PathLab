@@ -3,14 +3,14 @@ Task Queue Management Routes
 
 Provides API endpoints for monitoring and managing the GPU task queue.
 """
-import httpx
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..task_queue import get_task_queue
-from ..dependencies import logger, AI_SERVICE_URL
+from ..dependencies import logger
+from ..utils import cancel_ai_service_training
 from backend.ai.schemas.base import TaskStatus
 from backend.database import get_db
 from backend.database.repositories import TrainingTaskRepository
@@ -20,28 +20,6 @@ from backend.auth.dependencies import require_admin, check_data_ownership
 from .results import get_analysis_state
 
 router = APIRouter(prefix="/queue", tags=["Task Queue"])
-
-
-async def _cancel_ai_service_training(task_id: str) -> None:
-    """
-    Request AI service to cancel a training task and release GPU.
-
-    Called when user cancels a task. Uses fire-and-forget pattern:
-    sends the request and returns immediately without waiting for response,
-    since AI service may be blocked by GPU training.
-    """
-    try:
-        # Fire-and-forget: very short timeout, we don't care about the response
-        async with httpx.AsyncClient(timeout=1.0) as client:
-            await client.delete(f"{AI_SERVICE_URL}/api/ai/training/{task_id}")
-            logger.info(f"Sent cancellation request to AI service for task {task_id}")
-    except httpx.TimeoutException:
-        # Expected - AI service is blocked by GPU training, but flag is already set
-        logger.info(f"Cancellation request sent to AI service for task {task_id} (fire-and-forget)")
-    except Exception as e:
-        # Best effort - don't fail the main flow if cancellation fails
-        logger.warning(f"Failed to send cancellation to AI service for task {task_id}: {e}")
-
 
 class QueueConfigRequest(BaseModel):
     """Request to update queue configuration"""
@@ -220,7 +198,7 @@ async def cancel_queued_task(
 
     # Also notify AI service to cancel training and release GPU
     # This is needed because the HTTP request to AI service may still be in progress
-    await _cancel_ai_service_training(task_id)
+    await cancel_ai_service_training(task_id)
 
     # Always try to update database status (handles orphaned tasks after restart)
     if task and task.status not in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:

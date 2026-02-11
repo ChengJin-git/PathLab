@@ -31,13 +31,13 @@ export function TasksTab({
 
   return (
     <div className="space-y-6">
-      <Card className="p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-            <Layers className="w-6 h-6 mr-3 text-gray-700" />
-            Task Processing Configuration
+      <Card className="p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+          <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
+            <Layers className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700 font-shrink-0" />
+            <span className="break-words">Task Processing Configuration</span>
           </h2>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 self-end sm:self-auto">
             {queueStatus && (
               <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-50 rounded-md">
                 <Cpu className="w-4 h-4 text-blue-600" />

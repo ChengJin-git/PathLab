@@ -1,22 +1,17 @@
 /**
  * useRealtimeASR - Hook for realtime ASR (Automatic Speech Recognition)
- * 
+ *
  * Connects to the backend WebSocket proxy for qwen3-asr-realtime with server-side VAD.
  * Handles continuous voice input with automatic speech detection and transcription.
- * 
- * Flow:
- * 1. Call startRecording() to begin audio capture and WebSocket connection
- * 2. Audio is streamed to backend → DashScope in realtime
- * 3. Server VAD detects speech start/stop
- * 4. On speech_stopped, final transcript is delivered via onTranscriptComplete callback
- * 5. Recording continues until stopRecording() is called or max timeout
+ *
+ * Key design: All callbacks are stored in refs and all state guards use refs,
+ * so startRecording/stopRecording are **stable references** that never go stale.
  */
 
 import { useRef, useState, useCallback, useEffect } from 'react'
 import { getApiBase } from '../config'
 import { getAuthToken } from '../api'
 
-// Error message mappings for user-friendly error display
 const ERROR_MESSAGES: Record<string, string> = {
   'NotAllowedError': 'Microphone permission denied. Please allow microphone access and try again.',
   'NotFoundError': 'No microphone found. Please connect a microphone and try again.',
@@ -27,56 +22,35 @@ const ERROR_MESSAGES: Record<string, string> = {
   'TypeError': 'Invalid audio configuration.',
 }
 
-// ASR Event types from DashScope
 export interface ASREvent {
   type: string
   event_id?: string
-  // Session events
   session?: {
     id: string
     model: string
     input_audio_format: string
-    turn_detection?: {
-      type: string
-      threshold: number
-      silence_duration_ms: number
-    }
+    turn_detection?: { type: string; threshold: number; silence_duration_ms: number }
   }
-  // Speech events
   audio_start_ms?: number
   audio_end_ms?: number
   item_id?: string
-  // Transcription events
   content_index?: number
   language?: string
   emotion?: string
-  text?: string      // Confirmed text prefix
-  stash?: string     // Tentative text (may change)
-  transcript?: string // Final transcript (completed event)
-  // Error
-  error?: {
-    type?: string
-    code?: string
-    message: string
-    param?: string
-  }
+  text?: string
+  stash?: string
+  transcript?: string
+  error?: { type?: string; code?: string; message: string; param?: string }
 }
 
 export interface UseRealtimeASROptions {
-  // Called when VAD detects speech end and final transcript is ready
   onTranscriptComplete: (transcript: string) => void
-  // Called with realtime partial transcription (text + stash)
   onPartialTranscript?: (text: string) => void
-  // Called when speech is detected to start
   onSpeechStart?: () => void
-  // Called when speech ends (before transcript is ready)
   onSpeechEnd?: () => void
-  // Called on error
   onError?: (error: string) => void
-  // VAD configuration
-  vadThreshold?: number           // VAD detection threshold (default: 0.0)
-  silenceDurationMs?: number      // Silence duration to trigger end (default: 600ms)
-  // Maximum recording time in seconds (default: 60)
+  vadThreshold?: number
+  silenceDurationMs?: number
   maxRecordingSeconds?: number
 }
 
@@ -85,29 +59,29 @@ export interface UseRealtimeASRReturn {
   isConnecting: boolean
   partialText: string
   mediaStream: MediaStream | null
+  /** Stable reference – safe to call from any closure or setTimeout. */
   startRecording: () => Promise<void>
+  /** Stable reference – safe to call from any closure or setTimeout. */
   stopRecording: () => void
-  // Error state for UI display
   lastError: string | null
 }
 
 export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRReturn {
-  const {
-    onTranscriptComplete,
-    onPartialTranscript,
-    onSpeechStart,
-    onSpeechEnd,
-    onError,
-    vadThreshold = 0.0,
-    silenceDurationMs = 600,
-    maxRecordingSeconds = 60
-  } = options
-
+  // ---------------------------------------------------------------------------
+  // State (for UI rendering)
+  // ---------------------------------------------------------------------------
   const [isRecording, setIsRecording] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
   const [partialText, setPartialText] = useState('')
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null)
   const [lastError, setLastError] = useState<string | null>(null)
+
+  // ---------------------------------------------------------------------------
+  // Refs – single source of truth for guards & callbacks
+  // ---------------------------------------------------------------------------
+  // Mirror state into refs so startRecording/stopRecording never read stale values
+  const isRecordingRef = useRef(false)
+  const isConnectingRef = useRef(false)
 
   const wsRef = useRef<WebSocket | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -115,164 +89,172 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
   const processorRef = useRef<AudioWorkletNode | null>(null)
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
   const maxTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Debounce ref to prevent rapid clicks
   const startingRef = useRef(false)
-  // Track if component is mounted
   const isMountedRef = useRef(true)
 
+  // Store all callbacks in refs so they are always fresh
+  const optionsRef = useRef(options)
+  optionsRef.current = options
+
+  // ---------------------------------------------------------------------------
+  // Helper: set state + ref in one call
+  // ---------------------------------------------------------------------------
+  const setRecording = useCallback((v: boolean) => {
+    isRecordingRef.current = v
+    setIsRecording(v)
+  }, [])
+
+  const setConnecting = useCallback((v: boolean) => {
+    isConnectingRef.current = v
+    setIsConnecting(v)
+  }, [])
+
+  // ---------------------------------------------------------------------------
+  // cleanup – tears down all resources, resets to idle
+  // ---------------------------------------------------------------------------
   const cleanup = useCallback(() => {
-    // Clear debounce flag
     startingRef.current = false
-    // Clear max recording timeout
+
     if (maxTimeoutRef.current) {
       clearTimeout(maxTimeoutRef.current)
       maxTimeoutRef.current = null
     }
-    // Stop audio processing
+
     if (processorRef.current) {
-      // Signal the AudioWorklet to stop processing
-      try {
-        processorRef.current.port.postMessage('STOP')
-      } catch { /* ignore - processor may already be stopped */ }
-      try {
-        processorRef.current.disconnect()
-      } catch { /* ignore */ }
+      try { processorRef.current.port.postMessage('STOP') } catch { /* */ }
+      try { processorRef.current.disconnect() } catch { /* */ }
       processorRef.current = null
     }
+
     if (sourceRef.current) {
-      try {
-        sourceRef.current.disconnect()
-      } catch { /* ignore */ }
+      try { sourceRef.current.disconnect() } catch { /* */ }
       sourceRef.current = null
     }
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      audioContextRef.current.close().catch(() => { /* ignore */ })
+
+    if (audioContextRef.current) {
+      const ctx = audioContextRef.current
       audioContextRef.current = null
+      if (ctx.state !== 'closed') {
+        ctx.close().catch((err) => console.warn('[ASR] AudioContext close error:', err))
+      }
     }
+
     if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(track => {
-        try {
-          track.stop()
-        } catch { /* ignore */ }
-      })
+      mediaStreamRef.current.getTracks().forEach(t => { try { t.stop() } catch { /* */ } })
       mediaStreamRef.current = null
     }
+
+    if (wsRef.current) {
+      const ws = wsRef.current
+      wsRef.current = null
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        if (ws.readyState === WebSocket.OPEN) {
+          try { ws.send(JSON.stringify({ event_id: 'event_finish', type: 'session.finish' })) } catch { /* */ }
+        }
+        try { ws.close() } catch { /* */ }
+      }
+    }
+
     if (isMountedRef.current) {
       setMediaStream(null)
-    }
-    // Close WebSocket
-    if (wsRef.current) {
-      if (wsRef.current.readyState === WebSocket.OPEN) {
-        // Send session.finish before closing
-        try {
-          wsRef.current.send(JSON.stringify({
-            event_id: 'event_finish',
-            type: 'session.finish'
-          }))
-        } catch { /* ignore */ }
-      }
-      wsRef.current.close()
-      wsRef.current = null
-    }
-    if (isMountedRef.current) {
-      setIsRecording(false)
-      setIsConnecting(false)
+      setRecording(false)
+      setConnecting(false)
       setPartialText('')
     }
-  }, [])
+  }, [setRecording, setConnecting])
 
-  const stopRecording = useCallback(() => {
-    cleanup()
-  }, [cleanup])
+  // ---------------------------------------------------------------------------
+  // stopRecording – stable reference (deps are all stable)
+  // ---------------------------------------------------------------------------
+  const stopRecording = useCallback(() => { cleanup() }, [cleanup])
 
+  // ---------------------------------------------------------------------------
+  // startRecording – stable reference (guards via refs, callbacks via refs)
+  // ---------------------------------------------------------------------------
   const startRecording = useCallback(async () => {
-    // Edge case: Prevent rapid consecutive clicks
-    if (isRecording || isConnecting || startingRef.current) return
+    // Guard via refs – immune to stale closures
+    if (isRecordingRef.current || isConnectingRef.current || startingRef.current) {
+      // console.log('[ASR] Already recording/connecting, ignoring start')
+      return
+    }
     startingRef.current = true
-
-    setIsConnecting(true)
+    setConnecting(true)
     setPartialText('')
     setLastError(null)
 
-    try {
-      // Get auth token
-      const token = getAuthToken()
-      if (!token) {
-        throw new Error('Not authenticated')
-      }
+    // Read options from ref (always fresh)
+    const {
+      onTranscriptComplete,
+      onPartialTranscript,
+      onSpeechStart,
+      onSpeechEnd,
+      onError,
+      vadThreshold = 0.0,
+      silenceDurationMs = 600,
+      maxRecordingSeconds = 60,
+    } = optionsRef.current
 
-      // Build WebSocket URL
+    try {
+      const token = getAuthToken()
+      if (!token) throw new Error('Not authenticated')
+
       const apiBase = getApiBase()
       const wsUrl = apiBase.replace(/^http/, 'ws') + `/asr/realtime?token=${encodeURIComponent(token)}`
-
-      // Connect to WebSocket
       const ws = new WebSocket(wsUrl)
       wsRef.current = ws
 
-      // Handle WebSocket messages
+      // --- WebSocket message handler ---
       ws.onmessage = (event) => {
         try {
           const data: ASREvent = JSON.parse(event.data)
-
+          // Read callbacks from ref inside handler so they are always fresh
+          const opts = optionsRef.current
           switch (data.type) {
             case 'session.created':
-              // Session ready, send config update
-              ws.send(JSON.stringify({
-                event_id: 'event_session_update',
-                type: 'session.update',
-                session: {
-                  input_audio_format: 'pcm',
-                  sample_rate: 16000,
-                  input_audio_transcription: {
-                    // Auto language detection
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                  event_id: 'event_session_update',
+                  type: 'session.update',
+                  session: {
+                    input_audio_format: 'pcm',
+                    sample_rate: 16000,
+                    input_audio_transcription: {},
+                    turn_detection: { type: 'server_vad', threshold: vadThreshold, silence_duration_ms: silenceDurationMs },
                   },
-                  turn_detection: {
-                    type: 'server_vad',
-                    threshold: vadThreshold,
-                    silence_duration_ms: silenceDurationMs
-                  }
-                }
-              }))
+                }))
+              }
               break
-
             case 'session.updated':
-              // Config applied, we're ready
-              console.log('[ASR] Session updated, ready for audio')
+              // console.log('[ASR] Session updated, ready for audio')
               break
-
             case 'input_audio_buffer.speech_started':
-              console.log('[ASR] Speech started')
-              onSpeechStart?.()
+              // console.log('[ASR] Speech started')
+              opts.onSpeechStart?.()
               break
-
             case 'input_audio_buffer.speech_stopped':
-              console.log('[ASR] Speech stopped (VAD triggered)')
-              onSpeechEnd?.()
+              // console.log('[ASR] Speech stopped (VAD)')
+              opts.onSpeechEnd?.()
               break
-
-            case 'conversation.item.input_audio_transcription.text':
-              // Partial/realtime transcript
+            case 'conversation.item.input_audio_transcription.text': {
               const partial = (data.text || '') + (data.stash || '')
               setPartialText(partial)
-              onPartialTranscript?.(partial)
+              opts.onPartialTranscript?.(partial)
               break
-
-            case 'conversation.item.input_audio_transcription.completed':
-              // Final transcript for this speech segment
-              const transcript = data.transcript || ''
-              console.log('[ASR] Transcript completed:', transcript)
-              // Edge case: Ignore empty transcripts (just silence or noise)
-              if (transcript && transcript.trim()) {
-                onTranscriptComplete(transcript.trim())
+            }
+            case 'conversation.item.input_audio_transcription.completed': {
+              const transcript = (data.transcript || '').trim()
+              // console.log('[ASR] Transcript completed:', transcript)
+              if (transcript) {
+                opts.onTranscriptComplete(transcript)
               } else {
-                console.log('[ASR] Empty transcript ignored')
+                // console.log('[ASR] Empty transcript ignored')
               }
               setPartialText('')
               break
-
+            }
             case 'error':
-              console.error('[ASR] Error:', data.error?.message)
-              onError?.(data.error?.message || 'Unknown ASR error')
+              console.error('[ASR] Server error:', data.error?.message)
+              opts.onError?.(data.error?.message || 'Unknown ASR error')
               break
           }
         } catch (e) {
@@ -281,131 +263,105 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
       }
 
       ws.onerror = (error) => {
+        if (wsRef.current !== ws) return
         console.error('[ASR] WebSocket error:', error)
-        onError?.('WebSocket connection error')
+        const msg = 'Failed to connect to voice service. Please try again.'
+        setLastError(msg)
+        optionsRef.current.onError?.(msg)
         cleanup()
       }
 
-      ws.onclose = () => {
-        console.log('[ASR] WebSocket closed')
+      ws.onclose = (event) => {
+        if (wsRef.current !== ws) return
+        if (event.code !== 1000 && event.code !== 1001) {
+          console.warn('[ASR] WebSocket closed unexpectedly:', event.code, event.reason)
+        } else {
+          // console.log('[ASR] WebSocket closed normally')
+        }
         cleanup()
       }
 
       // Wait for connection
       await new Promise<void>((resolve, reject) => {
-        ws.onopen = () => {
-          console.log('[ASR] WebSocket connected')
-          resolve()
-        }
-        // Add timeout
-        setTimeout(() => reject(new Error('Connection timeout')), 10000)
+        const timeout = setTimeout(() => reject(new Error('Connection timeout')), 10000)
+        ws.onopen = () => { clearTimeout(timeout); console.log('[ASR] WebSocket connected'); resolve() }
+        const origErr = ws.onerror
+        ws.onerror = (err) => { clearTimeout(timeout); origErr?.call(ws, err); reject(new Error('WebSocket connection failed')) }
       })
 
-      // Start audio capture
+      // Audio capture
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true
-        }
+        audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true },
       })
       mediaStreamRef.current = stream
       setMediaStream(stream)
 
-      // Create audio context and load AudioWorklet processor
-      const audioContext = new AudioContext({ sampleRate: 16000 })
-      audioContextRef.current = audioContext
-
-      // Edge case: Handle AudioContext being suspended (browser autoplay policy)
-      if (audioContext.state === 'suspended') {
-        console.log('[ASR] AudioContext suspended, attempting to resume...')
-        await audioContext.resume()
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        stream.getTracks().forEach(t => t.stop())
+        throw new Error('Connection closed during setup')
       }
 
-      // Load the PCM processor AudioWorklet module
+      const audioContext = new AudioContext({ sampleRate: 16000 })
+      audioContextRef.current = audioContext
+      if (audioContext.state === 'suspended') await audioContext.resume()
+
       try {
         await audioContext.audioWorklet.addModule('/pcm-processor.js')
-      } catch (workletError) {
-        console.error('[ASR] Failed to load AudioWorklet module:', workletError)
+      } catch (e) {
+        console.error('[ASR] Failed to load AudioWorklet:', e)
         throw new Error('Failed to initialize audio processor. Please refresh the page.')
       }
 
+      if (!audioContextRef.current) throw new Error('AudioContext cleared during setup')
+
       const source = audioContext.createMediaStreamSource(stream)
       sourceRef.current = source
-
-      // Create AudioWorkletNode
       const pcmNode = new AudioWorkletNode(audioContext, 'pcm-processor')
       processorRef.current = pcmNode
 
-      // Handle AudioWorklet errors
-      pcmNode.onprocessorerror = (event) => {
-        console.error('[ASR] AudioWorklet processor error:', event)
-        onError?.('Audio processing error occurred')
+      pcmNode.onprocessorerror = (ev) => {
+        if (processorRef.current !== pcmNode) return
+        console.error('[ASR] AudioWorklet error:', ev)
+        optionsRef.current.onError?.('Audio processing error occurred')
         cleanup()
       }
 
-      // Handle audio data from the AudioWorklet
-      pcmNode.port.onmessage = (event) => {
-        if (ws.readyState !== WebSocket.OPEN) return
-        if (event.data.type !== 'audio') return
-
-        const pcmData = new Uint8Array(event.data.data)
-        // Send as base64
-        const base64 = btoa(String.fromCharCode(...pcmData))
-        ws.send(JSON.stringify({
-          event_id: `event_audio_${Date.now()}`,
-          type: 'input_audio_buffer.append',
-          audio: base64
-        }))
+      pcmNode.port.onmessage = (ev) => {
+        if (ws.readyState !== WebSocket.OPEN || ev.data.type !== 'audio') return
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(ev.data.data)))
+        ws.send(JSON.stringify({ event_id: `event_audio_${Date.now()}`, type: 'input_audio_buffer.append', audio: base64 }))
       }
 
       source.connect(pcmNode)
       pcmNode.connect(audioContext.destination)
 
       startingRef.current = false
-      setIsRecording(true)
-      setIsConnecting(false)
+      setRecording(true)
+      setConnecting(false)
 
-      // Set max recording timeout
       maxTimeoutRef.current = setTimeout(() => {
-        console.log('[ASR] Max recording time reached')
-        onError?.('Maximum recording time reached (2 minutes)')
-        stopRecording()
+        // console.log('[ASR] Max recording time reached')
+        optionsRef.current.onError?.('Maximum recording time reached')
+        cleanup()
       }, maxRecordingSeconds * 1000)
-
     } catch (error) {
       console.error('[ASR] Failed to start recording:', error)
-      // Edge case: Map specific error types to user-friendly messages
-      let errorMessage = 'Failed to start recording'
+      let msg = 'Failed to start recording'
       if (error instanceof Error) {
-        const mappedError = ERROR_MESSAGES[error.name]
-        errorMessage = mappedError || error.message
+        msg = ERROR_MESSAGES[error.name] || error.message
       }
-      setLastError(errorMessage)
-      onError?.(errorMessage)
+      setLastError(msg)
+      onError?.(msg)
       cleanup()
     }
-  }, [isRecording, isConnecting, vadThreshold, silenceDurationMs, maxRecordingSeconds,
-      onTranscriptComplete, onPartialTranscript, onSpeechStart, onSpeechEnd, onError, cleanup, stopRecording])
+  }, [cleanup, setRecording, setConnecting])  // all deps are stable
 
-  // Edge case: Cleanup on unmount
+  // Cleanup on unmount
   useEffect(() => {
     isMountedRef.current = true
-    return () => {
-      isMountedRef.current = false
-      cleanup()
-    }
+    return () => { isMountedRef.current = false; cleanup() }
   }, [cleanup])
 
-  return {
-    isRecording,
-    isConnecting,
-    partialText,
-    mediaStream,
-    startRecording,
-    stopRecording,
-    lastError
-  }
+  return { isRecording, isConnecting, partialText, mediaStream, startRecording, stopRecording, lastError }
 }
 

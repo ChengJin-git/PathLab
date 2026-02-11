@@ -6,7 +6,7 @@
  * Registration is only available through admin in Settings.
  */
 
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react'
 import {
   AuthUser,
   logout as apiLogout,
@@ -15,8 +15,10 @@ import {
   clearAuthToken,
   acceptAgreement as apiAcceptAgreement,
   getMyDatasetPermissions,
-  getClientIP
+  getClientIP,
+  SESSION_EXPIRED_EVENT
 } from '../api'
+import { useToast } from './ToastContext'
 import { initializeApiConfig, getApiBase } from '../config'
 
 interface AuthContextType {
@@ -54,6 +56,35 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [elevatedDatasetIds, setElevatedDatasetIds] = useState<string[]>([])
+  const toast = useToast()
+
+  // Track whether user was logged in, to show toast only on forced logout (not initial load)
+  const userRef = useRef<AuthUser | null>(null)
+  useEffect(() => { userRef.current = user }, [user])
+
+  // Prevent duplicate session-expired toasts
+  const sessionExpiredHandled = useRef(false)
+
+  // Listen for session-expired events from apiFetch (401 while authenticated)
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      // Only show toast if user was previously logged in and not already handled
+      if (userRef.current && !sessionExpiredHandled.current) {
+        sessionExpiredHandled.current = true
+        toast.warning(
+          'Your account has been logged in on another device. Current session has ended.',
+          5000
+        )
+        setUser(null)
+        setElevatedDatasetIds([])
+        // Reset the flag after a short delay to allow future detections
+        setTimeout(() => { sessionExpiredHandled.current = false }, 6000)
+      }
+    }
+
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
+  }, [toast])
 
   // Refresh dataset permissions (for temporary elevated access)
   const refreshDatasetPermissions = useCallback(async () => {
@@ -168,7 +199,10 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       const errorLower = errorMessage.toLowerCase()
 
       // Handle specific error codes from secure login endpoint
-      if (errorLower.includes('login_user_not_active') ||
+      if (errorLower.includes('maintenance_mode')) {
+        // System is in maintenance mode - non-admin users cannot log in
+        errorMessage = 'System is under maintenance. Please try again later or contact administrator.'
+      } else if (errorLower.includes('login_user_not_active') ||
           errorLower.includes('inactive') ||
           errorLower.includes('not active') ||
           errorLower.includes('deactivated')) {
@@ -176,9 +210,6 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       } else if (errorLower.includes('login_timestamp_expired')) {
         // Timestamp expired - this shouldn't happen normally, may indicate clock sync issue
         errorMessage = 'Login request expired. Please check your system clock and try again.'
-      } else if (errorLower.includes('password migration failed')) {
-        // Migration endpoint failed (shouldn't happen if password is correct)
-        errorMessage = 'Password migration failed. Please contact administrator.'
       } else if (errorLower.includes('bad credentials') ||
                  errorLower.includes('login_bad_credentials')) {
         errorMessage = 'Invalid username or password'

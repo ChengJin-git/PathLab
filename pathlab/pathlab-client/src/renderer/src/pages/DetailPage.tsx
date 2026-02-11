@@ -308,7 +308,7 @@ export default function DetailPage() {
 
   // Get selected task and check if it's patch-level
   const selectedTask = availableHeatmaps.find(h => h.task_id === selectedTaskId && (!h.fold_key || h.fold_key === selectedFoldKey))
-  const isPatchLevel = selectedTask?.data_level === 'patch'
+  const isPatchLevel = selectedTask?.data_type === 'patch'
 
   // Get available folds for the selected task (K-fold support)
   const availableFolds = useMemo(() => {
@@ -517,7 +517,7 @@ export default function DetailPage() {
               taskId={selectedTaskId}
               foldKey={selectedFoldKey}
               classIdx={selectedClassIdx}
-              dataLevel={selectedTask?.data_level || 'wsi'}
+              dataLevel={selectedTask?.data_type || 'wsi'}
               onHeatmapLoaded={handleHeatmapLoaded}
             />
           )}
@@ -647,7 +647,7 @@ export default function DetailPage() {
                                   {task.feature_extractor}
                                 </Badge>
                               )}
-                              {task.aggregator && task.data_level === 'wsi' && (
+                              {task.aggregator && task.data_type === 'wsi' && (
                                 <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-[10px] uppercase tracking-wider font-bold px-1.5 py-0">
                                   {task.aggregator}
                                 </Badge>
@@ -702,7 +702,7 @@ export default function DetailPage() {
                                       </span>
                                     )}
                                   </div>
-                                  {(hm.feature_extractor || (hm.aggregator && hm.data_level === 'wsi')) && (
+                                  {(hm.feature_extractor || (hm.aggregator && hm.data_type === 'wsi')) && (
                                     <div className="flex items-center gap-1">
                                       {hm.feature_extractor && (
                                         <span className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full w-fit transition-colors duration-200 ${selectedTaskId === (hm.task_id || '')
@@ -712,7 +712,7 @@ export default function DetailPage() {
                                           {hm.feature_extractor}
                                         </span>
                                       )}
-                                      {hm.aggregator && hm.data_level === 'wsi' && (
+                                      {hm.aggregator && hm.data_type === 'wsi' && (
                                         <span className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full w-fit transition-colors duration-200 ${selectedTaskId === (hm.task_id || '')
                                           ? 'bg-white/20 text-white'
                                           : 'bg-indigo-50 text-indigo-700'

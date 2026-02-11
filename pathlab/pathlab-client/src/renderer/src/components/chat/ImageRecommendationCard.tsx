@@ -141,7 +141,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         // Apply data_type filter
         if (recommendation.filters?.data_type && recommendation.filters.data_type !== 'all') {
           filtered = filtered.filter(s => {
-            const fileType = getFileType(s.wsi_path, s.file_size)
+            const fileType = getFileType(s.file_extension, s.file_size)
             return recommendation.filters!.data_type === 'wsi'
               ? fileType === 'WSI'
               : fileType === 'Patch'
@@ -164,7 +164,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         // Apply data_type filter
         if (recommendation.filters?.data_type && recommendation.filters.data_type !== 'all') {
           filtered = filtered.filter(s => {
-            const fileType = getFileType(s.wsi_path, s.file_size)
+            const fileType = getFileType(s.file_extension, s.file_size)
             return recommendation.filters!.data_type === 'wsi'
               ? fileType === 'WSI'
               : fileType === 'Patch'
@@ -328,7 +328,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         ) : (
           <div className="space-y-4">
             {imagesWithHeatmaps.map(({ image, heatmaps, hasHeatmap }) => {
-              const fileType = getFileType(image.wsi_path, image.file_size)
+              const fileType = getFileType(image.file_extension, image.file_size)
               const latestHeatmap = heatmaps[0] // Get the most recent heatmap
               return (
                 <div

@@ -193,17 +193,6 @@ async def wait_for_services_ready(timeout: float = 60.0, check_interval: float =
     logger.warning(f"Timeout waiting for services after {timeout}s")
     return False
 
-
-def _handle_task_exception(task: asyncio.Task, task_id: str):
-    """Callback to handle exceptions from background tasks"""
-    try:
-        exc = task.exception()
-        if exc is not None:
-            logger.error(f"Background task for {task_id} failed with exception: {exc}")
-    except asyncio.CancelledError:
-        logger.warning(f"Background task for {task_id} was cancelled")
-
-
 async def cleanup_old_tasks():
     """
     Cleanup old finished tasks on startup.
@@ -337,11 +326,11 @@ async def resume_interrupted_tasks():
                     task_queue = get_task_queue()
                     # Pass pipeline args as kwargs dict
                     # Note: task_id is automatically added by task_queue.submit(), don't include it here
-                    # Get data_level and task_type from DataGroup relationship
-                    data_level = task.data_group.data_type if task.data_group else "wsi"
+                    # Get data_type and task_type from DataGroup relationship
+                    data_type = task.data_group.data_type if task.data_group else "wsi"
                     task_type = task.data_group.task_type if task.data_group else "classification"
                     pipeline_kwargs = {
-                        "data_level": data_level,
+                        "data_type": data_type,
                         "wsi_ids": wsi_ids,
                         "preprocessing_config": task.preprocessing_config or {},
                         "model_config": task.model_config or {},

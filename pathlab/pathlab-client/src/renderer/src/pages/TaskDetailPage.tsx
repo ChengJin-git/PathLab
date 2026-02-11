@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw, AlertCircle, Activity, ClipboardList, Layers, Brain, StopCircle } from 'lucide-react'
+import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw, AlertCircle, Activity, ClipboardList, Layers, Brain, StopCircle, User } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { getApiBase } from '../config'
 import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask } from '../api'
 import { TASK_DETAIL_STATUS_BADGES, isActiveStatus } from '../constants/status'
+import { useAuth } from '../contexts/AuthContext'
 
 interface LogEntry {
   id: number
@@ -21,8 +22,8 @@ interface LogEntry {
 interface TaskDetail {
   task_id: string
   task_name: string
-  task_type: 'classification' | 'survival_prediction' | 'segmentation'
-  data_level: 'wsi' | 'patch'
+  task_type: 'classification' | 'survival' | 'segmentation' | 'external_validation'
+  data_type: 'wsi' | 'patch'
   task_description: string
   status: 'pending' | 'running' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
   progress: number
@@ -30,6 +31,7 @@ interface TaskDetail {
   updated_at: string
   wsi_count: number
   wsi_ids?: string[]
+  username?: string | null  // Username of task creator (only for admin users)
   preprocessing_config: {
     // Note: tile_size and stride removed - auto-determined by PrePATH-style tiling
     feature_extractor?: string
@@ -61,6 +63,11 @@ interface TaskDetail {
     epochs?: number
     optimizer?: string
     batch_size?: number
+    // External validation specific fields
+    model_id?: string
+    model_task_id?: string
+    dataset_id?: string
+    total_wsi?: number
   }
   classes?: string[]
   error_message?: string
@@ -113,6 +120,7 @@ export default function TaskDetailPage() {
   const { task_id } = useParams<{ task_id: string }>()
   const navigate = useNavigate()
   const location = useLocation()
+  const { isAdmin } = useAuth()
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
   const [task, setTask] = useState<TaskDetail | null>(null)
   const [logs, setLogs] = useState<LogEntry[]>([])
@@ -168,11 +176,12 @@ export default function TaskDetailPage() {
         }
 
         // Update task status (always present in SSE data)
-        // Preserve wsi_ids from initial load since SSE doesn't include them
+        // Preserve wsi_ids and username from initial load since SSE doesn't include them
         if (data.task) {
           setTask(prev => ({
             ...data.task,
-            wsi_ids: data.task.wsi_ids || prev?.wsi_ids
+            wsi_ids: data.task.wsi_ids || prev?.wsi_ids,
+            username: data.task.username || prev?.username
           }))
         }
 
@@ -288,7 +297,7 @@ export default function TaskDetailPage() {
       const result = await createTrainingTask({
         task_name: `${task.task_name} (rerun)`,
         task_type: task.task_type,
-        data_level: task.data_level,
+        data_type: task.data_type,
         task_description: task.task_description,
         wsi_ids: task.wsi_ids,
         preprocessing: {
@@ -365,13 +374,15 @@ export default function TaskDetailPage() {
     )
   }
 
-  const isPatchLevel = task.data_level === 'patch'
+  const isPatchLevel = task.data_type === 'patch'
+  const isExternalValidation = task.task_type === 'external_validation'
 
   // Calculate display progress for patch-level tasks
   // (map 66% - 100% backend progress to 0% - 100% UI progress)
   // For completed tasks, always show 100%
   // For cancelled/failed tasks, show the mapped progress at the time of cancellation/failure
-  const displayProgress = isPatchLevel && task.status !== 'completed'
+  // External validation tasks use 0-100 directly regardless of data_type
+  const displayProgress = isPatchLevel && !isExternalValidation && task.status !== 'completed'
     ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
     : Math.min(task.progress, 100)  // Cap at 100% for safety
 
@@ -443,7 +454,7 @@ export default function TaskDetailPage() {
 
       {/* Task Info Grid */}
       <Card className="p-4 sm:p-6 overflow-hidden border-gray-100 shadow-sm">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
+        <div className={`grid grid-cols-2 ${isAdmin && task.username ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-4 sm:gap-6`}>
           <div className="min-w-0">
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Task ID</div>
             <div className="flex items-center gap-1.5 overflow-hidden">
@@ -479,11 +490,11 @@ export default function TaskDetailPage() {
           </div>
           <div>
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">
-              {task.data_level === 'patch' ? 'Data' : 'Data'}
+              {task.data_type === 'patch' ? 'Data' : 'Data'}
             </div>
             <div className="flex items-end gap-1.5">
               <span className="text-lg sm:text-2xl font-bold text-gray-900 leading-none">{task.wsi_count}</span>
-              <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{task.data_level === 'patch' ? 'patches' : 'slides'}</span>
+              <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{task.data_type === 'patch' ? 'patches' : 'slides'}</span>
             </div>
           </div>
           <div>
@@ -494,6 +505,15 @@ export default function TaskDetailPage() {
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Updated</div>
             <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDate(task.updated_at)}</div>
           </div>
+          {isAdmin && task.username && (
+            <div>
+              <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Creator</div>
+              <div className="flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-gray-400" />
+                <div className="text-xs sm:text-sm font-bold text-gray-700 truncate" title={task.username}>{task.username}</div>
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -520,7 +540,25 @@ export default function TaskDetailPage() {
 
         {/* Stage Progress */}
         <div className="space-y-3">
-          {!isPatchLevel ? (
+          {isExternalValidation ? (
+            /* External validation: single "Testing" stage */
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center space-x-2">
+                <span className={
+                  (task.status === 'completed') ? 'text-green-600' :
+                  (task.status === 'running' || task.status === 'training') ? 'text-blue-600' :
+                  (task.status === 'failed') ? 'text-red-600' : 'text-gray-400'
+                }>
+                  { (task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
+                    (task.status === 'running' || task.status === 'training') ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                    (task.status === 'failed') ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
+                </span>
+                <span className={(task.status === 'completed' || task.status === 'running' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
+                  Testing on Target Dataset
+                </span>
+              </div>
+            </div>
+          ) : !isPatchLevel ? (
             <>
               <div className="flex items-center justify-between text-sm">
                 <div className="flex items-center space-x-2">
@@ -575,25 +613,28 @@ export default function TaskDetailPage() {
             </div>
           )}
 
-          <div className="flex items-center justify-between text-sm">
-            <div className="flex items-center space-x-2">
-              <span className={
-                (task.status === 'completed') ? 'text-green-600' :
-                (task.status === 'training') ? 'text-purple-600' :
-                (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? 'text-red-600' : 'text-gray-400'
-              }>
-                { (task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
-                  (task.status === 'training') ? <Loader2 className="w-4 h-4 animate-spin" /> :
-                  (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
-              </span>
-              <span className={(task.status === 'completed' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
-                Model Training
-              </span>
+          {/* Model Training / Testing stage - skip for external validation (already shown above) */}
+          {!isExternalValidation && (
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center space-x-2">
+                <span className={
+                  (task.status === 'completed') ? 'text-green-600' :
+                  (task.status === 'training') ? 'text-purple-600' :
+                  (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? 'text-red-600' : 'text-gray-400'
+                }>
+                  { (task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
+                    (task.status === 'training') ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                    (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
+                </span>
+                <span className={(task.status === 'completed' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
+                  Model Training
+                </span>
+              </div>
+              {task.status === 'training' && task.current_epoch && (
+                <span className="text-gray-600">Epoch {task.current_epoch}/{task.model_config.epochs}</span>
+              )}
             </div>
-            {task.status === 'training' && task.current_epoch && (
-              <span className="text-gray-600">Epoch {task.current_epoch}/{task.model_config.epochs}</span>
-            )}
-          </div>
+          )}
         </div>
       </Card>
 
@@ -711,89 +752,165 @@ export default function TaskDetailPage() {
           Configuration
         </h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
-            <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-              <Activity className="w-3.5 h-3.5 text-blue-600" />
-              Preprocessing
-            </h4>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Saturation Threshold</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.preprocessing_config.sthresh ?? 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Mask Threshold</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.preprocessing_config.mthresh ?? 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Use Otsu</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.preprocessing_config.use_otsu !== undefined
-                    ? (task.preprocessing_config.use_otsu ? 'Yes' : 'No')
-                    : 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Extractor</span>
-                <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
-                  {task.preprocessing_config.feature_extractor || 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Feature Batch Size</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.preprocessing_config.feature_batch_size ?? 'N/A'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
-            <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-              <Brain className="w-3.5 h-3.5 text-purple-600" />
-              Model & Training
-            </h4>
-            <div className="space-y-3">
-              {task.data_level === 'wsi' && (
+        {isExternalValidation ? (
+          /* External validation: show source model & target dataset info */
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
+              <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <Brain className="w-3.5 h-3.5 text-purple-600" />
+                Source Model
+              </h4>
+              <div className="space-y-3">
                 <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Aggregator</span>
-                  <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
-                    {task.model_config.aggregator?.toUpperCase() || 'N/A'}
+                  <span className="text-gray-500 font-medium">Model ID</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm font-mono text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.model_id}>
+                    {task.model_config.model_id || 'N/A'}
                   </span>
                 </div>
-              )}
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Learning Rate</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.model_config.learning_rate ?? 'N/A'}
-                </span>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Training Task</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm font-mono text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.model_task_id}>
+                    {task.model_config.model_task_id || 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Feature Extractor</span>
+                  <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
+                    {task.preprocessing_config.feature_extractor || 'N/A'}
+                  </span>
+                </div>
+                {task.data_type === 'wsi' && (
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">Aggregator</span>
+                    <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
+                      {task.model_config.aggregator?.toUpperCase() || 'N/A'}
+                    </span>
+                  </div>
+                )}
               </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Epochs</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.model_config.epochs ?? 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Optimizer</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm uppercase">
-                  {task.model_config.optimizer || 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Training Batch Size</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.model_config.batch_size ?? 'N/A'}
-                </span>
+            </div>
+
+            <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
+              <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <Activity className="w-3.5 h-3.5 text-blue-600" />
+                Target Dataset
+              </h4>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Dataset ID</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm font-mono text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.dataset_id}>
+                    {task.model_config.dataset_id || 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Total WSIs</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.model_config.total_wsi ?? task.wsi_count ?? 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Data Level</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm uppercase">
+                    {task.data_type || 'N/A'}
+                  </span>
+                </div>
+                {task.classes && task.classes.length > 0 && (
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">Classes</span>
+                    <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                      {task.classes.length}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
-        </div>
+        ) : (
+          /* Regular training task: show preprocessing & training config */
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
+              <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <Activity className="w-3.5 h-3.5 text-blue-600" />
+                Preprocessing
+              </h4>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Saturation Threshold</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.preprocessing_config.sthresh ?? 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Mask Threshold</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.preprocessing_config.mthresh ?? 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Use Otsu</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.preprocessing_config.use_otsu !== undefined
+                      ? (task.preprocessing_config.use_otsu ? 'Yes' : 'No')
+                      : 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Extractor</span>
+                  <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
+                    {task.preprocessing_config.feature_extractor || 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Feature Batch Size</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.preprocessing_config.feature_batch_size ?? 'N/A'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
+              <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <Brain className="w-3.5 h-3.5 text-purple-600" />
+                Model & Training
+              </h4>
+              <div className="space-y-3">
+                {task.data_type === 'wsi' && (
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">Aggregator</span>
+                    <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
+                      {task.model_config.aggregator?.toUpperCase() || 'N/A'}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Learning Rate</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.model_config.learning_rate ?? 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Epochs</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.model_config.epochs ?? 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Optimizer</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm uppercase">
+                    {task.model_config.optimizer || 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">Training Batch Size</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.model_config.batch_size ?? 'N/A'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Cancel Confirmation Modal */}

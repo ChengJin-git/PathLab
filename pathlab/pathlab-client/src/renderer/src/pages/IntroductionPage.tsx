@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { motion, useInView } from 'framer-motion'
 import { Button } from '../components/ui/button'
+import { InstallPWA } from '../components/InstallPWA'
 
 function FadeInSection({ children, className = '', delay = 0 }: {
   children: React.ReactNode; className?: string; delay?: number
@@ -51,6 +52,7 @@ export default function IntroductionPage() {
       <HowItWorksSection />
       <PricingSection goToLogin={goToLogin} />
       <Footer />
+      <InstallPWA />
     </div>
   )
 }

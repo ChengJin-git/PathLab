@@ -18,7 +18,7 @@ import {
   type ChatMessageContent,
   type MessageFeedback
 } from '../api'
-import { useRealtimeASR } from '../lib/useRealtimeASR'
+import { useVoiceSession } from '../lib/useVoiceSession'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import * as XLSX from 'xlsx'
@@ -45,7 +45,7 @@ import { TaskHistoryCard, parseTaskHistoryConfig, removeTaskHistoryConfigBlock, 
 import { CancelTaskCard, parseCancelTaskConfig, removeCancelTaskBlock } from '../components/chat/CancelTaskCard'
 import { DatasetRegistrationCard, parseDatasetRegistrationConfig, removeDatasetRegistrationBlock } from '../components/chat/DatasetRegistrationCard'
 import { MetadataUploadCard, parseMetadataUploadConfig, removeMetadataUploadBlock } from '../components/chat/MetadataUploadCard'
-import { shouldContinueVoice, removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
+import { removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
 import {
   TaskConfigSkeleton,
   OptionButtonsSkeleton,
@@ -85,6 +85,43 @@ interface FileAttachment {
   type: 'csv' | 'xlsx'
   content: string // text content for CSV, parsed content for XLSX
   preview: string[] // first few rows for preview
+}
+
+/**
+ * Strip persistence-only fields from config blocks before sending message content to the AI API.
+ * This prevents the AI from seeing and copying fields like submitted_task_id into new responses,
+ * which would cause new config cards to initialize as already submitted.
+ */
+function sanitizeConfigBlocksForAI(content: string): string {
+  // Fields to strip per config block type
+  const PERSISTENCE_FIELDS: Record<string, string[]> = {
+    TASK_CONFIG: ['submitted_task_id'],
+    INFERENCE_CONFIG: ['submitted_task_id'],
+    ANALYSIS_CONFIG: ['submitted_analysis_id', 'external_validation_task_id'],
+    DATASET_REGISTRATION: ['submitted_task_id', 'submitted_file_count', 'submitted_dataset_name', 'submitted_mode'],
+  }
+
+  let sanitized = content
+  for (const [blockType, fields] of Object.entries(PERSISTENCE_FIELDS)) {
+    const regex = new RegExp(`\\[${blockType}\\]([\\s\\S]*?)\\[\\/${blockType}\\]`, 'g')
+    sanitized = sanitized.replace(regex, (match, json) => {
+      try {
+        const config = JSON.parse(json.trim())
+        let changed = false
+        for (const field of fields) {
+          if (field in config) {
+            delete config[field]
+            changed = true
+          }
+        }
+        if (!changed) return match
+        return `[${blockType}]\n${JSON.stringify(config, null, 2)}\n[/${blockType}]`
+      } catch {
+        return match
+      }
+    })
+  }
+  return sanitized
 }
 
 // Scenario cards for guided experience
@@ -229,6 +266,20 @@ function parseCancelTaskNow(content: string): boolean {
 // Remove [CANCEL_TASK_NOW] block from content
 function removeCancelTaskNowBlock(content: string): string {
   return content.replace(/\[CANCEL_TASK_NOW\][\s\S]*?\[\/CANCEL_TASK_NOW\]/g, '').trim()
+}
+
+/**
+ * Check if an assistant message contains only internal-use blocks (no user-facing content).
+ * Such messages should not be rendered as visible bubbles.
+ * This handles the case where AI responds with only [VOICE_CONTROL], [SUBMIT_TASK], or [CANCEL_TASK_NOW].
+ */
+function isInternalOnlyMessage(content: string): boolean {
+  if (!content) return false // empty content shows "Thinking..." indicator
+  let stripped = content
+  stripped = removeVoiceControlBlock(stripped)
+  stripped = removeSubmitTaskBlock(stripped)
+  stripped = removeCancelTaskNowBlock(stripped)
+  return stripped.trim() === ''
 }
 
 
@@ -627,10 +678,6 @@ export default function AIChatPage() {
   // Helpfulness feedback state: messageId -> helpfulness type (for task submission feedback)
   const [helpfulnessFeedbacks, setHelpfulnessFeedbacks] = useState<Map<number, 'helpful' | 'not_helpful'>>(new Map())
 
-  // Voice session state (realtime ASR with VAD)
-  const [voiceSessionActive, setVoiceSessionActive] = useState(false)
-  const [realtimePartialText, setRealtimePartialText] = useState('')
-
   // Voice command submit trigger: when this changes, trigger submit on TaskConfigCard
   const [submitTaskTrigger, setSubmitTaskTrigger] = useState<number>(0)
   // Voice command cancel trigger: when this changes, trigger cancel on CancelTaskCard
@@ -645,16 +692,14 @@ export default function AIChatPage() {
   const scrollRestoredRef = useRef(false)
   // Ref for aborting AI generation
   const abortControllerRef = useRef<AbortController | null>(null)
-  // Ref to track if we should auto-restart voice after LLM response
-  const shouldRestartVoiceRef = useRef(false)
   // Ref to access latest messages in callbacks
   const messagesRef = useRef<Message[]>([])
   messagesRef.current = messages
   // Ref to skip loading conversation when we just created it (to avoid overwriting in-progress messages)
   const skipConversationLoadRef = useRef(false)
-  // Ref to track latest voiceSessionActive value for use in callbacks (avoids stale closure)
-  const voiceSessionActiveRef = useRef(false)
-  voiceSessionActiveRef.current = voiceSessionActive
+  // Ref to track current input value for voice transcript appending
+  const inputRef = useRef('')
+  inputRef.current = input
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -663,55 +708,45 @@ export default function AIChatPage() {
   // Toast helper function (defined early for use in hook callbacks)
   const showToastRef = useRef<(type: 'error' | 'success' | 'info', message: string) => void>(() => { })
 
-  // Auto-submit handler for realtime ASR
-  // Uses voiceSessionActiveRef to avoid stale closure issues with WebSocket callbacks
-  const handleVoiceTranscriptComplete = useCallback((transcript: string) => {
-    if (!transcript.trim()) return
-
-    // Clear the partial text immediately to hide the temporary bubble
-    setRealtimePartialText('')
-
-    // Set the input and submit
-    setInput(transcript)
-    // Mark that we should restart voice after LLM response
-    // Use ref to get the latest value, not the stale closure value
-    shouldRestartVoiceRef.current = voiceSessionActiveRef.current
-
-    // Auto-submit after a brief delay to ensure input is set
-    setTimeout(() => {
-      const form = document.getElementById('chat-form') as HTMLFormElement
-      if (form) {
-        form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }))
-      }
-    }, 50)
-  }, []) // No dependencies needed - uses refs for latest values
-
-  // Realtime ASR hook for continuous voice mode
+  // Voice session hook – single source of truth for all voice state
   const {
-    isRecording: realtimeIsRecording,
-    isConnecting: realtimeIsConnecting,
+    voiceState,
+    partialText: realtimePartialText,
     mediaStream: realtimeMediaStream,
-    startRecording: startRealtimeRecording,
-    stopRecording: stopRealtimeRecording
-  } = useRealtimeASR({
-    onTranscriptComplete: handleVoiceTranscriptComplete,
-    onPartialTranscript: (text) => {
-      setRealtimePartialText(text)
-    },
-    onSpeechStart: () => {
-      console.log('[VoiceSession] Speech started')
-    },
-    onSpeechEnd: () => {
-      console.log('[VoiceSession] Speech ended (VAD triggered)')
+    toggle: toggleVoiceSession,
+    stop: stopVoiceSession,
+    notifyResponseComplete: notifyVoiceResponseComplete,
+  } = useVoiceSession({
+    onTranscript: (transcript) => {
+      // Get current input value from ref to support appending
+      const currentInput = inputRef.current.trim()
+      const newInput = currentInput
+        ? `${currentInput} ${transcript}`
+        : transcript
+
+      // Set input state AND ref simultaneously to avoid race condition
+      setInput(newInput)
+      inputRef.current = newInput
+
+      // Auto-submit: dispatch form submit after React has the new input
+      setTimeout(() => {
+        const form = document.getElementById('chat-form') as HTMLFormElement
+        if (form) {
+          form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }))
+        }
+      }, 50)
     },
     onError: (error) => {
-      console.error('[VoiceSession] Error:', error)
       showToastRef.current('error', `Voice input error: ${error}`)
-      setVoiceSessionActive(false)
     },
-    silenceDurationMs: 800,  // Wait 800ms of silence before considering speech ended
-    maxRecordingSeconds: 120  // 2 minute max per session
+    silenceDurationMs: 800,
+    maxRecordingSeconds: 120,
   })
+
+  // Derived booleans for UI convenience
+  const voiceSessionActive = voiceState !== 'idle'
+  const realtimeIsRecording = voiceState === 'recording'
+  const realtimeIsConnecting = voiceState === 'connecting'
 
   // Pre-compute CSV content mapping: assistant message ID -> most recent CSV from any previous user message
   // Uses O(n) single pass: track the most recent CSV as we iterate forward
@@ -809,14 +844,19 @@ export default function AIChatPage() {
       }, 100)
     }
 
-    if (state?.autoStartRecording && !realtimeIsRecording && !voiceSessionActive) {
-      // Clear the autoStartRecording flag so it doesn't trigger again
+    if (state?.autoStartRecording) {
+      console.log('[VoiceSession] Auto-start recording triggered from navigation')
+
+      // Clear the autoStartRecording flag immediately to prevent re-triggering
       navigate(location.pathname, { replace: true, state: { ...state, autoStartRecording: false } })
-      // Start voice session with realtime ASR
-      setVoiceSessionActive(true)
-      startRealtimeRecording()
+
+      // Start voice session after a short delay to ensure everything is ready
+      setTimeout(() => {
+        console.log('[VoiceSession] Starting auto-recording')
+        toggleVoiceSession()
+      }, 100)
     }
-  }, [location.state, realtimeIsRecording, voiceSessionActive, startRealtimeRecording, navigate])
+  }, [location, toggleVoiceSession, navigate])
 
   const loadConversations = async () => {
     try {
@@ -849,7 +889,9 @@ export default function AIChatPage() {
   const handleLoadConversation = async (conversationId: string) => {
     try {
       const conv = await getConversation(conversationId)
-      const loadedMessages: Message[] = conv.messages.map(msg => ({
+      // Sort messages by id to ensure chronological order (defense-in-depth)
+      const sortedApiMessages = [...conv.messages].sort((a, b) => a.id - b.id)
+      const loadedMessages: Message[] = sortedApiMessages.map(msg => ({
         id: String(msg.id),
         role: msg.role as 'user' | 'assistant',
         content: msg.content,
@@ -1071,10 +1113,13 @@ export default function AIChatPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if ((!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0) || isGenerating) return
+    // Use inputRef.current to get the latest value, avoiding stale closure issues
+    // when form is submitted programmatically (e.g., from voice transcription)
+    const currentInputValue = inputRef.current.trim()
+    if ((!currentInputValue && imageAttachments.length === 0 && fileAttachments.length === 0) || isGenerating) return
 
     // Build user message content with optional file info
-    let messageContent = input.trim()
+    let messageContent = currentInputValue
 
     // Append file attachment info to message content for AI to analyze
     if (fileAttachments.length > 0) {
@@ -1167,13 +1212,16 @@ export default function AIChatPage() {
 
     try {
       // Build chat messages for API (with multimodal support)
+      // Sanitize config blocks to strip persistence-only fields (e.g., submitted_task_id)
+      // so the AI doesn't copy them into new responses
       const chatMessages: ChatMessage[] = messages
         .concat([userMessage])
         .map(m => {
+          const sanitizedContent = sanitizeConfigBlocksForAI(m.content)
           // If message has images, use multimodal format
           if (m.images && m.images.length > 0) {
             const content: ChatMessageContent = [
-              { type: 'text' as const, text: m.content },
+              { type: 'text' as const, text: sanitizedContent },
               ...m.images.map(imgBase64 => ({
                 type: 'image_url' as const,
                 image_url: { url: imgBase64 }
@@ -1182,7 +1230,7 @@ export default function AIChatPage() {
             return { role: m.role, content }
           }
           // Text-only message
-          return { role: m.role, content: m.content }
+          return { role: m.role, content: sanitizedContent }
         })
 
       let hasReceivedContent = false
@@ -1222,8 +1270,8 @@ export default function AIChatPage() {
           )
         )
       }
-      // On error, don't restart voice
-      shouldRestartVoiceRef.current = false
+      // On error, stop voice session
+      stopVoiceSession()
     } finally {
       setIsLoading(false)
       setIsGenerating(false)
@@ -1248,31 +1296,14 @@ export default function AIChatPage() {
         }
       }, 100)
 
-      // Check if we should restart voice session after LLM response
-      if (shouldRestartVoiceRef.current && voiceSessionActive) {
-        shouldRestartVoiceRef.current = false
-
-        // Get the latest messages to check for VOICE_CONTROL block
-        // Use a timeout to ensure messages state is updated
-        setTimeout(() => {
-          const latestMessages = messagesRef.current
-          const lastMessage = latestMessages[latestMessages.length - 1]
-
-          if (lastMessage?.role === 'assistant') {
-            // Use AI's intelligent decision via VOICE_CONTROL block
-            const continueVoice = shouldContinueVoice(lastMessage.content)
-
-            if (continueVoice) {
-              // AI decided user may have more to say - continue voice session
-              startRealtimeRecording()
-            } else {
-              // AI decided conversation turn is complete - end voice session
-              setVoiceSessionActive(false)
-              stopRealtimeRecording()
-            }
-          }
-        }, 100)
-      }
+      // Notify voice session that LLM response is complete.
+      // The hook will parse VOICE_CONTROL and decide whether to restart recording.
+      setTimeout(() => {
+        const latestMessages = messagesRef.current
+        const lastMessage = latestMessages[latestMessages.length - 1]
+        const aiContent = lastMessage?.role === 'assistant' ? lastMessage.content : ''
+        notifyVoiceResponseComplete(aiContent)
+      }, 150)
     }
   }
 
@@ -1558,10 +1589,12 @@ export default function AIChatPage() {
 
     try {
       // Build chat messages for API (with multimodal support)
+      // Sanitize config blocks to strip persistence-only fields (same as handleSubmit)
       const chatMessages: ChatMessage[] = newMessages.map(m => {
+        const sanitizedContent = sanitizeConfigBlocksForAI(m.content)
         if (m.images && m.images.length > 0) {
           const content: ChatMessageContent = [
-            { type: 'text' as const, text: m.content },
+            { type: 'text' as const, text: sanitizedContent },
             ...m.images.map(imgBase64 => ({
               type: 'image_url' as const,
               image_url: { url: imgBase64 }
@@ -1569,7 +1602,7 @@ export default function AIChatPage() {
           ]
           return { role: m.role, content }
         }
-        return { role: m.role, content: m.content }
+        return { role: m.role, content: sanitizedContent }
       })
 
       let hasReceivedContent = false
@@ -1616,24 +1649,11 @@ export default function AIChatPage() {
     }
   }
 
-  // Stop AI generation
+  // Stop AI generation and voice recording
   const handleStopGeneration = useCallback(() => {
     abortControllerRef.current?.abort()
-  }, [])
-
-  // Toggle voice session (continuous realtime ASR mode)
-  const toggleVoiceSession = useCallback(() => {
-    if (voiceSessionActive || realtimeIsRecording) {
-      // Stop voice session
-      setVoiceSessionActive(false)
-      stopRealtimeRecording()
-      setRealtimePartialText('')
-    } else {
-      // Start voice session
-      setVoiceSessionActive(true)
-      startRealtimeRecording()
-    }
-  }, [voiceSessionActive, realtimeIsRecording, startRealtimeRecording, stopRealtimeRecording])
+    stopVoiceSession()
+  }, [stopVoiceSession])
 
   // Handle option button selection - auto-send message
   const handleOptionSelect = (text: string) => {
@@ -2400,7 +2420,12 @@ export default function AIChatPage() {
                   }
                 }
               }
-              return messages.map((message, index) => (
+              return messages.map((message, index) => {
+              // Skip rendering assistant messages that contain only internal blocks (e.g., VOICE_CONTROL only)
+              if (message.role === 'assistant' && isInternalOnlyMessage(message.content)) {
+                return null
+              }
+              return (
               <div
                 key={message.id}
                 className={`flex gap-4 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'} items-start`}
@@ -2577,7 +2602,8 @@ export default function AIChatPage() {
                   )}
                 </div>
               </div>
-            ))
+              )
+              })
             })()}
 
             {/* Live Input Preview Bubble - shows text input or voice transcript in real-time */}

@@ -20,8 +20,12 @@ from backend.database.models import Base
 
 
 def utc_now() -> datetime:
-    """Get current UTC time as timezone-aware datetime."""
-    return datetime.now(timezone.utc)
+    """Get current UTC time as naive datetime (UTC assumed).
+
+    Returns timezone-naive datetime in UTC, compatible with PostgreSQL
+    TIMESTAMP WITHOUT TIME ZONE columns via asyncpg.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class User(SQLAlchemyBaseUserTableUUID, Base):
@@ -59,6 +63,15 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         nullable=True,
         default=None,
         doc="SHA256 hash of password for secure login. NULL for legacy users."
+    )
+
+    # Single-device login enforcement: regenerated on each login to invalidate old sessions.
+    # JWT tokens include this nonce; if the token's nonce doesn't match the DB, the session is rejected.
+    session_nonce: Mapped[Optional[str]] = mapped_column(
+        String(36),  # UUID4 string length
+        nullable=True,
+        default=None,
+        doc="Random UUID regenerated on each login. Old tokens with mismatched nonce are rejected."
     )
 
     # Agreement acceptance tracking

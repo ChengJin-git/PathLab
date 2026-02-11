@@ -6,7 +6,7 @@ Following industry best practices from Cytomine and DSA platforms.
 
 from datetime import datetime, timezone
 from typing import Optional
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime, ForeignKey, JSON, Index, Boolean
+from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, DateTime, ForeignKey, JSON, Index, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from backend.database.utils.json_utils import sanitize_for_json
@@ -15,12 +15,12 @@ Base = declarative_base()
 
 
 def utc_now() -> datetime:
-    """Get current UTC time as timezone-aware datetime.
+    """Get current UTC time as naive datetime (UTC assumed).
 
-    This replaces the deprecated datetime.utcnow() which returns naive datetime.
-    Returns timezone-aware datetime in UTC.
+    Returns timezone-naive datetime in UTC, compatible with PostgreSQL
+    TIMESTAMP WITHOUT TIME ZONE columns via asyncpg.
     """
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class DataGroup(Base):
@@ -86,7 +86,7 @@ class Dataset(Base):
     name = Column(String(255), nullable=False)  # Display name (stored only, never sent in URL/params)
     description = Column(Text)  # Optional description
 
-    # Owner - links to users table (UUID as string for SQLite compatibility)
+    # Owner - links to users table (UUID stored as string)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
     # Reference to DataGroup - defines data_type, aggregation_level, task_type
@@ -132,7 +132,7 @@ class WSISlide(Base):
     label = Column(String(100), index=True)
     wsi_path = Column(Text, nullable=False)
 
-    # Owner - links to users table (UUID as string for SQLite compatibility)
+    # Owner - links to users table (UUID stored as string)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
     # Patient metadata
@@ -151,11 +151,14 @@ class WSISlide(Base):
     width = Column(Integer)
     height = Column(Integer)
     magnification = Column(Integer)
-    file_size = Column(Integer)  # File size in bytes
+    file_size = Column(BigInteger)  # File size in bytes (BigInteger for files > 2GB)
 
     # Associated files for special formats (MRXS, TMAP)
     # JSON format: {"format_type": "mrxs"|"tmap"|"standard", "data_folder": str, "dt_files": [str]}
     associated_files = Column(JSON, nullable=True)
+
+    # Feature extraction status
+    feature_extracted = Column(Boolean, default=False, nullable=False, server_default="false", index=True)
 
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
@@ -167,12 +170,28 @@ class WSISlide(Base):
     ai_results = relationship("AIResult", back_populates="wsi_slide", cascade="all, delete-orphan")
     training_task_associations = relationship("TrainingTaskWSI", back_populates="wsi_slide", cascade="all, delete-orphan")
 
-    def to_dict(self):
-        """Convert to dictionary for API responses
+    # Composite indexes for common query patterns (PostgreSQL)
+    __table_args__ = (
+        # Speeds up get_datasets() filtered by user_id and grouped by dataset_id
+        Index('idx_wsi_user_dataset', 'user_id', 'dataset_id'),
+        # Speeds up sorted dataset listings (e.g., newest first within dataset)
+        Index('idx_wsi_dataset_created', 'dataset_id', 'created_at'),
+    )
 
-        Note: original_filename is included for display purposes.
-        The wsi_id (UUID) is still used for all API operations and URL routing.
-        Returns dataset_id (UUID) and dataset_name (display name from related Dataset).
+    def _get_file_extension(self) -> str:
+        """Extract file extension from wsi_path or original_filename."""
+        import os
+        if self.original_filename:
+            return os.path.splitext(self.original_filename)[1].lower()
+        if self.wsi_path:
+            return os.path.splitext(self.wsi_path)[1].lower()
+        return ''
+
+    def to_dict(self):
+        """Convert to dictionary for API responses.
+
+        Note: wsi_path is NOT included to avoid exposing server filesystem paths.
+        Use file_extension for file type determination on the frontend.
         """
         return {
             "wsi_id": self.wsi_id,
@@ -181,7 +200,7 @@ class WSISlide(Base):
             "dataset_name": self.dataset.name if self.dataset else None,
             "case_id": self.case_id,
             "label": self.label,
-            "wsi_path": self.wsi_path,
+            "file_extension": self._get_file_extension(),
             "user_id": self.user_id,
             "age": self.age,
             "gender": self.gender,
@@ -201,6 +220,31 @@ class WSISlide(Base):
         }
 
 
+    def to_summary_dict(self):
+        """Lightweight dict for list/pagination API responses.
+
+        Excludes heavy or detail-only fields: user_id, mpp, vendor, width,
+        height, magnification, associated_files, updated_at.
+        """
+        return {
+            "wsi_id": self.wsi_id,
+            "original_filename": self.original_filename,
+            "dataset_id": self.dataset_id,
+            "dataset_name": self.dataset.name if self.dataset else None,
+            "case_id": self.case_id,
+            "label": self.label,
+            "file_extension": self._get_file_extension(),
+            "age": self.age,
+            "gender": self.gender,
+            "source": self.source,
+            "event_time": self.event_time,
+            "event_status": self.event_status,
+            "split": self.split,
+            "file_size": self.file_size,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+        }
+
+
 class AITask(Base):
     """
     AI Task table.
@@ -215,7 +259,7 @@ class AITask(Base):
     status = Column(String(20), nullable=False, index=True)  # pending, running, completed, failed
     progress = Column(Integer, default=0)  # 0-100
 
-    # Owner - links to users table (UUID as string for SQLite compatibility)
+    # Owner - links to users table (UUID stored as string)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
     # Task parameters (JSON)
@@ -259,9 +303,11 @@ class AIResult(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     wsi_id = Column(String(255), ForeignKey("wsi_slides.wsi_id"), nullable=False, index=True)
-    task_id = Column(String(255), ForeignKey("ai_tasks.task_id"), index=True)
+    # NOTE: No ForeignKey constraint - task_id can reference either ai_tasks.task_id
+    # (for inference tasks) or training_tasks.task_id (for training tasks).
+    task_id = Column(String(255), index=True)
 
-    # Owner - links to users table (UUID as string for SQLite compatibility)
+    # Owner - links to users table (UUID stored as string)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
     # Prediction results
@@ -306,8 +352,8 @@ class ChatConversation(Base):
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
-    # Relationships
-    messages = relationship("ChatMessage", back_populates="conversation", cascade="all, delete-orphan")
+    # Relationships (order_by ensures messages are always returned in chronological order)
+    messages = relationship("ChatMessage", back_populates="conversation", cascade="all, delete-orphan", order_by="ChatMessage.id")
 
     def to_dict(self):
         """Convert to dictionary for API responses"""
@@ -494,7 +540,7 @@ class TrainingTask(Base):
     # Reference to DataGroup - defines data_type, aggregation_level, task_type
     group_id = Column(String(255), ForeignKey("data_groups.group_id"), nullable=False, index=True)
 
-    # Owner - links to users table (UUID as string for SQLite compatibility)
+    # Owner - links to users table (UUID stored as string)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
     # Status tracking
@@ -528,8 +574,7 @@ class TrainingTask(Base):
             "task_description": self.task_description,
             "group_id": self.group_id,
             # Include denormalized group info for convenience
-            # Note: data_level maps to data_type for frontend compatibility (progress bar mapping)
-            "data_level": self.data_group.data_type if self.data_group else None,
+            "data_type": self.data_group.data_type if self.data_group else None,
             "aggregation_level": self.data_group.aggregation_level if self.data_group else None,
             "task_type": self.data_group.task_type if self.data_group else None,
             "user_id": self.user_id,
@@ -585,7 +630,7 @@ class TrainedModel(Base):
     task_id = Column(String(255), ForeignKey("training_tasks.task_id"), nullable=False, index=True)
     model_name = Column(String(500), nullable=False)
 
-    # Owner - links to users table (UUID as string for SQLite compatibility)
+    # Owner - links to users table (UUID stored as string)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
     # Model files
@@ -700,7 +745,7 @@ class DatasetPermission(Base):
     # The dataset this permission applies to
     dataset_id = Column(String(255), ForeignKey("datasets.dataset_id", ondelete="CASCADE"), nullable=False, index=True)
 
-    # The user who is granted the permission (UUID as string)
+    # The user who is granted the permission
     user_id = Column(String(255), nullable=False, index=True)
 
     # The admin who granted this permission (UUID as string)
@@ -724,13 +769,10 @@ class DatasetPermission(Base):
         """Check if this permission has expired."""
         if self.expires_at is None:
             return False
-        # Handle both naive and aware datetimes
-        now = datetime.now(timezone.utc)
-        expires = self.expires_at
-        # If expires_at is naive (no timezone), assume it's UTC
-        if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        return now > expires
+        # PostgreSQL TIMESTAMP WITHOUT TIME ZONE returns naive datetimes (UTC assumed).
+        # Compare using naive UTC datetime for consistency.
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        return now > self.expires_at
 
     def is_valid(self) -> bool:
         """Check if this permission is still valid (not expired)."""

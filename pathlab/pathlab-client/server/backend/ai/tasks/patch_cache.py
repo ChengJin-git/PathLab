@@ -50,8 +50,19 @@ def find_cached_coords(
     Check if cached coordinates exist for the given params_hash and WSI.
 
     Returns the path to cached coordinates if found, None otherwise.
+    If a .h5.partial file is found, it indicates a previous extraction was
+    interrupted — the partial file is deleted and None is returned.
     """
     coords_path = get_cached_coords_path(uploads_root, params_hash, wsi_id)
+
+    # Check for incomplete extraction artifact
+    partial_path = coords_path.parent / f"{wsi_id}_coords.h5.partial"
+    if partial_path.exists():
+        logger.warning(f"Found incomplete coordinates file: {partial_path}, deleting")
+        try:
+            partial_path.unlink()
+        except OSError as e:
+            logger.warning(f"Failed to delete partial file {partial_path}: {e}")
 
     if coords_path.exists():
         logger.info(f"Found cached coordinates: {coords_path}")
@@ -159,6 +170,20 @@ def delete_all_cached_coords_for_wsi(
     # Search all params_hash directories for this wsi_id
     for params_hash_dir in coords_root.iterdir():
         if params_hash_dir.is_dir():
+            # Delete .h5.partial file if exists
+            partial_file = params_hash_dir / f"{wsi_id}_coords.h5.partial"
+            if partial_file.exists():
+                try:
+                    size = partial_file.stat().st_size
+                    partial_file.unlink()
+                    result["deleted_files"].append(str(partial_file))
+                    result["total_size"] += size
+                    logger.info(f"Deleted partial coordinates file: {partial_file} ({size} bytes)")
+                except Exception as e:
+                    result["failed"].append((str(partial_file), str(e)))
+                    logger.error(f"Failed to delete {partial_file}: {e}")
+
+            # Delete .h5 file if exists
             coords_file = params_hash_dir / f"{wsi_id}_coords.h5"
             if coords_file.exists():
                 result["total_count"] += 1
@@ -186,6 +211,9 @@ def find_any_cached_coords_for_wsi(
     coords file found. Useful for endpoints that need coords but don't care
     about specific preprocessing parameters (e.g., attention heatmap viewing).
 
+    If a .h5.partial file is found, it indicates a previous extraction was
+    interrupted — the partial file is deleted and the search continues.
+
     Args:
         uploads_root: Root uploads directory
         wsi_id: WSI identifier
@@ -200,6 +228,15 @@ def find_any_cached_coords_for_wsi(
     # Search all params_hash directories for this wsi_id
     for params_hash_dir in coords_root.iterdir():
         if params_hash_dir.is_dir():
+            # Check for incomplete extraction artifact
+            partial_path = params_hash_dir / f"{wsi_id}_coords.h5.partial"
+            if partial_path.exists():
+                logger.warning(f"Found incomplete coordinates file: {partial_path}, deleting")
+                try:
+                    partial_path.unlink()
+                except OSError as e:
+                    logger.warning(f"Failed to delete partial file {partial_path}: {e}")
+
             coords_file = params_hash_dir / f"{wsi_id}_coords.h5"
             if coords_file.exists():
                 logger.info(f"Found coords file for {wsi_id}: {coords_file}")

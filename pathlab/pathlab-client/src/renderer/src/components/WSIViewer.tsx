@@ -534,13 +534,14 @@ export default function WSIViewer({
         </div>
 
         {/* Patch image display with zoom and pan */}
-        <div className="w-full h-full overflow-auto flex items-center justify-center">
+        <div className="w-full h-full overflow-hidden flex items-center justify-center">
           <img
             ref={patchImageRef}
             src={patchImageUrl}
             alt="Patch Image"
-            className="transition-transform duration-200 cursor-move"
+            className="transition-transform duration-200 max-w-full max-h-full object-contain"
             style={{
+              cursor: patchZoom > 1 ? 'grab' : 'default',
               transform: `scale(${patchZoom})`,
               transformOrigin: 'center center'
             }}

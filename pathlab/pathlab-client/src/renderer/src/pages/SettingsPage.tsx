@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bot, ClipboardList, Database, Info, BookOpen, HardDrive, RefreshCw, ArrowLeft, Users, MessageSquare } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, detectOrphanedRecords, cleanupOrphanedRecords, OrphanedRecordsInfo, OrphanedRecordsCleanupResult, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus, scanDirectory, ScanDirectoryResponse, checkExternalFiles, CheckExternalFilesResponse, startBatchImportTask, startDeleteExternalTask, startUnbindDatasetTask, getExternalDatasets, getExternalDatasetsCachedSync, invalidateExternalDatasetsCache, ExternalDatasetInfo } from '../api'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, detectOrphanedRecords, cleanupOrphanedRecords, OrphanedRecordsInfo, OrphanedRecordsCleanupResult, resetDerivedData, getStorageConfig, updateStorageConfig, StorageConfig, getTrainedModels, TrainedModel, updateTrainedModel, deleteTrainedModel, TrainingTask, getQueueStatus, QueueStatus, updateQueueConfig, getQueueConfig, listUsers, updateUser, deleteUser, UserListItem, UserUpdateRequest, revokeUserAgreement, registerUser, RegisterRequest, fetchDatasets, DatasetSummary, getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, DatasetPermission, getAuthToken, getGlobalSettings, updateGlobalSettings, getAdminFeedbacks, getFeedbackStats, exportFeedbacks, resetAllFeedbacks, MessageFeedback, FeedbackStats, startAsyncExport, getExportTaskStatus, downloadExportFile, ExportTaskStatus, scanDirectory, ScanDirectoryResponse, checkExternalFiles, CheckExternalFilesResponse, startBatchImportTask, startDeleteExternalTask, startUnbindDatasetTask, getExternalDatasets, getExternalDatasetsCachedSync, invalidateExternalDatasetsCache, ExternalDatasetInfo, batchActivateUsers, batchDeactivateUsers, batchDeleteUsers, getMaintenanceMode, setMaintenanceMode as setMaintenanceModeApi } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { API_BASE, PREPROCESSING_BASE, AI_BASE } from '../config'
@@ -81,6 +81,7 @@ export default function SettingsPage() {
   const [showCreateUser, setShowCreateUser] = useState(false)
   const [createForm, setCreateForm] = useState<{ username: string; password: string; nickname: string; role: string }>({ username: '', password: '', nickname: '', role: 'pathologist' })
   const [creatingUser, setCreatingUser] = useState(false)
+  const [maintenanceMode, setMaintenanceMode] = useState(false)
 
   // Dataset Permission Management State
   const [permissionUser, setPermissionUser] = useState<UserListItem | null>(null)  // User being managed
@@ -785,7 +786,7 @@ export default function SettingsPage() {
         files: selectedFilesInfo,
         dataset_id: batchDatasetMode === 'existing' ? batchSelectedDatasetId : undefined,
         dataset_name: batchDatasetMode === 'new' ? datasetNameToUse : undefined,
-        data_level: batchDataLevel,
+        aggregation_level: batchDataLevel,
         task_type: batchTaskType,
         default_label: batchTaskType === 'classification' ? 'External Import' : undefined
       })
@@ -1114,6 +1115,42 @@ export default function SettingsPage() {
     }
   }
 
+  const handleResetDerivedData = async () => {
+    // Show confirmation dialog
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Reset All Derived Data?',
+      message: 'This will DELETE ALL processed data (coordinates, masks, features, AI results, training data, models, logs) while keeping original WSI files. This operation CANNOT be undone. Are you absolutely sure?',
+      confirmText: 'Yes, Reset All Data',
+      cancelText: 'Cancel',
+      variant: 'danger',
+      onConfirm: async () => {
+        setStorageError(null)
+        setResetDataResult(null)
+        try {
+          // Start background task
+          const response = await resetDerivedData()
+          console.log('Reset derived data task started:', response.task_id)
+
+          // Task will be tracked by BackgroundTaskContext automatically via SSE
+          // No need to manually track progress here
+
+          // Show success message
+          setStorageError(null)
+
+          // Note: We don't refresh stats here because the task is running in background
+          // User can manually refresh after task completes
+        } catch (err) {
+          console.error('Failed to start reset derived data task:', err)
+          setStorageError(err instanceof Error ? err.message : 'Failed to start reset derived data task')
+        }
+      },
+      onCancel: () => {
+        // Do nothing
+      }
+    })
+  }
+
   const formatBytes = (bytes: number): string => {
     if (bytes === 0) return '0 Bytes'
     const k = 1024
@@ -1379,6 +1416,91 @@ export default function SettingsPage() {
     } finally {
       setCreatingUser(false)
     }
+  }
+
+  // Load maintenance mode status when users tab is active
+  const loadMaintenanceMode = useCallback(async () => {
+    try {
+      const result = await getMaintenanceMode()
+      setMaintenanceMode(result.enabled)
+    } catch (err) {
+      console.error('Failed to load maintenance mode:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (activeTab === 'users') {
+      loadMaintenanceMode()
+    }
+  }, [activeTab, loadMaintenanceMode])
+
+  // Batch user operations
+  const handleBatchActivate = async (userIds: string[]) => {
+    if (userIds.length === 0) return
+    try {
+      await batchActivateUsers(userIds)
+      loadUsers()
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Failed to batch activate users')
+    }
+  }
+
+  const handleBatchDeactivate = async (userIds: string[]) => {
+    if (userIds.length === 0) return
+    try {
+      await batchDeactivateUsers(userIds)
+      loadUsers()
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Failed to batch deactivate users')
+    }
+  }
+
+  const handleBatchDelete = (userIds: string[]) => {
+    if (userIds.length === 0) return
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Users',
+      message: `Are you sure you want to delete ${userIds.length} user${userIds.length > 1 ? 's' : ''}? This action cannot be undone.`,
+      confirmVariant: 'danger',
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        try {
+          await batchDeleteUsers(userIds)
+          loadUsers()
+        } catch (err) {
+          setUsersError(err instanceof Error ? err.message : 'Failed to batch delete users')
+        } finally {
+          setConfirmDialog((prev) => ({ ...prev, isOpen: false }))
+        }
+      }
+    })
+  }
+
+  const handleToggleMaintenanceMode = () => {
+    const newMode = !maintenanceMode
+    const title = newMode ? 'Enable Maintenance Mode' : 'Disable Maintenance Mode'
+    const message = newMode
+      ? 'This will deactivate all non-admin users and prevent them from logging in. Are you sure?'
+      : 'This will re-enable normal login for all users. Are you sure?'
+
+    setConfirmDialog({
+      isOpen: true,
+      title,
+      message,
+      confirmVariant: newMode ? 'danger' : 'info',
+      confirmText: newMode ? 'Enable' : 'Disable',
+      onConfirm: async () => {
+        try {
+          const result = await setMaintenanceModeApi(newMode)
+          setMaintenanceMode(result.enabled)
+          loadUsers() // Refresh user list to show updated active status
+        } catch (err) {
+          setUsersError(err instanceof Error ? err.message : 'Failed to toggle maintenance mode')
+        } finally {
+          setConfirmDialog((prev) => ({ ...prev, isOpen: false }))
+        }
+      }
+    })
   }
 
   // Dataset Permission Management Functions
@@ -1647,6 +1769,7 @@ export default function SettingsPage() {
             recordsCleanupResult={recordsCleanupResult}
             detectOrphanedRecordsHandler={detectOrphanedRecordsHandler}
             handleRecordsCleanup={handleRecordsCleanup}
+            handleResetDerivedData={handleResetDerivedData}
             batchScanPath={batchScanPath}
             setBatchScanPath={setBatchScanPath}
             batchScanResult={batchScanResult}
@@ -1703,6 +1826,7 @@ export default function SettingsPage() {
             loadingUsers={loadingUsers}
             usersError={usersError}
             currentUserId={currentUser?.id}
+            maintenanceMode={maintenanceMode}
             onShowCreateUser={() => setShowCreateUser(true)}
             onLoadUsers={loadUsers}
             onEditUser={(user) => {
@@ -1726,16 +1850,29 @@ export default function SettingsPage() {
                 // Error handled by the component
               }
             }}
-            onDeleteUser={async (userId) => {
-              if (confirm('Are you sure you want to delete this user?')) {
-                try {
-                  await deleteUser(userId)
-                  loadUsers()
-                } catch {
-                  // Error handled by the component
+            onDeleteUser={(userId) => {
+              setConfirmDialog({
+                isOpen: true,
+                title: 'Delete User',
+                message: 'Are you sure you want to delete this user?',
+                confirmVariant: 'danger',
+                confirmText: 'Delete',
+                onConfirm: async () => {
+                  try {
+                    await deleteUser(userId)
+                    loadUsers()
+                  } catch {
+                    // Error handled by the component
+                  } finally {
+                    setConfirmDialog((prev) => ({ ...prev, isOpen: false }))
+                  }
                 }
-              }
+              })
             }}
+            onBatchActivate={handleBatchActivate}
+            onBatchDeactivate={handleBatchDeactivate}
+            onBatchDelete={handleBatchDelete}
+            onToggleMaintenanceMode={handleToggleMaintenanceMode}
           />
         )}
 
@@ -1772,10 +1909,10 @@ export default function SettingsPage() {
 
         {/* System Information - Show on all tabs except storage and feedback */}
         {activeTab !== 'storage' && activeTab !== 'feedback' && (
-          <Card className="p-6">
+          <Card className="p-4 sm:p-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-gray-900 flex items-center">
-                <Info className="w-6 h-6 mr-3 text-gray-700" />
+              <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
+                <Info className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700" />
                 System Information
               </h2>
               <button
@@ -1885,20 +2022,23 @@ export default function SettingsPage() {
 
         {/* About - Show on all tabs except storage, users, and feedback */}
         {activeTab !== 'storage' && activeTab !== 'users' && activeTab !== 'feedback' && (
-          <Card className="p-6">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-              <BookOpen className="w-6 h-6 mr-3 text-gray-700" />
+          <Card className="p-4 sm:p-6">
+            <h2 className="text-lg sm:text-xl font-semibold text-gray-900 mb-4 flex items-center">
+              <BookOpen className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700" />
               About
             </h2>
 
             <div className="space-y-3 text-sm text-gray-600">
               <p>
                 <strong className="text-gray-900">PathLab</strong> is an AI-powered pathology analysis platform
-                for whole slide image (WSI) classification and analysis.
+                for pathology image analysis.
               </p>
               <p>
                 The platform integrates state-of-the-art deep learning models with an intuitive
                 AI assistant to help researchers set up and run pathology analysis tasks.
+              </p>
+              <p>
+                Proudly developed by <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer">SmartLab</a>.
               </p>
             </div>
           </Card>

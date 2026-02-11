@@ -7,7 +7,6 @@ import json
 import os
 import uuid
 from typing import Optional
-import httpx
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,32 +25,13 @@ from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, get_user_id_filter, check_wsi_access_permission
 from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
-from ..dependencies import logger, storage_manager, AI_SERVICE_URL
+from ..dependencies import logger, storage_manager
 from ..models import TrainingTaskRequest, DeletionMode
 from ..pipeline import run_training_pipeline
 from ..task_queue import get_task_queue, TaskType
+from ..utils import cancel_ai_service_training
 
 router = APIRouter(prefix="/tasks/training", tags=["Training Tasks"])
-
-
-async def _cancel_ai_service_training(task_id: str) -> None:
-    """
-    Request AI service to cancel a training task and release GPU.
-
-    Called when deleting a task that might still be running.
-    Uses fire-and-forget pattern since AI service may be blocked by GPU training.
-    """
-    try:
-        # Fire-and-forget: very short timeout, we don't care about the response
-        async with httpx.AsyncClient(timeout=1.0) as client:
-            await client.delete(f"{AI_SERVICE_URL}/api/ai/training/{task_id}")
-            logger.info(f"Sent cancellation request to AI service for task {task_id}")
-    except httpx.TimeoutException:
-        # Expected - AI service is blocked by GPU training, but flag is already set
-        logger.debug(f"Cancellation request sent to AI service for task {task_id} (fire-and-forget)")
-    except Exception as e:
-        # Best effort - don't fail the delete if cancellation fails
-        logger.debug(f"Failed to send cancellation to AI service for task {task_id}: {e}")
 
 
 @router.post("")
@@ -64,7 +44,7 @@ async def create_training_task(
     Requires pathologist/admin role OR temporary elevated permission for all involved datasets.
     Automatically extracts classes from selected WSI labels.
 
-    Uses short-lived database sessions to avoid SQLite lock contention when other
+    Uses short-lived database sessions to avoid connection pool exhaustion when other
     training tasks are running.
     """
     try:
@@ -175,9 +155,9 @@ async def create_training_task(
             # Get or create DataGroup for this training task
             data_group = await DataGroupRepository.get_or_create(
                 db,
-                data_type=req.data_level,  # 'wsi' or 'patch'
+                data_type=req.data_type,  # 'wsi' or 'patch'
                 aggregation_level=aggregation_level,  # 'file' or 'case'
-                task_type=req.task_type  # 'classification' or 'survival_prediction'
+                task_type=req.task_type  # 'classification' or 'survival'
             )
 
             # Prepare task data
@@ -209,7 +189,7 @@ async def create_training_task(
         logger.info(f"Created training task: {task_id}")
         logger.info(f"  - Task name: {req.task_name}")
         logger.info(f"  - Task type: {req.task_type} (from DataGroup: {data_group.task_type})")
-        logger.info(f"  - Data type: {req.data_level}, Aggregation level: {aggregation_level}")
+        logger.info(f"  - Data type: {req.data_type}, Aggregation level: {aggregation_level}")
         logger.info(f"  - WSI count: {len(req.wsi_ids)}")
         logger.info(f"  - Classes: {task.classes}")
 
@@ -223,8 +203,7 @@ async def create_training_task(
 
         pipeline_kwargs = {
             # Note: task_id is automatically added by task_queue.submit()
-            # data_level here refers to data_type ('wsi' or 'patch') - kept for pipeline compatibility
-            "data_level": req.data_level,
+            "data_type": req.data_type,
             "wsi_ids": req.wsi_ids,
             "preprocessing_config": req.preprocessing,
             "model_config": req.model,
@@ -256,22 +235,38 @@ async def create_training_task(
 async def list_training_tasks(
     skip: int = 0,
     limit: int = 100,
+    user: User = Depends(current_active_user),
     user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db)
 ):
-    """List training tasks. Users see only their own tasks, admin sees all."""
-    tasks = await TrainingTaskRepository.get_all(db, limit, skip, user_id=user_id_filter)
+    """List training tasks. Users see only their own tasks, admin sees all (with username)."""
+    # Admin users get username information
+    include_username = user.is_admin()
+
+    tasks = await TrainingTaskRepository.get_all(db, limit, skip, user_id=user_id_filter, include_username=include_username)
     total = await TrainingTaskRepository.count(db, user_id=user_id_filter)
 
     # Batch get WSI counts for all tasks (avoids N+1 query)
-    task_ids = [task.task_id for task in tasks]
+    if include_username:
+        # tasks is already a list of dicts
+        task_ids = [task["task_id"] for task in tasks]
+    else:
+        # tasks is a list of TrainingTask objects
+        task_ids = [task.task_id for task in tasks]
+
     wsi_counts = await TrainingTaskRepository.get_wsi_counts_batch(db, task_ids)
 
     # Add WSI count to each task
     result_tasks = []
     for task in tasks:
-        task_dict = task.to_dict()
-        task_dict["wsi_count"] = wsi_counts.get(task.task_id, 0)
+        if include_username:
+            # task is already a dict with username
+            task_dict = task
+        else:
+            # task is a TrainingTask object
+            task_dict = task.to_dict()
+
+        task_dict["wsi_count"] = wsi_counts.get(task_dict["task_id"], 0)
         result_tasks.append(task_dict)
 
     return {"items": result_tasks, "total": total}
@@ -289,9 +284,14 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
     """
     # Capture user info before SSE stream starts
     user_id_filter = None if user.is_admin() else str(user.id)
+    include_username = user.is_admin()
 
     async def event_generator():
         """Generate SSE events with task updates"""
+        consecutive_errors = 0
+        last_data_hash = None
+        BASE_INTERVAL = 5  # seconds between polls
+
         try:
             while True:
                 # Use safe_session to ensure proper connection management even on cancel
@@ -299,10 +299,13 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                 async with safe_session() as db:
                     try:
                         # Fetch training tasks filtered by user
-                        tasks = await TrainingTaskRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter)
+                        tasks = await TrainingTaskRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter, include_username=include_username)
 
                         # Batch get WSI counts for all tasks (avoids N+1 query)
-                        task_ids = [task.task_id for task in tasks]
+                        if include_username:
+                            task_ids = [task["task_id"] for task in tasks]
+                        else:
+                            task_ids = [task.task_id for task in tasks]
                         wsi_counts = await TrainingTaskRepository.get_wsi_counts_batch(db, task_ids)
 
                         # Read real-time progress from shared files (no HTTP, no DB lock)
@@ -312,22 +315,48 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                         # Add WSI count and overlay file-based progress
                         result_tasks = []
                         for task in tasks:
-                            task_dict = task.to_dict()
-                            task_dict["wsi_count"] = wsi_counts.get(task.task_id, 0)
+                            if include_username:
+                                # task is already a dict with username
+                                task_dict = task
+                                task_id = task["task_id"]
+                                model_config = task.get("model_config") or {}
+                            else:
+                                # task is a TrainingTask object
+                                task_dict = task.to_dict()
+                                task_id = task.task_id
+                                model_config = task.model_config or {}
+                            # For external validation tasks, WSIs aren't in TrainingTaskWSI junction table
+                            # so use model_config.total_wsi as the count
+                            junction_count = wsi_counts.get(task_id, 0)
+                            if junction_count == 0 and task_dict.get("task_type") == "external_validation":
+                                task_dict["wsi_count"] = model_config.get("total_wsi", 0)
+                            else:
+                                task_dict["wsi_count"] = junction_count
                             # Overlay file progress if available (more up-to-date than DB)
-                            if task.task_id in file_progress:
-                                task_dict["progress"] = file_progress[task.task_id]
+                            if task_id in file_progress:
+                                task_dict["progress"] = file_progress[task_id]
                             result_tasks.append(task_dict)
 
-                        # Send SSE event
+                        # Change detection: only send if data changed
                         data = json.dumps({"items": result_tasks})
-                        yield f"data: {data}\n\n"
+                        import hashlib
+                        data_hash = hashlib.md5(data.encode()).hexdigest()
+                        if data_hash != last_data_hash:
+                            yield f"data: {data}\n\n"
+                            last_data_hash = data_hash
+
+                        consecutive_errors = 0  # Reset on success
                     except Exception as e:
-                        logger.error(f"Error fetching training tasks in SSE: {e}")
+                        consecutive_errors += 1
+                        logger.error(f"Error fetching training tasks in SSE (consecutive={consecutive_errors}): {e}")
                         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-                # Wait 5 seconds before next update (increased from 2s to reduce DB load)
-                await asyncio.sleep(5)
+                # Exponential backoff on consecutive errors: 5s → 10s → 20s → 30s (cap)
+                if consecutive_errors > 0:
+                    backoff = min(BASE_INTERVAL * (2 ** consecutive_errors), 30)
+                    await asyncio.sleep(backoff)
+                else:
+                    await asyncio.sleep(BASE_INTERVAL)
 
         except asyncio.CancelledError:
             # Client disconnected
@@ -350,26 +379,44 @@ async def get_training_task(
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get training task details. Users can only view their own tasks, admin can view all."""
-    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    """Get training task details. Users can only view their own tasks, admin can view all (with username)."""
+    # Admin users get username information
+    include_username = user.is_admin()
+
+    task = await TrainingTaskRepository.get_by_id(db, task_id, include_username=include_username)
     if not task:
         raise HTTPException(status_code=404, detail="Training task not found")
 
     # Check ownership
-    if not check_data_ownership(task.user_id, user):
+    task_user_id = task["user_id"] if include_username else task.user_id
+    if not check_data_ownership(task_user_id, user):
         raise HTTPException(status_code=403, detail="You don't have permission to view this task")
 
     # Get associated WSI IDs
     wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
 
-    result = task.to_dict()
+    if include_username:
+        # task is already a dict with username
+        result = task
+    else:
+        # task is a TrainingTask object
+        result = task.to_dict()
+
     result["wsi_ids"] = wsi_ids
-    result["wsi_count"] = len(wsi_ids)
+    # For external validation tasks, WSIs aren't in TrainingTaskWSI junction table
+    if len(wsi_ids) == 0 and result.get("task_type") == "external_validation":
+        # Get model_config from dict or object depending on include_username
+        model_config = task["model_config"] if include_username else task.model_config
+        result["wsi_count"] = (model_config or {}).get("total_wsi", 0)
+    else:
+        result["wsi_count"] = len(wsi_ids)
 
     # Overlay real-time progress from shared file (if available)
     # This ensures the initial load shows the most up-to-date progress
     from backend.common.progress_store import get_progress
-    file_prog = get_progress(task.task_id)
+    # Get task_id from dict or object depending on include_username
+    task_id_for_progress = task["task_id"] if include_username else task.task_id
+    file_prog = get_progress(task_id_for_progress)
     if file_prog is not None:
         result["progress"] = file_prog
 
@@ -415,7 +462,7 @@ async def delete_training_task(
 
         # If task is still running or queued, cancel it first to release GPU
         if task.status in [TaskStatus.PENDING, TaskStatus.RESUMING, TaskStatus.RUNNING, TaskStatus.PREPROCESSING, TaskStatus.EXTRACTING, TaskStatus.TRAINING]:
-            await _cancel_ai_service_training(task_id)
+            await cancel_ai_service_training(task_id)
 
         # Get all trained models for this task
         models = await TrainedModelRepository.get_by_task_id(db, task_id)
@@ -547,7 +594,11 @@ async def stream_training_logs(
                     if task:
                         task_dict = task.to_dict()
                         task_dict["wsi_ids"] = wsi_ids
-                        task_dict["wsi_count"] = len(wsi_ids)
+                        # For external validation tasks, WSIs aren't in junction table
+                        if len(wsi_ids) == 0 and task_dict.get("task_type") == "external_validation":
+                            task_dict["wsi_count"] = (task.model_config or {}).get("total_wsi", 0)
+                        else:
+                            task_dict["wsi_count"] = len(wsi_ids)
                         # Overlay real-time progress from shared file
                         from backend.common.progress_store import get_progress
                         file_prog = get_progress(task.task_id)
@@ -569,6 +620,10 @@ async def stream_training_logs(
                     yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
             # Continuously poll for new logs and task status
+            consecutive_errors = 0
+            last_data_hash = None
+            BASE_INTERVAL = 3  # seconds between polls
+
             while True:
                 task_completed = False
                 cached_wsi_ids = []
@@ -592,21 +647,30 @@ async def stream_training_logs(
                         if task:
                             task_dict = task.to_dict()
                             task_dict["wsi_ids"] = wsi_ids
-                            task_dict["wsi_count"] = len(wsi_ids)
+                            # For external validation tasks, WSIs aren't in junction table
+                            if len(wsi_ids) == 0 and task_dict.get("task_type") == "external_validation":
+                                task_dict["wsi_count"] = (task.model_config or {}).get("total_wsi", 0)
+                            else:
+                                task_dict["wsi_count"] = len(wsi_ids)
                             # Overlay real-time progress from shared file
                             from backend.common.progress_store import get_progress
                             file_prog = get_progress(task.task_id)
                             if file_prog is not None:
                                 task_dict["progress"] = file_prog
 
-                        # Always send task status update (even if no new logs)
-                        # This ensures progress bar and status are updated in real-time
+                        # Build data payload
                         data = json.dumps({
                             "logs": [log.to_dict() for log in new_logs] if new_logs else [],
                             "last_sequence": new_logs[-1].sequence if new_logs else last_sequence,
                             "task": task_dict
                         })
-                        yield f"data: {data}\n\n"
+
+                        # Change detection: only send if data changed
+                        import hashlib
+                        data_hash = hashlib.md5(data.encode()).hexdigest()
+                        if data_hash != last_data_hash:
+                            yield f"data: {data}\n\n"
+                            last_data_hash = data_hash
 
                         if new_logs:
                             last_sequence = new_logs[-1].sequence
@@ -617,8 +681,11 @@ async def stream_training_logs(
                             task_completed = True
                             cached_wsi_ids = wsi_ids
                             cached_task_dict = task.to_dict()
+
+                        consecutive_errors = 0  # Reset on success
                     except Exception as e:
-                        logger.error(f"Error polling logs for task {task_id}: {e}")
+                        consecutive_errors += 1
+                        logger.error(f"Error polling logs for task {task_id} (consecutive={consecutive_errors}): {e}")
                         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
                 # Handle task completion outside session to avoid holding DB
@@ -635,7 +702,11 @@ async def stream_training_logs(
                             # Build final task dict with wsi_ids and wsi_count
                             final_task_dict = cached_task_dict.copy()
                             final_task_dict["wsi_ids"] = cached_wsi_ids
-                            final_task_dict["wsi_count"] = len(cached_wsi_ids)
+                            # For external validation tasks, WSIs aren't in junction table
+                            if len(cached_wsi_ids) == 0 and final_task_dict.get("task_type") == "external_validation":
+                                final_task_dict["wsi_count"] = final_task_dict.get("model_config", {}).get("total_wsi", 0)
+                            else:
+                                final_task_dict["wsi_count"] = len(cached_wsi_ids)
 
                             data = json.dumps({
                                 "logs": [log.to_dict() for log in final_logs] if final_logs else [],
@@ -649,8 +720,12 @@ async def stream_training_logs(
                             yield f"data: {json.dumps({'error': str(e)})}\n\n"
                     return  # Use return instead of break to properly exit generator
 
-                # Poll every 3 seconds (increased from 1s to reduce DB load)
-                await asyncio.sleep(3)
+                # Exponential backoff on consecutive errors: 3s → 6s → 12s → 24s → 30s (cap)
+                if consecutive_errors > 0:
+                    backoff = min(BASE_INTERVAL * (2 ** consecutive_errors), 30)
+                    await asyncio.sleep(backoff)
+                else:
+                    await asyncio.sleep(BASE_INTERVAL)
 
         except asyncio.CancelledError:
             # Client disconnected

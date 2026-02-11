@@ -55,7 +55,9 @@ const METRIC_ICONS: Record<string, React.ReactNode> = {
   precision: <Percent className="w-4 h-4" />,
   recall: <Percent className="w-4 h-4" />,
   sensitivity: <Percent className="w-4 h-4" />,
-  specificity: <Percent className="w-4 h-4" />
+  specificity: <Percent className="w-4 h-4" />,
+  c_index: <TrendingUp className="w-4 h-4" />,
+  integrated_brier_score: <BarChart3 className="w-4 h-4" />
 }
 
 /** Parse [QUICK_ANALYSIS_CONFIG] block from message */
@@ -120,16 +122,47 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
   const [statusMessage, setStatusMessage] = useState('')
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
 
+  // Smooth progress animation - gradually interpolate toward target progress
+  const [animatedProgress, setAnimatedProgress] = useState(0)
+  const animationRef = useRef<number | null>(null)
+  const targetProgressRef = useRef(0)
+
+  useEffect(() => {
+    targetProgressRef.current = progress
+
+    // Cancel any existing animation
+    if (animationRef.current) cancelAnimationFrame(animationRef.current)
+
+    const animate = () => {
+      setAnimatedProgress(prev => {
+        const target = targetProgressRef.current
+        if (prev >= target) return target
+        // Smooth easing: move 8% of remaining distance per frame, minimum 0.5 per frame
+        const step = Math.max((target - prev) * 0.08, 0.5)
+        const next = Math.min(prev + step, target)
+        return Math.round(next * 10) / 10  // Round to 1 decimal
+      })
+      animationRef.current = requestAnimationFrame(animate)
+    }
+
+    animationRef.current = requestAnimationFrame(animate)
+
+    return () => {
+      if (animationRef.current) cancelAnimationFrame(animationRef.current)
+    }
+  }, [progress])
+
   // Use ref for callbacks to avoid triggering useEffect on callback changes
   const onErrorRef = useRef(onError)
   onErrorRef.current = onError
   const onDataLoadedRef = useRef(onDataLoaded)
   onDataLoadedRef.current = onDataLoaded
 
-  // Cleanup polling on unmount
+  // Cleanup polling and animation on unmount
   useEffect(() => {
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current)
+      if (animationRef.current) cancelAnimationFrame(animationRef.current)
     }
   }, [])
 
@@ -351,13 +384,13 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
             <div className="w-full max-w-xs">
               <div className="flex justify-between text-xs text-gray-500 mb-1">
                 <span>{analysisStatus === 'waiting' ? 'Waiting for inference' : analysisStatus === 'pending' ? 'Queued' : 'Processing'}</span>
-                <span>{analysisStatus === 'waiting' ? '' : `${progress}%`}</span>
+                <span>{analysisStatus === 'waiting' ? '' : `${Math.round(animatedProgress)}%`}</span>
               </div>
               {analysisStatus !== 'waiting' && (
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div
-                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${progress}%` }}
+                    className="bg-blue-600 h-2 rounded-full"
+                    style={{ width: `${animatedProgress}%` }}
                   />
                 </div>
               )}

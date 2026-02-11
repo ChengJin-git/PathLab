@@ -15,7 +15,7 @@
 
 [Unit]
 Description=PathLab Python Backend (Gateway + Preprocessing + AI)
-After=network.target
+After=network.target postgresql.service
 
 [Service]
 Type=simple
@@ -29,6 +29,7 @@ Environment="GATEWAY_PORT=6100"
 Environment="PREPROCESSING_PORT=6101"
 Environment="AI_PORT=6102"
 Environment="PATHLAB_UPLOADS_DIR=/path/to/pathlab-client/uploads"
+Environment="DATABASE_URL=postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab"
 
 ExecStart=/path/to/python3 main.py
 

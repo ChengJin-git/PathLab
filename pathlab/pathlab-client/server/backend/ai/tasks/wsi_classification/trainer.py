@@ -71,10 +71,10 @@ async def scoped_db(session_maker):
     - The main operation is NOT shielded (allows timeout/cancellation to work)
     - Only cleanup (rollback/close) is shielded to ensure proper resource release
 
-    Includes timeout protection to prevent indefinite blocking when
-    SQLite database is locked by another process or task.
+    Includes timeout protection to prevent indefinite blocking on
+    long-running database operations.
     """
-    timeout = Config.SQLITE_LOCK_TIMEOUT_SECONDS
+    timeout = Config.DB_OPERATION_TIMEOUT
     session = session_maker()
     try:
         async with asyncio.timeout(timeout):
@@ -84,8 +84,7 @@ async def scoped_db(session_maker):
         with anyio.CancelScope(shield=True):
             await session.rollback()
         _scoped_db_logger.error(
-            f"Database operation timed out after {timeout}s. "
-            "SQLite lock contention detected."
+            f"Database operation timed out after {timeout}s."
         )
         raise
     except Exception:
@@ -358,6 +357,18 @@ class WSIClassificationTrainer(BaseTrainer):
 
             results.append({"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)})
 
+        # Bulk update feature_extracted flag for all processed WSIs
+        processed_wsi_ids = [r["wsi_id"] for r in results]
+        if processed_wsi_ids:
+            try:
+                async with scoped_db(session_maker) as db:
+                    await WSIRepository.bulk_update_feature_extracted(db, processed_wsi_ids)
+            except Exception as e:
+                await logger.warning(
+                    f"Failed to update feature_extracted flags (non-fatal): {e}",
+                    metadata={"count": len(processed_wsi_ids)}
+                )
+
         return self._build_feature_response(results)
 
     def _extract_wsi_features(
@@ -385,9 +396,15 @@ class WSIClassificationTrainer(BaseTrainer):
         """
         # VRAM Protection: Check BEFORE creating the large-batch DataLoader
         # to prevent OOM when loading the first batch
+        _log = logging.getLogger(__name__)
         device = torch.device(self.device)
+
+        _log.info(f"[FeatureExtract] START wsi_path={wsi_path}, coords_h5={coords_h5}, "
+                  f"batch_size={batch_size}, device={device}")
+
         if device.type == "cuda":
             # Create a small DataLoader with batch_size=1 for VRAM measurement
+            _log.info("[FeatureExtract] Creating VRAM probe DataLoader (num_workers=0, batch_size=1)...")
             probe_loader, probe_dataset = build_dataloader(
                 wsi_path=wsi_path,
                 coords_h5=coords_h5,
@@ -398,10 +415,26 @@ class WSIClassificationTrainer(BaseTrainer):
                 extractor=extractor,
                 mode="eval",
             )
+            _log.info(f"[FeatureExtract] Probe dataset created, len={len(probe_dataset)}")
+
             if len(probe_dataset) > 0:
                 # Get a single sample for VRAM measurement
+                _log.info("[FeatureExtract] Reading first patch for VRAM probe...")
                 sample_batch, _ = next(iter(probe_loader))
+                _log.info(f"[FeatureExtract] First patch read OK, shape={sample_batch.shape}, numel={sample_batch.numel()}")
+
+                # Guard: collate may return empty tensor if all patches failed to load
+                if sample_batch.numel() == 0:
+                    _log.warning(
+                        f"All patches failed to load for VRAM probe (coords exist but patches unreadable). "
+                        f"Returning empty features for {wsi_path}"
+                    )
+                    del probe_loader, probe_dataset
+                    torch.cuda.empty_cache()
+                    return torch.empty(0, extractor.output_dim)
+
                 try:
+                    _log.info("[FeatureExtract] Running VRAM check (forward pass with batch_size=1)...")
                     check_vram_before_batch_processing(
                         extractor=extractor,
                         sample_input=sample_batch,
@@ -409,6 +442,7 @@ class WSIClassificationTrainer(BaseTrainer):
                         device=device,
                         safety_threshold=0.85,  # Use at most 85% of VRAM
                     )
+                    _log.info("[FeatureExtract] VRAM check passed")
                 except VRAMExceededError as e:
                     # Re-raise with clear message for upstream handling
                     raise RuntimeError(
@@ -418,10 +452,12 @@ class WSIClassificationTrainer(BaseTrainer):
                 # Clean up probe loader
                 del probe_loader, probe_dataset
                 torch.cuda.empty_cache()
+                _log.info("[FeatureExtract] Probe cleanup done")
 
         # Now create the actual DataLoader with user-specified batch_size
         # Note: Disable pin_memory to avoid CUDA errors in multiprocess DataLoader
         # "RuntimeError: Caught RuntimeError in pin memory thread for device 0"
+        _log.info(f"[FeatureExtract] Creating actual DataLoader (num_workers=4, batch_size={batch_size})...")
         loader, dataset = build_dataloader(
             wsi_path=wsi_path,
             coords_h5=coords_h5,
@@ -432,12 +468,21 @@ class WSIClassificationTrainer(BaseTrainer):
             extractor=extractor,
             mode="eval",
         )
+        _log.info(f"[FeatureExtract] DataLoader created, dataset len={len(dataset)}, "
+                  f"num_batches≈{(len(dataset) + batch_size - 1) // batch_size}")
 
         feats_all = []
+        batch_count = 0
+        total_batches = (len(dataset) + batch_size - 1) // batch_size
+        _log.info(f"[FeatureExtract] Starting batch iteration (total_batches≈{total_batches})...")
         # Process batches with inference mode applied per-batch.
         # This method runs in a thread pool (via asyncio.to_thread), so
         # inference_mode won't affect other coroutines on the event loop.
         for imgs, _coords in loader:
+            batch_count += 1
+            if batch_count <= 3 or batch_count % 50 == 0:
+                _log.info(f"[FeatureExtract] Batch {batch_count}/{total_batches}, imgs.shape={imgs.shape}")
+
             # Check for cancellation or permission revocation at each batch
             if is_task_cancelled(self.task_id):
                 raise TrainingCancelledException("Feature extraction cancelled during batch processing")
@@ -450,10 +495,15 @@ class WSIClassificationTrainer(BaseTrainer):
                 feats = extractor(imgs)
                 feats_all.append(feats.cpu())  # Keep on CPU to save VRAM
 
+        _log.info(f"[FeatureExtract] Batch iteration complete, total batches processed={batch_count}")
+
         if len(feats_all) == 0:
+            _log.warning(f"[FeatureExtract] No features extracted (0 batches), returning empty tensor")
             return torch.empty(0, extractor.output_dim)
 
-        return torch.cat(feats_all, dim=0)  # (N, D)
+        result = torch.cat(feats_all, dim=0)  # (N, D)
+        _log.info(f"[FeatureExtract] DONE, result shape={result.shape}")
+        return result
 
     def _is_kfold_splits(self, splits_map: Dict[str, List[str]]) -> bool:
         """Check if splits_map represents k-fold configuration."""

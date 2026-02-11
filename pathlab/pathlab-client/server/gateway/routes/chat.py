@@ -277,9 +277,11 @@ async def get_conversation(
     if not check_data_ownership(conversation.user_id, user):
         raise HTTPException(status_code=403, detail="You don't have permission to view this conversation")
 
+    # Sort messages by id to ensure chronological order (defense-in-depth)
+    sorted_messages = sorted(conversation.messages, key=lambda m: m.id)
     return {
         **conversation.to_dict(),
-        "messages": [msg.to_dict() for msg in conversation.messages]
+        "messages": [msg.to_dict() for msg in sorted_messages]
     }
 
 
@@ -409,7 +411,7 @@ async def submit_feedback(
     if req.task_helpfulness and req.task_helpfulness not in ["helpful", "not_helpful"]:
         raise HTTPException(status_code=400, detail="task_helpfulness must be 'helpful' or 'not_helpful'")
 
-    # Upsert feedback (convert UUID to string for SQLite compatibility)
+    # Upsert feedback (convert UUID to string for storage)
     feedback = await FeedbackRepository.upsert_feedback(
         db=db,
         message_id=message_id,
@@ -617,9 +619,11 @@ async def process_export_task(
             date_to = None
             if filter_params:
                 if filter_params.get('date_from'):
-                    date_from = datetime.fromisoformat(filter_params['date_from'].replace('Z', '+00:00'))
+                    # Parse ISO date and strip timezone for PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility
+                    date_from = datetime.fromisoformat(filter_params['date_from'].replace('Z', '+00:00')).replace(tzinfo=None)
                 if filter_params.get('date_to'):
-                    date_to = datetime.fromisoformat(filter_params['date_to'].replace('Z', '+00:00'))
+                    # Parse ISO date and strip timezone for PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility
+                    date_to = datetime.fromisoformat(filter_params['date_to'].replace('Z', '+00:00')).replace(tzinfo=None)
 
             # Get total count
             total_count = await FeedbackRepository.get_feedbacks_count(
@@ -952,7 +956,7 @@ async def chat_with_ai(
             if ds_labels:
                 task_types.append("classification")
             if ds_survival > 0:
-                task_types.append("survival_prediction")
+                task_types.append("survival")
             task_types_str = f", supported_tasks=[{', '.join(task_types)}]" if task_types else ""
 
             # Add access type marker for elevated (temporary permission) datasets

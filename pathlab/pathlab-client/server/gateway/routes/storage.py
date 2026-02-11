@@ -627,6 +627,59 @@ async def cleanup_orphaned_records(
         raise HTTPException(status_code=500, detail=f"Failed to cleanup orphaned records: {str(e)}")
 
 
+@router.post("/reset-derived-data")
+async def reset_derived_data(
+    background_tasks: BackgroundTasks,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Start a reset derived data background task.
+    This is a DESTRUCTIVE operation used for forcing a complete data reset.
+    Admin only operation.
+
+    Deletes:
+    - All coordinates, masks, features, AI results, training data, models, logs, metadata
+
+    Preserves:
+    - Original WSI files in wsi_files/
+
+    Returns the task ID immediately while processing continues in the background.
+    Progress can be monitored via SSE at /storage/tasks/stream
+    """
+    try:
+        # Generate task ID
+        task_id = f"reset_{uuid.uuid4().hex[:16]}"
+
+        # Create task record (8 directories to delete)
+        task = await StorageTaskRepository.create(
+            db,
+            task_id=task_id,
+            user_id=str(user.id),
+            task_type='reset_derived_data',
+            total_items=8,  # 8 directories to delete
+            params={}
+        )
+        await db.commit()
+
+        # Start background task
+        background_tasks.add_task(
+            _run_reset_derived_data_task,
+            task_id,
+            str(user.id)
+        )
+
+        return {
+            "task_id": task_id,
+            "message": "Reset derived data task started",
+            "total_items": 8
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to start reset derived data task: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start reset derived data task: {str(e)}")
+
+
 def _scan_directory_for_wsi(directory: str) -> list:
     """
     Scan a directory for WSI and patch files (non-recursive).
@@ -1132,7 +1185,22 @@ async def delete_unavailable_files(
                     failed_count += 1
                     continue
 
-                # Delete the WSI record (this will cascade delete related records)
+                # Delete all associated child records before deleting the WSI
+                # (PostgreSQL enforces FK constraints strictly)
+                try:
+                    await db.execute(
+                        sql_delete(TrainingTaskWSI).where(TrainingTaskWSI.wsi_id == wsi_id)
+                    )
+                    await db.execute(
+                        sql_delete(AIResult).where(AIResult.wsi_id == wsi_id)
+                    )
+                    await db.execute(
+                        sql_delete(AITask).where(AITask.wsi_id == wsi_id)
+                    )
+                except Exception as assoc_error:
+                    logger.warning(f"Failed to delete associated data for {wsi_id}: {assoc_error}")
+
+                # Delete the WSI record
                 success = await WSIRepository.delete(db, wsi_id)
                 if success:
                     await db.commit()
@@ -1192,8 +1260,7 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
             files = request_params.get('files', [])
             dataset_id = request_params.get('dataset_id')
             dataset_name = request_params.get('dataset_name')
-            # data_level in request is actually aggregation_level ('case' or 'file')
-            aggregation_level = request_params.get('data_level', 'file')
+            aggregation_level = request_params.get('aggregation_level', 'file')
             task_type = request_params.get('task_type', 'classification')
             default_label = request_params.get('default_label', 'External Import')
             default_event_time = request_params.get('default_event_time')
@@ -1392,6 +1459,56 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
             )
             await db.commit()
 
+
+async def _run_reset_derived_data_task(task_id: str, user_id: str):
+    """
+    Background task for resetting all derived data.
+    Updates progress in database as it processes directories.
+    """
+    async with async_session() as db:
+        try:
+            # Update task status to processing
+            await StorageTaskRepository.update_status(db, task_id, 'processing', progress=0)
+            await db.commit()
+
+            # Define progress callback to update database
+            def progress_callback(progress: int):
+                """Synchronous callback to update progress - will be called from sync context"""
+                # We can't use async here since it's called from sync code
+                # Instead, we'll update progress after the operation completes
+                pass
+
+            # Run the reset operation in thread pool
+            result = await asyncio.to_thread(
+                storage_manager.reset_derived_data,
+                progress_callback=None  # We'll update progress manually
+            )
+
+            # Update task with final results
+            await StorageTaskRepository.update_status(
+                db, task_id, 'completed',
+                progress=100,
+                processed_items=8,
+                success_count=len(result.get('deleted_dirs', [])),
+                failed_count=len(result.get('failed', [])),
+                results=[{
+                    "deleted_dirs": result.get('deleted_dirs', []),
+                    "failed": result.get('failed', []),
+                    "total_size": result.get('total_size', 0),
+                    "summary": result.get('summary', '')
+                }]
+            )
+            await db.commit()
+
+            logger.info(f"Reset derived data task {task_id} completed: {result.get('summary', '')}")
+
+        except Exception as e:
+            logger.error(f"Reset derived data task {task_id} failed: {e}")
+            await StorageTaskRepository.update_status(
+                db, task_id, 'failed',
+                error_message=str(e)
+            )
+            await db.commit()
 
 
 async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
@@ -1679,7 +1796,7 @@ async def start_batch_import_task(
             "files": [f.model_dump() if hasattr(f, 'model_dump') else f.dict() for f in request.files],
             "dataset_id": request.dataset_id,
             "dataset_name": request.dataset_name,
-            "data_level": request.data_level,
+            "aggregation_level": request.aggregation_level,
             "task_type": request.task_type,
             "default_label": request.default_label,
             "default_event_time": request.default_event_time,
@@ -1883,6 +2000,10 @@ async def stream_storage_tasks(user: User = Depends(get_user_from_token_param)):
 
     async def event_generator():
         """Generate SSE events with storage task updates"""
+        consecutive_errors = 0
+        last_data_hash = None
+        BASE_INTERVAL = 5  # seconds between polls (increased from 2s)
+
         try:
             while True:
                 # Use safe_session to ensure proper connection cleanup on cancel
@@ -1895,15 +2016,26 @@ async def stream_storage_tasks(user: User = Depends(get_user_from_token_param)):
 
                         result_tasks = [task.to_dict() for task in tasks]
 
-                        # Send SSE event
+                        # Change detection: only send if data changed
                         data = json.dumps({"items": result_tasks})
-                        yield f"data: {data}\n\n"
+                        import hashlib
+                        data_hash = hashlib.md5(data.encode()).hexdigest()
+                        if data_hash != last_data_hash:
+                            yield f"data: {data}\n\n"
+                            last_data_hash = data_hash
+
+                        consecutive_errors = 0  # Reset on success
                     except Exception as e:
-                        logger.error(f"Error fetching storage tasks in SSE: {e}")
+                        consecutive_errors += 1
+                        logger.error(f"Error fetching storage tasks in SSE (consecutive={consecutive_errors}): {e}")
                         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-                # Wait 2 seconds before next update
-                await asyncio.sleep(2)
+                # Exponential backoff on consecutive errors: 5s → 10s → 20s → 30s (cap)
+                if consecutive_errors > 0:
+                    backoff = min(BASE_INTERVAL * (2 ** consecutive_errors), 30)
+                    await asyncio.sleep(backoff)
+                else:
+                    await asyncio.sleep(BASE_INTERVAL)
 
         except asyncio.CancelledError:
             # Client disconnected

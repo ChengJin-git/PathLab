@@ -1706,7 +1706,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                         "pred": risk_group,
                         "probs": None,
                         "extra_metadata": {
-                            "task_type": "survival_prediction",
+                            "task_type": "survival",
                             "case_id": case_id,
                             "risk_score": float(risk_score),
                             "risk_group": risk_group,
@@ -1753,7 +1753,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     "pred": risk_group,
                     "probs": None,
                     "extra_metadata": {
-                        "task_type": "survival_prediction",
+                        "task_type": "survival",
                         "risk_score": float(risk_score),
                         "risk_group": risk_group,
                         "median_risk_score": median_risk_score,

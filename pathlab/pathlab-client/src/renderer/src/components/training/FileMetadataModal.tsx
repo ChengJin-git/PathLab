@@ -28,8 +28,8 @@ export function FileMetadataModal({
   onConfirm,
   onCancel,
 }: FileMetadataModalProps) {
-  const labelPlaceholder = taskType === 'survival_prediction' ? 'e.g., Surviving, Expired' : 'e.g., Benign, Malignant, Grade 1'
-  const labelHint = taskType === 'survival_prediction' ? 'Label (Survival Outcome)' : 'Label (Disease Classification)'
+  const labelPlaceholder = taskType === 'survival' ? 'e.g., Surviving, Expired' : 'e.g., Benign, Malignant, Grade 1'
+  const labelHint = taskType === 'survival' ? 'Label (Survival Outcome)' : 'Label (Disease Classification)'
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">

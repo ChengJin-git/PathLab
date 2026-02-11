@@ -72,10 +72,10 @@ def _get_deepzoom_generator():
     return _ADeepZoomGenerator
 
 def _load_slide(file_path: str):
-    """Load WSI file using Aslide"""
+    """Load WSI file using Aslide (delegates to shared slide_utils)"""
     try:
-        from Aslide.aslide import Slide
-        slide = Slide(str(file_path))
+        from backend.common.slide_utils import load_slide
+        slide = load_slide(file_path)
         logger.info(f"Opened WSI with Aslide: {file_path}")
         return slide
     except Exception as e:
@@ -287,8 +287,8 @@ async def get_thumbnail(
         else:
             # WSI file: use ASlide to get thumbnail
             try:
-                from Aslide.aslide import Slide
-                slide = Slide(str(file_path))
+                # Use _load_slide to ensure color correction is applied
+                slide = _load_slide(str(file_path))
 
                 # Get the thumbnail from the lowest resolution level
                 # ASlide's Slide object should have get_thumbnail or similar
@@ -526,14 +526,21 @@ async def compute_patches(
         slide = await get_slide(wsi_id, db)
 
         # Perform tissue segmentation to get contours
+        # NOTE: segment_tissue() is CPU-intensive (OpenCV operations).
+        # Run in thread pool to avoid blocking the event loop (which also serves tiles).
         logger.info(f"Segmenting tissue with params: {seg_params}, filter: {filter_params}, seg_level: {seg_level}")
         segmenter = TissueSegmenter(**seg_params, seg_level=seg_level, filter_params=filter_params)
-        tissue_contours, hole_contours = segmenter.segment_tissue(slide)
+        tissue_contours, hole_contours = await asyncio.to_thread(
+            segmenter.segment_tissue, slide
+        )
         logger.info(f"Found {len(tissue_contours)} tissue contours")
 
         # Compute coordinates with PrePATH-style tiling (patch_size auto-determined by MPP)
         # Returns (coordinates, coords_file_path) tuple
-        coordinates, coords_file = get_or_compute_coordinates(
+        # NOTE: get_or_compute_coordinates() is CPU-intensive (tiling computation).
+        # Run in thread pool to avoid blocking the event loop.
+        coordinates, coords_file = await asyncio.to_thread(
+            get_or_compute_coordinates,
             wsi_id=wsi_id,
             slide=slide,
             coords_dir=COORDS_DIR,
@@ -551,14 +558,17 @@ async def compute_patches(
         if save_mask:
             try:
                 logger.info(f"Generating tissue segmentation mask visualization")
-                mask_img = visualize_segmentation(
+                # NOTE: visualize_segmentation() is CPU-intensive (image processing).
+                # Run in thread pool to avoid blocking the event loop.
+                mask_img = await asyncio.to_thread(
+                    visualize_segmentation,
                     slide,
                     tissue_contours,
                     hole_contours,
-                    vis_level=-1,  # Auto-select ~64x downsample
-                    line_thickness=3,
-                    color=(0, 255, 0),  # Green for tissue
-                    hole_color=(255, 0, 0)  # Red for holes
+                    -1,  # vis_level: Auto-select ~64x downsample
+                    3,   # line_thickness
+                    (0, 255, 0),  # color: Green for tissue
+                    (255, 0, 0),  # hole_color: Red for holes
                 )
 
                 mask_path.parent.mkdir(parents=True, exist_ok=True)
@@ -619,7 +629,10 @@ async def get_patches(
 
         # Returns (coordinates, coords_file_path) tuple
         # Note: patch_size and stride are auto-determined by PrePATH-style tiling
-        coordinates, _coords_file = get_or_compute_coordinates(
+        # NOTE: get_or_compute_coordinates() is CPU-intensive on cache miss.
+        # Run in thread pool to avoid blocking the event loop.
+        coordinates, _coords_file = await asyncio.to_thread(
+            get_or_compute_coordinates,
             wsi_id=wsi_id,
             slide=slide,
             coords_dir=COORDS_DIR,
@@ -1095,8 +1108,7 @@ async def get_heatmap_thumbnail(
                 thumbnail.thumbnail((thumb_width, thumb_height), Image.Resampling.LANCZOS)
         else:
             # WSI file
-            from Aslide.aslide import Slide
-            aslide = Slide(str(file_path))
+            aslide = _load_slide(str(file_path))
             lowest_level = len(aslide.level_dimensions) - 1
             level_dims = aslide.level_dimensions[lowest_level]
             region = aslide.read_region((0, 0), lowest_level, level_dims)
@@ -1381,7 +1393,7 @@ async def get_available_heatmaps(
                 "aggregator": aggregator,
                 "created_at": attention_file.stat().st_mtime,
                 "attention_file": str(attention_file.name),
-                "data_level": "wsi",
+                "data_type": "wsi",
                 "attention_type": attention_type,
                 "num_attention_classes": num_attention_classes,
                 # Survival prediction fields
@@ -1415,7 +1427,7 @@ async def get_available_heatmaps(
                 "feature_extractor": feature_extractor,
                 "created_at": cam_file.stat().st_mtime,
                 "attention_file": str(cam_file.name),
-                "data_level": "patch",
+                "data_type": "patch",
                 "cam_size": result_meta.get("cam_size"),
             })
 

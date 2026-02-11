@@ -162,16 +162,6 @@ def main():
     # Main process loop just waits for signals
     print("[Main] All services started. Waiting for signal...", flush=True)
     try:
-        if debug_mode:
-             # In debug mode, file changes might trigger restarts in subprocesses if configured,
-             # but here we just wait.
-             # If you need uvicorn reload for Gateway, you might need to run it in main,
-             # but 'run_service' disables reload anyway. 
-             # For true hot-reload, the current architecture needs Gateway in main with reload=True.
-             # BUT user is having shutdown issues.
-             # Let's stick to subprocess pattern for stability first.
-             pass
-
         # Keep main process alive
         import time
         while True:

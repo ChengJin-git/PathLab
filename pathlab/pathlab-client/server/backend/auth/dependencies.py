@@ -20,6 +20,7 @@ Usage:
 """
 
 import uuid
+import logging
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Query, Header, status
@@ -27,7 +28,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from jose import jwt, JWTError
 
-from .users import current_active_user, optional_current_user, JWT_SECRET
+logger = logging.getLogger(__name__)
+
+from .users import current_active_user, JWT_SECRET
 from .models import User
 from backend.database.database import get_db
 
@@ -110,19 +113,6 @@ async def get_user_id_filter(user: User = Depends(current_active_user)) -> Optio
             ...
     """
     return None if user.is_admin() else str(user.id)
-
-
-async def get_optional_user_id(
-    user: Optional[User] = Depends(optional_current_user)
-) -> Optional[str]:
-    """
-    Get the current user's ID if logged in, otherwise None.
-
-    Use this for routes that work with or without authentication.
-    """
-    if user is None:
-        return None
-    return str(user.id)
 
 
 def check_data_ownership(resource_user_id: Optional[str], current_user: User) -> bool:
@@ -310,6 +300,21 @@ async def _get_user_from_jwt(token: str, db: AsyncSession) -> User:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User is inactive"
+            )
+
+        # Single-device login enforcement: check session_nonce
+        jwt_nonce = payload.get("sn")
+        if not jwt_nonce:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session expired. Please login again."
+            )
+        db_nonce = getattr(user, 'session_nonce', None)
+        if jwt_nonce != db_nonce:
+            logger.info(f"[Auth] Rejected stale token for user {user.id}: session nonce mismatch")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session expired. Please login again."
             )
 
         return user

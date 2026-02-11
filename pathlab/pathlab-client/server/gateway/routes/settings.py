@@ -86,10 +86,10 @@ async def get_public_settings() -> PublicSettingsResponse:
 
 @router.get("")
 async def get_global_settings(
-    user: User = Depends(current_active_user)
+    user: User = Depends(require_admin)
 ) -> GlobalSettingsResponse:
     """
-    Get global settings. Available to all authenticated users.
+    Get global settings. Admin only - contains sensitive API keys.
 
     Returns:
         Global settings including AI configuration

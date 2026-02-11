@@ -20,7 +20,7 @@ export interface WSIItem {
   gender?: string | null
   source?: string | null
   split?: string | null
-  wsi_path?: string | null
+  file_extension?: string | null  // e.g. ".svs", ".png" - for file type determination (wsi_path no longer exposed)
   file_size?: number | null
   event_time?: number | null
   event_status?: number | null

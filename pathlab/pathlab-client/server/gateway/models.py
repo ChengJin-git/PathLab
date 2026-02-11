@@ -15,12 +15,12 @@ class DatasetRenameRequest(BaseModel):
 
 class DatasetUpdateTypeRequest(BaseModel):
     """Request model for updating dataset type (classification/survival)"""
-    dataset_type: str  # "classification" or "survival"
+    task_type: str  # "classification" or "survival"
 
 
 class DatasetUpdateDataLevelRequest(BaseModel):
     """Request model for updating dataset aggregation level (case/file)"""
-    data_level: str  # "case" or "file"
+    aggregation_level: str  # "case" or "file"
 
 
 class DeletionMode(str, Enum):
@@ -49,8 +49,8 @@ class SplitConfig(BaseModel):
 class TrainingTaskRequest(BaseModel):
     """Request model for creating a training task"""
     task_name: str
-    task_type: str  # "classification" or "survival_prediction"
-    data_level: str  # "wsi" or "patch"
+    task_type: str  # "classification" or "survival"
+    data_type: str  # "wsi" or "patch"
     task_description: Optional[str] = None
     wsi_ids: List[str]
     preprocessing: Dict  # {tile_size, stride, feature_extractor, feature_batch_size, use_gpu}
@@ -64,7 +64,7 @@ class UploadByPathRequest(BaseModel):
     wsi_path: str
     dataset_id: Optional[str] = None  # Dataset UUID (existing dataset) or None for new
     dataset_name: Optional[str] = None  # Dataset display name (for creating new dataset)
-    data_level: Optional[str] = None  # Aggregation level for new dataset: "case" or "file"
+    aggregation_level: Optional[str] = None  # Aggregation level for new dataset: "case" or "file"
     label: Optional[str] = None
     case_id: Optional[str] = None
     wsi_id: Optional[str] = None
@@ -189,7 +189,7 @@ class StartBatchImportRequest(BaseModel):
     files: List[BatchRegisterFileInfo]  # List of file info objects to register
     dataset_id: Optional[str] = None  # Existing dataset UUID
     dataset_name: Optional[str] = None  # New dataset name (if creating new)
-    data_level: str = "file"  # "case" or "file" - aggregation level
+    aggregation_level: str = "file"  # "case" or "file" - aggregation level
     task_type: str = "classification"  # "classification" or "survival"
     # Classification fields
     default_label: str = "External Import"  # Default label for all files
