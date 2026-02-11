@@ -152,7 +152,7 @@ interface AnalysisResult {
 
 // Helper to check if task is survival type
 const isSurvivalTask = (modelType: string | undefined): boolean => {
-  return modelType === 'wsi_survival' || modelType === 'survival_prediction'
+  return modelType === 'wsi_survival' || modelType === 'survival_prediction' || modelType === 'survival'
 }
 
 export default function ResultsViewerPage() {
@@ -757,7 +757,7 @@ export default function ResultsViewerPage() {
                   <div className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-80 overflow-y-auto">
                     {trainedModels.map(model => {
                       const trainTask = tasks.find(t => t.task_id === model.task_id)
-                      const isSurvival = trainTask?.model_type === 'survival' || model.aggregator === 'survival'
+                      const isSurvival = isSurvivalTask(trainTask?.model_type) || model.aggregator === 'survival'
                       const metrics = model.val_metrics as Record<string, number> | undefined
                       const metricValue = isSurvival
                         ? metrics?.c_index
@@ -1680,7 +1680,7 @@ interface AnalysisDetailsProps {
 function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts, isExternal = false }: AnalysisDetailsProps) {
   // Use task_id from analysis object if available, fallback to prop
   const effectiveTaskId = analysis.task_id || taskId
-  const isSurvival = analysis.task_type === 'survival_prediction' || analysis.task_type === 'wsi_survival'
+  const isSurvival = analysis.task_type === 'survival_prediction' || analysis.task_type === 'wsi_survival' || analysis.task_type === 'survival'
   // Color scheme helpers: orange for external, indigo for internal (survival always emerald)
   const accentBg = isExternal ? 'bg-orange-600' : 'bg-indigo-600'
   const accentText = isExternal ? 'text-orange-600' : 'text-indigo-600'

@@ -3402,9 +3402,14 @@ async def get_quick_analysis(
         quick_task_data_group = task.data_group
         quick_task_type_str = quick_task_data_group.task_type if quick_task_data_group else "classification"
 
-        # Default metrics and charts
-        default_metrics = ["accuracy", "precision", "recall", "specificity", "f1", "auc"]
-        default_charts = ["roc_curve", "confusion_matrix", "loss_curve"]
+        # Default metrics and charts based on task type
+        is_survival_task = quick_task_type_str in ("survival_prediction", "wsi_survival", "survival")
+        if is_survival_task:
+            default_metrics = ["c_index", "integrated_brier_score"]
+            default_charts = ["km_curve", "loss_curve"]
+        else:
+            default_metrics = ["accuracy", "precision", "recall", "specificity", "f1", "auc"]
+            default_charts = ["roc_curve", "confusion_matrix", "loss_curve"]
 
         # Parse bootstrap_ci_metrics from query param or use legacy compute_bootstrap_ci
         ci_metrics_list = []
@@ -5009,9 +5014,16 @@ async def _run_survival_analysis(task, request, db, progress_callback=None, prog
 
     # Calculate Integrated Brier Score if requested
     if "integrated_brier_score" in request.metrics:
+        logger.info(f"IBS requested. surv_probs count: {len(surv_probs)}, bin_edges available: {bin_edges is not None}, "
+                    f"bin_edges length: {len(bin_edges) if bin_edges else 0}")
         ibs = _calculate_integrated_brier_score(times, events, surv_probs, bin_edges)
         if ibs is not None:
             metrics["integrated_brier_score"] = round(ibs, 4)
+            logger.info(f"IBS calculated successfully: {ibs:.4f}")
+        else:
+            logger.warning(f"IBS calculation returned None for task {task_id}")
+    else:
+        logger.info(f"IBS not requested. request.metrics: {request.metrics}")
 
     # Update progress - metrics calculated (use ci_start)
     if progress_callback:
@@ -5178,12 +5190,12 @@ def _generate_km_analysis(times, events, risks, output_path, include_ci: bool = 
         fig, ax = plt.subplots(figsize=(12, 8))
 
         # Low risk group (green)
-        ax.step(t_low, s_low, where="post", color='#10b981', lw=3, label='Low Risk (Risk < Median)')
+        ax.step(t_low, s_low, where="post", color='#10b981', lw=3, label='Low Risk Group')
         if include_ci:
             ax.fill_between(t_low, conf_low[0], conf_low[1], alpha=0.25, step="post", color='#10b981')
 
         # High risk group (red)
-        ax.step(t_high, s_high, where="post", color='#ef4444', lw=3, label='High Risk (Risk >= Median)')
+        ax.step(t_high, s_high, where="post", color='#ef4444', lw=3, label='High Risk Group')
         if include_ci:
             ax.fill_between(t_high, conf_high[0], conf_high[1], alpha=0.25, step="post", color='#ef4444')
 
@@ -5242,6 +5254,10 @@ def _calculate_integrated_brier_score(times, events, surv_probs_list, bin_edges)
     """
     try:
         import numpy as np
+        # Compatibility shim: scikit-survival >= 0.23 uses np.trapezoid (NumPy >= 2.0)
+        # but older NumPy versions only have np.trapz
+        if not hasattr(np, 'trapezoid'):
+            np.trapezoid = np.trapz
         from sksurv.metrics import integrated_brier_score
 
         if not surv_probs_list or len(surv_probs_list) == 0:
@@ -5280,14 +5296,13 @@ def _calculate_integrated_brier_score(times, events, surv_probs_list, bin_edges)
             logger.warning("Not enough valid time points for IBS calculation")
             return None
 
-        # Filter surv_probs to match valid eval_times
+        # Filter surv_probs to match valid eval_times using the same mask
         # surv_probs_arr[i][j] = S(t_j | x_i) for sample i at time bin j
-        surv_probs_filtered = surv_probs_arr[:, :len(eval_times)]
+        # Must use valid_mask (not positional slicing) to keep alignment with eval_times
+        surv_probs_filtered = surv_probs_arr[:, valid_mask]
 
-        # Ensure we have the right number of columns
-        if surv_probs_filtered.shape[1] != len(eval_times):
-            logger.warning(f"Survival probs shape mismatch: {surv_probs_filtered.shape[1]} vs {len(eval_times)}")
-            return None
+        logger.info(f"IBS calculation: {len(eval_times)} valid time points out of {len(bin_edges)-1} bins, "
+                    f"surv_probs shape: {surv_probs_filtered.shape}, eval_times range: [{eval_times[0]:.2f}, {eval_times[-1]:.2f}]")
 
         # Calculate IBS using scikit-survival
         # integrated_brier_score expects:
@@ -6025,7 +6040,7 @@ async def run_analysis_pipeline(
             }
 
             match task_type_str:
-                case "wsi_survival" | "survival_prediction":
+                case "wsi_survival" | "survival_prediction" | "survival":
                     result = await _run_survival_analysis(
                         task, request, db, progress_callback=update_progress, progress_config=progress_config
                     )
