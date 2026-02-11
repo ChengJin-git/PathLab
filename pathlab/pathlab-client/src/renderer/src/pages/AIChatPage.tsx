@@ -268,6 +268,20 @@ function removeCancelTaskNowBlock(content: string): string {
   return content.replace(/\[CANCEL_TASK_NOW\][\s\S]*?\[\/CANCEL_TASK_NOW\]/g, '').trim()
 }
 
+/**
+ * Check if an assistant message contains only internal-use blocks (no user-facing content).
+ * Such messages should not be rendered as visible bubbles.
+ * This handles the case where AI responds with only [VOICE_CONTROL], [SUBMIT_TASK], or [CANCEL_TASK_NOW].
+ */
+function isInternalOnlyMessage(content: string): boolean {
+  if (!content) return false // empty content shows "Thinking..." indicator
+  let stripped = content
+  stripped = removeVoiceControlBlock(stripped)
+  stripped = removeSubmitTaskBlock(stripped)
+  stripped = removeCancelTaskNowBlock(stripped)
+  return stripped.trim() === ''
+}
+
 
 // Assistant message component with special markup parsing
 // Defined outside of AIChatPage to prevent re-creation on every render
@@ -2404,7 +2418,12 @@ export default function AIChatPage() {
                   }
                 }
               }
-              return messages.map((message, index) => (
+              return messages.map((message, index) => {
+              // Skip rendering assistant messages that contain only internal blocks (e.g., VOICE_CONTROL only)
+              if (message.role === 'assistant' && isInternalOnlyMessage(message.content)) {
+                return null
+              }
+              return (
               <div
                 key={message.id}
                 className={`flex gap-4 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'} items-start`}
@@ -2581,7 +2600,8 @@ export default function AIChatPage() {
                   )}
                 </div>
               </div>
-            ))
+              )
+              })
             })()}
 
             {/* Live Input Preview Bubble - shows text input or voice transcript in real-time */}
