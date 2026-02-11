@@ -62,8 +62,8 @@ interface ValidationProgress {
 interface TrainingTask {
   task_id: string
   name: string
-  model_type: string
-  data_level: string  // "wsi" or "patch"
+  task_type: string
+  data_type: string  // "wsi" or "patch"
   aggregation_level: string  // "file" or "case"
   status: string
   created_at: string | null
@@ -123,7 +123,7 @@ interface BootstrapCIResult {
 interface AnalysisSummary {
   analysis_id: string
   task_id: string
-  task_type?: string  // 'classification' or 'survival_prediction'
+  task_type?: string  // 'classification' or 'survival'
   timestamp: string
   description: string | null
   num_samples: number
@@ -152,7 +152,7 @@ interface AnalysisResult {
 
 // Helper to check if task is survival type
 const isSurvivalTask = (modelType: string | undefined): boolean => {
-  return modelType === 'wsi_survival' || modelType === 'survival_prediction' || modelType === 'survival'
+  return modelType === 'wsi_survival' || modelType === 'survival'
 }
 
 export default function ResultsViewerPage() {
@@ -243,7 +243,7 @@ export default function ResultsViewerPage() {
   useEffect(() => {
     const task = tasks.find(t => t.task_id === selectedTaskId)
     if (task) {
-      if (isSurvivalTask(task.model_type)) {
+      if (isSurvivalTask(task.task_type)) {
         setSelectedMetrics(['c_index', 'integrated_brier_score'])
         setSelectedCharts(['km_curve', 'loss_curve'])
       } else {
@@ -757,7 +757,7 @@ export default function ResultsViewerPage() {
                   <div className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-80 overflow-y-auto">
                     {trainedModels.map(model => {
                       const trainTask = tasks.find(t => t.task_id === model.task_id)
-                      const isSurvival = isSurvivalTask(trainTask?.model_type) || model.aggregator === 'survival'
+                      const isSurvival = isSurvivalTask(trainTask?.task_type) || model.aggregator === 'survival'
                       const metrics = model.val_metrics as Record<string, number> | undefined
                       const metricValue = isSurvival
                         ? metrics?.c_index
@@ -832,11 +832,11 @@ export default function ResultsViewerPage() {
                     {/* Filter datasets by: 1. Same data_type 2. Matching task type 3. Class count match (classification) 4. No WSI overlap */}
                     {validationDatasets.filter(ds => {
                       // Must match data_type (WSI <-> WSI, Patch <-> Patch)
-                      const modelDataType = modelTask.data_level || 'wsi'
+                      const modelDataType = modelTask.data_type || 'wsi'
                       if (ds.data_type !== modelDataType) return false
                       // Must match task type (Classification <-> Classification, Survival <-> Survival)
-                      const modelIsSurvival = isSurvivalTask(modelTask.model_type)
-                      const datasetIsSurvival = ds.task_type === 'survival' || ds.task_type === 'survival_prediction'
+                      const modelIsSurvival = isSurvivalTask(modelTask.task_type)
+                      const datasetIsSurvival = ds.task_type === 'survival'
                       if (modelIsSurvival !== datasetIsSurvival) return false
                       // For classification: must match class count (not class names)
                       if (!modelIsSurvival) {
@@ -865,10 +865,10 @@ export default function ResultsViewerPage() {
                       </button>
                     ))}
                     {validationDatasets.filter(ds => {
-                      const modelDataType = modelTask.data_level || 'wsi'
+                      const modelDataType = modelTask.data_type || 'wsi'
                       if (ds.data_type !== modelDataType) return false
-                      const modelIsSurvival = isSurvivalTask(modelTask.model_type)
-                      const datasetIsSurvival = ds.task_type === 'survival' || ds.task_type === 'survival_prediction'
+                      const modelIsSurvival = isSurvivalTask(modelTask.task_type)
+                      const datasetIsSurvival = ds.task_type === 'survival'
                       if (modelIsSurvival !== datasetIsSurvival) return false
                       if (!modelIsSurvival) {
                         const modelClassCount = selectedModel.classes?.length || 0
@@ -881,7 +881,7 @@ export default function ResultsViewerPage() {
                       <div className="px-4 py-8 text-center text-gray-500">
                         <p className="font-medium">No compatible datasets</p>
                         <p className="text-xs mt-1">
-                          Looking for: {modelTask.data_level?.toUpperCase() || 'WSI'} level, {isSurvivalTask(modelTask.model_type) ? 'Survival' : 'Classification'} type, matching class count, no WSI overlap
+                          Looking for: {modelTask.data_type?.toUpperCase() || 'WSI'} level, {isSurvivalTask(modelTask.task_type) ? 'Survival' : 'Classification'} type, matching class count, no WSI overlap
                         </p>
                       </div>
                     )}
@@ -995,12 +995,12 @@ export default function ResultsViewerPage() {
                       <Card className="p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-4">
                           Metrics
-                          {modelTask && isSurvivalTask(modelTask.model_type) && (
+                          {modelTask && isSurvivalTask(modelTask.task_type) && (
                             <span className="ml-2 text-xs font-normal text-emerald-600"></span>
                           )}
                         </h3>
                         <div className="space-y-3">
-                          {(isSurvivalTask(modelTask?.model_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
+                          {(isSurvivalTask(modelTask?.task_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
                             <div key={metric.id} className="flex items-start gap-3 group">
                               <input
                                 type="checkbox"
@@ -1055,12 +1055,12 @@ export default function ResultsViewerPage() {
                       <Card className="p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-4">
                           Charts
-                          {modelTask && isSurvivalTask(modelTask.model_type) && (
+                          {modelTask && isSurvivalTask(modelTask.task_type) && (
                             <span className="ml-2 text-xs font-normal text-emerald-600"></span>
                           )}
                         </h3>
                         <div className="space-y-3">
-                          {(isSurvivalTask(modelTask?.model_type) ? EXTERNAL_VALIDATION_SURVIVAL_CHARTS : EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS).map(chart => (
+                          {(isSurvivalTask(modelTask?.task_type) ? EXTERNAL_VALIDATION_SURVIVAL_CHARTS : EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS).map(chart => (
                             <label key={chart.id} className="flex items-start gap-3 cursor-pointer group">
                               <input
                                 type="checkbox"
@@ -1238,7 +1238,7 @@ export default function ResultsViewerPage() {
                     {selectedTask && (
                       <div className="flex items-center gap-2 flex-wrap">
                         <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-[10px] uppercase tracking-wider font-bold px-2">
-                          {selectedTask.model_type}
+                          {selectedTask.task_type}
                         </Badge>
                         {selectedTask.feature_extractor && (
                           <Badge variant="secondary" className="bg-purple-50 text-purple-700 hover:bg-purple-100 text-[10px] uppercase tracking-wider font-bold px-2">
@@ -1294,7 +1294,7 @@ export default function ResultsViewerPage() {
                                       ? 'bg-white/20 text-white'
                                       : 'bg-indigo-50 text-indigo-700'
                                   }`}>
-                                    {task.model_type}
+                                    {task.task_type}
                                   </span>
                                   {task.feature_extractor && (
                                     <span className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full transition-colors duration-200 ${
@@ -1352,12 +1352,12 @@ export default function ResultsViewerPage() {
             <Card className="p-4 sm:p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">
                 Metrics
-                {selectedTask && isSurvivalTask(selectedTask.model_type) && (
+                {selectedTask && isSurvivalTask(selectedTask.task_type) && (
                   <span className="ml-2 text-xs font-normal text-emerald-600"></span>
                 )}
               </h3>
               <div className="space-y-3">
-                {(isSurvivalTask(selectedTask?.model_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
+                {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
                   <div key={metric.id} className="flex items-start gap-3 group">
                     <input
                       type="checkbox"
@@ -1414,7 +1414,7 @@ export default function ResultsViewerPage() {
                 Charts
               </h3>
               <div className="space-y-3">
-                {(isSurvivalTask(selectedTask?.model_type) ? SURVIVAL_CHARTS : CLASSIFICATION_CHARTS).map(chart => (
+                {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_CHARTS : CLASSIFICATION_CHARTS).map(chart => (
                   <label key={chart.id} className="flex items-start gap-3 cursor-pointer group">
                     <input
                       type="checkbox"
@@ -1680,7 +1680,7 @@ interface AnalysisDetailsProps {
 function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts, isExternal = false }: AnalysisDetailsProps) {
   // Use task_id from analysis object if available, fallback to prop
   const effectiveTaskId = analysis.task_id || taskId
-  const isSurvival = analysis.task_type === 'survival_prediction' || analysis.task_type === 'wsi_survival' || analysis.task_type === 'survival'
+  const isSurvival = analysis.task_type === 'wsi_survival' || analysis.task_type === 'survival'
   // Color scheme helpers: orange for external, indigo for internal (survival always emerald)
   const accentBg = isExternal ? 'bg-orange-600' : 'bg-indigo-600'
   const accentText = isExternal ? 'text-orange-600' : 'text-indigo-600'

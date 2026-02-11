@@ -133,9 +133,9 @@ export function TaskSetupStep({
                   subtitle="Categorical labels"
                 />
                 <RadioOption
-                  selected={taskType === 'survival_prediction'}
+                  selected={taskType === 'survival'}
                   disabled={dataLevel === 'patch'}
-                  onClick={() => setTaskType('survival_prediction')}
+                  onClick={() => setTaskType('survival')}
                   title={dataLevel === 'patch' ? 'Segmentation' : 'Survival Prediction'}
                   subtitle={dataLevel === 'patch' ? 'Coming soon' : 'Time-to-event outcomes'}
                 />

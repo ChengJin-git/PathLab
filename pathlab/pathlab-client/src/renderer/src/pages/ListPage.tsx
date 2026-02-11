@@ -89,7 +89,7 @@ export default function ListPage() {
   // Case grouping - tracks which case_ids are expanded
   const [expandedCases, setExpandedCases] = useState<Set<string>>(new Set())
 
-  // Edit dataset - stores dataset_id for the dataset being edited (rename + type + data_level change)
+  // Edit dataset - stores dataset_id for the dataset being edited (rename + type + aggregation_level change)
   const [editingDatasetId, setEditingDatasetId] = useState<string | null>(null)
   const [editingDatasetName, setEditingDatasetName] = useState('')
   const [editingDatasetType, setEditingDatasetType] = useState<'classification' | 'survival'>('classification')
@@ -124,7 +124,7 @@ export default function ListPage() {
       const dataset = datasets.find(d => d.dataset_id === initialDatasetId)
       if (dataset) {
         setSelectedDatasetName(dataset.dataset_name)
-        setSelectedDatasetType(dataset.dataset_type)
+        setSelectedDatasetType(dataset.task_type)
       }
     }
   }, [datasets, initialDatasetId, selectedDatasetName])
@@ -200,7 +200,7 @@ export default function ListPage() {
   const handleDatasetClick = (dataset: DatasetSummary) => {
     setSelectedDatasetId(dataset.dataset_id)
     setSelectedDatasetName(dataset.dataset_name)
-    setSelectedDatasetType(dataset.dataset_type)
+    setSelectedDatasetType(dataset.task_type)
     setCurrentPage(1)
     setSearchQuery('')
     setDebouncedSearch('')
@@ -549,9 +549,9 @@ export default function ListPage() {
     if (!dataset.dataset_id) return
     setEditingDatasetId(dataset.dataset_id)
     setEditingDatasetName(dataset.dataset_name)
-    setEditingDatasetType(dataset.dataset_type)
-    setEditingDatasetOriginalType(dataset.dataset_type)
-    const dataLevel = dataset.data_level || 'file'
+    setEditingDatasetType(dataset.task_type)
+    setEditingDatasetOriginalType(dataset.task_type)
+    const dataLevel = dataset.aggregation_level || 'file'
     setEditingDatasetDataLevel(dataLevel)
     setEditingDatasetOriginalDataLevel(dataLevel)
   }
@@ -973,19 +973,19 @@ export default function ListPage() {
                         </p>
                         <div className="w-1 h-1 rounded-full bg-slate-300" />
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
-                          dataset.dataset_type === 'survival'
+                          dataset.task_type === 'survival'
                             ? 'bg-amber-50 text-amber-700 border border-amber-100/50'
                             : 'bg-indigo-50 text-indigo-700 border border-indigo-100/50'
                         }`}>
-                          {dataset.dataset_type === 'survival' ? 'Survival' : 'Classification'}
+                          {dataset.task_type === 'survival' ? 'Survival' : 'Classification'}
                         </span>
                         {itemType === 'slides' && (
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
-                            dataset.data_level === 'case'
+                            dataset.aggregation_level === 'case'
                               ? 'bg-purple-50 text-purple-700 border border-purple-100/50'
                               : 'bg-orange-50 text-orange-700 border border-orange-100/50'
                           }`}>
-                            {dataset.data_level === 'case' ? (
+                            {dataset.aggregation_level === 'case' ? (
                               <><Users className="w-3 h-3" />Case-Level</>
                             ) : (
                               <><FileImage className="w-3 h-3" />File-Level</>

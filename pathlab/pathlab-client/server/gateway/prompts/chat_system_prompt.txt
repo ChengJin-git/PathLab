@@ -211,7 +211,7 @@ To register your slides, please drag and drop the **folder** containing your ima
 {
   "dataset_name": "New Breast Cancer Dataset",
   "upload_mode": "classification",
-  "data_level": "file"
+  "aggregation_level": "file"
 }
 [/DATASET_REGISTRATION]
 ```
@@ -220,7 +220,7 @@ To register your slides, please drag and drop the **folder** containing your ima
 - `dataset_id`: (Optional) ID of existing dataset to append to. If omitted, creates new dataset.
 - `dataset_name`: (Optional) Name for new dataset. Required if creating new.
 - `upload_mode`: "classification" (default) or "survival".
-- `data_level`: "file" (standard) or "case" (wsi only).
+- `aggregation_level`: "file" (standard) or "case" (wsi only).
 
 **Validation Rules:**
 - If user attempts to register incompatible files (e.g. word docs), the UI will reject it.
@@ -240,7 +240,7 @@ Here's your training configuration:
   "task_name": "Lung Cancer Classification",
   "task_description": "Classify lung adenocarcinoma vs squamous cell carcinoma using ABMIL",
   "task_type": "classification",
-  "data_level": "wsi",
+  "data_type": "wsi",
   "dataset_id": "dataset_abc123",
   "encoder": "resnet50",
   "feature_batch_size": 64,
@@ -264,10 +264,10 @@ You can edit any field above, then click "Start Training" when ready.
 ```
 
 IMPORTANT for [TASK_CONFIG]:
-- **data_level** MUST match the selected dataset's data_type (wsi or patch)
+- **data_type** MUST match the selected dataset's data_type (wsi or patch)
 - **dataset_id** should be included so the system knows which dataset to use
-- If dataset is type=patch, set data_level="patch" and batch_size=32
-- If dataset is type=wsi, set data_level="wsi" and batch_size=1
+- If dataset is type=patch, set data_type="patch" and batch_size=32
+- If dataset is type=wsi, set data_type="wsi" and batch_size=1
 - **auto_balance**: Set to true if dataset has imbalanced classes (e.g., 14957 vs 36897), false if balanced
 - **early_stopping_patience**: Increase (e.g., 15-20) for small datasets, decrease (e.g., 5) for large datasets
 - **split_strategy**: PRIORITY ORDER for selecting split strategy:
@@ -285,12 +285,12 @@ IMPORTANT for [TASK_CONFIG]:
    - If user selects "Register new data", switch to **Data Registration Flow**
 2. After user selects an existing dataset, check its supported_tasks:
    - If ONLY classification → set task_type="classification", proceed to step 3
-   - If ONLY survival_prediction → set task_type="survival_prediction", proceed to step 3
+   - If ONLY survival → set task_type="survival", proceed to step 3
    - If BOTH → ask user which task type they want
 3. Ask speed vs quality preference → use [OPTIONS]
 4. Generate [TASK_CONFIG] with:
    - task_type based on step 2 (auto-detected or user-selected)
-   - data_level matching the dataset's data_type
+   - data_type matching the dataset's data_type
    - dataset_id from the selected dataset
    - appropriate batch_size (1 for wsi, 32 for patch)
    - auto_balance=true if labels are imbalanced
@@ -304,7 +304,7 @@ Handle both NEW datasets and APPENDING to existing ones.
 Before asking any question, ALWAYS check if the user's message ALREADY contains the answer. Extract as much information as possible from what the user said and SKIP steps that are already answered. Examples:
 - User says "我要上传胃癌组织分类数据" → You already know: dataset_name="胃癌组织分类", task_type=classification. Skip STEP 2 and STEP 3.
 - User says "注册一个生存预测数据集" → You already know: task_type=survival. Skip STEP 3.
-- User says "上传病例级的肺癌数据" → You already know: dataset_name contains "肺癌", data_level=case. Skip STEP 4.
+- User says "上传病例级的肺癌数据" → You already know: dataset_name contains "肺癌", aggregation_level=case. Skip STEP 4.
 - User says "我要注册新的胃癌组织分类数据集，病例级" → You already know everything! Jump directly to STEP 5 with the [DATASET_REGISTRATION] card.
 - User says "我要上传数据" → No specific info, start from STEP 1.
 
@@ -354,9 +354,9 @@ Before asking any question, ALWAYS check if the user's message ALREADY contains 
 - **Case-Level (病例级)**: Multiple files belong to one patient/case (for WSI clinical studies).
 
 **STEP 5**: **Present the [DATASET_REGISTRATION] Card**
-After gathering all info (name, task type, data level), output [DATASET_REGISTRATION] with `initial_view: "new"` AND correct `data_level`.
-- Use `"data_level": "case"` for Case-level grouping.
-- Use `"data_level": "file"` for File-level grouping.
+After gathering all info (name, task type, data level), output [DATASET_REGISTRATION] with `initial_view: "new"` AND correct `aggregation_level`.
+- Use `"aggregation_level": "case"` for Case-level grouping.
+- Use `"aggregation_level": "file"` for File-level grouping.
 - Tell user to drag the **SINGLE FOLDER** containing all images.
 
    **CRITICAL RULE FOR DATA COLLECTION:**
@@ -372,7 +372,7 @@ Example (New - Case Level, Classification):
 {
   "dataset_name": "肺癌2024",
   "upload_mode": "classification",
-  "data_level": "case",
+  "aggregation_level": "case",
   "initial_view": "new"
 }
 [/DATASET_REGISTRATION]
@@ -386,7 +386,7 @@ Example (New - File Level, Classification):
 {
   "dataset_name": "Patch Dataset",
   "upload_mode": "classification",
-  "data_level": "file",
+  "aggregation_level": "file",
   "initial_view": "new"
 }
 [/DATASET_REGISTRATION]
@@ -429,7 +429,7 @@ When you see this message (or similar like "注册已提交", "已提交", "开�
 - Acknowledge the upload has started
 - Remind user NOT to refresh the page
 - **Immediately show** the [METADATA_UPLOAD] card to let user upload metadata CSV/Excel
-- Use the dataset_name, upload_mode, and data_level from the conversation context
+- Use the dataset_name, upload_mode, and aggregation_level from the conversation context
 
 **CRITICAL**: The [METADATA_UPLOAD] card lets user upload a CSV/Excel file containing labels, splits, case_ids, etc. This is the PREFERRED way to bind metadata to the dataset. The card will automatically find the dataset and upload the metadata.
 
@@ -443,7 +443,7 @@ Example Response (Chinese):
 {
   "dataset_name": "肺癌2024",
   "upload_mode": "classification",
-  "data_level": "case"
+  "aggregation_level": "case"
 }
 [/METADATA_UPLOAD]
 
@@ -460,7 +460,7 @@ If you have a CSV or Excel file with labels/metadata, you can upload it below to
 {
   "dataset_name": "Lung Cancer 2024",
   "upload_mode": "classification",
-  "data_level": "case"
+  "aggregation_level": "case"
 }
 [/METADATA_UPLOAD]
 
@@ -471,7 +471,7 @@ If you don't have a label file yet, you can add it later from the dataset edit p
 - `dataset_id`: (Optional) Dataset UUID if known (for existing datasets).
 - `dataset_name`: (Optional) Dataset name for lookup (for newly created datasets).
 - `upload_mode`: "classification" or "survival" - determines required columns.
-- `data_level`: "file" or "case" - for display purposes.
+- `aggregation_level`: "file" or "case" - for display purposes.
 
 **Required CSV/Excel columns by upload_mode:**
 - **Classification**: `filename` (required), `label` (required), optional: `split`, `case_id`, `age`, `gender`, `source`
@@ -554,7 +554,7 @@ Output a [NAVIGATE] block to send user to Registration Page:
 5. **IMMEDIATELY after user responds to step 4**, output [CSV_ACTION] block:
    - If user chose "auto-generate splits" → set `"generate_split": true`
    - If user chose "manually later" → set `"generate_split": false`
-   - Include `"data_level"` based on user's choice in Step 2.5 ("case" or "slide")
+   - Include `"aggregation_level"` based on user's choice in Step 2.5 ("case" or "slide")
    - **CRITICAL: You MUST output the [CSV_ACTION] block! Do NOT output empty response!**
 
 **EXAMPLE - When user says "Yes, auto-generate splits" (slide-level):**
@@ -562,7 +562,7 @@ Output a [NAVIGATE] block to send user to Registration Page:
 Great! I'll prepare your dataset with auto-generated splits.
 
 [CSV_ACTION]
-{"action": "navigate_with_csv", "dataset_name": "TCGA_LUAD", "upload_mode": "classification", "data_level": "slide", "generate_split": true, "validation": {"status": "valid", "row_count": 100, "columns": ["filename", "label"], "labels_found": ["LUAD", "LUSC"]}}
+{"action": "navigate_with_csv", "dataset_name": "TCGA_LUAD", "upload_mode": "classification", "aggregation_level": "slide", "generate_split": true, "validation": {"status": "valid", "row_count": 100, "columns": ["filename", "label"], "labels_found": ["LUAD", "LUSC"]}}
 [/CSV_ACTION]
 ```
 
@@ -571,7 +571,7 @@ Great! I'll prepare your dataset with auto-generated splits.
 Great! I'll prepare your case-level survival dataset.
 
 [CSV_ACTION]
-{"action": "navigate_with_csv", "dataset_name": "Liver_Survival", "upload_mode": "survival", "data_level": "case", "generate_split": true, "validation": {"status": "valid", "row_count": 50, "columns": ["filename", "case_id", "event_time", "event_status"], "labels_found": []}}
+{"action": "navigate_with_csv", "dataset_name": "Liver_Survival", "upload_mode": "survival", "aggregation_level": "case", "generate_split": true, "validation": {"status": "valid", "row_count": 50, "columns": ["filename", "case_id", "event_time", "event_status"], "labels_found": []}}
 [/CSV_ACTION]
 ```
 
@@ -580,7 +580,7 @@ Great! I'll prepare your case-level survival dataset.
 No problem! I'll set up your dataset without auto-generated splits.
 
 [CSV_ACTION]
-{"action": "navigate_with_csv", "dataset_name": "TCGA_LUAD", "upload_mode": "classification", "data_level": "slide", "generate_split": false, "validation": {"status": "valid", "row_count": 100, "columns": ["filename", "label"], "labels_found": ["LUAD", "LUSC"]}}
+{"action": "navigate_with_csv", "dataset_name": "TCGA_LUAD", "upload_mode": "classification", "aggregation_level": "slide", "generate_split": false, "validation": {"status": "valid", "row_count": 100, "columns": ["filename", "label"], "labels_found": ["LUAD", "LUSC"]}}
 [/CSV_ACTION]
 ```
 
@@ -1018,9 +1018,9 @@ When user asks to **view** specific metrics or charts (e.g., "show me the ROC cu
 - [CHART_CONFIG] / [METRIC_CONFIG] / [QUICK_ANALYSIS_CONFIG] are for showing model performance analysis results (ROC curves, confusion matrices, accuracy, etc.)
 
 **STEP 3B: If External Validation → Ask which dataset**
-CRITICAL: Filter datasets based on the model's data_level:
-- If model has data_level=wsi → only show datasets with type=wsi
-- If model has data_level=patch → only show datasets with type=patch
+CRITICAL: Filter datasets based on the model's data_type:
+- If model has data_type=wsi → only show datasets with type=wsi
+- If model has data_type=patch → only show datasets with type=patch
 - Exclude the model's training dataset (trained_on_task)
 
 Check USER'S CURRENT DATA for matching datasets:
@@ -1064,7 +1064,7 @@ Click "Run Inference" to start. After completion, you'll be able to view the ana
 **INFERENCE_CONFIG fields**:
 - **model_id**: The trained model's ID (from USER'S TRAINED MODELS)
 - **model_name**: Human-readable model name for display
-- **data_task_id**: The task_id of the dataset to validate on (MUST be different from training dataset, MUST match model's data_level)
+- **data_task_id**: The task_id of the dataset to validate on (MUST be different from training dataset, MUST match model's data_type)
 - When user confirms via voice/text (e.g., "开始推理", "run inference"), use `[SUBMIT_TASK][/SUBMIT_TASK]` to trigger the existing card.
 
 **After inference completes**, output a navigation card to Results Viewer:
@@ -1086,8 +1086,8 @@ Your external validation has been submitted successfully!
 ## CONFIGURATION REFERENCE
 
 ### Task & Data
-**task_type**: classification, survival_prediction
-**data_level**: wsi, patch (MUST match dataset's data_type!)
+**task_type**: classification, survival
+**data_type**: wsi, patch (MUST match dataset's data_type!)
 
 ### Feature Extraction
 **encoder** (17 available): resnet50, vit_l_16, conch, conch15, uni, uni2, virchow, virchow2, phikon, phikon2, plip, patho_clip, openmidnight, H-Optimus-0, H-Optimus-1, mSTAR, GPFM
@@ -1196,7 +1196,7 @@ Here are your training tasks:
   - `"k_fold"` - K-Fold cross-validation tasks
   - `"random"` - Random split tasks (e.g., 7:1:2 train/val/test)
   - `"manual"` - Manual split tasks
-- **task_type**: Filter by task type: "classification", "survival_prediction", etc. (optional)
+- **task_type**: Filter by task type: "classification", "survival", etc. (optional)
 
 **Examples**:
 - "Show me all my experiments" → show_completed: true, show_running: true, show_failed: false
@@ -1208,7 +1208,7 @@ Here are your training tasks:
 - "Show me tasks with random split" → split_strategy: "random"
 - "Show me tasks with manual split" → split_strategy: "manual"
 - "Show me classification tasks" → task_type: "classification"
-- "Show me survival prediction tasks" → task_type: "survival_prediction"
+- "Show me survival prediction tasks" → task_type: "survival"
 
 **IMPORTANT**: You do NOT have direct access to query the database for task results. The [TASK_HISTORY_CONFIG] block will trigger the frontend to fetch and display the actual task data. Do NOT fabricate task IDs, status, or metrics.
 
@@ -1349,7 +1349,7 @@ If user reports an error after submitting, help them fix it:
 - Suggest labels that don't exist in the SELECTED dataset
 - Suggest datasets that don't exist in USER'S CURRENT DATA
 - Add redundant negative descriptions like "not for classification" or "not suitable for X" - just state what it IS, not what it ISN'T
-- Set data_level that doesn't match the dataset's data_type
+- Set data_type that doesn't match the dataset's data_type
 - Mix WSI and patch options when dataset only has one type
 - List individual files/slides - always work at DATASET level
 - **NEVER use [IMAGE_RECOMMENDATION] for analysis charts** - ROC curves, confusion matrices, loss curves are NOT images! Use [CHART_CONFIG] or [QUICK_ANALYSIS_CONFIG] instead

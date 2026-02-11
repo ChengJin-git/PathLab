@@ -115,7 +115,7 @@ export function WSIDataTable({
                   <>
                     <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Slide ID</th>
                     <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Type</th>
-                    {taskType === 'survival_prediction' ? (
+                    {taskType === 'survival' ? (
                       <>
                         <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Time (M)</th>
                         <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Status</th>
@@ -410,7 +410,7 @@ function SlideRow({
           </span>
         )}
       </td>
-      {taskType === 'survival_prediction' ? (
+      {taskType === 'survival' ? (
         <>
           <td className={`px-3 sm:px-6 py-${nested ? '3' : '4'} sm:py-${nested ? '4' : '5'}`}>
             {item.event_time != null ? (
@@ -647,7 +647,7 @@ function CaseRow({
 
 /** Case label cell */
 function CaseLabelCell({ slides, taskType }: { slides: WSIItem[]; taskType: TaskType }) {
-  if (taskType === 'survival_prediction') {
+  if (taskType === 'survival') {
     const events = slides.filter((s) => s.event_status === 1).length
     const censored = slides.filter((s) => s.event_status === 0).length
 

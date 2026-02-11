@@ -1216,8 +1216,8 @@ class WSIRepository:
                 "user_id": row.dataset_user_id,  # Dataset owner
                 "group_id": row.group_id,
                 "data_type": row.data_type,  # wsi or patch (for frontend display)
-                "data_level": row.aggregation_level,  # file or case (frontend expects data_level)
-                "dataset_type": row.task_type or "classification",  # classification, survival (frontend expects dataset_type)
+                "aggregation_level": row.aggregation_level,  # file or case
+                "task_type": row.task_type or "classification",  # classification, survival
                 "file_count": row.file_count,
                 "total_size": row.total_size or 0,
                 "has_predefined_splits": has_predefined_splits,
@@ -2497,8 +2497,8 @@ class TrainingTaskRepository:
                     f"Found {len(classes)} class(es): {classes}. "
                     f"Please assign different labels to your slides."
                 )
-        elif task_type == "survival_prediction":
-            # Survival prediction tasks require both event (status=1) and censored (status=0) samples
+        elif task_type == "survival":
+            # Survival tasks require both event (status=1) and censored (status=0) samples
             event_statuses = set(wsi.event_status for wsi in wsis if wsi.event_status is not None and wsi.event_time is not None)
             if len(event_statuses) < 2:
                 event_count = sum(1 for wsi in wsis if wsi.event_status == 1 and wsi.event_time is not None)

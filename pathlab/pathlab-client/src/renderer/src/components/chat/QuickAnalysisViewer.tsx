@@ -55,7 +55,9 @@ const METRIC_ICONS: Record<string, React.ReactNode> = {
   precision: <Percent className="w-4 h-4" />,
   recall: <Percent className="w-4 h-4" />,
   sensitivity: <Percent className="w-4 h-4" />,
-  specificity: <Percent className="w-4 h-4" />
+  specificity: <Percent className="w-4 h-4" />,
+  c_index: <TrendingUp className="w-4 h-4" />,
+  integrated_brier_score: <BarChart3 className="w-4 h-4" />
 }
 
 /** Parse [QUICK_ANALYSIS_CONFIG] block from message */

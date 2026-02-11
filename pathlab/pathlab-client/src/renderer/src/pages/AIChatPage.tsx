@@ -889,7 +889,9 @@ export default function AIChatPage() {
   const handleLoadConversation = async (conversationId: string) => {
     try {
       const conv = await getConversation(conversationId)
-      const loadedMessages: Message[] = conv.messages.map(msg => ({
+      // Sort messages by id to ensure chronological order (defense-in-depth)
+      const sortedApiMessages = [...conv.messages].sort((a, b) => a.id - b.id)
+      const loadedMessages: Message[] = sortedApiMessages.map(msg => ({
         id: String(msg.id),
         role: msg.role as 'user' | 'assistant',
         content: msg.content,

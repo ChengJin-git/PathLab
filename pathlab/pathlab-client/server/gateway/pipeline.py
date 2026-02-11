@@ -71,12 +71,12 @@ class ScopedLogger:
 
 async def run_training_pipeline(
     task_id: str,
-    data_level: str,
+    data_type: str,
     wsi_ids: List[str],
     preprocessing_config: Dict,
     model_config: Dict,
     huggingface_token: str = None,
-    training_task_type: str = "classification",  # "classification" or "survival_prediction"
+    training_task_type: str = "classification",  # "classification" or "survival"
     assigned_device: str = None,  # GPU device assigned by task queue (e.g., "cuda:0")
 ):
     """
@@ -100,10 +100,10 @@ async def run_training_pipeline(
         async with logger_manager.session() as (logger, db):
             # Update task status to running
             await TrainingTaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=0)
-            await logger.info(f"Starting training pipeline for task: {task_id} (data_level: {data_level})")
+            await logger.info(f"Starting training pipeline for task: {task_id} (data_type: {data_type})")
 
         # For patch-level tasks, use Feature Extractor + Linear Probe training
-        if data_level == 'patch':
+        if data_type == 'patch':
             async with logger_manager.session() as (logger, db):
                 await logger.info("Patch-level task detected - using Feature Extractor + Linear Probe")
                 
@@ -338,7 +338,7 @@ async def run_training_pipeline(
 
         try:
             # Use correct endpoint based on training_task_type
-            if training_task_type == "survival_prediction":
+            if training_task_type == "survival":
                 endpoint = f"{AI_SERVICE_URL}/api/ai/training/wsi_survival"
                 payload = {
                     "task_id": task_id,

@@ -105,7 +105,7 @@ export default function RegisterPage() {
   const [existingDatasets, setExistingDatasets] = useState<string[]>([])
   // Map from dataset_name to task_type (classification/survival) for quick lookup
   const [existingDatasetTypes, setExistingDatasetTypes] = useState<Map<string, UploadMode>>(new Map())
-  // Map from dataset_name to data_level (case/file) for quick lookup
+  // Map from dataset_name to aggregation_level (case/file) for quick lookup
   const [existingDatasetLevels, setExistingDatasetLevels] = useState<Map<string, DataLevel>>(new Map())
   // Map from dataset_name to data_type (wsi/patch) for quick lookup
   const [existingDatasetDataTypes, setExistingDatasetDataTypes] = useState<Map<string, DataType>>(new Map())
@@ -160,8 +160,8 @@ export default function RegisterPage() {
         const dataTypeMap = new Map<string, DataType>()
         const idMap = new Map<string, string | null>()
         data.items.forEach(d => {
-          typeMap.set(d.dataset_name, d.dataset_type as UploadMode)
-          levelMap.set(d.dataset_name, d.data_level as DataLevel)
+          typeMap.set(d.dataset_name, d.task_type as UploadMode)
+          levelMap.set(d.dataset_name, d.aggregation_level as DataLevel)
           dataTypeMap.set(d.dataset_name, d.data_type as DataType)
           idMap.set(d.dataset_name, d.dataset_id)
         })
@@ -896,8 +896,8 @@ export default function RegisterPage() {
           // Use dataset_id for existing datasets, dataset_name for new datasets
           dataset_id: datasetId ?? undefined,
           dataset_name: datasetId ? undefined : datasetName.trim(),
-          // Only pass data_level for new datasets (when dataset_id is not set)
-          data_level: datasetId ? undefined : dataLevel,
+          // Only pass aggregation_level for new datasets (when dataset_id is not set)
+          aggregation_level: datasetId ? undefined : dataLevel,
           label: finalMeta.label ? String(finalMeta.label) : undefined,
           case_id: finalMeta.case_id ? String(finalMeta.case_id) : undefined,
           age,

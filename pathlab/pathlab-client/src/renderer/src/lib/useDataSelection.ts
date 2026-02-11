@@ -170,8 +170,7 @@ export function useDataSelection({
   // Filter datasets by task type
   const filteredDatasets = useMemo(() => {
     if (!datasets || datasets.length === 0) return []
-    const compatibleType = taskType === 'survival_prediction' ? 'survival' : 'classification'
-    return datasets.filter((d) => d.dataset_type === compatibleType)
+    return datasets.filter((d) => d.task_type === taskType)
   }, [datasets, taskType])
 
   // Filter items by search query

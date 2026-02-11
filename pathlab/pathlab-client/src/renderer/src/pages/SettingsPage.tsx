@@ -786,7 +786,7 @@ export default function SettingsPage() {
         files: selectedFilesInfo,
         dataset_id: batchDatasetMode === 'existing' ? batchSelectedDatasetId : undefined,
         dataset_name: batchDatasetMode === 'new' ? datasetNameToUse : undefined,
-        data_level: batchDataLevel,
+        aggregation_level: batchDataLevel,
         task_type: batchTaskType,
         default_label: batchTaskType === 'classification' ? 'External Import' : undefined
       })

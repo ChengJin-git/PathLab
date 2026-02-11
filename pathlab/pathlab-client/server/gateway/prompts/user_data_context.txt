@@ -66,11 +66,11 @@ CRITICAL RULES FOR DATA SELECTION:
 CRITICAL RULES FOR TASK TYPE:
 8. **INFER task_type from user's message FIRST**:
    - If user says "分类" / "classification" / "检测是否有X" / "区分X和Y" → task_type = classification
-   - If user says "生存" / "survival" / "预后" / "预测存活" → task_type = survival_prediction
+   - If user says "生存" / "survival" / "预后" / "预测存活" → task_type = survival
    - If user's intent is clear, DO NOT ask again - just confirm: "好的，我们来做分类任务"
 9. **AUTO-DETECT task_type from dataset's supported_tasks** (only if not already inferred from user):
    - If dataset has labels (labels=[...]) → it supports "classification"
-   - If dataset has survival_data > 0 → it supports "survival_prediction"
+   - If dataset has survival_data > 0 → it supports "survival"
    - If dataset supports ONLY ONE task type → use that type directly, DO NOT ask user
    - If dataset supports BOTH task types AND user hasn't specified → ask user which one they want
 10. **DO NOT ask about task type if already determined** - either from user's message or from dataset constraints

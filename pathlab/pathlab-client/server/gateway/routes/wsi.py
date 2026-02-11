@@ -46,7 +46,7 @@ router = APIRouter(prefix="/wsi", tags=["WSI Management"])
 @router.get("")
 async def list_wsi(
     dataset_id: Optional[str] = Query(None, description="Filter by dataset UUID"),
-    data_level: Optional[str] = Query(None, description="Filter by data type: 'wsi' for WSI files, 'patch' for image files"),
+    data_type: Optional[str] = Query(None, description="Filter by data type: 'wsi' for WSI files, 'patch' for image files"),
     search: Optional[str] = Query(None, description="Search across filename, case_id, label, source, wsi_id"),
     page: int = Query(1, ge=1, description="Page number (1-based) for case-level pagination"),
     page_size: int = Query(10, ge=0, le=10000, description="Number of case groups per page. 0 = return all (no pagination)."),
@@ -84,11 +84,11 @@ async def list_wsi(
             # ---- No pagination: return ALL files in this dataset ----
             wsi_slides = await WSIRepository.get_by_dataset(
                 db, dataset_id, skip=0, limit=0,
-                user_id=user_id_filter, data_type=data_level,
+                user_id=user_id_filter, data_type=data_type,
                 elevated_dataset_ids=elevated_dataset_ids,
             )
             total = await WSIRepository.count_by_dataset(
-                db, dataset_id, user_id=user_id_filter, data_type=data_level,
+                db, dataset_id, user_id=user_id_filter, data_type=data_type,
                 elevated_dataset_ids=elevated_dataset_ids,
             )
             items = []
@@ -108,12 +108,12 @@ async def list_wsi(
         # ---- Case-level pagination (dataset view) ----
         case_meta = await WSIRepository.count_cases_by_dataset(
             db, dataset_id, search=search,
-            user_id=user_id_filter, data_type=data_level,
+            user_id=user_id_filter, data_type=data_type,
             elevated_dataset_ids=elevated_dataset_ids,
         )
         wsi_slides = await WSIRepository.get_by_dataset_case_paginated(
             db, dataset_id, page=page, page_size=page_size,
-            search=search, user_id=user_id_filter, data_type=data_level,
+            search=search, user_id=user_id_filter, data_type=data_type,
             elevated_dataset_ids=elevated_dataset_ids,
         )
 
@@ -136,11 +136,11 @@ async def list_wsi(
             # ---- No pagination: return ALL files ----
             wsi_slides = await WSIRepository.get_all_with_dataset(
                 db, skip=0, limit=0,
-                user_id=user_id_filter, data_type=data_level,
+                user_id=user_id_filter, data_type=data_type,
                 elevated_dataset_ids=elevated_dataset_ids
             )
             total = await WSIRepository.count(
-                db, user_id=user_id_filter, data_type=data_level,
+                db, user_id=user_id_filter, data_type=data_type,
                 elevated_dataset_ids=elevated_dataset_ids
             )
         else:
@@ -148,11 +148,11 @@ async def list_wsi(
             skip = (page - 1) * page_size
             wsi_slides = await WSIRepository.get_all_with_dataset(
                 db, skip=skip, limit=page_size,
-                user_id=user_id_filter, data_type=data_level,
+                user_id=user_id_filter, data_type=data_type,
                 elevated_dataset_ids=elevated_dataset_ids
             )
             total = await WSIRepository.count(
-                db, user_id=user_id_filter, data_type=data_level,
+                db, user_id=user_id_filter, data_type=data_type,
                 elevated_dataset_ids=elevated_dataset_ids
             )
 
@@ -174,7 +174,7 @@ async def list_wsi(
 
 @router.get("/datasets")
 async def list_datasets(
-    data_level: Optional[str] = None,
+    data_type: Optional[str] = None,
     user: User = Depends(current_active_user),
     user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db)
@@ -189,12 +189,12 @@ async def list_datasets(
       - Datasets they have temporary elevated permissions for
 
     Args:
-        data_level: Optional filter - "wsi" for WSI files, "patch" for image files
+        data_type: Optional filter - "wsi" for WSI files, "patch" for image files
 
     Returns:
         {
             "items": [
-                {"dataset_id": str, "dataset_name": str, "file_count": int, "total_size": int, "dataset_type": str},
+                {"dataset_id": str, "dataset_name": str, "file_count": int, "total_size": int, "task_type": str},
                 ...
             ],
             "total": int
@@ -208,7 +208,7 @@ async def list_datasets(
 
     datasets = await WSIRepository.get_datasets(
         db,
-        data_type=data_level,
+        data_type=data_type,
         user_id=user_id_filter,
         elevated_dataset_ids=elevated_dataset_ids
     )
@@ -278,12 +278,12 @@ async def update_dataset_type(
 
     Args:
         dataset_id: UUID of the dataset
-        req: DatasetUpdateTypeRequest with dataset_type ("classification" or "survival")
+        req: DatasetUpdateTypeRequest with task_type ("classification" or "survival")
     """
     try:
-        # Validate dataset_type
-        if req.dataset_type not in ["classification", "survival"]:
-            raise HTTPException(status_code=400, detail="dataset_type must be 'classification' or 'survival'")
+        # Validate task_type
+        if req.task_type not in ["classification", "survival"]:
+            raise HTTPException(status_code=400, detail="task_type must be 'classification' or 'survival'")
 
         # Check dataset exists (with data_group loaded)
         dataset = await DatasetRepository.get_by_id(db, dataset_id)
@@ -303,7 +303,7 @@ async def update_dataset_type(
         from sqlalchemy import update as sql_update
         from backend.database.models import WSISlide
 
-        if req.dataset_type == "survival":
+        if req.task_type == "survival":
             # Set default event_time=0, event_status=0 for WSIs without event_time
             result = await db.execute(
                 sql_update(WSISlide)
@@ -328,7 +328,7 @@ async def update_dataset_type(
             db,
             data_type=current_data_group.data_type,
             aggregation_level=current_data_group.aggregation_level,
-            task_type=req.dataset_type
+            task_type=req.task_type
         )
 
         # Update dataset's group_id
@@ -336,12 +336,12 @@ async def update_dataset_type(
 
         await db.commit()
 
-        logger.info(f"Updated dataset {dataset_id} type to {req.dataset_type}: {updated_count} WSIs affected")
+        logger.info(f"Updated dataset {dataset_id} type to {req.task_type}: {updated_count} WSIs affected")
 
         return {
             "message": message,
             "dataset_id": dataset_id,
-            "new_type": req.dataset_type,
+            "new_type": req.task_type,
             "updated_count": updated_count
         }
     except HTTPException:
@@ -371,14 +371,14 @@ async def update_dataset_data_level(
 
     Args:
         dataset_id: UUID of the dataset
-        req: DatasetUpdateDataLevelRequest with data_level ("case" or "file")
+        req: DatasetUpdateDataLevelRequest with aggregation_level ("case" or "file")
     """
     try:
-        aggregation_level = req.data_level
+        aggregation_level = req.aggregation_level
 
         # Validate aggregation_level
         if aggregation_level not in ["case", "file"]:
-            raise HTTPException(status_code=400, detail="data_level must be 'case' or 'file'")
+            raise HTTPException(status_code=400, detail="aggregation_level must be 'case' or 'file'")
 
         # Check dataset exists (with data_group loaded)
         dataset = await DatasetRepository.get_by_id(db, dataset_id)
@@ -399,7 +399,7 @@ async def update_dataset_data_level(
             return {
                 "message": f"Dataset aggregation level is already {aggregation_level}",
                 "dataset_id": dataset_id,
-                "new_data_level": aggregation_level
+                "new_aggregation_level": aggregation_level
             }
 
         # Get or create a new DataGroup with the new aggregation_level
@@ -417,9 +417,9 @@ async def update_dataset_data_level(
         logger.info(f"Updated dataset {dataset_id} aggregation_level from {current_group.aggregation_level} to {aggregation_level}")
 
         return {
-            "message": f"Dataset data level changed to {aggregation_level}",
+            "message": f"Dataset aggregation level changed to {aggregation_level}",
             "dataset_id": dataset_id,
-            "new_data_level": aggregation_level
+            "new_aggregation_level": aggregation_level
         }
     except HTTPException:
         raise
@@ -699,7 +699,7 @@ async def upload_wsi_file(
     associated_files: List[UploadFile] = File(default=[]),
     dataset_id: Optional[str] = Form(None),  # Existing dataset UUID
     dataset_name: Optional[str] = Form(None),  # Display name for new dataset
-    data_level: Optional[str] = Form(None),  # Aggregation level for new dataset: "case" or "file"
+    aggregation_level: Optional[str] = Form(None),  # Aggregation level for new dataset: "case" or "file"
     label: Optional[str] = Form(None),
     case_id: Optional[str] = Form(None),
     age: Optional[int] = Form(None),
@@ -815,8 +815,7 @@ async def upload_wsi_file(
                 raise HTTPException(status_code=400, detail=f"Dataset not found: {dataset_id}")
             resolved_dataset_id = dataset_id
         elif dataset_name:
-            # data_level in request is actually aggregation_level ('case' or 'file')
-            aggregation_level = data_level or "file"
+            resolved_aggregation_level = aggregation_level or "file"
 
             # Determine data_type from file extension
             file_data_type = 'patch' if is_patch_file(str(wsi_path)) else 'wsi'
@@ -825,7 +824,7 @@ async def upload_wsi_file(
             data_group = await DataGroupRepository.get_or_create(
                 db,
                 data_type=file_data_type,
-                aggregation_level=aggregation_level,
+                aggregation_level=resolved_aggregation_level,
                 task_type='classification'  # Default task type for uploads
             )
 
@@ -1024,8 +1023,7 @@ async def upload_wsi_by_path(
                 raise HTTPException(status_code=400, detail=f"Dataset not found: {req.dataset_id}")
             resolved_dataset_id = req.dataset_id
         elif req.dataset_name:
-            # data_level in request is actually aggregation_level ('case' or 'file')
-            aggregation_level = req.data_level or "file"
+            resolved_aggregation_level = req.aggregation_level or "file"
 
             # Determine data_type from file path
             file_data_type = 'patch' if is_patch_file(req.wsi_path) else 'wsi'
@@ -1034,7 +1032,7 @@ async def upload_wsi_by_path(
             data_group = await DataGroupRepository.get_or_create(
                 db,
                 data_type=file_data_type,
-                aggregation_level=aggregation_level,
+                aggregation_level=resolved_aggregation_level,
                 task_type='classification'  # Default task type for uploads
             )
 

@@ -24,7 +24,7 @@ export type StorageTaskType = 'batch_import' | 'delete_external' | 'batch_update
 export type TrainingTaskStatus = 'pending' | 'queued' | 'preprocessing' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled' | 'running'
 
 // Server task type from backend
-export type ServerTaskType = 'classification' | 'survival_prediction' | 'external_validation'
+export type ServerTaskType = 'classification' | 'survival' | 'external_validation'
 
 // Individual task item (e.g., one file in a batch)
 export interface TaskItem {
@@ -123,7 +123,7 @@ export interface UploadTaskFile {
   metadata?: {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
-    data_level?: 'case' | 'file'  // Aggregation level for new dataset
+    aggregation_level?: 'case' | 'file'  // Aggregation level for new dataset
     label?: string
     case_id?: string
     age?: number
@@ -361,7 +361,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
             task_type?: ServerTaskType;
             status: string;
             progress: number;
-            data_level?: 'wsi' | 'patch';
+            data_type?: 'wsi' | 'patch';
             wsi_count?: number;
             created_at?: string;
             finished_at?: string
@@ -371,7 +371,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
 
             // Adjust progress for patch-level tasks (skip 66% baseline)
             let displayProgress = task.progress
-            if (task.data_level === 'patch' && task.status !== 'completed' && task.status !== 'failed') {
+            if (task.data_type === 'patch' && task.status !== 'completed' && task.status !== 'failed') {
               // Backend starts patch tasks at ~66% (after skipping patching & feature extraction)
               // We map 66-100% backend range to 0-100% UI range
               displayProgress = Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
@@ -405,7 +405,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
               isServerTask: true,
               serverTaskStatus: task.status as TrainingTaskStatus,
               taskName: task.task_name,
-              dataLevel: task.data_level
+              dataLevel: task.data_type
             }
           })
 
@@ -873,7 +873,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
             await uploadWSIByPath(file.path, {
               dataset_id: file.metadata?.dataset_id,
               dataset_name: file.metadata?.dataset_name,
-              data_level: file.metadata?.data_level,
+              aggregation_level: file.metadata?.aggregation_level,
               label: file.metadata?.label,
               case_id: file.metadata?.case_id,
               age: file.metadata?.age,
@@ -887,7 +887,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
             await uploadWSIFile(file.file, {
               dataset_id: file.metadata?.dataset_id,
               dataset_name: file.metadata?.dataset_name,
-              data_level: file.metadata?.data_level,
+              aggregation_level: file.metadata?.aggregation_level,
               label: file.metadata?.label,
               case_id: file.metadata?.case_id,
               age: file.metadata?.age,

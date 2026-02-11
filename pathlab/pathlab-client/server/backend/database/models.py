@@ -352,8 +352,8 @@ class ChatConversation(Base):
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
-    # Relationships
-    messages = relationship("ChatMessage", back_populates="conversation", cascade="all, delete-orphan")
+    # Relationships (order_by ensures messages are always returned in chronological order)
+    messages = relationship("ChatMessage", back_populates="conversation", cascade="all, delete-orphan", order_by="ChatMessage.id")
 
     def to_dict(self):
         """Convert to dictionary for API responses"""
@@ -574,8 +574,7 @@ class TrainingTask(Base):
             "task_description": self.task_description,
             "group_id": self.group_id,
             # Include denormalized group info for convenience
-            # Note: data_level maps to data_type for frontend compatibility (progress bar mapping)
-            "data_level": self.data_group.data_type if self.data_group else None,
+            "data_type": self.data_group.data_type if self.data_group else None,
             "aggregation_level": self.data_group.aggregation_level if self.data_group else None,
             "task_type": self.data_group.task_type if self.data_group else None,
             "user_id": self.user_id,

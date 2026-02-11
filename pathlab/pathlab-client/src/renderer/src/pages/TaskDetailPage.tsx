@@ -21,8 +21,8 @@ interface LogEntry {
 interface TaskDetail {
   task_id: string
   task_name: string
-  task_type: 'classification' | 'survival_prediction' | 'segmentation' | 'external_validation'
-  data_level: 'wsi' | 'patch'
+  task_type: 'classification' | 'survival' | 'segmentation' | 'external_validation'
+  data_type: 'wsi' | 'patch'
   task_description: string
   status: 'pending' | 'running' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
   progress: number
@@ -293,7 +293,7 @@ export default function TaskDetailPage() {
       const result = await createTrainingTask({
         task_name: `${task.task_name} (rerun)`,
         task_type: task.task_type,
-        data_level: task.data_level,
+        data_type: task.data_type,
         task_description: task.task_description,
         wsi_ids: task.wsi_ids,
         preprocessing: {
@@ -370,14 +370,14 @@ export default function TaskDetailPage() {
     )
   }
 
-  const isPatchLevel = task.data_level === 'patch'
+  const isPatchLevel = task.data_type === 'patch'
   const isExternalValidation = task.task_type === 'external_validation'
 
   // Calculate display progress for patch-level tasks
   // (map 66% - 100% backend progress to 0% - 100% UI progress)
   // For completed tasks, always show 100%
   // For cancelled/failed tasks, show the mapped progress at the time of cancellation/failure
-  // External validation tasks use 0-100 directly regardless of data_level
+  // External validation tasks use 0-100 directly regardless of data_type
   const displayProgress = isPatchLevel && !isExternalValidation && task.status !== 'completed'
     ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
     : Math.min(task.progress, 100)  // Cap at 100% for safety
@@ -486,11 +486,11 @@ export default function TaskDetailPage() {
           </div>
           <div>
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">
-              {task.data_level === 'patch' ? 'Data' : 'Data'}
+              {task.data_type === 'patch' ? 'Data' : 'Data'}
             </div>
             <div className="flex items-end gap-1.5">
               <span className="text-lg sm:text-2xl font-bold text-gray-900 leading-none">{task.wsi_count}</span>
-              <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{task.data_level === 'patch' ? 'patches' : 'slides'}</span>
+              <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{task.data_type === 'patch' ? 'patches' : 'slides'}</span>
             </div>
           </div>
           <div>
@@ -766,7 +766,7 @@ export default function TaskDetailPage() {
                     {task.preprocessing_config.feature_extractor || 'N/A'}
                   </span>
                 </div>
-                {task.data_level === 'wsi' && (
+                {task.data_type === 'wsi' && (
                   <div className="flex justify-between items-center text-[11px] sm:text-sm">
                     <span className="text-gray-500 font-medium">Aggregator</span>
                     <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
@@ -798,7 +798,7 @@ export default function TaskDetailPage() {
                 <div className="flex justify-between items-center text-[11px] sm:text-sm">
                   <span className="text-gray-500 font-medium">Data Level</span>
                   <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm uppercase">
-                    {task.data_level || 'N/A'}
+                    {task.data_type || 'N/A'}
                   </span>
                 </div>
                 {task.classes && task.classes.length > 0 && (
@@ -862,7 +862,7 @@ export default function TaskDetailPage() {
                 Model & Training
               </h4>
               <div className="space-y-3">
-                {task.data_level === 'wsi' && (
+                {task.data_type === 'wsi' && (
                   <div className="flex justify-between items-center text-[11px] sm:text-sm">
                     <span className="text-gray-500 font-medium">Aggregator</span>
                     <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">

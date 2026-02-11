@@ -155,9 +155,9 @@ async def create_training_task(
             # Get or create DataGroup for this training task
             data_group = await DataGroupRepository.get_or_create(
                 db,
-                data_type=req.data_level,  # 'wsi' or 'patch'
+                data_type=req.data_type,  # 'wsi' or 'patch'
                 aggregation_level=aggregation_level,  # 'file' or 'case'
-                task_type=req.task_type  # 'classification' or 'survival_prediction'
+                task_type=req.task_type  # 'classification' or 'survival'
             )
 
             # Prepare task data
@@ -189,7 +189,7 @@ async def create_training_task(
         logger.info(f"Created training task: {task_id}")
         logger.info(f"  - Task name: {req.task_name}")
         logger.info(f"  - Task type: {req.task_type} (from DataGroup: {data_group.task_type})")
-        logger.info(f"  - Data type: {req.data_level}, Aggregation level: {aggregation_level}")
+        logger.info(f"  - Data type: {req.data_type}, Aggregation level: {aggregation_level}")
         logger.info(f"  - WSI count: {len(req.wsi_ids)}")
         logger.info(f"  - Classes: {task.classes}")
 
@@ -203,8 +203,7 @@ async def create_training_task(
 
         pipeline_kwargs = {
             # Note: task_id is automatically added by task_queue.submit()
-            # data_level here refers to data_type ('wsi' or 'patch') - kept for pipeline compatibility
-            "data_level": req.data_level,
+            "data_type": req.data_type,
             "wsi_ids": req.wsi_ids,
             "preprocessing_config": req.preprocessing,
             "model_config": req.model,

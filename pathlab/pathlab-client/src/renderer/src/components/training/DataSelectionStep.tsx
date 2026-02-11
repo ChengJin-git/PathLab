@@ -301,10 +301,10 @@ function DatasetGrid({
       <div className="text-center py-12 sm:py-16 bg-gray-50/50 rounded-2xl border-2 border-dashed border-gray-200">
         <FolderOpen className="w-12 h-12 mx-auto mb-4 text-gray-300" />
         <p className="text-base sm:text-lg font-bold text-gray-700">
-          {`No ${taskType === 'survival_prediction' ? 'survival' : 'classification'} datasets found`}
+          {`No ${taskType === 'survival' ? 'survival' : 'classification'} datasets found`}
         </p>
         <p className="text-xs sm:text-sm text-gray-500 mt-1">
-          {taskType === 'survival_prediction'
+          {taskType === 'survival'
             ? 'Register datasets with event_time and event_status for survival analysis.'
             : 'Register datasets with class labels for classification tasks.'}
         </p>

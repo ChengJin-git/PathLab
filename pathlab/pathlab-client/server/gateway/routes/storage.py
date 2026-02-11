@@ -1207,8 +1207,7 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
             files = request_params.get('files', [])
             dataset_id = request_params.get('dataset_id')
             dataset_name = request_params.get('dataset_name')
-            # data_level in request is actually aggregation_level ('case' or 'file')
-            aggregation_level = request_params.get('data_level', 'file')
+            aggregation_level = request_params.get('aggregation_level', 'file')
             task_type = request_params.get('task_type', 'classification')
             default_label = request_params.get('default_label', 'External Import')
             default_event_time = request_params.get('default_event_time')
@@ -1694,7 +1693,7 @@ async def start_batch_import_task(
             "files": [f.model_dump() if hasattr(f, 'model_dump') else f.dict() for f in request.files],
             "dataset_id": request.dataset_id,
             "dataset_name": request.dataset_name,
-            "data_level": request.data_level,
+            "aggregation_level": request.aggregation_level,
             "task_type": request.task_type,
             "default_label": request.default_label,
             "default_event_time": request.default_event_time,

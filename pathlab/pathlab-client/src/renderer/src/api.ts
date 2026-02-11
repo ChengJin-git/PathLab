@@ -1037,7 +1037,7 @@ export interface TrainingTask {
   task_id: string
   task_name: string
   task_type: string
-  data_level: string
+  data_type: string
   task_description: string | null
   status: string
   progress: number
@@ -1493,7 +1493,7 @@ export async function fetchWSIList(
     params.set('dataset_id', datasetId)
   }
   if (dataLevel) {
-    params.set('data_level', dataLevel)
+    params.set('data_type', dataLevel)
   }
 
   if (options) {
@@ -1535,8 +1535,8 @@ export interface DatasetSummary {
   file_count: number
   total_size: number
   data_type: 'wsi' | 'patch'  // Data type: WSI collection or Patch collection
-  dataset_type: 'classification' | 'survival' // Task type: classification or survival
-  data_level: 'case' | 'file'  // Aggregation level: case-level or file-level dataset
+  task_type: 'classification' | 'survival' // Task type: classification or survival
+  aggregation_level: 'case' | 'file'  // Aggregation level: case-level or file-level dataset
   // Permission flag - whether user can delete this dataset
   can_delete?: boolean
   // Pre-defined split information (from CSV upload)
@@ -1560,7 +1560,7 @@ export interface DatasetsListResponse {
 export async function fetchDatasets(dataLevel?: string): Promise<DatasetsListResponse> {
   const params = new URLSearchParams()
   if (dataLevel) {
-    params.append('data_level', dataLevel)
+    params.append('data_type', dataLevel)
   }
   const queryString = params.toString()
   const url = queryString ? `${API_BASE}/wsi/datasets?${queryString}` : `${API_BASE}/wsi/datasets`
@@ -1614,7 +1614,7 @@ export async function updateDatasetType(
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dataset_type: datasetType })
+      body: JSON.stringify({ task_type: datasetType })
     },
     'Failed to update dataset type'
   )
@@ -1626,7 +1626,7 @@ export async function updateDatasetType(
 export interface UpdateDatasetDataLevelResponse {
   message: string
   dataset_id: string
-  new_data_level: 'case' | 'file'
+  new_aggregation_level: 'case' | 'file'
 }
 
 /**
@@ -1644,7 +1644,7 @@ export async function updateDatasetDataLevel(
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data_level: dataLevel })
+      body: JSON.stringify({ aggregation_level: dataLevel })
     },
     'Failed to update dataset data level'
   )
@@ -1810,7 +1810,7 @@ export async function uploadWSIFile(
   options?: {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
-    data_level?: 'case' | 'file'  // Aggregation level for new dataset
+    aggregation_level?: 'case' | 'file'  // Aggregation level for new dataset
     label?: string
     case_id?: string
     age?: number
@@ -1836,8 +1836,8 @@ export async function uploadWSIFile(
   if (options?.dataset_name) {
     formData.append('dataset_name', options.dataset_name)
   }
-  if (options?.data_level) {
-    formData.append('data_level', options.data_level)
+  if (options?.aggregation_level) {
+    formData.append('aggregation_level', options.aggregation_level)
   }
   if (options?.label) {
     formData.append('label', options.label)
@@ -1942,7 +1942,7 @@ export async function uploadWSIByPath(
   options?: {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
-    data_level?: 'case' | 'file'  // Aggregation level for new dataset
+    aggregation_level?: 'case' | 'file'  // Aggregation level for new dataset
     label?: string
     case_id?: string
     wsi_id?: string
@@ -1965,7 +1965,7 @@ export async function uploadWSIByPath(
         wsi_path,
         dataset_id: options?.dataset_id,
         dataset_name: options?.dataset_name,
-        data_level: options?.data_level,
+        aggregation_level: options?.aggregation_level,
         label: options?.label,
         case_id: options?.case_id,
         wsi_id: options?.wsi_id,
@@ -2640,8 +2640,8 @@ export interface SplitConfig {
 
 export interface TrainingTaskConfig {
   task_name: string
-  task_type: 'classification' | 'survival_prediction' | 'segmentation'
-  data_level: 'wsi' | 'patch'
+  task_type: 'classification' | 'survival' | 'segmentation'
+  data_type: 'wsi' | 'patch'
   task_description: string
   wsi_ids: string[]
   preprocessing: {
@@ -3547,7 +3547,7 @@ export interface BatchRegisterRequest {
   files: BatchRegisterFileInfo[]
   dataset_id?: string
   dataset_name?: string
-  data_level?: 'case' | 'file'  // Default: 'file' - how to organize data
+  aggregation_level?: 'case' | 'file'  // Default: 'file' - how to organize data
   task_type?: 'classification' | 'survival'  // Default: 'classification'
   default_label?: string  // For classification (default: 'External Import')
   default_event_time?: number  // For survival
@@ -3899,7 +3899,7 @@ export interface AvailableHeatmap {
   aggregator?: string | null  // MIL aggregator type (e.g., abmil, clam_sb, transmil)
   created_at: number
   attention_file: string
-  data_level?: 'wsi' | 'patch'  // WSI-level attention or patch-level CAM
+  data_type?: 'wsi' | 'patch'  // WSI-level attention or patch-level CAM
   cam_size?: [number, number]   // CAM size for patch-level
   is_best_fold?: boolean | null  // Whether this is the best fold (for k-fold training)
   is_kfold?: boolean  // Whether this task was trained with K-Fold cross-validation

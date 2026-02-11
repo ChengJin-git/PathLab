@@ -296,11 +296,11 @@ async def resume_interrupted_tasks():
                     task_queue = get_task_queue()
                     # Pass pipeline args as kwargs dict
                     # Note: task_id is automatically added by task_queue.submit(), don't include it here
-                    # Get data_level and task_type from DataGroup relationship
-                    data_level = task.data_group.data_type if task.data_group else "wsi"
+                    # Get data_type and task_type from DataGroup relationship
+                    data_type = task.data_group.data_type if task.data_group else "wsi"
                     task_type = task.data_group.task_type if task.data_group else "classification"
                     pipeline_kwargs = {
-                        "data_level": data_level,
+                        "data_type": data_type,
                         "wsi_ids": wsi_ids,
                         "preprocessing_config": task.preprocessing_config or {},
                         "model_config": task.model_config or {},

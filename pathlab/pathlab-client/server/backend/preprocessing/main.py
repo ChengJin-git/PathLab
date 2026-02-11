@@ -1393,7 +1393,7 @@ async def get_available_heatmaps(
                 "aggregator": aggregator,
                 "created_at": attention_file.stat().st_mtime,
                 "attention_file": str(attention_file.name),
-                "data_level": "wsi",
+                "data_type": "wsi",
                 "attention_type": attention_type,
                 "num_attention_classes": num_attention_classes,
                 # Survival prediction fields
@@ -1427,7 +1427,7 @@ async def get_available_heatmaps(
                 "feature_extractor": feature_extractor,
                 "created_at": cam_file.stat().st_mtime,
                 "attention_file": str(cam_file.name),
-                "data_level": "patch",
+                "data_type": "patch",
                 "cam_size": result_meta.get("cam_size"),
             })
 

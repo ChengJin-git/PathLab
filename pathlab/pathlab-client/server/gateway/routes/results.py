@@ -734,8 +734,8 @@ async def get_analysis_tasks(
         task_list.append({
             "task_id": task.task_id,
             "name": task.task_name or task.task_id,
-            "model_type": task_type,
-            "data_level": data_type,  # For frontend filtering (data_type: 'wsi' or 'patch')
+            "task_type": task_type,
+            "data_type": data_type,  # 'wsi' or 'patch'
             "aggregation_level": aggregation_level,  # 'file' or 'case'
             "status": task.status,
             "created_at": task.created_at.isoformat() + 'Z' if task.created_at else None,
@@ -848,7 +848,7 @@ async def _run_inference_if_needed(
     # Route to appropriate inference handler based on data_type and task_type
     if data_type == "patch":
         await _run_inference_patch_classification(task, wsi_ids, resources, db, progress_callback)
-    elif task_type in ("wsi_survival", "survival_prediction", "survival"):
+    elif task_type in ("wsi_survival", "survival"):
         await _run_inference_wsi_survival(task, wsi_ids, resources, db, progress_callback)
     else:
         # Default: WSI classification
@@ -1711,7 +1711,7 @@ async def _run_inference_wsi_survival(
                     "pred": risk_group,
                     "probs": None,
                     "extra_metadata": {
-                        "task_type": "survival_prediction",
+                        "task_type": "survival",
                         "risk_score": risk_score,
                         "risk_group": risk_group,
                         "median_risk_score": median_risk_score,
@@ -1785,7 +1785,7 @@ async def _run_inference_wsi_survival(
                 "pred": risk_group,
                 "probs": None,
                 "extra_metadata": {
-                    "task_type": "survival_prediction",
+                    "task_type": "survival",
                     "risk_score": risk_score,
                     "risk_group": risk_group,
                     "median_risk_score": median_risk_score,
@@ -1971,7 +1971,7 @@ async def start_external_validation(
         return task_type in ("classification", "wsi_classification", "patch_classification")
 
     def is_survival_task(task_type: str) -> bool:
-        return task_type in ("survival_prediction", "wsi_survival", "survival")
+        return task_type in ("wsi_survival", "survival")
 
     model_task_type = model_data_group.task_type if model_data_group else "classification"
     target_task_type = target_data_group.task_type if target_data_group else "classification"
@@ -2308,7 +2308,7 @@ async def _run_external_validation(
     model_task_id: str,
     model_id: str,
     model_classes: List[str],
-    model_task_type: str,  # "classification", "wsi_classification", "survival_prediction", "wsi_survival"
+    model_task_type: str,  # "classification", "wsi_classification", "survival", "wsi_survival"
     dataset_id: str,
     wsi_ids: List[str],
     assigned_device: str = None,  # GPU device assigned by task queue (e.g., "cuda:0")
@@ -2339,7 +2339,7 @@ async def _run_external_validation(
     logger_manager = ScopedLogger(task_id)
 
     # Determine if this is a survival task
-    is_survival = model_task_type in ("survival_prediction", "wsi_survival")
+    is_survival = model_task_type in ("survival", "wsi_survival")
 
     async def update_task_progress(status: str, progress: int, processed_wsi: int = 0,
                                    results_count: int = 0, error_msg: str = None):
@@ -3192,7 +3192,7 @@ async def run_task_analysis(
         analysis_type = "external"
     else:
         # Internal analysis: use task name with validation type
-        task_type_label = "Survival" if task_type_str in ("survival_prediction", "wsi_survival", "survival") else "Classification"
+        task_type_label = "Survival" if task_type_str in ("wsi_survival", "survival") else "Classification"
         title = f"{task.task_name} ({task_type_label})"
         analysis_type = "internal"
 
@@ -3403,7 +3403,7 @@ async def get_quick_analysis(
         quick_task_type_str = quick_task_data_group.task_type if quick_task_data_group else "classification"
 
         # Default metrics and charts based on task type
-        is_survival_task = quick_task_type_str in ("survival_prediction", "wsi_survival", "survival")
+        is_survival_task = quick_task_type_str in ("wsi_survival", "survival")
         if is_survival_task:
             default_metrics = ["c_index", "integrated_brier_score"]
             default_charts = ["km_curve", "loss_curve"]
@@ -5099,7 +5099,7 @@ async def _run_survival_analysis(task, request, db, progress_callback=None, prog
     # Save Summary
     summary = {
         "task_id": task_id,
-        "task_type": "survival_prediction",
+        "task_type": "survival",
         "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z',
         "description": request.description,
         "num_samples": len(risks),
@@ -5933,7 +5933,7 @@ async def run_analysis_pipeline(
         task_id: The queue task ID (same as analysis_id for analysis tasks)
         analysis_id: Unique analysis ID
         training_task_id: The training task to analyze
-        task_type_str: Type of training task (classification, survival_prediction, etc.)
+        task_type_str: Type of training task (classification, survival, etc.)
         metrics: List of metrics to compute
         charts: List of charts to generate
         description: Optional description
@@ -6040,7 +6040,7 @@ async def run_analysis_pipeline(
             }
 
             match task_type_str:
-                case "wsi_survival" | "survival_prediction" | "survival":
+                case "wsi_survival" | "survival":
                     result = await _run_survival_analysis(
                         task, request, db, progress_callback=update_progress, progress_config=progress_config
                     )

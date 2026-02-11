@@ -38,7 +38,7 @@ interface DatasetRegistrationConfig {
   dataset_id?: string
   dataset_name?: string
   upload_mode?: 'classification' | 'survival'
-  data_level?: 'file' | 'case'
+  aggregation_level?: 'file' | 'case'
   initial_view?: 'new' | 'existing'
   submitted_task_id?: string
   // Persisted after successful submission
@@ -80,7 +80,7 @@ export function DatasetRegistrationCard({
   const [loadingDatasets, setLoadingDatasets] = useState(false)
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>(config?.dataset_id || '')
   const [newDatasetName, setNewDatasetName] = useState(config?.dataset_name || '')
-  const [dataLevel, setDataLevel] = useState<'file' | 'case'>(config?.data_level || 'file')
+  const [dataLevel, setDataLevel] = useState<'file' | 'case'>(config?.aggregation_level || 'file')
   
   // Feedback
   const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
@@ -135,8 +135,8 @@ export function DatasetRegistrationCard({
       
       if (mode === 'existing' && selectedDatasetId) {
         const dataset = datasets.find(d => d.dataset_id === selectedDatasetId)
-        if (dataset && dataset.dataset_type) {
-          uploadMode = dataset.dataset_type as 'classification' | 'survival'
+        if (dataset && dataset.task_type) {
+          uploadMode = dataset.task_type as 'classification' | 'survival'
         }
       } else {
         // New dataset mode - use config or default
@@ -265,7 +265,7 @@ export function DatasetRegistrationCard({
         metadata: {
           dataset_id: mode === 'existing' ? selectedDatasetId : undefined,
           dataset_name: mode === 'new' ? newDatasetName : undefined,
-          data_level: dataLevel,
+          aggregation_level: dataLevel,
           label: '',
           case_id: '',
           age: undefined,
@@ -537,7 +537,7 @@ export function DatasetRegistrationCard({
                   let modeLabel = 'Classification'
                   if (mode === 'existing' && selectedDatasetId) {
                     const dataset = datasets.find(d => d.dataset_id === selectedDatasetId)
-                    if (dataset && dataset.dataset_type === 'survival') modeLabel = 'Survival'
+                    if (dataset && dataset.task_type === 'survival') modeLabel = 'Survival'
                   } else if (config?.upload_mode === 'survival') {
                     modeLabel = 'Survival'
                   }

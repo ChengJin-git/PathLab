@@ -90,6 +90,7 @@ export const METRIC_COLORS: Record<string, string> = {
   sensitivity: 'text-teal-600 bg-teal-50 border-teal-200',
   specificity: 'text-orange-600 bg-orange-50 border-orange-200',
   c_index: 'text-indigo-600 bg-indigo-50 border-indigo-200',
+  integrated_brier_score: 'text-emerald-600 bg-emerald-50 border-emerald-200',
   loss: 'text-red-600 bg-red-50 border-red-200',
 }
 
@@ -113,6 +114,7 @@ export const METRIC_ABBREVIATIONS: Record<string, string> = {
   support: 'SUPP',
   brier_score: 'BRIER',
   c_index: 'C-INDEX',
+  integrated_brier_score: 'IBS',
 }
 
 /**
@@ -120,7 +122,7 @@ export const METRIC_ABBREVIATIONS: Record<string, string> = {
  */
 export const RAW_VALUE_METRICS = new Set([
   'loss', 'train_loss', 'val_loss', 'test_loss',
-  'integrated_brier_score', 'brier_score',
+  'c_index', 'integrated_brier_score', 
   'mse', 'rmse', 'mae',
   'log_loss', 'cross_entropy',
 ])

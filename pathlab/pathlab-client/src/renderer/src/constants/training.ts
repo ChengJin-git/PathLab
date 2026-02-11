@@ -24,10 +24,10 @@ export interface SelectOption<T = string> {
  */
 export const TASK_TYPES: readonly SelectOption[] = [
   { value: 'classification', label: 'Classification' },
-  { value: 'survival_prediction', label: 'Survival Prediction' }
+  { value: 'survival', label: 'Survival Prediction' }
 ] as const
 
-export type TaskType = 'classification' | 'survival_prediction' | 'segmentation'
+export type TaskType = 'classification' | 'survival' | 'segmentation'
 
 // ============================================================================
 // Data Levels

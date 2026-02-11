@@ -28,6 +28,8 @@ const METRIC_ICONS: Record<string, React.ReactNode> = {
   recall: <Percent className="w-4 h-4" />,
   sensitivity: <Percent className="w-4 h-4" />,
   specificity: <Percent className="w-4 h-4" />,
+  c_index: <TrendingUp className="w-4 h-4" />,
+  integrated_brier_score: <Activity className="w-4 h-4" />,
 }
 
 /**

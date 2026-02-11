@@ -13,7 +13,7 @@ interface Task {
   task_id: string
   task_name: string
   task_type: string
-  data_level: string
+  data_type: string
   status: string
   progress: number
   created_at: string | null
@@ -486,7 +486,7 @@ export default function TaskListPage() {
                       <div className="flex items-center gap-1.5 sm:gap-2">
                         <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
                         <span className="text-sm sm:text-base font-bold text-gray-900">{task.wsi_count}</span>
-                        <span className="text-[11px] sm:text-sm text-gray-500">{task.data_level === 'patch' ? 'patches' : 'slides'}</span>
+                        <span className="text-[11px] sm:text-sm text-gray-500">{task.data_type === 'patch' ? 'patches' : 'slides'}</span>
                       </div>
                     </div>
 
@@ -503,7 +503,7 @@ export default function TaskListPage() {
                       <div className="flex items-center gap-1.5 sm:gap-2">
                         <Brain className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
                         <span className="text-sm sm:text-base font-bold truncate text-gray-900">
-                          {task.data_level === 'patch'
+                          {task.data_type === 'patch'
                             ? 'Linear Probe'
                             : (task.model_config?.aggregator?.toUpperCase() || 'N/A')}
                         </span>
@@ -532,14 +532,14 @@ export default function TaskListPage() {
                             <div
                               className="bg-gray-900 h-full rounded-full transition-all duration-300"
                               style={{
-                                width: `${task.data_level === 'patch' && task.task_type !== 'external_validation' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
+                                width: `${task.data_type === 'patch' && task.task_type !== 'external_validation' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
                                   ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
                                   : task.progress}%`
                               }}
                             />
                           </div>
                           <span className="text-[11px] sm:text-sm font-bold text-gray-900 w-8 sm:w-10 text-right">
-                            {task.data_level === 'patch' && task.task_type !== 'external_validation' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
+                            {task.data_type === 'patch' && task.task_type !== 'external_validation' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
                               ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
                               : task.progress}%
                           </span>

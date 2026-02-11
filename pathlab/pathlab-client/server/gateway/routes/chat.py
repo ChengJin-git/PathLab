@@ -277,9 +277,11 @@ async def get_conversation(
     if not check_data_ownership(conversation.user_id, user):
         raise HTTPException(status_code=403, detail="You don't have permission to view this conversation")
 
+    # Sort messages by id to ensure chronological order (defense-in-depth)
+    sorted_messages = sorted(conversation.messages, key=lambda m: m.id)
     return {
         **conversation.to_dict(),
-        "messages": [msg.to_dict() for msg in conversation.messages]
+        "messages": [msg.to_dict() for msg in sorted_messages]
     }
 
 
@@ -954,7 +956,7 @@ async def chat_with_ai(
             if ds_labels:
                 task_types.append("classification")
             if ds_survival > 0:
-                task_types.append("survival_prediction")
+                task_types.append("survival")
             task_types_str = f", supported_tasks=[{', '.join(task_types)}]" if task_types else ""
 
             # Add access type marker for elevated (temporary permission) datasets

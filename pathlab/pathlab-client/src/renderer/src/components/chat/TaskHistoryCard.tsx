@@ -8,7 +8,7 @@ export interface CachedTaskData {
   task_id: string
   task_name: string
   task_type: string
-  data_level: string
+  data_type: string
   status: string
   created_at: string | null
   finished_at: string | null
@@ -22,7 +22,7 @@ export interface AgentTaskHistoryConfig {
   show_failed?: boolean
   limit?: number
   split_strategy?: 'random' | 'k_fold' | 'manual'  // Filter by split strategy
-  task_type?: string    // Filter by task type: "classification", "survival_prediction", etc.
+  task_type?: string    // Filter by task type: "classification", "survival", etc.
   // Cached data for persistence (populated after first load)
   cached_tasks?: CachedTaskData[]
   cached_at?: string  // ISO timestamp when data was cached
@@ -136,7 +136,7 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
     task_id: task.task_id,
     task_name: task.task_name,
     task_type: task.task_type,
-    data_level: task.data_level,
+    data_type: task.data_type,
     status: task.status,
     created_at: task.created_at,
     finished_at: task.finished_at,
@@ -379,7 +379,7 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
                     <div className="mt-1 flex flex-wrap items-center gap-1.5 sm:gap-3 text-xs text-gray-500">
                       <span className="capitalize">{task.task_type.replace('_', ' ')}</span>
                       <span className="hidden sm:inline">•</span>
-                      <span className="uppercase">{task.data_level}</span>
+                      <span className="uppercase">{task.data_type}</span>
                       {getNumClasses(task) > 0 && (
                         <>
                           <span className="hidden sm:inline">•</span>

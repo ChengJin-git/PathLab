@@ -37,7 +37,7 @@ export function BatchEditModal({ taskType, selectedCount, updating, onConfirm, o
     onConfirm({ label, case_id: caseId, age, gender, source, event_time: eventTime, event_status: eventStatus })
   }
 
-  const isSurvival = taskType === 'survival_prediction'
+  const isSurvival = taskType === 'survival'
   const labelHint = 'Label (Disease Classification)'
 
   return (
