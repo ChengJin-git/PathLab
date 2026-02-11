@@ -174,7 +174,7 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
   const startRecording = useCallback(async () => {
     // Guard via refs – immune to stale closures
     if (isRecordingRef.current || isConnectingRef.current || startingRef.current) {
-      console.log('[ASR] Already recording/connecting, ignoring start')
+      // console.log('[ASR] Already recording/connecting, ignoring start')
       return
     }
     startingRef.current = true
@@ -225,14 +225,14 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
               }
               break
             case 'session.updated':
-              console.log('[ASR] Session updated, ready for audio')
+              // console.log('[ASR] Session updated, ready for audio')
               break
             case 'input_audio_buffer.speech_started':
-              console.log('[ASR] Speech started')
+              // console.log('[ASR] Speech started')
               opts.onSpeechStart?.()
               break
             case 'input_audio_buffer.speech_stopped':
-              console.log('[ASR] Speech stopped (VAD)')
+              // console.log('[ASR] Speech stopped (VAD)')
               opts.onSpeechEnd?.()
               break
             case 'conversation.item.input_audio_transcription.text': {
@@ -243,11 +243,11 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
             }
             case 'conversation.item.input_audio_transcription.completed': {
               const transcript = (data.transcript || '').trim()
-              console.log('[ASR] Transcript completed:', transcript)
+              // console.log('[ASR] Transcript completed:', transcript)
               if (transcript) {
                 opts.onTranscriptComplete(transcript)
               } else {
-                console.log('[ASR] Empty transcript ignored')
+                // console.log('[ASR] Empty transcript ignored')
               }
               setPartialText('')
               break
@@ -276,7 +276,7 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
         if (event.code !== 1000 && event.code !== 1001) {
           console.warn('[ASR] WebSocket closed unexpectedly:', event.code, event.reason)
         } else {
-          console.log('[ASR] WebSocket closed normally')
+          // console.log('[ASR] WebSocket closed normally')
         }
         cleanup()
       }
@@ -340,7 +340,7 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
       setConnecting(false)
 
       maxTimeoutRef.current = setTimeout(() => {
-        console.log('[ASR] Max recording time reached')
+        // console.log('[ASR] Max recording time reached')
         optionsRef.current.onError?.('Maximum recording time reached')
         cleanup()
       }, maxRecordingSeconds * 1000)
