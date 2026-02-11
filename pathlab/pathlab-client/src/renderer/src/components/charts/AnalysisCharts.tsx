@@ -552,7 +552,7 @@ export const KMCurveChart = memo(function KMCurveChart({ data, title, compact }:
     // Main survival lines (on top of CI bands)
     series.push(
       {
-        name: 'Low Risk (Risk < Median)',
+        name: 'Low Risk Group',
         type: 'line',
         step: 'end',
         data: lowRiskData,
@@ -580,7 +580,7 @@ export const KMCurveChart = memo(function KMCurveChart({ data, title, compact }:
         formatter: (params: any) => {
           if (!Array.isArray(params) || params.length === 0) return ''
           const mainLines = params.filter((p: any) =>
-            p.seriesName === 'Low Risk (Risk < Median)' || p.seriesName === 'High Risk (Risk >= Median)'
+            p.seriesName === 'Low Risk Group' || p.seriesName === 'High Risk Group'
           )
           if (mainLines.length === 0) return ''
           const lines = mainLines.map((p: any) => `${p.seriesName}: ${(p.data[1] * 100).toFixed(1)}%`)
@@ -602,8 +602,8 @@ export const KMCurveChart = memo(function KMCurveChart({ data, title, compact }:
         },
         tooltip: { show: true },
         data: [
-          { name: 'Low Risk (Risk < Median)' },
-          { name: 'High Risk (Risk >= Median)' },
+          { name: 'Low Risk Group' },
+          { name: 'High Risk Group' },
           ...(hasLowRiskCI ? [{ name: 'Low Risk 95% CI' }] : []),
           ...(hasHighRiskCI ? [{ name: 'High Risk 95% CI' }] : [])
         ],
