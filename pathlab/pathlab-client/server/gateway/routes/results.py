@@ -19,23 +19,35 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, or_
 from sqlalchemy.orm import selectinload
 
 from backend.ai.schemas.base import TaskStatus
 from backend.database import get_db, safe_session
 from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedModel, TrainingTaskWSI, DataGroup, Dataset
-from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository, TrainedModelRepository, DataGroupRepository, DatasetRepository
+from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository, TrainedModelRepository, DataGroupRepository, DatasetRepository, DatasetPermissionRepository
 from backend.common.config import Config
 from backend.storage import StorageManager
 from backend.auth import current_active_user, User, get_user_from_header_or_param, get_user_from_token_param
-from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, check_wsi_access_permission
+from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, check_wsi_access_permission, check_task_access_permission
 
 # Initialize storage manager
 storage_manager = StorageManager(str(Config.get_uploads_dir()))
 
 router = APIRouter(prefix="/results", tags=["AI Results"])
 logger = logging.getLogger(__name__)
+
+
+async def _get_elevated_dataset_ids(user: User, db: AsyncSession) -> Optional[List[str]]:
+    """
+    Get dataset IDs for which the user has temporary elevated permissions.
+    Returns None for admin users (no filtering needed).
+    Returns empty list if no elevated permissions.
+    """
+    if user.is_admin():
+        return None
+    permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
+    return [p.dataset_id for p in permissions if p.is_valid()]
 
 
 # =============================================================================
@@ -249,6 +261,7 @@ async def get_all_results(
     """
     Get all AI results with associated WSI labels for analysis.
     Users see only their own results, admin sees all.
+    Users with temporary elevated dataset permissions can also see results for WSIs in those datasets.
 
     Returns:
         List of results with predictions and ground truth labels
@@ -258,9 +271,13 @@ async def get_all_results(
         select(AIResult, WSISlide)
         .join(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
     )
-    # Filter by user_id if not admin
+    # Filter by user_id if not admin (include results for elevated datasets)
     if not user.is_admin():
-        query = query.where(AIResult.user_id == str(user.id))
+        elevated_dataset_ids = await _get_elevated_dataset_ids(user, db)
+        conditions = [AIResult.user_id == str(user.id)]
+        if elevated_dataset_ids:
+            conditions.append(WSISlide.dataset_id.in_(elevated_dataset_ids))
+        query = query.where(or_(*conditions))
     query = query.order_by(AIResult.created_at.desc()).offset(skip).limit(limit)
 
     result = await db.execute(query)
@@ -302,9 +319,13 @@ async def get_analysis_stats(
         .join(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
         .where(AIResult.pred.isnot(None))  # Only analyzed results
     )
-    # Filter by user_id if not admin
+    # Filter by user_id if not admin (include results for elevated datasets)
     if not user.is_admin():
-        query = query.where(AIResult.user_id == str(user.id))
+        elevated_dataset_ids = await _get_elevated_dataset_ids(user, db)
+        conditions = [AIResult.user_id == str(user.id)]
+        if elevated_dataset_ids:
+            conditions.append(WSISlide.dataset_id.in_(elevated_dataset_ids))
+        query = query.where(or_(*conditions))
     if task_id:
         query = query.where(AIResult.task_id == task_id)
 
@@ -655,6 +676,7 @@ async def get_analysis_tasks(
     """
     Get list of tasks available for analysis.
     Users see only their own tasks, admin sees all.
+    Users with temporary elevated dataset permissions can also see tasks for those datasets.
 
     Only returns tasks that have both features and model available.
     Also indicates whether ai_results exist (needed before running analysis).
@@ -668,9 +690,20 @@ async def get_analysis_tasks(
     query = select(TrainingTask).options(
         selectinload(TrainingTask.data_group)
     ).where(TrainingTask.status == TaskStatus.COMPLETED)
-    # Filter by user_id if not admin
+    # Filter by user_id if not admin (include tasks for elevated datasets)
     if not user.is_admin():
-        query = query.where(TrainingTask.user_id == str(user.id))
+        elevated_dataset_ids = await _get_elevated_dataset_ids(user, db)
+        conditions = [TrainingTask.user_id == str(user.id)]
+        if elevated_dataset_ids:
+            # Include tasks that have WSIs in elevated datasets
+            elevated_task_ids_subquery = (
+                select(TrainingTaskWSI.task_id)
+                .join(WSISlide, TrainingTaskWSI.wsi_id == WSISlide.wsi_id)
+                .where(WSISlide.dataset_id.in_(elevated_dataset_ids))
+                .distinct()
+            )
+            conditions.append(TrainingTask.task_id.in_(elevated_task_ids_subquery))
+        query = query.where(or_(*conditions))
     query = query.order_by(TrainingTask.created_at.desc())
     result = await db.execute(query)
     tasks = result.scalars().all()
@@ -1918,26 +1951,31 @@ async def start_external_validation(
     if not trained_model:
         raise HTTPException(status_code=404, detail=f"Model not found: {req.model_id}")
 
-    # Check ownership of the model
-    if not check_data_ownership(trained_model.user_id, user):
+    # Check ownership of the model (supports temporary elevated dataset permissions)
+    # First get model's training task to check dataset_id for temp permission
+    model_task = await TrainingTaskRepository.get_by_id(db, trained_model.task_id)
+    if not model_task:
+        raise HTTPException(status_code=404, detail=f"Model's training task not found: {trained_model.task_id}")
+    model_mc = model_task.model_config or {}
+    if not await check_task_access_permission(user, trained_model.user_id, model_mc.get("dataset_id"), db):
         raise HTTPException(status_code=403, detail="You don't have permission to use this model")
 
     if not trained_model.is_active:
         raise HTTPException(status_code=400, detail=f"Model is not active: {req.model_id}")
-
-    # Get model's training task to check task_type and data_level
-    model_task = await TrainingTaskRepository.get_by_id(db, trained_model.task_id)
-    if not model_task:
-        raise HTTPException(status_code=404, detail=f"Model's training task not found: {trained_model.task_id}")
 
     # Validate target dataset exists
     target_dataset = await DatasetRepository.get_by_id(db, req.dataset_id)
     if not target_dataset:
         raise HTTPException(status_code=404, detail=f"Dataset not found: {req.dataset_id}")
 
-    # Check ownership of the dataset
+    # Check ownership of the dataset (supports temporary elevated dataset permissions)
     if target_dataset.user_id and not check_data_ownership(target_dataset.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to use this dataset")
+        # Fallback: check temporary elevated permission for the target dataset
+        has_temp_dataset_perm = await DatasetPermissionRepository.has_valid_permission(
+            db, req.dataset_id, str(user.id), "pathologist"
+        )
+        if not has_temp_dataset_perm:
+            raise HTTPException(status_code=403, detail="You don't have permission to use this dataset")
 
     # Check GPU permission for the target dataset
     has_permission = await check_dataset_gpu_permission(user, req.dataset_id, db)
@@ -2202,8 +2240,9 @@ async def get_validation_progress(
     if not task:
         raise HTTPException(status_code=404, detail=f"Validation task not found: {task_id}")
 
-    # Check ownership
-    if not check_data_ownership(task.user_id, user):
+    # Check ownership (supports temporary elevated dataset permissions)
+    mc = task.model_config or {}
+    if not await check_task_access_permission(user, task.user_id, mc.get("dataset_id"), db):
         raise HTTPException(status_code=403, detail="You don't have permission to view this task")
 
     # Check if this is an external validation task via DataGroup
@@ -2270,9 +2309,19 @@ async def get_completed_external_validations(
             )
         )
     )
-    # Filter by user_id if not admin
+    # Filter by user_id if not admin (include tasks for elevated datasets)
     if not user.is_admin():
-        query = query.where(TrainingTask.user_id == str(user.id))
+        elevated_dataset_ids = await _get_elevated_dataset_ids(user, db)
+        conditions = [TrainingTask.user_id == str(user.id)]
+        if elevated_dataset_ids:
+            elevated_task_ids_subquery = (
+                select(TrainingTaskWSI.task_id)
+                .join(WSISlide, TrainingTaskWSI.wsi_id == WSISlide.wsi_id)
+                .where(WSISlide.dataset_id.in_(elevated_dataset_ids))
+                .distinct()
+            )
+            conditions.append(TrainingTask.task_id.in_(elevated_task_ids_subquery))
+        query = query.where(or_(*conditions))
     query = query.order_by(TrainingTask.created_at.desc())
     result = await db.execute(query)
     tasks = result.scalars().all()
@@ -3067,10 +3116,12 @@ async def get_task_analysis(
     """
     Get existing analysis results for a task. Users can only view their own tasks.
     """
-    # Check task ownership
+    # Check task ownership (supports temporary elevated dataset permissions)
     task = await TrainingTaskRepository.get_by_id(db, task_id)
-    if task and not check_data_ownership(task.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to view this task's analysis")
+    if task:
+        mc = task.model_config or {}
+        if not await check_task_access_permission(user, task.user_id, mc.get("dataset_id"), db):
+            raise HTTPException(status_code=403, detail="You don't have permission to view this task's analysis")
 
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id
 
@@ -3124,8 +3175,9 @@ async def run_task_analysis(
     if not task:
         raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
 
-    # Check ownership
-    if not check_data_ownership(task.user_id, user):
+    # Check ownership (supports temporary elevated dataset permissions)
+    mc = task.model_config or {}
+    if not await check_task_access_permission(user, task.user_id, mc.get("dataset_id"), db):
         raise HTTPException(status_code=403, detail="You don't have permission to analyze this task")
 
     # Check GPU permission (pathologist/admin OR temporary elevated permission)
@@ -3331,7 +3383,8 @@ async def get_quick_analysis(
     if not task:
         raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
 
-    if not check_data_ownership(task.user_id, user):
+    mc = task.model_config or {}
+    if not await check_task_access_permission(user, task.user_id, mc.get("dataset_id"), db):
         raise HTTPException(status_code=403, detail="You don't have permission to view this task's analysis")
 
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id
@@ -3549,10 +3602,12 @@ async def get_analysis_file(
     - Authorization header: Bearer <token>
     - Query parameter: ?token=<token> (for <img> tags)
     """
-    # Check task ownership
+    # Check task ownership (supports temporary elevated dataset permissions)
     task = await TrainingTaskRepository.get_by_id(db, task_id)
-    if task and not check_data_ownership(task.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to view this file")
+    if task:
+        mc = task.model_config or {}
+        if not await check_task_access_permission(user, task.user_id, mc.get("dataset_id"), db):
+            raise HTTPException(status_code=403, detail="You don't have permission to view this file")
 
     file_path = Config.get_uploads_dir() / "logs" / "analysis" / task_id / analysis_id / filename
 
@@ -3632,10 +3687,12 @@ async def get_analysis_status(
                 if task_dir.is_dir():
                     analysis_dir = task_dir / analysis_id
                     if analysis_dir.exists() and (analysis_dir / "summary.json").exists():
-                        # Analysis exists on disk, check ownership
+                        # Analysis exists on disk, check ownership (supports temp permissions)
                         task = await TrainingTaskRepository.get_by_id(db, task_dir.name)
-                        if task and not check_data_ownership(task.user_id, user):
-                            raise HTTPException(status_code=403, detail="You don't have permission to view this analysis")
+                        if task:
+                            mc = task.model_config or {}
+                            if not await check_task_access_permission(user, task.user_id, mc.get("dataset_id"), db):
+                                raise HTTPException(status_code=403, detail="You don't have permission to view this analysis")
 
                         return {
                             "analysis_id": analysis_id,
@@ -3648,12 +3705,14 @@ async def get_analysis_status(
 
         raise HTTPException(status_code=404, detail=f"Analysis not found: {analysis_id}")
 
-    # Check ownership
+    # Check ownership (supports temporary elevated dataset permissions)
     task_id = analysis_state.get("task_id")
     if task_id:
         task = await TrainingTaskRepository.get_by_id(db, task_id)
-        if task and not check_data_ownership(task.user_id, user):
-            raise HTTPException(status_code=403, detail="You don't have permission to view this analysis")
+        if task:
+            mc = task.model_config or {}
+            if not await check_task_access_permission(user, task.user_id, mc.get("dataset_id"), db):
+                raise HTTPException(status_code=403, detail="You don't have permission to view this analysis")
 
     return {
         "analysis_id": analysis_id,

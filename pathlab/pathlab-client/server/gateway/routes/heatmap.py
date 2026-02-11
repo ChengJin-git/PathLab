@@ -211,6 +211,45 @@ async def get_patch_cam(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/wsi/{wsi_id}/info")
+async def get_wsi_info(
+    wsi_id: str,
+    user: User = Depends(get_user_from_header_or_param),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get WSI info including whether it's a patch or WSI.
+    Used by frontend to determine display mode.
+
+    Supports authentication via:
+    - Authorization header: Bearer <token>
+    - Query parameter: ?token=<token> (for <img> tags)
+
+    Proxies to: GET /wsi/{wsi_id}/info
+    """
+    await _check_wsi_access(wsi_id, user, db)
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/info"
+            )
+
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=response.text
+                )
+
+            return response.json()
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Preprocessing service timeout")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get WSI info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/wsi/{wsi_id}/image")
 async def get_patch_file_image(
     wsi_id: str,

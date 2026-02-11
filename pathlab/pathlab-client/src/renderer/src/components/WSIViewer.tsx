@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { PREPROCESSING_BASE } from '../config'
-import { HeatmapData } from '../api'
+import { PREPROCESSING_BASE, API_BASE } from '../config'
+import { HeatmapData, getAuthToken, getPatchFileImageUrl } from '../api'
 import { Plus, Minus, RotateCcw, Maximize, Minimize, Loader2 } from 'lucide-react'
 
 interface WSIViewerProps {
@@ -151,8 +151,9 @@ export default function WSIViewer({
 
     const initViewer = async () => {
       try {
-        // First, check if this is a patch or WSI
-        const infoUrl = `${PREPROCESSING_BASE}/wsi/${wsi_id}/info`
+        // First, check if this is a patch or WSI (via gateway with auth)
+        const token = getAuthToken()
+        const infoUrl = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/info${token ? '?token=' + encodeURIComponent(token) : ''}`
         const infoResponse = await fetch(infoUrl)
         if (!infoResponse.ok) {
           throw new Error(`Failed to fetch file info: ${infoResponse.status}`)
@@ -161,10 +162,10 @@ export default function WSIViewer({
 
         if (cancelled) return
 
-        // If it's a patch, just display the image directly
+        // If it's a patch, just display the image directly (via gateway with auth)
         if (info.is_patch) {
           setIsPatch(true)
-          setPatchImageUrl(`${PREPROCESSING_BASE}/wsi/${wsi_id}/image`)
+          setPatchImageUrl(getPatchFileImageUrl(wsi_id))
           setLoading(false)
           return
         }
