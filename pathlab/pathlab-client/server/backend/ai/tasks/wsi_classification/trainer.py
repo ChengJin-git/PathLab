@@ -2186,7 +2186,5 @@ class WSIClassificationTrainer(BaseTrainer):
                 metadata={"task_id": task_id, "num_samples": len(all_sample_ids)}
             )
 
-        await db.commit()
-
         model.train()
 
