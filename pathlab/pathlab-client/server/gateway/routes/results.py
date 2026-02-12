@@ -2199,7 +2199,7 @@ async def start_external_validation(
         status=TaskStatus.PENDING,
         progress=0,
         classes=trained_model.classes,
-        preprocessing_config={
+        preprocessing_config=model_task.preprocessing_config or {
             "feature_extractor": trained_model.feature_extractor,
         },
         model_config={
@@ -2231,6 +2231,7 @@ async def start_external_validation(
         "model_id": req.model_id,
         "model_classes": trained_model.classes,
         "model_task_type": model_task_type,  # Pass model's task type for survival vs classification handling
+        "model_data_type": model_data_type,  # "wsi" or "patch"
         "dataset_id": req.dataset_id,
         "wsi_ids": wsi_ids,
     }
@@ -2372,20 +2373,271 @@ async def get_completed_external_validations(
     return {"items": items}
 
 
+async def _run_external_validation_patch_classification(
+    task_id: str,
+    model_task_id: str,
+    model_id: str,
+    model_classes: List[str],
+    dataset_id: str,
+    wsi_ids: List[str],
+    assigned_device: str,
+    logger_manager,
+    update_task_progress,
+):
+    """Run external validation for patch classification models.
+
+    Loads the feature extractor + linear probe, runs inference on each image,
+    generates CAM heatmaps, and saves results. Pattern follows
+    _run_inference_patch_classification but adapted for external validation context.
+    """
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    import numpy as np
+    from PIL import Image
+    from backend.ai.extractors import get_extractor
+    from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size, is_cnn_extractor
+    from backend.database.repositories import AIResultRepository, WSIRepository
+    from backend.database.database import safe_session
+    from backend.common.progress_store import clear_progress
+
+    uploads_dir = Config.get_uploads_dir()
+    device = assigned_device if assigned_device else ("cuda" if torch.cuda.is_available() else "cpu")
+
+    try:
+        # Load model checkpoint
+        model_dir = uploads_dir / "models" / model_id
+        ckpt_path = model_dir / "linear_probe.pth"
+        config_path = model_dir / "config.json"
+
+        if not ckpt_path.exists():
+            raise FileNotFoundError(f"Model checkpoint (linear_probe.pth) not found at {ckpt_path}")
+
+        config = {}
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+
+        classes = model_classes or config.get("classes", [])
+        if not classes:
+            raise ValueError("Could not determine model classes")
+
+        async with logger_manager.session() as (tl, _db):
+            await tl.info(f"Patch classification: loading model {model_id} with {len(classes)} classes")
+
+        # Load checkpoint and build model (in thread to avoid blocking event loop)
+        def _load_model():
+            checkpoint = torch.load(ckpt_path, map_location=device)
+            extractor_name = checkpoint.get("extractor_name", config.get("extractor", "resnet50"))
+            extractor_dim = checkpoint["extractor_dim"]
+            num_classes = checkpoint["num_classes"]
+
+            extractor = get_extractor(extractor_name, pretrained=True)
+            extractor = extractor.to(device)
+            extractor.eval()
+
+            linear_probe = nn.Linear(extractor_dim, num_classes).to(device)
+            linear_probe.load_state_dict(checkpoint["state_dict"])
+            linear_probe.eval()
+
+            return extractor, linear_probe, extractor_name
+
+        extractor, linear_probe, extractor_name = await asyncio.to_thread(_load_model)
+
+        # Get transforms and CAM extractor
+        fm_transform = extractor.get_transforms()
+        cam_extractor = get_cam_extractor(extractor_name)
+        cam_size = get_cam_spatial_size(extractor_name)
+        use_gradients = is_cnn_extractor(extractor_name)
+
+        # Combined model for CAM extraction
+        class CombinedModel(nn.Module):
+            def __init__(self, ext, probe):
+                super().__init__()
+                self.extractor = ext
+                self.linear_probe = probe
+
+            def forward(self, x):
+                features = self.extractor(x)
+                return self.linear_probe(features)
+
+        combined_model = CombinedModel(extractor, linear_probe).to(device)
+        combined_model.eval()
+
+        # Build labels dict and image paths from target dataset WSIs
+        labels = {}
+        image_paths = {}
+        async with safe_session() as db:
+            for wsi_id in wsi_ids:
+                wsi = await WSIRepository.get_by_id(db, wsi_id)
+                if wsi:
+                    if wsi.label and wsi.label in classes:
+                        labels[wsi_id] = classes.index(wsi.label)
+                    image_paths[wsi_id] = wsi.wsi_path
+
+        if not image_paths:
+            raise ValueError("No image paths found for target WSIs")
+
+        async with logger_manager.session() as (tl, _db):
+            await tl.info(f"Running inference on {len(image_paths)} images (extractor: {extractor_name})")
+
+        await update_task_progress(TaskStatus.RUNNING, 10)
+
+        # Delete old AIResult records for this task
+        async with safe_session() as db:
+            deleted_count = await AIResultRepository.delete_by_task_id(db, task_id)
+            await db.commit()
+            if deleted_count > 0:
+                logger.info(f"Deleted {deleted_count} old AIResult records for task {task_id}")
+
+        # Run inference (in thread to avoid blocking event loop)
+        ai_results_root = uploads_dir / "ai_results"
+        results_saved = 0
+        total_items = len(image_paths)
+
+        def _run_inference():
+            nonlocal results_saved
+            all_results = []
+            with torch.set_grad_enabled(use_gradients):
+                for idx, (wsi_id, img_path) in enumerate(image_paths.items()):
+                    try:
+                        img = Image.open(img_path).convert("RGB")
+                        img_tensor = fm_transform(img).unsqueeze(0).to(device)
+
+                        with torch.inference_mode():
+                            logits = combined_model(img_tensor)
+                            probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                            pred_idx = int(probs.argmax())
+                            pred_label = classes[pred_idx]
+
+                        # Extract CAM
+                        try:
+                            cam_map = cam_extractor.extract_cam(
+                                model=combined_model,
+                                input_tensor=img_tensor,
+                                target_class=pred_idx,
+                            )
+                            cam_map = cam_map.squeeze(0)
+                        except Exception:
+                            cam_map = np.ones(cam_size, dtype=np.float32) / (cam_size[0] * cam_size[1])
+
+                        probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
+                        gt_label = classes[labels[wsi_id]] if wsi_id in labels else "unknown"
+
+                        wsi_result_dir = ai_results_root / wsi_id
+                        wsi_result_dir.mkdir(parents=True, exist_ok=True)
+
+                        # Save CAM
+                        cam_file = wsi_result_dir / f"extval_{task_id}_cam.npy"
+                        np.save(cam_file, cam_map)
+
+                        # Save result JSON
+                        result_data = {
+                            "wsi_id": wsi_id,
+                            "task_id": task_id,
+                            "pred": pred_label,
+                            "probs": probs_dict,
+                            "ground_truth": gt_label,
+                            "correct": pred_label == gt_label,
+                            "classes": classes,
+                            "cam_file": str(cam_file),
+                            "cam_size": list(cam_size),
+                        }
+
+                        result_file = wsi_result_dir / f"extval_{task_id}_result.json"
+                        with open(result_file, 'w', encoding='utf-8') as f:
+                            json.dump(result_data, f, ensure_ascii=False, indent=2)
+
+                        all_results.append({
+                            "wsi_id": wsi_id,
+                            "pred": pred_label,
+                            "probs": probs_dict,
+                            "gt_label": gt_label,
+                            "correct": pred_label == gt_label,
+                            "cam_file": str(cam_file),
+                            "cam_size": list(cam_size),
+                            "result_file": str(result_file),
+                        })
+                        results_saved += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to process {wsi_id}: {e}")
+                        continue
+            return all_results
+
+        all_results = await asyncio.to_thread(_run_inference)
+
+        # Save to database
+        async with safe_session() as db:
+            for r in all_results:
+                db_result_data = {
+                    "wsi_id": r["wsi_id"],
+                    "task_id": task_id,
+                    "pred": r["pred"],
+                    "probs": r["probs"],
+                    "extra_metadata": {
+                        "ground_truth": r["gt_label"],
+                        "correct": r["correct"],
+                        "classes": classes,
+                        "task_type": "patch_classification",
+                        "cam_file": r["cam_file"],
+                        "cam_size": r["cam_size"],
+                        "result_file": r["result_file"],
+                    }
+                }
+                await AIResultRepository.create(db, db_result_data)
+            await db.commit()
+
+        clear_progress(task_id)
+        await update_task_progress(TaskStatus.COMPLETED, 100, results_saved, results_saved)
+
+        async with logger_manager.session() as (tl, _db):
+            await tl.info(f"Patch classification external validation completed: {results_saved}/{total_items} images processed")
+
+        # Auto-trigger analysis
+        await _auto_trigger_external_validation_analysis(
+            task_id=task_id,
+            model_task_id=model_task_id,
+            model_id=model_id,
+            dataset_id=dataset_id,
+        )
+
+    except Exception as e:
+        import traceback
+        logger.error(f"Patch classification external validation {task_id} failed: {e}\n{traceback.format_exc()}")
+        try:
+            clear_progress(task_id)
+            async with logger_manager.session() as (tl, _db):
+                await tl.error(f"Patch classification external validation failed: {e}")
+        except Exception:
+            pass
+        await update_task_progress(TaskStatus.FAILED, 0, error_msg=str(e))
+    finally:
+        try:
+            import gc
+            gc.collect()
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+        except Exception as cleanup_err:
+            logger.warning(f"Patch ext-val {task_id}: VRAM cleanup failed: {cleanup_err}")
+
+
 async def _run_external_validation(
     task_id: str,
     model_task_id: str,
     model_id: str,
     model_classes: List[str],
-    model_task_type: str,  # "classification", "wsi_classification", "survival", "wsi_survival"
-    dataset_id: str,
-    wsi_ids: List[str],
+    model_task_type: str,  # "classification", "wsi_classification", "survival", "wsi_survival", "patch_classification"
+    model_data_type: str = "wsi",  # "wsi" or "patch"
+    dataset_id: str = "",
+    wsi_ids: List[str] = None,
     assigned_device: str = None,  # GPU device assigned by task queue (e.g., "cuda:0")
 ):
     """Background task to run external validation.
 
     This function is called by the task queue and updates progress in the database.
-    Supports both classification and survival models.
+    Supports WSI classification, WSI survival, and patch classification models.
     Supports case-level inference based on the target dataset's aggregation_level.
 
     Architecture:
@@ -2398,11 +2650,16 @@ async def _run_external_validation(
     import torch
     import torch.nn.functional as F
     import numpy as np
+    import httpx
     from sqlalchemy import update as sql_update
     from backend.database.models import TrainingTask
     from backend.database.database import safe_session
     from backend.common.progress_store import set_progress, clear_progress
     from gateway.pipeline import ScopedLogger
+    from gateway.dependencies import PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
+    from backend.ai.tasks.feature_cache import compute_params_hash, find_cached_features, create_symlink_to_cache
+
+    wsi_ids = wsi_ids or []
 
     # ScopedLogger writes to training_logs table so SSE log stream works
     logger_manager = ScopedLogger(task_id)
@@ -2435,9 +2692,37 @@ async def _run_external_validation(
         await update_task_progress(TaskStatus.RUNNING, 0)
         async with logger_manager.session() as (tl, _db):
             await tl.info(f"Starting external validation for task: {task_id}")
-            await tl.info(f"Model: {model_id} | Dataset: {dataset_id} | WSIs: {len(wsi_ids)} | Type: {'survival' if is_survival else 'classification'}")
+            await tl.info(f"Model: {model_id} | Dataset: {dataset_id} | WSIs: {len(wsi_ids)} | Data type: {model_data_type} | Task type: {model_task_type}")
 
         uploads_dir = Config.get_uploads_dir()
+
+        # ================================================================
+        # Patch-level tasks: branch to dedicated handlers
+        # ================================================================
+        if model_data_type == "patch":
+            is_patch_segmentation = model_task_type in ("patch_segmentation", "segmentation")
+            if is_patch_segmentation:
+                # TODO: Patch segmentation external validation not yet implemented.
+                # The patch segmentation training module does not register TrainedModel
+                # in the database, so this code path should not be reachable in practice.
+                raise NotImplementedError(
+                    "Patch segmentation external validation is not yet supported. "
+                    "This module is still under development."
+                )
+
+            # Patch classification external validation
+            await _run_external_validation_patch_classification(
+                task_id=task_id,
+                model_task_id=model_task_id,
+                model_id=model_id,
+                model_classes=model_classes,
+                dataset_id=dataset_id,
+                wsi_ids=wsi_ids,
+                assigned_device=assigned_device,
+                logger_manager=logger_manager,
+                update_task_progress=update_task_progress,
+            )
+            return
 
         # Load model - wrapped in asyncio.to_thread because torch.load() is
         # CPU-intensive (pickle deserialization) and would block the event loop.
@@ -2571,47 +2856,157 @@ async def _run_external_validation(
                     if wsi and wsi.label and wsi.label in classes:
                         labels[wsi_id] = classes.index(wsi.label)
 
-        # Build features directory for this validation task by symlinking features
-        # from all training task directories that contain features for the target WSIs.
-        # Features are stored per-task at: uploads_dir / "training" / {task_id} / "features" / {wsi_id}.pt
-        # Since we're selecting by dataset_id, we search across all training task directories.
+        # ================================================================
+        # Build features directory using global cache (params_hash based).
+        # If features are missing, automatically extract them via
+        # preprocessing + AI services (same pattern as pipeline.py).
+        # ================================================================
         features_dir = uploads_dir / "training" / task_id / "features"
         features_dir.mkdir(parents=True, exist_ok=True)
 
-        training_base = uploads_dir / "training"
-        wsi_id_set = set(wsi_ids)
-        found_wsi_ids = set()
+        # Get preprocessing_config from the validation task record
+        async with safe_session() as db:
+            val_task = await TrainingTaskRepository.get_by_id(db, task_id)
+            preprocessing_config = (val_task.preprocessing_config if val_task else {}) or {}
 
-        def _build_feature_symlinks():
-            """Search all training task feature dirs and symlink found features."""
-            if not training_base.exists():
-                return
-            for task_dir in training_base.iterdir():
-                if not task_dir.is_dir():
-                    continue
-                task_features = task_dir / "features"
-                if not task_features.is_dir():
-                    continue
-                for wsi_id in wsi_id_set - found_wsi_ids:
-                    src = task_features / f"{wsi_id}.pt"
-                    dst = features_dir / f"{wsi_id}.pt"
-                    if src.exists() and not dst.exists():
-                        try:
-                            dst.symlink_to(src.resolve())
-                            found_wsi_ids.add(wsi_id)
-                        except OSError:
-                            pass
-                if found_wsi_ids == wsi_id_set:
-                    break  # All features found
+        feature_extractor = preprocessing_config.get("feature_extractor", "resnet50")
 
-        await asyncio.to_thread(_build_feature_symlinks)
-        logger.info(f"External validation: found features for {len(found_wsi_ids)}/{len(wsi_ids)} WSIs across training tasks")
+        # Compute params_hash from preprocessing config
+        seg_params = {
+            "sthresh": preprocessing_config.get("sthresh", 8),
+            "mthresh": preprocessing_config.get("mthresh", 7),
+            "close": preprocessing_config.get("close", 4),
+            "use_otsu": preprocessing_config.get("use_otsu", False),
+        }
+        filter_params = {
+            "a_t": preprocessing_config.get("a_t", 1),
+            "a_h": preprocessing_config.get("a_h", 256),
+            "max_n_holes": preprocessing_config.get("max_n_holes", 100),
+        }
+        level = preprocessing_config.get("level", 0)
+        contour_fn = preprocessing_config.get("contour_fn", "four_pt")
+        use_padding = preprocessing_config.get("use_padding", True)
+
+        params_hash = compute_params_hash(
+            level=level,
+            seg_params=seg_params,
+            filter_params=filter_params,
+            contour_fn=contour_fn,
+            use_padding=use_padding,
+        )
+
+        # Step 1: Check global feature cache for each WSI
+        cached_wsi_ids = []
+        missing_wsi_ids = []
+
+        def _check_feature_cache():
+            for wsi_id in wsi_ids:
+                cached_path = find_cached_features(uploads_dir, feature_extractor, params_hash, wsi_id)
+                if cached_path is not None:
+                    create_symlink_to_cache(features_dir, wsi_id, cached_path)
+                    cached_wsi_ids.append(wsi_id)
+                else:
+                    missing_wsi_ids.append(wsi_id)
+
+        await asyncio.to_thread(_check_feature_cache)
 
         async with logger_manager.session() as (tl, _db):
-            await tl.info(f"Found features for {len(found_wsi_ids)}/{len(wsi_ids)} WSIs")
-            if len(found_wsi_ids) < len(wsi_ids):
-                missing = len(wsi_ids) - len(found_wsi_ids)
-                await tl.warning(f"{missing} WSIs missing features, will be skipped")
+            await tl.info(f"Feature cache: {len(cached_wsi_ids)}/{len(wsi_ids)} WSIs found in global cache (hash={params_hash})")
+
+        # Step 2: If features are missing, extract them via preprocessing + AI services
+        if missing_wsi_ids:
+            async with logger_manager.session() as (tl, _db):
+                await tl.info(f"Extracting features for {len(missing_wsi_ids)} WSIs missing from cache...")
+
+            # Update status to EXTRACTING so frontend shows feature extraction stage
+            await update_task_progress(TaskStatus.EXTRACTING, 5)
+
+            # Step 2a: Patch extraction via preprocessing service
+            total_missing = len(missing_wsi_ids)
+            for idx, wsi_id in enumerate(missing_wsi_ids, 1):
+                await asyncio.sleep(0)  # Yield to event loop
+                try:
+                    async with httpx.AsyncClient(timeout=300.0) as client:
+                        response = await client.post(
+                            f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
+                            params={
+                                "level": level,
+                                "force_recompute": False,
+                                "sthresh": seg_params["sthresh"],
+                                "mthresh": seg_params["mthresh"],
+                                "close": seg_params["close"],
+                                "use_otsu": seg_params["use_otsu"],
+                                "contour_fn": contour_fn,
+                                "use_padding": use_padding,
+                                "a_t": filter_params["a_t"],
+                                "a_h": filter_params["a_h"],
+                                "max_n_holes": filter_params["max_n_holes"],
+                                "save_mask": True,
+                            },
+                        )
+                        response.raise_for_status()
+                except Exception as e:
+                    async with logger_manager.session() as (tl, _db):
+                        await tl.error(f"Failed to extract patches from {wsi_id}: {e}")
+                    raise
+
+                # Update progress (5-30% for patch extraction)
+                progress = 5 + int((idx / total_missing) * 25)
+                await update_task_progress(TaskStatus.EXTRACTING, progress)
+
+            async with logger_manager.session() as (tl, _db):
+                await tl.info(f"Patch extraction completed for {total_missing} WSIs")
+
+            # Step 2b: Feature extraction via AI service
+            feature_batch_size = preprocessing_config.get("feature_batch_size", 64)
+            from gateway.pipeline import get_training_timeout
+            timeout = get_training_timeout()
+
+            async with logger_manager.session() as (tl, _db):
+                await tl.info(f"Calling AI service for feature extraction (using {feature_extractor})")
+
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    resp = await client.post(
+                        f"{AI_SERVICE_URL}/api/ai/training/extract_features",
+                        json={
+                            "task_id": task_id,
+                            "wsi_ids": missing_wsi_ids,
+                            "feature_extractor": feature_extractor,
+                            "batch_size": feature_batch_size,
+                            "force_recompute": False,
+                            "huggingface_token": "",
+                            "preprocessing_config": preprocessing_config,
+                            "device": assigned_device or "",
+                        },
+                    )
+                    resp.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                body = e.response.text if e.response is not None else str(e)
+                async with logger_manager.session() as (tl, _db):
+                    await tl.error(f"Feature extraction failed: {e}", metadata={"body": body})
+                raise
+            except httpx.TimeoutException as e:
+                async with logger_manager.session() as (tl, _db):
+                    await tl.error(f"Feature extraction timeout: {e}")
+                raise
+
+            async with logger_manager.session() as (tl, _db):
+                await tl.info(f"Feature extraction completed for {total_missing} WSIs")
+
+            # After extraction, symlink newly created features
+            def _symlink_newly_extracted():
+                for wsi_id in missing_wsi_ids:
+                    cached_path = find_cached_features(uploads_dir, feature_extractor, params_hash, wsi_id)
+                    if cached_path is not None:
+                        create_symlink_to_cache(features_dir, wsi_id, cached_path)
+
+            await asyncio.to_thread(_symlink_newly_extracted)
+
+        # Update status back to RUNNING for inference phase
+        await update_task_progress(TaskStatus.RUNNING, 35)
+        async with logger_manager.session() as (tl, _db):
+            await tl.info(f"All features ready. Starting inference...")
 
         ai_results_root = uploads_dir / "ai_results"
 

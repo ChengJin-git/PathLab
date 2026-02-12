@@ -531,7 +531,8 @@ export default function TaskListPage() {
                       <div className="flex flex-col gap-0.5 w-full col-span-2 md:col-span-1">
                         <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">
                           {task.task_type === 'external_validation'
-                            ? (task.status === 'running' || task.status === 'training' ? 'Testing' : 'Progress')
+                            ? (task.status === 'extracting' ? 'Extracting' :
+                              task.status === 'running' || task.status === 'training' ? 'Testing' : 'Progress')
                             : (task.status === 'running' ? 'Patching' :
                               task.status === 'extracting' ? 'Extracting' :
                                 task.status === 'training' ? 'Training' : 'Progress')}
