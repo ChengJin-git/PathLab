@@ -20,7 +20,6 @@ import {
   DEFAULT_CLASSIFICATION_METRICS,
   DEFAULT_CLASSIFICATION_CHARTS,
   DEFAULT_SURVIVAL_METRICS,
-  DEFAULT_SURVIVAL_CHARTS,
   DEFAULT_EXTERNAL_CLASSIFICATION_CHARTS,
   DEFAULT_EXTERNAL_SURVIVAL_CHARTS
 } from '../constants/metrics'
@@ -451,7 +450,7 @@ export default function ResultsViewerPage() {
       // 1. status === 'completed' — both inference and analysis already exist
       // 2. status === 'analysis_started' — inference exists, analysis auto-triggered
       // 3. status === 'pending' — new task queued for GPU inference
-      const responseStatus = (result as Record<string, unknown>).status as string
+      const responseStatus = (result as unknown as Record<string, unknown>).status as string
 
       if (responseStatus === 'completed') {
         // Both inference and analysis already exist — load results directly
@@ -1054,287 +1053,155 @@ export default function ResultsViewerPage() {
             </div>
           </div>
 
-          {/* Right Panel - Progress & Results */}
-          <div className="lg:col-span-2 space-y-6">
-            {validationProgress ? (
-              <>
-                {/* Progress Card */}
-                <Card className="p-4 sm:p-6">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Validation Progress</h3>
+          {/* Right Panel — Results (mirrors internal analysis layout) */}
+          <div className="lg:col-span-3 flex flex-col gap-6">
+            {/* History Toggle */}
+            <div className="flex-none flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900">
+                {showExtHistory ? 'Analysis History' : 'Latest Result'}
+              </h3>
+              <button
+                onClick={() => setShowExtHistory(!showExtHistory)}
+                className="flex items-center gap-2 text-sm text-orange-600 hover:text-orange-800"
+              >
+                <History className="w-4 h-4" />
+                {showExtHistory ? 'Show Latest' : 'View History'}
+              </button>
+            </div>
 
+            <div className="flex-1 min-h-0">
+              {/* Progress — shown while validation is running/pending */}
+              {validationProgress && (validationProgress.status === 'running' || validationProgress.status === 'pending') ? (
+                <Card className="p-6">
+                  <h4 className="font-semibold text-gray-900 mb-4">Validation in Progress</h4>
                   <div className="space-y-4">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-gray-600">Status</span>
                       <Badge variant="secondary" className={
-                        validationProgress.status === 'completed' ? 'bg-green-100 text-green-700' :
-                        validationProgress.status === 'failed' ? 'bg-red-100 text-red-700' :
-                        validationProgress.status === 'running' ? 'bg-blue-100 text-blue-700' :
-                        'bg-gray-100 text-gray-700'
+                        validationProgress.status === 'running' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'
                       }>
                         {validationProgress.status}
                       </Badge>
                     </div>
-
                     <div>
                       <div className="flex items-center justify-between text-sm mb-2">
                         <span className="text-gray-600">Progress</span>
                         <span className="font-medium">{validationProgress.processed_wsi} / {validationProgress.total_wsi} WSIs</span>
                       </div>
                       <div className="w-full bg-gray-200 rounded-full h-3">
-                        <div
-                          className={`h-3 rounded-full transition-all duration-300 ${
-                            validationProgress.status === 'completed' ? 'bg-green-500' :
-                            validationProgress.status === 'failed' ? 'bg-red-500' :
-                            'bg-orange-500'
-                          }`}
-                          style={{ width: `${validationProgress.progress}%` }}
-                        />
+                        <div className="h-3 rounded-full transition-all duration-300 bg-orange-500" style={{ width: `${validationProgress.progress}%` }} />
                       </div>
                     </div>
+                  </div>
+                </Card>
 
-                    {validationProgress.status === 'completed' && (
-                      <div className="p-4 bg-green-50 rounded-lg border border-green-200">
-                        <div className="flex items-center gap-2 text-green-700">
-                          <CheckCircle2 className="w-5 h-5" />
-                          <span className="font-medium">Validation completed!</span>
-                        </div>
-                        <p className="text-sm text-green-600 mt-2">
-                          Generated {validationProgress.results_count || validationProgress.processed_wsi} inference results.
-                          Configure metrics and charts below, then run analysis.
-                        </p>
-                      </div>
-                    )}
-
-                    {validationProgress.status === 'failed' && validationProgress.error && (
-                      <div className="p-4 bg-red-50 rounded-lg border border-red-200">
-                        <div className="flex items-center gap-2 text-red-700">
-                          <AlertCircle className="w-5 h-5" />
-                          <span className="font-medium">Validation failed</span>
-                        </div>
-                        <p className="text-sm text-red-600 mt-2">{validationProgress.error}</p>
-                      </div>
+              ) : validationProgress?.status === 'failed' ? (
+                <Card className="p-6">
+                  <div className="p-4 bg-red-50 rounded-lg border border-red-200">
+                    <div className="flex items-center gap-2 text-red-700">
+                      <AlertCircle className="w-5 h-5" />
+                      <span className="font-medium">Validation failed</span>
+                    </div>
+                    {validationProgress.error && (
+                      <p className="text-sm text-red-600 mt-2">{validationProgress.error}</p>
                     )}
                   </div>
                 </Card>
 
-                {/* Analysis Configuration - Show when validation completed */}
-                {validationProgress.status === 'completed' && (
-                  <>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {/* Metrics Selection */}
-                      <Card className="p-6">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                          Metrics
-                          {modelTask && isSurvivalTask(modelTask.task_type) && (
-                            <span className="ml-2 text-xs font-normal text-emerald-600"></span>
-                          )}
-                        </h3>
-                        <div className="space-y-3">
-                          {(isSurvivalTask(modelTask?.task_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
-                            <div key={metric.id} className="flex items-start gap-3 group">
-                              <input
-                                type="checkbox"
-                                checked={selectedMetrics.includes(metric.id)}
-                                onChange={() => toggleMetric(metric.id)}
-                                className="mt-1 w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500 cursor-pointer"
-                              />
-                              <div className="flex-1">
-                                <div className="flex items-center justify-between">
-                                  <span
-                                    className="text-sm font-medium text-gray-900 group-hover:text-orange-600 cursor-pointer"
-                                    onClick={() => toggleMetric(metric.id)}
-                                  >
-                                    {metric.label}
-                                  </span>
-                                  {/* 95% CI button only for non-K-Fold models (K-Fold uses mean ± std) */}
-                                  {selectedMetrics.includes(metric.id) && !modelTask?.is_kfold && (
-                                    <button
-                                      type="button"
-                                      onClick={() => toggleBootstrapCI(metric.id)}
-                                      className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-tight transition-all duration-200 focus:outline-none border ${
-                                        bootstrapCIMetrics.includes(metric.id)
-                                          ? 'bg-orange-500 text-white shadow-sm border-orange-500 ring-2 ring-orange-500/20'
-                                          : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-orange-200 hover:bg-orange-50 hover:text-orange-600'
-                                      }`}
-                                    >
-                                      {bootstrapCIMetrics.includes(metric.id) ? (
-                                        <Check className="w-2.5 h-2.5 stroke-[3]" />
-                                      ) : (
-                                        <Plus className="w-2.5 h-2.5 stroke-[3]" />
-                                      )}
-                                      95% CI
-                                    </button>
-                                  )}
-                                </div>
-                                <p className="text-xs text-gray-500">{metric.description}</p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                        {/* 95% CI computation time note */}
-                        {bootstrapCIMetrics.length > 0 && (
-                          <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                            <p className="text-xs text-amber-700">
-                              <span className="font-semibold">Note:</span> Computing 95% CI with 1000 bootstrap samples would take longer time.
+              ) : showExtHistory ? (
+                /* History List */
+                <div className="space-y-4">
+                  {extAnalyses.length === 0 ? (
+                    <Card className="p-8 text-center">
+                      <History className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                      <p className="text-gray-500">No analysis history</p>
+                    </Card>
+                  ) : (
+                    extAnalyses.map(analysis => (
+                      <Card key={analysis.analysis_id} className="overflow-hidden">
+                        <div className="p-4 flex items-center justify-between hover:bg-gray-50">
+                          <button
+                            onClick={() => setExpandedExtAnalysis(
+                              expandedExtAnalysis === analysis.analysis_id ? null : analysis.analysis_id
+                            )}
+                            className="flex-1 text-left"
+                          >
+                            <p className="font-medium text-gray-900">
+                              {formatDate(analysis.timestamp)}
                             </p>
+                            <p className="text-sm text-gray-500">
+                              {analysis.num_samples} samples{analysis.classes && ` • ${analysis.classes.length} classes`}
+                              {isAdmin && analysis.submitted_by && (
+                                <span className="ml-2 text-orange-600">• {analysis.submitted_by}</span>
+                              )}
+                            </p>
+                            {analysis.description && (
+                              <p className="text-sm text-gray-600 mt-1">{analysis.description}</p>
+                            )}
+                          </button>
+                          <button
+                            onClick={() => setExpandedExtAnalysis(
+                              expandedExtAnalysis === analysis.analysis_id ? null : analysis.analysis_id
+                            )}
+                            className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors ml-3"
+                          >
+                            {expandedExtAnalysis === analysis.analysis_id ? (
+                              <ChevronUp className="w-5 h-5" />
+                            ) : (
+                              <ChevronDown className="w-5 h-5" />
+                            )}
+                          </button>
+                        </div>
+
+                        {expandedExtAnalysis === analysis.analysis_id && (
+                          <div className="border-t border-gray-100 p-4 bg-gray-50">
+                            <AnalysisDetails analysis={analysis} taskId={validationProgress?.validation_id} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
                           </div>
                         )}
                       </Card>
-
-                      {/* Charts Selection */}
-                      <Card className="p-6">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                          Charts
-                          {modelTask && isSurvivalTask(modelTask.task_type) && (
-                            <span className="ml-2 text-xs font-normal text-emerald-600"></span>
-                          )}
-                        </h3>
-                        <div className="space-y-3">
-                          {(isSurvivalTask(modelTask?.task_type) ? EXTERNAL_VALIDATION_SURVIVAL_CHARTS : EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS).map(chart => (
-                            <label key={chart.id} className="flex items-start gap-3 cursor-pointer group">
-                              <input
-                                type="checkbox"
-                                checked={selectedCharts.includes(chart.id)}
-                                onChange={() => toggleChart(chart.id)}
-                                className="mt-1 w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500"
-                              />
-                              <div>
-                                <span className="text-sm font-medium text-gray-900 group-hover:text-orange-600">
-                                  {chart.label}
-                                </span>
-                                <p className="text-xs text-gray-500">{chart.description}</p>
-                              </div>
-                            </label>
-                          ))}
-                        </div>
-                      </Card>
+                    ))
+                  )}
+                </div>
+              ) : (
+                /* Latest Result */
+                currentResult && currentResult.summary && !currentResult._pending ? (
+                  <Card className="h-full flex flex-col p-4 sm:p-6 overflow-hidden">
+                    <div className="flex-none flex items-center justify-between mb-6">
+                      <div>
+                        <h4 className="font-semibold text-gray-900">Analysis Complete</h4>
+                        <p className="text-sm text-gray-500">
+                          {formatDate(currentResult.summary.timestamp)}
+                        </p>
+                      </div>
+                      <CheckCircle2 className="w-6 h-6 text-green-500" />
                     </div>
-
-                    {/* Description */}
-                    <Card className="p-6">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Description (Optional)</h3>
-                      <textarea
-                        value={description}
-                        onChange={(e) => setDescription(e.target.value)}
-                        placeholder="Add notes about this external validation analysis..."
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 resize-none"
-                        rows={2}
-                      />
-                    </Card>
-
-                    {/* Run Analysis Button */}
-                    <Button
-                      onClick={async () => {
-                        // Use the external validation task ID for analysis
-                        const taskIdToAnalyze = validationProgress.validation_id
-                        setRunning(true)
-                        setAnalysisError(null)
-                        try {
-                          const response = await fetch(`${API_BASE}/results/tasks/${taskIdToAnalyze}/analysis`, authFetchOptions({
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              metrics: selectedMetrics,
-                              charts: selectedCharts,
-                              description: description || null,
-                              bootstrap_ci_metrics: bootstrapCIMetrics.length > 0 ? bootstrapCIMetrics : undefined
-                            })
-                          }))
-                          if (response.ok) {
-                            const result = await response.json()
-                            // Analysis is now async - result contains status, not full analysis
-                            if (result.status === 'pending' || result.status === 'running') {
-                              // Show submitted message - user can track in Background Tasks panel
-                              setAnalysisError(null)
-                              // Store the analysis_id for later
-                              setCurrentResult({
-                                ...result,
-                                message: 'Analysis submitted! Track progress in the Background Tasks panel.',
-                                _pending: true
-                              })
-                            } else {
-                              setCurrentResult(result)
-                              setExpandedAnalysis(result.analysis_id)
-                            }
-                          } else {
-                            const error = await response.json()
-                            setAnalysisError(error.detail || 'Unknown error occurred')
-                          }
-                        } catch (error) {
-                          console.error('Failed to run analysis:', error)
-                          setAnalysisError('Failed to connect to the server. Please try again.')
-                        } finally {
-                          setRunning(false)
-                        }
-                      }}
-                      disabled={running || selectedMetrics.length === 0}
-                      className="w-full bg-gray-800 hover:bg-gray-900 text-white py-3 gap-2"
-                    >
-                      {running ? (
-                        <>
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                          Submitting...
-                        </>
-                      ) : (
-                        <>
-                          <BarChart3 className="w-5 h-5" />
-                          Run Analysis on Validation Results
-                        </>
-                      )}
-                    </Button>
-
-                    {/* Analysis Submitted Message */}
-                    {currentResult?._pending && (
-                      <Card className="p-4 bg-blue-50 border-blue-200">
-                        <div className="flex items-center gap-3">
-                          <CheckCircle className="w-5 h-5 text-blue-500 flex-shrink-0" />
-                          <p className="text-sm text-blue-700">
-                            Analysis submitted! Track progress in the Background Tasks panel.
-                          </p>
-                        </div>
-                      </Card>
-                    )}
-
-                    {/* Analysis Error */}
-                    {analysisError && (
-                      <Card className="p-4 bg-red-50 border-red-200">
-                        <div className="flex items-start gap-3">
-                          <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
-                          <div className="flex-1">
-                            <p className="text-sm text-red-600">{analysisError}</p>
-                          </div>
-                          <button onClick={() => setAnalysisError(null)} className="text-red-400 hover:text-red-600">
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </Card>
-                    )}
-
-                    {/* Show current result if available - reuse AnalysisDetails for full feature parity */}
-                    {currentResult && currentResult.summary && !currentResult._pending && (
-                      <Card className="p-4 sm:p-6">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">External Validation Results</h3>
-                        <AnalysisDetails
-                          analysis={currentResult.summary}
-                          taskId={currentResult.task_id}
-                          selectedMetrics={selectedMetrics}
-                          selectedCharts={selectedCharts}
-                          isExternal
-                        />
-                      </Card>
-                    )}
-                  </>
-                )}
-              </>
-            ) : (
-              <Card className="p-12 text-center">
-                <FlaskConical className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">External Validation</h3>
-                <p className="text-gray-500 max-w-md mx-auto">
-                  Test a trained model on data from a different task. Select a model source and feature source, then run validation to generate inference results.
-                </p>
-              </Card>
-            )}
+                    <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
+                      <AnalysisDetails analysis={currentResult.summary} taskId={validationProgress?.validation_id} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
+                    </div>
+                  </Card>
+                ) : extAnalyses.length > 0 ? (
+                  <Card className="h-full flex flex-col p-4 sm:p-6 overflow-hidden">
+                    <div className="flex-none flex items-center justify-between mb-6">
+                      <div>
+                        <h4 className="font-semibold text-gray-900">Latest Analysis</h4>
+                        <p className="text-sm text-gray-500">
+                          {formatDate(extAnalyses[0].timestamp)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
+                      <AnalysisDetails analysis={extAnalyses[0]} taskId={validationProgress?.validation_id} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
+                    </div>
+                  </Card>
+                ) : (
+                  <Card className="p-12 text-center h-full flex flex-col items-center justify-center">
+                    <FlaskConical className="w-16 h-16 text-gray-300 mb-4" />
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">External Validation</h3>
+                    <p className="text-gray-500">Select a model and dataset, configure metrics, then run validation.</p>
+                  </Card>
+                )
+              )}
+            </div>
           </div>
         </div>
       ) : (
