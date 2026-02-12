@@ -943,10 +943,16 @@ export default function ResultsViewerPage() {
                       ))}
                       {compatibleDatasets.length === 0 && (
                         <div className="px-4 py-8 text-center text-gray-500">
-                          <p className="font-medium">No compatible datasets</p>
+                          <p className="font-medium">No compatible datasets found</p>
                           <p className="text-xs mt-1">
-                            Looking for: {modelDataType.toUpperCase()} level, {modelIsSurvival ? 'Survival' : 'Classification'} type, matching labels{modelDataType === 'wsi' ? ', compatible embed dim' : ''}, no WSI overlap
+                            Please check that the target dataset labels match the model's training labels.
                           </p>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); navigate('/wsi-list') }}
+                            className="text-xs text-orange-600 hover:text-orange-700 underline mt-2 inline-block"
+                          >
+                            Go to Data Repository →
+                          </button>
                         </div>
                       )}
                     </div>
