@@ -80,34 +80,47 @@ interface TaskDetail {
  * Parse VRAM-related error messages and extract suggested batch_size.
  * Returns structured error info for better user feedback.
  */
-function parseVRAMError(errorMessage: string): {
+function parseTaskError(errorMessage: string): {
   isVRAMError: boolean
+  isStorageError: boolean
   suggestedBatchSize: number | null
   originalMessage: string
   userFriendlyMessage: string
+  suggestion: string | null
 } {
   const result = {
     isVRAMError: false,
+    isStorageError: false,
     suggestedBatchSize: null as number | null,
     originalMessage: errorMessage,
     userFriendlyMessage: errorMessage,
+    suggestion: null as string | null,
+  }
+
+  const lower = errorMessage.toLowerCase()
+
+  // Check for external storage connectivity errors
+  if (lower.includes('external storage not responding') ||
+      (lower.includes('storage') && lower.includes('timed out')) ||
+      (lower.includes('not accessible') && lower.includes('file')) ||
+      lower.includes('mount point') || lower.includes('network storage')) {
+    result.isStorageError = true
+    result.userFriendlyMessage = 'The storage appears to be unreachable.'
+    result.suggestion = 'Please contact the administrator to check the storage device connection.'
+    return result
   }
 
   // Check if this is a VRAM protection error
-  if (errorMessage.toLowerCase().includes('vram') ||
-      errorMessage.toLowerCase().includes('gpu memory') ||
-      errorMessage.toLowerCase().includes('out of memory') ||
-      errorMessage.toLowerCase().includes('oom')) {
+  if (lower.includes('vram') || lower.includes('gpu memory') ||
+      lower.includes('out of memory') || lower.includes('oom')) {
     result.isVRAMError = true
 
     // Try to extract suggested batch_size from error message
-    // Pattern: "suggested safe batch_size: 123" or "reduce batch_size to 123"
     const batchSizeMatch = errorMessage.match(/batch_size[:\s]+(\d+)|batch_size to (\d+)/i)
     if (batchSizeMatch) {
       result.suggestedBatchSize = parseInt(batchSizeMatch[1] || batchSizeMatch[2], 10)
     }
 
-    // Create user-friendly message
     result.userFriendlyMessage = result.suggestedBatchSize
       ? `GPU memory exceeded. Please reduce the batch size to ${result.suggestedBatchSize} or lower and try again.`
       : 'GPU memory exceeded. Please reduce the batch size and try again.'
@@ -115,7 +128,6 @@ function parseVRAMError(errorMessage: string): {
 
   return result
 }
-
 export default function TaskDetailPage() {
   const { task_id } = useParams<{ task_id: string }>()
   const navigate = useNavigate()
@@ -330,9 +342,15 @@ export default function TaskDetailPage() {
       })
       // Navigate to the new task
       navigate(`/task/${result.task_id}`)
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to rerun task:', error)
-      setRerunError('Failed to rerun task. Please try again.')
+      const errMsg = error?.message || error?.detail || String(error)
+      const parsed = parseTaskError(errMsg)
+      if (parsed.isStorageError) {
+        setRerunError(parsed.userFriendlyMessage + ' ' + (parsed.suggestion || ''))
+      } else {
+        setRerunError('Failed to rerun task. Please try again.')
+      }
     } finally {
       setRerunning(false)
     }
@@ -640,7 +658,7 @@ export default function TaskDetailPage() {
 
       {/* Error Message Display */}
       {task.status === 'failed' && task.error_message && (() => {
-        const errorInfo = parseVRAMError(task.error_message)
+        const errorInfo = parseTaskError(task.error_message)
         return (
           <Card className="p-6 border-red-200 bg-red-50">
             <div className="flex items-start gap-3">
@@ -653,6 +671,13 @@ export default function TaskDetailPage() {
                     <p className="text-sm text-red-800">
                       <strong>Suggestion:</strong> When creating a new task, set the Feature Batch Size to{' '}
                       <span className="font-mono font-bold">{errorInfo.suggestedBatchSize}</span> or lower.
+                    </p>
+                  </div>
+                )}
+                {errorInfo.isStorageError && errorInfo.suggestion && (
+                  <div className="bg-red-100 border border-red-200 rounded-lg p-3 mb-3">
+                    <p className="text-sm text-red-800">
+                      <strong>💡 Suggestion:</strong> {errorInfo.suggestion}
                     </p>
                   </div>
                 )}

@@ -2641,7 +2641,7 @@ export interface SplitConfig {
 
 export interface TrainingTaskConfig {
   task_name: string
-  task_type: 'classification' | 'survival' | 'segmentation'
+  task_type: 'classification' | 'survival' | 'segmentation' | 'external_validation'
   data_type: 'wsi' | 'patch'
   task_description: string
   wsi_ids: string[]

@@ -2,6 +2,7 @@
 AI inference task management routes
 Handles WSI classification and other AI inference tasks
 """
+import asyncio
 import os
 import uuid
 import httpx
@@ -85,12 +86,26 @@ async def create_wsi_classification(
     if not has_access:
         raise HTTPException(status_code=403, detail="You don't have permission to analyze this WSI")
 
-    # Check if file is accessible
-    if wsi.wsi_path and not os.path.exists(wsi.wsi_path):
-        raise HTTPException(
-            status_code=400,
-            detail=f"File is not accessible: {wsi.original_filename or req.wsi_id}"
-        )
+    # Check if file is accessible (with timeout for external storage)
+    if wsi.wsi_path:
+        FILE_CHECK_TIMEOUT = 10  # seconds
+        try:
+            exists = await asyncio.wait_for(
+                asyncio.to_thread(os.path.exists, wsi.wsi_path),
+                timeout=FILE_CHECK_TIMEOUT
+            )
+            if not exists:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File is not accessible: {wsi.original_filename or req.wsi_id}"
+                )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=408,
+                detail=f"External storage not responding (timed out after {FILE_CHECK_TIMEOUT}s). "
+                       f"Cannot verify accessibility of {wsi.original_filename or req.wsi_id}. "
+                       f"Please check your network storage connection and try again."
+            )
 
     # Check if there are any active batch import tasks
     active_storage_tasks = await StorageTaskRepository.get_active_tasks(db)

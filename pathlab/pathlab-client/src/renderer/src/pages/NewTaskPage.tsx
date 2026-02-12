@@ -208,6 +208,14 @@ export default function NewTaskPage() {
 
   const getErrorSuggestion = (error: string): string | null => {
     const errorLower = error.toLowerCase()
+    // External storage connectivity errors (check first - most specific)
+    if (errorLower.includes('external storage not responding') ||
+        (errorLower.includes('storage') && errorLower.includes('timed out'))) {
+      return 'The storage appears to be unreachable. Please contact the administrator.'
+    }
+    if (errorLower.includes('not accessible') && errorLower.includes('file')) {
+      return 'Some files could not be accessed. Please contact the administrator.'
+    }
     if (errorLower.includes('network') || errorLower.includes('fetch')) {
       return 'Check your network connection and try again.'
     }
@@ -217,7 +225,10 @@ export default function NewTaskPage() {
     if (errorLower.includes('gpu') || errorLower.includes('cuda')) {
       return 'A CUDA-capable GPU is required. Please check GPU availability and CUDA driver installation.'
     }
-    if (errorLower.includes('timeout')) {
+    if (errorLower.includes('vram') || errorLower.includes('out of memory') || errorLower.includes('oom')) {
+      return 'GPU memory exceeded. Please reduce the batch size and try again.'
+    }
+    if (errorLower.includes('timeout') || errorLower.includes('timed out')) {
       return 'The server is taking too long to respond. Please try again later.'
     }
     return null

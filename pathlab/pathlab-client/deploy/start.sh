@@ -39,21 +39,41 @@ mkdir -p "$LOG_DIR"
 # ========== Step 1: 停止旧进程 ==========
 echo -e "${YELLOW}[1/4]${NC} 停止旧进程..."
 
-# Kill existing backend processes
-pkill -f "python.*server/main.py" 2>/dev/null || true
-pkill -f "uvicorn.*gateway" 2>/dev/null || true
-pkill -f "uvicorn.*preprocessing" 2>/dev/null || true
-pkill -f "uvicorn.*ai" 2>/dev/null || true
+# Function to kill process by port
+kill_by_port() {
+    local port=$1
+    local pids=$(ss -tlnp 2>/dev/null | grep ":$port " | grep -oP 'pid=\K[0-9]+' | sort -u)
+    if [ -n "$pids" ]; then
+        echo "  清理端口 $port (PID: $pids)"
+        for pid in $pids; do
+            kill -9 $pid 2>/dev/null || true
+        done
+    fi
+}
+
+# Kill existing backend processes by pattern
+pkill -9 -f "python.*server/main.py" 2>/dev/null || true
+pkill -9 -f "uvicorn.*gateway" 2>/dev/null || true
+pkill -9 -f "uvicorn.*preprocessing" 2>/dev/null || true
+pkill -9 -f "uvicorn.*ai" 2>/dev/null || true
 
 # Wait for ports to be released
-sleep 2
+sleep 1
 
+# Force kill by port if still occupied
 if ss -tlnp 2>/dev/null | grep -qE ':6100|:6101|:6102'; then
-    echo -e "${RED}[!] 端口仍被占用，强制清理...${NC}"
-    fuser -k 6100/tcp 2>/dev/null || true
-    fuser -k 6101/tcp 2>/dev/null || true
-    fuser -k 6102/tcp 2>/dev/null || true
+    echo -e "${YELLOW}[!] 端口仍被占用，强制清理...${NC}"
+    kill_by_port 6100
+    kill_by_port 6101
+    kill_by_port 6102
     sleep 1
+fi
+
+# Final check
+if ss -tlnp 2>/dev/null | grep -qE ':6100|:6101|:6102'; then
+    echo -e "${RED}[✗] 端口清理失败，请手动执行:${NC}"
+    echo -e "    sudo fuser -k 6100/tcp 6101/tcp 6102/tcp"
+    exit 1
 fi
 
 echo -e "${GREEN}[✓]${NC} 旧进程已清理"

@@ -827,6 +827,19 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           <div>
             <p className="text-sm font-medium text-red-700">Failed to create task</p>
             <p className="text-xs text-red-600 mt-0.5">{errorMessage}</p>
+            {(() => {
+              const lower = errorMessage.toLowerCase()
+              if (lower.includes('external storage not responding') ||
+                  (lower.includes('storage') && lower.includes('timed out')) ||
+                  (lower.includes('not accessible') && lower.includes('file'))) {
+                return (
+                  <p className="text-xs text-red-500 mt-1.5 flex items-start gap-1">
+                    <span>The storage appears to be unreachable. Please contact the administrator.</span>
+                  </p>
+                )
+              }
+              return null
+            })()}
           </div>
         </div>
       )}

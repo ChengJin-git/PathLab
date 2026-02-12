@@ -184,7 +184,7 @@ async def asr_realtime_websocket(
     upstream_ws = None
     source_name = "DashScope"  # Will be updated if local succeeds
 
-    # Helper function to connect to DashScope
+    # Helper function to connect to DashScope with retry
     async def connect_to_dashscope():
         model = "qwen3-asr-flash-realtime"
         base_url = "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime"
@@ -193,10 +193,24 @@ async def asr_realtime_websocket(
             "Authorization": f"Bearer {dashscope_api_key}",
             "OpenAI-Beta": "realtime=v1"
         }
-        logger.info(f"Connecting to DashScope ASR: {url}")
-        ws = await websockets.connect(url, additional_headers=headers, open_timeout=30)
-        logger.info("Connected to DashScope realtime ASR")
-        return ws
+
+        max_retries = 3
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info(f"Connecting to DashScope ASR (attempt {attempt}/{max_retries}): {url}")
+                ws = await websockets.connect(url, additional_headers=headers, open_timeout=30)
+                logger.info("Connected to DashScope realtime ASR")
+                return ws
+            except Exception as e:
+                last_error = e
+                logger.warning(f"DashScope connection attempt {attempt}/{max_retries} failed: {e}")
+                if attempt < max_retries:
+                    wait_time = attempt * 1.0  # 1s, 2s
+                    logger.info(f"Retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+
+        raise Exception(f"Failed to connect to DashScope after {max_retries} attempts: {last_error}")
 
     try:
         if use_local:

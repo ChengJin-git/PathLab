@@ -115,19 +115,45 @@ async def create_training_task(
             )
 
         # Check file accessibility concurrently using asyncio.to_thread
+        # Use timeout to prevent hanging when external storage is unreachable
+        FILE_CHECK_TIMEOUT = 15  # seconds for the entire batch check
         inaccessible_files = []
         if paths_to_check:
             async def check_file_exists(wsi_id: str, path: str, filename: str) -> tuple:
                 exists = await asyncio.to_thread(os.path.exists, path)
                 return (wsi_id, path, filename, exists)
 
-            results = await asyncio.gather(*[
-                check_file_exists(wsi_id, path, filename)
-                for wsi_id, path, filename in paths_to_check
-            ])
-            for wsi_id, path, filename, exists in results:
-                if not exists:
-                    inaccessible_files.append(filename or wsi_id)
+            try:
+                results = await asyncio.wait_for(
+                    asyncio.gather(*[
+                        check_file_exists(wsi_id, path, filename)
+                        for wsi_id, path, filename in paths_to_check
+                    ]),
+                    timeout=FILE_CHECK_TIMEOUT
+                )
+                for wsi_id, path, filename, exists in results:
+                    if not exists:
+                        inaccessible_files.append(filename or wsi_id)
+            except asyncio.TimeoutError:
+                # Determine which paths are external vs local
+                uploads_dir = str(Config.get_uploads_dir())
+                external_paths = [p for _, p, _ in paths_to_check if not p.startswith(uploads_dir)]
+                if external_paths:
+                    # Extract common root directory from external paths for user hint
+                    sample_path = external_paths[0]
+                    path_root = "/".join(sample_path.split("/")[:3])  # e.g. /jhcnas7/Pathology
+                    raise HTTPException(
+                        status_code=408,
+                        detail=f"External storage not responding (timed out after {FILE_CHECK_TIMEOUT}s). "
+                               f"Cannot verify accessibility of {len(external_paths)} file(s) on {path_root}. "
+                               f"Please check your network storage connection and try again."
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=408,
+                        detail=f"File accessibility check timed out after {FILE_CHECK_TIMEOUT}s. "
+                               f"Please check your storage connection and try again."
+                    )
 
         if inaccessible_files:
             if len(inaccessible_files) <= 5:

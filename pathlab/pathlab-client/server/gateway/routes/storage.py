@@ -856,7 +856,40 @@ async def scan_directory(
         logger.error(f"Failed to scan directory: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to scan directory: {str(e)}")
 
-def _check_wsi_file_availability(wsi_path: str, associated_files: dict = None) -> tuple[bool, str]:
+def _check_path_exists_with_timeout(path: str, timeout: float = 5.0) -> bool:
+    """
+    Check if a path exists with a timeout to handle unreachable NAS/network storage.
+    Uses a thread with join timeout since os.path.exists is blocking and cannot be interrupted.
+
+    Args:
+        path: File or directory path to check
+        timeout: Maximum seconds to wait (default 5s)
+
+    Returns:
+        True if path exists and responded within timeout, False otherwise.
+
+    Raises:
+        TimeoutError: If the check did not complete within the timeout.
+    """
+    import threading
+
+    result = [None]  # Use list to allow mutation from thread
+
+    def _check():
+        result[0] = os.path.exists(path)
+
+    t = threading.Thread(target=_check, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+
+    if t.is_alive():
+        # Thread is still running - path check is hanging (likely NAS unreachable)
+        raise TimeoutError(f"File accessibility check timed out after {timeout}s for: {path}")
+
+    return result[0]
+
+
+def _check_wsi_file_availability(wsi_path: str, associated_files: dict = None, timeout: float = 5.0) -> tuple[bool, str]:
     """
     Check if a WSI file and its associated data are available.
 
@@ -867,15 +900,22 @@ def _check_wsi_file_availability(wsi_path: str, associated_files: dict = None) -
     Args:
         wsi_path: Path to the main WSI file
         associated_files: Dict with format_type and associated data paths (from DB)
+        timeout: Maximum seconds to wait for each file check (default 5s)
 
     Returns:
         (is_available, message)
+
+    Raises:
+        TimeoutError: If the file check timed out (likely NAS unreachable)
     """
     file_path = Path(wsi_path)
 
-    # Check if main file exists
-    if not file_path.exists():
-        return False, "File not found"
+    # Check if main file exists (with timeout for NAS paths)
+    try:
+        if not _check_path_exists_with_timeout(str(file_path), timeout=timeout):
+            return False, "File not found"
+    except TimeoutError:
+        raise  # Let caller handle NAS timeout
 
     # If we have associated_files info, use it for validation
     if associated_files:
@@ -885,12 +925,12 @@ def _check_wsi_file_availability(wsi_path: str, associated_files: dict = None) -
         if format_type == "mrxs":
             data_folder = associated_files.get("data_folder")
             if data_folder:
-                if not Path(data_folder).exists() or not Path(data_folder).is_dir():
+                if not _check_path_exists_with_timeout(data_folder, timeout=timeout) or not Path(data_folder).is_dir():
                     return False, f"Missing required data folder: {Path(data_folder).name}/"
             else:
                 # Fallback: check for data folder with same name as file
-                data_folder = file_path.parent / file_path.stem
-                if not data_folder.exists() or not data_folder.is_dir():
+                data_folder = str(file_path.parent / file_path.stem)
+                if not _check_path_exists_with_timeout(data_folder, timeout=timeout) or not Path(data_folder).is_dir():
                     return False, f"Missing required data folder: {file_path.stem}/"
 
         # Check TMAP DT files (only if they were registered)
@@ -898,7 +938,7 @@ def _check_wsi_file_availability(wsi_path: str, associated_files: dict = None) -
             dt_files = associated_files.get("dt_files", [])
             missing_dt = []
             for dt_file in dt_files:
-                if not Path(dt_file).exists():
+                if not _check_path_exists_with_timeout(dt_file, timeout=timeout):
                     missing_dt.append(Path(dt_file).name)
             if missing_dt:
                 return False, f"Missing DT files: {', '.join(missing_dt)}"
@@ -907,8 +947,8 @@ def _check_wsi_file_availability(wsi_path: str, associated_files: dict = None) -
         # Fallback for files registered before this feature: check by extension
         ext = file_path.suffix.lower()
         if ext == '.mrxs':
-            data_folder = file_path.parent / file_path.stem
-            if not data_folder.exists() or not data_folder.is_dir():
+            data_folder = str(file_path.parent / file_path.stem)
+            if not _check_path_exists_with_timeout(data_folder, timeout=timeout) or not Path(data_folder).is_dir():
                 return False, f"Missing required data folder: {file_path.stem}/"
 
     return True, "Available"
@@ -922,6 +962,10 @@ def _check_external_files_sync(
     Check external files availability synchronously.
     Designed to run in a thread pool via asyncio.to_thread() to avoid blocking the event loop.
 
+    Handles TimeoutError from _check_wsi_file_availability when NAS is unreachable.
+    On first timeout, immediately marks all remaining external files as unavailable
+    with a storage connectivity error instead of checking each one (which would all timeout).
+
     Args:
         wsi_data: List of dicts with keys: wsi_id, original_filename, wsi_path,
                   dataset_id, dataset_name, label, associated_files
@@ -929,16 +973,13 @@ def _check_external_files_sync(
     """
     available = []
     unavailable = []
+    storage_timeout = False
+    timeout_path = None
 
     for item in wsi_data:
         wsi_path = item["wsi_path"]
 
         if not wsi_path.startswith(uploads_dir):
-            is_available, message = _check_wsi_file_availability(
-                wsi_path,
-                item["associated_files"]
-            )
-
             file_info = {
                 "wsi_id": item["wsi_id"],
                 "original_filename": item["original_filename"],
@@ -948,6 +989,26 @@ def _check_external_files_sync(
                 "label": item["label"],
             }
 
+            # If we already detected a timeout, skip checking remaining files
+            if storage_timeout:
+                file_info["status"] = "unavailable"
+                file_info["reason"] = "Storage not responding (skipped after timeout)"
+                unavailable.append(file_info)
+                continue
+
+            try:
+                is_available, message = _check_wsi_file_availability(
+                    wsi_path,
+                    item["associated_files"]
+                )
+            except TimeoutError:
+                storage_timeout = True
+                timeout_path = wsi_path
+                file_info["status"] = "unavailable"
+                file_info["reason"] = "External storage not responding (connection timed out)"
+                unavailable.append(file_info)
+                continue
+
             if is_available:
                 file_info["status"] = "available"
                 available.append(file_info)
@@ -956,13 +1017,23 @@ def _check_external_files_sync(
                 file_info["reason"] = message
                 unavailable.append(file_info)
 
-    return {
+    result = {
         "total_external": len(available) + len(unavailable),
         "available_count": len(available),
         "unavailable_count": len(unavailable),
         "available": available,
         "unavailable": unavailable,
     }
+
+    if storage_timeout:
+        path_root = "/".join(timeout_path.split("/")[:3]) if timeout_path else "unknown"
+        result["storage_timeout"] = True
+        result["storage_timeout_message"] = (
+            f"External storage at {path_root} is not responding. "
+            f"Please check your network storage connection."
+        )
+
+    return result
 
 
 @router.get("/external-datasets-summary")

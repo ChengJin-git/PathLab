@@ -216,9 +216,12 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
                   event_id: 'event_session_update',
                   type: 'session.update',
                   session: {
+                    modalities: ['text'],
                     input_audio_format: 'pcm',
                     sample_rate: 16000,
-                    input_audio_transcription: {},
+                    input_audio_transcription: {
+                      language: 'auto',
+                    },
                     turn_detection: { type: 'server_vad', threshold: vadThreshold, silence_duration_ms: silenceDurationMs },
                   },
                 }))
