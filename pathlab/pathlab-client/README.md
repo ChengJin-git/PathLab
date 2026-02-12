@@ -51,7 +51,7 @@ pathlab-client/
 │           │   ├── TaskListPage.tsx  # 任务列表
 │           │   ├── TaskDetailPage.tsx # 任务详情 + 实时日志
 │           │   ├── ListPage.tsx      # 切片浏览器
-│           │   ├── DetailPage.tsx    # WSI 阅片器 + 热图
+│           │   ├── WSIViewerPage.tsx # WSI 阅片器 + 热图
 │           │   ├── SettingsPage.tsx  # 系统设置
 │           │   └── StorageManagementPage.tsx  # 存储管理
 │           └── contexts/         # React Context

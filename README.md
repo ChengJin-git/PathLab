@@ -127,7 +127,7 @@ pathlab/
 | `/task-list` | TaskListPage | 任务列表 |
 | `/task/:task_id` | TaskDetailPage | 任务详情 |
 | `/wsi-list` | ListPage | 切片浏览器 |
-| `/wsi/:wsi_id` | DetailPage | WSI 阅片器 |
+| `/wsi/:wsi_id` | WSIViewerPage | WSI 阅片器 |
 | `/register` | RegisterPage | 注册切片 |
 | `/results` | ResultsViewerPage | 结果查看器 |
 | `/reports` | ReportGeneratorPage | 报告生成器 |

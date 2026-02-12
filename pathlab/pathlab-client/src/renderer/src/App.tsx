@@ -11,7 +11,7 @@ import NewTaskPage from './pages/NewTaskPage'
 import TaskListPage from './pages/TaskListPage'
 import TaskDetailPage from './pages/TaskDetailPage'
 import ListPage from './pages/ListPage'
-import DetailPage from './pages/DetailPage'
+import WSIViewerPage from './pages/WSIViewerPage'
 import RegisterPage from './pages/UploadPage'
 import ResultsViewerPage from './pages/ResultsViewerPage'
 import ReportGeneratorPage from './pages/ReportGeneratorPage'
@@ -38,8 +38,8 @@ export default function App() {
       <Route path="/results" element={<ProtectedRoute><Layout><ResultsViewerPage /></Layout></ProtectedRoute>} />
       <Route path="/reports" element={<ProtectedRoute><Layout><ReportGeneratorPage /></Layout></ProtectedRoute>} />
 
-      {/* DetailPage without Layout (full screen viewer) - Also protected */}
-      <Route path="/wsi/:wsi_id" element={<ProtectedRoute><DetailPage /></ProtectedRoute>} />
+      {/* WSIViewerPage without Layout (full screen viewer) - Also protected */}
+      <Route path="/wsi/:wsi_id" element={<ProtectedRoute><WSIViewerPage /></ProtectedRoute>} />
 
       {/* 404 - Protected */}
       <Route path="*" element={

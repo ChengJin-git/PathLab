@@ -16,13 +16,13 @@ import {
 import WSIViewer from '../components/WSIViewer'
 import { Card } from '../components/common'
 import { ArrowLeft, Microscope, Layers, Loader2, ChevronLeft, ChevronRight, Plus, Minus, RotateCcw, Maximize2, X } from 'lucide-react'
-import { exportPatchesAsZip } from '../components/detail/utils'
-import { TaskSelectorCard } from '../components/detail/TaskSelectorCard'
-import { AttentionClassSelector } from '../components/detail/AttentionClassSelector'
-import { AttentionPatchesPanel } from '../components/detail/AttentionPatchesPanel'
-import { DeleteResultsModal } from '../components/detail/DeleteResultsModal'
+import { exportPatchesAsZip } from '../components/wsiViewer/utils'
+import { TaskSelectorCard } from '../components/wsiViewer/TaskSelectorCard'
+import { AttentionClassSelector } from '../components/wsiViewer/AttentionClassSelector'
+import { AttentionPatchesPanel } from '../components/wsiViewer/AttentionPatchesPanel'
+import { DeleteResultsModal } from '../components/wsiViewer/DeleteResultsModal'
 
-export default function DetailPage() {
+export default function WSIViewerPage() {
   const { wsi_id = '' } = useParams()
   const navigate = useNavigate()
   const location = useLocation()

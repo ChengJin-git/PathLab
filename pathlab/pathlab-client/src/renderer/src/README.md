@@ -19,7 +19,7 @@ src/
 │   ├── AIChatPage.tsx            # AI assistant (SSE streaming)
 │   ├── ToolsPage.tsx             # Utility tools
 │   ├── ListPage.tsx              # Slide browser (/wsi-list)
-│   ├── DetailPage.tsx            # WSI viewer (/wsi/:wsi_id, fullscreen)
+│   ├── WSIViewerPage.tsx         # WSI viewer (/wsi/:wsi_id, fullscreen)
 │   ├── UploadPage.tsx            # Upload/register slide
 │   ├── NewTaskPage.tsx           # Task configuration (/task-setup)
 │   ├── TaskListPage.tsx          # Task list (/task-list)
@@ -59,7 +59,7 @@ src/
 | `/task-list` | TaskListPage | Task list |
 | `/task/:task_id` | TaskDetailPage | Task details |
 | `/wsi-list` | ListPage | Slide browser |
-| `/wsi/:wsi_id` | DetailPage | WSI viewer (fullscreen) |
+| `/wsi/:wsi_id` | WSIViewerPage | WSI viewer (fullscreen) |
 | `/register` | RegisterPage | Register/upload slide |
 | `/results` | ResultsViewerPage | Results viewer |
 | `/reports` | ReportGeneratorPage | Report generator |

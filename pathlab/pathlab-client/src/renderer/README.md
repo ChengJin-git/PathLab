@@ -66,7 +66,7 @@ pathlab/services/frontend/
 │   │   ├── AIChatPage.tsx            # AI assistant interface
 │   │   ├── ToolsPage.tsx             # Utility tools
 │   │   ├── ListPage.tsx              # WSI browser (/wsi-list)
-│   │   ├── DetailPage.tsx            # WSI viewer (/wsi/:wsi_id)
+│   │   ├── WSIViewerPage.tsx         # WSI viewer (/wsi/:wsi_id)
 │   │   ├── UploadPage.tsx            # WSI registration (/register)
 │   │   ├── NewTaskPage.tsx           # Manual task setup (/task-setup)
 │   │   ├── TaskListPage.tsx          # Task browser (/task-list)
@@ -254,7 +254,7 @@ All components use Tailwind CSS utility classes for consistent styling:
 ```
 User navigates to /wsi/{wsi_id}
   ↓
-DetailPage fetches metadata from Gateway
+WSIViewerPage fetches metadata from Gateway
   ↓
 WSIViewer component initializes OpenSeadragon
   ↓
