@@ -10,6 +10,7 @@ import logging
 import json
 import base64
 import shutil
+import traceback
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -3028,8 +3029,26 @@ async def _run_external_validation(
                         )
                         response.raise_for_status()
                 except Exception as e:
+                    err_type = type(e).__name__
+                    err_msg = str(e) or repr(e)
+                    err_tb = traceback.format_exc()
+                    resp_body = ""
+                    if isinstance(e, httpx.HTTPStatusError):
+                        try:
+                            resp_body = e.response.text[:1000]
+                        except Exception:
+                            resp_body = "(unable to read response body)"
                     async with logger_manager.session() as (tl, _db):
-                        await tl.error(f"Failed to extract patches from {wsi_id}: {e}")
+                        await tl.error(
+                            f"Failed to extract patches from {wsi_id}: [{err_type}] {err_msg}",
+                            metadata={
+                                "wsi_id": wsi_id,
+                                "error": err_msg,
+                                "error_type": err_type,
+                                "response_body": resp_body,
+                                "traceback": err_tb,
+                            }
+                        )
                     raise
 
                 # Update progress (5-30% for patch extraction)

@@ -10,6 +10,7 @@ Synchronous HTTP Architecture:
 """
 import asyncio
 import httpx
+import traceback
 from typing import List, Dict
 from contextlib import asynccontextmanager
 
@@ -260,10 +261,26 @@ async def run_training_pipeline(
                     await TrainingTaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=progress)
 
             except Exception as e:
+                err_type = type(e).__name__
+                err_msg = str(e) or repr(e)
+                err_tb = traceback.format_exc()
+                # For HTTP errors, include the response body for debugging
+                resp_body = ""
+                if isinstance(e, httpx.HTTPStatusError):
+                    try:
+                        resp_body = e.response.text[:1000]
+                    except Exception:
+                        resp_body = "(unable to read response body)"
                 async with logger_manager.session() as (logger, db):
                     await logger.error(
-                        f"Failed to extract patches from {wsi_id}: {e}",
-                        metadata={"wsi_id": wsi_id, "error": str(e)}
+                        f"Failed to extract patches from {wsi_id}: [{err_type}] {err_msg}",
+                        metadata={
+                            "wsi_id": wsi_id,
+                            "error": err_msg,
+                            "error_type": err_type,
+                            "response_body": resp_body,
+                            "traceback": err_tb,
+                        }
                     )
                 raise
 
@@ -416,11 +433,17 @@ async def run_training_pipeline(
     except Exception as e:
         # Don't reset progress on failure - keep the progress at the point of failure
         # Only update to 'failed' if not already cancelled
+        err_type = type(e).__name__
+        err_msg = str(e) or repr(e)
+        err_tb = traceback.format_exc()
         async with logger_manager.session() as (logger, db):
-            await logger.error(f"Training pipeline failed: {e}", metadata={"error": str(e)})
+            await logger.error(
+                f"Training pipeline failed: [{err_type}] {err_msg}",
+                metadata={"error": err_msg, "error_type": err_type, "traceback": err_tb}
+            )
             task = await TrainingTaskRepository.get_by_id(db, task_id)
             if task and task.status != TaskStatus.CANCELLED:
                 await TrainingTaskRepository.update_status(
-                    db, task_id, TaskStatus.FAILED, error_message=str(e)
+                    db, task_id, TaskStatus.FAILED, error_message=f"[{err_type}] {err_msg}"
                 )
 
