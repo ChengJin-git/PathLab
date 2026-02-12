@@ -658,24 +658,37 @@ export default function ResultsViewerPage() {
   }
 
   const confirmDeleteAnalysis = async () => {
-    if (!deleteConfirmId || !selectedTaskId) return
+    if (!deleteConfirmId) return
+
+    // Determine the task ID based on current page mode
+    const taskId = pageMode === 'external-validation'
+      ? validationProgress?.validation_id
+      : selectedTaskId
+    if (!taskId) return
 
     setDeleting(true)
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/analysis/${deleteConfirmId}`, authFetchOptions({
+      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis/${deleteConfirmId}`, authFetchOptions({
         method: 'DELETE'
       }))
 
       if (response.ok) {
-        // Remove from local state
-        setAnalyses(prev => prev.filter(a => a.analysis_id !== deleteConfirmId))
+        if (pageMode === 'external-validation') {
+          // Remove from external analyses state
+          setExtAnalyses(prev => prev.filter(a => a.analysis_id !== deleteConfirmId))
+          if (expandedExtAnalysis === deleteConfirmId) {
+            setExpandedExtAnalysis(null)
+          }
+        } else {
+          // Remove from internal analyses state
+          setAnalyses(prev => prev.filter(a => a.analysis_id !== deleteConfirmId))
+          if (expandedAnalysis === deleteConfirmId) {
+            setExpandedAnalysis(null)
+          }
+        }
         // If it was the current result, clear it
         if (currentResult?.analysis_id === deleteConfirmId) {
           setCurrentResult(null)
-        }
-        // If it was expanded, collapse it
-        if (expandedAnalysis === deleteConfirmId) {
-          setExpandedAnalysis(null)
         }
         setDeleteConfirmId(null)
       } else {
@@ -1139,18 +1152,27 @@ export default function ResultsViewerPage() {
                               <p className="text-sm text-gray-600 mt-1">{analysis.description}</p>
                             )}
                           </button>
-                          <button
-                            onClick={() => setExpandedExtAnalysis(
-                              expandedExtAnalysis === analysis.analysis_id ? null : analysis.analysis_id
-                            )}
-                            className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors ml-3"
-                          >
-                            {expandedExtAnalysis === analysis.analysis_id ? (
-                              <ChevronUp className="w-5 h-5" />
-                            ) : (
-                              <ChevronDown className="w-5 h-5" />
-                            )}
-                          </button>
+                          <div className="flex items-center gap-2 ml-3">
+                            <button
+                              onClick={(e) => handleDeleteAnalysis(analysis.analysis_id, e)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Delete this analysis"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => setExpandedExtAnalysis(
+                                expandedExtAnalysis === analysis.analysis_id ? null : analysis.analysis_id
+                              )}
+                              className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                              {expandedExtAnalysis === analysis.analysis_id ? (
+                                <ChevronUp className="w-5 h-5" />
+                              ) : (
+                                <ChevronDown className="w-5 h-5" />
+                              )}
+                            </button>
+                          </div>
                         </div>
 
                         {expandedExtAnalysis === analysis.analysis_id && (

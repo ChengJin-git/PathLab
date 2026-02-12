@@ -1977,7 +1977,8 @@ async def start_external_validation(
     if not model_task:
         raise HTTPException(status_code=404, detail=f"Model's training task not found: {trained_model.task_id}")
     model_mc = model_task.model_config or {}
-    if not await check_task_access_permission(user, trained_model.user_id, model_mc.get("dataset_id"), db):
+    model_dataset_id = await _resolve_task_dataset_id(model_task, db)
+    if not await check_task_access_permission(user, trained_model.user_id, model_dataset_id, db):
         raise HTTPException(status_code=403, detail="You don't have permission to use this model")
 
     if not trained_model.is_active:
@@ -2164,6 +2165,7 @@ async def start_external_validation(
                 metrics=analysis_metrics,
                 charts=analysis_charts,
                 bootstrap_ci_metrics=bootstrap_ci_metrics,
+                submitted_by=str(user.id),
             )
 
             return {
@@ -3497,6 +3499,7 @@ async def _auto_trigger_external_validation_analysis(
     metrics: Optional[List[str]] = None,
     charts: Optional[List[str]] = None,
     bootstrap_ci_metrics: Optional[List[str]] = None,
+    submitted_by: Optional[str] = None,
 ):
     """
     Auto-trigger analysis after external validation inference completes.
@@ -3542,6 +3545,8 @@ async def _auto_trigger_external_validation_analysis(
                 return
 
             user_id = str(task.user_id)
+            # Use provided submitted_by, or fall back to task owner
+            effective_submitted_by = submitted_by or user_id
 
             # Build title for the analysis
             model_config = task.model_config or {}
@@ -3585,7 +3590,7 @@ async def _auto_trigger_external_validation_analysis(
                     charts=analysis_charts,
                     description="Auto-triggered after external validation inference",
                     bootstrap_ci_metrics=analysis_bootstrap_ci,
-                    submitted_by=user_id,
+                    submitted_by=effective_submitted_by,
                 )
             )
             # Register task for potential cancellation
