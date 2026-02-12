@@ -219,9 +219,7 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
                     modalities: ['text'],
                     input_audio_format: 'pcm',
                     sample_rate: 16000,
-                    input_audio_transcription: {
-                      language: 'auto',
-                    },
+                    input_audio_transcription: {},
                     turn_detection: { type: 'server_vad', threshold: vadThreshold, silence_duration_ms: silenceDurationMs },
                   },
                 }))
