@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { HardDrive, RefreshCw, Trash2, Search, CheckCircle, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react'
 import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, OrphanedFile } from '../api'
 import { PageHeader, Card, Button } from '../components/common'
+import { formatBytes } from '../lib/utils'
 
 export default function StorageManagementPage() {
   const [stats, setStats] = useState<StorageStats | null>(null)
@@ -93,14 +94,6 @@ export default function StorageManagementPage() {
       newExpanded.add(category)
     }
     setExpandedCategories(newExpanded)
-  }
-
-  const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
   }
 
   const getCategoryLabel = (category: string): string => {

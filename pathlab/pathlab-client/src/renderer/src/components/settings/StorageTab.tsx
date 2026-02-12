@@ -22,9 +22,8 @@ import {
   ExternalDatasetInfo,
   DatasetSummary
 } from '../../api'
+import { formatBytes as formatBytesDefault, formatFileSize as formatFileSizeDefault } from '../../lib/utils'
 import {
-  formatBytesLocal,
-  formatFileSizeLocal,
   StorageStatsDisplay,
   OrphanedFilesCard,
   OrphanedRecordsCard,
@@ -214,8 +213,8 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
     handleDeleteUnavailableFiles,
 
     // Utilities
-    formatBytes = formatBytesLocal,
-    formatFileSize = formatFileSizeLocal,
+    formatBytes = formatBytesDefault,
+    formatFileSize = formatFileSizeDefault,
 
     // Electron API check
     hasSelectDirectoryApi

@@ -145,7 +145,7 @@ class TissueSegmenter:
         Returns:
             Tuple of (tissue_contours, hole_contours)
         """
-        import time as _time
+        # import time as _time
 
         # Auto-select segmentation level if needed
         seg_level = self._get_seg_level(slide)
@@ -153,10 +153,10 @@ class TissueSegmenter:
 
         # Read slide at segmentation level
         level_dims = slide.level_dimensions[seg_level]
-        _t0 = _time.monotonic()
+        # _t0 = _time.monotonic()
         img = slide.read_region((0, 0), seg_level, level_dims)
-        _t1 = _time.monotonic()
-        logger.info(f"[Timing] read_region level={seg_level} dims={level_dims} took {_t1 - _t0:.1f}s")
+        # _t1 = _time.monotonic()
+        # logger.info(f"[Timing] read_region level={seg_level} dims={level_dims} took {_t1 - _t0:.1f}s")
         img_np = np.array(img.convert('RGB'))
 
         # Convert to HSV and extract saturation channel
@@ -193,8 +193,8 @@ class TissueSegmenter:
         tissue_contours = self._scale_contours(tissue_contours, scale)
         hole_contours = self._scale_holes(hole_contours, scale)
 
-        _t2 = _time.monotonic()
-        logger.info(f"[Timing] segment_tissue total {_t2 - _t0:.1f}s (read={_t1 - _t0:.1f}s, process={_t2 - _t1:.1f}s), found {len(tissue_contours)} tissue regions")
+        # _t2 = _time.monotonic()
+        # logger.info(f"[Timing] segment_tissue total {_t2 - _t0:.1f}s (read={_t1 - _t0:.1f}s, process={_t2 - _t1:.1f}s), found {len(tissue_contours)} tissue regions")
 
         return tissue_contours, hole_contours
 

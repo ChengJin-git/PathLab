@@ -1,5 +1,5 @@
 // Storage sub-components barrel export
-export { formatBytesLocal, formatFileSizeLocal } from './utils'
+export { formatBytes as formatBytesLocal, formatFileSize as formatFileSizeLocal } from '../../../lib/utils'
 export { StorageStatsDisplay } from './StorageStatsDisplay'
 export { OrphanedFilesCard } from './OrphanedFilesCard'
 export { OrphanedRecordsCard } from './OrphanedRecordsCard'

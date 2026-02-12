@@ -3009,7 +3009,7 @@ async def _run_external_validation(
             for idx, wsi_id in enumerate(missing_wsi_ids, 1):
                 await asyncio.sleep(0)  # Yield to event loop
                 try:
-                    async with httpx.AsyncClient(timeout=300.0) as client:
+                    async with httpx.AsyncClient(timeout=600.0) as client:
                         response = await client.post(
                             f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
                             params={

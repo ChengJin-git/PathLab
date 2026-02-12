@@ -1210,7 +1210,7 @@ async def compute_patches(
 
     # Forward request to preprocessing service
     try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(timeout=600.0) as client:
             response = await client.post(
                 f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
                 params=params

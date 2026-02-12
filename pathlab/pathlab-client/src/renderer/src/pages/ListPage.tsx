@@ -8,6 +8,7 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { ALL_ACCEPT_STRING } from '../constants/fileTypes'
+import { formatBytes } from '../lib/utils'
 
 export default function ListPage() {
   const navigate = useNavigate()
@@ -214,14 +215,6 @@ export default function ListPage() {
     }
   }
 
-  // Format bytes to human readable
-  const formatDatasetSize = (bytes: number): string => {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-  }
 
 
 
@@ -366,14 +359,6 @@ export default function ListPage() {
       console.error('Failed to add delete task:', err)
       alert(`Failed to delete WSI: ${err}`)
     }
-  }
-
-  const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
   }
 
   const toggleSelection = (wsi_id: string) => {
@@ -1001,7 +986,7 @@ export default function ListPage() {
                         </span>
                         <span className="flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap">
                           <CheckCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
-                          {formatDatasetSize(dataset.total_size)}
+                          {formatBytes(dataset.total_size)}
                         </span>
                       </div>
                     </div>

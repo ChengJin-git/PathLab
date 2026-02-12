@@ -220,7 +220,7 @@ async def run_training_pipeline(
                 # Note: patch_size and stride are auto-determined by backend based on WSI MPP
                 # force_recompute=False allows reusing cached coordinates
                 # if ALL parameters match (including seg_params and filter_params)
-                async with httpx.AsyncClient(timeout=300.0) as client:
+                async with httpx.AsyncClient(timeout=600.0) as client:
                     response = await client.post(
                         f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
                         params={
