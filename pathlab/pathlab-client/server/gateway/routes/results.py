@@ -2463,6 +2463,7 @@ async def _run_external_validation(
 
             if _is_kfold:
                 logger.info(f"K-fold model detected with {_num_folds} folds, loading all checkpoints")
+                _all_fold_bin_edges = []
                 for fold_idx in range(_num_folds):
                     fold_ckpt_path = model_dir / f"fold_{fold_idx}" / "aggregator.pth"
                     if not fold_ckpt_path.exists():
@@ -2478,10 +2479,21 @@ async def _run_external_validation(
                     fold_model.eval()
                     _models.append(fold_model)
 
-                    if is_survival and _bin_edges is None:
-                        _bin_edges = checkpoint.get("bin_edges")
-                        if _bin_edges is not None:
-                            _bin_edges = np.array(_bin_edges) if not isinstance(_bin_edges, np.ndarray) else _bin_edges
+                    if is_survival:
+                        fold_be = checkpoint.get("bin_edges")
+                        if fold_be is not None:
+                            fold_be = np.array(fold_be) if not isinstance(fold_be, np.ndarray) else fold_be
+                            _all_fold_bin_edges.append(fold_be)
+
+                # Average bin_edges across all folds for ensemble survival model
+                if is_survival and _all_fold_bin_edges:
+                    if len(_all_fold_bin_edges) == 1:
+                        _bin_edges = _all_fold_bin_edges[0]
+                    else:
+                        # All folds should have same number of bins; average the edges
+                        min_len = min(len(be) for be in _all_fold_bin_edges)
+                        trimmed = [be[:min_len] for be in _all_fold_bin_edges]
+                        _bin_edges = np.mean(trimmed, axis=0)
             else:
                 ckpt_path = model_dir / "aggregator.pth"
                 if not ckpt_path.exists():
@@ -2655,6 +2667,7 @@ async def _run_external_validation(
                     times=case_times,
                     statuses=case_statuses,
                     task_type="survival",
+                    device=device,
                 )
             else:
                 dataset = CaseFeatureDataset(
@@ -2663,6 +2676,7 @@ async def _run_external_validation(
                     case_to_wsi=case_to_wsi,
                     labels=case_labels_map,
                     task_type="classification",
+                    device=device,
                 )
             total = len(case_ids)
             logger.info(f"External validation case-level: {total} cases from {len(valid_wsi_ids)} WSIs")
@@ -2689,6 +2703,7 @@ async def _run_external_validation(
                     times=times_map,
                     statuses=statuses_map,
                     task_type="survival",
+                    device=device,
                 )
             else:
                 dataset = WSIFeatureDataset(
@@ -2696,6 +2711,7 @@ async def _run_external_validation(
                     wsi_ids=valid_wsi_ids,
                     labels=labels,
                     task_type="classification",
+                    device=device,
                 )
             total = len(valid_wsi_ids)
             logger.info(f"External validation slide-level: {total} WSIs")
