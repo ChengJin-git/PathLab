@@ -91,6 +91,8 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
   const maxTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const startingRef = useRef(false)
   const isMountedRef = useRef(true)
+  // Track pending async cleanup (AudioContext.close) so startRecording can await it
+  const cleanupPromiseRef = useRef<Promise<void>>(Promise.resolve())
 
   // Store all callbacks in refs so they are always fresh
   const optionsRef = useRef(options)
@@ -131,11 +133,13 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
       sourceRef.current = null
     }
 
+    const asyncCleanupPromises: Promise<void>[] = []
+
     if (audioContextRef.current) {
       const ctx = audioContextRef.current
       audioContextRef.current = null
       if (ctx.state !== 'closed') {
-        ctx.close().catch((err) => console.warn('[ASR] AudioContext close error:', err))
+        asyncCleanupPromises.push(ctx.close().catch((err) => console.warn('[ASR] AudioContext close error:', err)))
       }
     }
 
@@ -161,6 +165,11 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
       setConnecting(false)
       setPartialText('')
     }
+
+    // Track async cleanup completion so startRecording can await it
+    cleanupPromiseRef.current = asyncCleanupPromises.length > 0
+      ? Promise.all(asyncCleanupPromises).then(() => {})
+      : Promise.resolve()
   }, [setRecording, setConnecting])
 
   // ---------------------------------------------------------------------------
@@ -174,9 +183,18 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
   const startRecording = useCallback(async () => {
     // Guard via refs – immune to stale closures
     if (isRecordingRef.current || isConnectingRef.current || startingRef.current) {
-      // console.log('[ASR] Already recording/connecting, ignoring start')
+      console.log('[ASR] Already recording/connecting, ignoring start')
       return
     }
+
+    // Wait for any pending async cleanup (AudioContext.close, etc.) to complete
+    // This prevents browser resource limits from being hit when rapidly restarting
+    try {
+      await cleanupPromiseRef.current
+    } catch {
+      // Ignore cleanup errors – they were already logged
+    }
+
     startingRef.current = true
     setConnecting(true)
     setPartialText('')

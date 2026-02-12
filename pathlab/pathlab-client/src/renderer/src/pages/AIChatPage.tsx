@@ -2309,7 +2309,7 @@ export default function AIChatPage() {
                         </div>
                         <button
                           onClick={(e) => handleDeleteConversation(conv.conversation_id, e)}
-                          className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                          className="sm:opacity-0 sm:group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
                           title="Delete conversation"
                         >
                           <Trash2 className="w-4 h-4" />

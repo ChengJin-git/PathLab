@@ -2405,13 +2405,9 @@ async def _run_external_validation_patch_classification(
     device = assigned_device if assigned_device else ("cuda" if torch.cuda.is_available() else "cpu")
 
     try:
-        # Load model checkpoint
+        # Load model checkpoint(s)
         model_dir = uploads_dir / "models" / model_id
-        ckpt_path = model_dir / "linear_probe.pth"
         config_path = model_dir / "config.json"
-
-        if not ckpt_path.exists():
-            raise FileNotFoundError(f"Model checkpoint (linear_probe.pth) not found at {ckpt_path}")
 
         config = {}
         if config_path.exists():
@@ -2422,27 +2418,58 @@ async def _run_external_validation_patch_classification(
         if not classes:
             raise ValueError("Could not determine model classes")
 
+        is_kfold = config.get("split_type") == "kfold"
+        num_folds = config.get("num_folds", 5) if is_kfold else 1
+
         async with logger_manager.session() as (tl, _db):
-            await tl.info(f"Patch classification: loading model {model_id} with {len(classes)} classes")
+            kfold_msg = f" (k-fold: {num_folds} folds)" if is_kfold else ""
+            await tl.info(f"Patch classification: loading model {model_id} with {len(classes)} classes{kfold_msg}")
 
-        # Load checkpoint and build model (in thread to avoid blocking event loop)
-        def _load_model():
-            checkpoint = torch.load(ckpt_path, map_location=device)
-            extractor_name = checkpoint.get("extractor_name", config.get("extractor", "resnet50"))
-            extractor_dim = checkpoint["extractor_dim"]
-            num_classes = checkpoint["num_classes"]
+        # Load checkpoint(s) and build model(s) (in thread to avoid blocking event loop)
+        def _load_models():
+            _extractor_name = config.get("extractor", "resnet50")
+            _models = []
 
-            extractor = get_extractor(extractor_name, pretrained=True)
-            extractor = extractor.to(device)
-            extractor.eval()
+            if is_kfold:
+                # K-fold: load each fold's linear_probe and build a combined model
+                for fold_idx in range(num_folds):
+                    fold_ckpt_path = model_dir / f"fold_{fold_idx}" / "linear_probe.pth"
+                    if not fold_ckpt_path.exists():
+                        raise FileNotFoundError(f"Fold {fold_idx} checkpoint not found: {fold_ckpt_path}")
 
-            linear_probe = nn.Linear(extractor_dim, num_classes).to(device)
-            linear_probe.load_state_dict(checkpoint["state_dict"])
-            linear_probe.eval()
+                    checkpoint = torch.load(fold_ckpt_path, map_location=device)
+                    # K-fold checkpoints use "feature_dim" instead of "extractor_dim"
+                    extractor_dim = checkpoint.get("feature_dim") or checkpoint.get("extractor_dim")
+                    _num_classes = checkpoint["num_classes"]
 
-            return extractor, linear_probe, extractor_name
+                    fold_probe = nn.Linear(extractor_dim, _num_classes).to(device)
+                    fold_probe.load_state_dict(checkpoint["state_dict"])
+                    fold_probe.eval()
+                    _models.append(fold_probe)
+            else:
+                # Regular: single checkpoint at root
+                ckpt_path = model_dir / "linear_probe.pth"
+                if not ckpt_path.exists():
+                    raise FileNotFoundError(f"Model checkpoint (linear_probe.pth) not found at {ckpt_path}")
 
-        extractor, linear_probe, extractor_name = await asyncio.to_thread(_load_model)
+                checkpoint = torch.load(ckpt_path, map_location=device)
+                _extractor_name = checkpoint.get("extractor_name", _extractor_name)
+                extractor_dim = checkpoint.get("extractor_dim") or checkpoint.get("feature_dim")
+                _num_classes = checkpoint["num_classes"]
+
+                probe = nn.Linear(extractor_dim, _num_classes).to(device)
+                probe.load_state_dict(checkpoint["state_dict"])
+                probe.eval()
+                _models.append(probe)
+
+            # Build shared extractor (frozen, shared across all folds)
+            _extractor = get_extractor(_extractor_name, pretrained=True)
+            _extractor = _extractor.to(device)
+            _extractor.eval()
+
+            return _extractor, _models, _extractor_name
+
+        extractor, linear_probes, extractor_name = await asyncio.to_thread(_load_models)
 
         # Get transforms and CAM extractor
         fm_transform = extractor.get_transforms()
@@ -2450,7 +2477,7 @@ async def _run_external_validation_patch_classification(
         cam_size = get_cam_spatial_size(extractor_name)
         use_gradients = is_cnn_extractor(extractor_name)
 
-        # Combined model for CAM extraction
+        # Combined model for CAM extraction (uses first probe for CAM; ensemble for prediction)
         class CombinedModel(nn.Module):
             def __init__(self, ext, probe):
                 super().__init__()
@@ -2461,12 +2488,14 @@ async def _run_external_validation_patch_classification(
                 features = self.extractor(x)
                 return self.linear_probe(features)
 
-        combined_model = CombinedModel(extractor, linear_probe).to(device)
+        # For CAM, use the first linear probe (all folds share the same extractor)
+        combined_model = CombinedModel(extractor, linear_probes[0]).to(device)
         combined_model.eval()
 
         # Build labels dict and image paths from target dataset WSIs
         labels = {}
         image_paths = {}
+        task_user_id = None
         async with safe_session() as db:
             for wsi_id in wsi_ids:
                 wsi = await WSIRepository.get_by_id(db, wsi_id)
@@ -2474,6 +2503,10 @@ async def _run_external_validation_patch_classification(
                     if wsi.label and wsi.label in classes:
                         labels[wsi_id] = classes.index(wsi.label)
                     image_paths[wsi_id] = wsi.wsi_path
+
+            # Get user_id from the task for saving results later
+            task_record = await TrainingTaskRepository.get_by_id(db, task_id)
+            task_user_id = str(task_record.user_id) if task_record and task_record.user_id else None
 
         if not image_paths:
             raise ValueError("No image paths found for target WSIs")
@@ -2504,13 +2537,26 @@ async def _run_external_validation_patch_classification(
                         img = Image.open(img_path).convert("RGB")
                         img_tensor = fm_transform(img).unsqueeze(0).to(device)
 
-                        with torch.inference_mode():
-                            logits = combined_model(img_tensor)
-                            probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
-                            pred_idx = int(probs.argmax())
-                            pred_label = classes[pred_idx]
+                        # K-fold ensemble: average logits across all folds
+                        if is_kfold:
+                            with torch.inference_mode():
+                                features = extractor(img_tensor)
+                                all_logits = []
+                                for fold_probe in linear_probes:
+                                    fold_logits = fold_probe(features)
+                                    all_logits.append(fold_logits)
+                                avg_logits = torch.mean(torch.stack(all_logits), dim=0)
+                                probs = F.softmax(avg_logits, dim=-1).squeeze(0).cpu().numpy()
+                                pred_idx = int(probs.argmax())
+                                pred_label = classes[pred_idx]
+                        else:
+                            with torch.inference_mode():
+                                logits = combined_model(img_tensor)
+                                probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                                pred_idx = int(probs.argmax())
+                                pred_label = classes[pred_idx]
 
-                        # Extract CAM
+                        # Extract CAM (uses combined_model with first probe)
                         try:
                             cam_map = cam_extractor.extract_cam(
                                 model=combined_model,
@@ -2531,17 +2577,23 @@ async def _run_external_validation_patch_classification(
                         cam_file = wsi_result_dir / f"extval_{task_id}_cam.npy"
                         np.save(cam_file, cam_map)
 
-                        # Save result JSON
+                        # Save result JSON (aligned with WSI branch fields)
                         result_data = {
                             "wsi_id": wsi_id,
-                            "task_id": task_id,
+                            "task_id": model_task_id,
+                            "validation_source": dataset_id,
+                            "validation_task_id": task_id,
+                            "task_type": "patch_classification",
+                            "aggregation_level": "file",
                             "pred": pred_label,
                             "probs": probs_dict,
                             "ground_truth": gt_label,
-                            "correct": pred_label == gt_label,
+                            "correct": pred_label == gt_label if gt_label != "unknown" else None,
                             "classes": classes,
                             "cam_file": str(cam_file),
                             "cam_size": list(cam_size),
+                            "is_kfold": is_kfold,
+                            "num_folds": num_folds if is_kfold else None,
                         }
 
                         result_file = wsi_result_dir / f"extval_{task_id}_result.json"
@@ -2553,7 +2605,7 @@ async def _run_external_validation_patch_classification(
                             "pred": pred_label,
                             "probs": probs_dict,
                             "gt_label": gt_label,
-                            "correct": pred_label == gt_label,
+                            "correct": pred_label == gt_label if gt_label != "unknown" else None,
                             "cam_file": str(cam_file),
                             "cam_size": list(cam_size),
                             "result_file": str(result_file),
@@ -2566,15 +2618,20 @@ async def _run_external_validation_patch_classification(
 
         all_results = await asyncio.to_thread(_run_inference)
 
-        # Save to database
+        # Save to database (aligned with WSI branch fields)
         async with safe_session() as db:
             for r in all_results:
                 db_result_data = {
                     "wsi_id": r["wsi_id"],
                     "task_id": task_id,
+                    "user_id": task_user_id,
                     "pred": r["pred"],
                     "probs": r["probs"],
                     "extra_metadata": {
+                        "validation_type": "external",
+                        "model_task_id": model_task_id,
+                        "dataset_id": dataset_id,
+                        "aggregation_level": "file",
                         "ground_truth": r["gt_label"],
                         "correct": r["correct"],
                         "classes": classes,

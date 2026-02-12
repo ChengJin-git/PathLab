@@ -168,8 +168,15 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     const shouldContinue = shouldContinueVoice(aiContent)
 
     if (shouldContinue) {
-      console.log('[VoiceSession] AI says continue → restarting recording')
-      startRef.current()
+      console.log('[VoiceSession] AI says continue → restarting recording (300ms delay)')
+      // Add a delay to ensure all async cleanup (AudioContext.close, WebSocket.close)
+      // has fully completed before starting a new recording session.
+      // This prevents intermittent failures from browser resource limits.
+      setTimeout(() => {
+        if (sessionActiveRef.current) {
+          startRef.current()
+        }
+      }, 300)
     } else {
       console.log('[VoiceSession] AI says stop → ending session')
       sessionActiveRef.current = false
