@@ -1288,7 +1288,15 @@ export default function ListPage() {
                               </td>
                               <td className="px-3 sm:px-6 py-4 sm:py-5 text-right">
                                 <div className="flex items-center justify-end gap-1 sm:gap-3 sm:opacity-60 group-hover:opacity-100 transition-opacity">
-                                  <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`} title="View File">
+                                  <Link
+                                    to={`/wsi/${encodeURIComponent(it.wsi_id)}`}
+                                    state={{
+                                      fromDataset: true,
+                                      datasetId: selectedDatasetId,
+                                      datasetName: selectedDatasetName
+                                    }}
+                                    title="View File"
+                                  >
                                     <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Microscope className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>
                                   </Link>
                                   {it.can_delete && <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title="Edit Metadata" onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>}
@@ -1507,7 +1515,15 @@ export default function ListPage() {
                                   </td>
                                   <td className="px-3 sm:px-6 py-3 sm:py-4 text-right">
                                     <div className="flex items-center justify-end gap-1 sm:gap-2 opacity-60 group-hover:opacity-100 transition-opacity">
-                                      <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`} title="View File">
+                                      <Link
+                                        to={`/wsi/${encodeURIComponent(it.wsi_id)}`}
+                                        state={{
+                                          fromDataset: true,
+                                          datasetId: selectedDatasetId,
+                                          datasetName: selectedDatasetName
+                                        }}
+                                        title="View File"
+                                      >
                                         <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Microscope className="w-3 h-3 sm:w-4 sm:h-4" /></Button>
                                       </Link>
                                       {it.can_delete && <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title="Edit Metadata" onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit className="w-3 h-3 sm:w-4 sm:h-4" /></Button>}
@@ -1624,7 +1640,15 @@ export default function ListPage() {
                             </td>
                             <td className="px-3 sm:px-6 py-4 sm:py-5 text-right">
                               <div className="flex items-center justify-end gap-1 sm:gap-3 sm:opacity-60 group-hover:opacity-100 transition-opacity">
-                                <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`} title="View File">
+                                <Link
+                                  to={`/wsi/${encodeURIComponent(it.wsi_id)}`}
+                                  state={{
+                                    fromDataset: true,
+                                    datasetId: selectedDatasetId,
+                                    datasetName: selectedDatasetName
+                                  }}
+                                  title="View File"
+                                >
                                   <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
                                     <Microscope className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
                                   </Button>

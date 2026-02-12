@@ -701,10 +701,14 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
   - "This heatmap shows where the model focused when predicting {predicted_class}. Since CLAM_MB generates separate attention maps for each class, you can explore attention for other classes in the WSI Viewer."
 
 **IMPORTANT for label vs pred filters:**
-- If user asks for images with a specific **ground truth label** (e.g., "MSIH images", "labeled as MSIH"), use the `label` filter
-- If user asks for images with specific **AI predictions** (e.g., "predicted as MSIH", "AI thinks it's MSIH"), use the `pred` filter
-- If user asks for BOTH (e.g., "MSIH images with high AI diagnostic probability", "labeled MSIH and predicted MSIH"), use BOTH `label` AND `pred` filters together!
-- Example: "MSIH with high AI probability" means label=MSIH AND pred=MSIH (both filters needed)
+- If user asks for images with a specific **ground truth label** (e.g., "MSIH images", "labeled as MSIH", "show me MSIH", "给我看MSIH的图片"), use the `label` filter
+  - This is the most common case - when user mentions a class name without explicitly saying "predicted", they mean the ground truth label
+- If user asks for images with specific **AI predictions** (e.g., "predicted as MSIH", "AI thinks it's MSIH", "AI诊断为MSIH"), use the `pred` filter
+- If user asks for BOTH (e.g., "MSIH images with high AI diagnostic probability", "labeled MSIH and predicted MSIH", "真实标签是MSIH且AI预测也是MSIH"), use BOTH `label` AND `pred` filters together!
+  - Example: "MSIH with high AI probability" means label=MSIH AND pred=MSIH (both filters needed)
+  - Example: "show me MSIH images that the AI correctly identified" means label=MSIH AND pred=MSIH
+  - Example: "给我看AI预测准确的MSIH图片" means label=MSIH AND pred=MSIH
+- **Common mistake to avoid:** When user says "show me MSIH images" without mentioning predictions, do NOT add pred filter - only use label filter!
 
 **IMPORTANT for Survival Prediction heatmaps:**
 - Survival prediction models do NOT have class labels like classification models

@@ -9,6 +9,7 @@ import { API_BASE } from '../config'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KFoldLossCurveData, type KMCurveData } from '../components/charts/AnalysisCharts'
 import { getTrainedModels, TrainedModel, getAuthToken, startExternalValidation as apiStartExternalValidation, fetchDatasetsForValidation, ValidationDataset } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
+import { useAuth } from '../contexts/AuthContext'
 import {
   CLASSIFICATION_METRICS,
   CLASSIFICATION_CHARTS,
@@ -17,7 +18,11 @@ import {
   EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS,
   EXTERNAL_VALIDATION_SURVIVAL_CHARTS,
   DEFAULT_CLASSIFICATION_METRICS,
-  DEFAULT_CLASSIFICATION_CHARTS
+  DEFAULT_CLASSIFICATION_CHARTS,
+  DEFAULT_SURVIVAL_METRICS,
+  DEFAULT_SURVIVAL_CHARTS,
+  DEFAULT_EXTERNAL_CLASSIFICATION_CHARTS,
+  DEFAULT_EXTERNAL_SURVIVAL_CHARTS
 } from '../constants/metrics'
 
 /**
@@ -137,6 +142,7 @@ interface AnalysisSummary {
   chart_data?: ChartData
   kfold_training?: KFoldTrainingInfo  // K-Fold training info if available
   bootstrap_ci?: BootstrapCIResult  // Bootstrap 95% confidence intervals if computed
+  submitted_by?: string  // Display name of user who initiated analysis (admin only)
 }
 
 interface AnalysisResult {
@@ -160,6 +166,7 @@ export default function ResultsViewerPage() {
   const location = useLocation()
   const [searchParams] = useSearchParams()
   const { analysisTasks, subscribeAnalysisSSE } = useBackgroundTask()
+  const { isAdmin } = useAuth()
 
   // Subscribe to analysis SSE when this page is mounted
   useEffect(() => {
@@ -215,6 +222,11 @@ export default function ResultsViewerPage() {
   }
   const [completedExtValTasks, setCompletedExtValTasks] = useState<CompletedExtValTask[]>([])
 
+  // External validation analysis history (mirrors `analyses` for internal)
+  const [extAnalyses, setExtAnalyses] = useState<AnalysisSummary[]>([])
+  const [showExtHistory, setShowExtHistory] = useState(false)
+  const [expandedExtAnalysis, setExpandedExtAnalysis] = useState<string | null>(null)
+
   useEffect(() => {
     loadTasks()
     loadTrainedModels()
@@ -253,6 +265,23 @@ export default function ResultsViewerPage() {
     }
   }, [selectedTaskId, tasks])
 
+  // Reset metrics/charts selection when external model changes
+  useEffect(() => {
+    if (pageMode !== 'external-validation' || !selectedModelId) return
+    const model = trainedModels.find(m => m.model_id === selectedModelId)
+    const task = model ? tasks.find(t => t.task_id === model.task_id) : null
+    if (task) {
+      if (isSurvivalTask(task.task_type)) {
+        setSelectedMetrics([...DEFAULT_SURVIVAL_METRICS])
+        setSelectedCharts([...DEFAULT_EXTERNAL_SURVIVAL_CHARTS])
+      } else {
+        setSelectedMetrics([...DEFAULT_CLASSIFICATION_METRICS])
+        setSelectedCharts([...DEFAULT_EXTERNAL_CLASSIFICATION_CHARTS])
+      }
+      setBootstrapCIMetrics([])
+    }
+  }, [pageMode, selectedModelId, trainedModels, tasks])
+
   // Auto-restore external validation results when model+dataset selection matches a completed task
   useEffect(() => {
     if (pageMode !== 'external-validation' || !selectedModelId || !datasetId) return
@@ -277,36 +306,13 @@ export default function ResultsViewerPage() {
         error: null,
         results_count: matchingTask.results_count,
       })
-      // Load analysis results for this task
-      ;(async () => {
-        try {
-          const response = await fetch(
-            `${API_BASE}/results/tasks/${matchingTask.task_id}/analysis`,
-            authFetchOptions()
-          )
-          if (response.ok) {
-            const data = await response.json()
-            const analysesList: AnalysisSummary[] = data.analyses || []
-            if (analysesList.length > 0) {
-              // Use the most recent analysis
-              setCurrentResult({
-                task_id: matchingTask.task_id,
-                analysis_id: analysesList[0].analysis_id,
-                analysis_dir: '',
-                summary: analysesList[0],
-                chart_paths: analysesList[0].chart_paths || {},
-                metrics: analysesList[0].metrics || {},
-              })
-            }
-          }
-        } catch (error) {
-          console.error('Failed to load external validation analysis:', error)
-        }
-      })()
+      // Load analysis history for this task
+      loadExtAnalyses(matchingTask.task_id)
     } else if (!validationProgress || validationProgress.model_id !== selectedModelId || validationProgress.dataset_id !== datasetId) {
       // No matching completed task and selection changed — clear stale results
       setValidationProgress(null)
       setCurrentResult(null)
+      setExtAnalyses([])
     }
   }, [pageMode, selectedModelId, datasetId, completedExtValTasks])
 
@@ -327,32 +333,8 @@ export default function ResultsViewerPage() {
 
         // Check if this is an external validation analysis
         if (task.analysisType === 'external' && task.trainingTaskId) {
-          // Load analysis results for the external validation task
-          const extTaskId = task.trainingTaskId
-          ;(async () => {
-            try {
-              const response = await fetch(
-                `${API_BASE}/results/tasks/${extTaskId}/analysis`,
-                authFetchOptions()
-              )
-              if (response.ok) {
-                const data = await response.json()
-                const analysesList: AnalysisSummary[] = data.analyses || []
-                if (analysesList.length > 0) {
-                  setCurrentResult({
-                    task_id: extTaskId,
-                    analysis_id: analysesList[0].analysis_id,
-                    analysis_dir: '',
-                    summary: analysesList[0],
-                    chart_paths: analysesList[0].chart_paths || {},
-                    metrics: analysesList[0].metrics || {},
-                  })
-                }
-              }
-            } catch (error) {
-              console.error('Failed to load external validation analysis:', error)
-            }
-          })()
+          // Load analysis history for the external validation task
+          loadExtAnalyses(task.trainingTaskId)
           // Also refresh the completed extval tasks list for future visits
           loadCompletedExtValTasks()
         } else {
@@ -435,31 +417,85 @@ export default function ResultsViewerPage() {
     }
   }
 
+  const loadExtAnalyses = async (taskId: string) => {
+    try {
+      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`, authFetchOptions())
+      if (response.ok) {
+        const data = await response.json()
+        setExtAnalyses(data.analyses || [])
+      }
+    } catch (error) {
+      console.error('Failed to load external validation analyses:', error)
+    }
+  }
+
   const startExternalValidation = async () => {
-    if (!selectedModelId || !datasetId) return
+    if (!selectedModelId || !datasetId || selectedMetrics.length === 0) return
 
     const selectedModel = trainedModels.find(m => m.model_id === selectedModelId)
     if (!selectedModel) return
 
+    setRunning(true)
     setValidationError(null)
     try {
-      // Use the API function which supports all parameters including bootstrap CI
-      const result = await apiStartExternalValidation(selectedModelId, datasetId)
-      // Task submitted successfully - show pending status
-      // Progress will be tracked via SSE in the Background Task Panel
-      setValidationProgress({
-        validation_id: result.task_id,
-        status: 'pending',
-        progress: 0,
-        total_wsi: result.total_wsi || 0,
-        processed_wsi: 0,
-        model_id: selectedModelId,
-        model_task_id: selectedModel.task_id,
-        dataset_id: datasetId,
-        error: null,
-      })
-      // Start polling to track this specific task's progress
-      startPolling(result.task_id)
+      // Pass metrics/charts/bootstrapCI so backend auto-triggers analysis after inference
+      const result = await apiStartExternalValidation(
+        selectedModelId,
+        datasetId,
+        selectedMetrics,
+        selectedCharts,
+        bootstrapCIMetrics.length > 0
+      )
+
+      // Handle different response statuses from backend:
+      // 1. status === 'completed' — both inference and analysis already exist
+      // 2. status === 'analysis_started' — inference exists, analysis auto-triggered
+      // 3. status === 'pending' — new task queued for GPU inference
+      const responseStatus = (result as Record<string, unknown>).status as string
+
+      if (responseStatus === 'completed') {
+        // Both inference and analysis already exist — load results directly
+        setValidationProgress({
+          validation_id: result.task_id,
+          status: 'completed',
+          progress: 100,
+          total_wsi: result.total_wsi || 0,
+          processed_wsi: result.total_wsi || 0,
+          model_id: selectedModelId,
+          model_task_id: selectedModel.task_id,
+          dataset_id: datasetId,
+          error: null,
+        })
+        await loadExtAnalyses(result.task_id)
+      } else if (responseStatus === 'analysis_started') {
+        // Inference results exist, analysis auto-triggered — wait for SSE
+        setValidationProgress({
+          validation_id: result.task_id,
+          status: 'completed',
+          progress: 100,
+          total_wsi: result.total_wsi || 0,
+          processed_wsi: result.total_wsi || 0,
+          model_id: selectedModelId,
+          model_task_id: selectedModel.task_id,
+          dataset_id: datasetId,
+          error: null,
+        })
+        // Analysis is running — SSE handler will pick it up
+      } else {
+        // New task submitted — show pending status and start polling
+        setValidationProgress({
+          validation_id: result.task_id,
+          status: 'pending',
+          progress: 0,
+          total_wsi: result.total_wsi || 0,
+          processed_wsi: 0,
+          model_id: selectedModelId,
+          model_task_id: selectedModel.task_id,
+          dataset_id: datasetId,
+          error: null,
+        })
+        startPolling(result.task_id)
+      }
     } catch (error) {
       console.error('Failed to start external validation:', error)
       if (error instanceof Error) {
@@ -467,6 +503,8 @@ export default function ResultsViewerPage() {
       } else {
         setValidationError('Failed to connect to the server. Please try again.')
       }
+    } finally {
+      setRunning(false)
     }
   }
 
@@ -719,25 +757,19 @@ export default function ResultsViewerPage() {
           <p className="text-gray-500">Complete a training task to analyze its results.</p>
         </Card>
       ) : pageMode === 'external-validation' ? (
-        /* External Validation Mode */
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-          {/* Left Panel - Task Selection */}
-          <div className="lg:col-span-1 space-y-6">
+        /* External Validation Mode — 4-col layout matching Internal Analysis */
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 items-stretch">
+          {/* Left Panel - Configuration */}
+          <div className="lg:col-span-1 flex flex-col">
+            <div className="space-y-6 flex-1">
             {/* Model Selection */}
-            <Card className="p-6 overflow-visible">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">Select Model</h3>
-                <Badge variant="secondary" className="bg-gray-100 text-gray-700">Step 1</Badge>
-              </div>
-              <p className="text-base md:text-lg text-gray-600 mb-6 leading-relaxed">
-                Select a trained model for inference. Manage models in Settings.
-              </p>
-
+            <Card className="p-4 sm:p-6 overflow-visible">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Select Model</h3>
               <div className="relative">
                 <button
                   onClick={() => { setIsModelDropdownOpen(!isModelDropdownOpen); setIsDataDropdownOpen(false); }}
                   className={`w-full flex items-center justify-between px-4 py-3 bg-white border rounded-xl shadow-sm transition-all duration-200 ${
-                    isModelDropdownOpen ? 'border-gray-400 ring-4 ring-gray-200' : 'border-gray-200 hover:border-gray-300'
+                    isModelDropdownOpen ? 'border-orange-500 ring-4 ring-orange-500/10' : 'border-gray-200 hover:border-orange-300'
                   }`}
                 >
                   <div className="flex flex-col items-start">
@@ -754,69 +786,65 @@ export default function ResultsViewerPage() {
                 </button>
 
                 {isModelDropdownOpen && (
-                  <div className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-80 overflow-y-auto">
-                    {trainedModels.map(model => {
-                      const trainTask = tasks.find(t => t.task_id === model.task_id)
-                      const isSurvival = isSurvivalTask(trainTask?.task_type) || model.aggregator === 'survival'
-                      const metrics = model.val_metrics as Record<string, number> | undefined
-                      const metricValue = isSurvival
-                        ? metrics?.c_index
-                        : (metrics?.macro_auc || metrics?.auc)
-                      const metricLabel = isSurvival ? 'C-Index' : 'AUC'
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setIsModelDropdownOpen(false)} />
+                    <div className="absolute z-20 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-80 overflow-y-auto">
+                      {trainedModels.map(model => {
+                        const trainTask = tasks.find(t => t.task_id === model.task_id)
+                        const isSurvival = isSurvivalTask(trainTask?.task_type) || model.aggregator === 'survival'
+                        const metrics = model.val_metrics as Record<string, number> | undefined
+                        const metricValue = isSurvival
+                          ? metrics?.c_index
+                          : (metrics?.macro_auc || metrics?.auc)
+                        const metricLabel = isSurvival ? 'C-Index' : 'AUC'
 
-                      return (
-                        <button
-                          key={model.model_id}
-                          onClick={() => { setSelectedModelId(model.model_id); setIsModelDropdownOpen(false); }}
-                          className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
-                            selectedModelId === model.model_id ? 'bg-gray-100' : ''
-                          }`}
-                        >
-                          <div className="flex-1 min-w-0">
-                            <div className="font-medium text-gray-900 flex items-center gap-2">
-                              {model.model_name}
-                              {model.is_default && <Star className="w-3 h-3 text-gray-500 flex-shrink-0" />}
+                        return (
+                          <button
+                            key={model.model_id}
+                            onClick={() => { setSelectedModelId(model.model_id); setIsModelDropdownOpen(false); }}
+                            className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
+                              selectedModelId === model.model_id ? 'bg-orange-50' : ''
+                            }`}
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-gray-900 flex items-center gap-2">
+                                {model.model_name}
+                                {model.is_default && <Star className="w-3 h-3 text-gray-500 flex-shrink-0" />}
+                              </div>
+                              <div className="text-xs text-gray-500 truncate">
+                                Trained on: {trainTask?.name || 'Unknown'}
+                              </div>
                             </div>
-                            <div className="text-xs text-gray-500 truncate">
-                              Trained on: {trainTask?.name || 'Unknown'}
+                            <div className="flex items-center gap-3 ml-2">
+                              {metricValue !== undefined && (
+                                <span className="text-xs font-mono bg-gray-100 px-2 py-1 rounded">
+                                  {metricLabel}: {(metricValue * 100).toFixed(1)}%
+                                </span>
+                              )}
+                              {selectedModelId === model.model_id && <CheckCircle2 className="w-4 h-4 text-orange-600 flex-shrink-0" />}
                             </div>
-                          </div>
-                          <div className="flex items-center gap-3 ml-2">
-                            {metricValue !== undefined && (
-                              <span className="text-xs font-mono bg-gray-100 px-2 py-1 rounded">
-                                {metricLabel}: {(metricValue * 100).toFixed(1)}%
-                              </span>
-                            )}
-                            {selectedModelId === model.model_id && <CheckCircle2 className="w-4 h-4 text-gray-600 flex-shrink-0" />}
-                          </div>
-                        </button>
-                      )
-                    })}
-                    {trainedModels.length === 0 && (
-                      <div className="px-4 py-8 text-center text-gray-500">No active models. Train a model first.</div>
-                    )}
-                  </div>
+                          </button>
+                        )
+                      })}
+                      {trainedModels.length === 0 && (
+                        <div className="px-4 py-8 text-center text-gray-500">No active models. Train a model first.</div>
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
             </Card>
 
             {/* Target Dataset Selection */}
-            <Card className="p-6 overflow-visible">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">Target Dataset</h3>
-                <Badge variant="secondary" className="bg-gray-100 text-gray-700">Step 2</Badge>
-              </div>
-              <p className="text-base md:text-lg text-gray-600 mb-6 leading-relaxed">
-                Select a dataset to run inference on. Features will be extracted automatically if needed.
-              </p>
-
+            <Card className="p-4 sm:p-6 overflow-visible">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Target Dataset</h3>
               <div className="relative">
                 <button
                   onClick={() => { setIsDataDropdownOpen(!isDataDropdownOpen); setIsModelDropdownOpen(false); }}
                   disabled={!selectedModelId}
                   className={`w-full flex items-center justify-between px-4 py-3 bg-white border rounded-xl shadow-sm transition-all duration-200 ${
                     !selectedModelId ? 'opacity-50 cursor-not-allowed' :
-                    isDataDropdownOpen ? 'border-gray-400 ring-4 ring-gray-200' : 'border-gray-200 hover:border-gray-300'
+                    isDataDropdownOpen ? 'border-orange-500 ring-4 ring-orange-500/10' : 'border-gray-200 hover:border-orange-300'
                   }`}
                 >
                   <div className="flex flex-col items-start">
@@ -828,100 +856,202 @@ export default function ResultsViewerPage() {
                 </button>
 
                 {isDataDropdownOpen && selectedModel && modelTask && (
-                  <div className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-64 overflow-y-auto">
-                    {/* Filter datasets by: 1. Same data_type 2. Matching task type 3. Class count match (classification) 4. No WSI overlap */}
-                    {validationDatasets.filter(ds => {
-                      // Must match data_type (WSI <-> WSI, Patch <-> Patch)
-                      const modelDataType = modelTask.data_type || 'wsi'
-                      if (ds.data_type !== modelDataType) return false
-                      // Must match task type (Classification <-> Classification, Survival <-> Survival)
-                      const modelIsSurvival = isSurvivalTask(modelTask.task_type)
-                      const datasetIsSurvival = ds.task_type === 'survival'
-                      if (modelIsSurvival !== datasetIsSurvival) return false
-                      // For classification: must match class count (not class names)
-                      if (!modelIsSurvival) {
-                        const modelClassCount = selectedModel.classes?.length || 0
-                        if (modelClassCount !== ds.distinct_label_count) return false
-                      }
-                      // Exclude datasets with WSI overlap (prevent data leakage)
-                      const modelWsiIds = new Set(modelTask.wsi_ids || [])
-                      if (modelWsiIds.size > 0 && ds.wsi_ids?.some(id => modelWsiIds.has(id))) return false
-                      return true
-                    }).map(dataset => (
-                      <button
-                        key={dataset.dataset_id}
-                        onClick={() => { setDatasetId(dataset.dataset_id); setIsDataDropdownOpen(false); }}
-                        className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
-                          datasetId === dataset.dataset_id ? 'bg-gray-100' : ''
-                        }`}
-                      >
-                        <div>
-                          <div className="font-medium text-gray-900">{dataset.name}</div>
-                          <div className="text-xs text-gray-500">
-                            {dataset.display_count || 0} {dataset.aggregation_level === 'case' ? 'cases' : 'slides'} • {dataset.data_type?.toUpperCase() || 'WSI'}
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setIsDataDropdownOpen(false)} />
+                    <div className="absolute z-20 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-64 overflow-y-auto">
+                      {validationDatasets.filter(ds => {
+                        const modelDataType = modelTask.data_type || 'wsi'
+                        if (ds.data_type !== modelDataType) return false
+                        const modelIsSurvival = isSurvivalTask(modelTask.task_type)
+                        const datasetIsSurvival = ds.task_type === 'survival'
+                        if (modelIsSurvival !== datasetIsSurvival) return false
+                        if (!modelIsSurvival) {
+                          const modelClassCount = selectedModel.classes?.length || 0
+                          if (modelClassCount !== ds.distinct_label_count) return false
+                        }
+                        const modelWsiIds = new Set(modelTask.wsi_ids || [])
+                        if (modelWsiIds.size > 0 && ds.wsi_ids?.some(id => modelWsiIds.has(id))) return false
+                        return true
+                      }).map(dataset => (
+                        <button
+                          key={dataset.dataset_id}
+                          onClick={() => { setDatasetId(dataset.dataset_id); setIsDataDropdownOpen(false); }}
+                          className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
+                            datasetId === dataset.dataset_id ? 'bg-orange-50' : ''
+                          }`}
+                        >
+                          <div>
+                            <div className="font-medium text-gray-900">{dataset.name}</div>
+                            <div className="text-xs text-gray-500">
+                              {dataset.display_count || 0} {dataset.aggregation_level === 'case' ? 'cases' : 'slides'} • {dataset.data_type?.toUpperCase() || 'WSI'}
+                            </div>
                           </div>
+                          {datasetId === dataset.dataset_id && <CheckCircle2 className="w-4 h-4 text-orange-600" />}
+                        </button>
+                      ))}
+                      {validationDatasets.filter(ds => {
+                        const modelDataType = modelTask.data_type || 'wsi'
+                        if (ds.data_type !== modelDataType) return false
+                        const modelIsSurvival = isSurvivalTask(modelTask.task_type)
+                        const datasetIsSurvival = ds.task_type === 'survival'
+                        if (modelIsSurvival !== datasetIsSurvival) return false
+                        if (!modelIsSurvival) {
+                          const modelClassCount = selectedModel.classes?.length || 0
+                          if (modelClassCount !== ds.distinct_label_count) return false
+                        }
+                        const modelWsiIds = new Set(modelTask.wsi_ids || [])
+                        if (modelWsiIds.size > 0 && ds.wsi_ids?.some(id => modelWsiIds.has(id))) return false
+                        return true
+                      }).length === 0 && (
+                        <div className="px-4 py-8 text-center text-gray-500">
+                          <p className="font-medium">No compatible datasets</p>
+                          <p className="text-xs mt-1">
+                            Looking for: {modelTask.data_type?.toUpperCase() || 'WSI'} level, {isSurvivalTask(modelTask.task_type) ? 'Survival' : 'Classification'} type, matching class count, no WSI overlap
+                          </p>
                         </div>
-                        {datasetId === dataset.dataset_id && <CheckCircle2 className="w-4 h-4 text-gray-600" />}
-                      </button>
-                    ))}
-                    {validationDatasets.filter(ds => {
-                      const modelDataType = modelTask.data_type || 'wsi'
-                      if (ds.data_type !== modelDataType) return false
-                      const modelIsSurvival = isSurvivalTask(modelTask.task_type)
-                      const datasetIsSurvival = ds.task_type === 'survival'
-                      if (modelIsSurvival !== datasetIsSurvival) return false
-                      if (!modelIsSurvival) {
-                        const modelClassCount = selectedModel.classes?.length || 0
-                        if (modelClassCount !== ds.distinct_label_count) return false
-                      }
-                      const modelWsiIds = new Set(modelTask.wsi_ids || [])
-                      if (modelWsiIds.size > 0 && ds.wsi_ids?.some(id => modelWsiIds.has(id))) return false
-                      return true
-                    }).length === 0 && (
-                      <div className="px-4 py-8 text-center text-gray-500">
-                        <p className="font-medium">No compatible datasets</p>
-                        <p className="text-xs mt-1">
-                          Looking for: {modelTask.data_type?.toUpperCase() || 'WSI'} level, {isSurvivalTask(modelTask.task_type) ? 'Survival' : 'Classification'} type, matching class count, no WSI overlap
-                        </p>
-                      </div>
-                    )}
-                  </div>
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
             </Card>
 
-            {/* Run Validation Button */}
-            <Button
-              onClick={startExternalValidation}
-              disabled={!selectedModelId || !datasetId || (validationProgress?.status === 'running')}
-              className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 gap-2 shadow-lg shadow-orange-600/20"
-            >
-              {validationProgress?.status === 'running' ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Running Validation...
-                </>
-              ) : (
-                <>
-                  <FlaskConical className="w-5 h-5" />
-                  Run External Validation
-                </>
-              )}
-            </Button>
-
-            {validationError && (
-              <Card className="p-4 bg-red-50 border-red-200">
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
-                  <div className="flex-1">
-                    <p className="text-sm text-red-600">{validationError}</p>
+            {/* Metrics Selection — shown when model is selected */}
+            {selectedModel && (
+              <Card className="p-4 sm:p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Metrics</h3>
+                <div className="space-y-3">
+                  {(isSurvivalTask(modelTask?.task_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
+                    <div key={metric.id} className="flex items-start gap-3 group">
+                      <input
+                        type="checkbox"
+                        checked={selectedMetrics.includes(metric.id)}
+                        onChange={() => toggleMetric(metric.id)}
+                        className="mt-1 w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500 cursor-pointer"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          <span
+                            className="text-sm font-medium text-gray-900 group-hover:text-orange-600 cursor-pointer"
+                            onClick={() => toggleMetric(metric.id)}
+                          >
+                            {metric.label}
+                          </span>
+                          {/* 95% CI button — always available for external validation (no K-Fold concept) */}
+                          {selectedMetrics.includes(metric.id) && (
+                            <button
+                              type="button"
+                              onClick={() => toggleBootstrapCI(metric.id)}
+                              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-tight transition-all duration-200 focus:outline-none border ${
+                                bootstrapCIMetrics.includes(metric.id)
+                                  ? 'bg-orange-500 text-white shadow-sm border-orange-500 ring-2 ring-orange-500/20'
+                                  : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-orange-200 hover:bg-orange-50 hover:text-orange-600'
+                              }`}
+                            >
+                              {bootstrapCIMetrics.includes(metric.id) ? (
+                                <Check className="w-2.5 h-2.5 stroke-[3]" />
+                              ) : (
+                                <Plus className="w-2.5 h-2.5 stroke-[3]" />
+                              )}
+                              95% CI
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-500">{metric.description}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {bootstrapCIMetrics.length > 0 && (
+                  <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <p className="text-xs text-amber-700">
+                      <span className="font-semibold">Note:</span> Computing 95% CI with 1000 bootstrap samples would take longer time.
+                    </p>
                   </div>
-                  <button onClick={() => setValidationError(null)} className="text-red-400 hover:text-red-600">
-                    <X className="w-4 h-4" />
-                  </button>
+                )}
+              </Card>
+            )}
+
+            {/* Charts Selection — shown when model is selected */}
+            {selectedModel && (
+              <Card className="p-4 sm:p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Charts</h3>
+                <div className="space-y-3">
+                  {(isSurvivalTask(modelTask?.task_type) ? EXTERNAL_VALIDATION_SURVIVAL_CHARTS : EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS).map(chart => (
+                    <label key={chart.id} className="flex items-start gap-3 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={selectedCharts.includes(chart.id)}
+                        onChange={() => toggleChart(chart.id)}
+                        className="mt-1 w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500"
+                      />
+                      <div>
+                        <span className="text-sm font-medium text-gray-900 group-hover:text-orange-600">
+                          {chart.label}
+                        </span>
+                        <p className="text-xs text-gray-500">{chart.description}</p>
+                      </div>
+                    </label>
+                  ))}
                 </div>
               </Card>
             )}
+
+            {/* Description */}
+            {selectedModel && (
+              <Card className="p-4 sm:p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Description (Optional)</h3>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Add notes about this external validation..."
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 resize-none"
+                  rows={3}
+                />
+              </Card>
+            )}
+
+            </div>
+
+            <div className="mt-auto pt-6 space-y-4">
+              {/* Submit Button */}
+              <Button
+                onClick={startExternalValidation}
+                disabled={running || !selectedModelId || !datasetId || selectedMetrics.length === 0 || (validationProgress?.status === 'running') || (validationProgress?.status === 'pending')}
+                className="w-full bg-orange-600 hover:bg-orange-700 text-white py-4 gap-2 text-base font-bold shadow-lg shadow-orange-500/20 rounded-xl"
+              >
+                {running ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Submitting...
+                  </>
+                ) : validationProgress?.status === 'running' || validationProgress?.status === 'pending' ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Validation in Progress...
+                  </>
+                ) : (
+                  <>
+                    <FlaskConical className="w-5 h-5" />
+                    Run External Validation
+                  </>
+                )}
+              </Button>
+
+              {validationError && (
+                <Card className="p-4 bg-red-50 border-red-200">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-sm text-red-600">{validationError}</p>
+                    </div>
+                    <button onClick={() => setValidationError(null)} className="text-red-400 hover:text-red-600">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </Card>
+              )}
+            </div>
           </div>
 
           {/* Right Panel - Progress & Results */}
@@ -1545,6 +1675,9 @@ export default function ResultsViewerPage() {
                             </p>
                             <p className="text-sm text-gray-500">
                               {analysis.num_samples} samples{analysis.classes && ` • ${analysis.classes.length} classes`}
+                              {isAdmin && analysis.submitted_by && (
+                                <span className="ml-2 text-indigo-600">• {analysis.submitted_by}</span>
+                              )}
                             </p>
                             {analysis.description && (
                               <p className="text-sm text-gray-600 mt-1">{analysis.description}</p>

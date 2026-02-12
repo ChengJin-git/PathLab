@@ -90,6 +90,9 @@ export default function DetailPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
+  const fromDataset = (location.state as { fromDataset?: boolean } | null)?.fromDataset === true
+  const datasetId = (location.state as { datasetId?: string } | null)?.datasetId
+  const datasetName = (location.state as { datasetName?: string } | null)?.datasetName
   const [detail, setDetail] = useState<any>()
   const [showHeatmap, setShowHeatmap] = useState(false)
   const [heatmapOpacity, setHeatmapOpacity] = useState(0.5)
@@ -261,13 +264,14 @@ export default function DetailPage() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
 
   // Load WSI list for navigation
+  // If coming from a dataset, load only that dataset's WSIs; otherwise load all
   useEffect(() => {
-    fetchWSIList().then(res => {
+    fetchWSIList(fromDataset ? datasetId : undefined).then(res => {
       if (res && res.items) {
         setAllWSIs(res.items)
       }
     })
-  }, [])
+  }, [fromDataset, datasetId])
 
   // Load WSI detail and available heatmaps
   useEffect(() => {
@@ -387,11 +391,23 @@ export default function DetailPage() {
       <div className="flex-1 flex flex-col bg-gray-50 relative min-h-[50vh] lg:min-h-0">
         <div className="flex items-center px-2 sm:px-4 py-2 sm:py-3 bg-white border-b border-gray-200 gap-2 sm:gap-4 shadow-sm z-10">
           <button
-            onClick={() => navigate(fromAIChat ? '/ai-chat' : '/wsi-list')}
+            onClick={() => {
+              if (fromAIChat) {
+                navigate('/ai-chat')
+              } else if (fromDataset && datasetId) {
+                // Return to the same dataset in ListPage
+                navigate('/wsi-list', { state: { dataset_id: datasetId } })
+              } else {
+                // Return to all datasets list
+                navigate('/wsi-list')
+              }
+            }}
             className="flex items-center gap-1 sm:gap-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100/80 text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg transition-all"
           >
             <ArrowLeft className="w-4 h-4" />
-            <span className="hidden sm:inline">{fromAIChat ? 'Back to Chat' : 'Back'}</span>
+            <span className="hidden sm:inline">
+              {fromAIChat ? 'Back to Chat' : fromDataset && datasetName ? `Back to ${datasetName}` : 'Back'}
+            </span>
           </button>
           <div className="w-px h-6 bg-gray-100"></div>
 
@@ -405,7 +421,14 @@ export default function DetailPage() {
           <div className="flex items-center gap-1 sm:gap-2">
             <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-100">
               <button
-                onClick={() => prevWSI && navigate(`/wsi/${prevWSI.wsi_id}`)}
+                onClick={() => prevWSI && navigate(`/wsi/${prevWSI.wsi_id}`, {
+                  state: {
+                    fromAIChat,
+                    fromDataset,
+                    datasetId,
+                    datasetName
+                  }
+                })}
                 disabled={!prevWSI}
                 className="p-1 sm:p-1.5 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all"
                 title={prevWSI ? `Previous` : 'No previous slide'}
@@ -414,7 +437,14 @@ export default function DetailPage() {
               </button>
               <div className="w-px h-4 bg-gray-200"></div>
               <button
-                onClick={() => nextWSI && navigate(`/wsi/${nextWSI.wsi_id}`)}
+                onClick={() => nextWSI && navigate(`/wsi/${nextWSI.wsi_id}`, {
+                  state: {
+                    fromAIChat,
+                    fromDataset,
+                    datasetId,
+                    datasetName
+                  }
+                })}
                 disabled={!nextWSI}
                 className="p-1 sm:p-1.5 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all"
                 title={nextWSI ? `Next` : 'No next slide'}

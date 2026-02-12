@@ -124,19 +124,20 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
           )
         }
 
+        // Apply label filter (ground truth label) on results BEFORE creating the wsi_id set
+        // This is critical: we must filter by label here, not later on the WSI list
+        if (recommendation.filters?.label) {
+          resultsWithWsi = resultsWithWsi.filter(r =>
+            r.label?.toLowerCase().includes(recommendation.filters!.label!.toLowerCase())
+          )
+        }
+
         // We need to get full WSI info, so fetch WSI list and merge
         const wsiResult = await fetchWSIList(recommendation.filters?.dataset_id)
 
-        // Filter to only WSIs that have predictions (and match pred filter if specified)
+        // Filter to only WSIs that have predictions (and match both pred and label filters if specified)
         const wsiIdsWithPredictions = new Set(resultsWithWsi.map(r => r.wsi_id))
         let filtered = wsiResult.items.filter(w => wsiIdsWithPredictions.has(w.wsi_id))
-
-        // Apply label filter (ground truth label)
-        if (recommendation.filters?.label) {
-          filtered = filtered.filter(s =>
-            s.label?.toLowerCase().includes(recommendation.filters!.label!.toLowerCase())
-          )
-        }
 
         // Apply data_type filter
         if (recommendation.filters?.data_type && recommendation.filters.data_type !== 'all') {

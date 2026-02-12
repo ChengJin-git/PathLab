@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import select, func, and_, or_, cast, String
 from sqlalchemy.orm import selectinload
 
 from backend.ai.schemas.base import TaskStatus
@@ -3585,6 +3585,7 @@ async def _auto_trigger_external_validation_analysis(
                     charts=analysis_charts,
                     description="Auto-triggered after external validation inference",
                     bootstrap_ci_metrics=analysis_bootstrap_ci,
+                    submitted_by=user_id,
                 )
             )
             # Register task for potential cancellation
@@ -3607,8 +3608,8 @@ async def get_task_analysis(
     # Check task ownership (supports temporary elevated dataset permissions)
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if task:
-        mc = task.model_config or {}
-        if not await check_task_access_permission(user, task.user_id, mc.get("dataset_id"), db):
+        task_dataset_id = await _resolve_task_dataset_id(task, db)
+        if not await check_task_access_permission(user, task.user_id, task_dataset_id, db):
             raise HTTPException(status_code=403, detail="You don't have permission to view this task's analysis")
 
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id
@@ -3632,6 +3633,41 @@ async def get_task_analysis(
 
     # Run file operations in thread pool to avoid blocking event loop
     analyses = await asyncio.to_thread(_read_analyses)
+
+    # Filter and resolve usernames based on user role
+    if user.is_admin():
+        # Admin sees all analyses with submitter info resolved to nickname
+        user_ids = set()
+        for analysis in analyses:
+            submitted_by_id = analysis.get("submitted_by")
+            if submitted_by_id:
+                user_ids.add(submitted_by_id)
+
+        # Batch lookup nicknames for all submitters
+        user_map = {}
+        if user_ids:
+            result = await db.execute(
+                select(User.id, User.nickname, User.email)
+                .where(cast(User.id, String).in_(list(user_ids)))
+            )
+            for row in result.all():
+                uid_str = str(row[0])
+                user_map[uid_str] = row[1] or row[2]  # nickname or email
+
+        # Resolve submitted_by from user_id to display name
+        for analysis in analyses:
+            submitted_by_id = analysis.get("submitted_by")
+            if submitted_by_id:
+                analysis["submitted_by"] = user_map.get(submitted_by_id, submitted_by_id)
+    else:
+        # Non-admin: only show their own analyses, remove submitted_by field
+        user_id_str = str(user.id)
+        filtered = []
+        for analysis in analyses:
+            if analysis.get("submitted_by") == user_id_str:
+                analysis.pop("submitted_by", None)
+                filtered.append(analysis)
+        analyses = filtered
 
     return {"task_id": task_id, "analyses": analyses}
 
@@ -3664,8 +3700,8 @@ async def run_task_analysis(
         raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
 
     # Check ownership (supports temporary elevated dataset permissions)
-    mc = task.model_config or {}
-    if not await check_task_access_permission(user, task.user_id, mc.get("dataset_id"), db):
+    task_dataset_id = await _resolve_task_dataset_id(task, db)
+    if not await check_task_access_permission(user, task.user_id, task_dataset_id, db):
         raise HTTPException(status_code=403, detail="You don't have permission to analyze this task")
 
     # Check GPU permission (pathologist/admin OR temporary elevated permission)
@@ -3762,6 +3798,7 @@ async def run_task_analysis(
             charts=request.charts,
             description=request.description,
             bootstrap_ci_metrics=request.bootstrap_ci_metrics or [],
+            submitted_by=str(user.id),
         )
         logger.info(f"Analysis task queued (needs GPU): task_id={task_id}, analysis_id={analysis_id}")
     else:
@@ -3776,6 +3813,7 @@ async def run_task_analysis(
                 charts=request.charts,
                 description=request.description,
                 bootstrap_ci_metrics=request.bootstrap_ci_metrics or [],
+                submitted_by=str(user.id),
             )
         )
         # Register task for potential cancellation
@@ -3871,8 +3909,8 @@ async def get_quick_analysis(
     if not task:
         raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
 
-    mc = task.model_config or {}
-    if not await check_task_access_permission(user, task.user_id, mc.get("dataset_id"), db):
+    task_dataset_id = await _resolve_task_dataset_id(task, db)
+    if not await check_task_access_permission(user, task.user_id, task_dataset_id, db):
         raise HTTPException(status_code=403, detail="You don't have permission to view this task's analysis")
 
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id
@@ -3980,6 +4018,7 @@ async def get_quick_analysis(
                 charts=default_charts,
                 description=None,
                 bootstrap_ci_metrics=ci_metrics_list,
+                submitted_by=str(user.id),
             )
             logger.info(f"Analysis task queued (needs GPU): task_id={task_id}, analysis_id={analysis_id}")
         else:
@@ -3994,6 +4033,7 @@ async def get_quick_analysis(
                     charts=default_charts,
                     description=None,
                     bootstrap_ci_metrics=ci_metrics_list,
+                    submitted_by=str(user.id),
                 )
             )
             # Register task for potential cancellation
@@ -4093,8 +4133,8 @@ async def get_analysis_file(
     # Check task ownership (supports temporary elevated dataset permissions)
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if task:
-        mc = task.model_config or {}
-        if not await check_task_access_permission(user, task.user_id, mc.get("dataset_id"), db):
+        task_dataset_id = await _resolve_task_dataset_id(task, db)
+        if not await check_task_access_permission(user, task.user_id, task_dataset_id, db):
             raise HTTPException(status_code=403, detail="You don't have permission to view this file")
 
     file_path = Config.get_uploads_dir() / "logs" / "analysis" / task_id / analysis_id / filename
@@ -5040,11 +5080,41 @@ def _get_random_seed_from_task(task) -> Optional[int]:
     return split_config.get("seed")
 
 
+async def _resolve_task_dataset_id(task, db) -> Optional[str]:
+    """Resolve dataset_id for a training task.
+
+    For external validation tasks, dataset_id is stored in model_config.
+    For regular training tasks, dataset_id must be derived from the task's WSIs
+    through the TrainingTaskWSI junction table.
+
+    Args:
+        task: TrainingTask object
+        db: Database session
+
+    Returns:
+        dataset_id string or None
+    """
+    mc = task.model_config or {}
+    # External validation tasks have dataset_id in model_config
+    dataset_id = mc.get("dataset_id")
+    if dataset_id:
+        return dataset_id
+
+    # For regular training tasks, derive from WSIs
+    wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task.task_id)
+    if wsi_ids:
+        first_wsi = await WSIRepository.get_by_id(db, wsi_ids[0])
+        if first_wsi and first_wsi.dataset_id:
+            return first_wsi.dataset_id
+
+    return None
+
+
 # =============================================================================
 # Classification Analysis
 # =============================================================================
 
-async def _run_classification_analysis(task, request, db, progress_callback=None, progress_config=None):
+async def _run_classification_analysis(task, request, db, progress_callback=None, progress_config=None, submitted_by=None):
     """Run analysis for classification task.
 
     NOTE: Analysis is performed ONLY on the test set to provide unbiased metrics.
@@ -5279,7 +5349,8 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
         "requested_charts": request.charts,
         "metrics": metrics_result["metrics"],
         "class_metrics": metrics_result["class_metrics"],
-        "random_seed": random_seed  # Invisible watermark for model provenance tracking
+        "random_seed": random_seed,  # Invisible watermark for model provenance tracking
+        "submitted_by": submitted_by,
     }
 
     # Add bootstrap CI if computed
@@ -5386,7 +5457,7 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
 # Survival Analysis
 # =============================================================================
 
-async def _run_survival_analysis(task, request, db, progress_callback=None, progress_config=None):
+async def _run_survival_analysis(task, request, db, progress_callback=None, progress_config=None, submitted_by=None):
     """Run analysis for survival task.
 
     NOTE: Analysis is performed ONLY on the test set to provide unbiased metrics.
@@ -5653,7 +5724,8 @@ async def _run_survival_analysis(task, request, db, progress_callback=None, prog
         "metrics": metrics,
         "chart_paths": chart_paths,
         "chart_data": chart_data,
-        "random_seed": random_seed  # Invisible watermark for model provenance tracking
+        "random_seed": random_seed,  # Invisible watermark for model provenance tracking
+        "submitted_by": submitted_by,
     }
 
     # Add K-Fold training info if available
@@ -5872,7 +5944,7 @@ def _calculate_integrated_brier_score(times, events, surv_probs_list, bin_edges)
 # External Validation Analysis
 # =============================================================================
 
-async def _run_external_validation_analysis(task, request, db, progress_callback=None, progress_config=None):
+async def _run_external_validation_analysis(task, request, db, progress_callback=None, progress_config=None, submitted_by=None):
     """Run analysis for external validation task.
 
     Reads results from extval_{task_id}_result.json files.
@@ -5910,12 +5982,12 @@ async def _run_external_validation_analysis(task, request, db, progress_callback
 
     # Route to appropriate analysis based on task type
     if detected_task_type == "survival":
-        return await _run_external_validation_survival_analysis(task, request, db, model_config, progress_callback, progress_config)
+        return await _run_external_validation_survival_analysis(task, request, db, model_config, progress_callback, progress_config, submitted_by)
     else:
-        return await _run_external_validation_classification_analysis(task, request, db, model_config, progress_callback, progress_config)
+        return await _run_external_validation_classification_analysis(task, request, db, model_config, progress_callback, progress_config, submitted_by)
 
 
-async def _run_external_validation_survival_analysis(task, request, db, model_config, progress_callback=None, progress_config=None):
+async def _run_external_validation_survival_analysis(task, request, db, model_config, progress_callback=None, progress_config=None, submitted_by=None):
     """Run survival analysis for external validation task.
 
     Args:
@@ -6134,6 +6206,7 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
         "chart_paths": chart_paths,
         "chart_data": chart_data,
         "random_seed": random_seed,  # Invisible watermark for model provenance tracking
+        "submitted_by": submitted_by,
     }
 
     # Add bootstrap CI if computed
@@ -6169,7 +6242,7 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     }
 
 
-async def _run_external_validation_classification_analysis(task, request, db, model_config, progress_callback=None, progress_config=None):
+async def _run_external_validation_classification_analysis(task, request, db, model_config, progress_callback=None, progress_config=None, submitted_by=None):
     """Run classification analysis for external validation task.
 
     Args:
@@ -6347,6 +6420,7 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
         "is_kfold": is_kfold,
         "num_folds": num_folds,
         "random_seed": random_seed,  # Invisible watermark for model provenance tracking
+        "submitted_by": submitted_by,
     }
 
     # Add bootstrap CI if computed
@@ -6458,6 +6532,7 @@ async def run_analysis_pipeline(
     charts: List[str],
     description: Optional[str] = None,
     bootstrap_ci_metrics: Optional[List[str]] = None,
+    submitted_by: Optional[str] = None,
 ):
     """
     Async pipeline for running analysis in background.
@@ -6485,6 +6560,7 @@ async def run_analysis_pipeline(
         charts: List of charts to generate
         description: Optional description
         bootstrap_ci_metrics: List of metrics to compute 95% CI for
+        submitted_by: User ID of the person who initiated the analysis
     """
     from backend.database.database import async_session
 
@@ -6589,15 +6665,15 @@ async def run_analysis_pipeline(
             match task_type_str:
                 case "wsi_survival" | "survival":
                     result = await _run_survival_analysis(
-                        task, request, db, progress_callback=update_progress, progress_config=progress_config
+                        task, request, db, progress_callback=update_progress, progress_config=progress_config, submitted_by=submitted_by
                     )
                 case "external_validation":
                     result = await _run_external_validation_analysis(
-                        task, request, db, progress_callback=update_progress, progress_config=progress_config
+                        task, request, db, progress_callback=update_progress, progress_config=progress_config, submitted_by=submitted_by
                     )
                 case _:
                     result = await _run_classification_analysis(
-                        task, request, db, progress_callback=update_progress, progress_config=progress_config
+                        task, request, db, progress_callback=update_progress, progress_config=progress_config, submitted_by=submitted_by
                     )
 
             # Mark as completed

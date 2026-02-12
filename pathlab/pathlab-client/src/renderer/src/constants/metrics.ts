@@ -141,6 +141,26 @@ export const DEFAULT_CLASSIFICATION_METRICS = ['accuracy', 'precision', 'sensiti
  */
 export const DEFAULT_CLASSIFICATION_CHARTS = ['confusion_matrix', 'roc_curve', 'loss_curve']
 
+/**
+ * Default metrics to show for survival tasks.
+ */
+export const DEFAULT_SURVIVAL_METRICS = ['c_index', 'integrated_brier_score']
+
+/**
+ * Default charts to show for survival tasks.
+ */
+export const DEFAULT_SURVIVAL_CHARTS = ['km_curve', 'loss_curve']
+
+/**
+ * Default charts for external validation classification (no loss_curve since no training).
+ */
+export const DEFAULT_EXTERNAL_CLASSIFICATION_CHARTS = ['confusion_matrix', 'roc_curve']
+
+/**
+ * Default charts for external validation survival (no loss_curve since no training).
+ */
+export const DEFAULT_EXTERNAL_SURVIVAL_CHARTS = ['km_curve']
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
