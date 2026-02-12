@@ -101,7 +101,8 @@ async def get_user_manager(user_db: SQLAlchemyUserDatabase = Depends(get_user_db
 
 
 # JWT Transport - Bearer token in Authorization header
-bearer_transport = BearerTransport(tokenUrl="auth/jwt/login")
+# tokenUrl points to the secure login endpoint (the legacy /auth/jwt/login is disabled)
+bearer_transport = BearerTransport(tokenUrl="auth/secure-login")
 
 
 class SingleSessionJWTStrategy(JWTStrategy):

@@ -27,7 +27,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
-| POST | `/auth/jwt/login` | JWT 登录 | 公开 |
+| POST | `/auth/jwt/login` | ⛔ 已禁用（防止绕过 reCAPTCHA） | — |
 | POST | `/auth/jwt/logout` | 登出 | 已登录 |
 | POST | `/auth/secure-login` | 安全登录（客户端哈希） | 公开 |
 | POST | `/auth/register` | 注册新用户 | 公开 |

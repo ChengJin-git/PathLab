@@ -9,7 +9,7 @@ Security Features:
 - Server stores bcrypt hash of the password
 
 Endpoints:
-- POST /auth/jwt/login - Login with email/password, returns JWT token
+- POST /auth/jwt/login - DISABLED (blocked to prevent reCAPTCHA bypass)
 - POST /auth/jwt/logout - Logout (client-side token removal)
 - POST /auth/secure-login - Secure login with client-side hashed password
 - POST /auth/register - Register new user
@@ -108,9 +108,26 @@ class SecureLoginRequest(BaseModel):
 # Create main auth router
 router = APIRouter(tags=["Authentication"])
 
-# Include FastAPI-Users auth routes
-# POST /auth/jwt/login - Login
-# POST /auth/jwt/logout - Logout
+
+# Block the default FastAPI-Users login endpoint to prevent reCAPTCHA bypass.
+# This route is registered BEFORE include_router so it shadows /auth/jwt/login
+# from the default auth router.  /auth/jwt/logout is unaffected.
+@router.post("/auth/jwt/login", tags=["Authentication"])
+async def blocked_jwt_login():
+    """
+    Legacy login endpoint — disabled for security.
+    All login requests must go through /auth/secure-login which enforces
+    reCAPTCHA verification (when enabled) and client-side password hashing.
+    """
+    logger.warning("Blocked login attempt via /auth/jwt/login (reCAPTCHA bypass prevention)")
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="LOGIN_ENDPOINT_DISABLED",
+    )
+
+
+# Include FastAPI-Users auth routes (only /auth/jwt/logout is effective now;
+# /auth/jwt/login is shadowed by the custom route above)
 router.include_router(
     fastapi_users.get_auth_router(auth_backend),
     prefix="/auth/jwt",

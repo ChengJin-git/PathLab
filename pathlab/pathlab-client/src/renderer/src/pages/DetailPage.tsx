@@ -7,83 +7,20 @@ import {
   deleteWSIResults,
   HeatmapData,
   AvailableHeatmap,
-  HeatmapPoint,
-  getPatchImageUrl,
   WSISummary,
   PatchCAMData,
   fetchPatchCAMData,
   getPatchCAMImageUrl,
   getPatchFileImageUrl,
-  getAuthToken
 } from '../api'
 import WSIViewer from '../components/WSIViewer'
 import { Card } from '../components/common'
-import { ArrowLeft, Microscope, Layers, ChevronDown, TrendingUp, TrendingDown, Loader2, Download, CheckCircle2, History, ChevronLeft, ChevronRight, Trash2, Plus, Minus, RotateCcw, Maximize2, X } from 'lucide-react'
-import { Badge } from '../components/ui/badge'
-
-/**
- * Export patches as a ZIP file containing images
- */
-async function exportPatchesAsZip(
-  wsi_id: string,
-  patches: HeatmapPoint[],
-  prefix: string,
-  fileName: string
-) {
-  // Dynamically import JSZip
-  const JSZip = (await import('jszip')).default
-  const zip = new JSZip()
-
-  // Download all patch images
-  const token = getAuthToken()
-  const downloadPromises = patches.map(async (patch, idx) => {
-    const url = getPatchImageUrl(wsi_id, patch.x, patch.y, 256)
-    try {
-      const response = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      })
-      if (response.ok) {
-        const blob = await response.blob()
-        const paddedIdx = String(idx + 1).padStart(2, '0')
-        const attention = (patch.weight * 100).toFixed(1)
-        zip.file(`${prefix}_${paddedIdx}_attn${attention}_x${patch.x}_y${patch.y}.png`, blob)
-      }
-    } catch (err) {
-      console.error(`Failed to download patch ${idx}:`, err)
-    }
-  })
-
-  await Promise.all(downloadPromises)
-
-  // Generate and download the ZIP file
-  const content = await zip.generateAsync({ type: 'blob' })
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(content)
-  link.download = fileName
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  URL.revokeObjectURL(link.href)
-}
-
-/**
- * Format classes for display
- * - 2 classes: "A vs B"
- * - 3 classes: "A, B, C"
- * - >3 classes: "A, B, C +N more"
- */
-function formatClasses(classes: string[] | null | undefined, maxShow: number = 3): string | null {
-  if (!classes || classes.length === 0) return null
-  if (classes.length === 2) {
-    return classes.join(' vs ')
-  }
-  if (classes.length <= maxShow) {
-    return classes.join(', ')
-  }
-  const shown = classes.slice(0, maxShow)
-  const remaining = classes.length - maxShow
-  return `${shown.join(', ')} +${remaining} more`
-}
+import { ArrowLeft, Microscope, Layers, Loader2, ChevronLeft, ChevronRight, Plus, Minus, RotateCcw, Maximize2, X } from 'lucide-react'
+import { exportPatchesAsZip } from '../components/detail/utils'
+import { TaskSelectorCard } from '../components/detail/TaskSelectorCard'
+import { AttentionClassSelector } from '../components/detail/AttentionClassSelector'
+import { AttentionPatchesPanel } from '../components/detail/AttentionPatchesPanel'
+import { DeleteResultsModal } from '../components/detail/DeleteResultsModal'
 
 export default function DetailPage() {
   const { wsi_id = '' } = useParams()
@@ -636,551 +573,58 @@ export default function DetailPage() {
         {/* Heatmaps available */}
         {!loadingHeatmaps && availableHeatmaps.length > 0 && (
           <>
-            {/* Task Selector Card */}
-            <Card className="mb-4 overflow-visible">
-              <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 bg-gradient-to-br from-gray-50 to-white">
-                <Layers className="w-4 h-4 text-indigo-500" />
-                <h3 className="m-0 text-sm font-semibold text-gray-900">Select Task</h3>
-                <span className="ml-auto text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-                  {uniqueTasks.length} available
-                </span>
-                <button
-                  onClick={() => setShowDeleteConfirm(true)}
-                  className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                  title="Delete AI Results"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="p-3 relative">
-                <div className="relative">
-                  <button
-                    onClick={() => setIsTaskDropdownOpen(!isTaskDropdownOpen)}
-                    className={`w-full flex items-center justify-between px-3 py-2.5 bg-white border rounded-lg shadow-sm transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 active:scale-[0.99] group ${isTaskDropdownOpen ? 'border-indigo-500 ring-4 ring-indigo-500/10' : 'border-gray-200 hover:border-indigo-300 hover:shadow-md'
-                      }`}
-                  >
-                    <div className="flex flex-col items-start gap-1">
-                      <span className="text-gray-900 font-semibold text-sm tracking-tight text-left capitalize">
-                        {(() => {
-                          const task = availableHeatmaps.find(h => h.task_id === selectedTaskId);
-                          if (!task) return 'Select a task...';
-                          return formatClasses(task.classes) || task.task_name || task.task_type?.replace(/_/g, ' ');
-                        })()}
-                      </span>
-                      {(() => {
-                        const task = availableHeatmaps.find(h => h.task_id === selectedTaskId);
-                        if (task?.feature_extractor || task?.aggregator) {
-                          return (
-                            <div className="flex items-center gap-1">
-                              {task.feature_extractor && (
-                                <Badge variant="secondary" className="bg-purple-50 text-purple-700 hover:bg-purple-100 text-[10px] uppercase tracking-wider font-bold px-1.5 py-0">
-                                  {task.feature_extractor}
-                                </Badge>
-                              )}
-                              {task.aggregator && task.data_type === 'wsi' && (
-                                <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-[10px] uppercase tracking-wider font-bold px-1.5 py-0">
-                                  {task.aggregator}
-                                </Badge>
-                              )}
-                            </div>
-                          );
-                        }
-                        return null;
-                      })()}
-                    </div>
-                    <ChevronDown
-                      className={`w-4 h-4 text-gray-400 transition-transform duration-300 ease-in-out group-hover:text-indigo-500 ${isTaskDropdownOpen ? 'rotate-180 text-indigo-500' : ''
-                        }`}
-                    />
-                  </button>
-
-                  {isTaskDropdownOpen && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-10"
-                        onClick={() => setIsTaskDropdownOpen(false)}
-                      />
-                      <div className="absolute z-20 w-full mt-2 bg-white/90 backdrop-blur-xl border border-white/20 rounded-xl shadow-2xl shadow-indigo-500/10 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top ring-1 ring-black/5">
-                        <div className="max-h-[320px] overflow-y-auto py-2 scrollbar-thin scrollbar-thumb-gray-200">
-                          {uniqueTasks.map(hm => (
-                            <button
-                              key={hm.task_id || hm.attention_file}
-                              onClick={() => {
-                                setSelectedTaskId(hm.task_id ?? undefined)
-                                setIsTaskDropdownOpen(false)
-                              }}
-                              className="w-full text-left px-2 py-1 mx-2 rounded-lg transition-all duration-200 group/item flex items-center mb-1 last:mb-0 relative overflow-hidden max-w-[calc(100%-16px)]"
-                            >
-                              <div className={`absolute inset-0 transition-opacity duration-200 ${selectedTaskId === (hm.task_id || '')
-                                ? 'bg-indigo-600 opacity-100'
-                                : 'bg-gray-50 opacity-0 group-hover/item:opacity-100'
-                                }`} />
-
-                              <div className="relative z-10 w-full px-3 py-2.5 flex items-center justify-between">
-                                <div className="flex flex-col gap-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className={`text-[13px] font-semibold tracking-tight transition-colors duration-200 capitalize ${selectedTaskId === (hm.task_id || '') ? 'text-white' : 'text-gray-700'
-                                      }`}>
-                                      {formatClasses(hm.classes) || hm.task_name || hm.task_type?.replace(/_/g, ' ')}
-                                    </span>
-                                    {hm.isKFold && (
-                                      <span className={`text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full transition-colors duration-200 ${selectedTaskId === (hm.task_id || '')
-                                        ? 'bg-white/20 text-white'
-                                        : 'bg-amber-50 text-amber-700'
-                                        }`}>
-                                        {hm.numFolds}-Fold
-                                      </span>
-                                    )}
-                                  </div>
-                                  {(hm.feature_extractor || (hm.aggregator && hm.data_type === 'wsi')) && (
-                                    <div className="flex items-center gap-1">
-                                      {hm.feature_extractor && (
-                                        <span className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full w-fit transition-colors duration-200 ${selectedTaskId === (hm.task_id || '')
-                                          ? 'bg-white/20 text-white'
-                                          : 'bg-purple-50 text-purple-700'
-                                          }`}>
-                                          {hm.feature_extractor}
-                                        </span>
-                                      )}
-                                      {hm.aggregator && hm.data_type === 'wsi' && (
-                                        <span className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full w-fit transition-colors duration-200 ${selectedTaskId === (hm.task_id || '')
-                                          ? 'bg-white/20 text-white'
-                                          : 'bg-indigo-50 text-indigo-700'
-                                          }`}>
-                                          {hm.aggregator}
-                                        </span>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                                {selectedTaskId === (hm.task_id || '') && (
-                                  <CheckCircle2 className="w-3.5 h-3.5 text-white" />
-                                )}
-                              </div>
-                            </button>
-                          ))}
-                          {uniqueTasks.length === 0 && (
-                            <div className="px-4 py-8 text-sm text-gray-500 text-center flex flex-col items-center gap-2">
-                              <div className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center">
-                                <History className="w-4 h-4 text-gray-400" />
-                              </div>
-                              <p>No tasks available</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                {/* K-Fold Selector - show when multiple folds are available */}
-                {availableFolds.length > 1 && (
-                  <div className="mt-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-xs text-gray-500 font-medium uppercase tracking-wider">K-Fold</span>
-                      <span className="text-xs text-gray-400">({availableFolds.length} folds)</span>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {availableFolds.map((foldKey) => (
-                        <button
-                          key={foldKey}
-                          onClick={() => setSelectedFoldKey(foldKey)}
-                          className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all duration-200 ${selectedFoldKey === foldKey
-                            ? 'bg-indigo-600 text-white shadow-sm'
-                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                            }`}
-                        >
-                          {foldKey.replace('_', ' ').replace('fold', 'Fold')}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Selected task prediction info - supports both WSI heatmap and patch heatmap */}
-                {(heatmapData || patchCAMData) && (
-                  <div className={`mt-3 p-3 rounded-lg border ${heatmapData?.task_type === 'survival'
-                    ? 'bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-200'
-                    : 'bg-gradient-to-br from-indigo-50 to-blue-50 border-indigo-200'
-                    }`}>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-xs font-semibold uppercase tracking-wider ${heatmapData?.task_type === 'survival' ? 'text-emerald-700' : 'text-indigo-700'
-                          }`}>
-                          {heatmapData?.task_type === 'survival' ? 'Risk Group' : 'Prediction'}
-                        </span>
-                        {/* Show fold info for K-Fold trained models */}
-                        {heatmapData?.fold_key && (
-                          <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700">
-                            {heatmapData.fold_key.replace('_', ' ').replace('fold', 'Fold')}
-                          </span>
-                        )}
-                      </div>
-                      {isPatchLevel ? (
-                        <Badge variant="secondary" className="bg-orange-50 text-orange-700 text-[10px]">
-                          Patch Heatmap
-                        </Badge>
-                      ) : (
-                        <span className="text-xs text-gray-500">{heatmapData?.num_patches?.toLocaleString()} patches</span>
-                      )}
-                    </div>
-                    {/* Survival task: show risk group and risk score */}
-                    {heatmapData?.task_type === 'survival' ? (
-                      <>
-                        <div className={`text-lg font-bold ${heatmapData?.risk_group === 'High Risk' ? 'text-red-600' : 'text-emerald-600'
-                          }`}>
-                          {heatmapData?.risk_group || 'N/A'}
-                        </div>
-                        {heatmapData?.risk_score != null && (
-                          <div className="mt-2 flex flex-wrap gap-1.5">
-                            <span className="text-xs bg-white/70 px-2 py-0.5 rounded border border-emerald-100">
-                              Risk Score: {heatmapData.risk_score.toFixed(4)}
-                            </span>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        {/* Classification task: show prediction and probabilities */}
-                        <div className="text-lg font-bold text-indigo-700">
-                          {(isPatchLevel ? patchCAMData?.prediction : heatmapData?.prediction) || 'N/A'}
-                        </div>
-                        {(() => {
-                          const probs = isPatchLevel ? patchCAMData?.probs : heatmapData?.probs
-                          if (probs && Object.keys(probs).length > 0) {
-                            return (
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {Object.entries(probs)
-                                  .sort(([, a], [, b]) => (b as number) - (a as number))
-                                  .slice(0, 3)
-                                  .map(([cls, prob]) => (
-                                    <span key={cls} className="text-xs bg-white/70 px-2 py-0.5 rounded border border-indigo-100">
-                                      {cls}: {((prob as number) * 100).toFixed(1)}%
-                                    </span>
-                                  ))}
-                              </div>
-                            )
-                          }
-                          return null
-                        })()}
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            </Card>
+            <TaskSelectorCard
+              availableHeatmaps={availableHeatmaps}
+              selectedTaskId={selectedTaskId}
+              setSelectedTaskId={setSelectedTaskId}
+              selectedFoldKey={selectedFoldKey}
+              setSelectedFoldKey={setSelectedFoldKey}
+              availableFolds={availableFolds}
+              uniqueTasks={uniqueTasks}
+              isTaskDropdownOpen={isTaskDropdownOpen}
+              setIsTaskDropdownOpen={setIsTaskDropdownOpen}
+              setShowDeleteConfirm={setShowDeleteConfirm}
+              heatmapData={heatmapData}
+              patchCAMData={patchCAMData}
+              isPatchLevel={isPatchLevel}
+            />
 
             {/* Multi-class Attention Selector - only for CLAM_MB and similar aggregators */}
             {heatmapData?.attention_type === 'multi_class' && heatmapData.classes && heatmapData.classes.length > 0 && (
-              <Card className="mb-4 overflow-visible">
-                <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 bg-gradient-to-br from-purple-50 to-white">
-                  <Layers className="w-4 h-4 text-purple-500" />
-                  <h3 className="m-0 text-sm font-semibold text-gray-900">Attention Class</h3>
-                  <span className="ml-auto text-xs text-gray-500 bg-purple-100 px-2 py-0.5 rounded">
-                    {heatmapData.aggregator || 'multi-class'}
-                  </span>
-                </div>
-                <div className="p-3 relative">
-                  <div className="relative">
-                    <button
-                      onClick={() => setIsClassDropdownOpen(!isClassDropdownOpen)}
-                      className={`w-full flex items-center justify-between px-3 py-2.5 bg-white border rounded-lg shadow-sm transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-purple-500/10 active:scale-[0.99] group ${isClassDropdownOpen ? 'border-purple-500 ring-4 ring-purple-500/10' : 'border-gray-200 hover:border-purple-300 hover:shadow-md'
-                        }`}
-                    >
-                      <div className="flex flex-col items-start gap-1">
-                        <span className="text-gray-900 font-semibold text-sm tracking-tight text-left">
-                          {selectedClassIdx !== undefined && heatmapData.classes[selectedClassIdx]
-                            ? heatmapData.classes[selectedClassIdx]
-                            : 'Select a class...'}
-                        </span>
-                        <span className="text-xs text-gray-500">
-                          Class {(selectedClassIdx ?? 0) + 1} of {heatmapData.num_attention_classes}
-                        </span>
-                      </div>
-                      <ChevronDown
-                        className={`w-4 h-4 text-gray-400 transition-transform duration-300 ease-in-out group-hover:text-purple-500 ${isClassDropdownOpen ? 'rotate-180 text-purple-500' : ''
-                          }`}
-                      />
-                    </button>
-
-                    {isClassDropdownOpen && (
-                      <>
-                        <div
-                          className="fixed inset-0 z-10"
-                          onClick={() => setIsClassDropdownOpen(false)}
-                        />
-                        <div className="absolute z-20 w-full mt-2 bg-white/90 backdrop-blur-xl border border-white/20 rounded-xl shadow-2xl shadow-purple-500/10 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top ring-1 ring-black/5">
-                          <div className="max-h-[320px] overflow-y-auto py-2 scrollbar-thin scrollbar-thumb-gray-200">
-                            {heatmapData.classes.map((cls, idx) => (
-                              <button
-                                key={idx}
-                                onClick={() => {
-                                  setSelectedClassIdx(idx)
-                                  setIsClassDropdownOpen(false)
-                                }}
-                                className="w-full text-left px-2 py-1 mx-2 rounded-lg transition-all duration-200 group/item flex items-center mb-1 last:mb-0 relative overflow-hidden max-w-[calc(100%-16px)]"
-                              >
-                                <div className={`absolute inset-0 transition-opacity duration-200 ${selectedClassIdx === idx
-                                  ? 'bg-purple-600 opacity-100'
-                                  : 'bg-gray-50 opacity-0 group-hover/item:opacity-100'
-                                  }`} />
-
-                                <div className="relative z-10 w-full px-3 py-2.5 flex items-center justify-between">
-                                  <div className="flex flex-col gap-1">
-                                    <span className={`text-[13px] font-semibold tracking-tight transition-colors duration-200 ${selectedClassIdx === idx ? 'text-white' : 'text-gray-700'
-                                      }`}>
-                                      {cls}
-                                    </span>
-                                    <span className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full w-fit transition-colors duration-200 ${selectedClassIdx === idx
-                                      ? 'bg-white/20 text-white'
-                                      : 'bg-purple-50 text-purple-700'
-                                      }`}>
-                                      Class {idx + 1}
-                                    </span>
-                                  </div>
-                                  {selectedClassIdx === idx && (
-                                    <CheckCircle2 className="w-3.5 h-3.5 text-white" />
-                                  )}
-                                </div>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                  <p className="mt-2 text-xs text-gray-500">
-                    Select which class's attention to visualize on the slide.
-                  </p>
-                </div>
-              </Card>
+              <AttentionClassSelector
+                heatmapData={heatmapData}
+                selectedClassIdx={selectedClassIdx}
+                setSelectedClassIdx={setSelectedClassIdx}
+                isClassDropdownOpen={isClassDropdownOpen}
+                setIsClassDropdownOpen={setIsClassDropdownOpen}
+              />
             )}
 
-            {/* Patch Heatmap Info Card - only for patch-level tasks */}
-            {isPatchLevel && patchCAMData && (
-              <Card className="overflow-hidden border-0 shadow-sm ring-1 ring-gray-200">
-                <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-orange-50/50 to-white">
-                  <div className="p-1.5 bg-orange-100/50 rounded-md">
-                    <Layers className="w-4 h-4 text-orange-600" />
-                  </div>
-                  <h3 className="text-sm font-semibold text-gray-900 tracking-tight">Class Activation Map</h3>
-                </div>
-                <div className="p-5">
-                  <p className="text-sm text-gray-600 mb-3">
-                    The heatmap overlay shows which regions of the patch contributed most to the classification decision.
-                  </p>
-                  <div className="flex items-center gap-2 text-xs text-gray-500">
-                    <span className="font-medium">Heatmap Size:</span>
-                    <span>{patchCAMData.cam_size?.[0]} × {patchCAMData.cam_size?.[1]}</span>
-                  </div>
-                  <div className="mt-3 flex items-center gap-2">
-                    <span className="text-[10px] text-gray-400 uppercase tracking-wide">Activation:</span>
-                    <div className="flex-1 h-2 rounded-full bg-gradient-to-r from-blue-500 via-green-500 via-yellow-500 to-red-500"></div>
-                    <span className="text-[10px] text-gray-500">Low → High</span>
-                  </div>
-                </div>
-              </Card>
-            )}
-
-            {/* Top Attention Patches Card - only for WSI-level tasks */}
-            {!isPatchLevel && heatmapData?.top_patches && heatmapData.top_patches.length > 0 && (
-              <Card className="overflow-hidden border-0 shadow-sm ring-1 ring-gray-200">
-                <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-red-50/50 to-white">
-                  <div className="p-1.5 bg-red-100/50 rounded-md">
-                    <TrendingUp className="w-4 h-4 text-red-600" />
-                  </div>
-                  <h3 className="text-sm font-semibold text-gray-900 tracking-tight">High Attention Regions</h3>
-                  <div className="ml-auto flex items-center gap-2 sm:gap-3">
-                    <Badge variant="secondary" className="bg-red-50 text-red-700 hover:bg-red-100 px-2 sm:px-2.5 font-semibold text-[10px] sm:text-xs">
-                      Top 10
-                    </Badge>
-                    <button
-                      onClick={handleExportTop}
-                      disabled={exportingTop}
-                      className="text-gray-400 hover:text-red-600 transition-colors"
-                      title="Export Top 10 patches as ZIP"
-                    >
-                      {exportingTop ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Download className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-                <div className="p-3 sm:p-5">
-                  <div className="grid grid-cols-3 xs:grid-cols-4 sm:grid-cols-5 gap-2 sm:gap-3">
-                    {heatmapData.top_patches.map((patch, idx) => (
-                      <div
-                        key={`top-${idx}`}
-                        className="relative aspect-square rounded-xl overflow-hidden border border-gray-100 shadow-sm hover:ring-2 hover:ring-red-500 hover:shadow-lg transition-all duration-300 cursor-pointer group"
-                        title={`Attention: ${(patch.weight * 100).toFixed(1)}%\nPosition: (${patch.x}, ${patch.y})`}
-                      >
-                        <img
-                          src={getPatchImageUrl(wsi_id, patch.x, patch.y, 256)}
-                          alt={`Top ${idx + 1}`}
-                          className="w-full h-full object-cover transform group-hover:scale-110 transition-transform duration-500"
-                          loading="lazy"
-                        />
-                        <div className="absolute top-1 left-1 bg-red-600/90 backdrop-blur-sm text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-lg shadow-sm">
-                          {idx + 1}
-                        </div>
-                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-1.5 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-2 group-hover:translate-y-0">
-                          <span className="text-[10px] text-white font-medium flex justify-center">
-                            {(patch.weight * 100).toFixed(1)}%
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </Card>
-            )}
-
-            {/* Bottom Attention Patches Card - only for WSI-level tasks */}
-            {!isPatchLevel && heatmapData?.bottom_patches && heatmapData.bottom_patches.length > 0 && (
-              <Card className="overflow-hidden border-0 shadow-sm ring-1 ring-gray-200">
-                <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-blue-50/50 to-white">
-                  <div className="p-1.5 bg-blue-100/50 rounded-md">
-                    <TrendingDown className="w-4 h-4 text-blue-600" />
-                  </div>
-                  <h3 className="text-sm font-semibold text-gray-900 tracking-tight">Low Attention Regions</h3>
-                  <div className="ml-auto flex items-center gap-2 sm:gap-3">
-                    <Badge variant="secondary" className="bg-blue-50 text-blue-700 hover:bg-blue-100 px-2 sm:px-2.5 font-semibold text-[10px] sm:text-xs">
-                      Bottom 10
-                    </Badge>
-                    <button
-                      onClick={handleExportBottom}
-                      disabled={exportingBottom}
-                      className="text-gray-400 hover:text-blue-600 transition-colors"
-                      title="Export Bottom 10 patches as ZIP"
-                    >
-                      {exportingBottom ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Download className="w-4 h-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-                <div className="p-3 sm:p-5">
-                  <div className="grid grid-cols-3 xs:grid-cols-4 sm:grid-cols-5 gap-2 sm:gap-3">
-                    {heatmapData.bottom_patches.map((patch, idx) => (
-                      <div
-                        key={`bottom-${idx}`}
-                        className="relative aspect-square rounded-xl overflow-hidden border border-gray-100 shadow-sm hover:ring-2 hover:ring-blue-500 hover:shadow-lg transition-all duration-300 cursor-pointer group"
-                        title={`Attention: ${(patch.weight * 100).toFixed(1)}%\nPosition: (${patch.x}, ${patch.y})`}
-                      >
-                        <img
-                          src={getPatchImageUrl(wsi_id, patch.x, patch.y, 256)}
-                          alt={`Bottom ${idx + 1}`}
-                          className="w-full h-full object-cover transform group-hover:scale-110 transition-transform duration-500"
-                          loading="lazy"
-                        />
-                        <div className="absolute top-1 left-1 bg-blue-600/90 backdrop-blur-sm text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-lg shadow-sm">
-                          {idx + 1}
-                        </div>
-                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-1.5 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-2 group-hover:translate-y-0">
-                          <span className="text-[10px] text-white font-medium flex justify-center">
-                            {(patch.weight * 100).toFixed(1)}%
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </Card>
-            )}
+            <AttentionPatchesPanel
+              heatmapData={heatmapData}
+              wsi_id={wsi_id}
+              exportingTop={exportingTop}
+              exportingBottom={exportingBottom}
+              handleExportTop={handleExportTop}
+              handleExportBottom={handleExportBottom}
+              patchCAMData={patchCAMData}
+              isPatchLevel={isPatchLevel}
+            />
           </>
         )}
       </div>
 
       {/* Delete Confirmation Modal */}
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[200]">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
-            <div className="p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="p-2 bg-red-100 rounded-lg">
-                  <Trash2 className="w-5 h-5 text-red-600" />
-                </div>
-                <h3 className="text-lg font-semibold text-gray-900">Delete AI Results</h3>
-              </div>
-
-              <p className="text-gray-600 mb-4">
-                Choose what to delete for this slide:
-              </p>
-
-              <div className="space-y-2 mb-6">
-                <label className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                  <input
-                    type="radio"
-                    name="deleteMode"
-                    checked={deleteMode === 'task'}
-                    onChange={() => setDeleteMode('task')}
-                    className="w-4 h-4 text-red-600"
-                  />
-                  <div>
-                    <div className="font-medium text-gray-900">Delete selected task only</div>
-                    <div className="text-sm text-gray-500">
-                      Remove results for: {availableHeatmaps.find(h => h.task_id === selectedTaskId)?.task_name || selectedTaskId || 'N/A'}
-                    </div>
-                  </div>
-                </label>
-
-                <label className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                  <input
-                    type="radio"
-                    name="deleteMode"
-                    checked={deleteMode === 'all'}
-                    onChange={() => setDeleteMode('all')}
-                    className="w-4 h-4 text-red-600"
-                  />
-                  <div>
-                    <div className="font-medium text-gray-900">Delete all results</div>
-                    <div className="text-sm text-gray-500">
-                      Remove all {availableHeatmaps.length} analysis results for this slide
-                    </div>
-                  </div>
-                </label>
-              </div>
-
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6">
-                <p className="text-sm text-amber-800">
-                  <strong>Warning:</strong> This will permanently delete the attention weights and prediction data. This action cannot be undone.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex gap-3 px-6 py-4 bg-gray-50 border-t">
-              <button
-                onClick={() => setShowDeleteConfirm(false)}
-                disabled={deletingResults}
-                className="flex-1 px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDeleteResults}
-                disabled={deletingResults}
-                className="flex-1 px-4 py-2 text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {deletingResults ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Deleting...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="w-4 h-4" />
-                    Delete
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DeleteResultsModal
+        showDeleteConfirm={showDeleteConfirm}
+        setShowDeleteConfirm={setShowDeleteConfirm}
+        deleteMode={deleteMode}
+        setDeleteMode={setDeleteMode}
+        deletingResults={deletingResults}
+        handleDeleteResults={handleDeleteResults}
+        availableHeatmaps={availableHeatmaps}
+        selectedTaskId={selectedTaskId}
+      />
     </div>
   )
 }

@@ -523,7 +523,11 @@ async def compute_patches(
                 return JSONResponse(response_data)
 
         # Cache miss or force_recompute - need to compute coordinates
+        import time as _time
+        _t0 = _time.monotonic()
         slide = await get_slide(wsi_id, db)
+        _t1 = _time.monotonic()
+        logger.info(f"[Timing] get_slide took {_t1 - _t0:.1f}s for {wsi_id}")
 
         # Perform tissue segmentation to get contours
         # NOTE: segment_tissue() is CPU-intensive (OpenCV operations).
@@ -533,7 +537,8 @@ async def compute_patches(
         tissue_contours, hole_contours = await asyncio.to_thread(
             segmenter.segment_tissue, slide
         )
-        logger.info(f"Found {len(tissue_contours)} tissue contours")
+        _t2 = _time.monotonic()
+        logger.info(f"[Timing] segment_tissue took {_t2 - _t1:.1f}s, found {len(tissue_contours)} tissue contours")
 
         # Compute coordinates with PrePATH-style tiling (patch_size auto-determined by MPP)
         # Returns (coordinates, coords_file_path) tuple
@@ -554,6 +559,8 @@ async def compute_patches(
             tissue_contours=tissue_contours,
             hole_contours=hole_contours,
         )
+        _t3 = _time.monotonic()
+        logger.info(f"[Timing] get_or_compute_coordinates took {_t3 - _t2:.1f}s, {len(coordinates)} coords for {wsi_id}")
 
         # Generate and save mask visualization
         mask_file = None
@@ -576,7 +583,8 @@ async def compute_patches(
                 mask_path.parent.mkdir(parents=True, exist_ok=True)
                 mask_img.save(mask_path, format='PNG', optimize=True)
                 mask_file = str(mask_path)
-                logger.info(f"Saved mask visualization to {mask_path}")
+                _t4 = _time.monotonic()
+                logger.info(f"[Timing] visualize+save mask took {_t4 - _t3:.1f}s for {wsi_id}")
             except Exception as e:
                 logger.warning(f"Failed to generate mask visualization: {e}")
 

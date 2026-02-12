@@ -1,0 +1,67 @@
+export interface LogEntry {
+  id: number
+  task_id: string
+  level: 'INFO' | 'WARNING' | 'ERROR' | 'DEBUG'
+  message: string
+  sequence: number
+  metadata?: Record<string, any>
+  created_at: string
+}
+
+export interface TaskDetail {
+  task_id: string
+  task_name: string
+  task_type: 'classification' | 'survival' | 'segmentation' | 'external_validation'
+  data_type: 'wsi' | 'patch'
+  task_description: string
+  status: 'pending' | 'running' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled' | 'resuming'
+  progress: number
+  created_at: string
+  updated_at: string
+  wsi_count: number
+  wsi_ids?: string[]
+  username?: string | null  // Username of task creator (only for admin users)
+  preprocessing_config: {
+    // Note: tile_size and stride removed - auto-determined by PrePATH-style tiling
+    feature_extractor?: string
+    feature_batch_size?: number
+    use_gpu?: boolean
+    // Tissue segmentation parameters
+    level?: number
+    sthresh?: number
+    mthresh?: number
+    close?: number
+    use_otsu?: boolean
+    contour_fn?: string
+    use_padding?: boolean
+    // Filter parameters
+    a_t?: number
+    a_h?: number
+    max_n_holes?: number
+    split_config?: {
+      strategy: 'random' | 'k_fold' | 'manual'
+      n_splits?: number
+      ratios?: { train: number; val: number; test: number }
+      manual_splits?: Record<string, string>
+      seed?: number
+    }
+  }
+  model_config: {
+    aggregator?: string
+    learning_rate?: number
+    epochs?: number
+    optimizer?: string
+    batch_size?: number
+    // External validation specific fields
+    model_id?: string
+    model_task_id?: string
+    dataset_id?: string
+    total_wsi?: number
+  }
+  classes?: string[]
+  error_message?: string
+  patch_count?: number
+  processed_patches?: number
+  current_epoch?: number
+}
+
