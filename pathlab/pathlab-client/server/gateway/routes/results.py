@@ -548,6 +548,21 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
     tasks_with_test_set_result = await db.execute(tasks_with_test_set_query)
     tasks_with_test_set = {row[0] for row in tasks_with_test_set_result.all()}
 
+    # Step 1.5: Count test WSIs per task (for 100% AI results completeness check)
+    test_wsi_count_by_task = {}
+    if tasks_with_test_set:
+        test_wsi_count_query = (
+            select(
+                TrainingTaskWSI.task_id,
+                func.count(TrainingTaskWSI.wsi_id).label('count')
+            )
+            .where(TrainingTaskWSI.task_id.in_(list(tasks_with_test_set)))
+            .where(TrainingTaskWSI.split == "test")
+            .group_by(TrainingTaskWSI.task_id)
+        )
+        test_wsi_count_result = await db.execute(test_wsi_count_query)
+        test_wsi_count_by_task = {row[0]: row[1] for row in test_wsi_count_result.all()}
+
     # Step 2: For tasks WITH test set, count AI results joined with test WSIs
     ai_count_with_test = {}
     if tasks_with_test_set:
@@ -628,7 +643,12 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
 
         # Get AI results count from batch query
         ai_results_count = ai_results_by_task.get(task_id, 0)
-        has_ai_results = ai_results_count > 0
+        # 100% check: all expected WSIs must have AI results to skip GPU inference
+        if task_id in tasks_with_test_set:
+            expected_wsi_count = test_wsi_count_by_task.get(task_id, 0)
+        else:
+            expected_wsi_count = total_wsi_by_task.get(task_id, 0)
+        has_ai_results = expected_wsi_count > 0 and ai_results_count >= expected_wsi_count
 
         # Get total WSI count and case count for this task
         total_wsi_count = total_wsi_by_task.get(task_id, 0)
@@ -2099,11 +2119,11 @@ async def start_external_validation(
     analysis_charts = req.charts or ["confusion_matrix", "roc_curve"]
     bootstrap_ci_metrics = analysis_metrics if req.compute_bootstrap_ci else []
 
-    # If we have existing results for most WSIs, skip GPU inference and run analysis directly.
+    # If we have existing results for ALL WSIs, skip GPU inference and run analysis directly.
     # BUT: verify the referenced task still exists in the database first.
     # If the DB was reset or the task was deleted, the cached task ID is stale — fall through
     # to create a new task instead.
-    if existing_results_count >= len(wsi_ids) * 0.9 and existing_validation_id:
+    if existing_results_count >= len(wsi_ids) and existing_validation_id:
         existing_task = await TrainingTaskRepository.get_by_id(db, existing_validation_id)
         if existing_task is None:
             logger.warning(
