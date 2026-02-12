@@ -112,7 +112,7 @@ class TissueSegmenter:
     ):
         """
         Args:
-            seg_level: Pyramid level for segmentation (-1 = auto select ~96x downsample)
+            seg_level: Pyramid level for segmentation (-1 = auto select ~64x downsample)
             sthresh: Binary threshold value (default: 8, low threshold for maximum tissue detection)
             mthresh: Median filter kernel size (default: 7)
             close: Morphological closing kernel size (default: 4)
@@ -158,10 +158,13 @@ class TissueSegmenter:
         # _t1 = _time.monotonic()
         # logger.info(f"[Timing] read_region level={seg_level} dims={level_dims} took {_t1 - _t0:.1f}s")
         img_np = np.array(img.convert('RGB'))
+        del img  # Release PIL image immediately
 
         # Convert to HSV and extract saturation channel
         img_hsv = cv2.cvtColor(img_np, cv2.COLOR_RGB2HSV)
+        del img_np  # No longer needed after HSV conversion
         img_med = cv2.medianBlur(img_hsv[:, :, 1], self.mthresh)
+        del img_hsv  # No longer needed after extracting saturation
 
         # Thresholding
         if self.use_otsu:
@@ -172,6 +175,7 @@ class TissueSegmenter:
             _, img_thresh = cv2.threshold(
                 img_med, self.sthresh, 255, cv2.THRESH_BINARY
             )
+        del img_med  # No longer needed after thresholding
 
         # Morphological closing
         if self.close > 0:
@@ -199,12 +203,12 @@ class TissueSegmenter:
         return tissue_contours, hole_contours
 
     def _get_seg_level(self, slide) -> int:
-        """Get appropriate segmentation level (~96x downsample)"""
+        """Get appropriate segmentation level (~64x downsample)"""
         if self.seg_level >= 0:
             return min(self.seg_level, len(slide.level_dimensions) - 1)
 
-        # Auto-select level closest to 96x downsample
-        target_downsample = 96
+        # Auto-select level closest to 64x downsample
+        target_downsample = 64
         level_downsamples = slide.level_downsamples
 
         best_level = 0
@@ -1157,7 +1161,7 @@ def visualize_segmentation(
         slide: ASlide Slide object
         tissue_contours: List of tissue contours (at level 0)
         hole_contours: List of hole contours (at level 0)
-        vis_level: Visualization level (-1 = auto select ~96x)
+        vis_level: Visualization level (-1 = auto select ~64x)
         line_thickness: Line thickness for drawing contours
         color: Color for tissue contours (RGB)
         hole_color: Color for hole contours (RGB)
@@ -1167,7 +1171,7 @@ def visualize_segmentation(
     """
     # Auto-select visualization level
     if vis_level < 0:
-        target_downsample = 96
+        target_downsample = 64
         level_downsamples = slide.level_downsamples
         vis_level = 0
         min_diff = abs(level_downsamples[0] - target_downsample)
@@ -1181,6 +1185,7 @@ def visualize_segmentation(
     level_dims = slide.level_dimensions[vis_level]
     img = slide.read_region((0, 0), vis_level, level_dims)
     img_np = np.array(img.convert('RGB'))
+    del img  # Release PIL image immediately
 
     # Scale contours to visualization level
     downsample = slide.level_downsamples[vis_level]

@@ -32,7 +32,24 @@ from backend.common.config import Config
 from backend.common.file_types import is_patch_file
 
 # Preprocessing service: WSI processing, tissue segmentation, patch extraction
-app = FastAPI(title="PathLab Preprocessing Service")
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(_app):
+    # Startup: nothing extra needed
+    yield
+    # Shutdown: close all cached slides to release file handles and memory
+    logger.info(f"Shutting down: closing {len(slide_cache)} cached slides")
+    for _wsi_id, slide in list(slide_cache.items()):
+        try:
+            slide.close()
+        except Exception:
+            pass
+    slide_cache.clear()
+    dzg_cache.clear()
+    logger.info("All cached slides closed")
+
+app = FastAPI(title="PathLab Preprocessing Service", lifespan=lifespan)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -286,6 +303,7 @@ async def get_thumbnail(
                 return Response(content=img_bytes.getvalue(), media_type='image/jpeg')
         else:
             # WSI file: use ASlide to get thumbnail
+            slide = None
             try:
                 # Use _load_slide to ensure color correction is applied
                 slide = _load_slide(str(file_path))
@@ -315,6 +333,12 @@ async def get_thumbnail(
             except Exception as e:
                 logger.error(f"Failed to generate WSI thumbnail: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to generate thumbnail: {str(e)}")
+            finally:
+                if slide is not None:
+                    try:
+                        slide.close()
+                    except Exception:
+                        pass
     except HTTPException:
         raise
     except Exception as e:
@@ -575,7 +599,7 @@ async def compute_patches(
                     slide,
                     tissue_contours,
                     hole_contours,
-                    -1,  # vis_level: Auto-select ~96x downsample
+                    -1,  # vis_level: Auto-select ~64x downsample
                     3,   # line_thickness
                     (0, 255, 0),  # color: Green for tissue
                     (255, 0, 0),  # hole_color: Red for holes
@@ -1120,11 +1144,17 @@ async def get_heatmap_thumbnail(
         else:
             # WSI file
             aslide = _load_slide(str(file_path))
-            lowest_level = len(aslide.level_dimensions) - 1
-            level_dims = aslide.level_dimensions[lowest_level]
-            region = aslide.read_region((0, 0), lowest_level, level_dims)
-            thumbnail = region.convert('RGB')
-            thumbnail.thumbnail((thumb_width, thumb_height), Image.Resampling.LANCZOS)
+            try:
+                lowest_level = len(aslide.level_dimensions) - 1
+                level_dims = aslide.level_dimensions[lowest_level]
+                region = aslide.read_region((0, 0), lowest_level, level_dims)
+                thumbnail = region.convert('RGB')
+                thumbnail.thumbnail((thumb_width, thumb_height), Image.Resampling.LANCZOS)
+            finally:
+                try:
+                    aslide.close()
+                except Exception:
+                    pass
 
         # Get actual thumbnail dimensions after resize (may differ from calculated)
         actual_thumb_width, actual_thumb_height = thumbnail.size
