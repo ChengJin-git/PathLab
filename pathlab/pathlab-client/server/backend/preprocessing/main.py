@@ -403,23 +403,24 @@ async def get_tile(
                 detail=f"Invalid tile coordinates: ({col}, {row}), valid range: x: 0-{level_tiles[0]-1}, y: 0-{level_tiles[1]-1}"
             )
 
-        # Get tile image
-        tile = dzg.get_tile(level, (col, row))
-
-        # Convert to bytes
-        img_bytes = io.BytesIO()
+        # Run blocking tile I/O in thread pool to avoid blocking the event loop
         fmt_lower = format.lower()
-        save_format = "JPEG" if fmt_lower in ("jpeg", "jpg") else "PNG"
 
-        if save_format == "JPEG":
-            tile.save(img_bytes, format=save_format, quality=85, optimize=True)
-        else:
-            tile.save(img_bytes, format=save_format, optimize=True)
+        def _generate_tile_bytes() -> bytes:
+            """Blocking: read tile from disk + encode to image bytes"""
+            tile = dzg.get_tile(level, (col, row))
+            buf = io.BytesIO()
+            save_format = "JPEG" if fmt_lower in ("jpeg", "jpg") else "PNG"
+            if save_format == "JPEG":
+                tile.save(buf, format=save_format, quality=85, optimize=True)
+            else:
+                tile.save(buf, format=save_format, optimize=True)
+            return buf.getvalue()
 
-        img_bytes.seek(0)
+        tile_bytes = await asyncio.to_thread(_generate_tile_bytes)
 
         content_type = f"image/{fmt_lower}"
-        return Response(content=img_bytes.getvalue(), media_type=content_type)
+        return Response(content=tile_bytes, media_type=content_type)
     except HTTPException:
         raise
     except Exception as e:

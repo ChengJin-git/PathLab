@@ -33,17 +33,18 @@ DEFAULT_PREPROCESSING_PORT = 6101
 DEFAULT_AI_PORT = 6102
 
 
-def run_service(app_module: str, port: int, name: str):
+def run_service(app_module: str, port: int, name: str, workers: int = 1):
     """Run a single uvicorn service in a subprocess"""
     import uvicorn
 
-    print(f"[{name}] Starting on port {port}...", flush=True)
+    print(f"[{name}] Starting on port {port} with {workers} worker(s)...", flush=True)
     uvicorn.run(
         app_module,
         host="0.0.0.0",
         port=port,
         log_level="info",
         reload=False,  # Disable reload in subprocess
+        workers=workers,
     )
 
 
@@ -127,10 +128,13 @@ def main():
     # Start Preprocessing service in subprocess
     # NOTE: daemon=False allows AI service to spawn DataLoader workers (num_workers > 0)
     # Daemon processes cannot have children due to Python multiprocessing restrictions
+    # Preprocessing uses multiple workers to handle concurrent tile requests
+    # Note: slide_cache/dzg_cache are process-local and won't be shared across workers
+    preprocessing_workers = int(os.environ.get("PREPROCESSING_WORKERS", "4"))
     preprocessing_proc = multiprocessing.Process(
         target=run_service,
         name="Preprocessing",
-        args=("backend.preprocessing.main:app", preprocessing_port, "Preprocessing"),
+        args=("backend.preprocessing.main:app", preprocessing_port, "Preprocessing", preprocessing_workers),
         daemon=False
     )
     preprocessing_proc.start()
