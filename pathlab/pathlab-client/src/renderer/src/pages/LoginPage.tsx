@@ -9,16 +9,16 @@ import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { GoogleReCaptchaProvider, useGoogleReCaptcha } from 'react-google-recaptcha-v3'
 import { useAuth } from '../contexts/AuthContext'
-import { Microscope, Brain, Shield, Zap, LogIn, Loader2, User, Lock, Heart, ExternalLink } from 'lucide-react'
+import { Microscope, Brain, Shield, Zap, LogIn, Loader2, User, Lock, Heart, ExternalLink, AlertTriangle } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
-import { getPublicSettings } from '../api'
+import { getPublicSettings, ApiError } from '../api'
 
 /**
  * Inner login page component that uses the reCAPTCHA hook.
  * Must be rendered inside GoogleReCaptchaProvider.
  */
-function LoginPageInner() {
+function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: boolean }) {
   const navigate = useNavigate()
   const { login, isLoading, error, isLoggedIn } = useAuth()
   const { executeRecaptcha } = useGoogleReCaptcha()
@@ -154,6 +154,14 @@ function LoginPageInner() {
               </div>
             </div>
 
+            {/* Backend Unavailable / Maintenance Banner */}
+            {backendUnavailable && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm font-medium flex items-start gap-2 animate-in fade-in slide-in-from-top-2">
+                <AlertTriangle className="w-4 h-4 mt-0.5 text-amber-500 flex-shrink-0" />
+                <p>System is under maintenance. Please try again later.</p>
+              </div>
+            )}
+
             {/* Error Message */}
             {(error || formError) && (
               <div className="p-3 bg-red-50 border border-red-100 rounded-lg text-red-600 text-sm font-medium flex items-start gap-2 animate-in fade-in slide-in-from-top-2">
@@ -272,15 +280,21 @@ export default function LoginPage() {
   const [recaptchaSiteKey, setRecaptchaSiteKey] = React.useState<string>('')
   const [recaptchaEnabled, setRecaptchaEnabled] = React.useState<boolean>(false)
   const [settingsLoaded, setSettingsLoaded] = React.useState(false)
+  const [backendUnavailable, setBackendUnavailable] = React.useState(false)
 
   React.useEffect(() => {
     getPublicSettings()
       .then((settings) => {
         setRecaptchaEnabled(settings.recaptcha_enabled)
         setRecaptchaSiteKey(settings.recaptcha_site_key)
+        setBackendUnavailable(false)
       })
-      .catch(() => {
-        // If fetching settings fails, continue without reCAPTCHA
+      .catch((err) => {
+        // If backend is unreachable (network error), show maintenance banner
+        if (err instanceof ApiError && err.isNetworkError()) {
+          setBackendUnavailable(true)
+        }
+        // Continue without reCAPTCHA either way
       })
       .finally(() => {
         setSettingsLoaded(true)
@@ -308,10 +322,10 @@ export default function LoginPage() {
   if (recaptchaEnabled && recaptchaSiteKey) {
     return (
       <GoogleReCaptchaProvider reCaptchaKey={recaptchaSiteKey}>
-        <LoginPageInner />
+        <LoginPageInner backendUnavailable={backendUnavailable} />
       </GoogleReCaptchaProvider>
     )
   }
 
-  return <LoginPageInner />
+  return <LoginPageInner backendUnavailable={backendUnavailable} />
 }

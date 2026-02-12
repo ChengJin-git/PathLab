@@ -9,6 +9,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react'
 import {
   AuthUser,
+  ApiError,
   logout as apiLogout,
   getCurrentUser,
   loginWithCredentials,
@@ -148,8 +149,10 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       let errorMessage = err instanceof Error ? err.message : 'Login failed'
       const errorLower = errorMessage.toLowerCase()
 
-      // Handle specific error codes from secure login endpoint
-      if (errorLower.includes('maintenance_mode')) {
+      // Handle network error (backend unreachable) - treat as maintenance
+      if (err instanceof ApiError && err.isNetworkError()) {
+        errorMessage = 'System is under maintenance. Please try again later.'
+      } else if (errorLower.includes('maintenance_mode')) {
         // System is in maintenance mode - non-admin users cannot log in
         errorMessage = 'System is under maintenance. Please try again later or contact administrator.'
       } else if (errorLower.includes('login_user_not_active') ||
