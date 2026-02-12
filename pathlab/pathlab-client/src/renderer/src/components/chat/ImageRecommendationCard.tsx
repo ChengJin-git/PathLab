@@ -117,18 +117,20 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         // Convert ResultWithWSI to WSISummary-like objects
         let resultsWithWsi = resultsData.items
 
-        // Apply pred filter (filter by AI prediction result)
+        // Apply pred filter (filter by AI prediction result) - use exact match to avoid substring issues
+        // e.g., "MSIH" should NOT match "nonMSIH"
         if (recommendation.filters?.pred) {
           resultsWithWsi = resultsWithWsi.filter(r =>
-            r.pred?.toLowerCase().includes(recommendation.filters!.pred!.toLowerCase())
+            r.pred?.toLowerCase() === recommendation.filters!.pred!.toLowerCase()
           )
         }
 
         // Apply label filter (ground truth label) on results BEFORE creating the wsi_id set
         // This is critical: we must filter by label here, not later on the WSI list
+        // Use exact match to avoid substring issues (e.g., "MSIH" matching "nonMSIH")
         if (recommendation.filters?.label) {
           resultsWithWsi = resultsWithWsi.filter(r =>
-            r.label?.toLowerCase().includes(recommendation.filters!.label!.toLowerCase())
+            r.label?.toLowerCase() === recommendation.filters!.label!.toLowerCase()
           )
         }
 
@@ -155,10 +157,11 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         const result = await fetchWSIList(recommendation.filters?.dataset_id)
         let filtered = result.items
 
-        // Apply label filter
+        // Apply label filter - use exact match to avoid substring issues
+        // e.g., "MSIH" should NOT match "nonMSIH"
         if (recommendation.filters?.label) {
           filtered = filtered.filter(s =>
-            s.label?.toLowerCase().includes(recommendation.filters!.label!.toLowerCase())
+            s.label?.toLowerCase() === recommendation.filters!.label!.toLowerCase()
           )
         }
 
