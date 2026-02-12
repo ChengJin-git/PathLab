@@ -112,7 +112,7 @@ class TissueSegmenter:
     ):
         """
         Args:
-            seg_level: Pyramid level for segmentation (-1 = auto select ~64x downsample)
+            seg_level: Pyramid level for segmentation (-1 = auto select ~96x downsample)
             sthresh: Binary threshold value (default: 8, low threshold for maximum tissue detection)
             mthresh: Median filter kernel size (default: 7)
             close: Morphological closing kernel size (default: 4)
@@ -199,12 +199,12 @@ class TissueSegmenter:
         return tissue_contours, hole_contours
 
     def _get_seg_level(self, slide) -> int:
-        """Get appropriate segmentation level (~64x downsample)"""
+        """Get appropriate segmentation level (~96x downsample)"""
         if self.seg_level >= 0:
             return min(self.seg_level, len(slide.level_dimensions) - 1)
 
-        # Auto-select level closest to 64x downsample
-        target_downsample = 64
+        # Auto-select level closest to 96x downsample
+        target_downsample = 96
         level_downsamples = slide.level_downsamples
 
         best_level = 0
@@ -1157,7 +1157,7 @@ def visualize_segmentation(
         slide: ASlide Slide object
         tissue_contours: List of tissue contours (at level 0)
         hole_contours: List of hole contours (at level 0)
-        vis_level: Visualization level (-1 = auto select ~64x)
+        vis_level: Visualization level (-1 = auto select ~96x)
         line_thickness: Line thickness for drawing contours
         color: Color for tissue contours (RGB)
         hole_color: Color for hole contours (RGB)
@@ -1167,7 +1167,7 @@ def visualize_segmentation(
     """
     # Auto-select visualization level
     if vis_level < 0:
-        target_downsample = 64
+        target_downsample = 96
         level_downsamples = slide.level_downsamples
         vis_level = 0
         min_diff = abs(level_downsamples[0] - target_downsample)

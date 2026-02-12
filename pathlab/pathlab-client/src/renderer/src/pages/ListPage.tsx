@@ -679,8 +679,8 @@ export default function ListPage() {
 
   const allPageSelected = pageSlides.length > 0 && pageSlides.every(s => selectedIds.has(s.wsi_id))
 
-  // With server-side pagination, "select all filtered" only covers current page items
-  const allFilteredSelected = items.length > 0 && items.every(s => selectedIds.has(s.wsi_id))
+  // Check if all items across all pages are selected (based on totalCount)
+  const allFilteredSelected = selectedIds.size > 0 && selectedIds.size === totalCount
 
   const handleSelectPage = () => {
     if (allFilteredSelected) {
@@ -695,6 +695,23 @@ export default function ListPage() {
       pageSlides.forEach(s => newSelected.add(s.wsi_id))
     }
     setSelectedIds(newSelected)
+  }
+
+  // Handle selecting all filtered items (across all pages)
+  const handleSelectAllFiltered = async () => {
+    try {
+      // Fetch all IDs without loading full data
+      const d = await fetchWSIList(selectedDatasetId!, undefined, {
+        page: 1,
+        page_size: totalCount, // Request all items
+        search: debouncedSearch || undefined,
+      })
+      const allIds = new Set((d.items || []).map((item: any) => item.wsi_id))
+      setSelectedIds(allIds)
+    } catch (e) {
+      toastError('Failed to select all items')
+      console.error(e)
+    }
   }
 
   // Toggle case expansion
@@ -1168,11 +1185,25 @@ export default function ListPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 bg-white/40">
-                     {/* Batch Selection Banner — current page items only (server-side pagination) */}
-                      {allPageSelected && (
+                     {/* Batch Selection Banner — show prompt to select all when page is selected */}
+                      {allPageSelected && !allFilteredSelected && totalCount > pageSlides.length && (
                         <tr className="bg-blue-50/50">
                           <td colSpan={100} className="px-4 py-2 text-center text-xs sm:text-sm text-gray-700 border-b border-blue-100">
                             <span className="font-medium">All {pageSlides.length} items on this page are selected.</span>
+                            <button
+                              onClick={handleSelectAllFiltered}
+                              className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none"
+                            >
+                              Select all {totalCount} items
+                            </button>
+                          </td>
+                        </tr>
+                      )}
+                      {/* Show when all items are selected */}
+                      {allFilteredSelected && totalCount > pageSlides.length && (
+                        <tr className="bg-blue-50/50">
+                          <td colSpan={100} className="px-4 py-2 text-center text-xs sm:text-sm text-gray-700 border-b border-blue-100">
+                            <span className="font-medium">All {totalCount} items are selected.</span>
                             <button
                               onClick={() => setSelectedIds(new Set())}
                               className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none"

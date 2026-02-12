@@ -575,7 +575,7 @@ async def compute_patches(
                     slide,
                     tissue_contours,
                     hole_contours,
-                    -1,  # vis_level: Auto-select ~64x downsample
+                    -1,  # vis_level: Auto-select ~96x downsample
                     3,   # line_thickness
                     (0, 255, 0),  # color: Green for tissue
                     (255, 0, 0),  # hole_color: Red for holes
