@@ -1907,8 +1907,24 @@ async def get_datasets_for_validation(
             if extracted_count < len(wsi_ids):
                 continue  # Skip datasets with missing features
 
-        # Get distinct label count (for classification matching)
-        distinct_label_count = await DatasetRepository.get_distinct_label_count(db, dataset_id)
+        # Get distinct labels (names + count, for classification matching)
+        distinct_labels = await DatasetRepository.get_distinct_labels(db, dataset_id)
+        distinct_label_count = len(distinct_labels)
+
+        # For WSI datasets, scan feature cache to find which extractors have features
+        available_feature_extractors: list = []
+        if dg.data_type != "patch" and wsi_ids:
+            first_wsi_id = wsi_ids[0]
+            features_root = Config.get_uploads_dir() / "features"
+            if features_root.exists():
+                for extractor_dir in features_root.iterdir():
+                    if extractor_dir.is_dir():
+                        for params_hash_dir in extractor_dir.iterdir():
+                            if params_hash_dir.is_dir():
+                                feat_file = params_hash_dir / f"{first_wsi_id}.pt"
+                                if feat_file.exists():
+                                    available_feature_extractors.append(extractor_dir.name)
+                                    break  # Found for this extractor, move to next
 
         # Get case count for case-level datasets
         total_wsi_count = len(wsi_ids)
@@ -1930,6 +1946,8 @@ async def get_datasets_for_validation(
             "total_case_count": total_case_count,
             "display_count": display_count,
             "distinct_label_count": distinct_label_count,
+            "distinct_labels": sorted(distinct_labels),
+            "available_feature_extractors": available_feature_extractors,
             "wsi_ids": wsi_ids,
         })
 
@@ -2056,16 +2074,21 @@ async def start_external_validation(
                    f"Please select a survival dataset."
         )
 
-    # 3. Validate class count matching (for classification tasks)
+    # 3. Validate class label name matching (for classification tasks)
     if model_is_classification and target_is_classification:
-        model_class_count = len(trained_model.classes) if trained_model.classes else 0
-        dataset_label_count = await DatasetRepository.get_distinct_label_count(db, req.dataset_id)
-        if model_class_count != dataset_label_count:
+        model_classes = set(trained_model.classes) if trained_model.classes else set()
+        dataset_labels = set(await DatasetRepository.get_distinct_labels(db, req.dataset_id))
+        if model_classes != dataset_labels:
+            missing_in_dataset = model_classes - dataset_labels
+            extra_in_dataset = dataset_labels - model_classes
+            detail_parts = ["Label mismatch between model and dataset."]
+            if missing_in_dataset:
+                detail_parts.append(f"Model classes not in dataset: {sorted(missing_in_dataset)}")
+            if extra_in_dataset:
+                detail_parts.append(f"Dataset labels not in model: {sorted(extra_in_dataset)}")
             raise HTTPException(
                 status_code=400,
-                detail=f"Class count mismatch: Model predicts {model_class_count} classes, "
-                       f"but dataset has {dataset_label_count} distinct labels. "
-                       f"Please select a dataset with {model_class_count} classes."
+                detail=" ".join(detail_parts),
             )
 
     # Get WSI IDs from target dataset

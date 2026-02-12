@@ -1175,6 +1175,8 @@ export interface ValidationDataset {
   total_case_count: number
   display_count: number
   distinct_label_count: number
+  distinct_labels: string[]
+  available_feature_extractors: string[]
   wsi_ids: string[]
 }
 

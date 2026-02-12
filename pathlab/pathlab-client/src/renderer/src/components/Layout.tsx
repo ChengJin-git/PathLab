@@ -2,11 +2,12 @@ import React, { useState, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { LogOut, Settings, Camera, Trash2, User as UserIcon } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { useToast } from '../contexts/ToastContext'
 import { Button } from './ui/button'
 import { BackgroundTaskPanel } from './BackgroundTaskPanel'
 import { InstallPWA } from './InstallPWA'
 import { DisclaimerModal } from './DisclaimerModal'
-import { uploadAvatar, deleteAvatar } from '../api'
+import { uploadAvatar, deleteAvatar, ApiError } from '../api'
 import { API_BASE } from '../config'
 
 interface LayoutProps {
@@ -17,6 +18,7 @@ export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
   const navigate = useNavigate()
   const { user, logout, needsAgreement, acceptAgreement, isLoading, isAdmin, refreshUser } = useAuth()
+  const { error: toastError, success: toastSuccess } = useToast()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -67,8 +69,16 @@ export default function Layout({ children }: LayoutProps) {
       try {
         await uploadAvatar(file)
         await refreshUser()
+        toastSuccess('Avatar uploaded successfully')
       } catch (err) {
         console.error('Failed to upload avatar:', err)
+        // Extract error message from ApiError or use generic message
+        const errorMessage = err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+          ? err.message
+          : 'Failed to upload avatar'
+        toastError(errorMessage)
       }
     }
     // Clear input
@@ -81,9 +91,17 @@ export default function Layout({ children }: LayoutProps) {
         await deleteAvatar()
         await refreshUser()
         setIsMenuOpen(false)
+        toastSuccess('Avatar deleted successfully')
       }
     } catch (err) {
       console.error('Failed to delete avatar:', err)
+      // Extract error message from ApiError or use generic message
+      const errorMessage = err instanceof ApiError
+        ? err.message
+        : err instanceof Error
+        ? err.message
+        : 'Failed to delete avatar'
+      toastError(errorMessage)
     }
   }
 

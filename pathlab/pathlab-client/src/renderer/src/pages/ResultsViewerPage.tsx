@@ -25,6 +25,30 @@ import {
 } from '../constants/metrics'
 
 /**
+ * Feature extractor name → embedding dimension mapping.
+ * Used for WSI-level external validation compatibility check.
+ */
+const EXTRACTOR_EMBED_DIM: Record<string, number> = {
+  resnet50: 2048,
+  vit_l_16: 1024,
+  conch: 512,
+  uni: 1024,
+  uni2: 1536,
+  virchow: 1280,
+  virchow2: 1280,
+  plip: 512,
+  phikon: 1024,
+  phikon2: 1024,
+  patho_clip: 512,
+  openmidnight: 1536,
+  conch15: 512,
+  'H-Optimus-1': 1536,
+  'H-Optimus-0': 1536,
+  mSTAR: 1024,
+  GPFM: 1024,
+}
+
+/**
  * Helper to create fetch options with authentication header
  */
 function authFetchOptions(options: RequestInit = {}): RequestInit {
@@ -867,24 +891,40 @@ export default function ResultsViewerPage() {
                   <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${isDataDropdownOpen ? 'rotate-180' : ''}`} />
                 </button>
 
-                {isDataDropdownOpen && selectedModel && modelTask && (
+                {isDataDropdownOpen && selectedModel && modelTask && (() => {
+                  const modelDataType = modelTask.data_type || 'wsi'
+                  const modelIsSurvival = isSurvivalTask(modelTask.task_type)
+                  const modelClasses = new Set(selectedModel.classes || [])
+                  const modelWsiIds = new Set(modelTask.wsi_ids || [])
+                  const modelExtractor = selectedModel.feature_extractor || ''
+                  const modelEmbedDim = EXTRACTOR_EMBED_DIM[modelExtractor] ?? 0
+                  const compatibleDatasets = validationDatasets.filter(ds => {
+                    if (ds.data_type !== modelDataType) return false
+                    const datasetIsSurvival = ds.task_type === 'survival'
+                    if (modelIsSurvival !== datasetIsSurvival) return false
+                    // For classification: require exact label name set match
+                    if (!modelIsSurvival) {
+                      const dsLabels = new Set(ds.distinct_labels || [])
+                      if (modelClasses.size !== dsLabels.size) return false
+                      for (const cls of modelClasses) {
+                        if (!dsLabels.has(cls)) return false
+                      }
+                    }
+                    // For WSI: require matching embed_dim (feature extractor compatibility)
+                    if (modelDataType === 'wsi' && modelExtractor && modelEmbedDim > 0) {
+                      const dsExtractors = ds.available_feature_extractors || []
+                      const hasSameDim = dsExtractors.some(e => (EXTRACTOR_EMBED_DIM[e] ?? 0) === modelEmbedDim)
+                      if (!hasSameDim) return false
+                    }
+                    // No WSI overlap with training data
+                    if (modelWsiIds.size > 0 && ds.wsi_ids?.some(id => modelWsiIds.has(id))) return false
+                    return true
+                  })
+                  return (
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setIsDataDropdownOpen(false)} />
                     <div className="absolute z-20 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-64 overflow-y-auto">
-                      {validationDatasets.filter(ds => {
-                        const modelDataType = modelTask.data_type || 'wsi'
-                        if (ds.data_type !== modelDataType) return false
-                        const modelIsSurvival = isSurvivalTask(modelTask.task_type)
-                        const datasetIsSurvival = ds.task_type === 'survival'
-                        if (modelIsSurvival !== datasetIsSurvival) return false
-                        if (!modelIsSurvival) {
-                          const modelClassCount = selectedModel.classes?.length || 0
-                          if (modelClassCount !== ds.distinct_label_count) return false
-                        }
-                        const modelWsiIds = new Set(modelTask.wsi_ids || [])
-                        if (modelWsiIds.size > 0 && ds.wsi_ids?.some(id => modelWsiIds.has(id))) return false
-                        return true
-                      }).map(dataset => (
+                      {compatibleDatasets.map(dataset => (
                         <button
                           key={dataset.dataset_id}
                           onClick={() => { setDatasetId(dataset.dataset_id); setIsDataDropdownOpen(false); }}
@@ -901,30 +941,18 @@ export default function ResultsViewerPage() {
                           {datasetId === dataset.dataset_id && <CheckCircle2 className="w-4 h-4 text-orange-600" />}
                         </button>
                       ))}
-                      {validationDatasets.filter(ds => {
-                        const modelDataType = modelTask.data_type || 'wsi'
-                        if (ds.data_type !== modelDataType) return false
-                        const modelIsSurvival = isSurvivalTask(modelTask.task_type)
-                        const datasetIsSurvival = ds.task_type === 'survival'
-                        if (modelIsSurvival !== datasetIsSurvival) return false
-                        if (!modelIsSurvival) {
-                          const modelClassCount = selectedModel.classes?.length || 0
-                          if (modelClassCount !== ds.distinct_label_count) return false
-                        }
-                        const modelWsiIds = new Set(modelTask.wsi_ids || [])
-                        if (modelWsiIds.size > 0 && ds.wsi_ids?.some(id => modelWsiIds.has(id))) return false
-                        return true
-                      }).length === 0 && (
+                      {compatibleDatasets.length === 0 && (
                         <div className="px-4 py-8 text-center text-gray-500">
                           <p className="font-medium">No compatible datasets</p>
                           <p className="text-xs mt-1">
-                            Looking for: {modelTask.data_type?.toUpperCase() || 'WSI'} level, {isSurvivalTask(modelTask.task_type) ? 'Survival' : 'Classification'} type, matching class count, no WSI overlap
+                            Looking for: {modelDataType.toUpperCase()} level, {modelIsSurvival ? 'Survival' : 'Classification'} type, matching labels{modelDataType === 'wsi' ? ', compatible embed dim' : ''}, no WSI overlap
                           </p>
                         </div>
                       )}
                     </div>
                   </>
-                )}
+                  )
+                })()}
               </div>
             </Card>
 

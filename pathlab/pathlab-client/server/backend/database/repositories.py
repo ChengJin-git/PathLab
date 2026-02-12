@@ -416,6 +416,17 @@ class DatasetRepository:
         return result.scalar() or 0
 
     @staticmethod
+    async def get_distinct_labels(db: AsyncSession, dataset_id: str) -> list:
+        """Get the list of distinct non-null labels in a dataset."""
+        result = await db.execute(
+            select(WSISlide.label)
+            .where(WSISlide.dataset_id == dataset_id)
+            .where(WSISlide.label.isnot(None))
+            .distinct()
+        )
+        return [row[0] for row in result.all()]
+
+    @staticmethod
     async def get_feature_extracted_count(db: AsyncSession, dataset_id: str) -> int:
         """Get the count of WSIs with feature_extracted=True in a dataset."""
         result = await db.execute(
