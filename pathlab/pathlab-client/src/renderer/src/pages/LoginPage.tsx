@@ -290,8 +290,8 @@ export default function LoginPage() {
         setBackendUnavailable(false)
       })
       .catch((err) => {
-        // If backend is unreachable (network error), show maintenance banner
-        if (err instanceof ApiError && err.isNetworkError()) {
+        // If backend is unreachable (network error or nginx 502/503), show maintenance banner
+        if (err instanceof ApiError && (err.isNetworkError() || err.isServerError())) {
           setBackendUnavailable(true)
         }
         // Continue without reCAPTCHA either way

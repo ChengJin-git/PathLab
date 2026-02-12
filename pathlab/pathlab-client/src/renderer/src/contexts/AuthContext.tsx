@@ -149,8 +149,8 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       let errorMessage = err instanceof Error ? err.message : 'Login failed'
       const errorLower = errorMessage.toLowerCase()
 
-      // Handle network error (backend unreachable) - treat as maintenance
-      if (err instanceof ApiError && err.isNetworkError()) {
+      // Handle network error or server error (backend unreachable / nginx 502) - treat as maintenance
+      if (err instanceof ApiError && (err.isNetworkError() || err.isServerError())) {
         errorMessage = 'System is under maintenance. Please try again later.'
       } else if (errorLower.includes('maintenance_mode')) {
         // System is in maintenance mode - non-admin users cannot log in

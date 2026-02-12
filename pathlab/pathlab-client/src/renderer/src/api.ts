@@ -233,6 +233,11 @@ async function parseErrorResponse(response: Response): Promise<{ message: string
     }
   }
 
+  // If the response is HTML (e.g. nginx 502/503 error page), don't use raw HTML as message
+  if (contentType?.includes('text/html')) {
+    return { message: response.statusText || `Server error (${response.status})` }
+  }
+
   const text = await response.text()
   return { message: text || response.statusText, detail: text }
 }
