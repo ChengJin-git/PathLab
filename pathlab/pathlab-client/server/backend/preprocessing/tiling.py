@@ -440,7 +440,11 @@ class WSITiler:
         cont_idx: int
     ) -> List[Tuple[int, int]]:
         """
-        Process a single tissue contour to extract patch coordinates
+        Process a single tissue contour to extract patch coordinates.
+
+        Uses vectorized mask-based filtering: draws filled contour/hole masks
+        with cv2.drawContours, then checks all candidate points via numpy
+        array indexing instead of per-point cv2.pointPolygonTest calls.
 
         Args:
             slide: ASlide Slide object
@@ -456,9 +460,8 @@ class WSITiler:
         logger.info(f"Contour {cont_idx}: bbox=({x},{y},{w},{h}), area={cv2.contourArea(contour):.0f}")
 
         # Calculate patch parameters at level 0
-        # Use read_size and step_size which are already MPP-adjusted
         downsample = slide.level_downsamples[self.level]
-        ref_patch_size = int(self.read_size * downsample)  # Size at level 0 in native pixels
+        ref_patch_size = int(self.read_size * downsample)
         step_size_x = int(self.step_size * downsample)
         step_size_y = int(self.step_size * downsample)
 
@@ -471,24 +474,89 @@ class WSITiler:
             stop_x = min(x + w, img_w - ref_patch_size + 1)
             stop_y = min(y + h, img_h - ref_patch_size + 1)
 
-        # Create contour checking function
-        cont_check_fn = self._get_contour_check_fn(contour, ref_patch_size)
-
         # Generate candidate coordinates
         x_range = np.arange(x, stop_x, step=step_size_x)
         y_range = np.arange(y, stop_y, step=step_size_y)
+
+        if len(x_range) == 0 or len(y_range) == 0:
+            logger.info(f"Contour {cont_idx}: no candidate coordinates")
+            return []
+
         x_coords, y_coords = np.meshgrid(x_range, y_range, indexing='ij')
-        coord_candidates = np.array([x_coords.flatten(), y_coords.flatten()]).transpose()
+        coord_candidates = np.array([x_coords.flatten(), y_coords.flatten()]).T
+        num_candidates = len(coord_candidates)
+        logger.info(f"Contour {cont_idx}: checking {num_candidates} candidate coordinates")
 
-        # Filter coordinates by contour and holes
-        logger.info(f"Contour {cont_idx}: checking {len(coord_candidates)} candidate coordinates")
-        valid_coords = []
-        for coord in coord_candidates:
-            if self._is_in_contour(cont_check_fn, coord, holes, ref_patch_size):
-                valid_coords.append(tuple(coord))
+        if num_candidates == 0:
+            return []
 
-        logger.info(f"Contour {cont_idx}: extracted {len(valid_coords)} patches from {len(coord_candidates)} candidates")
+        # --- Vectorized mask-based filtering ---
+        # Choose mask resolution: ref_patch_size // 4 matches four_pt offset granularity
+        mask_scale = max(ref_patch_size // 4, 1)
 
+        # Extend bounding box to cover all test points (center ± offset)
+        extend = ref_patch_size
+        mask_x0 = x - extend
+        mask_y0 = y - extend
+        mask_w = int(np.ceil((w + 2 * extend) / mask_scale)) + 1
+        mask_h = int(np.ceil((h + 2 * extend) / mask_scale)) + 1
+
+        # Build filled tissue mask
+        tissue_mask = np.zeros((mask_h, mask_w), dtype=np.uint8)
+        sc = ((contour.squeeze().astype(np.float64) - [mask_x0, mask_y0]) / mask_scale).astype(np.int32)
+        cv2.drawContours(tissue_mask, [sc.reshape(-1, 1, 2)], -1, 255, -1)
+
+        # Build filled holes mask
+        holes_mask = np.zeros((mask_h, mask_w), dtype=np.uint8) if holes else None
+        for hole in holes:
+            sh = ((hole.squeeze().astype(np.float64) - [mask_x0, mask_y0]) / mask_scale).astype(np.int32)
+            cv2.drawContours(holes_mask, [sh.reshape(-1, 1, 2)], -1, 255, -1)
+
+        half = ref_patch_size // 2
+        quarter = ref_patch_size // 4
+        cx = coord_candidates[:, 0] + half   # center x
+        cy = coord_candidates[:, 1] + half   # center y
+
+        # Determine tissue test points based on contour_fn mode
+        if self.contour_fn == 'four_pt':
+            tpx = np.stack([cx - quarter, cx + quarter, cx - quarter, cx + quarter], axis=1)
+            tpy = np.stack([cy - quarter, cy - quarter, cy + quarter, cy + quarter], axis=1)
+        elif self.contour_fn == 'center':
+            tpx = cx.reshape(-1, 1)
+            tpy = cy.reshape(-1, 1)
+        else:  # basic – top-left corner
+            tpx = coord_candidates[:, 0].astype(np.float64).reshape(-1, 1)
+            tpy = coord_candidates[:, 1].astype(np.float64).reshape(-1, 1)
+
+        # Convert test points to mask indices
+        mpx = ((tpx - mask_x0) / mask_scale).astype(np.int32)
+        mpy = ((tpy - mask_y0) / mask_scale).astype(np.int32)
+
+        # Vectorised tissue check: ALL test points must be inside
+        in_tissue = np.ones(num_candidates, dtype=bool)
+        for i in range(tpx.shape[1]):
+            mx = mpx[:, i]
+            my = mpy[:, i]
+            ib = (mx >= 0) & (mx < mask_w) & (my >= 0) & (my < mask_h)
+            ok = np.zeros(num_candidates, dtype=bool)
+            idx = np.where(ib)[0]
+            if len(idx) > 0:
+                ok[idx] = tissue_mask[my[idx], mx[idx]] > 0
+            in_tissue &= ok
+
+        # Vectorised hole check: center must NOT be in any hole
+        if holes_mask is not None and np.any(in_tissue):
+            hx = ((cx - mask_x0) / mask_scale).astype(np.int32)
+            hy = ((cy - mask_y0) / mask_scale).astype(np.int32)
+            ib = (hx >= 0) & (hx < mask_w) & (hy >= 0) & (hy < mask_h)
+            in_hole = np.zeros(num_candidates, dtype=bool)
+            idx = np.where(ib & in_tissue)[0]
+            if len(idx) > 0:
+                in_hole[idx] = holes_mask[hy[idx], hx[idx]] > 0
+            in_tissue &= ~in_hole
+
+        valid_coords = [tuple(c) for c in coord_candidates[in_tissue]]
+        logger.info(f"Contour {cont_idx}: extracted {len(valid_coords)} patches from {num_candidates} candidates")
         return valid_coords
 
     def _get_contour_check_fn(self, contour, patch_size: int):
@@ -877,6 +945,8 @@ def get_or_compute_coordinates(
     contour_fn: str = 'four_pt',
     use_padding: bool = True,
     seg_level: int = -1,
+    tissue_contours: Optional[List] = None,
+    hole_contours: Optional[List] = None,
     **kwargs,  # Ignore legacy patch_size, stride parameters
 ) -> Tuple[List[Tuple[int, int]], Path]:
     """
@@ -1005,6 +1075,8 @@ def get_or_compute_coordinates(
     # Don't save yet - may need adaptive fallback to lower seg_levels
     coordinates = tiler.compute_coordinates(
         slide, save_path=None,
+        tissue_contours=tissue_contours,
+        hole_contours=hole_contours,
         seg_params=seg_params, filter_params=filter_params
     )
 

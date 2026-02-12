@@ -551,6 +551,8 @@ async def compute_patches(
             contour_fn=contour_fn,
             use_padding=use_padding,
             seg_level=seg_level,
+            tissue_contours=tissue_contours,
+            hole_contours=hole_contours,
         )
 
         # Generate and save mask visualization

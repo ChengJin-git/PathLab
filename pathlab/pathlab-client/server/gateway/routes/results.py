@@ -5387,6 +5387,7 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
     # Save summary
     summary = {
         "task_id": task_id,
+        "task_type": "classification",
         "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z',
         "description": request.description,
         "num_samples": len(predictions),
@@ -6631,11 +6632,13 @@ async def run_analysis_pipeline(
 
             # Check if K-Fold (K-Fold skips CI, uses mean ± std instead)
             # split_strategy is stored in preprocessing_config.split_config.strategy
+            # NOTE: Only skip CI for internal analysis. External validation always allows CI
+            # because it measures uncertainty on the new dataset, independent of training method.
             split_config = task.preprocessing_config.get("split_config", {}) if task.preprocessing_config else {}
             split_strategy = split_config.get("strategy", "random")
             is_kfold = split_strategy == "k_fold"
-            if is_kfold and has_ci_calculation:
-                has_ci_calculation = False  # K-Fold doesn't use Bootstrap CI
+            if is_kfold and has_ci_calculation and task_type_str != "external_validation":
+                has_ci_calculation = False  # K-Fold doesn't use Bootstrap CI (internal analysis only)
 
             if task_type_str != "external_validation":
                 # Check if AI results exist

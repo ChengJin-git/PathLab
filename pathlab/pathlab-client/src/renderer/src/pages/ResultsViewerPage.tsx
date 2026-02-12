@@ -1736,7 +1736,7 @@ interface AnalysisDetailsProps {
 function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts, isExternal = false }: AnalysisDetailsProps) {
   // Use task_id from analysis object if available, fallback to prop
   const effectiveTaskId = analysis.task_id || taskId
-  const isSurvival = analysis.task_type === 'wsi_survival' || analysis.task_type === 'survival'
+  const isSurvival = analysis.task_type === 'wsi_survival' || analysis.task_type === 'survival' || analysis.task_type === 'external_validation_survival'
   // Color scheme helpers: orange for external, indigo for internal (survival always emerald)
   const accentBg = isExternal ? 'bg-orange-600' : 'bg-indigo-600'
   const accentText = isExternal ? 'text-orange-600' : 'text-indigo-600'
