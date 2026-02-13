@@ -24,6 +24,7 @@ export interface TrainingTask {
   updated_at: string | null
   started_at: string | null
   finished_at: string | null
+  user_id?: string | null  // User ID of task creator
   username?: string | null  // Username of task creator (only for admin users)
 }
 

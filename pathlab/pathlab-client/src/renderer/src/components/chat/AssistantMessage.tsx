@@ -24,6 +24,7 @@ import { CancelTaskCard, parseCancelTaskConfig, removeCancelTaskBlock } from './
 import { DatasetRegistrationCard, parseDatasetRegistrationConfig, removeDatasetRegistrationBlock } from './DatasetRegistrationCard'
 import { MetadataUploadCard, parseMetadataUploadConfig, removeMetadataUploadBlock } from './MetadataUploadCard'
 import { ModelListCard, parseModelListConfig, removeModelListBlock } from './ModelListCard'
+import { RenameTaskCard, parseRenameTaskConfig, removeRenameTaskBlock } from './RenameTaskCard'
 import { removeVoiceControlBlock } from './VoiceControlBlock'
 import {
   TaskConfigSkeleton,
@@ -85,6 +86,7 @@ const SPECIAL_BLOCK_TAGS = [
   'QUICK_ANALYSIS_CONFIG',
   'CSV_PREVIEW',
   'CANCEL_TASK',
+  'RENAME_TASK',
   'TASK_HISTORY_CONFIG',
   'VOICE_CONTROL',
   'SUBMIT_TASK',  // Voice command to trigger submit on existing TaskConfigCard
@@ -194,6 +196,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const quickAnalysisConfig = parseQuickAnalysisConfig(content)
   const taskHistoryConfig = parseTaskHistoryConfig(content)
   const cancelTaskConfig = parseCancelTaskConfig(content)
+  const renameTaskConfig = parseRenameTaskConfig(content)
   const datasetRegistrationConfig = parseDatasetRegistrationConfig(content)
   const metadataUploadConfig = parseMetadataUploadConfig(content)
   const modelListConfig = parseModelListConfig(content)
@@ -213,6 +216,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (quickAnalysisConfig) displayContent = removeQuickAnalysisConfigBlock(displayContent)
   if (taskHistoryConfig) displayContent = removeTaskHistoryConfigBlock(displayContent)
   if (cancelTaskConfig) displayContent = removeCancelTaskBlock(displayContent)
+  if (renameTaskConfig) displayContent = removeRenameTaskBlock(displayContent)
   if (datasetRegistrationConfig) displayContent = removeDatasetRegistrationBlock(displayContent)
   if (metadataUploadConfig) displayContent = removeMetadataUploadBlock(displayContent)
   if (modelListConfig) displayContent = removeModelListBlock(displayContent)
@@ -440,6 +444,21 @@ const AssistantMessage = React.memo(function AssistantMessage({
           </motion.div>
         ) : incompleteTag === 'CANCEL_TASK' && (
           <motion.div key="cancel-task-skeleton" {...cardTransition}>
+            <GenericCardSkeleton />
+          </motion.div>
+        )}
+
+        {/* Rename Task card */}
+        {renameTaskConfig ? (
+          <motion.div key="rename-task-real" {...cardTransition}>
+            <RenameTaskCard
+              config={renameTaskConfig}
+              onSuccess={(taskId, newName) => onToast({ type: 'success', message: `Task renamed to "${newName}"` })}
+              onError={(error) => onToast({ type: 'error', message: error })}
+            />
+          </motion.div>
+        ) : incompleteTag === 'RENAME_TASK' && (
+          <motion.div key="rename-task-skeleton" {...cardTransition}>
             <GenericCardSkeleton />
           </motion.div>
         )}

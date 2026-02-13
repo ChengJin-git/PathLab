@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { Loader2, History, CheckCircle2, XCircle, Clock, PlayCircle, AlertCircle, RefreshCw, ChevronRight } from 'lucide-react'
-import { getTrainingTasks, TrainingTask } from '../../api'
+import { Loader2, History, CheckCircle2, XCircle, Clock, PlayCircle, AlertCircle, RefreshCw, ChevronRight, Edit2 } from 'lucide-react'
+import { getTrainingTasks, TrainingTask, updateTrainingTaskName } from '../../api'
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../../contexts/AuthContext'
 
 // Cached task data for persistence - minimal data for display only
 export interface CachedTaskData {
@@ -102,6 +103,14 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
     hasCachedData ? (config.cached_tasks as unknown as TrainingTask[]) : []
   )
   const navigate = useNavigate()
+  const { user } = useAuth()
+
+  // Edit modal state
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [taskToEdit, setTaskToEdit] = useState<TrainingTask | null>(null)
+  const [editedTaskName, setEditedTaskName] = useState('')
+  const [isEditingSaving, setIsEditingSaving] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
 
   // Use ref for callbacks to avoid triggering useEffect on callback changes
   const onErrorRef = useRef(onError)
@@ -260,6 +269,48 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
     }
   }
 
+  // Handle edit task name
+  const handleEditTask = (task: TrainingTask, e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent card click
+    setTaskToEdit(task)
+    setEditedTaskName(task.task_name)
+    setEditError(null)
+    setShowEditModal(true)
+  }
+
+  // Handle save task name
+  const handleSaveTaskName = async () => {
+    if (!taskToEdit || !editedTaskName.trim()) {
+      setEditError('Task name cannot be empty')
+      return
+    }
+
+    setIsEditingSaving(true)
+    setEditError(null)
+
+    try {
+      const updatedTask = await updateTrainingTaskName(taskToEdit.task_id, editedTaskName.trim())
+
+      // Update local state immediately
+      setTasks(prevTasks =>
+        prevTasks.map(t =>
+          t.task_id === taskToEdit.task_id
+            ? { ...t, task_name: updatedTask.task_name, updated_at: updatedTask.updated_at }
+            : t
+        )
+      )
+
+      // Close modal
+      setShowEditModal(false)
+      setTaskToEdit(null)
+    } catch (err: any) {
+      console.error('Failed to update task name:', err)
+      setEditError(err.message || 'Failed to update task name')
+    } finally {
+      setIsEditingSaving(false)
+    }
+  }
+
   const handleTaskClick = (taskId: string) => {
     // Save scroll position and conversation ID before navigating
     const messagesContainer = document.querySelector('[data-chat-messages-container]')
@@ -392,13 +443,94 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
                       {task.finished_at && <span className="hidden sm:inline"> • Finished: {formatDate(task.finished_at)}</span>}
                     </div>
                   </div>
-                  <ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-purple-500 transition-colors flex-shrink-0 mt-1" />
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {/* Edit button - only for task creator */}
+                    {user && task.user_id === user.id && (
+                      <button
+                        onClick={(e) => handleEditTask(task, e)}
+                        className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors"
+                        title="Edit Task Name"
+                      >
+                        <Edit2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                      </button>
+                    )}
+                    <ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-purple-500 transition-colors" />
+                  </div>
                 </div>
               </div>
             )
           })
         )}
       </div>
+
+      {/* Edit Task Name Modal */}
+      {showEditModal && taskToEdit && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowEditModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-gray-100">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-50 rounded-lg">
+                  <Edit2 className="w-5 h-5 text-indigo-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Edit Task Name</h3>
+                  <p className="text-sm text-gray-500 mt-0.5">Update the name of your training task</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 py-5">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Task Name
+                  </label>
+                  <input
+                    type="text"
+                    value={editedTaskName}
+                    onChange={(e) => setEditedTaskName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !isEditingSaving) {
+                        handleSaveTaskName()
+                      }
+                    }}
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
+                    placeholder="Enter task name"
+                    autoFocus
+                  />
+                </div>
+
+                {editError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-sm text-red-700">{editError}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-gray-50 rounded-b-2xl flex items-center justify-end gap-3">
+              <button
+                onClick={() => setShowEditModal(false)}
+                disabled={isEditingSaving}
+                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveTaskName}
+                disabled={isEditingSaving || !editedTaskName.trim()}
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {isEditingSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+                {isEditingSaving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
