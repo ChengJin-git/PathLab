@@ -26,6 +26,8 @@ from .analysis_metrics import (
     _generate_roc_chart,
     _generate_km_analysis,
     _get_kfold_metrics,
+    run_chart_in_process,
+    _write_json_sync,
 )
 
 logger = logging.getLogger(__name__)
@@ -257,8 +259,8 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
         # Include CI bands only if user selected C-index 95% CI
         km_path = analysis_dir / "km_curve.png"
         include_km_ci = "c_index" in ci_metrics
-        # NOTE: matplotlib chart generation is CPU-intensive — run in thread
-        km_data = await asyncio.to_thread(_generate_km_analysis, times, events, risks, km_path, include_km_ci)
+        # NOTE: matplotlib chart generation is CPU-intensive — run in **process**
+        km_data = await run_chart_in_process(_generate_km_analysis, times, events, risks, km_path, include_km_ci)
         if km_data:
             chart_data["km_curve"] = km_data
             chart_paths["km_curve"] = str(km_path)
@@ -307,15 +309,17 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     if progress_callback:
         await progress_callback(97)
 
-    with open(analysis_dir / "summary.json", 'w') as f:
-        json.dump(summary, f, indent=2)
+    await asyncio.to_thread(
+        _write_json_sync, analysis_dir / "summary.json", summary
+    )
 
     # Save detailed results
-    with open(analysis_dir / "results.json", 'w') as f:
-        json.dump({
+    await asyncio.to_thread(
+        _write_json_sync, analysis_dir / "results.json", {
             "wsi_results": wsi_results,
             "metrics": metrics
-        }, f, indent=2)
+        }
+    )
 
     logger.info(f"External validation survival analysis completed for task {task_id}, saved to {analysis_dir}")
 
@@ -518,16 +522,22 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
     if kfold_metrics:
         summary["kfold_training"] = kfold_metrics
 
-    with open(analysis_dir / "summary.json", 'w') as f:
-        json.dump(summary, f, indent=2)
+    # Convert defaultdict → regular dict (defaultdict with lambda is not picklable
+    # across processes, and we need to pass it to ProcessPoolExecutor)
+    confusion_matrix_plain = {k: dict(v) for k, v in confusion_matrix.items()}
+
+    await asyncio.to_thread(
+        _write_json_sync, analysis_dir / "summary.json", summary
+    )
 
     # Save detailed results
-    with open(analysis_dir / "results.json", 'w') as f:
-        json.dump({
+    await asyncio.to_thread(
+        _write_json_sync, analysis_dir / "results.json", {
             "wsi_results": wsi_results,
-            "confusion_matrix": {k: dict(v) for k, v in confusion_matrix.items()},
+            "confusion_matrix": confusion_matrix_plain,
             "roc_data": metrics_result.get("roc_data", {})
-        }, f, indent=2)
+        }
+    )
 
     # Generate charts and collect chart data for frontend ECharts rendering
     chart_paths = {}
@@ -538,17 +548,17 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
         cm_data = []
         for i, true_cls in enumerate(all_classes):
             for j, pred_cls in enumerate(all_classes):
-                value = confusion_matrix.get(true_cls, {}).get(pred_cls, 0)
+                value = confusion_matrix_plain.get(true_cls, {}).get(pred_cls, 0)
                 cm_data.append([j, i, value])
         chart_data["confusion_matrix"] = {
             "classes": all_classes,
             "data": cm_data
         }
 
-        # NOTE: matplotlib chart generation is CPU-intensive — run in thread
-        cm_path = await asyncio.to_thread(
+        # NOTE: matplotlib chart generation is CPU-intensive — run in **process**
+        cm_path = await run_chart_in_process(
             _generate_confusion_matrix_chart,
-            confusion_matrix, all_classes, analysis_dir / "confusion_matrix.png"
+            confusion_matrix_plain, all_classes, analysis_dir / "confusion_matrix.png"
         )
         if cm_path:
             chart_paths["confusion_matrix"] = str(cm_path)
@@ -574,8 +584,8 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
             "data": roc_chart_data
         }
 
-        # NOTE: matplotlib chart generation is CPU-intensive — run in thread
-        roc_path = await asyncio.to_thread(
+        # NOTE: matplotlib chart generation is CPU-intensive — run in **process**
+        roc_path = await run_chart_in_process(
             _generate_roc_chart,
             metrics_result["roc_data"], all_classes, analysis_dir / "roc_curve.png",
             roc_ci
@@ -592,8 +602,9 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
     # Update summary with chart paths and chart data
     summary["chart_paths"] = chart_paths
     summary["chart_data"] = chart_data
-    with open(analysis_dir / "summary.json", 'w') as f:
-        json.dump(summary, f, indent=2)
+    await asyncio.to_thread(
+        _write_json_sync, analysis_dir / "summary.json", summary
+    )
 
     logger.info(f"External validation classification analysis completed for task {task_id}, saved to {analysis_dir}")
 

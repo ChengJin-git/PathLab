@@ -4,14 +4,53 @@ Analysis Metrics Module
 Contains metric calculation, bootstrap CI computation, and chart generation
 for classification and survival analysis results.
 """
+import asyncio
 import json
 import logging
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
 
 from backend.common.config import Config
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Process pool for CPU-intensive chart rendering (matplotlib at DPI 600).
+#
+# Why ProcessPoolExecutor instead of ThreadPoolExecutor / asyncio.to_thread?
+#   Threads share the GIL with the event-loop thread.  Matplotlib's Python-
+#   level figure layout, tight_layout(), and text rendering hold the GIL for
+#   seconds at high DPI, which *effectively* blocks the event loop even when
+#   the rendering itself runs in a background thread.  A separate **process**
+#   has its own GIL, so the main event loop stays fully responsive.
+# ---------------------------------------------------------------------------
+_chart_process_pool: Optional[ProcessPoolExecutor] = None
+
+
+def _get_chart_process_pool() -> ProcessPoolExecutor:
+    """Return (lazily-created) process pool for chart generation."""
+    global _chart_process_pool
+    if _chart_process_pool is None:
+        _chart_process_pool = ProcessPoolExecutor(max_workers=2)
+    return _chart_process_pool
+
+
+async def run_chart_in_process(func, *args):
+    """Run *func* in a separate **process** so the event loop is never blocked.
+
+    All arguments and return values must be picklable (top-level functions,
+    plain dicts / lists / Paths – no lambdas, no defaultdicts).
+    """
+    loop = asyncio.get_event_loop()
+    pool = _get_chart_process_pool()
+    return await loop.run_in_executor(pool, func, *args)
+
+
+def _write_json_sync(path, data):
+    """Write *data* as JSON to *path* (sync – for ``asyncio.to_thread``)."""
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
 
 
 def _calculate_all_metrics(
@@ -552,10 +591,9 @@ def _generate_roc_chart(roc_data, classes, output_path, roc_ci=None) -> Optional
         return None
 
 
-async def _get_loss_data(task_id: str) -> Optional[Dict[str, Any]]:
-    """Get loss data for ECharts rendering. Supports both regular and K-Fold training."""
+def _get_loss_data_sync(task_id: str) -> Optional[Dict[str, Any]]:
+    """Sync file-I/O implementation for loss data retrieval."""
     try:
-        # Find model metrics file
         models_dir = Config.get_uploads_dir() / "models"
         metrics_file = None
 
@@ -574,13 +612,11 @@ async def _get_loss_data(task_id: str) -> Optional[Dict[str, Any]]:
 
         # Check if this is K-Fold training
         if metrics.get("is_kfold"):
-            # Return K-Fold loss data structure
             folds = metrics.get("folds", {})
             fold_loss_data = {}
 
             for fold_name, fold_data in folds.items():
                 history = fold_data.get("history", {})
-                # Support both "loss" and "train_loss" keys
                 loss = history.get("loss", history.get("train_loss", []))
                 if loss:
                     fold_loss_data[fold_name] = {
@@ -601,7 +637,6 @@ async def _get_loss_data(task_id: str) -> Optional[Dict[str, Any]]:
                 "aggregated": metrics.get("aggregated", {}),
             }
         else:
-            # Regular training
             history = metrics.get("history", {})
             loss = history.get("loss", history.get("train_loss", []))
 
@@ -623,8 +658,13 @@ async def _get_loss_data(task_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-async def _get_kfold_metrics(task_id: str) -> Optional[Dict[str, Any]]:
-    """Get K-Fold aggregated metrics if available."""
+async def _get_loss_data(task_id: str) -> Optional[Dict[str, Any]]:
+    """Get loss data for ECharts rendering (file I/O offloaded to thread)."""
+    return await asyncio.to_thread(_get_loss_data_sync, task_id)
+
+
+def _get_kfold_metrics_sync(task_id: str) -> Optional[Dict[str, Any]]:
+    """Sync file-I/O implementation for K-Fold metrics retrieval."""
     try:
         models_dir = Config.get_uploads_dir() / "models"
         metrics_file = None
@@ -656,14 +696,18 @@ async def _get_kfold_metrics(task_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-async def _generate_loss_chart(task_id: str, output_path: Path) -> Optional[Path]:
-    """Generate loss curve chart from training metrics."""
+async def _get_kfold_metrics(task_id: str) -> Optional[Dict[str, Any]]:
+    """Get K-Fold aggregated metrics (file I/O offloaded to thread)."""
+    return await asyncio.to_thread(_get_kfold_metrics_sync, task_id)
+
+
+def _render_loss_chart_sync(loss_data: Dict[str, Any], output_path: Path) -> Optional[Path]:
+    """Render loss curve chart using matplotlib (sync, CPU-intensive).
+
+    This is a pure sync function designed to be called via asyncio.to_thread().
+    """
     try:
         plt = _setup_matplotlib_font()
-
-        loss_data = await _get_loss_data(task_id)
-        if not loss_data or not loss_data.get("loss"):
-            return None
 
         loss = loss_data["loss"]
 
@@ -688,6 +732,24 @@ async def _generate_loss_chart(task_id: str, output_path: Path) -> Optional[Path
         plt.close(fig)
 
         return output_path
+    except Exception as e:
+        logger.error(f"Failed to render loss chart: {e}")
+        return None
+
+
+async def _generate_loss_chart(task_id: str, output_path: Path) -> Optional[Path]:
+    """Generate loss curve chart from training metrics.
+
+    Fetches data asynchronously, then offloads matplotlib rendering to a
+    **separate process** so the GIL-heavy rendering never blocks the event loop.
+    """
+    try:
+        loss_data = await _get_loss_data(task_id)
+        if not loss_data or not loss_data.get("loss"):
+            return None
+
+        # NOTE: matplotlib chart generation is CPU-intensive — run in process
+        return await run_chart_in_process(_render_loss_chart_sync, loss_data, output_path)
     except Exception as e:
         logger.error(f"Failed to generate loss chart: {e}")
         return None

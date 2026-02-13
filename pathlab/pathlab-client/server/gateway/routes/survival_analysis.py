@@ -26,6 +26,8 @@ from .analysis_metrics import (
     _generate_km_analysis,
     _get_loss_data,
     _get_kfold_metrics,
+    run_chart_in_process,
+    _write_json_sync,
 )
 
 logger = logging.getLogger(__name__)
@@ -272,7 +274,8 @@ async def _run_survival_analysis(task, request, db, progress_callback=None, prog
         # Generate KM Curve - include CI bands only if user selected C-index 95% CI
         km_path = analysis_dir / "km_curve.png"
         include_km_ci = "c_index" in ci_metrics
-        km_data = _generate_km_analysis(times, events, risks, km_path, include_ci=include_km_ci)
+        # NOTE: matplotlib chart generation is CPU-intensive — run in **process**
+        km_data = await run_chart_in_process(_generate_km_analysis, times, events, risks, km_path, include_km_ci)
         if km_data:
             chart_paths["km_curve"] = str(km_path)
             chart_data["km_curve"] = km_data # For frontend rendering
@@ -315,14 +318,16 @@ async def _run_survival_analysis(task, request, db, progress_callback=None, prog
     if progress_callback:
         await progress_callback(97)
 
-    with open(analysis_dir / "summary.json", 'w') as f:
-        json.dump(summary, f, indent=2)
+    await asyncio.to_thread(
+        _write_json_sync, analysis_dir / "summary.json", summary
+    )
 
-    with open(analysis_dir / "results.json", 'w') as f:
-        json.dump({
+    await asyncio.to_thread(
+        _write_json_sync, analysis_dir / "results.json", {
             "wsi_results": wsi_results,
             "metrics": metrics
-        }, f, indent=2)
+        }
+    )
 
     return {
         "task_id": task_id,

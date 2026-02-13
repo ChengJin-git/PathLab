@@ -29,6 +29,8 @@ from .analysis_metrics import (
     _get_loss_data,
     _get_kfold_metrics,
     _generate_loss_chart,
+    run_chart_in_process,
+    _write_json_sync,
 )
 
 logger = logging.getLogger(__name__)
@@ -284,16 +286,22 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
     if kfold_metrics:
         summary["kfold_training"] = kfold_metrics
 
-    with open(analysis_dir / "summary.json", 'w') as f:
-        json.dump(summary, f, indent=2)
+    # Convert defaultdict → regular dict (defaultdict with lambda is not picklable
+    # across processes, and we need to pass it to ProcessPoolExecutor)
+    confusion_matrix_plain = {k: dict(v) for k, v in confusion_matrix.items()}
+
+    await asyncio.to_thread(
+        _write_json_sync, analysis_dir / "summary.json", summary
+    )
 
     # Save detailed results
-    with open(analysis_dir / "results.json", 'w') as f:
-        json.dump({
+    await asyncio.to_thread(
+        _write_json_sync, analysis_dir / "results.json", {
             "wsi_results": wsi_results,
-            "confusion_matrix": {k: dict(v) for k, v in confusion_matrix.items()},
+            "confusion_matrix": confusion_matrix_plain,
             "roc_data": metrics_result.get("roc_data", {})
-        }, f, indent=2)
+        }
+    )
 
     # Generate charts and collect chart data for frontend ECharts rendering
     chart_paths = {}
@@ -304,15 +312,17 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
         cm_data = []
         for i, true_cls in enumerate(all_classes):
             for j, pred_cls in enumerate(all_classes):
-                value = confusion_matrix.get(true_cls, {}).get(pred_cls, 0)
+                value = confusion_matrix_plain.get(true_cls, {}).get(pred_cls, 0)
                 cm_data.append([j, i, value])
         chart_data["confusion_matrix"] = {
             "classes": all_classes,
             "data": cm_data
         }
 
-        cm_path = _generate_confusion_matrix_chart(
-            confusion_matrix, all_classes, analysis_dir / "confusion_matrix.png"
+        # NOTE: matplotlib chart generation is CPU-intensive — run in **process**
+        cm_path = await run_chart_in_process(
+            _generate_confusion_matrix_chart,
+            confusion_matrix_plain, all_classes, analysis_dir / "confusion_matrix.png"
         )
         if cm_path:
             chart_paths["confusion_matrix"] = str(cm_path)
@@ -338,9 +348,11 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
             "data": roc_chart_data
         }
 
-        roc_path = _generate_roc_chart(
+        # NOTE: matplotlib chart generation is CPU-intensive — run in **process**
+        roc_path = await run_chart_in_process(
+            _generate_roc_chart,
             metrics_result["roc_data"], all_classes, analysis_dir / "roc_curve.png",
-            roc_ci=roc_ci
+            roc_ci
         )
         if roc_path:
             chart_paths["roc_curve"] = str(roc_path)
@@ -351,6 +363,7 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
         if loss_data:
             chart_data["loss_curve"] = loss_data
 
+        # NOTE: matplotlib chart generation is CPU-intensive — run in **process**
         loss_path = await _generate_loss_chart(task_id, analysis_dir / "loss_curve.png")
         if loss_path:
             chart_paths["loss_curve"] = str(loss_path)
@@ -362,8 +375,9 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
     # Update summary with chart paths and chart data
     summary["chart_paths"] = chart_paths
     summary["chart_data"] = chart_data
-    with open(analysis_dir / "summary.json", 'w') as f:
-        json.dump(summary, f, indent=2)
+    await asyncio.to_thread(
+        _write_json_sync, analysis_dir / "summary.json", summary
+    )
 
     logger.info(f"Analysis completed for task {task_id}, saved to {analysis_dir}")
 
