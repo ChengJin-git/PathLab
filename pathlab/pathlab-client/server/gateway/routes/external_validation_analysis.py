@@ -251,29 +251,50 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
     analysis_dir.mkdir(parents=True, exist_ok=True)
 
-    # Generate charts
+    # Generate charts — run KM image generation and kfold metrics loading in parallel
     chart_paths = {}
     chart_data = {}
 
+    km_coro = None
+    km_path = None
     if "km_curve" in request.charts and len(risks) > 0:
-        # Include CI bands only if user selected C-index 95% CI
         km_path = analysis_dir / "km_curve.png"
         include_km_ci = "c_index" in ci_metrics
-        # NOTE: matplotlib chart generation is CPU-intensive — run in **process**
-        km_data = await run_chart_in_process(_generate_km_analysis, times, events, risks, km_path, include_km_ci)
-        if km_data:
-            chart_data["km_curve"] = km_data
-            chart_paths["km_curve"] = str(km_path)
+        km_coro = run_chart_in_process(_generate_km_analysis, times, events, risks, km_path, include_km_ci)
 
     # Note: loss_curve is skipped for external validation (training-only)
 
     # Extract random seed (serves as invisible watermark for model provenance)
     random_seed = _get_random_seed_from_task(task)
 
-    # Check for K-Fold training metrics from the original model
-    kfold_metrics = None
-    if model_task_id:
-        kfold_metrics = await _get_kfold_metrics(model_task_id)
+    # Check for K-Fold training metrics from the original model — run in parallel with KM chart
+    kfold_coro = _get_kfold_metrics(model_task_id) if model_task_id else None
+
+    parallel_tasks = []
+    task_names = []
+    for name, coro in [("km", km_coro), ("kfold", kfold_coro)]:
+        if coro is not None:
+            parallel_tasks.append(coro)
+            task_names.append(name)
+
+    if parallel_tasks:
+        parallel_results = await asyncio.gather(*parallel_tasks, return_exceptions=True)
+        result_map = {}
+        for name, result in zip(task_names, parallel_results):
+            if isinstance(result, Exception):
+                logger.error(f"Parallel task '{name}' failed: {result}")
+                result_map[name] = None
+            else:
+                result_map[name] = result
+    else:
+        result_map = {}
+
+    km_data = result_map.get("km")
+    if km_data:
+        chart_data["km_curve"] = km_data
+        chart_paths["km_curve"] = str(km_path)
+
+    kfold_metrics = result_map.get("kfold")
 
     # Save summary
     summary = {
@@ -540,8 +561,11 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
     )
 
     # Generate charts and collect chart data for frontend ECharts rendering
+    # Phase 1: Prepare ECharts data (fast) and build list of chart generation coroutines
+    # Phase 2: Run all chart image generation in parallel via asyncio.gather()
     chart_paths = {}
     chart_data = {}
+    chart_gen_tasks = []  # [(chart_name, coroutine), ...]
 
     if "confusion_matrix" in request.charts:
         # Prepare confusion matrix data for ECharts
@@ -554,19 +578,14 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
             "classes": all_classes,
             "data": cm_data
         }
-
-        # NOTE: matplotlib chart generation is CPU-intensive — run in **process**
-        cm_path = await run_chart_in_process(
+        chart_gen_tasks.append(("confusion_matrix", run_chart_in_process(
             _generate_confusion_matrix_chart,
             confusion_matrix_plain, all_classes, analysis_dir / "confusion_matrix.png"
-        )
-        if cm_path:
-            chart_paths["confusion_matrix"] = str(cm_path)
+        )))
 
     if "roc_curve" in request.charts and metrics_result.get("roc_data"):
         # Prepare ROC curve data for ECharts
         roc_chart_data = {}
-        # Get ROC CI from bootstrap_ci_result if available
         roc_ci = bootstrap_ci_result.get("roc_ci", {}) if bootstrap_ci_result else {}
         for cls, data in metrics_result["roc_data"].items():
             roc_chart_data[cls] = {
@@ -574,7 +593,6 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
                 "tpr": [p["tpr"] for p in data["points"]],
                 "auc": data["auc"]
             }
-            # Add CI data if available for this class
             if cls in roc_ci:
                 roc_chart_data[cls]["fpr_grid"] = roc_ci[cls]["fpr_grid"]
                 roc_chart_data[cls]["tpr_lower"] = roc_ci[cls]["tpr_lower"]
@@ -583,17 +601,24 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
             "classes": all_classes,
             "data": roc_chart_data
         }
-
-        # NOTE: matplotlib chart generation is CPU-intensive — run in **process**
-        roc_path = await run_chart_in_process(
+        chart_gen_tasks.append(("roc_curve", run_chart_in_process(
             _generate_roc_chart,
             metrics_result["roc_data"], all_classes, analysis_dir / "roc_curve.png",
             roc_ci
-        )
-        if roc_path:
-            chart_paths["roc_curve"] = str(roc_path)
+        )))
 
     # Note: loss_curve is skipped for external validation (training-only)
+
+    # Phase 2: Generate all chart images in parallel (each runs in ProcessPoolExecutor)
+    if chart_gen_tasks:
+        results = await asyncio.gather(
+            *[coro for _, coro in chart_gen_tasks], return_exceptions=True
+        )
+        for (name, _), result in zip(chart_gen_tasks, results):
+            if isinstance(result, Exception):
+                logger.error(f"Chart generation failed for {name}: {result}")
+            elif result:
+                chart_paths[name] = str(result)
 
     # Update progress - charts generated
     if progress_callback:

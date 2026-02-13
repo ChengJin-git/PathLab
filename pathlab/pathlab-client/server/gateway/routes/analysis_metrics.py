@@ -523,7 +523,7 @@ def _generate_confusion_matrix_chart(confusion_matrix, classes, output_path) -> 
                        color="white" if cm[i, j] > thresh else "black")
 
         plt.tight_layout()
-        plt.savefig(output_path, dpi=600, bbox_inches='tight')
+        plt.savefig(output_path, dpi=300)
         plt.close(fig)
 
         return output_path
@@ -582,7 +582,7 @@ def _generate_roc_chart(roc_data, classes, output_path, roc_ci=None) -> Optional
         ax.tick_params(axis='both', labelsize=18)
 
         plt.tight_layout()
-        plt.savefig(output_path, dpi=600, bbox_inches='tight')
+        plt.savefig(output_path, dpi=300)
         plt.close(fig)
 
         return output_path
@@ -728,7 +728,7 @@ def _render_loss_chart_sync(loss_data: Dict[str, Any], output_path: Path) -> Opt
         ax.tick_params(axis='both', labelsize=18)
 
         plt.tight_layout()
-        plt.savefig(output_path, dpi=600, bbox_inches='tight')
+        plt.savefig(output_path, dpi=300)
         plt.close(fig)
 
         return output_path

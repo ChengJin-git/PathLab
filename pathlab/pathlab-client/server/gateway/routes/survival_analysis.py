@@ -266,28 +266,49 @@ async def _run_survival_analysis(task, request, db, progress_callback=None, prog
     if progress_callback:
         await progress_callback(p_ci_end)
 
-    # Generate Charts
+    # Generate Charts — run KM image generation, loss data loading, and kfold
+    # metrics loading in parallel where possible
     chart_paths = {}
     chart_data = {}
 
+    # Build parallel tasks: KM chart (CPU-intensive), loss data (file I/O), kfold metrics (file I/O)
+    km_coro = None
     if "km_curve" in request.charts:
-        # Generate KM Curve - include CI bands only if user selected C-index 95% CI
         km_path = analysis_dir / "km_curve.png"
         include_km_ci = "c_index" in ci_metrics
-        # NOTE: matplotlib chart generation is CPU-intensive — run in **process**
-        km_data = await run_chart_in_process(_generate_km_analysis, times, events, risks, km_path, include_km_ci)
-        if km_data:
-            chart_paths["km_curve"] = str(km_path)
-            chart_data["km_curve"] = km_data # For frontend rendering
+        km_coro = run_chart_in_process(_generate_km_analysis, times, events, risks, km_path, include_km_ci)
 
-    if "loss_curve" in request.charts:
-        # Load loss history from model metrics (supports K-Fold)
-        loss_data = await _get_loss_data(task_id)
-        if loss_data:
-            chart_data["loss_curve"] = loss_data
+    loss_coro = _get_loss_data(task_id) if "loss_curve" in request.charts else None
+    kfold_coro = _get_kfold_metrics(task_id)
 
-    # Check for K-Fold training metrics
-    kfold_metrics = await _get_kfold_metrics(task_id)
+    # Run all in parallel
+    parallel_tasks = []
+    task_names = []
+    for name, coro in [("km", km_coro), ("loss", loss_coro), ("kfold", kfold_coro)]:
+        if coro is not None:
+            parallel_tasks.append(coro)
+            task_names.append(name)
+
+    parallel_results = await asyncio.gather(*parallel_tasks, return_exceptions=True)
+    result_map = {}
+    for name, result in zip(task_names, parallel_results):
+        if isinstance(result, Exception):
+            logger.error(f"Parallel task '{name}' failed: {result}")
+            result_map[name] = None
+        else:
+            result_map[name] = result
+
+    # Unpack results
+    km_data = result_map.get("km")
+    if km_data:
+        chart_paths["km_curve"] = str(km_path)
+        chart_data["km_curve"] = km_data
+
+    loss_data = result_map.get("loss")
+    if loss_data:
+        chart_data["loss_curve"] = loss_data
+
+    kfold_metrics = result_map.get("kfold")
 
     # Extract random seed (serves as invisible watermark for model provenance)
     random_seed = _get_random_seed_from_task(task)

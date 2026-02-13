@@ -28,7 +28,7 @@ from .analysis_metrics import (
     _generate_roc_chart,
     _get_loss_data,
     _get_kfold_metrics,
-    _generate_loss_chart,
+    _render_loss_chart_sync,
     run_chart_in_process,
     _write_json_sync,
 )
@@ -304,8 +304,11 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
     )
 
     # Generate charts and collect chart data for frontend ECharts rendering
+    # Phase 1: Prepare ECharts data (fast) and build list of chart generation coroutines
+    # Phase 2: Run all chart image generation in parallel via asyncio.gather()
     chart_paths = {}
     chart_data = {}
+    chart_gen_tasks = []  # [(chart_name, coroutine), ...]
 
     if "confusion_matrix" in request.charts:
         # Prepare confusion matrix data for ECharts
@@ -318,19 +321,14 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
             "classes": all_classes,
             "data": cm_data
         }
-
-        # NOTE: matplotlib chart generation is CPU-intensive — run in **process**
-        cm_path = await run_chart_in_process(
+        chart_gen_tasks.append(("confusion_matrix", run_chart_in_process(
             _generate_confusion_matrix_chart,
             confusion_matrix_plain, all_classes, analysis_dir / "confusion_matrix.png"
-        )
-        if cm_path:
-            chart_paths["confusion_matrix"] = str(cm_path)
+        )))
 
     if "roc_curve" in request.charts and metrics_result.get("roc_data"):
         # Prepare ROC curve data for ECharts
         roc_chart_data = {}
-        # Get ROC CI from bootstrap_ci_result if available
         roc_ci = bootstrap_ci_result.get("roc_ci", {}) if bootstrap_ci_result else {}
         for cls, data in metrics_result["roc_data"].items():
             roc_chart_data[cls] = {
@@ -338,7 +336,6 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
                 "tpr": [p["tpr"] for p in data["points"]],
                 "auc": data["auc"]
             }
-            # Add CI data if available for this class
             if cls in roc_ci:
                 roc_chart_data[cls]["fpr_grid"] = roc_ci[cls]["fpr_grid"]
                 roc_chart_data[cls]["tpr_lower"] = roc_ci[cls]["tpr_lower"]
@@ -347,26 +344,31 @@ async def _run_classification_analysis(task, request, db, progress_callback=None
             "classes": all_classes,
             "data": roc_chart_data
         }
-
-        # NOTE: matplotlib chart generation is CPU-intensive — run in **process**
-        roc_path = await run_chart_in_process(
+        chart_gen_tasks.append(("roc_curve", run_chart_in_process(
             _generate_roc_chart,
             metrics_result["roc_data"], all_classes, analysis_dir / "roc_curve.png",
             roc_ci
-        )
-        if roc_path:
-            chart_paths["roc_curve"] = str(roc_path)
+        )))
 
     if "loss_curve" in request.charts:
-        # Load loss history from model metrics
+        # Load loss history for ECharts (async file I/O — must finish before parallel phase)
         loss_data = await _get_loss_data(task_id)
         if loss_data:
             chart_data["loss_curve"] = loss_data
+            chart_gen_tasks.append(("loss_curve", run_chart_in_process(
+                _render_loss_chart_sync, loss_data, analysis_dir / "loss_curve.png"
+            )))
 
-        # NOTE: matplotlib chart generation is CPU-intensive — run in **process**
-        loss_path = await _generate_loss_chart(task_id, analysis_dir / "loss_curve.png")
-        if loss_path:
-            chart_paths["loss_curve"] = str(loss_path)
+    # Phase 2: Generate all chart images in parallel (each runs in ProcessPoolExecutor)
+    if chart_gen_tasks:
+        results = await asyncio.gather(
+            *[coro for _, coro in chart_gen_tasks], return_exceptions=True
+        )
+        for (name, _), result in zip(chart_gen_tasks, results):
+            if isinstance(result, Exception):
+                logger.error(f"Chart generation failed for {name}: {result}")
+            elif result:
+                chart_paths[name] = str(result)
 
     # Update progress - charts generated
     if progress_callback:
