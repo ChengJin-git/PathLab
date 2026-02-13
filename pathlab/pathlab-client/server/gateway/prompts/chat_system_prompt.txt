@@ -917,7 +917,8 @@ Note: Bootstrap CI computation takes longer but provides publication-quality res
 
 ⚠️ **MANDATORY STEP-BY-STEP CHECK** ⚠️
 
-When user asks for external validation, you MUST:
+When user asks for external validation, you MUST perform ALL 5 steps below IN ORDER.
+DO NOT skip any step. DO NOT assume compatibility without checking.
 
 **STEP 1: Check task_type compatibility FIRST**
 - Look at model's `task_type` field in USER'S TRAINED MODELS
@@ -931,12 +932,14 @@ When user asks for external validation, you MUST:
 - ❌ Patch model (data_type=patch) → WSI dataset (type=wsi) = **INCOMPATIBLE**
 - ✅ Only proceed if data types match
 
-**STEP 3: For classification - check label compatibility**
-- Extract model's `classes` field (e.g., classes=[LUAD, LUSC])
-- Extract dataset's `labels` field (e.g., labels=[LUAD(80), LUSC(70)])
-- ❌ Different label names = **INCOMPATIBLE**
-- ❌ Missing labels = **INCOMPATIBLE**
-- ✅ Exact match required
+**STEP 3: For classification - check label compatibility (CRITICAL)**
+- Extract model's `classes` field (e.g., classes=[Cancerous, Benign])
+- Extract dataset's `labels` field (e.g., labels=[Cancerous(80), Benign(70)])
+- **IMPORTANT**: Label names must match EXACTLY (case-sensitive)
+- ❌ classes=[Cancerous, Benign] vs labels=[IM相关(100)] = **INCOMPATIBLE** (completely different labels)
+- ❌ classes=[LUAD, LUSC] vs labels=[Normal(50), Tumor(100)] = **INCOMPATIBLE** (different label names)
+- ❌ classes=[LUAD, LUSC] vs labels=[LUAD(80)] = **INCOMPATIBLE** (missing LUSC)
+- ✅ classes=[Cancerous, Benign] vs labels=[Cancerous(80), Benign(70)] = **COMPATIBLE** (exact match)
 
 **STEP 4: For WSI - check feature extractor compatibility**
 - Extract model's `feature_extractor` field (e.g., feature_extractor=uni)
@@ -974,7 +977,33 @@ When user asks for external validation, you MUST:
 4. [WSI任务] 使用相同特征提取器提取的特征（或相同embedding维度的兼容提取器）
 ```
 
-**Example: External Validation (when compatible dataset exists)**
+**Example 1: NO compatible dataset - label mismatch (REAL SCENARIO)**
+```
+User: "我有数据能做外部验证吗"
+
+Context:
+- Model: Lung_Cancer_Classification (classes=[Cancerous, Benign], task_type=classification, data_type=wsi, feature_extractor=uni)
+- Available datasets:
+  1. Gastric_Intestinal_Metaplasia: labels=[IM相关(100)], task_type=classification, data_type=wsi, available_extractors=[uni]
+  2. Liver_OS: survival_data=50, task_type=survival, data_type=wsi
+
+AI Response:
+很抱歉，您目前没有合适的数据集可以对肺癌分类模型进行外部验证。
+
+您的模型信息：
+- 任务类型：classification
+- 数据类型：WSI
+- 类别：Cancerous, Benign
+- 特征提取器：uni (embedding_dim: 1024)
+
+可用数据集及不兼容原因：
+- Gastric_Intestinal_Metaplasia: 标签不匹配（数据集有 IM相关，但模型需要 Cancerous, Benign）
+- Liver_OS: 任务类型不匹配（生存分析 vs 分类）
+
+要进行外部验证，您需要一个新的数据集，标签为 Cancerous 和 Benign。
+```
+
+**Example 2: External Validation (when compatible dataset exists)**
 ```
 I'll validate your model on the external dataset.
 

@@ -10,9 +10,11 @@ from typing import List, Dict, AsyncIterator, Optional
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.database import get_db
 from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository, DatasetPermissionRepository, DatasetRepository, TrainingTaskRepository, AITaskRepository
+from backend.database.models import TrainingTask, DataGroup
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import check_data_ownership, get_user_id_filter
 from backend.common.config import Config
@@ -535,14 +537,19 @@ async def chat_with_ai(
 
     if trained_models:
         models_details = []
-        # Batch query all training tasks to get detailed info
+        # Batch query all training tasks to get detailed info with eager loading
         task_ids = list(set(m.task_id for m in trained_models if m.task_id))
         training_tasks_map = {}
         if task_ids:
-            for task_id in task_ids:
-                task = await TrainingTaskRepository.get_by_id(db, task_id)
-                if task:
-                    training_tasks_map[task_id] = task
+            from sqlalchemy import select
+            # Eager load data_group and datasets to avoid lazy loading issues
+            stmt = select(TrainingTask).options(
+                selectinload(TrainingTask.data_group).selectinload(DataGroup.datasets)
+            ).where(TrainingTask.task_id.in_(task_ids))
+            result = await db.execute(stmt)
+            tasks = result.scalars().all()
+            for task in tasks:
+                training_tasks_map[task.task_id] = task
 
         for m in trained_models:
             model_name = m.model_name
