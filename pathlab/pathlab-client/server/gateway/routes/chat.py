@@ -553,9 +553,14 @@ async def chat_with_ai(
 
             # Get data_type and task_type from training task's DataGroup
             training_task = training_tasks_map.get(model_task_id)
+            training_dataset_name = None
             if training_task and training_task.data_group:
                 data_type = training_task.data_group.data_type
                 task_type = training_task.data_group.task_type
+                # Get the dataset name from the data group
+                if training_task.data_group.datasets:
+                    # Assuming one dataset per group for training tasks
+                    training_dataset_name = training_task.data_group.datasets[0].name
             else:
                 data_type = "unknown"
                 task_type = "unknown"
@@ -579,6 +584,10 @@ async def chat_with_ai(
                 info_parts.append(f"feature_extractor={model_feature_extractor}")
                 if embed_dim > 0:
                     info_parts.append(f"embedding_dim={embed_dim}")
+
+            # Add training dataset name for external validation overlap detection
+            if training_dataset_name:
+                info_parts.append(f"trained_on_dataset={training_dataset_name}")
 
             info_parts.append(f"trained_on_task={model_task_id}")
 

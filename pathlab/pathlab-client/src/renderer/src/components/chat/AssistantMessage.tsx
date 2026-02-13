@@ -23,6 +23,7 @@ import { TaskHistoryCard, parseTaskHistoryConfig, removeTaskHistoryConfigBlock, 
 import { CancelTaskCard, parseCancelTaskConfig, removeCancelTaskBlock } from './CancelTaskCard'
 import { DatasetRegistrationCard, parseDatasetRegistrationConfig, removeDatasetRegistrationBlock } from './DatasetRegistrationCard'
 import { MetadataUploadCard, parseMetadataUploadConfig, removeMetadataUploadBlock } from './MetadataUploadCard'
+import { ModelListCard, parseModelListConfig, removeModelListBlock } from './ModelListCard'
 import { removeVoiceControlBlock } from './VoiceControlBlock'
 import {
   TaskConfigSkeleton,
@@ -36,6 +37,7 @@ import {
   NavigationCardSkeleton,
   QuickAnalysisViewerSkeleton,
   GenericCardSkeleton,
+  ModelListSkeleton,
   cardTransition
 } from './CardSkeletons'
 
@@ -88,7 +90,8 @@ const SPECIAL_BLOCK_TAGS = [
   'SUBMIT_TASK',  // Voice command to trigger submit on existing TaskConfigCard
   'CANCEL_TASK_NOW',  // Voice command to trigger cancel on existing CancelTaskCard
   'DATASET_UPLOAD',
-  'METADATA_UPLOAD'
+  'METADATA_UPLOAD',
+  'MODEL_LIST'
 ]
 
 /**
@@ -193,6 +196,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const cancelTaskConfig = parseCancelTaskConfig(content)
   const datasetRegistrationConfig = parseDatasetRegistrationConfig(content)
   const metadataUploadConfig = parseMetadataUploadConfig(content)
+  const modelListConfig = parseModelListConfig(content)
 
   // Remove special blocks from display content
   // Keep the text content but strip out the special markup blocks
@@ -211,6 +215,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (cancelTaskConfig) displayContent = removeCancelTaskBlock(displayContent)
   if (datasetRegistrationConfig) displayContent = removeDatasetRegistrationBlock(displayContent)
   if (metadataUploadConfig) displayContent = removeMetadataUploadBlock(displayContent)
+  if (modelListConfig) displayContent = removeModelListBlock(displayContent)
   // Remove VOICE_CONTROL block - it's for internal use only
   displayContent = removeVoiceControlBlock(displayContent)
   // Remove SUBMIT_TASK block - it's for internal use only (voice command to trigger submit)
@@ -454,6 +459,17 @@ const AssistantMessage = React.memo(function AssistantMessage({
         ) : incompleteTag === 'DATASET_REGISTRATION' && (
           <motion.div key="dataset-reg-skeleton" {...cardTransition}>
             <GenericCardSkeleton />
+          </motion.div>
+        )}
+
+        {/* Model List Card */}
+        {modelListConfig ? (
+          <motion.div key="model-list-real" {...cardTransition}>
+            <ModelListCard config={modelListConfig} />
+          </motion.div>
+        ) : incompleteTag === 'MODEL_LIST' && (
+          <motion.div key="model-list-skeleton" {...cardTransition}>
+            <ModelListSkeleton />
           </motion.div>
         )}
 

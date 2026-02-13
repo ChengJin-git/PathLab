@@ -46,6 +46,7 @@ import { removeQuickAnalysisConfigBlock, CachedAnalysisData } from '../component
 import { CachedTaskData } from '../components/chat/TaskHistoryCard'
 import { parseCancelTaskConfig } from '../components/chat/CancelTaskCard'
 import { removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
+import { removeModelListBlock } from '../components/chat/ModelListCard'
 
 
 interface Message {
@@ -775,6 +776,7 @@ export default function AIChatPage() {
     cleaned = removeQuickAnalysisConfigBlock(cleaned)
     // Remove VOICE_CONTROL block - it's for internal use only
     cleaned = removeVoiceControlBlock(cleaned)
+    cleaned = removeModelListBlock(cleaned)
     return cleaned.trim()
   }
 
