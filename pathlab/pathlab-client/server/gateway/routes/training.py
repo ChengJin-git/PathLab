@@ -26,7 +26,7 @@ from backend.auth.dependencies import require_can_use_gpu, require_pathologist_o
 from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
 from ..dependencies import logger, storage_manager
-from ..models import TrainingTaskRequest, DeletionMode
+from ..models import TrainingTaskRequest, TrainingTaskUpdateRequest, DeletionMode
 from ..pipeline import run_training_pipeline
 from ..task_queue import get_task_queue, TaskType
 from ..utils import cancel_ai_service_training
@@ -446,6 +446,50 @@ async def get_training_task(
         result["progress"] = file_prog
 
     return result
+
+
+@router.patch("/{task_id}")
+async def update_training_task(
+    task_id: str,
+    req: TrainingTaskUpdateRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update a training task's name.
+    Only the task creator can update the task.
+
+    This endpoint allows renaming tasks without affecting running services.
+    The change is persisted to the database and immediately visible to all services.
+    """
+    # Get task from database
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Training task not found")
+
+    # Check ownership - only task creator can update
+    if task.user_id != str(user.id):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the task creator can update this task"
+        )
+
+    # Validate task name
+    if not req.task_name or not req.task_name.strip():
+        raise HTTPException(status_code=400, detail="Task name cannot be empty")
+
+    # Update task name
+    updated_task = await TrainingTaskRepository.update_task_name(
+        db, task_id, req.task_name.strip()
+    )
+    await db.commit()
+
+    if not updated_task:
+        raise HTTPException(status_code=500, detail="Failed to update task")
+
+    logger.info(f"Training task {task_id} renamed to '{req.task_name}' by user {user.id}")
+
+    return updated_task.to_dict()
 
 
 @router.delete("/{task_id}")

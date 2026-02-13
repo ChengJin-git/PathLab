@@ -59,6 +59,11 @@ class TrainingTaskRequest(BaseModel):
     split_config: Optional[SplitConfig] = None
 
 
+class TrainingTaskUpdateRequest(BaseModel):
+    """Request model for updating a training task"""
+    task_name: str  # New task name
+
+
 class UploadByPathRequest(BaseModel):
     """Request model for uploading WSI by file path"""
     wsi_path: str

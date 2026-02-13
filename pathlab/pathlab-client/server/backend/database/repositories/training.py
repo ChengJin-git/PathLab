@@ -569,6 +569,36 @@ class TrainingTaskRepository:
         await db.flush()
         return await TrainingTaskRepository.get_by_id(db, task_id)
 
+    @staticmethod
+    async def update_task_name(
+        db: AsyncSession,
+        task_id: str,
+        task_name: str
+    ) -> Optional[TrainingTask]:
+        """
+        Update training task name.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            task_name: New task name
+
+        Returns:
+            Updated TrainingTask object or None if not found
+        """
+        update_data = {
+            "task_name": task_name,
+            "updated_at": utc_now()
+        }
+
+        await db.execute(
+            update(TrainingTask)
+            .where(TrainingTask.task_id == task_id)
+            .values(**update_data)
+        )
+        await db.flush()
+        return await TrainingTaskRepository.get_by_id(db, task_id)
+
     # Status values that indicate a task was interrupted (not failed normally)
     # - 'pending': task was queued but not yet started (queue is in-memory, lost on restart)
     # - 'running', 'extracting', 'training': task was actively processing

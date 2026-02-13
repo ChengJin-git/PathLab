@@ -90,6 +90,27 @@ export async function getTrainedModel(modelId: string): Promise<TrainedModel> {
 }
 
 /**
+ * Update training task name
+ * @param taskId - Task ID
+ * @param taskName - New task name
+ * @throws {ApiError} If the request fails (use .isNotFound() to check for 404)
+ */
+export async function updateTrainingTaskName(
+  taskId: string,
+  taskName: string
+): Promise<TrainingTask> {
+  return apiFetch<TrainingTask>(
+    `${API_BASE}/tasks/training/${encodeURIComponent(taskId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_name: taskName })
+    },
+    'Failed to update task name'
+  )
+}
+
+/**
  * Update trained model properties
  * @param modelId - Model ID
  * @param updates - Properties to update (is_default, is_active)
