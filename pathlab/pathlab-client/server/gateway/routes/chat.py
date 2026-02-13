@@ -3,6 +3,7 @@ Chat and conversation management routes
 Handles AI chat, conversation persistence, and task parsing
 """
 import json
+import os
 import uuid
 import httpx
 from typing import List, Dict, AsyncIterator, Optional
