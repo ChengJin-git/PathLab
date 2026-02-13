@@ -647,6 +647,7 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
 - `filters.has_predictions`: Only show images that have AI predictions
 - `filters.dataset_id`: Filter by specific dataset
 - `filters.data_type`: Filter by "wsi" or "patch"
+- `filters.event_status`: Filter by survival event status (integer): 0 = censored (no event), 1 = event occurred. Use this for survival datasets instead of `label`.
 - `max_count`: Number of images to display (default: 3). Extract from user's request like "show me 5 images" → max_count: 5
 - `show_heatmap`: Whether to display heatmaps alongside images (default: false). Set to true if user asks for heatmaps/attention maps
 - `heatmap_filter`: Optional filter to select specific heatmaps by model configuration:
@@ -710,19 +711,31 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
   - Example: "给我看AI预测准确的MSIH图片" means label=MSIH AND pred=MSIH
 - **Common mistake to avoid:** When user says "show me MSIH images" without mentioning predictions, do NOT add pred filter - only use label filter!
 
+**IMPORTANT for Survival datasets (event_status filter):**
+- Survival datasets do NOT have `label` field (they have `event_time` and `event_status` instead), so do NOT use `label` filter for survival datasets
+- Use `filters.event_status` to filter by survival status:
+  - `event_status: 0` → Censored patients (no event observed during follow-up)
+  - `event_status: 1` → Event patients (event occurred, e.g., death)
+- Examples:
+  - "show me censored patients" → `event_status: 0`
+  - "show event patients" → `event_status: 1`
+  - "查看status为Censored的患者图像" → `event_status: 0`
+  - "给我看发生事件的病例" → `event_status: 1`
+  - "显示删失的患者" → `event_status: 0`
+
 **IMPORTANT for Survival Prediction heatmaps:**
 - Survival prediction models do NOT have class labels like classification models
 - Instead, they predict **risk groups**: "High Risk" or "Low Risk" based on median risk score cutoff
 - When user asks for survival heatmaps, use `pred: "High Risk"` or `pred: "Low Risk"` to filter by risk group
 - Examples:
-  - "show me high risk patients with heatmaps" → `pred: "High Risk"`, `show_heatmap: true`
-  - "show low risk cases" → `pred: "Low Risk"`
-  - "给我看高风险的热力图" → `pred: "High Risk"`, `show_heatmap: true`
-  - "显示低风险病例" → `pred: "Low Risk"`
+  - "show me high risk patients with heatmaps" → `pred: "High Risk"`, `show_heatmap: true`, `has_predictions: true`
+  - "show low risk cases" → `pred: "Low Risk"`, `has_predictions: true`
+  - "给我看高风险的热力图" → `pred: "High Risk"`, `show_heatmap: true`, `has_predictions: true`
+  - "显示低风险病例" → `pred: "Low Risk"`, `has_predictions: true`
 - When explaining survival heatmaps to users:
   - "This heatmap shows where the model focused when predicting the patient's risk level. Patients are stratified into High Risk or Low Risk groups based on the median risk score."
   - "The attention map highlights tissue regions that contributed most to the survival risk prediction."
-- Survival datasets do NOT have `label` field (they have `event_time` and `event_status` instead), so do NOT use `label` filter for survival datasets
+- **CRITICAL distinction**: `event_status` is the GROUND TRUTH survival status from patient data; `pred` ("High Risk"/"Low Risk") is the AI MODEL PREDICTION. Use the correct filter based on what the user asks for.
 
 ### Test Model / Validation Flow
 When user wants to test a trained model or run validation:

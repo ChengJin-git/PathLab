@@ -21,6 +21,7 @@ export interface ImageRecommendation {
     has_predictions?: boolean
     dataset_id?: string
     data_type?: 'wsi' | 'patch' | 'all'
+    event_status?: number  // Filter by survival event status: 1 = event occurred, 0 = censored
   }
   max_count?: number  // Maximum number of images to display (default: 3)
   show_heatmap?: boolean  // Whether to show heatmaps alongside images
@@ -86,6 +87,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         has_predictions: recommendation.filters?.has_predictions,
         dataset_id: recommendation.filters?.dataset_id,
         data_type: recommendation.filters?.data_type,
+        event_status: recommendation.filters?.event_status,
         max_count: maxCount,
         show_heatmap: recommendation.show_heatmap
       }),
@@ -141,6 +143,11 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         const wsiIdsWithPredictions = new Set(resultsWithWsi.map(r => r.wsi_id))
         let filtered = wsiResult.items.filter(w => wsiIdsWithPredictions.has(w.wsi_id))
 
+        // Apply event_status filter (for survival datasets: 0=censored, 1=event)
+        if (recommendation.filters?.event_status !== undefined && recommendation.filters?.event_status !== null) {
+          filtered = filtered.filter(s => s.event_status === recommendation.filters!.event_status)
+        }
+
         // Apply data_type filter
         if (recommendation.filters?.data_type && recommendation.filters.data_type !== 'all') {
           filtered = filtered.filter(s => {
@@ -163,6 +170,11 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
           filtered = filtered.filter(s =>
             s.label?.toLowerCase() === recommendation.filters!.label!.toLowerCase()
           )
+        }
+
+        // Apply event_status filter (for survival datasets: 0=censored, 1=event)
+        if (recommendation.filters?.event_status !== undefined && recommendation.filters?.event_status !== null) {
+          filtered = filtered.filter(s => s.event_status === recommendation.filters!.event_status)
         }
 
         // Apply data_type filter
@@ -417,6 +429,20 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                           {image.label && (
                             <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded-full">
                               Label: {image.label}
+                            </span>
+                          )}
+                          {image.event_status !== null && image.event_status !== undefined && (
+                            <span className={`px-2 py-0.5 text-xs rounded-full ${
+                              image.event_status === 1
+                                ? 'bg-red-100 text-red-700'
+                                : 'bg-teal-100 text-teal-700'
+                            }`}>
+                              {image.event_status === 1 ? 'Event' : 'Censored'}
+                            </span>
+                          )}
+                          {image.event_time !== null && image.event_time !== undefined && (
+                            <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full">
+                              Time: {image.event_time}
                             </span>
                           )}
                           {hasHeatmap && latestHeatmap?.prediction && (

@@ -17,7 +17,7 @@ from backend.database.repositories import TrainingTaskRepository
 from backend.common.config import Config
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_admin, check_data_ownership
-from .results import get_analysis_state
+from .analysis_state import get_analysis_state
 
 router = APIRouter(prefix="/queue", tags=["Task Queue"])
 
