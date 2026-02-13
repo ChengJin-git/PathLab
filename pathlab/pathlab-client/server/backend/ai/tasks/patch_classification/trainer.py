@@ -189,6 +189,60 @@ class PatchClassificationTrainer(BaseTrainer):
                 optimizer, auto_balance, early_stopping_patience
             )
 
+    @staticmethod
+    def _run_one_epoch(
+        train_loader: DataLoader,
+        extractor: nn.Module,
+        linear_probe: nn.Module,
+        criterion: nn.Module,
+        optimizer,
+        device: str,
+        task_id: str,
+    ):
+        """
+        Run one training epoch synchronously.
+
+        Must be called via asyncio.to_thread() to avoid blocking the event loop.
+        GPU operations (forward/backward pass) and DataLoader iteration are blocking.
+
+        Returns:
+            Tuple of (running_loss, num_batches, stop_reason).
+            stop_reason is None if completed normally, 'cancelled' or 'permission_revoked' otherwise.
+        """
+        linear_probe.train()
+        running_loss = 0.0
+        num_batches = 0
+        batch_count = 0
+
+        for batch_img, gt in train_loader:
+            batch_count += 1
+
+            # Check for cancellation/permission every 50 batches
+            if batch_count % 50 == 0:
+                if is_task_cancelled(task_id):
+                    return None, 0, "cancelled"
+                if is_permission_revoked(task_id):
+                    return None, 0, "permission_revoked"
+
+            batch_img = batch_img.to(device)
+            gt = gt.to(device).long()
+
+            optimizer.zero_grad()
+
+            with torch.no_grad():
+                features = extractor(batch_img)
+
+            logits = linear_probe(features)
+            loss = criterion(logits, gt)
+
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item()
+            num_batches += 1
+
+        return running_loss, num_batches, None
+
     async def _train_regular(
         self,
         splits_map: Dict[str, List[str]],
@@ -328,55 +382,30 @@ class PatchClassificationTrainer(BaseTrainer):
                     del class_weights
                 raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
 
-            # Training
-            linear_probe.train()
-            running_loss = 0.0
-            num_batches = 0
-            batch_count = 0
+            # Run training epoch in thread pool to avoid blocking the event loop.
+            # GPU operations (forward/backward pass) and DataLoader iteration are blocking.
+            running_loss, num_batches, stop_reason = await asyncio.to_thread(
+                self._run_one_epoch, train_loader, extractor, linear_probe,
+                criterion, optimizer, self.device, self.task_id
+            )
 
-            for batch_img, gt in train_loader:
-                batch_count += 1
-
-                # Check for cancellation/permission every 50 batches to reduce overhead
-                if batch_count % 50 == 0:
-                    if is_task_cancelled(self.task_id):
-                        # Clean up CUDA tensors before raising exception
-                        del model, extractor, linear_probe, optimizer, criterion
-                        if class_weights is not None:
-                            del class_weights
-                        raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
-                    if is_permission_revoked(self.task_id):
-                        del model, extractor, linear_probe, optimizer, criterion
-                        if class_weights is not None:
-                            del class_weights
-                        raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
-
-                    # Yield control to event loop every 50 batches to allow other tasks to run
-                    await asyncio.sleep(0)
-
-                batch_img = batch_img.to(self.device)
-                gt = gt.to(self.device).long()
-
-                optimizer.zero_grad()
-
-                with torch.no_grad():
-                    features = extractor(batch_img)
-
-                logits = linear_probe(features)
-                loss = criterion(logits, gt)
-
-                loss.backward()
-                optimizer.step()
-
-                running_loss += loss.item()
-                num_batches += 1
+            if stop_reason == "cancelled":
+                del model, extractor, linear_probe, optimizer, criterion
+                if class_weights is not None:
+                    del class_weights
+                raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
+            if stop_reason == "permission_revoked":
+                del model, extractor, linear_probe, optimizer, criterion
+                if class_weights is not None:
+                    del class_weights
+                raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
 
             epoch_loss = running_loss / max(1, num_batches)
             history["loss"].append(epoch_loss)
 
-            # Validation
+            # Validation - run in thread pool (DataLoader + GPU inference are blocking)
             if val_loader is not None:
-                val_metrics = self._evaluate(model, val_loader, criterion=criterion)
+                val_metrics = await asyncio.to_thread(self._evaluate, model, val_loader, criterion)
                 val_loss = val_metrics.get("loss", epoch_loss)
                 val_acc = val_metrics["accuracy"]
                 val_auc = val_metrics.get("auc")
@@ -432,7 +461,7 @@ class PatchClassificationTrainer(BaseTrainer):
                 epochs_without_improvement = 0  # Reset counter
 
                 if test_loader is not None:
-                    best_test_metrics = self._evaluate(model, test_loader, criterion=criterion)
+                    best_test_metrics = await asyncio.to_thread(self._evaluate, model, test_loader, criterion)
                     await logger.info(
                         f"New best model at epoch {epoch} - val_loss: {val_loss:.4f}, test_acc: {best_test_metrics['accuracy']:.4f}",
                         {"epoch": epoch, **best_test_metrics}
@@ -608,50 +637,29 @@ class PatchClassificationTrainer(BaseTrainer):
                         del class_weights
                     raise PermissionRevokedException(f"Training stopped at fold {fold_idx + 1}, epoch {epoch}: permission revoked by admin")
 
-                linear_probe.train()
-                running_loss = 0.0
-                num_batches = 0
-                kfold_batch_count = 0
+                # Run training epoch in thread pool to avoid blocking the event loop.
+                # GPU operations (forward/backward pass) and DataLoader iteration are blocking.
+                running_loss, num_batches, stop_reason = await asyncio.to_thread(
+                    self._run_one_epoch, train_loader, extractor, linear_probe,
+                    criterion, optimizer, self.device, self.task_id
+                )
 
-                for batch_img, gt in train_loader:
-                    kfold_batch_count += 1
-
-                    # Check for cancellation/permission every 50 batches to reduce overhead
-                    if kfold_batch_count % 50 == 0:
-                        if is_task_cancelled(self.task_id):
-                            # Clean up CUDA tensors before raising exception
-                            del model, extractor, linear_probe, optimizer, criterion
-                            if class_weights is not None:
-                                del class_weights
-                            raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
-                        if is_permission_revoked(self.task_id):
-                            del model, extractor, linear_probe, optimizer, criterion
-                            if class_weights is not None:
-                                del class_weights
-                            raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
-
-                        # Yield control to event loop every 50 batches to allow other tasks to run
-                        await asyncio.sleep(0)
-
-                    batch_img = batch_img.to(self.device)
-                    gt = gt.to(self.device).long()
-
-                    optimizer.zero_grad()
-                    with torch.no_grad():
-                        features = extractor(batch_img)
-                    logits = linear_probe(features)
-                    loss = criterion(logits, gt)
-                    loss.backward()
-                    optimizer.step()
-
-                    running_loss += loss.item()
-                    num_batches += 1
+                if stop_reason == "cancelled":
+                    del model, extractor, linear_probe, optimizer, criterion
+                    if class_weights is not None:
+                        del class_weights
+                    raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
+                if stop_reason == "permission_revoked":
+                    del model, extractor, linear_probe, optimizer, criterion
+                    if class_weights is not None:
+                        del class_weights
+                    raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
 
                 epoch_loss = running_loss / max(1, num_batches)
                 history["loss"].append(epoch_loss)
 
-                # Validation
-                val_metrics = self._evaluate(model, val_loader, criterion=criterion)
+                # Validation - run in thread pool (DataLoader + GPU inference are blocking)
+                val_metrics = await asyncio.to_thread(self._evaluate, model, val_loader, criterion)
                 val_loss = val_metrics.get("loss", epoch_loss)
                 history["val_loss"].append(val_loss)
                 history["val_accuracy"].append(val_metrics["accuracy"])
@@ -700,7 +708,7 @@ class PatchClassificationTrainer(BaseTrainer):
             # Restore best and evaluate
             if best_state_dict:
                 linear_probe.load_state_dict(best_state_dict)
-            final_val_metrics = self._evaluate(model, val_loader)
+            final_val_metrics = await asyncio.to_thread(self._evaluate, model, val_loader)
 
             fold_results[val_fold_key] = {
                 "history": history,
