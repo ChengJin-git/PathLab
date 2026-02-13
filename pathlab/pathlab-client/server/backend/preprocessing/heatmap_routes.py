@@ -23,6 +23,13 @@ from backend.common.config import Config
 from backend.common.file_types import is_patch_file
 from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 from .tiling import safe_load_h5_coords
+from .heatmap_utils import (
+    load_result_meta,
+    select_attention_file,
+    handle_multi_class_attention,
+    normalize_attention,
+    find_best_fold,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,38 +134,17 @@ async def get_heatmap_data(
             return empty_heatmap_response("No attention data available")
 
         # Select the right attention file based on task_id and fold_key
-        if task_id:
-            if fold_key:
-                # K-fold: look for train_{task_id}_{fold_key}_attention.npy
-                matching = [f for f in attention_files if task_id in f.name and fold_key in f.name]
-            else:
-                # Regular or auto-select: match task_id but exclude fold files if there's a non-fold version
-                matching = [f for f in attention_files if task_id in f.name]
-                # If there are both fold and non-fold files, prefer non-fold (shouldn't happen but be safe)
-                non_fold = [f for f in matching if "fold_" not in f.name]
-                if non_fold:
-                    matching = non_fold
-            if not matching:
-                # Return empty data when specific task not found
-                logger.info(f"No attention data found for task {task_id}, fold_key={fold_key}")
-                return empty_heatmap_response(f"No attention data for task {task_id}" + (f" fold {fold_key}" if fold_key else ""))
-            attention_file = matching[0]
-        else:
-            # Use the most recent
-            attention_file = sorted(attention_files, key=lambda f: f.stat().st_mtime, reverse=True)[0]
+        attention_file = select_attention_file(attention_files, task_id, fold_key, UPLOADS_DIR)
+        if attention_file is None:
+            logger.info(f"No attention data found for task {task_id}, fold_key={fold_key}")
+            return empty_heatmap_response(f"No attention data for task {task_id}" + (f" fold {fold_key}" if fold_key else ""))
 
         # Load attention weights
         attention = np.load(str(attention_file), allow_pickle=True)
         logger.info(f"Loaded attention: shape={attention.shape}, min={attention.min()}, max={attention.max()}")
 
         # Load corresponding result.json for metadata
-        result_json_file = attention_file.with_name(
-            attention_file.name.replace("_attention.npy", "_result.json")
-        )
-        result_meta = {}
-        if result_json_file.exists():
-            with open(result_json_file, 'r') as f:
-                result_meta = json.load(f)
+        result_meta = load_result_meta(attention_file, "_attention.npy")
 
         # Load coordinates from coords.h5 (search across all params_hash directories)
         coords_file = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
@@ -181,32 +167,8 @@ async def get_heatmap_data(
         # Handle multi-class attention (e.g., CLAM_MB returns shape (num_classes, N))
         attention_type = result_meta.get("attention_type", "single")
         classes = result_meta.get("classes", [])
-        num_attention_classes = None
-        selected_class_idx = class_idx
-
-        if attention.ndim == 2:
-            # Multi-class attention: shape (num_classes, N)
-            num_attention_classes = attention.shape[0]
-            logger.info(f"Multi-class attention detected: {num_attention_classes} classes")
-
-            # Select which class's attention to use
-            if selected_class_idx is None:
-                # Default to predicted class
-                pred_label = result_meta.get("pred")
-                if pred_label and pred_label in classes:
-                    selected_class_idx = classes.index(pred_label)
-                else:
-                    selected_class_idx = 0  # Fallback to first class
-
-            # Validate class_idx
-            if selected_class_idx < 0 or selected_class_idx >= num_attention_classes:
-                selected_class_idx = 0
-
-            logger.info(f"Using attention for class {selected_class_idx}: {classes[selected_class_idx] if selected_class_idx < len(classes) else 'unknown'}")
-            attention = attention[selected_class_idx]  # Now shape (N,)
-        else:
-            # Single-class attention: shape (N,)
-            selected_class_idx = None
+        num_attention_classes = attention.shape[0] if attention.ndim == 2 else None
+        attention, selected_class_idx = handle_multi_class_attention(attention, result_meta, class_idx)
 
         # Verify shapes match
         num_patches = len(coords)
@@ -217,27 +179,8 @@ async def get_heatmap_data(
             attention = attention[:min_len]
             coords = coords[:min_len]
 
-        # Check if attention is already softmax-normalized (sums to ~1) or raw logits
-        attention_sum = attention.sum()
-        if abs(attention_sum - 1.0) < 0.01:
-            # Already softmax normalized - use min-max with percentile clipping for visualization
-            # This enhances contrast for visualization
-            p_low, p_high = np.percentile(attention, [5, 95])
-            attention_clipped = np.clip(attention, p_low, p_high)
-            attention_normalized = (attention_clipped - p_low) / (p_high - p_low + 1e-8)
-            logger.info(f"Using percentile normalization: p5={p_low:.6f}, p95={p_high:.6f}")
-        else:
-            # Raw logits - apply softmax first
-            # Numerically stable softmax
-            attention_shifted = attention - attention.max()
-            exp_attention = np.exp(attention_shifted)
-            attention_softmax = exp_attention / exp_attention.sum()
-            # Then percentile normalization for visualization
-            p_low, p_high = np.percentile(attention_softmax, [5, 95])
-            attention_clipped = np.clip(attention_softmax, p_low, p_high)
-            attention_normalized = (attention_clipped - p_low) / (p_high - p_low + 1e-8)
-            attention = attention_softmax  # Use softmax values for raw_weight
-            logger.info(f"Applied softmax, then percentile normalization: p5={p_low:.6f}, p95={p_high:.6f}")
+        # Normalize attention for visualization
+        attention_normalized, attention = normalize_attention(attention)
 
         # Build heatmap data with index for sorting
         heatmap_data = []
@@ -347,63 +290,15 @@ async def get_heatmap_thumbnail(
             raise HTTPException(status_code=404, detail="No attention data available")
 
         # Select the right attention file
-        if task_id:
-            if fold_key:
-                # Explicit fold_key specified - use it
-                matching = [f for f in attention_files if task_id in f.name and fold_key in f.name]
-            else:
-                # No fold_key specified - try to find best fold from metrics.json
-                matching = [f for f in attention_files if task_id in f.name]
-                non_fold = [f for f in matching if "fold_" not in f.name]
-                if non_fold:
-                    # Non-k-fold files exist - use them
-                    matching = non_fold
-                elif matching:
-                    # All files are k-fold - try to find best fold
-                    best_fold = None
-                    # Check model directory for metrics.json
-                    possible_prefixes = [
-                        "patch_cls",  # Patch classification
-                        "abmil", "meanmil", "maxmil", "dsmil", "dtfdmil",  # WSI aggregators
-                        "clam_sb", "clam_mb", "transmil",
-                    ]
-                    for model_prefix in possible_prefixes:
-                        model_id = f"{model_prefix}_{task_id}"
-                        metrics_file = UPLOADS_DIR / "models" / model_id / "metrics.json"
-                        if metrics_file.exists():
-                            try:
-                                with open(metrics_file, 'r') as f:
-                                    metrics_data = json.load(f)
-                                    best_fold = metrics_data.get("best_fold")
-                                    if best_fold:
-                                        break
-                            except Exception as e:
-                                logger.warning(f"Failed to read metrics.json for {model_id}: {e}")
-
-                    if best_fold:
-                        # Filter to best fold only
-                        best_matching = [f for f in matching if best_fold in f.name]
-                        if best_matching:
-                            matching = best_matching
-                            logger.info(f"Using best fold {best_fold} for task {task_id}")
-                    # If no best_fold found, use first matching file (fallback)
-            if not matching:
-                raise HTTPException(status_code=404, detail=f"No attention data for task {task_id}")
-            attention_file = matching[0]
-        else:
-            attention_file = sorted(attention_files, key=lambda f: f.stat().st_mtime, reverse=True)[0]
+        attention_file = select_attention_file(attention_files, task_id, fold_key, UPLOADS_DIR)
+        if attention_file is None:
+            raise HTTPException(status_code=404, detail=f"No attention data for task {task_id}")
 
         # Load attention weights
         attention = np.load(str(attention_file), allow_pickle=True)
 
         # Load result metadata
-        result_json_file = attention_file.with_name(
-            attention_file.name.replace("_attention.npy", "_result.json")
-        )
-        result_meta = {}
-        if result_json_file.exists():
-            with open(result_json_file, 'r') as f:
-                result_meta = json.load(f)
+        result_meta = load_result_meta(attention_file, "_attention.npy")
 
         # Load coordinates (search across all params_hash directories)
         coords_file = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
@@ -419,19 +314,7 @@ async def get_heatmap_thumbnail(
             )
 
         # Handle multi-class attention
-        classes = result_meta.get("classes", [])
-        if attention.ndim == 2:
-            num_attention_classes = attention.shape[0]
-            selected_class_idx = class_idx
-            if selected_class_idx is None:
-                pred_label = result_meta.get("pred")
-                if pred_label and pred_label in classes:
-                    selected_class_idx = classes.index(pred_label)
-                else:
-                    selected_class_idx = 0
-            if selected_class_idx < 0 or selected_class_idx >= num_attention_classes:
-                selected_class_idx = 0
-            attention = attention[selected_class_idx]
+        attention, _ = handle_multi_class_attention(attention, result_meta, class_idx)
 
         # Verify shapes match
         num_patches = len(coords)
@@ -441,18 +324,7 @@ async def get_heatmap_thumbnail(
             coords = coords[:min_len]
 
         # Normalize attention for visualization
-        attention_sum = attention.sum()
-        if abs(attention_sum - 1.0) < 0.01:
-            p_low, p_high = np.percentile(attention, [5, 95])
-            attention_clipped = np.clip(attention, p_low, p_high)
-            attention_normalized = (attention_clipped - p_low) / (p_high - p_low + 1e-8)
-        else:
-            attention_shifted = attention - attention.max()
-            exp_attention = np.exp(attention_shifted)
-            attention_softmax = exp_attention / exp_attention.sum()
-            p_low, p_high = np.percentile(attention_softmax, [5, 95])
-            attention_clipped = np.clip(attention_softmax, p_low, p_high)
-            attention_normalized = (attention_clipped - p_low) / (p_high - p_low + 1e-8)
+        attention_normalized, _ = normalize_attention(attention)
 
         # Get slide dimensions
         slide = await get_slide(wsi_id, db)
@@ -618,13 +490,7 @@ async def get_available_heatmaps(
             task_id = parts[1] if len(parts) > 1 else None
 
             # Load result.json for metadata
-            result_json_file = attention_file.with_name(
-                attention_file.name.replace("_attention.npy", "_result.json")
-            )
-            result_meta = {}
-            if result_json_file.exists():
-                with open(result_json_file, 'r') as f:
-                    result_meta = json.load(f)
+            result_meta = load_result_meta(attention_file, "_attention.npy")
 
             effective_task_id = task_id or result_meta.get("task_id")
             effective_fold_key = fold_key or result_meta.get("fold_key")
@@ -655,13 +521,7 @@ async def get_available_heatmaps(
             task_type = parts[0] if parts else "unknown"
             task_id = parts[1] if len(parts) > 1 else None
 
-            result_json_file = cam_file.with_name(
-                cam_file.name.replace("_cam.npy", "_result.json")
-            )
-            result_meta = {}
-            if result_json_file.exists():
-                with open(result_json_file, 'r') as f:
-                    result_meta = json.load(f)
+            result_meta = load_result_meta(cam_file, "_cam.npy")
 
             effective_task_id = task_id or result_meta.get("task_id")
             effective_fold_key = fold_key or result_meta.get("fold_key")
@@ -936,17 +796,7 @@ async def get_patch_cam(
                 matching = non_fold
             elif matching:
                 # All files are k-fold - try to find best fold from metrics.json
-                best_fold = None
-                model_id = f"patch_cls_{task_id}"
-                metrics_file = UPLOADS_DIR / "models" / model_id / "metrics.json"
-                if metrics_file.exists():
-                    try:
-                        with open(metrics_file, 'r') as f:
-                            metrics_data = json.load(f)
-                            best_fold = metrics_data.get("best_fold")
-                    except Exception as e:
-                        logger.warning(f"Failed to read metrics.json for {model_id}: {e}")
-
+                best_fold = find_best_fold(task_id, UPLOADS_DIR)
                 if best_fold:
                     best_matching = [f for f in matching if best_fold in f.name]
                     if best_matching:
@@ -962,13 +812,7 @@ async def get_patch_cam(
         logger.info(f"Loaded CAM: shape={cam.shape}, min={cam.min():.4f}, max={cam.max():.4f}")
 
         # Load corresponding result.json for metadata
-        result_json_file = cam_file.with_name(
-            cam_file.name.replace("_cam.npy", "_result.json")
-        )
-        result_meta = {}
-        if result_json_file.exists():
-            with open(result_json_file, 'r') as f:
-                result_meta = json.load(f)
+        result_meta = load_result_meta(cam_file, "_cam.npy")
 
         if format == "json":
             return {

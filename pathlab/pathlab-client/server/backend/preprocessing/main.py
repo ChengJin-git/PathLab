@@ -889,7 +889,3 @@ async def get_patch_image(
         logger.error(f"Failed to get patch image: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get patch image: {str(e)}")
 
-
-# Include heatmap routes
-from .heatmap_routes import router as heatmap_router
-app.include_router(heatmap_router)
