@@ -482,10 +482,31 @@ async def chat_with_ai(
                 task_types.append("survival")
             task_types_str = f", supported_tasks=[{', '.join(task_types)}]" if task_types else ""
 
+            # For WSI datasets, scan feature cache to find available extractors (for external validation compatibility)
+            available_extractors_str = ""
+            if ds_type == "wsi":
+                # Get WSI IDs for this dataset
+                wsi_ids = await DatasetRepository.get_wsi_ids(db, ds_id)
+                if wsi_ids:
+                    first_wsi_id = wsi_ids[0]
+                    features_root = Config.get_uploads_dir() / "features"
+                    available_extractors = []
+                    if features_root.exists():
+                        for extractor_dir in features_root.iterdir():
+                            if extractor_dir.is_dir():
+                                for params_hash_dir in extractor_dir.iterdir():
+                                    if params_hash_dir.is_dir():
+                                        feat_file = params_hash_dir / f"{first_wsi_id}.pt"
+                                        if feat_file.exists():
+                                            available_extractors.append(extractor_dir.name)
+                                            break  # Found for this extractor, move to next
+                    if available_extractors:
+                        available_extractors_str = f", available_extractors=[{', '.join(available_extractors)}]"
+
             # Add access type marker for elevated (temporary permission) datasets
             access_marker = " [ELEVATED ACCESS - temporary permission]" if ds_access_type == "elevated" else ""
 
-            datasets_details.append(f"  - {ds_name} (id={ds_id}){access_marker}: {ds_count} files, type={ds_type}, labels=[{labels_str}]{survival_str}{splits_str}{task_types_str}")
+            datasets_details.append(f"  - {ds_name} (dataset_id={ds_id}){access_marker}: {ds_count} files, type={ds_type}, labels=[{labels_str}]{survival_str}{splits_str}{task_types_str}{available_extractors_str}")
         datasets_list = "\n".join(datasets_details)
     else:
         datasets_list = "  None"
@@ -502,10 +523,18 @@ async def chat_with_ai(
     else:
         data_types_info = "None"
 
-    # Format trained models info (with data_level from training task)
+    # Format trained models info (with detailed info for external validation)
+    # Embedding dimension mapping for feature extractors
+    EXTRACTOR_EMBED_DIM = {
+        "resnet50": 2048, "vit_l_16": 1024, "conch": 512, "uni": 1024, "uni2": 1536,
+        "virchow": 1280, "virchow2": 1280, "plip": 512, "phikon": 1024, "phikon2": 1024,
+        "patho_clip": 512, "openmidnight": 1536, "conch15": 512, "H-Optimus-1": 1536,
+        "H-Optimus-0": 1536, "mSTAR": 1024, "GPFM": 1024,
+    }
+
     if trained_models:
         models_details = []
-        # Batch query all training tasks to get data_level
+        # Batch query all training tasks to get detailed info
         task_ids = list(set(m.task_id for m in trained_models if m.task_id))
         training_tasks_map = {}
         if task_ids:
@@ -519,16 +548,42 @@ async def chat_with_ai(
             model_id = m.model_id
             model_classes = m.classes or []
             model_task_id = m.task_id
-            classes_str = ", ".join(model_classes) if model_classes else "unknown"
+            model_feature_extractor = m.feature_extractor or "unknown"
+            classes_str = ", ".join(model_classes) if model_classes else "none"
 
-            # Get data_type from training task's DataGroup
+            # Get data_type and task_type from training task's DataGroup
             training_task = training_tasks_map.get(model_task_id)
             if training_task and training_task.data_group:
                 data_type = training_task.data_group.data_type
+                task_type = training_task.data_group.task_type
             else:
                 data_type = "unknown"
+                task_type = "unknown"
 
-            models_details.append(f"  - {model_name} (id={model_id}): classes=[{classes_str}], data_type={data_type}, trained_on_task={model_task_id}")
+            # Get embedding dimension for WSI models
+            embed_dim = EXTRACTOR_EMBED_DIM.get(model_feature_extractor, 0)
+
+            # Build model info string
+            info_parts = [
+                f"id={model_id}",
+                f"task_type={task_type}",
+                f"data_type={data_type}",
+            ]
+
+            # Add classes for classification models
+            if model_classes:
+                info_parts.append(f"classes=[{classes_str}]")
+
+            # Add feature extractor info for WSI models
+            if data_type == "wsi" and model_feature_extractor != "unknown":
+                info_parts.append(f"feature_extractor={model_feature_extractor}")
+                if embed_dim > 0:
+                    info_parts.append(f"embedding_dim={embed_dim}")
+
+            info_parts.append(f"trained_on_task={model_task_id}")
+
+            models_details.append(f"  - {model_name} ({', '.join(info_parts)})")
+
         models_list = "\n".join(models_details)
         models_count = len(trained_models)
     else:

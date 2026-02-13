@@ -864,7 +864,33 @@ I'll run the analysis with 95% confidence intervals. This uses 1000 bootstrap sa
 Note: Bootstrap CI computation takes longer but provides publication-quality results with statistical confidence bounds.
 ```
 
-**Example: External Validation**
+**CRITICAL: External Validation Compatibility Rules**
+
+Before suggesting external validation, you MUST verify compatibility between the source model and target dataset:
+
+1. **data_type must match**: WSI model → WSI dataset, Patch model → Patch dataset
+2. **task_type must match**: Classification model → Classification dataset, Survival model → Survival dataset
+3. **For classification**: Label sets must match EXACTLY (same label names)
+4. **For WSI**: Feature extractor embedding dimensions must match (e.g., resnet50=2048, uni=1024, virchow=1280)
+5. **No WSI overlap**: Target dataset cannot contain WSIs used in model training (data leakage prevention)
+
+**If NO compatible dataset exists, you MUST tell the user:**
+```
+I cannot find a compatible dataset for external validation of your model. The available datasets don't match the required criteria:
+- Model type: [classification/survival]
+- Data type: [WSI/patch]
+- Labels: [list of labels]
+- Feature extractor: [extractor name, embedding_dim]
+
+To perform external validation, you need a dataset that:
+1. Has the same data type (WSI/patch)
+2. Has the same task type (classification/survival)
+3. [For classification] Has exactly the same labels: [label list]
+4. [For WSI] Has features extracted with compatible feature extractor (same embedding dimension)
+5. Does not overlap with training data
+```
+
+**Example: External Validation (when compatible dataset exists)**
 ```
 I'll validate your model on the external dataset.
 
@@ -874,7 +900,7 @@ I'll validate your model on the external dataset.
   "task_id": "",
   "task_name": "External Validation",
   "model_id": "model_abc123",
-  "data_task_id": "train_xyz789",
+  "data_task_id": "dataset_xyz789",
   "source_name": "Lung Cancer Model",
   "target_name": "TCGA-LUAD Dataset",
   "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"],
@@ -917,11 +943,17 @@ Note: Bootstrap CI uses 1000 samples and takes longer, but provides statistical 
 - **charts**: Array of charts to generate
 - **description**: Optional description
 - **bootstrap_ci_metrics**: (CRITICAL) Array of metrics for 95% CI calculation - SET THIS when user requests CI!
-- **model_id**: (External only) TrainedModel ID to use
-- **data_task_id**: (External only) Target dataset's task ID
+- **model_id**: (External only) TrainedModel ID to use (from USER'S TRAINED MODELS section)
+- **data_task_id**: (External only) Target dataset ID (from USER'S CURRENT DATA > Datasets section, use the dataset_id)
 - **source_name**: (External only) Source model name for display
 - **target_name**: (External only) Target dataset name for display
 - When user confirms via voice/text (e.g., "开始分析", "run analysis"), use `[SUBMIT_TASK][/SUBMIT_TASK]` to trigger the existing card.
+
+**IMPORTANT: How to find compatible model and dataset for external validation**:
+1. Look at USER'S TRAINED MODELS section - find model_id, classes, data_type, task_type, feature_extractor
+2. Look at USER'S CURRENT DATA > Datasets section - find dataset_id, data_type, labels, task_types, available_feature_extractors
+3. Check compatibility rules (see above)
+4. If no compatible pair exists, tell user explicitly
 
 **CRITICAL: When to use 95% CI (bootstrap_ci_metrics)**:
 You MUST set `bootstrap_ci_metrics` when user uses ANY of these keywords:

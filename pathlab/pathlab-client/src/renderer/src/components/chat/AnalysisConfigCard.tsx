@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Play, AlertCircle, CheckCircle, Loader2, BarChart3, FileText, ThumbsUp, ThumbsDown, ArrowRight, FlaskConical } from 'lucide-react'
-import { runTaskAnalysis, getTrainingTasks, startExternalValidation } from '../../api'
+import { runTaskAnalysis, getTrainingTasks, startExternalValidation, getTrainedModels, fetchDatasetsForValidation } from '../../api'
+import { isDatasetCompatible } from '../../lib/externalValidationUtils'
 
 // Config from Agent - supports both internal and external analysis
 export interface AgentAnalysisConfig {
@@ -105,6 +106,7 @@ export function AnalysisConfigCard({
   // Task/model validation
   const [isLoadingTask, setIsLoadingTask] = useState(true)
   const [taskExists, setTaskExists] = useState(true)
+  const [validationError, setValidationError] = useState<string>('')
 
   const isExternal = config.analysis_type === 'external'
 
@@ -112,20 +114,68 @@ export function AnalysisConfigCard({
   useEffect(() => {
     const checkTask = async () => {
       setIsLoadingTask(true)
+      setValidationError('')
       try {
         const tasks = await getTrainingTasks()
         if (isExternal) {
-          // For external: check if model_id and data_task_id are valid
-          // We just check if the config has the required fields
-          setTaskExists(!!(config.model_id && config.data_task_id))
+          // For external: validate model and dataset compatibility using same logic as ResultsViewerPage
+          if (!config.model_id || !config.data_task_id) {
+            setTaskExists(false)
+            setValidationError('Missing model or dataset configuration')
+            return
+          }
+
+          // Fetch model and dataset details
+          const [models, datasets] = await Promise.all([
+            getTrainedModels(),
+            fetchDatasetsForValidation()
+          ])
+
+          const model = models.find(m => m.model_id === config.model_id)
+          if (!model) {
+            setTaskExists(false)
+            setValidationError(`Model not found: ${config.model_id}`)
+            return
+          }
+
+          const modelTask = tasks.find(t => t.task_id === model.task_id)
+          if (!modelTask) {
+            setTaskExists(false)
+            setValidationError(`Training task not found for model: ${model.model_name}`)
+            return
+          }
+
+          const dataset = datasets.items.find(ds => ds.dataset_id === config.data_task_id)
+          if (!dataset) {
+            setTaskExists(false)
+            setValidationError(`Dataset not found: ${config.data_task_id}`)
+            return
+          }
+
+          // Check compatibility using shared validation logic
+          const compatible = isDatasetCompatible(model, modelTask, dataset)
+          if (!compatible) {
+            setTaskExists(false)
+            setValidationError(
+              `Dataset "${dataset.name}" is not compatible with model "${model.model_name}". ` +
+              `Please check that task types, data types, and label sets match.`
+            )
+            return
+          }
+
+          setTaskExists(true)
         } else {
           // For internal: check if task exists and is completed
           const found = tasks.some(t => t.task_id === config.task_id && t.status === 'completed')
           setTaskExists(found)
+          if (!found) {
+            setValidationError(`Task not found or not completed: ${config.task_id}`)
+          }
         }
       } catch (error) {
         console.error('Failed to check task:', error)
         setTaskExists(false)
+        setValidationError(error instanceof Error ? error.message : 'Failed to validate configuration')
       } finally {
         setIsLoadingTask(false)
       }
@@ -295,14 +345,9 @@ export function AnalysisConfigCard({
           {!taskExists ? (
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
               <p className="text-sm text-red-700">
-                {isExternal
+                {validationError || (isExternal
                   ? `Missing model or target dataset configuration`
-                  : `Task not found: ${config.task_name || config.task_id}`}
-              </p>
-              <p className="text-xs text-red-600 mt-1">
-                {isExternal
-                  ? 'Please ensure model_id and data_task_id are provided.'
-                  : 'The task may have been deleted or not completed.'}
+                  : `Task not found: ${config.task_name || config.task_id}`)}
               </p>
             </div>
           ) : isExternal ? (
