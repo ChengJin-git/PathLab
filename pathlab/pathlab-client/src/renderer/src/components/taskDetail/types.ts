@@ -48,10 +48,13 @@ export interface TaskDetail {
   }
   model_config: {
     aggregator?: string
+    backbone?: string  // For patch-level tasks
     learning_rate?: number
     epochs?: number
     optimizer?: string
     batch_size?: number
+    auto_balance?: boolean  // Auto-balance class weights for imbalanced datasets
+    early_stopping_patience?: number  // Number of epochs to wait before early stopping
     // External validation specific fields
     model_id?: string
     model_task_id?: string
