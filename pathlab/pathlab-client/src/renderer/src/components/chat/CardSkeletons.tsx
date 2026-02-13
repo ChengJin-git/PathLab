@@ -33,7 +33,7 @@ export function ModelListSkeleton() {
                 <div className="w-24 h-4 rounded bg-gray-200 animate-pulse" />
             </div>
 
-            <div className="space-y-3">
+            <div className="flex flex-col gap-4">
                 {[1, 2].map((i) => (
                     <div key={i} className="bg-white border-l-4 border-gray-100 rounded-lg p-4 shadow-sm">
                         <div className="flex items-start justify-between gap-3">
