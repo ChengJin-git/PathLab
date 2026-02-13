@@ -33,7 +33,13 @@ from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size
 from backend.database.repositories import TrainingTaskRepository, WSIRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 from backend.ai.permission_revocation import is_permission_revoked, PermissionRevokedException
-from backend.ai.tasks.wsi_classification.trainer import scoped_db, _safe_update_progress
+from backend.ai.tasks.training_utils import (
+    safe_update_progress as _safe_update_progress,
+    scoped_db,
+    is_kfold_splits,
+    get_num_folds,
+    calculate_kfold_classification_metrics,
+)
 
 
 logger = logging.getLogger("patch_classification_trainer")
@@ -85,13 +91,10 @@ class PatchClassificationTrainer(BaseTrainer):
         return self._build_feature_response([])
 
     def _is_kfold_splits(self, splits_map: Dict[str, List[str]]) -> bool:
-        """Check if splits_map represents k-fold configuration."""
-        return any(key.startswith("fold_") for key in splits_map.keys())
+        return is_kfold_splits(splits_map)
 
     def _get_num_folds(self, splits_map: Dict[str, List[str]]) -> int:
-        """Get number of folds from k-fold splits_map."""
-        fold_keys = [k for k in splits_map.keys() if k.startswith("fold_")]
-        return len(fold_keys)
+        return get_num_folds(splits_map)
 
     def _calculate_kfold_comprehensive_metrics(
         self,
@@ -100,163 +103,10 @@ class PatchClassificationTrainer(BaseTrainer):
         classes: List[str],
         splits_map: Optional[Dict[str, List[str]]] = None,
     ) -> tuple:
-        """
-        Calculate comprehensive metrics for K-Fold training by reading saved JSON files.
-
-        This reads the per-image result JSON files saved during K-Fold training and
-        calculates metrics using sklearn, similar to how non-K-Fold analysis does it.
-
-        Args:
-            task_id: Training task ID
-            fold_keys: List of fold keys (e.g., ["fold_0", "fold_1"])
-            classes: List of class names
-            splits_map: Optional dict mapping fold_key to list of WSI IDs.
-                       If provided, directly reads files for known WSI IDs (fast).
-                       If None, falls back to scanning directory (slow, for backward compatibility).
-
-        Returns:
-            Tuple of:
-            - Dict with metric names as keys and {"mean": float, "std": float} as values (aggregated)
-            - Dict with fold_key as keys and {metric_name: value} as values (per-fold)
-            Metrics include: precision, sensitivity (recall), specificity, f1, auc
-        """
-        ai_results_root = self.uploads_root / "ai_results"
-        n_classes = len(classes)
-
-        # Per-fold metrics (for aggregated calculation)
-        fold_metrics = {
-            "precision": [],
-            "sensitivity": [],
-            "specificity": [],
-            "f1": [],
-            "auc": [],
-        }
-        # Per-fold detailed values
-        per_fold_metrics = {}
-
-        for fold_key in fold_keys:
-            # Collect predictions for this fold from saved JSON files
-            all_preds = []
-            all_labels = []
-            all_probs = []  # For AUC calculation
-
-            # Fast path: directly read files for known WSI IDs
-            if splits_map and fold_key in splits_map:
-                wsi_ids = splits_map[fold_key]
-                for wsi_id in wsi_ids:
-                    result_file = ai_results_root / wsi_id / f"train_{task_id}_{fold_key}_result.json"
-                    if result_file.exists():
-                        try:
-                            with open(result_file, 'r') as f:
-                                data = json.load(f)
-                                pred = data.get("pred")
-                                gt = data.get("ground_truth")
-                                probs = data.get("probs", {})
-                                if pred and gt:
-                                    pred_idx = classes.index(pred) if pred in classes else -1
-                                    gt_idx = classes.index(gt) if gt in classes else -1
-                                    if pred_idx >= 0 and gt_idx >= 0:
-                                        all_preds.append(pred_idx)
-                                        all_labels.append(gt_idx)
-                                        probs_arr = [probs.get(cls, 0.0) for cls in classes]
-                                        all_probs.append(probs_arr)
-                        except Exception:
-                            continue
-            # Slow path: scan directory (fallback for backward compatibility)
-            elif ai_results_root.exists():
-                for wsi_dir in ai_results_root.iterdir():
-                    if wsi_dir.is_dir():
-                        result_file = wsi_dir / f"train_{task_id}_{fold_key}_result.json"
-                        if result_file.exists():
-                            try:
-                                with open(result_file, 'r') as f:
-                                    data = json.load(f)
-                                    if data.get("task_id") == task_id and data.get("fold_key") == fold_key:
-                                        pred = data.get("pred")
-                                        gt = data.get("ground_truth")
-                                        probs = data.get("probs", {})
-                                        if pred and gt:
-                                            pred_idx = classes.index(pred) if pred in classes else -1
-                                            gt_idx = classes.index(gt) if gt in classes else -1
-                                            if pred_idx >= 0 and gt_idx >= 0:
-                                                all_preds.append(pred_idx)
-                                                all_labels.append(gt_idx)
-                                                probs_arr = [probs.get(cls, 0.0) for cls in classes]
-                                                all_probs.append(probs_arr)
-                            except Exception:
-                                continue
-
-            if not all_preds:
-                continue
-
-            all_preds = np.array(all_preds)
-            all_labels = np.array(all_labels)
-            all_probs = np.array(all_probs)
-
-            # Calculate metrics using sklearn
-            precision = precision_score(all_labels, all_preds, average='macro', zero_division=0)
-            recall = recall_score(all_labels, all_preds, average='macro', zero_division=0)
-            f1 = f1_score(all_labels, all_preds, average='macro', zero_division=0)
-
-            # Specificity calculation (macro average)
-            cm = sklearn_confusion_matrix(all_labels, all_preds, labels=list(range(n_classes)))
-            specificities = []
-            for i in range(n_classes):
-                tp = cm[i, i]
-                fp = cm[:, i].sum() - tp
-                fn = cm[i, :].sum() - tp
-                tn = cm.sum() - tp - fp - fn
-                spec = tn / (tn + fp) if (tn + fp) > 0 else 0
-                specificities.append(spec)
-            specificity = np.mean(specificities) if specificities else 0.0
-
-            # AUC calculation
-            try:
-                if n_classes == 2:
-                    auc_val = roc_auc_score(all_labels, all_probs[:, 1])
-                else:
-                    auc_val = roc_auc_score(all_labels, all_probs, multi_class='ovr', average='macro')
-            except ValueError:
-                auc_val = None
-
-            # Filter out nan values before appending
-            if not np.isnan(precision):
-                fold_metrics["precision"].append(precision)
-            if not np.isnan(recall):
-                fold_metrics["sensitivity"].append(recall)
-            if not np.isnan(specificity):
-                fold_metrics["specificity"].append(specificity)
-            if not np.isnan(f1):
-                fold_metrics["f1"].append(f1)
-            if auc_val is not None and not np.isnan(auc_val):
-                fold_metrics["auc"].append(auc_val)
-
-            # Store per-fold values (rounded to 4 decimal places), skip nan values
-            per_fold_metrics[fold_key] = {}
-            if not np.isnan(precision):
-                per_fold_metrics[fold_key]["precision"] = round(float(precision), 4)
-            if not np.isnan(recall):
-                per_fold_metrics[fold_key]["sensitivity"] = round(float(recall), 4)
-            if not np.isnan(specificity):
-                per_fold_metrics[fold_key]["specificity"] = round(float(specificity), 4)
-            if not np.isnan(f1):
-                per_fold_metrics[fold_key]["f1"] = round(float(f1), 4)
-            if auc_val is not None and not np.isnan(auc_val):
-                per_fold_metrics[fold_key]["auc"] = round(float(auc_val), 4)
-
-        # Calculate mean and std for each metric (rounded to 4 decimal places)
-        aggregated = {}
-        for metric_name, values in fold_metrics.items():
-            if values:
-                mean_val = float(np.mean(values))
-                std_val = float(np.std(values))
-                if not np.isnan(mean_val) and not np.isnan(std_val):
-                    aggregated[metric_name] = {
-                        "mean": round(mean_val, 4),
-                        "std": round(std_val, 4),
-                    }
-
-        return aggregated, per_fold_metrics
+        """Delegate to shared classification metrics calculator."""
+        return calculate_kfold_classification_metrics(
+            self.uploads_root, task_id, fold_keys, classes, splits_map
+        )
 
     async def train_model(
         self,

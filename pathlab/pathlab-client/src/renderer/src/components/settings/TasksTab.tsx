@@ -1,32 +1,58 @@
+import { useState, useEffect, useCallback } from 'react'
 import { Layers, RefreshCw, Minus, Plus, CheckCircle, Cpu } from 'lucide-react'
 import { Card } from '../ui/card'
-import { QueueStatus } from '../../api'
+import { QueueStatus, getQueueStatus, updateQueueConfig, getQueueConfig } from '../../api'
+import { ShowConfirmDialog } from './ConfirmDialog'
 
 export interface TasksTabProps {
-  queueStatus: QueueStatus | null
-  loadingQueue: boolean
-  queueError: string | null
-  taskTimeout: string
-  taskSaving: boolean
-  taskSaved: boolean
-  onLoadQueueStatus: () => void
-  onUpdateMaxConcurrent: (value: number) => void
-  onTaskTimeoutChange: (value: string) => void
-  onTaskSave: (e: React.FormEvent) => void
+  showConfirmDialog: ShowConfirmDialog
+  closeConfirmDialog: () => void
 }
 
-export function TasksTab({
-  queueStatus,
-  loadingQueue,
-  queueError,
-  taskTimeout,
-  taskSaving,
-  taskSaved,
-  onLoadQueueStatus,
-  onUpdateMaxConcurrent,
-  onTaskTimeoutChange,
-  onTaskSave
-}: TasksTabProps) {
+export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProps) {
+  const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null)
+  const [loadingQueue, setLoadingQueue] = useState(false)
+  const [queueError, setQueueError] = useState<string | null>(null)
+  const [taskTimeout, setTaskTimeout] = useState('259200')
+  const [taskSaved, setTaskSaved] = useState(false)
+  const [taskSaving, setTaskSaving] = useState(false)
+
+  const loadQueueStatus = useCallback(async () => {
+    setLoadingQueue(true); setQueueError(null)
+    try { const status = await getQueueStatus(); setQueueStatus(status) }
+    catch (err) { console.error('Failed to load queue status:', err); setQueueError(err instanceof Error ? err.message : 'Failed to load queue status') }
+    finally { setLoadingQueue(false) }
+  }, [])
+
+  const loadTaskConfig = useCallback(async () => {
+    try { const config = await getQueueConfig(); setTaskTimeout(String(config.task_timeout)) }
+    catch (err) { console.error('Failed to load task config:', err) }
+  }, [])
+
+  // Load on mount + auto-refresh
+  useEffect(() => { loadQueueStatus(); loadTaskConfig() }, [loadQueueStatus, loadTaskConfig])
+  useEffect(() => {
+    const interval = setInterval(loadQueueStatus, 15000)
+    return () => clearInterval(interval)
+  }, [loadQueueStatus])
+
+  const handleUpdateMaxConcurrent = useCallback(async (newValue: number) => {
+    try { await updateQueueConfig({ max_concurrent: newValue }); const status = await getQueueStatus(); setQueueStatus(status) }
+    catch (err) { console.error('Failed to update queue config:', err); setQueueError(err instanceof Error ? err.message : 'Failed to update queue config') }
+  }, [])
+
+  const handleTaskSave = async (e: React.FormEvent) => {
+    e.preventDefault(); setTaskSaving(true)
+    try {
+      const timeout = parseInt(taskTimeout, 10)
+      if (isNaN(timeout) || timeout < 60 || timeout > 259200) throw new Error('Task timeout must be between 60 and 259200 seconds')
+      await updateQueueConfig({ task_timeout: timeout })
+      setTaskSaved(true); setTimeout(() => setTaskSaved(false), 3000)
+    } catch (err) {
+      console.error('Failed to save task config:', err)
+      showConfirmDialog({ title: 'Error', message: err instanceof Error ? err.message : 'Failed to save task configuration', confirmText: 'OK', confirmVariant: 'danger', showCancel: false, onConfirm: () => closeConfirmDialog() })
+    } finally { setTaskSaving(false) }
+  }
   const isSingleGPU = queueStatus?.gpu_count === 1
 
   return (
@@ -47,7 +73,7 @@ export function TasksTab({
               </div>
             )}
             <button
-              onClick={onLoadQueueStatus}
+              onClick={loadQueueStatus}
               disabled={loadingQueue}
               className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
               title="Refresh queue status"
@@ -105,7 +131,7 @@ export function TasksTab({
                   <div className="flex items-center w-full">
                     <div className={`flex items-center bg-white border border-gray-300 rounded-lg overflow-hidden shadow-sm transition-colors w-full ${isSingleGPU ? 'opacity-50 cursor-not-allowed' : 'hover:border-primary-400'}`}>
                       <button
-                        onClick={() => onUpdateMaxConcurrent(Math.max(1, queueStatus.max_concurrent - 1))}
+                        onClick={() => handleUpdateMaxConcurrent(Math.max(1, queueStatus.max_concurrent - 1))}
                         disabled={isSingleGPU}
                         className={`p-2.5 text-gray-600 transition-colors border-r border-gray-200 flex-shrink-0 ${isSingleGPU ? 'cursor-not-allowed' : 'hover:bg-gray-50 active:bg-gray-100'}`}
                         title={isSingleGPU ? 'Disabled: Single GPU' : 'Decrease'}
@@ -121,13 +147,13 @@ export function TasksTab({
                         onChange={(e) => {
                           const val = parseInt(e.target.value);
                           if (!isNaN(val)) {
-                            onUpdateMaxConcurrent(Math.min(10, Math.max(1, val)));
+                            handleUpdateMaxConcurrent(Math.min(10, Math.max(1, val)));
                           }
                         }}
                         className={`flex-1 py-1.5 text-center font-bold text-gray-900 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none bg-transparent text-sm ${isSingleGPU ? 'cursor-not-allowed' : ''}`}
                       />
                       <button
-                        onClick={() => onUpdateMaxConcurrent(Math.min(10, queueStatus.max_concurrent + 1))}
+                        onClick={() => handleUpdateMaxConcurrent(Math.min(10, queueStatus.max_concurrent + 1))}
                         disabled={isSingleGPU}
                         className={`p-2.5 text-gray-600 transition-colors border-l border-gray-200 flex-shrink-0 ${isSingleGPU ? 'cursor-not-allowed' : 'hover:bg-gray-50 active:bg-gray-100'}`}
                         title={isSingleGPU ? 'Disabled: Single GPU' : 'Increase'}
@@ -150,7 +176,7 @@ export function TasksTab({
 
               {/* Timeout */}
               <div>
-                <form onSubmit={onTaskSave} className="flex flex-col gap-2 h-full justify-between">
+                <form onSubmit={handleTaskSave} className="flex flex-col gap-2 h-full justify-between">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Task Timeout (seconds)
@@ -159,7 +185,7 @@ export function TasksTab({
                       <input
                         type="number"
                         value={taskTimeout}
-                        onChange={(e) => onTaskTimeoutChange(e.target.value)}
+                        onChange={(e) => setTaskTimeout(e.target.value)}
                         min="60"
                         max="259200"
                         className="flex-1 px-3 py-2 border-none focus:ring-0 text-sm font-medium"

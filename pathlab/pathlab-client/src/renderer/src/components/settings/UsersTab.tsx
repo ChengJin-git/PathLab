@@ -1,28 +1,25 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, Key, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, AlertTriangle, Construction, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Select } from '../ui/select'
-import { UserListItem } from '../../api'
+import {
+  UserListItem, UserUpdateRequest, RegisterRequest, DatasetPermission,
+  listUsers, updateUser, deleteUser, registerUser, revokeUserAgreement,
+  batchActivateUsers, batchDeactivateUsers, batchDeleteUsers,
+  getMaintenanceMode, setMaintenanceMode as setMaintenanceModeApi,
+  getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, fetchDatasets
+} from '../../api'
+import { ShowConfirmDialog } from './ConfirmDialog'
+import { EditUserModal } from './EditUserModal'
+import { CreateUserModal } from './CreateUserModal'
+import { PermissionModal } from './PermissionModal'
 
 export interface UsersTabProps {
-  users: UserListItem[]
-  loadingUsers: boolean
-  usersError: string | null
+  showConfirmDialog: ShowConfirmDialog
+  closeConfirmDialog: () => void
   currentUserId: string | undefined
-  maintenanceMode: boolean
-  onShowCreateUser: () => void
-  onLoadUsers: () => void
-  onEditUser: (user: UserListItem) => void
-  onOpenPermissionModal: (user: UserListItem) => void
-  onToggleUserActive: (user: UserListItem) => void
-  onRevokeAgreement: (userId: string) => void
-  onDeleteUser: (userId: string) => void
-  onBatchActivate: (userIds: string[]) => void
-  onBatchDeactivate: (userIds: string[]) => void
-  onBatchDelete: (userIds: string[]) => void
-  onToggleMaintenanceMode: () => void
 }
 
 function getRoleBadgeColor(role: string) {
@@ -34,24 +31,27 @@ function getRoleBadgeColor(role: string) {
   }
 }
 
-export function UsersTab({
-  users,
-  loadingUsers,
-  usersError,
-  currentUserId,
-  maintenanceMode,
-  onShowCreateUser,
-  onLoadUsers,
-  onEditUser,
-  onOpenPermissionModal,
-  onToggleUserActive,
-  onRevokeAgreement,
-  onDeleteUser,
-  onBatchActivate,
-  onBatchDeactivate,
-  onBatchDelete,
-  onToggleMaintenanceMode
-}: UsersTabProps) {
+export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId }: UsersTabProps) {
+  // User management state
+  const [users, setUsers] = useState<UserListItem[]>([])
+  const [loadingUsers, setLoadingUsers] = useState(false)
+  const [usersError, setUsersError] = useState<string | null>(null)
+  const [editingUser, setEditingUser] = useState<UserListItem | null>(null)
+  const [editForm, setEditForm] = useState<{ nickname: string; role: string; password: string }>({ nickname: '', role: '', password: '' })
+  const [showCreateUser, setShowCreateUser] = useState(false)
+  const [createForm, setCreateForm] = useState<{ username: string; password: string; nickname: string; role: string }>({ username: '', password: '', nickname: '', role: 'pathologist' })
+  const [creatingUser, setCreatingUser] = useState(false)
+  const [maintenanceMode, setMaintenanceMode] = useState(false)
+
+  // Dataset Permission Management State
+  const [permissionUser, setPermissionUser] = useState<UserListItem | null>(null)
+  const [userPermissions, setUserPermissions] = useState<DatasetPermission[]>([])
+  const [loadingPermissions, setLoadingPermissions] = useState(false)
+  const [datasets, setDatasets] = useState<{ dataset_id: string; dataset_name: string }[]>([])
+  const [selectedDatasetIds, setSelectedDatasetIds] = useState<string[]>([])
+  const [expiresInHours, setExpiresInHours] = useState<string>('')
+  const [grantingPermission, setGrantingPermission] = useState(false)
+
   // Batch selection state
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set())
 
@@ -59,6 +59,108 @@ export function UsersTab({
   const [searchQuery, setSearchQuery] = useState('')
   const [itemsPerPage, setItemsPerPage] = useState(10)
   const [currentPage, setCurrentPage] = useState(1)
+
+  // --- Data loading ---
+  const loadUsers = useCallback(async () => {
+    setLoadingUsers(true)
+    setUsersError(null)
+    try {
+      const userList = await listUsers()
+      setUsers(userList)
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Failed to load users')
+    } finally {
+      setLoadingUsers(false)
+    }
+  }, [])
+
+  const loadMaintenanceMode = useCallback(async () => {
+    try {
+      const result = await getMaintenanceMode()
+      setMaintenanceMode(result.enabled)
+    } catch (err) {
+      console.error('Failed to load maintenance mode:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadUsers()
+    loadMaintenanceMode()
+  }, [loadUsers, loadMaintenanceMode])
+
+  // --- User CRUD handlers ---
+  const handleSaveUser = async () => {
+    if (!editingUser) return
+    if (editForm.password && editForm.password.length < 6) {
+      setUsersError('Password must be at least 6 characters')
+      return
+    }
+    try {
+      const updateData: UserUpdateRequest = {}
+      if (editForm.nickname !== (editingUser.nickname || '')) updateData.nickname = editForm.nickname
+      if (editForm.role !== editingUser.role) updateData.role = editForm.role as 'admin' | 'pathologist' | 'guest'
+      if (editForm.password) updateData.password = editForm.password
+      await updateUser(editingUser.id, updateData)
+      setEditingUser(null)
+      setUsersError(null)
+      loadUsers()
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Failed to update user')
+    }
+  }
+
+  const handleCreateUser = async () => {
+    if (!createForm.username || !createForm.password) { setUsersError('Username and password are required'); return }
+    if (createForm.password.length < 6) { setUsersError('Password must be at least 6 characters'); return }
+    try {
+      setCreatingUser(true)
+      setUsersError(null)
+      const data: RegisterRequest = {
+        email: createForm.username,
+        password: createForm.password,
+        nickname: createForm.nickname || undefined,
+        role: createForm.role as 'pathologist' | 'guest'
+      }
+      await registerUser(data)
+      setShowCreateUser(false)
+      setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist' })
+      loadUsers()
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Failed to create user')
+    } finally {
+      setCreatingUser(false)
+    }
+  }
+
+  const handleToggleUserActive = async (user: UserListItem) => {
+    try {
+      await updateUser(user.id, { is_active: !user.is_active })
+      loadUsers()
+    } catch { /* Error handled */ }
+  }
+
+  const handleRevokeAgreement = async (userId: string) => {
+    try {
+      await revokeUserAgreement(userId)
+      loadUsers()
+    } catch { /* Error handled */ }
+  }
+
+  const handleDeleteUser = (userId: string) => {
+    showConfirmDialog({
+      title: 'Delete User',
+      message: 'Are you sure you want to delete this user?',
+      confirmVariant: 'danger',
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        try {
+          await deleteUser(userId)
+          loadUsers()
+        } catch { /* Error handled */ }
+        closeConfirmDialog()
+      }
+    })
+  }
 
   // Reset page when search or items per page changes
   useEffect(() => {
@@ -120,22 +222,152 @@ export function UsersTab({
     setSelectedUserIds(newSet)
   }
 
-  const handleBatchActivate = () => {
-    onBatchActivate(Array.from(selectedUserIds))
+  const handleBatchActivate = async () => {
+    const ids = Array.from(selectedUserIds)
+    if (ids.length === 0) return
+    try { await batchActivateUsers(ids); loadUsers() }
+    catch (err) { setUsersError(err instanceof Error ? err.message : 'Failed to batch activate users') }
     setSelectedUserIds(new Set())
   }
 
-  const handleBatchDeactivate = () => {
-    onBatchDeactivate(Array.from(selectedUserIds))
+  const handleBatchDeactivate = async () => {
+    const ids = Array.from(selectedUserIds)
+    if (ids.length === 0) return
+    try { await batchDeactivateUsers(ids); loadUsers() }
+    catch (err) { setUsersError(err instanceof Error ? err.message : 'Failed to batch deactivate users') }
     setSelectedUserIds(new Set())
   }
 
   const handleBatchDelete = () => {
-    onBatchDelete(Array.from(selectedUserIds))
+    const ids = Array.from(selectedUserIds)
+    if (ids.length === 0) return
+    showConfirmDialog({
+      title: 'Delete Users',
+      message: `Are you sure you want to delete ${ids.length} user${ids.length > 1 ? 's' : ''}? This action cannot be undone.`,
+      confirmVariant: 'danger',
+      confirmText: 'Delete',
+      onConfirm: async () => {
+        try { await batchDeleteUsers(ids); loadUsers() }
+        catch (err) { setUsersError(err instanceof Error ? err.message : 'Failed to batch delete users') }
+        closeConfirmDialog()
+      }
+    })
     setSelectedUserIds(new Set())
   }
 
+  const handleToggleMaintenanceMode = () => {
+    const newMode = !maintenanceMode
+    const title = newMode ? 'Enable Maintenance Mode' : 'Disable Maintenance Mode'
+    const message = newMode
+      ? 'This will deactivate all non-admin users and prevent them from logging in. Are you sure?'
+      : 'This will re-enable normal login for all users. Are you sure?'
+    showConfirmDialog({
+      title, message,
+      confirmVariant: newMode ? 'danger' : 'info',
+      confirmText: newMode ? 'Enable' : 'Disable',
+      onConfirm: async () => {
+        try {
+          const result = await setMaintenanceModeApi(newMode)
+          setMaintenanceMode(result.enabled)
+          loadUsers()
+        } catch (err) {
+          setUsersError(err instanceof Error ? err.message : 'Failed to toggle maintenance mode')
+        }
+        closeConfirmDialog()
+      }
+    })
+  }
+
+  // --- Dataset Permission Management ---
+  const openPermissionModal = async (user: UserListItem) => {
+    setPermissionUser(user)
+    setLoadingPermissions(true)
+    setSelectedDatasetIds([])
+    setExpiresInHours('')
+    try {
+      const permResponse = await getUserDatasetPermissions(user.id)
+      setUserPermissions(permResponse.permissions)
+      const datasetResponse = await fetchDatasets()
+      setDatasets(datasetResponse.items.filter(d => d.dataset_id !== null).map(d => ({
+        dataset_id: d.dataset_id!,
+        dataset_name: d.dataset_name
+      })))
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Failed to load permissions')
+    } finally {
+      setLoadingPermissions(false)
+    }
+  }
+
+  const handleGrantPermission = async () => {
+    if (!permissionUser || selectedDatasetIds.length === 0) return
+    try {
+      setGrantingPermission(true)
+      const hours = expiresInHours ? parseInt(expiresInHours, 10) : undefined
+      for (const dsId of selectedDatasetIds) {
+        if (dsId) await grantDatasetPermission(dsId, permissionUser.id, hours)
+      }
+      const permResponse = await getUserDatasetPermissions(permissionUser.id)
+      setUserPermissions(permResponse.permissions)
+      setSelectedDatasetIds([])
+      setExpiresInHours('')
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Failed to grant permission')
+    } finally {
+      setGrantingPermission(false)
+    }
+  }
+
+  const handleRevokePermission = (datasetId: string) => {
+    if (!permissionUser) return
+    const datasetName = datasets.find(d => d.dataset_id === datasetId)?.dataset_name || datasetId
+    showConfirmDialog({
+      title: 'Revoke Permission',
+      message: `Revoke access to dataset "${datasetName}" for this user?`,
+      confirmText: 'Revoke',
+      confirmVariant: 'warning',
+      onConfirm: async () => {
+        closeConfirmDialog()
+        try {
+          await revokeDatasetPermission(datasetId, permissionUser.id)
+          const permResponse = await getUserDatasetPermissions(permissionUser.id)
+          setUserPermissions(permResponse.permissions)
+        } catch (err) {
+          setUsersError(err instanceof Error ? err.message : 'Failed to revoke permission')
+        }
+      }
+    })
+  }
+
+  const handleRevokeAllPermissions = () => {
+    if (!permissionUser || userPermissions.length === 0) return
+    showConfirmDialog({
+      title: 'Revoke All Permissions',
+      message: `Are you sure you want to revoke ALL dataset permissions for ${permissionUser.nickname || permissionUser.email}?`,
+      confirmText: 'Revoke All',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        closeConfirmDialog()
+        try {
+          await Promise.allSettled(userPermissions.map(perm => revokeDatasetPermission(perm.dataset_id, permissionUser.id)))
+          const permResponse = await getUserDatasetPermissions(permissionUser.id)
+          setUserPermissions(permResponse.permissions)
+        } catch (err) {
+          setUsersError(err instanceof Error ? err.message : 'Failed to revoke permissions')
+        }
+      }
+    })
+  }
+
+  const closePermissionModal = () => {
+    setPermissionUser(null)
+    setUserPermissions([])
+    setSelectedDatasetIds([])
+    setExpiresInHours('')
+  }
+
   return (
+    <>
     <Card className="p-4 sm:p-6">
       {/* Maintenance Mode Banner */}
       {maintenanceMode && (
@@ -166,18 +398,18 @@ export function UsersTab({
           {/* Maintenance Mode Toggle */}
           <Button
             variant={maintenanceMode ? "destructive" : "outline"}
-            onClick={onToggleMaintenanceMode}
+            onClick={handleToggleMaintenanceMode}
             className="gap-2"
             title={maintenanceMode ? "Disable maintenance mode" : "Enable maintenance mode"}
           >
             <Construction className="w-4 h-4" />
             {maintenanceMode ? "End Maintenance Mode" : "Maintenance Mode"}
           </Button>
-          <Button onClick={onShowCreateUser} className="gap-2">
+          <Button onClick={() => setShowCreateUser(true)} className="gap-2">
             <UserPlus className="w-4 h-4" />
             Create User
           </Button>
-          <Button variant="outline" onClick={onLoadUsers} disabled={loadingUsers} className="gap-2">
+          <Button variant="outline" onClick={loadUsers} disabled={loadingUsers} className="gap-2">
             <RefreshCw className={`w-4 h-4 ${loadingUsers ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
@@ -330,11 +562,11 @@ export function UsersTab({
                     </td>
                     <td className="py-3 px-4 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => onEditUser(user)} className="h-8 w-8 p-0" title="Edit user">
+                        <Button variant="ghost" size="sm" onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '' }) }} className="h-8 w-8 p-0" title="Edit user">
                           <Edit className="w-4 h-4" />
                         </Button>
                         {user.role !== 'admin' && (
-                          <Button variant="ghost" size="sm" onClick={() => onOpenPermissionModal(user)} className="h-8 w-8 p-0 text-purple-600 hover:text-purple-700 hover:bg-purple-50" title="Manage dataset permissions">
+                          <Button variant="ghost" size="sm" onClick={() => openPermissionModal(user)} className="h-8 w-8 p-0 text-purple-600 hover:text-purple-700 hover:bg-purple-50" title="Manage dataset permissions">
                             <Key className="w-4 h-4" />
                           </Button>
                         )}
@@ -342,7 +574,7 @@ export function UsersTab({
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => onToggleUserActive(user)}
+                            onClick={() => handleToggleUserActive(user)}
                             className={`h-8 w-8 p-0 ${user.is_active ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}
                             title={user.is_active ? 'Deactivate user' : 'Activate user'}
                           >
@@ -350,11 +582,11 @@ export function UsersTab({
                           </Button>
                         )}
                         {user.agreement_accepted_at && (
-                          <Button variant="ghost" size="sm" onClick={() => onRevokeAgreement(user.id)} className="h-8 w-8 p-0 text-orange-600 hover:text-orange-700 hover:bg-orange-50" title="Revoke agreement">
+                          <Button variant="ghost" size="sm" onClick={() => handleRevokeAgreement(user.id)} className="h-8 w-8 p-0 text-orange-600 hover:text-orange-700 hover:bg-orange-50" title="Revoke agreement">
                             <RotateCcw className="w-4 h-4" />
                           </Button>
                         )}
-                        <Button variant="ghost" size="sm" onClick={() => onDeleteUser(user.id)} className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50" title="Delete user">
+                        <Button variant="ghost" size="sm" onClick={() => handleDeleteUser(user.id)} className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50" title="Delete user">
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
@@ -421,6 +653,52 @@ export function UsersTab({
         </>
       )}
     </Card>
+
+      {/* Edit User Modal */}
+      {editingUser && (
+        <EditUserModal
+          user={editingUser}
+          editForm={editForm}
+          onEditFormChange={setEditForm}
+          onSave={handleSaveUser}
+          onClose={() => setEditingUser(null)}
+        />
+      )}
+
+      {/* Create User Modal */}
+      {showCreateUser && (
+        <CreateUserModal
+          createForm={createForm}
+          onCreateFormChange={setCreateForm}
+          onSubmit={handleCreateUser}
+          onClose={() => {
+            setShowCreateUser(false)
+            setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist' })
+            setUsersError(null)
+          }}
+          isCreating={creatingUser}
+        />
+      )}
+
+      {/* Dataset Permission Management Modal */}
+      {permissionUser && (
+        <PermissionModal
+          user={permissionUser}
+          permissions={userPermissions}
+          datasets={datasets}
+          selectedDatasetIds={selectedDatasetIds}
+          expiresInHours={expiresInHours}
+          loadingPermissions={loadingPermissions}
+          grantingPermission={grantingPermission}
+          onSelectedDatasetIdsChange={setSelectedDatasetIds}
+          onExpiresInHoursChange={setExpiresInHours}
+          onGrantPermission={handleGrantPermission}
+          onRevokePermission={handleRevokePermission}
+          onRevokeAllPermissions={handleRevokeAllPermissions}
+          onClose={closePermissionModal}
+        />
+      )}
+    </>
   )
 }
 

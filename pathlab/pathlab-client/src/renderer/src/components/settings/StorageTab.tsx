@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Database,
@@ -20,9 +20,29 @@ import {
   ScanDirectoryResponse,
   CheckExternalFilesResponse,
   ExternalDatasetInfo,
-  DatasetSummary
+  DatasetSummary,
+  getStorageStats,
+  detectOrphanedFiles,
+  cleanupOrphanedFiles,
+  detectOrphanedRecords,
+  cleanupOrphanedRecords,
+  resetDerivedData,
+  getStorageConfig,
+  updateStorageConfig,
+  scanDirectory,
+  checkExternalFiles,
+  startBatchImportTask,
+  startDeleteExternalTask,
+  startUnbindDatasetTask,
+  getExternalDatasets,
+  getExternalDatasetsCachedSync,
+  invalidateExternalDatasetsCache,
+  fetchDatasets
 } from '../../api'
-import { formatBytes as formatBytesDefault, formatFileSize as formatFileSizeDefault } from '../../lib/utils'
+import { formatBytes, formatFileSize } from '../../lib/utils'
+import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
+import { ShowConfirmDialog } from './ConfirmDialog'
+import { MigrationModal } from './MigrationModal'
 import {
   StorageStatsDisplay,
   OrphanedFilesCard,
@@ -31,201 +51,506 @@ import {
   ExternalFilesHealthCheckCard
 } from './storage'
 
+interface ElectronFilesApi {
+  selectDirectory?: (options?: { title?: string }) => Promise<string | null>
+}
+interface ElectronApi {
+  files?: ElectronFilesApi
+}
+declare const window: Window & { api?: ElectronApi }
+
 export interface StorageTabProps {
-  // Storage Config
-  storageConfig: StorageConfig | null
-  storagePath: string
-  setStoragePath: (path: string) => void
-  storageSaving: boolean
-  storageSaved: boolean
-  storageConfigError: string | null
-  handleStorageSave: (e: React.FormEvent) => Promise<void>
-  handleSelectStorageDir: () => Promise<void>
-
-  // Storage Stats
-  stats: StorageStats | null
-  loadingStorage: boolean
-  storageError: string | null
-  loadStats: () => Promise<void>
-
-  // Orphaned Files
-  orphanedFiles: OrphanedFilesInfo | null
-  loadingOrphaned: boolean
-  isCleaningUp: boolean
-  cleanupResult: CleanupResult | null
-  detectOrphaned: (clearCleanupResult?: boolean) => Promise<void>
-  handleCleanup: (e: React.MouseEvent) => Promise<void>
-
-  // Orphaned Records
-  orphanedRecords: OrphanedRecordsInfo | null
-  loadingOrphanedRecords: boolean
-  isCleaningUpRecords: boolean
-  recordsCleanupResult: OrphanedRecordsCleanupResult | null
-  detectOrphanedRecordsHandler: (clearCleanupResult?: boolean) => Promise<void>
-  handleRecordsCleanup: (e: React.MouseEvent) => Promise<void>
-
-  // Reset Derived Data
-  handleResetDerivedData: () => Promise<void>
-
-  // Batch Scan & Register
-  batchScanPath: string
-  setBatchScanPath: (path: string) => void
-  batchScanResult: ScanDirectoryResponse | null
-  batchScanning: boolean
-  batchScanError: string | null
-  batchSelectedFiles: Set<string>
-  batchDatasetMode: 'existing' | 'new'
-  setBatchDatasetMode: (mode: 'existing' | 'new') => void
-  batchSelectedDatasetId: string
-  setBatchSelectedDatasetId: (id: string) => void
-  batchNewDatasetNameRef: React.RefObject<HTMLInputElement>
-  batchRegistering: boolean
-  batchImportTaskId: string | null
-  batchDatasets: DatasetSummary[]
-  batchTaskType: 'classification' | 'survival'
-  setBatchTaskType: (type: 'classification' | 'survival') => void
-  batchDataLevel: 'case' | 'file'
-  setBatchDataLevel: (level: 'case' | 'file') => void
-  handleSelectBatchScanDir: () => Promise<void>
-  handleBatchScan: () => Promise<void>
-  handleBatchFileToggle: (path: string) => void
-  handleBatchSelectAll: () => void
-  handleBatchDeselectAll: () => void
-  handleBatchRegister: () => Promise<void>
-
-  // External Datasets
-  externalDatasets: ExternalDatasetInfo[]
-  loadingExternalDatasets: boolean
-  externalDatasetsLoaded: boolean
-  loadExternalDatasets: (forceRefresh?: boolean) => Promise<void>
-  selectedExternalDatasets: Set<string>
-  unbindingDatasets: boolean
-  refreshExternalDatasets: () => Promise<void>
-  handleExternalDatasetToggle: (datasetId: string | null) => void
-  handleExternalDatasetSelectAll: () => void
-  handleUnbindDataset: (datasetId: string, datasetName: string) => Promise<void>
-  handleUnbindSelectedDatasets: () => Promise<void>
-
-  // External Files Check
-  checkingExternalFiles: boolean
-  externalFilesResult: CheckExternalFilesResponse | null
-  selectedUnavailableFiles: Set<string>
-  setSelectedUnavailableFiles: React.Dispatch<React.SetStateAction<Set<string>>>
-  deletingUnavailableFiles: boolean
-  externalFilesError: string | null
-  handleCheckExternalFiles: () => Promise<void>
-  handleDeleteUnavailableFiles: () => Promise<void>
-
-  // Utilities
-  formatBytes: (bytes: number) => string
-  formatFileSize: (bytes: number) => string
-
-  // Electron API check
-  hasSelectDirectoryApi: boolean
+  showConfirmDialog: ShowConfirmDialog
+  closeConfirmDialog: () => void
 }
 
-export const StorageTab: React.FC<StorageTabProps> = (props) => {
+export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, closeConfirmDialog }) => {
   const navigate = useNavigate()
+  const { addMigrationTask } = useBackgroundTask()
   const [isDangerZoneOpen, setIsDangerZoneOpen] = React.useState(false)
-  const {
-    // Storage Config
-    storageConfig,
-    storagePath,
-    setStoragePath,
-    storageSaving,
-    storageSaved,
-    storageConfigError,
-    handleStorageSave,
-    handleSelectStorageDir,
+  const hasSelectDirectoryApi = !!window.api?.files?.selectDirectory
 
-    // Storage Stats
-    stats,
-    loadingStorage,
-    storageError,
-    loadStats,
+  // Storage Management State
+  const [stats, setStats] = useState<StorageStats | null>(null)
+  const [loadingStorage, setLoadingStorage] = useState(false)
+  const [storageError, setStorageError] = useState<string | null>(null)
+  const [orphanedFiles, setOrphanedFiles] = useState<OrphanedFilesInfo | null>(null)
+  const [loadingOrphaned, setLoadingOrphaned] = useState(false)
+  const [isCleaningUp, setIsCleaningUp] = useState(false)
+  const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null)
+  const [selectedCategories] = useState<Set<string>>(new Set())
+  const [orphanedRecords, setOrphanedRecords] = useState<OrphanedRecordsInfo | null>(null)
+  const [loadingOrphanedRecords, setLoadingOrphanedRecords] = useState(false)
+  const [isCleaningUpRecords, setIsCleaningUpRecords] = useState(false)
+  const [recordsCleanupResult, setRecordsCleanupResult] = useState<OrphanedRecordsCleanupResult | null>(null)
+  const [storageConfig, setStorageConfig] = useState<StorageConfig | null>(null)
+  const [storagePath, setStoragePath] = useState('')
+  const [storageSaving, setStorageSaving] = useState(false)
+  const [storageSaved, setStorageSaved] = useState(false)
+  const [storageConfigError, setStorageConfigError] = useState<string | null>(null)
+  const [showMigrationPrompt, setShowMigrationPrompt] = useState(false)
+  const [migrationTarget, setMigrationTarget] = useState('')
+  const [deleteSource, setDeleteSource] = useState(false)
+  const [batchScanPath, setBatchScanPath] = useState('')
+  const [batchScanResult, setBatchScanResult] = useState<ScanDirectoryResponse | null>(null)
+  const [batchScanning, setBatchScanning] = useState(false)
+  const [batchScanError, setBatchScanError] = useState<string | null>(null)
+  const [batchSelectedFiles, setBatchSelectedFiles] = useState<Set<string>>(new Set())
+  const [batchDatasetMode, setBatchDatasetMode] = useState<'existing' | 'new'>('new')
+  const [batchSelectedDatasetId, setBatchSelectedDatasetId] = useState<string>('')
+  const batchNewDatasetNameRef = useRef<HTMLInputElement>(null)
+  const [batchRegistering, setBatchRegistering] = useState(false)
+  const [batchImportTaskId, setBatchImportTaskId] = useState<string | null>(null)
+  const [batchDatasets, setBatchDatasets] = useState<DatasetSummary[]>([])
+  const [batchTaskType, setBatchTaskType] = useState<'classification' | 'survival'>('classification')
+  const [batchDataLevel, setBatchDataLevel] = useState<'case' | 'file'>('file')
+  const [externalDatasets, setExternalDatasets] = useState<ExternalDatasetInfo[]>(() => {
+    const cached = getExternalDatasetsCachedSync()
+    return cached?.datasets ?? []
+  })
+  const [externalDatasetsLoaded, setExternalDatasetsLoaded] = useState<boolean>(() => {
+    return getExternalDatasetsCachedSync() !== null
+  })
+  const [loadingExternalDatasets, setLoadingExternalDatasets] = useState(false)
+  const [selectedExternalDatasets, setSelectedExternalDatasets] = useState<Set<string>>(new Set())
+  const [unbindingDatasets, setUnbindingDatasets] = useState(false)
+  const [checkingExternalFiles, setCheckingExternalFiles] = useState(false)
+  const [externalFilesResult, setExternalFilesResult] = useState<CheckExternalFilesResponse | null>(null)
+  const [selectedUnavailableFiles, setSelectedUnavailableFiles] = useState<Set<string>>(new Set())
+  const [deletingUnavailableFiles, setDeletingUnavailableFiles] = useState(false)
+  const [externalFilesError, setExternalFilesError] = useState<string | null>(null)
 
-    // Orphaned Files
-    orphanedFiles,
-    loadingOrphaned,
-    isCleaningUp,
-    cleanupResult,
-    detectOrphaned,
-    handleCleanup,
+  // --- Data Loading ---
 
-    // Orphaned Records
-    orphanedRecords,
-    loadingOrphanedRecords,
-    isCleaningUpRecords,
-    recordsCleanupResult,
-    detectOrphanedRecordsHandler,
-    handleRecordsCleanup,
+  const loadBatchDatasets = async () => {
+    try {
+      const response = await fetchDatasets()
+      setBatchDatasets(response.items)
+    } catch (err) {
+      console.error('Failed to load datasets for batch registration:', err)
+    }
+  }
 
-    // Reset Derived Data
-    handleResetDerivedData,
+  const loadExternalDatasetsFunc = async (forceRefresh = false) => {
+    setLoadingExternalDatasets(true)
+    try {
+      const response = await getExternalDatasets(forceRefresh)
+      setExternalDatasets(response.datasets)
+      setExternalDatasetsLoaded(true)
+    } catch (err) {
+      console.error('Failed to load external datasets:', err)
+    } finally {
+      setLoadingExternalDatasets(false)
+    }
+  }
 
-    // Batch Scan & Register
-    batchScanPath,
-    setBatchScanPath,
-    batchScanResult,
-    batchScanning,
-    batchScanError,
-    batchSelectedFiles,
-    batchDatasetMode,
-    setBatchDatasetMode,
-    batchSelectedDatasetId,
-    setBatchSelectedDatasetId,
-    batchNewDatasetNameRef,
-    batchRegistering,
-    batchImportTaskId,
-    batchDatasets,
-    batchTaskType,
-    setBatchTaskType,
-    batchDataLevel,
-    setBatchDataLevel,
-    handleSelectBatchScanDir,
-    handleBatchScan,
-    handleBatchFileToggle,
-    handleBatchSelectAll,
-    handleBatchDeselectAll,
-    handleBatchRegister,
+  const refreshExternalDatasets = async () => {
+    invalidateExternalDatasetsCache()
+    setExternalDatasetsLoaded(false)
+    await loadExternalDatasetsFunc(true)
+  }
 
-    // External Datasets
-    externalDatasets,
-    loadingExternalDatasets,
-    externalDatasetsLoaded,
-    loadExternalDatasets,
-    selectedExternalDatasets,
-    unbindingDatasets,
-    refreshExternalDatasets,
-    handleExternalDatasetToggle,
-    handleExternalDatasetSelectAll,
-    handleUnbindDataset,
-    handleUnbindSelectedDatasets,
+  const loadStats = async () => {
+    setLoadingStorage(true)
+    setStorageError(null)
+    try {
+      const data = await getStorageStats()
+      setStats(data)
+    } catch (err) {
+      console.error('Failed to load storage stats:', err)
+      setStorageError(err instanceof Error ? err.message : 'Failed to load storage stats')
+    } finally {
+      setLoadingStorage(false)
+    }
+  }
 
-    // External Files Check
-    checkingExternalFiles,
-    externalFilesResult,
-    selectedUnavailableFiles,
-    setSelectedUnavailableFiles,
-    deletingUnavailableFiles,
-    externalFilesError,
-    handleCheckExternalFiles,
-    handleDeleteUnavailableFiles,
+  const loadStorageConfig = async () => {
+    setStorageConfigError(null)
+    try {
+      const config = await getStorageConfig()
+      setStorageConfig(config)
+      setStoragePath(config.uploads_dir)
+    } catch (err) {
+      console.error('Failed to load storage config:', err)
+      setStorageConfigError(err instanceof Error ? err.message : 'Failed to load storage config')
+    }
+  }
 
-    // Utilities
-    formatBytes = formatBytesDefault,
-    formatFileSize = formatFileSizeDefault,
+  // --- Batch Scan & Register ---
 
-    // Electron API check
-    hasSelectDirectoryApi
-  } = props
+  const handleSelectBatchScanDir = async () => {
+    if (!window.api?.files?.selectDirectory) return
+    const selected = await window.api.files.selectDirectory({ title: 'Select directory to scan for WSI files' })
+    if (selected) {
+      setBatchScanPath(selected)
+      setBatchScanResult(null)
+      setBatchScanError(null)
+      setBatchSelectedFiles(new Set())
+      setBatchImportTaskId(null)
+    }
+  }
 
-  // Mutual exclusion: disable all storage operation buttons when any operation is in progress
+  const handleBatchScan = async () => {
+    if (!batchScanPath.trim()) return
+    setBatchScanning(true)
+    setBatchScanError(null)
+    setBatchScanResult(null)
+    setBatchSelectedFiles(new Set())
+    setBatchImportTaskId(null)
+    try {
+      const result = await scanDirectory(batchScanPath.trim())
+      setBatchScanResult(result)
+      const validFiles = new Set(result.files.filter(f => f.valid).map(f => f.path))
+      setBatchSelectedFiles(validFiles)
+    } catch (err) {
+      console.error('Failed to scan directory:', err)
+      setBatchScanError(err instanceof Error ? err.message : 'Failed to scan directory')
+    } finally {
+      setBatchScanning(false)
+    }
+  }
+
+  const handleBatchFileToggle = (path: string) => {
+    setBatchSelectedFiles(prev => {
+      const next = new Set(prev)
+      if (next.has(path)) { next.delete(path) } else { next.add(path) }
+      return next
+    })
+  }
+
+  const handleBatchSelectAll = () => {
+    if (!batchScanResult) return
+    setBatchSelectedFiles(new Set(batchScanResult.files.filter(f => f.valid).map(f => f.path)))
+  }
+
+  const handleBatchDeselectAll = () => {
+    setBatchSelectedFiles(new Set())
+  }
+
+  const handleBatchRegister = async () => {
+    if (batchSelectedFiles.size === 0) return
+    if (batchDatasetMode === 'existing' && !batchSelectedDatasetId) {
+      setBatchScanError('Please select an existing dataset')
+      return
+    }
+    const datasetNameToUse = batchNewDatasetNameRef.current?.value.trim() || ''
+    if (batchDatasetMode === 'new' && !datasetNameToUse) {
+      setBatchScanError('Please enter a name for the new dataset')
+      return
+    }
+    setBatchRegistering(true)
+    setBatchScanError(null)
+    setBatchImportTaskId(null)
+    try {
+      const selectedFilesInfo = batchScanResult?.files
+        .filter(f => batchSelectedFiles.has(f.path))
+        .map(f => ({ path: f.path, format_type: f.format_type, associated_data: f.associated_data })) || []
+      const result = await startBatchImportTask({
+        files: selectedFilesInfo,
+        dataset_id: batchDatasetMode === 'existing' ? batchSelectedDatasetId : undefined,
+        dataset_name: batchDatasetMode === 'new' ? datasetNameToUse : undefined,
+        aggregation_level: batchDataLevel,
+        task_type: batchTaskType,
+        default_label: batchTaskType === 'classification' ? 'External Import' : undefined
+      })
+      setBatchImportTaskId(result.task_id)
+      setBatchSelectedFiles(new Set())
+      if (batchNewDatasetNameRef.current) { batchNewDatasetNameRef.current.value = '' }
+      setTimeout(() => { loadBatchDatasets(); refreshExternalDatasets() }, 2000)
+    } catch (err) {
+      console.error('Failed to start batch import task:', err)
+      setBatchScanError(err instanceof Error ? err.message : 'Failed to start batch import task')
+    } finally {
+      setBatchRegistering(false)
+    }
+  }
+
+  // --- External Files ---
+
+  const handleCheckExternalFiles = async () => {
+    setCheckingExternalFiles(true)
+    setExternalFilesResult(null)
+    setExternalFilesError(null)
+    setSelectedUnavailableFiles(new Set())
+    try {
+      const result = await checkExternalFiles()
+      setExternalFilesResult(result)
+      if (result.unavailable.length > 0) {
+        setSelectedUnavailableFiles(new Set(result.unavailable.map(f => f.wsi_id)))
+      }
+    } catch (err) {
+      console.error('Failed to check external files:', err)
+      setExternalFilesError(err instanceof Error ? err.message : 'Failed to check external files')
+    } finally {
+      setCheckingExternalFiles(false)
+    }
+  }
+
+  const handleDeleteUnavailableFiles = async () => {
+    if (selectedUnavailableFiles.size === 0) return
+    showConfirmDialog({
+      title: 'Delete records',
+      message: `Are you sure you want to delete ${selectedUnavailableFiles.size} unavailable file record(s)? This action cannot be undone. Progress will be shown in the notification center.`,
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        closeConfirmDialog()
+        setDeletingUnavailableFiles(true)
+        setExternalFilesError(null)
+        try {
+          await startDeleteExternalTask(Array.from(selectedUnavailableFiles))
+          setSelectedUnavailableFiles(new Set())
+          setTimeout(() => handleCheckExternalFiles(), 2000)
+        } catch (err) {
+          console.error('Failed to start delete external task:', err)
+          setExternalFilesError(err instanceof Error ? err.message : 'Failed to start delete task')
+        } finally {
+          setDeletingUnavailableFiles(false)
+        }
+      }
+    })
+  }
+
+  const handleExternalDatasetToggle = (datasetId: string | null) => {
+    if (!datasetId) return
+    setSelectedExternalDatasets(prev => {
+      const next = new Set(prev)
+      if (next.has(datasetId)) { next.delete(datasetId) } else { next.add(datasetId) }
+      return next
+    })
+  }
+
+  const handleExternalDatasetSelectAll = () => {
+    if (selectedExternalDatasets.size === externalDatasets.filter(d => d.dataset_id).length) {
+      setSelectedExternalDatasets(new Set())
+    } else {
+      setSelectedExternalDatasets(new Set(externalDatasets.filter(d => d.dataset_id).map(d => d.dataset_id!)))
+    }
+  }
+
+  const handleUnbindDataset = async (datasetId: string, datasetName: string) => {
+    showConfirmDialog({
+      title: 'Unbind dataset',
+      message: `Are you sure you want to unbind dataset "${datasetName}"? This will remove all external file records from this dataset. The actual files on the external drive will NOT be deleted. Progress will be shown in the notification center.`,
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        closeConfirmDialog()
+        setUnbindingDatasets(true)
+        try {
+          await startUnbindDatasetTask(datasetId)
+          setTimeout(() => refreshExternalDatasets(), 2000)
+        } catch (err) {
+          console.error('Failed to start unbind dataset task:', err)
+          showConfirmDialog({
+            title: 'Unbind Failed',
+            message: err instanceof Error ? err.message : 'Failed to start unbind task',
+            confirmVariant: 'info',
+            showCancel: false,
+            onConfirm: () => closeConfirmDialog()
+          })
+        } finally {
+          setUnbindingDatasets(false)
+        }
+      }
+    })
+  }
+
+  const handleUnbindSelectedDatasets = async () => {
+    if (selectedExternalDatasets.size === 0) return
+    const datasetNames = externalDatasets
+      .filter(d => d.dataset_id && selectedExternalDatasets.has(d.dataset_id))
+      .map(d => d.dataset_name)
+      .join(', ')
+    showConfirmDialog({
+      title: 'Unbind datasets',
+      message: `Are you sure you want to unbind ${selectedExternalDatasets.size} dataset(s): ${datasetNames}? This will remove all external file records from these datasets. The actual files on the external drive will NOT be deleted. Progress will be shown in the notification center.`,
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        closeConfirmDialog()
+        setUnbindingDatasets(true)
+        try {
+          for (const datasetId of selectedExternalDatasets) {
+            await startUnbindDatasetTask(datasetId)
+          }
+          setSelectedExternalDatasets(new Set())
+          setTimeout(() => refreshExternalDatasets(), 2000)
+        } catch (err) {
+          console.error('Failed to start unbind dataset tasks:', err)
+          showConfirmDialog({
+            title: 'Unbind Failed',
+            message: err instanceof Error ? err.message : 'Failed to start unbind tasks',
+            confirmVariant: 'info',
+            showCancel: false,
+            onConfirm: () => closeConfirmDialog()
+          })
+        } finally {
+          setUnbindingDatasets(false)
+        }
+      }
+    })
+  }
+
+  // --- Storage Config ---
+
+  const handleSelectStorageDir = async () => {
+    if (!window.api?.files?.selectDirectory) return
+    const selected = await window.api.files.selectDirectory({ title: 'Select storage location' })
+    if (selected) { setStoragePath(selected) }
+  }
+
+  const performStorageUpdate = async (path: string) => {
+    setStorageSaving(true)
+    setStorageConfigError(null)
+    try {
+      const result = await updateStorageConfig(path)
+      setStorageConfig({ uploads_dir: result.uploads_dir, source: 'config' })
+      setStoragePath(result.uploads_dir)
+      await loadStats()
+      setStorageSaved(true)
+      setTimeout(() => setStorageSaved(false), 3000)
+    } catch (err) {
+      console.error('Failed to update storage config:', err)
+      setStorageConfigError(err instanceof Error ? err.message : 'Failed to update storage config')
+    } finally {
+      setStorageSaving(false)
+    }
+  }
+
+  const handleStorageSave = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!storagePath.trim()) return
+    if (storageConfig && storagePath.trim() !== storageConfig.uploads_dir) {
+      setMigrationTarget(storagePath.trim())
+      setShowMigrationPrompt(true)
+      return
+    }
+    await performStorageUpdate(storagePath.trim())
+  }
+
+  const handleConfirmMigration = async () => {
+    setShowMigrationPrompt(false)
+    setStorageSaving(true)
+    try {
+      await addMigrationTask(migrationTarget, deleteSource)
+      setStorageSaved(true)
+      setTimeout(() => setStorageSaved(false), 3000)
+    } catch (err) {
+      console.error('Failed to start migration:', err)
+      setStorageConfigError(err instanceof Error ? err.message : 'Failed to start migration')
+    } finally {
+      setStorageSaving(false)
+    }
+  }
+
+  const handleSkipMigration = async () => {
+    setShowMigrationPrompt(false)
+    await performStorageUpdate(migrationTarget)
+  }
+
+  // --- Orphaned Files & Records ---
+
+  const detectOrphaned = async (clearCleanupResult: boolean = true) => {
+    setLoadingOrphaned(true)
+    setStorageError(null)
+    if (clearCleanupResult) { setCleanupResult(null) }
+    try {
+      const data = await detectOrphanedFiles()
+      setOrphanedFiles(data)
+    } catch (err) {
+      console.error('Failed to detect orphaned files:', err)
+      setStorageError(err instanceof Error ? err.message : 'Failed to detect orphaned files')
+    } finally {
+      setLoadingOrphaned(false)
+    }
+  }
+
+  const handleCleanup = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (!orphanedFiles) return
+    const categories = selectedCategories.size > 0 ? Array.from(selectedCategories) : undefined
+    setIsCleaningUp(true)
+    setStorageError(null)
+    try {
+      const result = await cleanupOrphanedFiles(categories)
+      setCleanupResult(result)
+      loadStats()
+    } catch (err) {
+      console.error('Failed to cleanup orphaned files:', err)
+      setStorageError(err instanceof Error ? err.message : 'Failed to cleanup orphaned files')
+    } finally {
+      setIsCleaningUp(false)
+    }
+  }
+
+  const detectOrphanedRecordsHandler = async (clearCleanupResult: boolean = true) => {
+    setLoadingOrphanedRecords(true)
+    setStorageError(null)
+    if (clearCleanupResult) { setRecordsCleanupResult(null) }
+    try {
+      const data = await detectOrphanedRecords()
+      setOrphanedRecords(data)
+    } catch (err) {
+      console.error('Failed to detect orphaned records:', err)
+      setStorageError(err instanceof Error ? err.message : 'Failed to detect orphaned records')
+    } finally {
+      setLoadingOrphanedRecords(false)
+    }
+  }
+
+  const handleRecordsCleanup = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (!orphanedRecords) return
+    setIsCleaningUpRecords(true)
+    setStorageError(null)
+    try {
+      const result = await cleanupOrphanedRecords()
+      setRecordsCleanupResult(result)
+      await detectOrphanedRecordsHandler(false)
+    } catch (err) {
+      console.error('Failed to cleanup orphaned records:', err)
+      setStorageError(err instanceof Error ? err.message : 'Failed to cleanup orphaned records')
+    } finally {
+      setIsCleaningUpRecords(false)
+    }
+  }
+
+  // --- Reset Derived Data ---
+
+  const handleResetDerivedData = async () => {
+    showConfirmDialog({
+      title: 'Reset All Derived Data?',
+      message: 'This will DELETE ALL processed data (coordinates, masks, features, AI results, training data, models, logs) while keeping original WSI files. This operation CANNOT be undone. Are you absolutely sure?',
+      confirmText: 'Yes, Reset All Data',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        closeConfirmDialog()
+        setStorageError(null)
+        try {
+          const response = await resetDerivedData()
+          console.log('Reset derived data task started:', response.task_id)
+        } catch (err) {
+          console.error('Failed to start reset derived data task:', err)
+          setStorageError(err instanceof Error ? err.message : 'Failed to start reset derived data task')
+        }
+      }
+    })
+  }
+
+  // --- Load data on mount ---
+
+  useEffect(() => {
+    if (!stats) loadStats()
+    if (!storageConfig) loadStorageConfig()
+    if (batchDatasets.length === 0) loadBatchDatasets()
+    if (!externalDatasetsLoaded && !loadingExternalDatasets && getExternalDatasetsCachedSync() !== null) {
+      loadExternalDatasetsFunc()
+    }
+  }, [])
+
   const anyStorageOpInProgress = loadingStorage || loadingOrphaned || loadingOrphanedRecords
 
   return (
     <>
-      {/* Storage Location Configuration - Always visible, doesn't depend on stats */}
+      {/* Storage Location Configuration */}
       <Card className="p-4 sm:p-6 mb-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
           <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
@@ -236,7 +561,6 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
             <span className="text-xs text-gray-500">Source: {storageConfig.source}</span>
           )}
         </div>
-
         <form onSubmit={handleStorageSave} className="space-y-3">
           <div className="flex flex-col md:flex-row gap-2">
             <input
@@ -246,12 +570,7 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
               className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             />
             <div className="flex gap-2">
-              <Button
-                type="button"
-                onClick={handleSelectStorageDir}
-                disabled={storageSaving || !hasSelectDirectoryApi}
-                className="bg-gray-100 text-gray-800 hover:bg-gray-200"
-              >
+              <Button type="button" onClick={handleSelectStorageDir} disabled={storageSaving || !hasSelectDirectoryApi} className="bg-gray-100 text-gray-800 hover:bg-gray-200">
                 Browse
               </Button>
               <Button type="submit" disabled={storageSaving || !storagePath.trim()}>
@@ -259,20 +578,15 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
               </Button>
             </div>
           </div>
-
-          {storageConfigError && (
-            <div className="text-sm text-red-600">{storageConfigError}</div>
-          )}
-          {storageSaved && (
-            <div className="text-sm text-green-600">Storage location saved. Restart services to apply fully.</div>
-          )}
+          {storageConfigError && <div className="text-sm text-red-600">{storageConfigError}</div>}
+          {storageSaved && <div className="text-sm text-green-600">Storage location saved. Restart services to apply fully.</div>}
           <p className="text-xs text-gray-500">
             This directory stores derived data (coordinates, masks, results, models, logs). Image files can remain in their original locations.
           </p>
         </form>
       </Card>
 
-      {/* Storage Stats - Shows loading/error state inside the card */}
+      {/* Storage Stats */}
       <Card className="p-4 sm:p-6 mb-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-3">
@@ -283,10 +597,7 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
           </div>
           <button
             type="button"
-            onClick={(e) => {
-              e.preventDefault()
-              loadStats()
-            }}
+            onClick={(e) => { e.preventDefault(); loadStats() }}
             disabled={anyStorageOpInProgress}
             className="px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
           >
@@ -296,7 +607,6 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
             {loadingStorage ? 'Loading...' : 'Refresh'}
           </button>
         </div>
-
         {loadingStorage ? (
           <div className="flex items-center justify-center py-8">
             <div className="text-center">
@@ -308,26 +618,17 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
             <h3 className="text-red-800 font-semibold mb-2">Error</h3>
             <p className="text-red-600 text-sm">{storageError}</p>
-            <button
-              type="button"
-              onClick={loadStats}
-              className="mt-3 px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700"
-            >
-              Retry
-            </button>
+            <button type="button" onClick={loadStats} className="mt-3 px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700">Retry</button>
           </div>
         ) : stats ? (
           <StorageStatsDisplay stats={stats} formatBytes={formatBytes} />
         ) : (
-          <div className="text-center py-8 text-gray-500">
-            <p>No storage data available.</p>
-          </div>
+          <div className="text-center py-8 text-gray-500"><p>No storage data available.</p></div>
         )}
       </Card>
 
       {/* Orphaned Files & Orphaned Records Management - Side by Side */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Orphaned Files Card */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
         <OrphanedFilesCard
           orphanedFiles={orphanedFiles}
           loadingOrphaned={loadingOrphaned}
@@ -338,8 +639,6 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
           formatBytes={formatBytes}
           anyStorageOpInProgress={anyStorageOpInProgress}
         />
-
-        {/* Orphaned Records Card */}
         <OrphanedRecordsCard
           orphanedRecords={orphanedRecords}
           loadingOrphanedRecords={loadingOrphanedRecords}
@@ -351,63 +650,41 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
         />
       </div>
 
-      {/* Reset Derived Data - Dangerous Operation */}
+      {/* Reset Derived Data - Danger Zone */}
       <Card className="p-4 sm:p-6 mb-6 border-2 border-red-200 bg-red-50/30">
-        <div 
-          className="flex items-center justify-between cursor-pointer" 
+        <button
+          type="button"
           onClick={() => setIsDangerZoneOpen(!isDangerZoneOpen)}
+          className="w-full flex items-center justify-between"
         >
-          <h2 className="text-lg sm:text-lg font-semibold text-red-900 flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-red-700" />
+          <h2 className="text-lg sm:text-xl font-semibold text-red-800 flex items-center">
+            <AlertCircle className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-red-600 flex-shrink-0" />
             Danger Zone
           </h2>
-          <button type="button" className="text-red-700 transition-transform duration-200">
-            {isDangerZoneOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-          </button>
-        </div>
-
+          {isDangerZoneOpen ? (
+            <ChevronUp className="w-5 h-5 text-red-600" />
+          ) : (
+            <ChevronDown className="w-5 h-5 text-red-600" />
+          )}
+        </button>
         {isDangerZoneOpen && (
-          <div className="mt-4 animate-in fade-in slide-in-from-top-2 duration-200">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
-              <div>
-                <h3 className="text-md font-medium text-red-800 mb-1">
-                  Reset All Derived Data
-                </h3>
-                <p className="text-xs text-red-700">
-                  Warning: This will delete ALL processed data while keeping original WSI files.
-                </p>
-              </div>
-              <button
+          <div className="mt-4 space-y-4">
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <h3 className="text-red-800 font-semibold mb-2 flex items-center">
+                <Trash2 className="w-4 h-4 mr-2" />
+                Reset All Derived Data
+              </h3>
+              <p className="text-sm text-red-700 mb-3">
+                This will delete ALL processed data (coordinates, masks, features, AI results, training data, models, logs) while keeping original WSI files. This cannot be undone.
+              </p>
+              <Button
                 type="button"
                 onClick={handleResetDerivedData}
-                disabled={anyStorageOpInProgress}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors self-end sm:self-auto"
+                className="bg-red-600 text-white hover:bg-red-700"
               >
-                <Trash2 className="w-4 h-4" />
-                Reset All Data
-              </button>
-            </div>
-
-            <div className="bg-white rounded-lg p-4 border border-red-200">
-              <div className="text-sm text-gray-700 space-y-2">
-                <p className="font-medium text-red-900">This operation will DELETE:</p>
-                <ul className="list-disc list-inside space-y-1 text-xs ml-2">
-                  <li>All coordinates files</li>
-                  <li>All mask files</li>
-                  <li>All feature caches</li>
-                  <li>All AI analysis results</li>
-                  <li>All training data and tasks</li>
-                  <li>All trained models</li>
-                  <li>All logs and metadata</li>
-                </ul>
-                <p className="font-medium text-green-900 mt-3">This operation will PRESERVE:</p>
-                <ul className="list-disc list-inside space-y-1 text-xs ml-2">
-                  <li>Original WSI files (in wsi_files/)</li>
-                </ul>
-                <p className="text-xs text-red-700 mt-3 font-medium">
-                  This operation CANNOT be undone. Check Background Tasks panel for progress.
-                </p>
-              </div>
+                <Trash2 className="w-4 h-4 mr-2" />
+                Reset All Derived Data
+              </Button>
             </div>
           </div>
         )}
@@ -444,7 +721,7 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
         externalDatasets={externalDatasets}
         loadingExternalDatasets={loadingExternalDatasets}
         externalDatasetsLoaded={externalDatasetsLoaded}
-        loadExternalDatasets={loadExternalDatasets}
+        loadExternalDatasets={loadExternalDatasetsFunc}
         selectedExternalDatasets={selectedExternalDatasets}
         unbindingDatasets={unbindingDatasets}
         refreshExternalDatasets={refreshExternalDatasets}
@@ -455,7 +732,7 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
         navigate={navigate}
       />
 
-      {/* Check External Files Card */}
+      {/* Check External Files */}
       <ExternalFilesHealthCheckCard
         checkingExternalFiles={checkingExternalFiles}
         externalFilesResult={externalFilesResult}
@@ -465,6 +742,18 @@ export const StorageTab: React.FC<StorageTabProps> = (props) => {
         externalFilesError={externalFilesError}
         handleCheckExternalFiles={handleCheckExternalFiles}
         handleDeleteUnavailableFiles={handleDeleteUnavailableFiles}
+      />
+
+      {/* Migration Confirmation Modal */}
+      <MigrationModal
+        isOpen={showMigrationPrompt}
+        currentPath={storageConfig?.uploads_dir}
+        targetPath={migrationTarget}
+        deleteSource={deleteSource}
+        onDeleteSourceChange={setDeleteSource}
+        onCancel={() => setShowMigrationPrompt(false)}
+        onSkipMigration={handleSkipMigration}
+        onConfirmMigration={handleConfirmMigration}
       />
     </>
   )

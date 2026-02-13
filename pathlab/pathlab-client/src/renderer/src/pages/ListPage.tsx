@@ -9,6 +9,7 @@ import { Button } from '../components/ui/button'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { ALL_ACCEPT_STRING } from '../constants/fileTypes'
 import { formatBytes } from '../lib/utils'
+import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal } from '../components/list'
 
 export default function ListPage() {
   const navigate = useNavigate()
@@ -1797,765 +1798,118 @@ export default function ListPage() {
 
       {/* File Metadata Modal */}
       {showFileMetadataModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-            {/* Header */}
-            <div className="p-6 border-b border-gray-200">
-              <h3 className="text-2xl font-bold text-gray-900">Set Metadata for Files</h3>
-              <p className="text-gray-600 mt-1">Add metadata for each file (all fields are optional)</p>
-            </div>
-
-            {/* File List */}
-            <div className="flex-1 overflow-y-auto p-6">
-              <div className="space-y-4">
-                {selectedFiles.map((file, index) => (
-                  <div key={index} className="bg-gray-50 rounded-xl p-4 border border-gray-200">
-                    <div className="flex items-start gap-4">
-                      {/* File Icon and Name */}
-                      <div className="flex-shrink-0 w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                        <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                      </div>
-
-                      {/* File Info and Inputs */}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-gray-900 truncate mb-3">{file.name}</p>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Label (Disease Classification)
-                            </label>
-                            <input
-                              type="text"
-                              placeholder="e.g., Benign, Malignant, Grade 1"
-                              value={fileMetadata.get(file.name)?.label || ''}
-                              onChange={(e) => updateFileMetadata(file.name, 'label', e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Case ID
-                            </label>
-                            <input
-                              type="text"
-                              placeholder="e.g., case_001"
-                              value={fileMetadata.get(file.name)?.case_id || ''}
-                              onChange={(e) => updateFileMetadata(file.name, 'case_id', e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Age
-                            </label>
-                            <input
-                              type="number"
-                              placeholder="e.g., 45"
-                              value={fileMetadata.get(file.name)?.age || ''}
-                              onChange={(e) => updateFileMetadata(file.name, 'age', e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Gender
-                            </label>
-                            <select
-                              value={fileMetadata.get(file.name)?.gender || ''}
-                              onChange={(e) => updateFileMetadata(file.name, 'gender', e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                            >
-                              <option value="">Select Gender</option>
-                              <option value="Male">Male</option>
-                              <option value="Female">Female</option>
-                              <option value="Unspecified">Unspecified</option>
-                            </select>
-                          </div>
-                          <div className="col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Source (Organ/Tissue)
-                            </label>
-                            <input
-                              type="text"
-                              placeholder="e.g., Cervix, Lung, Breast"
-                              value={fileMetadata.get(file.name)?.source || ''}
-                              onChange={(e) => updateFileMetadata(file.name, 'source', e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="p-6 border-t border-gray-200 bg-gray-50">
-              <div className="flex justify-between items-center">
-                <p className="text-sm text-gray-600">
-                  {selectedFiles.length} file(s) selected
-                </p>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => {
-                      setShowFileMetadataModal(false)
-                      setSelectedFiles([])
-                      setFileMetadata(new Map())
-                      if (fileInputRef.current) {
-                        fileInputRef.current.value = ''
-                      }
-                    }}
-                    className="px-6 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleConfirmUpload}
-                    disabled={uploading}
-                    className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all font-semibold shadow-lg shadow-blue-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Upload All Files
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <FileMetadataModal
+          selectedFiles={selectedFiles}
+          fileMetadata={fileMetadata}
+          onUpdateMetadata={updateFileMetadata}
+          onCancel={() => {
+            setShowFileMetadataModal(false)
+            setSelectedFiles([])
+            setFileMetadata(new Map())
+            if (fileInputRef.current) {
+              fileInputRef.current.value = ''
+            }
+          }}
+          onConfirm={handleConfirmUpload}
+          uploading={uploading}
+        />
       )}
 
 
       {/* Delete Confirmation Modal */}
       {showDeleteModal && wsiToDelete && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="text-center mb-3 sm:mb-6">
-              <div className="w-10 h-10 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
-                <AlertCircle className="w-6 h-6 sm:w-10 sm:h-10 text-red-600" />
-              </div>
-              <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2 leading-tight">Delete Slide?</h3>
-              <p className="text-xs sm:text-base text-gray-600">This action cannot be undone</p>
-            </div>
-
-            {/* WSI Info */}
-            <div className="bg-gray-50 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4 border border-gray-100">
-              <div className="space-y-1 sm:space-y-2">
-                <div className="flex justify-between items-start gap-4">
-                  <span className="text-xs sm:text-sm font-medium text-gray-500 whitespace-nowrap">File:</span>
-                  <span className="text-xs sm:text-sm text-gray-900 font-semibold break-all text-right">{wsiToDelete.original_filename || wsiToDelete.wsi_id}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-xs sm:text-sm font-medium text-gray-500">Label:</span>
-                  <span className="text-xs sm:text-sm text-gray-900 font-medium">{wsiToDelete.label || 'Unknown'}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Storage Info */}
-            {loadingStorageInfo && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4 mb-3 sm:mb-4">
-                <div className="flex items-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
-                  <span className="text-xs sm:text-sm text-blue-800">Calculating size...</span>
-                </div>
-              </div>
-            )}
-
-            {wsiStorageInfo && !loadingStorageInfo && (() => {
-              // Calculate size and file count based on delete mode
-              const featuresSize = wsiStorageInfo.features.reduce((sum, f) => sum + f.size, 0)
-              const featuresCount = wsiStorageInfo.features.length
-              const displaySize = deleteMode === 'complete' ? wsiStorageInfo.total_size : wsiStorageInfo.total_size - featuresSize
-              const displayFiles = deleteMode === 'complete' ? wsiStorageInfo.total_files : wsiStorageInfo.total_files - featuresCount
-              return (
-                <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs sm:text-sm font-semibold text-blue-900">Reduced Storage:</span>
-                    <span className="text-base sm:text-lg font-bold text-blue-900">
-                      {formatBytes(displaySize)}
-                    </span>
-                  </div>
-                  <details className="text-xs sm:text-sm">
-                    <summary className="cursor-pointer text-blue-700 hover:text-blue-900 font-medium">
-                      Files to be removed ({displayFiles})
-                    </summary>
-                    <ul className="mt-2 space-y-1 text-blue-600/80 ml-4 border-l border-blue-100 pl-3">
-                      {wsiStorageInfo.wsi_file.exists && (
-                        <li>• WSI file ({formatBytes(wsiStorageInfo.wsi_file.size)})</li>
-                      )}
-                      {wsiStorageInfo.coordinates.exists && (
-                        <li>• Coordinates cache ({formatBytes(wsiStorageInfo.coordinates.size)})</li>
-                      )}
-                      {wsiStorageInfo.mask.exists && (
-                        <li>• Tissue mask ({formatBytes(wsiStorageInfo.mask.size)})</li>
-                      )}
-                      {wsiStorageInfo.ai_results.file_count > 0 && (
-                        <li>• AI results ({wsiStorageInfo.ai_results.file_count} files, {formatBytes(wsiStorageInfo.ai_results.size)})</li>
-                      )}
-                      {deleteMode === 'complete' && wsiStorageInfo.features.length > 0 && (
-                        <li>• Features ({wsiStorageInfo.features.length} files, {formatBytes(wsiStorageInfo.features.reduce((sum, f) => sum + f.size, 0))})</li>
-                      )}
-                    </ul>
-                  </details>
-                </div>
-              )
-            })()}
-
-            {/* Delete Mode Selection */}
-            <div className="mb-4">
-              <label className="block text-xs sm:text-sm font-bold text-gray-700 mb-2">
-                Deletion Mode
-              </label>
-              <div className="space-y-2">
-                <label className={`flex items-start gap-3 p-2 sm:p-3 border-2 rounded-xl cursor-pointer hover:bg-gray-50 transition-all ${deleteMode === 'standard' ? 'border-blue-500 bg-blue-50/20' : 'border-gray-100'}`}>
-                  <input
-                    type="radio"
-                    name="deleteMode"
-                    value="standard"
-                    checked={deleteMode === 'standard'}
-                    onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
-                    className="mt-1 h-4 w-4 text-blue-600"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold text-gray-900 text-sm">Standard Delete</div>
-                    <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
-                      Removes slide and results. <span className="text-blue-600 font-semibold">Keeps training features</span> for future research.
-                    </div>
-                  </div>
-                </label>
-
-                <label className={`flex items-start gap-3 p-2 sm:p-3 border-2 rounded-xl cursor-pointer hover:bg-gray-50 transition-all ${deleteMode === 'complete' ? 'border-red-500 bg-red-50/20' : 'border-gray-100'}`}>
-                  <input
-                    type="radio"
-                    name="deleteMode"
-                    value="complete"
-                    checked={deleteMode === 'complete'}
-                    onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
-                    className="mt-1 h-4 w-4 text-red-600"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold text-gray-900 text-sm">Complete Delete</div>
-                    <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
-                      Permanently wipes all data including training features. <span className="text-red-500 font-bold">Irreversible.</span>
-                    </div>
-                  </div>
-                </label>
-              </div>
-            </div>
-
-            {/* Warning - only on mobile */}
-            <div className="sm:hidden bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-4">
-              <p className="text-[10px] text-amber-800 leading-tight">
-                <strong>Attention:</strong> This permanent action cannot be undone.
-              </p>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowDeleteModal(false)
-                  setWsiToDelete(null)
-                }}
-                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmDelete}
-                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-bold shadow-sm"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <DeleteConfirmModal
+          wsiToDelete={wsiToDelete}
+          wsiStorageInfo={wsiStorageInfo}
+          loadingStorageInfo={loadingStorageInfo}
+          deleteMode={deleteMode}
+          onDeleteModeChange={setDeleteMode}
+          onCancel={() => {
+            setShowDeleteModal(false)
+            setWsiToDelete(null)
+          }}
+          onConfirm={handleConfirmDelete}
+        />
       )}
+
 
       {/* Batch Delete Confirmation Modal */}
       {showBatchDeleteModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="text-center mb-3 sm:mb-6">
-              <div className="w-10 h-10 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
-                <AlertCircle className="w-6 h-6 sm:w-10 sm:h-10 text-red-600" />
-              </div>
-              <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2 text-balance leading-tight">
-                {datasetToDeleteId ? 'Delete Dataset?' : 'Delete Multiple Slides?'}
-              </h3>
-              <p className="text-xs sm:text-base text-gray-600">This action cannot be undone</p>
-            </div>
-
-            {/* Selection Info */}
-            <div className="bg-gray-50 rounded-xl p-3 sm:p-4 mb-4 sm:mb-6 border border-gray-100 text-center">
-              <p className="text-xs sm:text-sm text-gray-700 leading-relaxed">
-                {datasetToDeleteId ? (
-                  <>You are about to delete dataset <span className="font-bold text-red-600">{datasetToDeleteName}</span> and all its <span className="font-bold">{selectedIds.size}</span> files</>
-                ) : (
-                  <>You are about to delete <span className="font-bold text-red-600">{selectedIds.size}</span> file{selectedIds.size > 1 ? 's' : ''}</>
-                )}
-              </p>
-            </div>
-
-            {/* Delete Mode Selection */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Deletion Mode
-              </label>
-              <div className="space-y-2">
-                <label className="flex items-start gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
-                  style={{ borderColor: deleteMode === 'standard' ? '#3b82f6' : '#e5e7eb' }}>
-                  <input
-                    type="radio"
-                    name="batchDeleteMode"
-                    value="standard"
-                    checked={deleteMode === 'standard'}
-                    onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
-                    className="mt-1 h-4 w-4 text-blue-600"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold text-gray-900 text-sm">Standard Delete</div>
-                    <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
-                      Removes slide and results. <span className="text-blue-600 font-semibold">Keeps training features</span> for future research.
-                    </div>
-                  </div>
-                </label>
-
-                <label className={`flex items-start gap-3 p-2 sm:p-3 border-2 rounded-xl cursor-pointer hover:bg-gray-50 transition-all ${deleteMode === 'complete' ? 'border-red-500 bg-red-50/20' : 'border-gray-100'}`}>
-                  <input
-                    type="radio"
-                    name="batchDeleteMode"
-                    value="complete"
-                    checked={deleteMode === 'complete'}
-                    onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
-                    className="mt-1 h-4 w-4 text-red-600"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold text-gray-900 text-sm">Complete Delete</div>
-                    <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
-                      Permanently wipes all data including training features. <span className="text-red-500 font-bold">Irreversible.</span>
-                    </div>
-                  </div>
-                </label>
-              </div>
-            </div>
-
-            {/* Warning - only on mobile */}
-            <div className="sm:hidden bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-4">
-              <p className="text-[10px] text-amber-800 leading-tight">
-                <strong>Attention:</strong> This permanent action cannot be undone.
-              </p>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowBatchDeleteModal(false)
-                }}
-                disabled={deleting}
-                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmBatchDelete}
-                disabled={deleting}
-                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-bold disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
-              >
-                {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
-                {deleting ? 'Deleting...' : (datasetToDeleteId ? 'Delete' : `Delete ${selectedIds.size}`)}
-              </button>
-            </div>
-          </div>
-        </div>
+        <BatchDeleteModal
+          selectedIds={selectedIds}
+          datasetToDeleteId={datasetToDeleteId}
+          datasetToDeleteName={datasetToDeleteName}
+          deleteMode={deleteMode}
+          onDeleteModeChange={setDeleteMode}
+          deleting={deleting}
+          onCancel={() => setShowBatchDeleteModal(false)}
+          onConfirm={handleConfirmBatchDelete}
+        />
       )}
 
       {/* Edit Metadata Modal */}
       {showEditModal && editingWSI && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="text-center mb-3 sm:mb-6">
-              <div className="w-10 h-10 sm:w-16 sm:h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
-                <Edit className="w-6 h-6 sm:w-10 sm:h-10 text-blue-600" />
-              </div>
-              <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2">Edit Metadata</h3>
-              <p className="text-xs sm:text-sm text-gray-600">Update slide information</p>
-            </div>
-
-            {/* WSI ID (read-only) */}
-            <div className="mb-3 sm:mb-4">
-              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                Slide ID
-              </label>
-              <input
-                type="text"
-                value={editingWSI.wsi_id}
-                disabled
-                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed text-xs sm:text-sm"
-              />
-            </div>
-
-            {/* Label Input */}
-            <div className="mb-3 sm:mb-4">
-              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                Label (Disease Classification)
-              </label>
-              <input
-                type="text"
-                value={editLabel}
-                onChange={(e) => setEditLabel(e.target.value)}
-                placeholder="e.g., Benign, Malignant, Grade 1"
-                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
-              />
-            </div>
-
-            {/* Case ID Input */}
-            <div className="mb-3 sm:mb-4">
-              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                Case ID
-              </label>
-              <input
-                type="text"
-                value={editCaseId}
-                onChange={(e) => setEditCaseId(e.target.value)}
-                placeholder="e.g., case_001"
-                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-blue-100 rounded-lg focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 text-xs sm:text-sm transition-all"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4">
-              {/* Age Input */}
-              <div>
-                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                  Age
-                </label>
-                <input
-                  type="number"
-                  value={editAge}
-                  onChange={(e) => setEditAge(e.target.value)}
-                  placeholder="e.g., 45"
-                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
-                />
-              </div>
-
-              {/* Gender Input */}
-              <div>
-                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                  Gender
-                </label>
-                <select
-                  value={editGender}
-                  onChange={(e) => setEditGender(e.target.value)}
-                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm bg-white"
-                >
-                  <option value="">Select Gender</option>
-                  <option value="Male">Male</option>
-                  <option value="Female">Female</option>
-                  <option value="Unspecified">Unspecified</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Source Input */}
-            <div className="mb-6 sm:mb-8">
-              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                Source (Organ/Tissue)
-              </label>
-              <input
-                type="text"
-                value={editSource}
-                onChange={(e) => setEditSource(e.target.value)}
-                placeholder="e.g., Cervix, Lung, Breast"
-                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
-              />
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowEditModal(false)
-                  setEditingWSI(null)
-                }}
-                disabled={updating}
-                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmEdit}
-                disabled={updating}
-                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-blue-500/10"
-              >
-                {updating ? 'Saving...' : 'Save Changes'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <EditMetadataModal
+          editingWSI={editingWSI}
+          editLabel={editLabel}
+          editCaseId={editCaseId}
+          editAge={editAge}
+          editGender={editGender}
+          editSource={editSource}
+          onEditLabelChange={setEditLabel}
+          onEditCaseIdChange={setEditCaseId}
+          onEditAgeChange={setEditAge}
+          onEditGenderChange={setEditGender}
+          onEditSourceChange={setEditSource}
+          updating={updating}
+          onCancel={() => {
+            setShowEditModal(false)
+            setEditingWSI(null)
+          }}
+          onConfirm={handleConfirmEdit}
+        />
       )}
 
       {/* Batch Edit Metadata Modal */}
       {showBatchEditModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="text-center mb-3 sm:mb-6">
-              <div className="w-10 h-10 sm:w-16 sm:h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
-                <Edit className="w-6 h-6 sm:w-10 sm:h-10 text-blue-600" />
-              </div>
-              <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2">Batch Edit Metadata</h3>
-              <p className="text-xs sm:text-sm text-gray-600">Update {selectedIds.size} slide(s)</p>
-            </div>
-
-            {/* Info Message */}
-            <div className="mb-3 sm:mb-4 p-2.5 sm:p-3 bg-blue-50 border border-blue-100 rounded-lg">
-              <p className="text-[10px] sm:text-sm text-blue-800 font-medium">
-                Leave fields empty to keep existing values unchanged
-              </p>
-            </div>
-
-            <div className="space-y-3 sm:space-y-4">
-              {/* Label Input */}
-              <div>
-                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                  Label (Disease Classification)
-                </label>
-                <input
-                  type="text"
-                  value={batchEditLabel}
-                  onChange={(e) => setBatchEditLabel(e.target.value)}
-                  placeholder="Keep existing..."
-                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
-                />
-              </div>
-
-              {/* Case ID Input */}
-              <div>
-                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                  Case ID
-                </label>
-                <input
-                  type="text"
-                  value={batchEditCaseId}
-                  onChange={(e) => setBatchEditCaseId(e.target.value)}
-                  placeholder="Keep existing..."
-                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                {/* Age Input */}
-                <div>
-                  <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                    Age
-                  </label>
-                  <input
-                    type="number"
-                    value={batchEditAge}
-                    onChange={(e) => setBatchEditAge(e.target.value)}
-                    placeholder="Existing..."
-                    className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
-                  />
-                </div>
-
-                {/* Gender Input */}
-                <div>
-                  <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                    Gender
-                  </label>
-                  <select
-                    value={batchEditGender}
-                    onChange={(e) => setBatchEditGender(e.target.value)}
-                    className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm bg-white"
-                  >
-                    <option value="">Keep existing</option>
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                    <option value="Unspecified">Unspecified</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Source Input */}
-              <div className="mb-4 sm:mb-6">
-                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                  Source (Organ/Tissue)
-                </label>
-                <input
-                  type="text"
-                  value={batchEditSource}
-                  onChange={(e) => setBatchEditSource(e.target.value)}
-                  placeholder="Keep existing..."
-                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
-                />
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowBatchEditModal(false)
-                }}
-                disabled={batchUpdating}
-                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmBatchEdit}
-                disabled={batchUpdating}
-                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-blue-500/10"
-              >
-                {batchUpdating ? 'Updating...' : `Update ${selectedIds.size}`}
-              </button>
-            </div>
-          </div>
-        </div>
+        <BatchEditModal
+          selectedCount={selectedIds.size}
+          batchEditLabel={batchEditLabel}
+          batchEditCaseId={batchEditCaseId}
+          batchEditAge={batchEditAge}
+          batchEditGender={batchEditGender}
+          batchEditSource={batchEditSource}
+          onBatchEditLabelChange={setBatchEditLabel}
+          onBatchEditCaseIdChange={setBatchEditCaseId}
+          onBatchEditAgeChange={setBatchEditAge}
+          onBatchEditGenderChange={setBatchEditGender}
+          onBatchEditSourceChange={setBatchEditSource}
+          batchUpdating={batchUpdating}
+          onCancel={() => setShowBatchEditModal(false)}
+          onConfirm={handleConfirmBatchEdit}
+        />
       )}
 
       {/* Edit Dataset Modal */}
       {editingDatasetId && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={handleEditDatasetCancel}>
-          <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-md p-4 sm:p-6 animate-in zoom-in-95 fade-in duration-200" onClick={e => e.stopPropagation()}>
-            {/* Header */}
-            <div className="flex items-center justify-between mb-4 sm:mb-6">
-              <h3 className="text-lg sm:text-xl font-bold text-gray-900">Edit Dataset</h3>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-gray-400 hover:text-gray-600"
-                onClick={handleEditDatasetCancel}
-              >
-                <X className="w-5 h-5" />
-              </Button>
-            </div>
-
-            {/* Dataset Name */}
-            <div className="mb-4">
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Dataset Name
-              </label>
-              <input
-                type="text"
-                value={editingDatasetName}
-                onChange={(e) => setEditingDatasetName(e.target.value)}
-                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Enter dataset name"
-                autoFocus
-              />
-            </div>
-
-            {/* Dataset Type */}
-            <div className="mb-4">
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Analysis Type
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setEditingDatasetType('classification')}
-                  className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
-                    editingDatasetType === 'classification'
-                      ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                  }`}
-                >
-                  <span className="font-medium">Classification</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingDatasetType('survival')}
-                  className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
-                    editingDatasetType === 'survival'
-                      ? 'border-amber-500 bg-amber-50 text-amber-700'
-                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                  }`}
-                >
-                  <span className="font-medium">Survival</span>
-                </button>
-              </div>
-              {editingDatasetType !== editingDatasetOriginalType && (
-                <p className="mt-2 text-xs text-amber-600">
-                  Changing type will modify metadata for all slides in this dataset
-                </p>
-              )}
-            </div>
-
-            {/* Data Level */}
-            {(() => {
-              const ds = datasets.find(d => d.dataset_id === editingDatasetId)
-              if (ds && getDatasetItemType(ds.total_size, ds.file_count) === 'slides') {
-                return (
-                  <div className="mb-6">
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Data Level
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setEditingDatasetDataLevel('case')}
-                        className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
-                          editingDatasetDataLevel === 'case'
-                            ? 'border-purple-500 bg-purple-50 text-purple-700'
-                            : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                        }`}
-                      >
-                        <Users className="w-4 h-4" />
-                        <span className="font-medium">Case-Level</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingDatasetDataLevel('file')}
-                        className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
-                          editingDatasetDataLevel === 'file'
-                            ? 'border-orange-500 bg-orange-50 text-orange-700'
-                            : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                        }`}
-                      >
-                        <FileImage className="w-4 h-4" />
-                        <span className="font-medium">File-Level</span>
-                      </button>
-                    </div>
-                    {editingDatasetDataLevel !== editingDatasetOriginalDataLevel && (
-                      <p className="mt-2 text-xs text-purple-600">
-                        Changing data level affects how files are grouped for analysis
-                      </p>
-                    )}
-                  </div>
-                )
-              }
-              return null
-            })()}
-
-            {/* Action Buttons */}
-            <div className="flex gap-3">
-              <button
-                onClick={handleEditDatasetCancel}
-                disabled={editingDatasetSaving}
-                className="flex-1 px-4 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleEditDatasetSave}
-                disabled={editingDatasetSaving || !editingDatasetName.trim()}
-                className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-bold disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {editingDatasetSaving ? 'Saving...' : 'Save Changes'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <EditDatasetModal
+          editingDatasetName={editingDatasetName}
+          editingDatasetType={editingDatasetType}
+          editingDatasetOriginalType={editingDatasetOriginalType}
+          editingDatasetDataLevel={editingDatasetDataLevel}
+          editingDatasetOriginalDataLevel={editingDatasetOriginalDataLevel}
+          editingDatasetSaving={editingDatasetSaving}
+          isSlideDataset={(() => {
+            const ds = datasets.find(d => d.dataset_id === editingDatasetId)
+            return ds ? getDatasetItemType(ds.total_size, ds.file_count) === 'slides' : false
+          })()}
+          onNameChange={setEditingDatasetName}
+          onTypeChange={setEditingDatasetType}
+          onDataLevelChange={setEditingDatasetDataLevel}
+          onCancel={handleEditDatasetCancel}
+          onSave={handleEditDatasetSave}
+        />
       )}
     </div>
   )
 }
-

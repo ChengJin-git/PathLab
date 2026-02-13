@@ -1,53 +1,148 @@
+import { useState, useEffect, useCallback } from 'react'
 import { MessageSquare, RefreshCw, Trash2, Download, X, ThumbsUp, ThumbsDown, Clock } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Label } from '../ui/label'
 import { Select } from '../ui/select'
-import { MessageFeedback } from '../../api'
+import {
+  MessageFeedback, FeedbackStats,
+  getAdminFeedbacks, getFeedbackStats, exportFeedbacks as exportFeedbacksApi,
+  resetAllFeedbacks, startAsyncExport, getExportTaskStatus, downloadExportFile,
+  ExportTaskStatus
+} from '../../api'
+import { ShowConfirmDialog } from './ConfirmDialog'
 
 export interface FeedbackTabProps {
-  feedbacks: MessageFeedback[]
-  feedbackTotal: number
-  feedbackPage: number
-  feedbackLimit: number
-  loadingFeedbacks: boolean
-  resettingFeedbacks: boolean
-  exportingFeedbacks: boolean
-  feedbackTypeFilter: 'thumbs_up' | 'thumbs_down' | null
-  helpfulnessFilter: 'helpful' | 'not_helpful' | null
-  exportDateFrom: string
-  exportDateTo: string
-  onLoadFeedbacks: () => void
-  onResetFeedbacks: () => void
-  onExportFeedbacks: (format: 'csv' | 'json') => void
-  onFeedbackTypeFilterChange: (value: 'thumbs_up' | 'thumbs_down' | null) => void
-  onHelpfulnessFilterChange: (value: 'helpful' | 'not_helpful' | null) => void
-  onExportDateFromChange: (value: string) => void
-  onExportDateToChange: (value: string) => void
-  onPageChange: (page: number) => void
+  showConfirmDialog: ShowConfirmDialog
+  closeConfirmDialog: () => void
 }
 
-export function FeedbackTab({
-  feedbacks,
-  feedbackTotal,
-  feedbackPage,
-  feedbackLimit,
-  loadingFeedbacks,
-  resettingFeedbacks,
-  exportingFeedbacks,
-  feedbackTypeFilter,
-  helpfulnessFilter,
-  exportDateFrom,
-  exportDateTo,
-  onLoadFeedbacks,
-  onResetFeedbacks,
-  onExportFeedbacks,
-  onFeedbackTypeFilterChange,
-  onHelpfulnessFilterChange,
-  onExportDateFromChange,
-  onExportDateToChange,
-  onPageChange
-}: FeedbackTabProps) {
+export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackTabProps) {
+  // State
+  const [feedbacks, setFeedbacks] = useState<MessageFeedback[]>([])
+  const [feedbackStats, setFeedbackStats] = useState<FeedbackStats | null>(null)
+  const [feedbackTotal, setFeedbackTotal] = useState(0)
+  const [feedbackPage, setFeedbackPage] = useState(0)
+  const [feedbackLimit] = useState(20)
+  const [loadingFeedbacks, setLoadingFeedbacks] = useState(false)
+  const [feedbackError, setFeedbackError] = useState<string | null>(null)
+  const [feedbackTypeFilter, setFeedbackTypeFilter] = useState<'thumbs_up' | 'thumbs_down' | null>(null)
+  const [helpfulnessFilter, setHelpfulnessFilter] = useState<'helpful' | 'not_helpful' | null>(null)
+  const [exportingFeedbacks, setExportingFeedbacks] = useState(false)
+  const [resettingFeedbacks, setResettingFeedbacks] = useState(false)
+  const [exportDateFrom, setExportDateFrom] = useState<string>(() => {
+    const d = new Date(); d.setMonth(d.getMonth() - 3); return d.toISOString().split('T')[0]
+  })
+  const [exportDateTo, setExportDateTo] = useState<string>(() => new Date().toISOString().split('T')[0])
+  const [exportTaskId, setExportTaskId] = useState<string | null>(null)
+  const [exportTaskStatus, setExportTaskStatus] = useState<ExportTaskStatus | null>(null)
+  const [exportPollingInterval, setExportPollingInterval] = useState<NodeJS.Timeout | null>(null)
+
+  // Load feedbacks
+  const loadFeedbacks = useCallback(async () => {
+    setLoadingFeedbacks(true)
+    setFeedbackError(null)
+    try {
+      const [feedbackResponse, statsResponse] = await Promise.all([
+        getAdminFeedbacks(feedbackPage * feedbackLimit, feedbackLimit, feedbackTypeFilter, helpfulnessFilter),
+        getFeedbackStats()
+      ])
+      setFeedbacks(feedbackResponse.feedbacks)
+      setFeedbackTotal(feedbackResponse.total)
+      setFeedbackStats(statsResponse)
+    } catch (err) {
+      setFeedbackError(err instanceof Error ? err.message : 'Failed to load feedbacks')
+    } finally {
+      setLoadingFeedbacks(false)
+    }
+  }, [feedbackPage, feedbackLimit, feedbackTypeFilter, helpfulnessFilter])
+
+  // Load on mount and when filters change
+  useEffect(() => { loadFeedbacks() }, [loadFeedbacks])
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => { if (exportPollingInterval) clearInterval(exportPollingInterval) }
+  }, [exportPollingInterval])
+
+  // Async export
+  const handleAsyncExport = async (format: 'json' | 'csv') => {
+    if (exportPollingInterval) { clearInterval(exportPollingInterval); setExportPollingInterval(null) }
+    setExportTaskId(null); setExportTaskStatus(null); setExportingFeedbacks(true); setFeedbackError(null)
+    try {
+      const result = await startAsyncExport(format, exportDateFrom || null, exportDateTo || null, feedbackTypeFilter, helpfulnessFilter)
+      setExportTaskId(result.task_id)
+      const pollStatus = async () => {
+        try {
+          const status = await getExportTaskStatus(result.task_id)
+          setExportTaskStatus(status)
+          if (status.status === 'completed') {
+            if (exportPollingInterval) { clearInterval(exportPollingInterval); setExportPollingInterval(null) }
+            setExportingFeedbacks(false)
+            const blob = await downloadExportFile(result.task_id)
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a'); a.href = url
+            a.download = `feedbacks_${new Date().toISOString().split('T')[0]}.${format}`
+            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
+          } else if (status.status === 'failed') {
+            if (exportPollingInterval) { clearInterval(exportPollingInterval); setExportPollingInterval(null) }
+            setExportingFeedbacks(false); setFeedbackError(status.error_message || 'Export failed')
+          }
+        } catch { /* continue polling */ }
+      }
+      const interval = setInterval(pollStatus, 2000); setExportPollingInterval(interval)
+      await pollStatus()
+    } catch (err) {
+      setFeedbackError(err instanceof Error ? err.message : 'Failed to start export'); setExportingFeedbacks(false)
+    }
+  }
+
+  // Export feedbacks (sync for small datasets, async for large)
+  const handleExportFeedbacks = async (format: 'csv' | 'json') => {
+    if (feedbackStats && feedbackStats.total_feedbacks > 1000) { await handleAsyncExport(format); return }
+    setExportingFeedbacks(true)
+    try {
+      const result = await exportFeedbacksApi(format)
+      if (format === 'csv' && result instanceof Blob) {
+        const url = URL.createObjectURL(result); const a = document.createElement('a'); a.href = url
+        a.download = `feedbacks_${new Date().toISOString().split('T')[0]}.csv`
+        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
+      } else if (format === 'json' && !(result instanceof Blob)) {
+        const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url
+        a.download = `feedbacks_${new Date().toISOString().split('T')[0]}.json`
+        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
+      }
+    } catch (err) {
+      setFeedbackError(err instanceof Error ? err.message : 'Failed to export feedbacks')
+    } finally { setExportingFeedbacks(false) }
+  }
+
+  // Reset all feedbacks
+  const handleResetFeedbacks = () => {
+    showConfirmDialog({
+      title: 'Reset All Feedbacks',
+      message: 'Are you sure you want to delete ALL feedback data? This action cannot be undone.',
+      confirmText: 'Delete All', confirmVariant: 'danger', showCancel: true,
+      onConfirm: async () => {
+        closeConfirmDialog()
+        setResettingFeedbacks(true)
+        try {
+          const result = await resetAllFeedbacks()
+          setTimeout(() => {
+            showConfirmDialog({
+              title: 'Success', message: `Successfully deleted ${result.deleted_count} feedbacks.`,
+              confirmText: 'OK', confirmVariant: 'info', showCancel: false,
+              onConfirm: () => closeConfirmDialog()
+            })
+          }, 100)
+          await loadFeedbacks()
+        } catch (err) {
+          setFeedbackError(err instanceof Error ? err.message : 'Failed to reset feedbacks')
+        } finally { setResettingFeedbacks(false) }
+      }
+    })
+  }
   return (
     <Card className="p-4 sm:p-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
@@ -56,13 +151,13 @@ export function FeedbackTab({
           User Feedback Analytics
         </h2>
         <div className="flex gap-2 self-end sm:self-auto">
-          <Button variant="outline" onClick={onLoadFeedbacks} disabled={loadingFeedbacks} className="gap-2">
+          <Button variant="outline" onClick={loadFeedbacks} disabled={loadingFeedbacks} className="gap-2">
             <RefreshCw className={`w-4 h-4 ${loadingFeedbacks ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
           <Button
             variant="outline"
-            onClick={onResetFeedbacks}
+            onClick={handleResetFeedbacks}
             disabled={loadingFeedbacks || resettingFeedbacks}
             className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
           >
@@ -81,7 +176,7 @@ export function FeedbackTab({
               <Label className="text-xs font-semibold text-gray-500 mb-1.5 block">Feedback Type</Label>
               <Select
                 value={feedbackTypeFilter || ''}
-                onChange={(val) => onFeedbackTypeFilterChange(val ? val as 'thumbs_up' | 'thumbs_down' : null)}
+                onChange={(val) => { setFeedbackTypeFilter(val ? val as 'thumbs_up' | 'thumbs_down' : null); setFeedbackPage(0) }}
                 options={[
                   { value: '', label: 'All Types' },
                   { value: 'thumbs_up', label: 'Thumbs Up' },
@@ -93,7 +188,7 @@ export function FeedbackTab({
               <Label className="text-xs font-semibold text-gray-500 mb-1.5 block">Helpfulness</Label>
               <Select
                 value={helpfulnessFilter || ''}
-                onChange={(val) => onHelpfulnessFilterChange(val ? val as 'helpful' | 'not_helpful' : null)}
+                onChange={(val) => { setHelpfulnessFilter(val ? val as 'helpful' | 'not_helpful' : null); setFeedbackPage(0) }}
                 options={[
                   { value: '', label: 'All Ratings' },
                   { value: 'helpful', label: 'Helpful' },
@@ -113,21 +208,21 @@ export function FeedbackTab({
                 <input
                   type="date"
                   value={exportDateFrom}
-                  onChange={(e) => onExportDateFromChange(e.target.value)}
+                  onChange={(e) => setExportDateFrom(e.target.value)}
                   className="h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
                 />
                 <span className="text-gray-400">-</span>
                 <input
                   type="date"
                   value={exportDateTo}
-                  onChange={(e) => onExportDateToChange(e.target.value)}
+                  onChange={(e) => setExportDateTo(e.target.value)}
                   className="h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
                 />
                 {(exportDateFrom || exportDateTo) && (
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => { onExportDateFromChange(''); onExportDateToChange('') }}
+                    onClick={() => { setExportDateFrom(''); setExportDateTo('') }}
                     className="h-9 w-9 p-0 text-gray-400 hover:text-gray-600"
                     title="Clear dates"
                   >
@@ -137,10 +232,10 @@ export function FeedbackTab({
               </div>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => onExportFeedbacks('csv')} disabled={exportingFeedbacks || loadingFeedbacks} className="h-9 gap-2 bg-white">
+              <Button variant="outline" onClick={() => handleExportFeedbacks('csv')} disabled={exportingFeedbacks || loadingFeedbacks} className="h-9 gap-2 bg-white">
                 <Download className="w-4 h-4" />CSV
               </Button>
-              <Button variant="outline" onClick={() => onExportFeedbacks('json')} disabled={exportingFeedbacks || loadingFeedbacks} className="h-9 gap-2 bg-white">
+              <Button variant="outline" onClick={() => handleExportFeedbacks('json')} disabled={exportingFeedbacks || loadingFeedbacks} className="h-9 gap-2 bg-white">
                 <Download className="w-4 h-4" />JSON
               </Button>
             </div>
@@ -245,7 +340,7 @@ export function FeedbackTab({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => onPageChange(Math.max(0, feedbackPage - 1))}
+              onClick={() => setFeedbackPage(Math.max(0, feedbackPage - 1))}
               disabled={feedbackPage === 0 || loadingFeedbacks}
             >
               Previous
@@ -253,7 +348,7 @@ export function FeedbackTab({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => onPageChange(feedbackPage + 1)}
+              onClick={() => setFeedbackPage(feedbackPage + 1)}
               disabled={(feedbackPage + 1) * feedbackLimit >= feedbackTotal || loadingFeedbacks}
             >
               Next

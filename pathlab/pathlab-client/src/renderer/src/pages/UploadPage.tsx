@@ -1,28 +1,23 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import * as XLSX from 'xlsx'
 import {
   Download,
   X,
   AlertCircle,
   UploadCloud,
-  Settings2,
   Trash2,
   Edit2,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
   ChevronUp,
-  Database,
-  ArrowRight,
   Plus,
   Tags,
   Activity,
   ArrowLeft,
   FileSpreadsheet,
   CheckCircle2,
-  Users,
-  FileImage
 } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -30,59 +25,18 @@ import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
 import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate } from '../api'
-import { useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
 import { ALL_EXTENSIONS, isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../constants/fileTypes'
-
-interface LocalItem {
-  key: string
-  name: string
-  path?: string
-  file?: File
-  associatedFiles?: File[]
-  associatedPaths?: string[]
-  type?: 'mrxs' | 'tmap' | 'standard'
-  missingAssociated?: boolean  // True if MRXS/TMAP is missing associated data
-}
-
-interface ElectronFilesApi {
-  selectFiles?: (options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => Promise<string[] | null>
-}
-
-interface ElectronApi {
-  files?: ElectronFilesApi
-}
+import { parseCsvMetadata } from '../lib/csvImporter'
+import {
+  type LocalItem, type FileMetadata, type UploadMode, type DataLevel, type DataType,
+  type ElectronApi, type MrxsDataFolder, type CollectionResult,
+  defaultMetadata, organSources, generateCaseId,
+  collectItemsFromDataTransfer, buildFileKey,
+  BulkEditModal, DatasetConfigStep, SuccessStep
+} from '../components/upload'
 
 declare const window: Window & { api?: ElectronApi }
-
-// Upload mode type: classification (label) or survival (event_time, event_status)
-type UploadMode = 'classification' | 'survival'
-// Aggregation level type: case (case-level grouping) or file (file-level, each file independent)
-type DataLevel = 'case' | 'file'
-// Data type: wsi (whole slide images) or patch (image patches/tiles)
-type DataType = 'wsi' | 'patch'
-
-// Metadata type with all possible fields
-interface FileMetadata {
-  label: string
-  case_id: string
-  age: string
-  gender: string
-  source: string
-  // Survival analysis fields
-  event_time: string
-  event_status: string
-}
-
-const defaultMetadata: FileMetadata = {
-  label: '',
-  case_id: '',
-  age: '',
-  gender: '',
-  source: '',
-  event_time: '',
-  event_status: ''
-}
 
 export default function RegisterPage() {
   const { error: toastError, warning: toastWarning } = useToast()
@@ -245,249 +199,7 @@ export default function RegisterPage() {
     }
   }, [totalPages, currentPage])
 
-  // --- Logic Helpers ---
-
-  const generateCaseId = () => {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-    let result = ''
-    for (let i = 0; i < 5; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length))
-    }
-    return result
-  }
-
-  const organSources = [
-    'Adrenal Gland', 'Aorta', 'Bladder', 'Blood Vessel', 'Bone', 'Bone Marrow',
-    'Brain', 'Breast', 'Bronchus', 'Cartilage', 'Cervix', 'Colon',
-    'Endometrium', 'Esophagus', 'Eye', 'Fallopian Tube', 'Gallbladder',
-    'Heart', 'Joint', 'Kidney', 'Larynx', 'Liver', 'Lung', 'Lymph Node',
-    'Mesentery', 'Muscle', 'Oral Cavity', 'Ovary', 'Pancreas', 'Parathyroid',
-    'Penis', 'Peripheral Nerve', 'Peritoneum', 'Pharynx', 'Pituitary Gland',
-    'Pleura', 'Prostate', 'Rectum', 'Retina', 'Salivary Gland', 'Skin',
-    'Small Intestine', 'Soft Tissue', 'Spinal Cord', 'Spleen', 'Stomach',
-    'Testis', 'Thymus', 'Thyroid', 'Tongue', 'Tonsil', 'Trachea',
-    'Ureter', 'Urethra', 'Uterus', 'Vagina', 'Vulva', 'Other'
-  ]
-
   const supportsNativePicker = typeof window !== 'undefined' && !!window.api?.files?.selectFiles
-
-  const buildFileKey = (file: File) => `${file.name}-${file.size}-${file.lastModified}`
-
-  // --- File Collection Logic ---
-  // Design: User drags a single folder containing WSI files.
-  // Sub-folders are ONLY for MRXS associated data (same name as .mrxs file).
-  // Files in sub-folders should NOT be treated as independent WSI files.
-
-  const readAllEntries = async (directoryEntry: any): Promise<any[]> => {
-    const reader = directoryEntry.createReader()
-    const entries: any[] = []
-    while (true) {
-      const batch: any[] = await new Promise(resolve => reader.readEntries(resolve, () => resolve([])))
-      if (!batch.length) break
-      entries.push(...batch)
-    }
-    return entries
-  }
-
-  // Recursively collect all files from a directory (for MRXS data folders)
-  const collectAllFilesFromDirectory = async (directoryEntry: any): Promise<File[]> => {
-    const entries = await readAllEntries(directoryEntry)
-    const files: File[] = []
-    for (const entry of entries) {
-      if (entry.isFile) {
-        const file = await new Promise<File | null>(resolve => {
-          entry.file((f: File) => resolve(f), () => resolve(null))
-        })
-        if (file) files.push(file)
-      } else if (entry.isDirectory) {
-        const subFiles = await collectAllFilesFromDirectory(entry)
-        files.push(...subFiles)
-      }
-    }
-    return files
-  }
-
-  interface MrxsDataFolder {
-    folderName: string
-    folderFiles: File[]
-  }
-
-  interface CollectionResult {
-    items: LocalItem[]
-    orphanFolders: MrxsDataFolder[]  // Folders without matching .mrxs
-    orphanDtFiles: Map<string, File[]>  // baseName -> dt files without matching .tmap
-    unsupportedFileNames: string[]
-  }
-
-  const collectItemsFromDataTransfer = async (dataTransfer: DataTransfer): Promise<CollectionResult> => {
-    const dataItems = Array.from(dataTransfer.items || [])
-    const hasEntries = dataItems.some(item => (item as any).webkitGetAsEntry)
-
-    // First-level files (WSI candidates) and sub-folders (MRXS data only)
-    const firstLevelFiles: File[] = []
-    const mrxsDataFolders: MrxsDataFolder[] = []
-    // Track directly dragged folders (potential MRXS data folders dragged separately)
-    const directlyDraggedFolders: MrxsDataFolder[] = []
-
-    if (hasEntries) {
-      const topEntries = dataItems.map(item => (item as any).webkitGetAsEntry?.()).filter(Boolean)
-
-      for (const entry of topEntries) {
-        if (entry.isFile) {
-          // Directly dragged file -> WSI candidate
-          const file = await new Promise<File | null>(resolve => {
-            entry.file((f: File) => resolve(f), () => resolve(null))
-          })
-          if (file) firstLevelFiles.push(file)
-        } else if (entry.isDirectory) {
-          // Check if this folder contains WSI files (then it's a container)
-          // or only data files (then it might be an MRXS data folder)
-          const folderEntries = await readAllEntries(entry)
-          const hasWsiFiles = folderEntries.some(e => e.isFile && isSupportedName(e.name))
-
-          if (hasWsiFiles) {
-            // This is a container folder with WSI files
-            for (const subEntry of folderEntries) {
-              if (subEntry.isFile) {
-                const file = await new Promise<File | null>(resolve => {
-                  subEntry.file((f: File) => resolve(f), () => resolve(null))
-                })
-                if (file) firstLevelFiles.push(file)
-              } else if (subEntry.isDirectory) {
-                // Sub-folder -> ONLY for MRXS associated data
-                const subFolderFiles = await collectAllFilesFromDirectory(subEntry)
-                mrxsDataFolders.push({
-                  folderName: subEntry.name,
-                  folderFiles: subFolderFiles
-                })
-              }
-            }
-          } else {
-            // This might be a directly dragged MRXS data folder
-            const folderFiles = await collectAllFilesFromDirectory(entry)
-            directlyDraggedFolders.push({
-              folderName: entry.name,
-              folderFiles
-            })
-          }
-        }
-      }
-    } else {
-      // Fallback: no webkitGetAsEntry support
-      const files = Array.from(dataTransfer.files || [])
-      firstLevelFiles.push(...files)
-    }
-
-    const files = firstLevelFiles
-    const folders = [...mrxsDataFolders, ...directlyDraggedFolders]
-
-    const mrxsFiles = files.filter(f => f.name.toLowerCase().endsWith('.mrxs'))
-    const tmapFiles = files.filter(f => f.name.toLowerCase().endsWith('.tmap'))
-    const dtFiles = files.filter(f => isTmapDataFile(f.name))
-
-    const result: LocalItem[] = []
-    const usedFiles = new Set<File>()
-    const usedFolders = new Set<string>()
-    const unsupportedFileNames: string[] = []
-
-    // Electron Mode Check
-    const isElectron = files.length > 0 && files.some(f => getFilePath(f))
-
-    // MRXS
-    for (const mrxsFile of mrxsFiles) {
-      const baseName = getBaseName(mrxsFile.name)
-      // Case-insensitive matching for folder name
-      const matchingFolder = folders.find(f => f.folderName.toLowerCase() === baseName.toLowerCase())
-      usedFiles.add(mrxsFile)
-      if (matchingFolder) usedFolders.add(matchingFolder.folderName)
-
-      const hasAssociated = !!matchingFolder && matchingFolder.folderFiles.length > 0
-
-      if (isElectron) {
-        const path = getFilePath(mrxsFile)!
-        result.push({
-          key: path,
-          name: mrxsFile.name,
-          path,
-          type: 'mrxs',
-          associatedPaths: matchingFolder ? [] : undefined,
-          missingAssociated: !hasAssociated
-        })
-      } else {
-        result.push({
-          key: buildFileKey(mrxsFile),
-          name: mrxsFile.name,
-          file: mrxsFile,
-          type: 'mrxs',
-          associatedFiles: matchingFolder?.folderFiles || [],
-          missingAssociated: !hasAssociated
-        })
-      }
-    }
-
-    // TMAP
-    for (const tmapFile of tmapFiles) {
-      const baseName = getBaseName(tmapFile.name)
-      const matchingDtFiles = dtFiles.filter(f => getBaseName(f.name) === baseName)
-      usedFiles.add(tmapFile)
-      matchingDtFiles.forEach(f => usedFiles.add(f))
-
-      // TMAP dt files are optional, so no missingAssociated warning
-      if (isElectron) {
-        const path = getFilePath(tmapFile)!
-        result.push({
-          key: path,
-          name: tmapFile.name,
-          path,
-          type: 'tmap',
-          associatedPaths: matchingDtFiles.map(f => getFilePath(f)!).filter(Boolean)
-        })
-      } else {
-        result.push({
-          key: buildFileKey(tmapFile),
-          name: tmapFile.name,
-          file: tmapFile,
-          type: 'tmap',
-          associatedFiles: matchingDtFiles
-        })
-      }
-    }
-
-    // Standard
-    for (const file of files) {
-      if (usedFiles.has(file)) continue
-
-      // Skip known auxiliary files that are handled elsewhere (like TMAP data files)
-      if (isTmapDataFile(file.name)) continue
-
-      if (!isSupportedName(file.name)) {
-        unsupportedFileNames.push(file.name)
-        continue
-      }
-      if (isElectron) {
-        const path = getFilePath(file)!
-        result.push({ key: path, name: file.name, path, type: 'standard' })
-      } else {
-        result.push({ key: buildFileKey(file), name: file.name, file, type: 'standard' })
-      }
-    }
-
-    // Collect orphan folders (MRXS data folders without matching .mrxs)
-    const orphanFolders = folders.filter(f => !usedFolders.has(f.folderName))
-
-    // Collect orphan dt files (without matching .tmap)
-    const orphanDtFiles = new Map<string, File[]>()
-    for (const dtFile of dtFiles) {
-      if (usedFiles.has(dtFile)) continue
-      const baseName = getBaseName(dtFile.name)
-      if (!orphanDtFiles.has(baseName)) {
-        orphanDtFiles.set(baseName, [])
-      }
-      orphanDtFiles.get(baseName)!.push(dtFile)
-    }
-
-    return { items: result, orphanFolders, orphanDtFiles, unsupportedFileNames }
-  }
 
   // --- Interaction Logic ---
 
@@ -795,28 +507,7 @@ export default function RegisterPage() {
     // Case 2: New Dataset - Parse CSV to bind to files
     if (splitFile && !datasetId) {
       try {
-        const arrayBuffer = await splitFile.arrayBuffer()
-        const workbook = XLSX.read(arrayBuffer, { type: 'array' })
-        const sheet = workbook.Sheets[workbook.SheetNames[0]]
-        const jsonData = XLSX.utils.sheet_to_json(sheet) // Array of objects
-        
-        jsonData.forEach((row: any) => {
-          // Normalize keys
-          const normRow: any = {}
-          Object.keys(row).forEach(k => normRow[k.toLowerCase().trim()] = row[k])
-          
-          if (normRow.filename) {
-            const name = String(normRow.filename).trim()
-            // Map full name (e.g. "slide1.svs")
-            csvMetadataMap.set(name.toLowerCase(), normRow)
-            // Map name without extension (e.g. "slide1" -> match "slide1.svs")
-            // This handles cases where CSV lists "slide1" but file is "slide1.svs"
-            const nameNoExt = name.replace(/\.[^/.]+$/, "")
-            if (nameNoExt !== name) {
-              csvMetadataMap.set(nameNoExt.toLowerCase(), normRow)
-            }
-          }
-        })
+        csvMetadataMap = await parseCsvMetadata(splitFile)
         console.log(`[Upload] Parsed ${csvMetadataMap.size} entries from CSV for binding`)
       } catch (err) {
         console.error("Failed to parse split file for binding", err)
@@ -1089,349 +780,40 @@ export default function RegisterPage() {
     <div className="flex flex-col h-full w-full">
       {/* Bulk Edit Modal */}
       {showBulkEdit && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-[1.5rem] sm:rounded-3xl shadow-2xl w-full max-w-lg p-5 sm:p-8 animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h3 className="text-lg sm:text-xl font-bold text-slate-900 flex items-center gap-2">
-                  <Settings2 className="w-5 h-5 text-blue-600" />
-                  Batch Edit
-                </h3>
-                <p className="text-xs sm:text-sm text-slate-500 mt-1">{selectedItems.size} items selected</p>
-              </div>
-              <button onClick={() => setShowBulkEdit(false)} className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4 sm:space-y-6">
-              {/* Classification: Label | Survival: Event Time & Status */}
-              {uploadMode === 'classification' ? (
-                <div className="space-y-1.5">
-                  <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">Label</label>
-                  <input
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all"
-                    placeholder="Apply label to all..."
-                    value={batchMetadata.label}
-                    onChange={e => setBatchMetadata(p => ({ ...p, label: e.target.value }))}
-                  />
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] sm:text-xs font-semibold text-emerald-600 uppercase tracking-wider">Event Time</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none"
-                      placeholder="Months..."
-                      value={batchMetadata.event_time}
-                      onChange={e => setBatchMetadata(p => ({ ...p, event_time: e.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] sm:text-xs font-semibold text-emerald-600 uppercase tracking-wider">Status</label>
-                    <select
-                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none"
-                      value={batchMetadata.event_status}
-                      onChange={e => setBatchMetadata(p => ({ ...p, event_status: e.target.value }))}
-                    >
-                      <option value="">No Change</option>
-                      <option value="1">Event (1)</option>
-                      <option value="0">Censored (0)</option>
-                    </select>
-                  </div>
-                </div>
-              )}
-              <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">Case ID</label>
-                  <input
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none"
-                    placeholder="Batch ID"
-                    value={batchMetadata.case_id}
-                    onChange={e => setBatchMetadata(p => ({ ...p, case_id: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">Age</label>
-                  <input
-                    type="number"
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none"
-                    placeholder="Age"
-                    value={batchMetadata.age}
-                    onChange={e => setBatchMetadata(p => ({ ...p, age: e.target.value }))}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">Source</label>
-                  <select
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none"
-                    value={batchMetadata.source}
-                    onChange={e => setBatchMetadata(p => ({ ...p, source: e.target.value }))}
-                  >
-                    <option value="">No Change</option>
-                    {organSources.map(o => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">Gender</label>
-                  <select
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none"
-                    value={batchMetadata.gender}
-                    onChange={e => setBatchMetadata(p => ({ ...p, gender: e.target.value }))}
-                  >
-                    <option value="">No Change</option>
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                    <option value="Unspecified">Any</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-8 flex flex-col sm:flex-row justify-end gap-3">
-              <Button variant="ghost" className="h-11 sm:h-10 order-2 sm:order-1 font-semibold" onClick={() => setShowBulkEdit(false)}>Cancel</Button>
-              <Button onClick={handleApplyBulkEdit} className="bg-blue-600 hover:bg-blue-700 text-white h-11 sm:h-10 shadow-lg shadow-blue-500/20 order-1 sm:order-2 font-semibold">Apply Changes</Button>
-            </div>
-          </div>
-        </div>
+        <BulkEditModal
+          uploadMode={uploadMode}
+          selectedCount={selectedItems.size}
+          batchMetadata={batchMetadata}
+          onBatchMetadataChange={setBatchMetadata}
+          onApply={handleApplyBulkEdit}
+          onClose={() => setShowBulkEdit(false)}
+        />
       )}
 
-      {/* Header */}
+      {/* Steps */}
       {step === 1 ? (
-        <>
-          <div className="flex-none mb-6">
-            <PageHeader
-              title="Register Files"
-              description="Prepare and register local files."
-            >
-              <Button
-                variant="outline"
-                onClick={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
-                className="gap-2"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                {fromAIChat ? 'Back to Chat' : 'Back to Dashboard'}
-              </Button>
-            </PageHeader>
-          </div>
-          <div className="flex-1 flex flex-col items-center p-4">
-            <div className="w-full max-w-4xl">
-              <div className="text-center mb-6 sm:mb-8">
-                <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-2 sm:mb-3">Create Dataset</h1>
-                <p className="text-base sm:text-lg text-slate-500 px-4">Define a dataset name and analysis type to get started.</p>
-              </div>
-
-              <Card className="p-5 sm:p-8 shadow-xl border-slate-100 rounded-[1.5rem] sm:rounded-[2rem] overflow-hidden">
-                <div className="flex flex-col gap-6 sm:gap-8">
-                  <div>
-                    <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Dataset Name</label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        className={`w-full px-4 sm:px-5 py-3 sm:py-4 text-base sm:text-lg border rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all ${showValidation && !datasetName.trim()
-                          ? 'border-red-500 bg-red-50'
-                          : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
-                          }`}
-                        placeholder="e.g., Lung Cancer Trial 2024"
-                        value={datasetName}
-                        onChange={e => setDatasetName(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && datasetName.trim() && setStep(2)}
-                        autoFocus
-                      />
-                      {isExistingDataset && (
-                        <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-600 rounded-full text-xs font-bold border border-amber-100">
-                          <Plus className="w-3 h-3" />
-                          EXISTING DATASET
-                        </div>
-                      )}
-                    </div>
-                    {existingDatasets.length > 0 && !datasetName.trim() && (
-                      <div className="mt-4">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Or select existing</p>
-                        <div className="flex flex-wrap gap-2">
-                          {existingDatasets.slice(0, 8).map(name => (
-                            <button
-                              key={name}
-                              type="button"
-                              onClick={() => setDatasetName(name)}
-                              className="px-3 py-1.5 text-xs bg-white border border-slate-200 text-slate-600 rounded-lg hover:border-blue-500 hover:text-blue-600 transition-all shadow-sm"
-                            >
-                              {name}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    <p className="mt-3 text-sm text-slate-400">
-                      {isExistingDataset
-                        ? 'This dataset already exists. New files will be appended to it.'
-                        : 'Choose a unique name to identify this collection of slides.'}
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
-                  <div>
-                    <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Analysis Type</label>
-                    <div className="grid grid-cols-1 gap-3 sm:gap-4">
-                      <button
-                        onClick={() => !isExistingDataset && setUploadMode('classification')}
-                        disabled={isExistingDataset}
-                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'classification'
-                          ? 'border-blue-500 bg-blue-50/50'
-                          : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                          } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'classification' ? 'opacity-40' : ''}`}
-                      >
-                        <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'classification' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                          <Tags className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <span className={`font-bold block ${uploadMode === 'classification' ? 'text-blue-900' : 'text-slate-900'}`}>Classification</span>
-                          <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Diagnostic labels & categories</span>
-                        </div>
-                      </button>
-
-                      <button
-                        onClick={() => !isExistingDataset && setUploadMode('survival')}
-                        disabled={isExistingDataset}
-                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'survival'
-                          ? 'border-emerald-500 bg-emerald-50/50'
-                          : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                          } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'survival' ? 'opacity-40' : ''}`}
-                      >
-                        <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'survival' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                          <Activity className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <span className={`font-bold block ${uploadMode === 'survival' ? 'text-emerald-900' : 'text-slate-900'}`}>Survival Analysis</span>
-                          <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Event time & status tracking</span>
-                        </div>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Data Level</label>
-                    <div className="grid grid-cols-1 gap-3 sm:gap-4">
-                      <button
-                        onClick={() => !isExistingDataset && setDataLevel('case')}
-                        disabled={isExistingDataset}
-                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'case'
-                          ? 'border-purple-500 bg-purple-50/50'
-                          : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                          } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && dataLevel !== 'case' ? 'opacity-40' : ''}`}
-                      >
-                        <div className={`p-2 rounded-lg mr-4 ${dataLevel === 'case' ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                          <Users className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <span className={`font-bold block ${dataLevel === 'case' ? 'text-purple-900' : 'text-slate-900'}`}>Case-Level</span>
-                          <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Files grouped by case ID</span>
-                        </div>
-                      </button>
-
-                      <button
-                        onClick={() => !isExistingDataset && setDataLevel('file')}
-                        disabled={isExistingDataset}
-                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'file'
-                          ? 'border-orange-500 bg-orange-50/50'
-                          : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                          } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && dataLevel !== 'file' ? 'opacity-40' : ''}`}
-                      >
-                        <div className={`p-2 rounded-lg mr-4 ${dataLevel === 'file' ? 'bg-orange-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                          <FileImage className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <span className={`font-bold block ${dataLevel === 'file' ? 'text-orange-900' : 'text-slate-900'}`}>File-Level</span>
-                          <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Each file is independent</span>
-                        </div>
-                      </button>
-                    </div>
-                  </div>
-                  </div>
-
-                  <Button
-                    size="lg"
-                    className="w-full h-14 sm:h-16 text-base sm:text-lg rounded-xl sm:rounded-2xl bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/20 mt-2 sm:mt-4"
-                    disabled={!datasetName.trim()}
-                    onClick={() => setStep(2)}
-                  >
-                    Next: Choose Files <ArrowRight className="ml-2 w-4 h-4 sm:w-5 sm:h-5" />
-                  </Button>
-                </div>
-              </Card>
-            </div>
-          </div>
-        </>
+        <DatasetConfigStep
+          datasetName={datasetName}
+          onDatasetNameChange={setDatasetName}
+          uploadMode={uploadMode}
+          onUploadModeChange={setUploadMode}
+          dataLevel={dataLevel}
+          onDataLevelChange={setDataLevel}
+          isExistingDataset={isExistingDataset}
+          existingDatasets={existingDatasets}
+          showValidation={showValidation}
+          fromAIChat={fromAIChat}
+          onNext={() => setStep(2)}
+          onBack={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
+        />
       ) : step === 3 ? (
-        <div className="flex-1 flex flex-col items-center lg:justify-center p-4 sm:p-8 lg:-mt-12">
-          <Card className="w-full max-w-4xl overflow-hidden shadow-2xl border-slate-100 rounded-[1.5rem] sm:rounded-[2rem] bg-white ring-1 ring-slate-900/5 animate-in zoom-in-95 duration-300">
-            <div className="grid grid-cols-1 md:grid-cols-2 min-h-[300px] md:min-h-[420px]">
-              {/* Left Column: Success State & Actions */}
-              <div className="bg-slate-50/80 p-6 sm:p-10 flex flex-col justify-center items-center text-center border-b md:border-b-0 md:border-r border-slate-100">
-                <div className="w-16 h-16 sm:w-20 sm:h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4 sm:mb-6 ring-8 ring-green-50 shadow-sm">
-                  <CheckCircle2 className="w-8 h-8 sm:w-10 sm:h-10" />
-                </div>
-                
-                <h2 className="text-xl sm:text-2xl font-bold text-slate-900 mb-2 sm:mb-3 tracking-tight">Import Successful</h2>
-                <p className="text-sm sm:text-slate-500 mb-6 sm:mb-8 max-w-[240px] leading-relaxed">
-                  Dataset information has been updated successfully.
-                </p>
-
-                <div className="flex flex-col gap-3 w-full max-w-xs">
-                  <Button
-                    size="lg"
-                    className="w-full h-11 text-base font-semibold bg-slate-900 hover:bg-black text-white shadow-lg shadow-slate-200"
-                    onClick={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
-                  >
-                    {fromAIChat ? 'Go to Chat' : 'Go to Dashboard'}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="w-full h-11 text-base border-slate-200 text-slate-600 hover:bg-white hover:border-slate-300"
-                    onClick={resetUpload}
-                  >
-                    Upload More
-                  </Button>
-                </div>
-              </div>
-
-              {/* Right Column: Summary Details */}
-              <div className="p-6 sm:p-10 flex flex-col justify-center bg-white relative">
-                 <h3 className="text-[10px] sm:text-xs font-bold text-slate-900 uppercase tracking-widest mb-4 sm:mb-6 border-b border-slate-100 pb-3">Dataset Summary</h3>
-                 
-                 <div className="space-y-4 sm:space-y-6">
-                    <div>
-                      <div className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Target Dataset</div>
-                      <div className="text-base sm:text-lg font-bold text-slate-900 truncate flex items-center gap-2">
-                        <Database className="w-4 h-4 text-blue-500" />
-                        {datasetName}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Action</div>
-                      <div className="text-xs sm:text-sm font-medium text-slate-700 bg-slate-50 inline-block px-3 py-1 rounded-md border border-slate-200">
-                        Metadata / Split Update (CSV)
-                      </div>
-                    </div>
-
-                    {splitUploadSuccess && (
-                      <div>
-                        <div className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Import Result</div>
-                        <div className="text-xs sm:text-sm text-slate-600 bg-green-50/50 p-3 sm:p-4 rounded-xl border border-green-100 leading-relaxed text-wrap break-words">
-                           {splitUploadSuccess}
-                        </div>
-                      </div>
-                    )}
-                 </div>
-              </div>
-            </div>
-          </Card>
-        </div>
+        <SuccessStep
+          datasetName={datasetName}
+          splitUploadSuccess={splitUploadSuccess}
+          fromAIChat={fromAIChat}
+          onNavigate={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
+          onReset={resetUpload}
+        />
       ) : (
         <>
           <div className="flex-none mb-2 px-2 sm:px-0">

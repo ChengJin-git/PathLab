@@ -1,30 +1,99 @@
+import { useState, useEffect, useCallback } from 'react'
 import { Database, RefreshCw, Layers, Calendar, Star, ToggleRight, ToggleLeft, Trash2 } from 'lucide-react'
 import { Card } from '../ui/card'
-import { TrainedModel, TrainingTask } from '../../api'
+import { TrainedModel, getTrainedModels, updateTrainedModel, deleteTrainedModel, getAuthToken } from '../../api'
+import { API_BASE } from '../../config'
+import { ShowConfirmDialog } from './ConfirmDialog'
 
-export interface ModelsTabProps {
-  trainedModels: TrainedModel[]
-  loadingModels: boolean
-  modelsError: string | null
-  modelsTotal: number
-  tasks: TrainingTask[]
-  onLoadModels: () => void
-  onSetDefault: (model: TrainedModel) => void
-  onToggleActive: (model: TrainedModel) => void
-  onDeleteModel: (model: TrainedModel) => void
+interface TaskItem {
+  task_id: string
+  task_name?: string
+  name?: string
 }
 
-export function ModelsTab({
-  trainedModels,
-  loadingModels,
-  modelsError,
-  modelsTotal,
-  tasks,
-  onLoadModels,
-  onSetDefault,
-  onToggleActive,
-  onDeleteModel
-}: ModelsTabProps) {
+export interface ModelsTabProps {
+  showConfirmDialog: ShowConfirmDialog
+  closeConfirmDialog: () => void
+}
+
+export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabProps) {
+  const [trainedModels, setTrainedModels] = useState<TrainedModel[]>([])
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [modelsError, setModelsError] = useState<string | null>(null)
+  const [modelsTotal, setModelsTotal] = useState(0)
+  const [tasks, setTasks] = useState<TaskItem[]>([])
+
+  const loadTasks = useCallback(async () => {
+    try {
+      const token = getAuthToken()
+      const response = await fetch(`${API_BASE}/results/tasks`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      })
+      if (response.ok) {
+        const data = await response.json()
+        setTasks(data.items || [])
+      }
+    } catch (error) {
+      console.error('Failed to load tasks:', error)
+    }
+  }, [])
+
+  const loadTrainedModels = useCallback(async () => {
+    setLoadingModels(true)
+    setModelsError(null)
+    try {
+      const response = await getTrainedModels(0, 100)
+      setTrainedModels(response.items)
+      setModelsTotal(response.total)
+    } catch (err) {
+      console.error('Failed to load trained models:', err)
+      setModelsError(err instanceof Error ? err.message : 'Failed to load models')
+    } finally {
+      setLoadingModels(false)
+    }
+  }, [])
+
+  const handleSetDefaultModel = useCallback(async (model: TrainedModel) => {
+    try {
+      await updateTrainedModel(model.model_id, { is_default: true })
+      await loadTrainedModels()
+    } catch (err) {
+      setModelsError(err instanceof Error ? err.message : 'Failed to set default')
+    }
+  }, [loadTrainedModels])
+
+  const handleToggleModelActive = useCallback(async (model: TrainedModel) => {
+    try {
+      await updateTrainedModel(model.model_id, { is_active: !model.is_active })
+      await loadTrainedModels()
+    } catch (err) {
+      setModelsError(err instanceof Error ? err.message : 'Failed to update status')
+    }
+  }, [loadTrainedModels])
+
+  const handleDeleteModel = useCallback((model: TrainedModel) => {
+    showConfirmDialog({
+      title: 'Delete Model',
+      message: `Are you sure you want to delete "${model.model_name}"? This cannot be undone.`,
+      confirmText: 'Delete',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        closeConfirmDialog()
+        try {
+          await deleteTrainedModel(model.model_id)
+          await loadTrainedModels()
+        } catch (err) {
+          setModelsError(err instanceof Error ? err.message : 'Failed to delete')
+        }
+      }
+    })
+  }, [loadTrainedModels, showConfirmDialog, closeConfirmDialog])
+
+  useEffect(() => {
+    loadTrainedModels()
+    loadTasks()
+  }, [loadTrainedModels, loadTasks])
+
   const formatValue = (v: unknown) => (typeof v === 'number' ? v.toFixed(3) : (v || '—'))
 
   return (
@@ -40,7 +109,7 @@ export function ModelsTab({
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-500">{modelsTotal} model{modelsTotal !== 1 ? 's' : ''}</span>
           <button
-            onClick={onLoadModels}
+            onClick={loadTrainedModels}
             disabled={loadingModels}
             className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
             title="Refresh models"
@@ -86,7 +155,7 @@ export function ModelsTab({
             <tbody className="divide-y divide-gray-100">
               {trainedModels.map((model) => {
                 const task = tasks.find(t => t.task_id === model.task_id)
-                const taskName = (task as Record<string, unknown>)?.name as string || (task as Record<string, unknown>)?.task_name as string || 'Unknown Task'
+                const taskName = task?.name || task?.task_name || 'Unknown Task'
 
                 const metrics = model.val_metrics || {}
                 const isSurvival = (metrics as Record<string, unknown>).c_index !== undefined
@@ -200,7 +269,7 @@ export function ModelsTab({
                       <div className="flex items-center justify-end gap-2">
                         {!model.is_default && model.is_active && (
                           <button
-                            onClick={() => onSetDefault(model)}
+                            onClick={() => handleSetDefaultModel(model)}
                             className="p-2 text-gray-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-all"
                             title="Set as default"
                           >
@@ -208,7 +277,7 @@ export function ModelsTab({
                           </button>
                         )}
                         <button
-                          onClick={() => onToggleActive(model)}
+                          onClick={() => handleToggleModelActive(model)}
                           className={`p-2 rounded-lg transition-all ${model.is_active
                             ? 'text-emerald-600 hover:bg-emerald-50'
                             : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'
@@ -218,7 +287,7 @@ export function ModelsTab({
                           {model.is_active ? <ToggleRight className="w-5 h-5" /> : <ToggleLeft className="w-5 h-5" />}
                         </button>
                         <button
-                          onClick={() => onDeleteModel(model)}
+                          onClick={() => handleDeleteModel(model)}
                           className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
                           title="Delete model"
                         >

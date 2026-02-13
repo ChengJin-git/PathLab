@@ -11,6 +11,8 @@ export interface ConfirmDialogState {
   showCancel?: boolean
 }
 
+export type ShowConfirmDialog = (config: Omit<ConfirmDialogState, 'isOpen'>) => void
+
 export interface ConfirmDialogProps {
   dialog: ConfirmDialogState
   onClose: () => void

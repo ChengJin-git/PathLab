@@ -1,70 +1,141 @@
+import { useState, useEffect, useCallback } from 'react'
 import { Cloud, Server, Key, Info, CheckCircle, Mic } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
+import { getGlobalSettings, updateGlobalSettings, getAuthToken } from '../../api'
+import { API_BASE } from '../../config'
+import { ShowConfirmDialog } from './ConfirmDialog'
 
 export interface GeneralTabProps {
-  // Remote LLM Settings (OpenRouter)
-  apiKey: string
-  baseUrl: string
-  model: string
-  huggingfaceToken: string
-  dashscopeApiKey: string
-  // Local LLM Settings (vLLM)
-  localVllmEnabled: boolean
-  localVllmBaseUrl: string
-  localVllmModel: string
-  localVllmApiKey: string
-  localVllmStatus: 'checking' | 'online' | 'offline'
-  localVllmDetectedModel: string | null
-  // Local ASR Settings
-  localAsrEnabled: boolean
-  localAsrBaseUrl: string
-  localAsrModel: string
-  localAsrApiKey: string
-  localAsrStatus: 'checking' | 'online' | 'offline'
-  localAsrDetectedModel: string | null
-  // Save state
-  aiSaving: boolean
-  aiSaved: boolean
-  // LLM Callbacks
-  onApiKeyChange: (value: string) => void
-  onBaseUrlChange: (value: string) => void
-  onModelChange: (value: string) => void
-  onHuggingfaceTokenChange: (value: string) => void
-  onDashscopeApiKeyChange: (value: string) => void
-  onLocalVllmEnabledChange: (value: boolean) => void
-  onLocalVllmBaseUrlChange: (value: string) => void
-  onLocalVllmModelChange: (value: string) => void
-  onLocalVllmApiKeyChange: (value: string) => void
-  onCheckLocalVllmStatus: () => void
-  // ASR Callbacks
-  onLocalAsrEnabledChange: (value: boolean) => void
-  onLocalAsrBaseUrlChange: (value: string) => void
-  onLocalAsrModelChange: (value: string) => void
-  onLocalAsrApiKeyChange: (value: string) => void
-  onCheckLocalAsrStatus: () => void
-  onSave: (e: React.FormEvent) => void
+  showConfirmDialog: ShowConfirmDialog
+  closeConfirmDialog: () => void
 }
 
-export function GeneralTab({
-  apiKey, baseUrl, model, huggingfaceToken, dashscopeApiKey,
-  localVllmEnabled, localVllmBaseUrl, localVllmModel, localVllmApiKey,
-  localVllmStatus, localVllmDetectedModel,
-  localAsrEnabled, localAsrBaseUrl, localAsrModel, localAsrApiKey,
-  localAsrStatus, localAsrDetectedModel,
-  aiSaving, aiSaved,
-  onApiKeyChange, onBaseUrlChange, onModelChange, onHuggingfaceTokenChange, onDashscopeApiKeyChange,
-  onLocalVllmEnabledChange, onLocalVllmBaseUrlChange, onLocalVllmModelChange, onLocalVllmApiKeyChange,
-  onCheckLocalVllmStatus,
-  onLocalAsrEnabledChange, onLocalAsrBaseUrlChange, onLocalAsrModelChange, onLocalAsrApiKeyChange,
-  onCheckLocalAsrStatus,
-  onSave
-}: GeneralTabProps) {
+export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTabProps) {
+  // Remote LLM state
+  const [apiKey, setApiKey] = useState('')
+  const [baseUrl, setBaseUrl] = useState('https://openrouter.ai/api/v1')
+  const [model, setModel] = useState('qwen/qwen3-vl-235b-a22b-instruct')
+  const [huggingfaceToken, setHuggingfaceToken] = useState('')
+  const [dashscopeApiKey, setDashscopeApiKey] = useState('')
+  const [aiSaved, setAiSaved] = useState(false)
+  const [aiSaving, setAiSaving] = useState(false)
+
+  // Local vLLM state
+  const [localVllmEnabled, setLocalVllmEnabled] = useState(false)
+  const [localVllmBaseUrl, setLocalVllmBaseUrl] = useState('http://127.0.0.1:8000/v1')
+  const [localVllmModel, setLocalVllmModel] = useState('')
+  const [localVllmApiKey, setLocalVllmApiKey] = useState('')
+  const [localVllmStatus, setLocalVllmStatus] = useState<'checking' | 'online' | 'offline'>('offline')
+  const [localVllmDetectedModel, setLocalVllmDetectedModel] = useState<string | null>(null)
+
+  // Local ASR state
+  const [localAsrEnabled, setLocalAsrEnabled] = useState(false)
+  const [localAsrBaseUrl, setLocalAsrBaseUrl] = useState('http://127.0.0.1:8001/v1')
+  const [localAsrModel, setLocalAsrModel] = useState('')
+  const [localAsrApiKey, setLocalAsrApiKey] = useState('')
+  const [localAsrStatus, setLocalAsrStatus] = useState<'checking' | 'online' | 'offline'>('offline')
+  const [localAsrDetectedModel, setLocalAsrDetectedModel] = useState<string | null>(null)
+
+  // Check local vLLM status
+  const checkLocalVllmStatusWithParams = async (bUrl: string, aKey: string) => {
+    if (!bUrl) { setLocalVllmStatus('offline'); setLocalVllmDetectedModel(null); return }
+    setLocalVllmStatus('checking')
+    setLocalVllmDetectedModel(null)
+    try {
+      const token = getAuthToken()
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) headers['Authorization'] = `Bearer ${token}`
+      const res = await fetch(`${API_BASE}/settings/check-vllm`, {
+        method: 'POST', headers,
+        body: JSON.stringify({ base_url: bUrl, api_key: aKey || null })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setLocalVllmStatus(data.online ? 'online' : 'offline')
+        if (data.online && data.model) setLocalVllmDetectedModel(data.model)
+      } else { setLocalVllmStatus('offline') }
+    } catch { setLocalVllmStatus('offline') }
+  }
+
+  // Check local ASR status
+  const checkLocalAsrStatusWithParams = async (bUrl: string, aKey: string, m?: string) => {
+    if (!bUrl) { setLocalAsrStatus('offline'); setLocalAsrDetectedModel(null); return }
+    setLocalAsrStatus('checking')
+    setLocalAsrDetectedModel(null)
+    try {
+      const token = getAuthToken()
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) headers['Authorization'] = `Bearer ${token}`
+      const res = await fetch(`${API_BASE}/settings/check-asr`, {
+        method: 'POST', headers,
+        body: JSON.stringify({ base_url: bUrl, model: m || null, api_key: aKey || null })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setLocalAsrStatus(data.online ? 'online' : 'offline')
+        if (data.online && data.model) setLocalAsrDetectedModel(data.model)
+      } else { setLocalAsrStatus('offline') }
+    } catch { setLocalAsrStatus('offline') }
+  }
+
+  // Load global settings
+  const loadGlobalSettings = useCallback(async () => {
+    try {
+      const s = await getGlobalSettings()
+      setApiKey(s.openrouter_api_key); setBaseUrl(s.openrouter_base_url); setModel(s.openrouter_model)
+      setHuggingfaceToken(s.huggingface_token); setDashscopeApiKey(s.dashscope_api_key)
+      setLocalVllmEnabled(s.local_vllm_enabled); setLocalVllmBaseUrl(s.local_vllm_base_url)
+      setLocalVllmModel(s.local_vllm_model); setLocalVllmApiKey(s.local_vllm_api_key)
+      setLocalAsrEnabled(s.local_asr_enabled); setLocalAsrBaseUrl(s.local_asr_base_url)
+      setLocalAsrModel(s.local_asr_model); setLocalAsrApiKey(s.local_asr_api_key)
+      if (s.local_vllm_enabled && s.local_vllm_base_url) {
+        checkLocalVllmStatusWithParams(s.local_vllm_base_url, s.local_vllm_api_key)
+      }
+      if (s.local_asr_enabled && s.local_asr_base_url) {
+        checkLocalAsrStatusWithParams(s.local_asr_base_url, s.local_asr_api_key, s.local_asr_model)
+      }
+    } catch (err) { console.error('Failed to load global settings:', err) }
+  }, [])
+
+  useEffect(() => { loadGlobalSettings() }, [loadGlobalSettings])
+
+  // When disabled, show offline
+  useEffect(() => { if (!localVllmEnabled) { setLocalVllmStatus('offline'); setLocalVllmDetectedModel(null) } }, [localVllmEnabled])
+  useEffect(() => { if (!localAsrEnabled) { setLocalAsrStatus('offline'); setLocalAsrDetectedModel(null) } }, [localAsrEnabled])
+
+  const checkLocalVllmStatus = () => checkLocalVllmStatusWithParams(localVllmBaseUrl, localVllmApiKey)
+  const checkLocalAsrStatus = () => checkLocalAsrStatusWithParams(localAsrBaseUrl, localAsrApiKey, localAsrModel)
+
+  const handleAISave = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setAiSaving(true)
+    try {
+      await updateGlobalSettings({
+        openrouter_api_key: apiKey, openrouter_base_url: baseUrl, openrouter_model: model,
+        huggingface_token: huggingfaceToken, dashscope_api_key: dashscopeApiKey,
+        local_vllm_enabled: localVllmEnabled, local_vllm_base_url: localVllmBaseUrl,
+        local_vllm_model: localVllmModel, local_vllm_api_key: localVllmApiKey,
+        local_asr_enabled: localAsrEnabled, local_asr_base_url: localAsrBaseUrl,
+        local_asr_model: localAsrModel, local_asr_api_key: localAsrApiKey,
+      })
+      setAiSaved(true)
+      setTimeout(() => setAiSaved(false), 3000)
+    } catch (err) {
+      console.error('Failed to save AI settings:', err)
+      showConfirmDialog({
+        title: 'Error',
+        message: err instanceof Error ? err.message : 'Failed to save AI configuration',
+        confirmText: 'OK', confirmVariant: 'danger', showCancel: false,
+        onConfirm: () => closeConfirmDialog()
+      })
+    } finally { setAiSaving(false) }
+  }
   return (
     <div className="space-y-6">
-      <form onSubmit={onSave} className="space-y-6">
+      <form onSubmit={handleAISave} className="space-y-6">
         {/* Stacked Layout: Remote Services then Local Services */}
         <div className="space-y-8">
           {/* Remote Services Section */}
@@ -86,20 +157,20 @@ export function GeneralTab({
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label>API Key</Label>
-                    <Input type="password" value={apiKey} onChange={(e) => onApiKeyChange(e.target.value)} placeholder="sk-..." />
+                    <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." />
                     <p className="text-xs text-gray-500">
                       <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline">Get Key</a>
                     </p>
                   </div>
                   <div className="space-y-2">
                     <Label>Base URL</Label>
-                    <Input value={baseUrl} onChange={(e) => onBaseUrlChange(e.target.value)} placeholder="https://openrouter.ai/api/v1" className="font-mono text-sm" />
+                    <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://openrouter.ai/api/v1" className="font-mono text-sm" />
                   </div>
                   <div className="space-y-2">
                     <Label>Model</Label>
                     <select
                       value={model}
-                      onChange={(e) => onModelChange(e.target.value)}
+                      onChange={(e) => setModel(e.target.value)}
                       className="flex h-9 w-full rounded-lg border border-gray-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950"
                     >
                       <optgroup label="Multimodal Models">
@@ -132,7 +203,7 @@ export function GeneralTab({
                   <CardContent className="space-y-4">
                     <div className="space-y-2">
                       <Label>DashScope API Key</Label>
-                      <Input type="password" value={dashscopeApiKey} onChange={(e) => onDashscopeApiKeyChange(e.target.value)} placeholder="sk-..." />
+                      <Input type="password" value={dashscopeApiKey} onChange={(e) => setDashscopeApiKey(e.target.value)} placeholder="sk-..." />
                       <p className="text-xs text-gray-500">
                         For Qwen3-ASR realtime. <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-primary-600 hover:underline">Get Key</a>
                       </p>
@@ -151,7 +222,7 @@ export function GeneralTab({
                   <CardContent>
                     <div className="space-y-2">
                       <Label>HuggingFace Token</Label>
-                      <Input type="password" value={huggingfaceToken} onChange={(e) => onHuggingfaceTokenChange(e.target.value)} placeholder="hf_..." />
+                      <Input type="password" value={huggingfaceToken} onChange={(e) => setHuggingfaceToken(e.target.value)} placeholder="hf_..." />
                       <p className="text-xs text-gray-500">
                         For downloading gated models. <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-primary-600 hover:underline">Get Token</a>
                       </p>
@@ -188,7 +259,7 @@ export function GeneralTab({
                       </div>
                       <div
                         className={`w-10 h-5 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-300 ${localVllmEnabled ? 'bg-green-600' : 'bg-gray-200'}`}
-                        onClick={() => onLocalVllmEnabledChange(!localVllmEnabled)}
+                        onClick={() => setLocalVllmEnabled(!localVllmEnabled)}
                       >
                         <div className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-300 ${localVllmEnabled ? 'translate-x-5' : ''}`} />
                       </div>
@@ -200,8 +271,8 @@ export function GeneralTab({
                     <div className="space-y-2">
                       <Label>Base URL</Label>
                       <div className="flex gap-2">
-                        <Input value={localVllmBaseUrl} onChange={(e) => onLocalVllmBaseUrlChange(e.target.value)} placeholder="http://127.0.0.1:8000/v1" className="font-mono text-sm" />
-                        <Button type="button" variant="outline" size="sm" onClick={onCheckLocalVllmStatus} className="bg-white whitespace-nowrap">
+                        <Input value={localVllmBaseUrl} onChange={(e) => setLocalVllmBaseUrl(e.target.value)} placeholder="http://127.0.0.1:8000/v1" className="font-mono text-sm" />
+                        <Button type="button" variant="outline" size="sm" onClick={checkLocalVllmStatus} className="bg-white whitespace-nowrap">
                           Test
                         </Button>
                       </div>
@@ -215,11 +286,11 @@ export function GeneralTab({
                           </span>
                         )}
                       </div>
-                      <Input value={localVllmModel} onChange={(e) => onLocalVllmModelChange(e.target.value)} placeholder={localVllmDetectedModel || "Qwen/Qwen3-235B-A22B-Instruct"} />
+                      <Input value={localVllmModel} onChange={(e) => setLocalVllmModel(e.target.value)} placeholder={localVllmDetectedModel || "Qwen/Qwen3-235B-A22B-Instruct"} />
                     </div>
                     <div className="space-y-2">
                       <Label>API Key <span className="text-gray-400 font-normal">(Optional)</span></Label>
-                      <Input type="password" value={localVllmApiKey} onChange={(e) => onLocalVllmApiKeyChange(e.target.value)} placeholder="token-..." />
+                      <Input type="password" value={localVllmApiKey} onChange={(e) => setLocalVllmApiKey(e.target.value)} placeholder="token-..." />
                     </div>
                   </CardContent>
                 )}
@@ -243,7 +314,7 @@ export function GeneralTab({
                       </div>
                       <div
                         className={`w-10 h-5 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-300 ${localAsrEnabled ? 'bg-purple-600' : 'bg-gray-200'}`}
-                        onClick={() => onLocalAsrEnabledChange(!localAsrEnabled)}
+                        onClick={() => setLocalAsrEnabled(!localAsrEnabled)}
                       >
                         <div className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-300 ${localAsrEnabled ? 'translate-x-5' : ''}`} />
                       </div>
@@ -255,8 +326,8 @@ export function GeneralTab({
                     <div className="space-y-2">
                       <Label>WebSocket URL</Label>
                       <div className="flex gap-2">
-                        <Input value={localAsrBaseUrl} onChange={(e) => onLocalAsrBaseUrlChange(e.target.value)} placeholder="ws://127.0.0.1:8001/api-ws/v1/realtime" className="font-mono text-sm" />
-                        <Button type="button" variant="outline" size="sm" onClick={onCheckLocalAsrStatus} className="bg-white whitespace-nowrap">
+                        <Input value={localAsrBaseUrl} onChange={(e) => setLocalAsrBaseUrl(e.target.value)} placeholder="ws://127.0.0.1:8001/api-ws/v1/realtime" className="font-mono text-sm" />
+                        <Button type="button" variant="outline" size="sm" onClick={checkLocalAsrStatus} className="bg-white whitespace-nowrap">
                           Test
                         </Button>
                       </div>
@@ -273,14 +344,14 @@ export function GeneralTab({
                           </span>
                         )}
                       </div>
-                      <Input value={localAsrModel} onChange={(e) => onLocalAsrModelChange(e.target.value)} placeholder={localAsrDetectedModel || "Qwen/Qwen3-ASR-1.7B"} />
+                      <Input value={localAsrModel} onChange={(e) => setLocalAsrModel(e.target.value)} placeholder={localAsrDetectedModel || "Qwen/Qwen3-ASR-1.7B"} />
                       <p className="text-xs text-gray-500">
                         Model name will be appended as ?model=... to the URL
                       </p>
                     </div>
                     <div className="space-y-2">
                       <Label>API Key <span className="text-gray-400 font-normal">(Optional)</span></Label>
-                      <Input type="password" value={localAsrApiKey} onChange={(e) => onLocalAsrApiKeyChange(e.target.value)} placeholder="token-..." />
+                      <Input type="password" value={localAsrApiKey} onChange={(e) => setLocalAsrApiKey(e.target.value)} placeholder="token-..." />
                     </div>
                   </CardContent>
                 )}
