@@ -220,30 +220,53 @@ async def run_training_pipeline(
                 # Note: patch_size and stride are auto-determined by backend based on WSI MPP
                 # force_recompute=False allows reusing cached coordinates
                 # if ALL parameters match (including seg_params and filter_params)
-                async with httpx.AsyncClient(timeout=600.0) as client:
-                    response = await client.post(
-                        f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
-                        params={
-                            "level": level,
-                            "force_recompute": False,  # Allow cache reuse
-                            "sthresh": sthresh,
-                            "mthresh": mthresh,
-                            "close": close,
-                            "use_otsu": use_otsu,
-                            "contour_fn": contour_fn,
-                            "use_padding": use_padding,
-                            "a_t": a_t,
-                            "a_h": a_h,
-                            "max_n_holes": max_n_holes,
-                            "save_mask": True,
-                        },
-                    )
-                    response.raise_for_status()
-                    result = response.json()
+                #
+                # Retry logic: If the preprocessing worker crashes (e.g., C library segfault
+                # during mask visualization), the HTTP connection is severed, causing
+                # RemoteProtocolError. On retry, cached coordinates are returned instantly.
+                max_retries = 3
+                result = None
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        async with httpx.AsyncClient(timeout=600.0) as client:
+                            response = await client.post(
+                                f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
+                                params={
+                                    "level": level,
+                                    "force_recompute": False,  # Allow cache reuse
+                                    "sthresh": sthresh,
+                                    "mthresh": mthresh,
+                                    "close": close,
+                                    "use_otsu": use_otsu,
+                                    "contour_fn": contour_fn,
+                                    "use_padding": use_padding,
+                                    "a_t": a_t,
+                                    "a_h": a_h,
+                                    "max_n_holes": max_n_holes,
+                                    "save_mask": True,
+                                },
+                            )
+                            response.raise_for_status()
+                            result = response.json()
+                        break  # Success, exit retry loop
+                    except (httpx.RemoteProtocolError, httpx.ConnectError) as retry_err:
+                        # Worker crash (segfault) or connection refused (worker restarting)
+                        if attempt < max_retries:
+                            wait_secs = attempt * 3  # 3s, 6s backoff
+                            async with logger_manager.session() as (logger, db):
+                                await logger.warning(
+                                    f"[{idx}/{total_wsi}] compute_patches attempt {attempt}/{max_retries} "
+                                    f"failed for {wsi_id}: {type(retry_err).__name__}. "
+                                    f"Retrying in {wait_secs}s (cached coords will be used on retry)...",
+                                    metadata={"wsi_id": wsi_id, "attempt": attempt, "error": str(retry_err)}
+                                )
+                            await asyncio.sleep(wait_secs)
+                        else:
+                            raise  # Final attempt failed, propagate to outer except
 
                 num_patches = result.get('num_patches', 0)
                 cached = result.get('cached', False)
-                
+
                 async with logger_manager.session() as (logger, db):
                     if cached:
                         await logger.info(

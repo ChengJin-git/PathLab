@@ -33,19 +33,29 @@ DEFAULT_PREPROCESSING_PORT = 6101
 DEFAULT_AI_PORT = 6102
 
 
-def run_service(app_module: str, port: int, name: str, workers: int = 1):
+def run_service(app_module: str, port: int, name: str, workers: int = 1, limit_max_requests: int | None = None):
     """Run a single uvicorn service in a subprocess"""
     import uvicorn
 
-    print(f"[{name}] Starting on port {port} with {workers} worker(s)...", flush=True)
-    uvicorn.run(
-        app_module,
+    extra = ""
+    if limit_max_requests:
+        extra = f", limit_max_requests={limit_max_requests}"
+    print(f"[{name}] Starting on port {port} with {workers} worker(s){extra}...", flush=True)
+
+    kwargs: dict = dict(
         host="0.0.0.0",
         port=port,
         log_level="info",
         reload=False,  # Disable reload in subprocess
         workers=workers,
     )
+    if limit_max_requests:
+        # Recycle workers after N requests to release accumulated C library memory.
+        # This is the standard defence against memory leaks in native (C/C++) extensions
+        # such as the SdpcSlide SDK which can leak internal decoder buffers.
+        kwargs["limit_max_requests"] = limit_max_requests
+
+    uvicorn.run(app_module, **kwargs)
 
 
 def main():
@@ -131,10 +141,13 @@ def main():
     # Preprocessing uses multiple workers to handle concurrent tile requests
     # Note: slide_cache/dzg_cache are process-local and won't be shared across workers
     preprocessing_workers = int(os.environ.get("PREPROCESSING_WORKERS", "4"))
+    # Recycle preprocessing workers every 500 requests to release C library memory leaks
+    # (SdpcSlide SDK accumulates internal buffers that are not fully freed on close).
+    preprocessing_max_requests = int(os.environ.get("PREPROCESSING_MAX_REQUESTS", "500"))
     preprocessing_proc = multiprocessing.Process(
         target=run_service,
         name="Preprocessing",
-        args=("backend.preprocessing.main:app", preprocessing_port, "Preprocessing", preprocessing_workers),
+        args=("backend.preprocessing.main:app", preprocessing_port, "Preprocessing", preprocessing_workers, preprocessing_max_requests),
         daemon=False
     )
     preprocessing_proc.start()
