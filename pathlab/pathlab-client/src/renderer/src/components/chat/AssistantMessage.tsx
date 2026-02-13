@@ -511,7 +511,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
           'TASK_HISTORY_CONFIG',
           'CANCEL_TASK',
           'DATASET_REGISTRATION',
-          'METADATA_UPLOAD'
+          'METADATA_UPLOAD',
+          'MODEL_LIST'
         ].includes(incompleteTag) && (
             <motion.div key="generic-skeleton" {...cardTransition}>
               <GenericCardSkeleton />
