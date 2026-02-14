@@ -277,76 +277,132 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
           <p className="text-sm mt-1">Try adjusting your filters</p>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-gray-200 shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50/80">
-                <tr className="border-b border-gray-200">
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-16">ID</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[200px]">Message Content</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-32">User</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-28">Type</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-28">Helpfulness</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">Task</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24 text-right">Duration</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-32 text-right">Created</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 bg-white">
-                {feedbacks.map((feedback) => (
-                  <tr key={feedback.id} className="hover:bg-gray-50/80 transition-colors">
-                    <td className="px-4 py-3 text-gray-500 font-mono text-xs">{feedback.id}</td>
-                    <td className="px-4 py-3">
-                        <div className="text-gray-900 line-clamp-2 max-w-[300px] text-xs leading-relaxed" title={feedback.message_content || ''}>
-                            {feedback.message_content || <span className="text-gray-300 italic">No content</span>}
-                        </div>
-                    </td>
-                    <td className="px-4 py-3 text-gray-700 text-xs font-medium">
+        <>
+          {/* Mobile Card View */}
+          <div className="block sm:hidden space-y-4">
+            {feedbacks.map((feedback) => (
+              <div key={feedback.id} className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-3">
+                <div className="flex justify-between items-start">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono text-gray-400">#{feedback.id}</span>
+                    <span className="text-sm font-medium text-gray-900">
                       {feedback.username || <span className="font-mono text-gray-400">{feedback.user_id.slice(0, 6)}</span>}
-                    </td>
-                    <td className="px-4 py-3">
-                      {feedback.feedback_type === 'thumbs_up' && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-green-50 text-green-700 border border-green-100">
-                          <ThumbsUp className="w-3 h-3" /> Up
-                        </span>
-                      )}
-                      {feedback.feedback_type === 'thumbs_down' && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-red-50 text-red-700 border border-red-100">
-                          <ThumbsDown className="w-3 h-3" /> Down
-                        </span>
-                      )}
-                      {!feedback.feedback_type && <span className="text-gray-300">-</span>}
-                    </td>
-                    <td className="px-4 py-3">
-                      {feedback.task_helpfulness === 'helpful' && (
-                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">Helpful</span>
-                      )}
-                      {feedback.task_helpfulness === 'not_helpful' && (
-                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-50 text-orange-700 border border-orange-100">Not Helpful</span>
-                      )}
-                      {!feedback.task_helpfulness && <span className="text-gray-300 text-xs">-</span>}
-                    </td>
-                    <td className="px-4 py-3 text-gray-500 text-xs truncate max-w-[100px]" title={feedback.related_task_id || ''}>
-                        {feedback.related_task_id || '-'}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                        {feedback.time_to_action_seconds ? (
-                            <span className="font-mono text-xs text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded">
-                                {Number(feedback.time_to_action_seconds).toFixed(1)}s
-                            </span>
-                        ) : (
-                            <span className="text-gray-300 text-xs">-</span>
-                        )}
-                    </td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap text-xs text-gray-500">
-                       {new Date(feedback.created_at).toLocaleDateString()}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </span>
+                  </div>
+                  <span className="text-xs text-gray-500">{new Date(feedback.created_at).toLocaleDateString()}</span>
+                </div>
+                
+                <div className="flex flex-wrap gap-2">
+                   {feedback.feedback_type === 'thumbs_up' && (
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-green-50 text-green-700 border border-green-100">
+                      <ThumbsUp className="w-3 h-3" /> Up
+                    </span>
+                  )}
+                  {feedback.feedback_type === 'thumbs_down' && (
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-red-50 text-red-700 border border-red-100">
+                      <ThumbsDown className="w-3 h-3" /> Down
+                    </span>
+                  )}
+                  {feedback.task_helpfulness === 'helpful' && (
+                      <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">Helpful</span>
+                  )}
+                  {feedback.task_helpfulness === 'not_helpful' && (
+                      <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-orange-50 text-orange-700 border border-orange-100">Not Helpful</span>
+                  )}
+                </div>
+
+                <div className="p-3 bg-gray-50 rounded-lg text-sm text-gray-800 leading-relaxed break-words">
+                  {feedback.message_content || <span className="text-gray-400 italic">No content</span>}
+                </div>
+                
+                <div className="flex justify-between items-center text-xs text-gray-500 pt-2 border-t border-gray-100">
+                  <div className="flex items-center gap-1">
+                    <span className="uppercase tracking-wider">Task:</span>
+                    <span className="font-mono">{feedback.related_task_id || '-'}</span>
+                  </div>
+                   {feedback.time_to_action_seconds && (
+                    <div className="flex items-center gap-1">
+                       <Clock className="w-3 h-3" />
+                       <span>{Number(feedback.time_to_action_seconds).toFixed(1)}s</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
-        </div>
+
+          {/* Desktop Table View */}
+          <div className="hidden sm:block overflow-hidden rounded-lg border border-gray-200 shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50/80">
+                  <tr className="border-b border-gray-200">
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-16">ID</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[350px]">Message Content</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-32">User</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-28">Type</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-28">Helpfulness</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">Task</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24 text-right">Duration</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-32 text-right">Created</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 bg-white">
+                  {feedbacks.map((feedback) => (
+                    <tr key={feedback.id} className="hover:bg-gray-50/80 transition-colors">
+                      <td className="px-4 py-3 text-gray-500 font-mono text-xs">{feedback.id}</td>
+                      <td className="px-4 py-3">
+                          <div className="text-gray-900 text-xs leading-relaxed break-words whitespace-pre-wrap" title={feedback.message_content || ''}>
+                              {feedback.message_content || <span className="text-gray-300 italic">No content</span>}
+                          </div>
+                      </td>
+                      <td className="px-4 py-3 text-gray-700 text-xs font-medium">
+                        {feedback.username || <span className="font-mono text-gray-400">{feedback.user_id.slice(0, 6)}</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        {feedback.feedback_type === 'thumbs_up' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-green-50 text-green-700 border border-green-100">
+                            <ThumbsUp className="w-3 h-3" /> Up
+                          </span>
+                        )}
+                        {feedback.feedback_type === 'thumbs_down' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-red-50 text-red-700 border border-red-100">
+                            <ThumbsDown className="w-3 h-3" /> Down
+                          </span>
+                        )}
+                        {!feedback.feedback_type && <span className="text-gray-300">-</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        {feedback.task_helpfulness === 'helpful' && (
+                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">Helpful</span>
+                        )}
+                        {feedback.task_helpfulness === 'not_helpful' && (
+                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-50 text-orange-700 border border-orange-100">Not Helpful</span>
+                        )}
+                        {!feedback.task_helpfulness && <span className="text-gray-300 text-xs">-</span>}
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 text-xs truncate max-w-[100px]" title={feedback.related_task_id || ''}>
+                          {feedback.related_task_id || '-'}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                          {feedback.time_to_action_seconds ? (
+                              <span className="font-mono text-xs text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded">
+                                  {Number(feedback.time_to_action_seconds).toFixed(1)}s
+                              </span>
+                          ) : (
+                              <span className="text-gray-300 text-xs">-</span>
+                          )}
+                      </td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap text-xs text-gray-500">
+                         {new Date(feedback.created_at).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
       )}
     </Card>
   )
