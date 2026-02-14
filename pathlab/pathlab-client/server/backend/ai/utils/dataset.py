@@ -249,6 +249,7 @@ def build_dataloader(
         pin_memory=pin_memory,
         drop_last=False,
         collate_fn=_collate_skip_failed_patches,  # Use custom collate to skip failed patches
+        multiprocessing_context='spawn' if num_workers > 0 else None,  # Avoid fork deadlock in multithreaded env
     )
     return loader, dataset
 

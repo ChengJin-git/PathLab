@@ -891,6 +891,7 @@ class PatchClassificationTrainer(BaseTrainer):
             pin_memory=True,
             persistent_workers=True,
             prefetch_factor=2,
+            multiprocessing_context='spawn',  # Avoid fork deadlock in multithreaded env
         )
         val_loader = DataLoader(
             val_dataset,
@@ -900,6 +901,7 @@ class PatchClassificationTrainer(BaseTrainer):
             pin_memory=True,
             persistent_workers=True,
             prefetch_factor=2,
+            multiprocessing_context='spawn',  # Avoid fork deadlock in multithreaded env
         ) if val_dataset else None
         test_loader = DataLoader(
             test_dataset,
@@ -909,6 +911,7 @@ class PatchClassificationTrainer(BaseTrainer):
             pin_memory=True,
             persistent_workers=True,
             prefetch_factor=2,
+            multiprocessing_context='spawn',  # Avoid fork deadlock in multithreaded env
         ) if test_dataset else None
 
         return train_loader, val_loader, test_loader

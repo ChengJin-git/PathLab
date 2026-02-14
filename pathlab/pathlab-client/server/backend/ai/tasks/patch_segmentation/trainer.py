@@ -185,6 +185,7 @@ class SegmentationTrainer:
             shuffle=True,
             num_workers=4,
             pin_memory=True,
+            multiprocessing_context='spawn',  # Avoid fork deadlock in multithreaded env
         )
         val_loader = DataLoader(
             self.val_dataset,
@@ -192,6 +193,7 @@ class SegmentationTrainer:
             shuffle=False,
             num_workers=4,
             pin_memory=True,
+            multiprocessing_context='spawn',  # Avoid fork deadlock in multithreaded env
         )
         test_loader = None
         if self.test_dataset is not None:
@@ -201,6 +203,7 @@ class SegmentationTrainer:
                 shuffle=False,
                 num_workers=4,
                 pin_memory=True,
+                multiprocessing_context='spawn',  # Avoid fork deadlock in multithreaded env
             )
         return train_loader, val_loader, test_loader
     
