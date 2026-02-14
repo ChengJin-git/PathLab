@@ -612,8 +612,8 @@ export default function TaskListPage() {
                   </div>
 
                   <div className="flex items-center gap-1">
-                    {/* Edit button - only for task creator */}
-                    {user && task.user_id === user.id && (
+                    {/* Edit button - only for task creator or admin */}
+                    {user && (isAdmin || task.user_id === user.id) && (
                       <button
                         onClick={(e) => handleEditTask(task, e)}
                         className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors"

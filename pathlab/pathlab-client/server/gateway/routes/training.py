@@ -457,7 +457,7 @@ async def update_training_task(
 ):
     """
     Update a training task's name.
-    Only the task creator can update the task.
+    Only the task creator or admin can update the task.
 
     This endpoint allows renaming tasks without affecting running services.
     The change is persisted to the database and immediately visible to all services.
@@ -467,11 +467,11 @@ async def update_training_task(
     if not task:
         raise HTTPException(status_code=404, detail="Training task not found")
 
-    # Check ownership - only task creator can update
-    if task.user_id != str(user.id):
+    # Check ownership - only task creator or admin can update
+    if not check_data_ownership(task.user_id, user):
         raise HTTPException(
             status_code=403,
-            detail="Only the task creator can update this task"
+            detail="Only the task creator or admin can update this task"
         )
 
     # Validate task name
