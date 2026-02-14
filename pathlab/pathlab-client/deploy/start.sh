@@ -57,17 +57,27 @@ pkill -9 -f "uvicorn.*gateway" 2>/dev/null || true
 pkill -9 -f "uvicorn.*preprocessing" 2>/dev/null || true
 pkill -9 -f "uvicorn.*ai" 2>/dev/null || true
 
-# Wait for ports to be released
-sleep 1
+# Wait for ports to be released with retry logic
+MAX_RETRIES=5
+RETRY_COUNT=0
 
-# Force kill by port if still occupied
-if ss -tlnp 2>/dev/null | grep -qE ':6100|:6101|:6102'; then
-    echo -e "${YELLOW}[!] 端口仍被占用，强制清理...${NC}"
-    kill_by_port 6100
-    kill_by_port 6101
-    kill_by_port 6102
-    sleep 1
-fi
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    sleep 2
+
+    if ! ss -tlnp 2>/dev/null | grep -qE ':6100|:6101|:6102'; then
+        # Ports are free
+        break
+    fi
+
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+
+    if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+        echo -e "${YELLOW}[!] 端口仍被占用，强制清理... (尝试 $RETRY_COUNT/$MAX_RETRIES)${NC}"
+        kill_by_port 6100
+        kill_by_port 6101
+        kill_by_port 6102
+    fi
+done
 
 # Final check
 if ss -tlnp 2>/dev/null | grep -qE ':6100|:6101|:6102'; then

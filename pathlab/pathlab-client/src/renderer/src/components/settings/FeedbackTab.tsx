@@ -214,8 +214,8 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
             <div className="flex flex-col md:flex-row gap-4 pt-4 xl:pt-0 border-t xl:border-t-0 border-gray-200 xl:border-l xl:pl-6">
                  <div className="space-y-1.5 flex-grow sm:flex-grow-0">
                      <Label className="text-xs font-medium text-gray-500 uppercase tracking-wider ml-0.5">Date Range</Label>
-                     <div className="flex items-center gap-2">
-                        <div className="relative flex-1 sm:w-36">
+                     <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                        <div className="relative flex-1 w-full sm:w-36">
                             <input
                               type="date"
                               value={exportDateFrom}
@@ -224,8 +224,8 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                             />
                             <Calendar className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-2.5 pointer-events-none" />
                         </div>
-                        <span className="text-gray-400 text-sm">–</span>
-                        <div className="relative flex-1 sm:w-36">
+                        <span className="hidden sm:inline text-gray-400 text-sm">–</span>
+                        <div className="relative flex-1 w-full sm:w-36">
                             <input
                               type="date"
                               value={exportDateTo}
@@ -237,11 +237,22 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                         {(exportDateFrom || exportDateTo) && (
                             <button
                                 onClick={() => { setExportDateFrom(''); setExportDateTo('') }}
-                                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors"
+                                className="hidden sm:block p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors"
                                 title="Clear dates"
                             >
                                 <X className="w-4 h-4" />
                             </button>
+                        )}
+                        {/* Mobile clear button */}
+                        {(exportDateFrom || exportDateTo) && (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => { setExportDateFrom(''); setExportDateTo('') }}
+                                className="sm:hidden h-8 w-full text-gray-500 border border-dashed border-gray-300"
+                            >
+                                <X className="w-3.5 h-3.5 mr-1.5" /> Clear Dates
+                            </Button>
                         )}
                      </div>
                  </div>
@@ -334,32 +345,32 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
           {/* Desktop Table View */}
           <div className="hidden sm:block overflow-hidden rounded-lg border border-gray-200 shadow-sm">
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm table-fixed">
                 <thead className="bg-gray-50/80">
                   <tr className="border-b border-gray-200">
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-16">ID</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[350px]">Message Content</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-32">User</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-28">Type</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-28">Helpfulness</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-[40%]">Message Content</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-[15%]">User</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">Type</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">Helpfulness</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">Task</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24 text-right">Duration</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-32 text-right">Created</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-28 text-right">Created</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 bg-white">
                   {feedbacks.map((feedback) => (
                     <tr key={feedback.id} className="hover:bg-gray-50/80 transition-colors">
-                      <td className="px-4 py-3 text-gray-500 font-mono text-xs">{feedback.id}</td>
-                      <td className="px-4 py-3">
-                          <div className="text-gray-900 text-xs leading-relaxed break-words whitespace-pre-wrap" title={feedback.message_content || ''}>
-                              {feedback.message_content || <span className="text-gray-300 italic">No content</span>}
+                      <td className="px-4 py-3 text-gray-500 font-mono text-xs align-top pt-3.5">{feedback.id}</td>
+                      <td className="px-4 py-3 align-top">
+                      <div className="text-gray-900 text-xs leading-relaxed break-words whitespace-normal line-clamp-4 hover:line-clamp-none transition-all duration-200" title={feedback.message_content || ''}>
+                              {feedback.message_content ? feedback.message_content.replace(/\s+/g, ' ') : <span className="text-gray-300 italic">No content</span>}
                           </div>
                       </td>
-                      <td className="px-4 py-3 text-gray-700 text-xs font-medium">
+                      <td className="px-4 py-3 text-gray-700 text-xs font-medium align-top pt-3.5 truncate">
                         {feedback.username || <span className="font-mono text-gray-400">{feedback.user_id.slice(0, 6)}</span>}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 align-top pt-3.5">
                         {feedback.feedback_type === 'thumbs_up' && (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-green-50 text-green-700 border border-green-100">
                             <ThumbsUp className="w-3 h-3" /> Up
@@ -372,7 +383,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                         )}
                         {!feedback.feedback_type && <span className="text-gray-300">-</span>}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 align-top pt-3.5">
                         {feedback.task_helpfulness === 'helpful' && (
                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">Helpful</span>
                         )}
@@ -381,10 +392,10 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                         )}
                         {!feedback.task_helpfulness && <span className="text-gray-300 text-xs">-</span>}
                       </td>
-                      <td className="px-4 py-3 text-gray-500 text-xs truncate max-w-[100px]" title={feedback.related_task_id || ''}>
+                      <td className="px-4 py-3 text-gray-500 text-xs truncate max-w-[100px] align-top pt-3.5" title={feedback.related_task_id || ''}>
                           {feedback.related_task_id || '-'}
                       </td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="px-4 py-3 text-right align-top pt-3.5">
                           {feedback.time_to_action_seconds ? (
                               <span className="font-mono text-xs text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded">
                                   {Number(feedback.time_to_action_seconds).toFixed(1)}s
@@ -393,7 +404,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                               <span className="text-gray-300 text-xs">-</span>
                           )}
                       </td>
-                      <td className="px-4 py-3 text-right whitespace-nowrap text-xs text-gray-500">
+                      <td className="px-4 py-3 text-right whitespace-nowrap text-xs text-gray-500 align-top pt-3.5">
                          {new Date(feedback.created_at).toLocaleDateString()}
                       </td>
                     </tr>
