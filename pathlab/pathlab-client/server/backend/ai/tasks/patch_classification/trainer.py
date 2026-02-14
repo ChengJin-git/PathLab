@@ -661,6 +661,7 @@ class PatchClassificationTrainer(BaseTrainer):
                 # Validation - run in thread pool (DataLoader + GPU inference are blocking)
                 val_metrics = await asyncio.to_thread(self._evaluate, model, val_loader, criterion)
                 val_loss = val_metrics.get("loss", epoch_loss)
+                val_acc = val_metrics.get("accuracy", 0.0)
                 history["val_loss"].append(val_loss)
                 history["val_accuracy"].append(val_metrics["accuracy"])
                 history["val_auc"].append(val_metrics.get("auc"))
@@ -668,7 +669,7 @@ class PatchClassificationTrainer(BaseTrainer):
                 # Select best model based on accuracy/AUC (higher is better)
                 is_improvement = False
                 check_metric = val_metrics.get("auc") if val_metrics.get("auc") is not None else val_metrics.get("accuracy")
-                
+
                 if check_metric is not None:
                      if best_val_metric is None or check_metric > best_val_metric:
                         best_val_metric = check_metric
@@ -677,13 +678,23 @@ class PatchClassificationTrainer(BaseTrainer):
                     if val_loss < best_val_loss:
                         best_val_loss = val_loss
                         is_improvement = True
-                        
+
                 if is_improvement:
                     best_val_loss = val_loss # Update for logging
                     best_state_dict = {k: v.cpu().clone() for k, v in linear_probe.state_dict().items()}
                     epochs_without_improvement = 0
                 else:
                     epochs_without_improvement += 1
+
+                # Log epoch progress - format consistent with non-kfold training
+                # Prepare metadata with train_ prefix for training loss and val_ prefix for validation metrics
+                metadata = {"fold": fold_idx + 1, "epoch": epoch, "train_loss": epoch_loss}
+                metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
+
+                await logger.info(
+                    f"[Fold {fold_idx + 1}] Epoch {epoch}/{epochs} - loss: {epoch_loss:.4f}, val_loss: {val_loss:.4f}, val_acc: {val_acc:.4f}",
+                    metadata
+                )
 
                 # Progress update: training uses 66-90% (24% total), saving uses 90-100%
                 # Each fold gets equal share of the 24% training range

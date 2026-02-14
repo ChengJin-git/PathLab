@@ -1236,6 +1236,22 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 else:
                     epochs_without_improvement += 1
 
+                # Log epoch progress - format consistent with non-kfold training
+                log_msg = f"[Fold {fold_idx + 1}] Epoch {epoch}/{epochs} - train_loss: {epoch_loss:.4f}, train_c_index: {train_c_index:.4f}"
+                log_msg += f", val_loss: {val_loss:.4f}, val_c_index: {val_c_index:.4f}"
+
+                # Prepare metadata with train_ and val_ prefixes
+                metadata = {
+                    "fold": fold_idx + 1,
+                    "epoch": epoch,
+                    "train_loss": epoch_loss,
+                    "train_c_index": train_c_index,
+                    "val_loss": val_loss,
+                    "val_c_index": val_c_index
+                }
+
+                await logger.info(log_msg, metadata=metadata)
+
                 # Progress (66-100% for all folds including saving)
                 # Each fold gets 34/num_folds percent; 70% for training, 30% for saving
                 fold_total_range = 34 / num_folds

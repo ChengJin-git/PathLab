@@ -21,6 +21,7 @@ from backend.ai.extractors import get_extractor
 from backend.ai.aggregators import get_aggregator
 from backend.ai.utils.dataset import build_dataloader
 from backend.ai.utils.feature_dataset import WSIFeatureDataset, CaseFeatureDataset
+from backend.common.config import Config
 from backend.ai.utils.vram_guard import (
     check_vram_before_model_load,
     check_vram_before_batch_processing,
@@ -717,6 +718,7 @@ class WSIClassificationTrainer(BaseTrainer):
         optimizer_type: str = "adam",
         auto_balance: bool = False,
         early_stopping_patience: int = 10,
+        fold_idx: Optional[int] = None,  # Optional fold index for kfold training
     ) -> Dict[str, Any]:
         """
         Train a single model run (used for both regular training and k-fold).
@@ -885,6 +887,8 @@ class WSIClassificationTrainer(BaseTrainer):
 
             # Prepare metadata with val_ prefix for validation metrics
             metadata = {"epoch": epoch, "train_loss": epoch_loss}
+            if fold_idx is not None:
+                metadata["fold"] = fold_idx
             if val_dataset is not None and len(val_dataset) > 0:
                 metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
             await logger.info(log_msg, metadata=metadata)
@@ -1446,6 +1450,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 optimizer_type=optimizer,
                 auto_balance=auto_balance,
                 early_stopping_patience=early_stopping_patience,
+                fold_idx=fold_idx + 1,  # Pass fold index for logging
             )
 
             model = result["model"]
