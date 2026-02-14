@@ -93,11 +93,16 @@ export default function AIChatPage() {
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
   // Initialize from localStorage, defaulting to true on desktop, false on mobile
   const [showHistory, setShowHistory] = useState(() => {
+    // Mobile always defaults to hidden (false) regardless of previous state
+    if (window.innerWidth < 1024) {
+      return false
+    }
+
     const saved = localStorage.getItem('ai-chat-sidebar-open')
     if (saved !== null) {
       return saved === 'true'
     }
-    return window.innerWidth >= 1024
+    return true
   })
 
   // Persist sidebar state
