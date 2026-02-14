@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { MessageSquare, RefreshCw, Trash2, Download, X, ThumbsUp, ThumbsDown, Clock } from 'lucide-react'
+import { MessageSquare, RefreshCw, Trash2, Download, X, ThumbsUp, ThumbsDown, Clock, Search, Calendar } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Label } from '../ui/label'
@@ -143,216 +143,208 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
       }
     })
   }
+
   return (
     <Card className="p-4 sm:p-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-6">
         <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
           <MessageSquare className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700 font-shrink-0" />
-          User Feedback Analytics
+          <div className="flex flex-col">
+            <span>User Feedback Analytics</span>
+            <span className="text-gray-500 font-normal text-sm mt-0.5 sm:hidden">
+                Manage and analyze user feedback
+            </span>
+          </div>
         </h2>
-        <div className="flex gap-2 self-end sm:self-auto">
-          <Button variant="outline" onClick={loadFeedbacks} disabled={loadingFeedbacks} className="gap-2">
+        <div className="flex gap-2 w-full sm:w-auto">
+          <Button variant="outline" onClick={loadFeedbacks} disabled={loadingFeedbacks} className="flex-1 sm:flex-none gap-2">
             <RefreshCw className={`w-4 h-4 ${loadingFeedbacks ? 'animate-spin' : ''}`} />
-            Refresh
+            <span className="sm:hidden lg:inline">Refresh</span>
           </Button>
           <Button
             variant="outline"
             onClick={handleResetFeedbacks}
             disabled={loadingFeedbacks || resettingFeedbacks}
-            className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+            className="flex-1 sm:flex-none gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
           >
             <Trash2 className={`w-4 h-4 ${resettingFeedbacks ? 'animate-pulse' : ''}`} />
-            Reset All
+            <span className="sm:hidden lg:inline">Reset All</span>
           </Button>
         </div>
       </div>
 
-      {/* Export Section & Filters */}
-      <div className="mb-6 p-4 bg-gray-50/50 border border-gray-200/60 rounded-xl space-y-4">
-        <div className="flex flex-col xl:flex-row gap-4 items-end xl:items-center justify-between">
-          {/* Filters */}
-          <div className="flex flex-wrap gap-3 items-center w-full xl:w-auto">
-            <div className="w-full sm:w-48">
-              <Label className="text-xs font-semibold text-gray-500 mb-1.5 block">Feedback Type</Label>
-              <Select
-                value={feedbackTypeFilter || ''}
-                onChange={(val) => { setFeedbackTypeFilter(val ? val as 'thumbs_up' | 'thumbs_down' : null); setFeedbackPage(0) }}
-                options={[
-                  { value: '', label: 'All Types' },
-                  { value: 'thumbs_up', label: 'Thumbs Up' },
-                  { value: 'thumbs_down', label: 'Thumbs Down' }
-                ]}
-              />
-            </div>
-            <div className="w-full sm:w-48">
-              <Label className="text-xs font-semibold text-gray-500 mb-1.5 block">Helpfulness</Label>
-              <Select
-                value={helpfulnessFilter || ''}
-                onChange={(val) => { setHelpfulnessFilter(val ? val as 'helpful' | 'not_helpful' : null); setFeedbackPage(0) }}
-                options={[
-                  { value: '', label: 'All Ratings' },
-                  { value: 'helpful', label: 'Helpful' },
-                  { value: 'not_helpful', label: 'Not Helpful' }
-                ]}
-              />
-            </div>
-          </div>
-
-          <div className="hidden xl:block w-px h-10 bg-gray-200 mx-2"></div>
-
-          {/* Date Range + Export */}
-          <div className="flex flex-col sm:flex-row flex-wrap gap-3 items-end w-full xl:w-auto">
-            <div>
-              <Label className="text-xs font-semibold text-gray-500 mb-1.5 block">Date Range</Label>
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="date"
-                  value={exportDateFrom}
-                  onChange={(e) => setExportDateFrom(e.target.value)}
-                  className="h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-                />
-                <span className="text-gray-400">-</span>
-                <input
-                  type="date"
-                  value={exportDateTo}
-                  onChange={(e) => setExportDateTo(e.target.value)}
-                  className="h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-                />
-                {(exportDateFrom || exportDateTo) && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => { setExportDateFrom(''); setExportDateTo('') }}
-                    className="h-9 w-9 p-0 text-gray-400 hover:text-gray-600"
-                    title="Clear dates"
-                  >
-                    <X className="w-4 h-4" />
-                  </Button>
-                )}
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => handleExportFeedbacks('csv')} disabled={exportingFeedbacks || loadingFeedbacks} className="h-9 gap-2 bg-white">
-                <Download className="w-4 h-4" />CSV
-              </Button>
-              <Button variant="outline" onClick={() => handleExportFeedbacks('json')} disabled={exportingFeedbacks || loadingFeedbacks} className="h-9 gap-2 bg-white">
-                <Download className="w-4 h-4" />JSON
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {loadingFeedbacks ? (
-        <div className="flex items-center justify-center py-12">
-          <RefreshCw className="w-6 h-6 animate-spin text-gray-400 mr-2" />
-          <span className="text-gray-500">Loading feedbacks...</span>
-        </div>
-      ) : feedbacks.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
-          <MessageSquare className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-          <p>No feedbacks found</p>
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Message Content</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Feedback</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Helpfulness</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Task</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time to Action</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created At</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {feedbacks.map((feedback) => (
-                <tr key={feedback.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 text-gray-900 font-mono text-xs">{feedback.id}</td>
-                  <td className="px-4 py-3 text-gray-600 text-xs max-w-[200px] truncate" title={feedback.message_content || ''}>
-                    {feedback.message_content
-                      ? feedback.message_content.length > 50
-                        ? feedback.message_content.slice(0, 50) + '...'
-                        : feedback.message_content
-                      : '-'}
-                  </td>
-                  <td className="px-4 py-3 text-gray-900 text-sm">
-                    {feedback.username || feedback.user_id.slice(0, 8) + '...'}
-                  </td>
-                  <td className="px-4 py-3">
-                    {feedback.feedback_type === 'thumbs_up' && (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                        <ThumbsUp className="w-3 h-3" /> Up
-                      </span>
-                    )}
-                    {feedback.feedback_type === 'thumbs_down' && (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">
-                        <ThumbsDown className="w-3 h-3" /> Down
-                      </span>
-                    )}
-                    {!feedback.feedback_type && <span className="text-gray-400">-</span>}
-                  </td>
-                  <td className="px-4 py-3">
-                    {feedback.task_helpfulness === 'helpful' && (
-                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">Helpful</span>
-                    )}
-                    {feedback.task_helpfulness === 'not_helpful' && (
-                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-700">Not Helpful</span>
-                    )}
-                    {!feedback.task_helpfulness && <span className="text-gray-400">-</span>}
-                  </td>
-                  <td className="px-4 py-3 text-gray-600 text-xs max-w-[150px]">
-                    {feedback.task_title ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-purple-50 text-purple-700 truncate capitalize" title={`${feedback.task_type?.replace(/_/g, ' ')}: ${feedback.task_title}`}>
-                        {feedback.task_type && <span className="font-medium">{feedback.task_type.replace(/_/g, ' ')}:</span>}
-                        <span className="truncate max-w-[80px]">{feedback.task_title}</span>
-                      </span>
-                    ) : '-'}
-                  </td>
-                  <td className="px-4 py-3 text-gray-600 text-xs">
-                    {feedback.time_to_action_seconds != null ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-cyan-50 text-cyan-700">
-                        <Clock className="w-3 h-3" />
-                        {feedback.time_to_action_seconds.toFixed(1)}s
-                      </span>
-                    ) : '-'}
-                  </td>
-                  <td className="px-4 py-3 text-gray-600 text-xs">
-                    {new Date(feedback.created_at).toLocaleString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {feedbackError && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+          {feedbackError}
         </div>
       )}
 
-      {/* Pagination */}
-      {feedbackTotal > feedbackLimit && (
-        <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
-          <div className="text-sm text-gray-600">
-            Showing {feedbackPage * feedbackLimit + 1} - {Math.min((feedbackPage + 1) * feedbackLimit, feedbackTotal)} of {feedbackTotal}
+      {/* Compact Filters & Actions Bar */}
+      <div className="mb-6 p-4 bg-gray-50/80 border border-gray-100 rounded-xl">
+         <div className="flex flex-col xl:flex-row gap-4 xl:items-end justify-between">
+            {/* Left: Filters Group */}
+            <div className="flex flex-col md:flex-row gap-4 flex-1">
+                <div className="w-full md:w-48 space-y-1.5">
+                    <Label className="text-xs font-medium text-gray-500 uppercase tracking-wider ml-0.5">Type</Label>
+                    <Select
+                        value={feedbackTypeFilter || ''}
+                        onChange={(val) => { setFeedbackTypeFilter(val ? val as 'thumbs_up' | 'thumbs_down' : null); setFeedbackPage(0) }}
+                        options={[
+                        { value: '', label: 'All Types' },
+                        { value: 'thumbs_up', label: 'Thumbs Up' },
+                        { value: 'thumbs_down', label: 'Thumbs Down' }
+                        ]}
+                    />
+                </div>
+                <div className="w-full md:w-48 space-y-1.5">
+                    <Label className="text-xs font-medium text-gray-500 uppercase tracking-wider ml-0.5">Helpfulness</Label>
+                    <Select
+                        value={helpfulnessFilter || ''}
+                        onChange={(val) => { setHelpfulnessFilter(val ? val as 'helpful' | 'not_helpful' : null); setFeedbackPage(0) }}
+                        options={[
+                        { value: '', label: 'All Ratings' },
+                        { value: 'helpful', label: 'Helpful' },
+                        { value: 'not_helpful', label: 'Not Helpful' }
+                        ]}
+                    />
+                </div>
+            </div>
+
+            {/* Right: Date & Export Group */}
+            <div className="flex flex-col md:flex-row gap-4 pt-4 xl:pt-0 border-t xl:border-t-0 border-gray-200 xl:border-l xl:pl-6">
+                 <div className="space-y-1.5 flex-grow sm:flex-grow-0">
+                     <Label className="text-xs font-medium text-gray-500 uppercase tracking-wider ml-0.5">Date Range</Label>
+                     <div className="flex items-center gap-2">
+                        <div className="relative flex-1 sm:w-36">
+                            <input
+                              type="date"
+                              value={exportDateFrom}
+                              onChange={(e) => setExportDateFrom(e.target.value)}
+                              className="w-full h-9 pl-8 pr-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                            />
+                            <Calendar className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-2.5 pointer-events-none" />
+                        </div>
+                        <span className="text-gray-400 text-sm">–</span>
+                        <div className="relative flex-1 sm:w-36">
+                            <input
+                              type="date"
+                              value={exportDateTo}
+                              onChange={(e) => setExportDateTo(e.target.value)}
+                              className="w-full h-9 pl-8 pr-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                            />
+                            <Calendar className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-2.5 pointer-events-none" />
+                        </div>
+                        {(exportDateFrom || exportDateTo) && (
+                            <button
+                                onClick={() => { setExportDateFrom(''); setExportDateTo('') }}
+                                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors"
+                                title="Clear dates"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        )}
+                     </div>
+                 </div>
+
+                 <div className="space-y-1.5 flex flex-col justify-end">
+                      <div className="h-4 hidden md:block"></div> {/* Spacer to align button bottom with inputs */}
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => handleExportFeedbacks('csv')} disabled={exportingFeedbacks || loadingFeedbacks} className="h-9 w-full sm:w-auto gap-1.5 bg-white border-gray-200 text-gray-700 hover:bg-gray-50">
+                            <Download className="w-3.5 h-3.5" />
+                            <span className="text-xs font-medium">CSV</span>
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => handleExportFeedbacks('json')} disabled={exportingFeedbacks || loadingFeedbacks} className="h-9 w-full sm:w-auto gap-1.5 bg-white border-gray-200 text-gray-700 hover:bg-gray-50">
+                            <Download className="w-3.5 h-3.5" />
+                            <span className="text-xs font-medium">JSON</span>
+                        </Button>
+                      </div>
+                 </div>
+            </div>
+         </div>
+      </div>
+
+      {loadingFeedbacks ? (
+        <div className="flex flex-col items-center justify-center py-12 text-gray-500">
+           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mb-3"></div>
+           <p className="text-sm">Loading user feedback...</p>
+        </div>
+      ) : feedbacks.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-gray-400 bg-gray-50/30 rounded-lg border border-dashed border-gray-200">
+          <div className="bg-gray-50 p-3 rounded-full mb-3">
+             <MessageSquare className="w-6 h-6 text-gray-300" />
           </div>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setFeedbackPage(Math.max(0, feedbackPage - 1))}
-              disabled={feedbackPage === 0 || loadingFeedbacks}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setFeedbackPage(feedbackPage + 1)}
-              disabled={(feedbackPage + 1) * feedbackLimit >= feedbackTotal || loadingFeedbacks}
-            >
-              Next
-            </Button>
+          <p className="font-medium text-gray-600">No feedback data found</p>
+          <p className="text-sm mt-1">Try adjusting your filters</p>
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-gray-200 shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50/80">
+                <tr className="border-b border-gray-200">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-16">ID</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider min-w-[200px]">Message Content</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-32">User</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-28">Type</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-28">Helpfulness</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">Task</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24 text-right">Duration</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-32 text-right">Created</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 bg-white">
+                {feedbacks.map((feedback) => (
+                  <tr key={feedback.id} className="hover:bg-gray-50/80 transition-colors">
+                    <td className="px-4 py-3 text-gray-500 font-mono text-xs">{feedback.id}</td>
+                    <td className="px-4 py-3">
+                        <div className="text-gray-900 line-clamp-2 max-w-[300px] text-xs leading-relaxed" title={feedback.message_content || ''}>
+                            {feedback.message_content || <span className="text-gray-300 italic">No content</span>}
+                        </div>
+                    </td>
+                    <td className="px-4 py-3 text-gray-700 text-xs font-medium">
+                      {feedback.username || <span className="font-mono text-gray-400">{feedback.user_id.slice(0, 6)}</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      {feedback.feedback_type === 'thumbs_up' && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-green-50 text-green-700 border border-green-100">
+                          <ThumbsUp className="w-3 h-3" /> Up
+                        </span>
+                      )}
+                      {feedback.feedback_type === 'thumbs_down' && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-red-50 text-red-700 border border-red-100">
+                          <ThumbsDown className="w-3 h-3" /> Down
+                        </span>
+                      )}
+                      {!feedback.feedback_type && <span className="text-gray-300">-</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      {feedback.task_helpfulness === 'helpful' && (
+                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">Helpful</span>
+                      )}
+                      {feedback.task_helpfulness === 'not_helpful' && (
+                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-50 text-orange-700 border border-orange-100">Not Helpful</span>
+                      )}
+                      {!feedback.task_helpfulness && <span className="text-gray-300 text-xs">-</span>}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 text-xs truncate max-w-[100px]" title={feedback.related_task_id || ''}>
+                        {feedback.related_task_id || '-'}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                        {feedback.time_to_action_seconds ? (
+                            <span className="font-mono text-xs text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded">
+                                {Number(feedback.time_to_action_seconds).toFixed(1)}s
+                            </span>
+                        ) : (
+                            <span className="text-gray-300 text-xs">-</span>
+                        )}
+                    </td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap text-xs text-gray-500">
+                       {new Date(feedback.created_at).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

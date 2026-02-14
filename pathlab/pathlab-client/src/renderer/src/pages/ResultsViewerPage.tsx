@@ -170,9 +170,30 @@ export default function ResultsViewerPage() {
     }
   }, [selectedTaskId])
 
-  // Auto-expand the most recent analysis when navigating via URL param or state
   useEffect(() => {
-    if (initialSelectedTaskId && analyses.length > 0 && !expandedAnalysis) {
+    // Check for task_id in URL params first
+    if (taskIdFromUrl && taskIdFromUrl !== selectedTaskId) {
+      setSelectedTaskId(taskIdFromUrl)
+      // Switch back to internal analysis if we were elsewhere
+      if (pageMode !== 'internal-analysis') {
+        setPageMode('internal-analysis')
+      }
+    }
+    
+    // Check navigation state for mode switching or pre-selection
+    const state = location.state as { pageMode?: PageMode, selectedModelId?: string, selectedTaskId?: string } | null
+    if (state?.pageMode && state.pageMode !== pageMode) {
+      setPageMode(state.pageMode)
+    }
+    if (state?.selectedModelId) {
+      // We need to wait for trainedModels to load, but we can set the intent
+      setSelectedModelId(state.selectedModelId)
+    }
+    // Also handle task_id from state if not in URL
+    if (state?.selectedTaskId && !taskIdFromUrl && state.selectedTaskId !== selectedTaskId) {
+      setSelectedTaskId(state.selectedTaskId)
+    }
+  }, [location.state, taskIdFromUrl]) // removed dependency loop risks
       // Sort by timestamp descending and expand the most recent
       const sortedAnalyses = [...analyses].sort((a, b) =>
         new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
