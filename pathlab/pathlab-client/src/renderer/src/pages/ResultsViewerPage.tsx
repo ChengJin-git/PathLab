@@ -10,7 +10,7 @@ import { API_BASE } from '../config'
 import { getTrainedModels, TrainedModel, getAuthToken, startExternalValidation as apiStartExternalValidation, fetchDatasetsForValidation, ValidationDataset } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
-import { AnalysisDetails, type AnalysisSummary, type BootstrapCI } from '../components/results/AnalysisDetails'
+import { AnalysisDetails, type AnalysisSummary, type BootstrapCI, type ChartData } from '../components/results/AnalysisDetails'
 import {
   CLASSIFICATION_METRICS,
   CLASSIFICATION_CHARTS,
@@ -194,6 +194,10 @@ export default function ResultsViewerPage() {
       setSelectedTaskId(state.selectedTaskId)
     }
   }, [location.state, taskIdFromUrl]) // removed dependency loop risks
+
+  // Auto-expand the most recent analysis when navigating via URL param or state
+  useEffect(() => {
+    if (initialSelectedTaskId && analyses.length > 0 && !expandedAnalysis) {
       // Sort by timestamp descending and expand the most recent
       const sortedAnalyses = [...analyses].sort((a, b) =>
         new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
