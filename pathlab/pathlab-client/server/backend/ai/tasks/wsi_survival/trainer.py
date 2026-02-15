@@ -1523,7 +1523,6 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         ai_results_root = self.uploads_root / "ai_results"
         has_raw_attention = hasattr(model, 'forward_with_raw_attention')
 
-        all_risks = []
         file_save_items = []  # For parallel file saving
         db_records = []  # For batch database insert
 
@@ -1537,37 +1536,44 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             num_workers=0,
         )
 
-        # Phase 1: Run inference and collect results (GPU-bound, sequential)
-        with torch.inference_mode():
-            for batch in inference_loader:
-                # Unpack batch based on data level
-                # Features are already on GPU if Dataset was created with device parameter
-                if is_case_level:
-                    features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
-                    sample_id = sample_id[0]
-                    # Convert from batch format
-                    slide_wsi_ids = [wid[0] for wid in slide_wsi_ids]
-                    patch_counts = [int(pc) for pc in patch_counts]
-                else:
-                    features, sample_time, sample_status, sample_id = batch
-                    sample_id = sample_id[0]
-                    slide_wsi_ids = None
-                    patch_counts = None
+        # Phase 1: Run inference and collect results in thread pool.
+        # DataLoader triggers torch.load() in __getitem__(), and GPU inference is blocking.
+        def _run_inference():
+            """Synchronous inference loop - runs in thread pool to avoid blocking event loop."""
+            _all_risks = []
+            with torch.inference_mode():
+                for batch in inference_loader:
+                    # Unpack batch based on data level
+                    # Features are already on GPU if Dataset was created with device parameter
+                    if is_case_level:
+                        features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
+                        sample_id = sample_id[0]
+                        # Convert from batch format
+                        slide_wsi_ids = [wid[0] for wid in slide_wsi_ids]
+                        patch_counts = [int(pc) for pc in patch_counts]
+                    else:
+                        features, sample_time, sample_status, sample_id = batch
+                        sample_id = sample_id[0]
+                        slide_wsi_ids = None
+                        patch_counts = None
 
-                H = features.squeeze(0)  # Already on GPU
+                    H = features.squeeze(0)  # Already on GPU
 
-                if has_raw_attention:
-                    logits, attention, raw_attention = model.forward_with_raw_attention(H)
-                else:
-                    logits, attention = model(H)
-                    raw_attention = None
+                    if has_raw_attention:
+                        logits, attention, raw_attention = model.forward_with_raw_attention(H)
+                    else:
+                        logits, attention = model(H)
+                        raw_attention = None
 
-                # Compute hazards
-                hazards = torch.sigmoid(logits).cpu().numpy().flatten()
-                surv = np.cumprod(1 - hazards)
-                risk_score = np.sum(hazards)
-                all_risks.append((sample_id, risk_score, hazards, surv, attention, raw_attention,
-                                  float(sample_time), int(sample_status), slide_wsi_ids, patch_counts))
+                    # Compute hazards
+                    hazards = torch.sigmoid(logits).cpu().numpy().flatten()
+                    surv = np.cumprod(1 - hazards)
+                    risk_score = np.sum(hazards)
+                    _all_risks.append((sample_id, risk_score, hazards, surv, attention, raw_attention,
+                                      float(sample_time), int(sample_status), slide_wsi_ids, patch_counts))
+            return _all_risks
+
+        all_risks = await asyncio.to_thread(_run_inference)
 
         # Calculate median risk score for risk stratification
         median_risk_score = float(np.median([r[1] for r in all_risks]))

@@ -841,15 +841,19 @@ class PatchClassificationTrainer(BaseTrainer):
         # Use best fold's checkpoint as default
         ckpt_path = model_dir / best_fold_key / "linear_probe.pth"
 
+        # Build val_metrics with only float values
+        val_metrics_dict: Dict[str, float] = {
+            "accuracy": aggregated["accuracy"]["mean"],
+        }
+        if aggregated.get("auc", {}).get("mean") is not None:
+            val_metrics_dict["auc"] = aggregated["auc"]["mean"]
+
         return self._build_train_response(
             model_id=model_id,
             checkpoint_path=str(ckpt_path),
             loss_history=fold_results[best_fold_key]["history"]["loss"],
-            val_metrics={
-                "accuracy": aggregated["accuracy"]["mean"],
-                "auc": aggregated.get("auc", {}).get("mean"),
-                "kfold_aggregated": aggregated,
-            },
+            val_metrics=val_metrics_dict,
+            kfold_aggregated=aggregated,
         )
 
     def _build_dataloaders(
@@ -1121,16 +1125,7 @@ class PatchClassificationTrainer(BaseTrainer):
 
         model.eval()
         ai_results_root = self.uploads_root / "ai_results"
-
-        # Collect predictions for metrics calculation
-        all_probs = []
-        all_preds = []
-        all_labels_list = []
         num_classes = len(classes)
-
-        # Collect data for batch processing
-        file_save_items = []  # List of (wsi_result_dir, result_data, cam_map, fold_suffix, task_id)
-        db_records = []  # For batch database insert
 
         # Get transforms for inference using actual extractor
         extractor_temp = get_extractor(extractor_name, pretrained=False, hf_token=self.hf_token)
@@ -1150,81 +1145,95 @@ class PatchClassificationTrainer(BaseTrainer):
         from backend.ai.utils.cam_utils import is_cnn_extractor
         use_gradients = is_cnn_extractor(extractor_name)
 
-        # Phase 1: Run inference and collect results (GPU-bound, sequential)
+        # Phase 1: Run inference and collect results in thread pool.
+        # GPU inference and image loading are blocking - run in thread to avoid blocking event loop.
         from PIL import Image
-        with torch.set_grad_enabled(use_gradients):
-            for idx, wsi_id in enumerate(wsi_ids):
-                # Load and transform image
-                img_path = image_paths[wsi_id]
-                img = Image.open(img_path).convert("RGB")
-                img_tensor = fm_transform(img).unsqueeze(0).to(self.device)
 
-                # Forward pass for prediction
-                with torch.inference_mode():
-                    logits = model(img_tensor)
-                    probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
-                    pred_idx = int(probs.argmax())
-                    pred_label = classes[pred_idx]
+        def _run_inference():
+            """Synchronous inference loop - runs in thread pool to avoid blocking event loop."""
+            _all_probs = []
+            _all_preds = []
+            _all_labels_list = []
+            _file_save_items = []
+            _db_records = []
 
-                # Extract CAM heatmap
-                try:
-                    cam_map = cam_extractor.extract_cam(
-                        model=model,
-                        input_tensor=img_tensor,
-                        target_class=pred_idx,
-                    )
-                    cam_map = cam_map.squeeze(0)
-                except Exception as e:
-                    import traceback
-                    error_details = traceback.format_exc()
-                    await logger.warning(f"CAM extraction failed for {wsi_id}: {e}\n{error_details}")
-                    cam_map = np.ones(cam_size, dtype=np.float32) / (cam_size[0] * cam_size[1])
+            with torch.set_grad_enabled(use_gradients):
+                for idx, wsi_id in enumerate(wsi_ids):
+                    # Load and transform image
+                    img_path = image_paths[wsi_id]
+                    img = Image.open(img_path).convert("RGB")
+                    img_tensor = fm_transform(img).unsqueeze(0).to(self.device)
 
-                # Collect for metrics
-                all_probs.append(probs)
-                all_preds.append(pred_idx)
-                all_labels_list.append(labels[wsi_id])
+                    # Forward pass for prediction
+                    with torch.inference_mode():
+                        logits = model(img_tensor)
+                        probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                        pred_idx = int(probs.argmax())
+                        pred_label = classes[pred_idx]
 
-                probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
-                gt_label = classes[labels[wsi_id]]
+                    # Extract CAM heatmap
+                    try:
+                        cam_map = cam_extractor.extract_cam(
+                            model=model,
+                            input_tensor=img_tensor,
+                            target_class=pred_idx,
+                        )
+                        cam_map = cam_map.squeeze(0)
+                    except Exception as e:
+                        import traceback
+                        error_details = traceback.format_exc()
+                        logger.warning(f"CAM extraction failed for {wsi_id}: {e}\n{error_details}")
+                        cam_map = np.ones(cam_size, dtype=np.float32) / (cam_size[0] * cam_size[1])
 
-                wsi_result_dir = ai_results_root / wsi_id
-                cam_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_cam.npy"
-                result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
+                    # Collect for metrics
+                    _all_probs.append(probs)
+                    _all_preds.append(pred_idx)
+                    _all_labels_list.append(labels[wsi_id])
 
-                result_data = {
-                    "wsi_id": wsi_id,
-                    "task_id": task_id,
-                    "pred": pred_label,
-                    "probs": probs_dict,
-                    "ground_truth": gt_label,
-                    "correct": pred_label == gt_label,
-                    "classes": classes,
-                    "cam_file": str(cam_file),
-                    "cam_size": list(cam_size),
-                }
-                if fold_key:
-                    result_data["fold_key"] = fold_key
+                    probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
+                    gt_label = classes[labels[wsi_id]]
 
-                file_save_items.append((wsi_result_dir, result_data, cam_map, fold_suffix, task_id))
+                    wsi_result_dir = ai_results_root / wsi_id
+                    cam_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_cam.npy"
+                    result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
 
-                # Prepare database record
-                db_records.append({
-                    "wsi_id": wsi_id,
-                    "task_id": task_id,
-                    "pred": pred_label,
-                    "probs": probs_dict,
-                    "extra_metadata": {
+                    result_data = {
+                        "wsi_id": wsi_id,
+                        "task_id": task_id,
+                        "pred": pred_label,
+                        "probs": probs_dict,
                         "ground_truth": gt_label,
                         "correct": pred_label == gt_label,
                         "classes": classes,
-                        "task_type": "patch_classification",
                         "cam_file": str(cam_file),
                         "cam_size": list(cam_size),
-                        "fold_key": fold_key,
-                        "result_file": str(result_file),
                     }
-                })
+                    if fold_key:
+                        result_data["fold_key"] = fold_key
+
+                    _file_save_items.append((wsi_result_dir, result_data, cam_map, fold_suffix, task_id))
+
+                    # Prepare database record
+                    _db_records.append({
+                        "wsi_id": wsi_id,
+                        "task_id": task_id,
+                        "pred": pred_label,
+                        "probs": probs_dict,
+                        "extra_metadata": {
+                            "ground_truth": gt_label,
+                            "correct": pred_label == gt_label,
+                            "classes": classes,
+                            "task_type": "patch_classification",
+                            "cam_file": str(cam_file),
+                            "cam_size": list(cam_size),
+                            "fold_key": fold_key,
+                            "result_file": str(result_file),
+                        }
+                    })
+
+            return _all_probs, _all_preds, _all_labels_list, _file_save_items, _db_records
+
+        all_probs, all_preds, all_labels_list, file_save_items, db_records = await asyncio.to_thread(_run_inference)
 
         # Phase 2: Parallel file I/O using thread pool with progress updates
         await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_file_io_start)
