@@ -488,10 +488,14 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
               {Object.entries(kfoldTraining.folds)
                 .sort(([a], [b]) => a.localeCompare(b))
-                .map(([foldName, foldData]) => (
+                .map(([foldName, foldData]) => {
+                  // Convert fold_0 to FOLD 1, fold_1 to FOLD 2, etc.
+                  const foldNumber = parseInt(foldName.replace('fold_', ''), 10) + 1
+                  const displayName = `FOLD ${foldNumber}`
+                  return (
                   <div key={foldName} className="bg-white border border-gray-200 rounded-lg p-3 shadow-sm hover:border-purple-300 transition-colors">
                     <div className="text-xs font-bold text-gray-700 mb-2 uppercase tracking-wider border-b border-gray-100 pb-2">
-                      {foldName.replace('_', ' ')}
+                      {displayName}
                     </div>
                     {foldData.val_metrics && (
                       <div className="space-y-2">
@@ -508,7 +512,8 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
                       </div>
                     )}
                   </div>
-                ))}
+                  )
+                })}
             </div>
           </div>
         )}

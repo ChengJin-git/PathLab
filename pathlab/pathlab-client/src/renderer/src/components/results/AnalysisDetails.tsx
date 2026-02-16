@@ -221,10 +221,14 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                 <tbody>
                   {Object.entries(analysis.kfold_training.folds)
                     .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
-                    .map(([foldName, foldData]) => (
+                    .map(([foldName, foldData]) => {
+                      // Convert fold_0 to Fold 1, fold_1 to Fold 2, etc.
+                      const foldNumber = parseInt(foldName.replace('fold_', ''), 10) + 1
+                      const displayName = `Fold ${foldNumber}`
+                      return (
                     <tr key={foldName} className="border-b border-purple-100">
                       <td className="py-2 font-medium text-purple-700">
-                        {foldName.replace('fold_', 'Fold ')}
+                        {displayName}
                       </td>
                       {Object.keys(analysis.kfold_training!.aggregated)
                         .filter(key => key !== 'loss' && shouldShowMetric(key))
@@ -240,7 +244,8 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                         )
                       })}
                     </tr>
-                  ))}
+                      )
+                    })}
                 </tbody>
               </table>
             </div>
