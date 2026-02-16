@@ -299,11 +299,11 @@ export default function WSIViewerPage() {
   // Load patch CAM data when selecting a patch-level task
   useEffect(() => {
     if (isPatchLevel && selectedTaskId) {
-      fetchPatchCAMData(wsi_id, selectedTaskId).then(setPatchCAMData)
+      fetchPatchCAMData(wsi_id, selectedTaskId, selectedFoldKey).then(setPatchCAMData)
     } else {
       setPatchCAMData(null)
     }
-  }, [wsi_id, selectedTaskId, isPatchLevel])
+  }, [wsi_id, selectedTaskId, selectedFoldKey, isPatchLevel])
 
   const currentIndex = allWSIs.findIndex(w => w.wsi_id === wsi_id)
   const prevWSI = currentIndex > 0 ? allWSIs[currentIndex - 1] : null
@@ -466,7 +466,7 @@ export default function WSIViewerPage() {
                 {/* Heatmap overlay */}
                 {showHeatmap && selectedTaskId && (
                   <img
-                    src={getPatchCAMImageUrl(wsi_id, selectedTaskId)}
+                    src={getPatchCAMImageUrl(wsi_id, selectedTaskId, selectedFoldKey)}
                     alt="Heatmap Overlay"
                     className="absolute inset-0 w-full h-full object-contain rounded-xl pointer-events-none select-none"
                     style={{ opacity: heatmapOpacity }}

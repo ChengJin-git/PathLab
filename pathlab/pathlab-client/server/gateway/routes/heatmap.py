@@ -163,6 +163,7 @@ async def get_patch_image(
 async def get_patch_cam(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID"),
+    fold_key: Optional[str] = Query(None, description="Fold key for k-fold results (e.g., 'fold_0')"),
     format: str = Query("image", description="Output format: 'image' or 'json'"),
     user: User = Depends(get_user_from_header_or_param),
     db: AsyncSession = Depends(get_db)
@@ -182,6 +183,8 @@ async def get_patch_cam(
         params = {"format": format}
         if task_id:
             params["task_id"] = task_id
+        if fold_key:
+            params["fold_key"] = fold_key
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(

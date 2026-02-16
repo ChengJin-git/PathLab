@@ -722,6 +722,7 @@ async def get_available_heatmaps(
 async def get_patch_cam(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID for the result"),
+    fold_key: Optional[str] = Query(None, description="Fold key for k-fold results (e.g., 'fold_0')"),
     format: str = Query("image", description="Output format: 'image' for colored PNG, 'json' for raw data"),
     db: AsyncSession = Depends(get_db)
 ):
@@ -734,6 +735,7 @@ async def get_patch_cam(
     Args:
         wsi_id: The WSI/patch ID
         task_id: Optional specific task ID
+        fold_key: Optional fold key for k-fold results (e.g., 'fold_0')
         format: 'image' returns colored heatmap PNG with transparency,
                 'json' returns raw CAM data
 
@@ -745,7 +747,7 @@ async def get_patch_cam(
     matplotlib.use('Agg')
     from matplotlib import cm
 
-    logger.info(f"Getting patch CAM for {wsi_id}, task_id={task_id}, format={format}")
+    logger.info(f"Getting patch CAM for {wsi_id}, task_id={task_id}, fold_key={fold_key}, format={format}")
 
     # Helper function to return empty CAM response
     def empty_cam_response(message: str = "No CAM data available"):
@@ -783,25 +785,35 @@ async def get_patch_cam(
             logger.info(f"No CAM files found for {wsi_id}")
             return empty_cam_response("No CAM data available")
 
-        # Select the right CAM file based on task_id
+        # Select the right CAM file based on task_id and fold_key
         if task_id:
             matching = [f for f in cam_files if task_id in f.name]
             if not matching:
                 logger.info(f"No CAM data found for task {task_id}")
                 return empty_cam_response(f"No CAM data for task {task_id}")
 
-            # Handle K-Fold: prefer non-fold files, or use best_fold from metrics.json
-            non_fold = [f for f in matching if "fold_" not in f.name]
-            if non_fold:
-                matching = non_fold
-            elif matching:
-                # All files are k-fold - try to find best fold from metrics.json
-                best_fold = find_best_fold(task_id, UPLOADS_DIR)
-                if best_fold:
-                    best_matching = [f for f in matching if best_fold in f.name]
-                    if best_matching:
-                        matching = best_matching
-                        logger.info(f"Using best fold {best_fold} for patch CAM task {task_id}")
+            # Handle K-Fold selection
+            if fold_key:
+                # Explicit fold_key specified - use it
+                fold_matching = [f for f in matching if fold_key in f.name]
+                if fold_matching:
+                    matching = fold_matching
+                    logger.info(f"Using specified fold {fold_key} for patch CAM task {task_id}")
+                else:
+                    logger.warning(f"Fold {fold_key} not found for task {task_id}, using fallback")
+            else:
+                # No fold_key specified - prefer non-fold files, or use best_fold
+                non_fold = [f for f in matching if "fold_" not in f.name]
+                if non_fold:
+                    matching = non_fold
+                elif matching:
+                    # All files are k-fold - try to find best fold from metrics.json
+                    best_fold = find_best_fold(task_id, UPLOADS_DIR)
+                    if best_fold:
+                        best_matching = [f for f in matching if best_fold in f.name]
+                        if best_matching:
+                            matching = best_matching
+                            logger.info(f"Using best fold {best_fold} for patch CAM task {task_id}")
 
             cam_file = matching[0]
         else:

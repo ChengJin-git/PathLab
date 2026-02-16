@@ -170,13 +170,17 @@ export interface PatchCAMData {
  * Get patch CAM overlay image URL
  * @param wsi_id - The WSI/patch ID
  * @param task_id - Optional task ID for specific CAM
+ * @param fold_key - Optional fold key for k-fold results (e.g., 'fold_0')
  * @returns URL for the CAM overlay PNG image (with auth token for <img> tags)
  */
-export function getPatchCAMImageUrl(wsi_id: string, task_id?: string): string {
+export function getPatchCAMImageUrl(wsi_id: string, task_id?: string, fold_key?: string): string {
   const token = getAuthToken()
   let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=image`
   if (task_id) {
     url += `&task_id=${encodeURIComponent(task_id)}`
+  }
+  if (fold_key) {
+    url += `&fold_key=${encodeURIComponent(fold_key)}`
   }
   if (token) {
     url += `&token=${encodeURIComponent(token)}`
@@ -216,13 +220,17 @@ export function getHeatmapThumbnailUrl(
  * Fetch patch CAM data as JSON
  * @param wsi_id - The WSI/patch ID
  * @param task_id - Optional task ID for specific CAM
+ * @param fold_key - Optional fold key for k-fold results (e.g., 'fold_0')
  * @returns Patch CAM data
  * @throws {ApiError} If the request fails
  */
-export async function fetchPatchCAMData(wsi_id: string, task_id?: string): Promise<PatchCAMData> {
+export async function fetchPatchCAMData(wsi_id: string, task_id?: string, fold_key?: string): Promise<PatchCAMData> {
   let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=json`
   if (task_id) {
     url += `&task_id=${encodeURIComponent(task_id)}`
+  }
+  if (fold_key) {
+    url += `&fold_key=${encodeURIComponent(fold_key)}`
   }
   return apiFetch<PatchCAMData>(url, undefined, 'Failed to fetch patch CAM data')
 }
