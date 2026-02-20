@@ -43,7 +43,7 @@ export async function chatWithAI(
   // Get AI configuration from localStorage
   const apiKey = localStorage.getItem('openrouter_api_key') || ''
   const baseUrl = localStorage.getItem('openrouter_base_url') || 'https://openrouter.ai/api/v1'
-  const model = localStorage.getItem('openrouter_model') || 'qwen/qwen3-vl-235b-a22b-instruct'
+  const model = localStorage.getItem('openrouter_model') || 'qwen/qwen3.5-plus-02-15'
 
   let response: Response
   try {

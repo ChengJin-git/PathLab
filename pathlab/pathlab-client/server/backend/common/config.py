@@ -224,7 +224,7 @@ class Config:
         return {
             "openrouter_api_key": data.get("openrouter_api_key", ""),
             "openrouter_base_url": data.get("openrouter_base_url", "https://openrouter.ai/api/v1"),
-            "openrouter_model": data.get("openrouter_model", "qwen/qwen3-vl-235b-a22b-instruct"),
+            "openrouter_model": data.get("openrouter_model", "qwen/qwen3.5-plus-02-15"),
             "huggingface_token": data.get("huggingface_token", ""),
             "dashscope_api_key": data.get("dashscope_api_key", ""),
             # Local vLLM settings (OpenAI-compatible server for LLM)

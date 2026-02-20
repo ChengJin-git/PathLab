@@ -17,7 +17,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   // Remote LLM state
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('https://openrouter.ai/api/v1')
-  const [model, setModel] = useState('qwen/qwen3-vl-235b-a22b-instruct')
+  const [model, setModel] = useState('qwen/qwen3.5-plus-02-15')
   const [huggingfaceToken, setHuggingfaceToken] = useState('')
   const [dashscopeApiKey, setDashscopeApiKey] = useState('')
   const [aiSaved, setAiSaved] = useState(false)
@@ -174,9 +174,8 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                       className="flex h-9 w-full rounded-lg border border-gray-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950"
                     >
                       <optgroup label="Multimodal Models">
-                        <option value="qwen/qwen3-vl-235b-a22b-instruct">Qwen3-VL-235B-A22B-Instruct</option>
-                        <option value="qwen/qwen3-vl-235b-a22b-thinking">Qwen3-VL-235B-A22B-Thinking</option>
-                        <option value="z-ai/glm-4.6v">GLM-4.6V</option>
+                        <option value="qwen/qwen3.5-plus-02-15">Qwen3.5-Plus-02-15</option>
+                        <option value="z-ai/glm-5">GLM-5</option>
                         <option value="moonshotai/kimi-k2.5">Kimi-K2.5</option>
                       </optgroup>
                       <optgroup label="Text Models">
@@ -286,7 +285,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                           </span>
                         )}
                       </div>
-                      <Input value={localVllmModel} onChange={(e) => setLocalVllmModel(e.target.value)} placeholder={localVllmDetectedModel || "Qwen/Qwen3-235B-A22B-Instruct"} />
+                      <Input value={localVllmModel} onChange={(e) => setLocalVllmModel(e.target.value)} placeholder={localVllmDetectedModel || "Qwen/Qwen3.5-Plus-02-15"} />
                     </div>
                     <div className="space-y-2">
                       <Label>API Key <span className="text-gray-400 font-normal">(Optional)</span></Label>
