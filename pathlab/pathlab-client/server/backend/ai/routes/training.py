@@ -316,7 +316,7 @@ async def handle_training_error_scoped(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def cleanup_training_scoped(task_id: str) -> None:
+async def cleanup_training_scoped(task_id: str) -> None:
     """
     Cleanup resources after training operation (success, failure, or cancellation/revocation).
     Version for ScopedSession pattern - no logger to close since sessions are short-lived.
@@ -330,7 +330,7 @@ def cleanup_training_scoped(task_id: str) -> None:
     clear_feature_cache()
     clear_cancellation(task_id)
     clear_revocation(task_id)
-    clear_progress(task_id)
+    await clear_progress(task_id)
 
 
 @router.get("/extractors")
@@ -578,8 +578,7 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
         await handle_training_error_scoped(e, req.task_id, scoped_session, "WSI Classification")
 
     finally:
-        cleanup_training_scoped(req.task_id)
-
+        await cleanup_training_scoped(req.task_id)
 
 
 # =============================================================================
@@ -692,7 +691,7 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
         await handle_training_error_scoped(e, req.task_id, scoped_session, "WSI Survival")
 
     finally:
-        cleanup_training_scoped(req.task_id)
+        await cleanup_training_scoped(req.task_id)
 
 
 # =============================================================================
@@ -817,7 +816,7 @@ async def train_patch_classification(req: PatchClassificationTrainRequest) -> Tr
         await handle_training_error_scoped(e, req.task_id, scoped_session, "Patch Classification")
 
     finally:
-        cleanup_training_scoped(req.task_id)
+        await cleanup_training_scoped(req.task_id)
 
 
 # =============================================================================
@@ -870,7 +869,6 @@ def _run_patch_segmentation_training_sync(task_id: str, config: dict) -> TrainRe
     finally:
         cleanup_gpu_memory()
         clear_cancellation(task_id)
-        clear_progress(task_id)
 
 
 @router.post("/patch_segmentation")
@@ -883,6 +881,9 @@ async def train_patch_segmentation(
     Runs training synchronously (via thread pool) and returns result when complete.
     """
     import asyncio
-    # Run sync training in thread pool to avoid blocking event loop
-    result = await asyncio.to_thread(_run_patch_segmentation_training_sync, req.task_id, req.config)
-    return result
+    try:
+        # Run sync training in thread pool to avoid blocking event loop
+        result = await asyncio.to_thread(_run_patch_segmentation_training_sync, req.task_id, req.config)
+        return result
+    finally:
+        await clear_progress(req.task_id)

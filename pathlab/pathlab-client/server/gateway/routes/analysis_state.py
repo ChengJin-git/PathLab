@@ -1,8 +1,8 @@
 """
-Analysis Task State Management (in-memory)
+Analysis Task State Management (Redis-backed)
 
-Provides AnalysisTaskState for tracking analysis task lifecycle,
-and AnalysisRequest Pydantic model for API request bodies.
+Task metadata stored in Redis hashes (survives restarts).
+Running asyncio.Task references stay in-memory (not serializable).
 """
 import asyncio
 import logging
@@ -11,17 +11,57 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 
 from backend.ai.schemas.base import TaskStatus
+from backend.common.redis_client import get_redis, make_key
 
 logger = logging.getLogger(__name__)
 
+_HASH_TTL = 86400
+
 
 class AnalysisTaskState:
-    """In-memory state for tracking analysis tasks."""
+    """Redis-backed state for tracking analysis tasks.
+
+    _running_tasks stays in-memory (asyncio.Task objects are not serializable).
+    """
 
     def __init__(self):
-        self._tasks: Dict[str, Dict[str, Any]] = {}
-        self._running_tasks: Dict[str, asyncio.Task] = {}  # Track running asyncio.Task for cancellation
-        self._lock = asyncio.Lock()
+        self._running_tasks: Dict[str, asyncio.Task] = {}
+
+    def _key(self, analysis_id: str) -> str:
+        return make_key("analysis", analysis_id)
+
+    async def _hash_to_dict(self, data: dict) -> Dict[str, Any]:
+        progress = data.get("progress", "0")
+        return {
+            "analysis_id": data.get("analysis_id", ""),
+            "task_id": data.get("task_id", ""),
+            "user_id": data.get("user_id", ""),
+            "title": data.get("title", ""),
+            "analysis_type": data.get("analysis_type", "internal"),
+            "status": TaskStatus(data.get("status", "pending")),
+            "progress": int(progress) if progress else 0,
+            "error_message": data.get("error_message") or None,
+            "created_at": data.get("created_at") or None,
+            "started_at": data.get("started_at") or None,
+            "finished_at": data.get("finished_at") or None,
+        }
+
+    def _dict_to_hash(self, state: Dict[str, Any]) -> Dict[str, str]:
+        status = state.get("status", TaskStatus.PENDING)
+        status_str = status.value if isinstance(status, TaskStatus) else str(status)
+        return {
+            "analysis_id": state.get("analysis_id", ""),
+            "task_id": state.get("task_id", ""),
+            "user_id": state.get("user_id", ""),
+            "title": state.get("title", ""),
+            "analysis_type": state.get("analysis_type", "internal"),
+            "status": status_str,
+            "progress": str(state.get("progress", 0)),
+            "error_message": state.get("error_message") or "",
+            "created_at": state.get("created_at") or "",
+            "started_at": state.get("started_at") or "",
+            "finished_at": state.get("finished_at") or "",
+        }
 
     async def create(
         self,
@@ -29,43 +69,59 @@ class AnalysisTaskState:
         task_id: str,
         user_id: str,
         title: str = "",
-        analysis_type: str = "internal"  # "internal" or "external"
+        analysis_type: str = "internal"
     ) -> Dict[str, Any]:
-        """Create a new analysis task entry."""
-        async with self._lock:
-            state = {
-                "analysis_id": analysis_id,
-                "task_id": task_id,
-                "user_id": user_id,
-                "title": title or f"Analyzing task {task_id}",
-                "analysis_type": analysis_type,
-                "status": TaskStatus.PENDING,  # pending, queued, running, completed, failed
-                "progress": 0,
-                "error_message": None,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "started_at": None,
-                "finished_at": None,
-            }
-            self._tasks[analysis_id] = state
-            logger.info(f"AnalysisTaskState.create: Created task analysis_id={analysis_id}, task_id={task_id}, title={title}, user_id={user_id}, total_tasks={len(self._tasks)}")
-            return state.copy()
+        state = {
+            "analysis_id": analysis_id,
+            "task_id": task_id,
+            "user_id": user_id,
+            "title": title or f"Analyzing task {task_id}",
+            "analysis_type": analysis_type,
+            "status": TaskStatus.PENDING,
+            "progress": 0,
+            "error_message": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "started_at": None,
+            "finished_at": None,
+        }
+        r = get_redis()
+        key = self._key(analysis_id)
+        await r.hset(key, mapping=self._dict_to_hash(state))
+        await r.expire(key, _HASH_TTL)
+        logger.info(f"AnalysisTaskState.create: analysis_id={analysis_id}, task_id={task_id}, title={title}, user_id={user_id}")
+        return state.copy()
 
     async def get(self, analysis_id: str) -> Optional[Dict[str, Any]]:
-        """Get analysis task state."""
-        async with self._lock:
-            state = self._tasks.get(analysis_id)
-            return state.copy() if state else None
+        r = get_redis()
+        data = await r.hgetall(self._key(analysis_id))
+        if not data:
+            return None
+        return await self._hash_to_dict(data)
 
     async def update(self, analysis_id: str, **kwargs) -> Optional[Dict[str, Any]]:
-        """Update analysis task state."""
-        async with self._lock:
-            if analysis_id not in self._tasks:
-                return None
-            self._tasks[analysis_id].update(kwargs)
-            return self._tasks[analysis_id].copy()
+        r = get_redis()
+        key = self._key(analysis_id)
+        if not await r.exists(key):
+            return None
+
+        update_map: Dict[str, str] = {}
+        for k, v in kwargs.items():
+            if k == "status":
+                update_map[k] = v.value if isinstance(v, TaskStatus) else str(v)
+            elif k == "progress":
+                update_map[k] = str(v)
+            elif v is None:
+                update_map[k] = ""
+            else:
+                update_map[k] = str(v)
+        if update_map:
+            await r.hset(key, mapping=update_map)
+            await r.expire(key, _HASH_TTL)
+
+        data = await r.hgetall(key)
+        return await self._hash_to_dict(data)
 
     async def set_queued(self, analysis_id: str) -> Optional[Dict[str, Any]]:
-        """Mark task as queued (waiting in GPU queue)."""
         return await self.update(
             analysis_id,
             status=TaskStatus.QUEUED,
@@ -73,7 +129,6 @@ class AnalysisTaskState:
         )
 
     async def set_running(self, analysis_id: str) -> Optional[Dict[str, Any]]:
-        """Mark task as running."""
         return await self.update(
             analysis_id,
             status=TaskStatus.RUNNING,
@@ -82,7 +137,6 @@ class AnalysisTaskState:
         )
 
     async def set_completed(self, analysis_id: str) -> Optional[Dict[str, Any]]:
-        """Mark task as completed."""
         return await self.update(
             analysis_id,
             status=TaskStatus.COMPLETED,
@@ -91,7 +145,6 @@ class AnalysisTaskState:
         )
 
     async def set_failed(self, analysis_id: str, error: str) -> Optional[Dict[str, Any]]:
-        """Mark task as failed."""
         return await self.update(
             analysis_id,
             status=TaskStatus.FAILED,
@@ -100,7 +153,6 @@ class AnalysisTaskState:
         )
 
     async def set_cancelled(self, analysis_id: str) -> Optional[Dict[str, Any]]:
-        """Mark task as cancelled."""
         return await self.update(
             analysis_id,
             status=TaskStatus.CANCELLED,
@@ -108,19 +160,12 @@ class AnalysisTaskState:
         )
 
     def register_task(self, analysis_id: str, task: asyncio.Task) -> None:
-        """Register an asyncio.Task for potential cancellation."""
         self._running_tasks[analysis_id] = task
 
     def unregister_task(self, analysis_id: str) -> None:
-        """Unregister an asyncio.Task after completion."""
         self._running_tasks.pop(analysis_id, None)
 
     async def cancel_running_task(self, analysis_id: str) -> bool:
-        """Cancel a running asyncio.Task if it exists.
-
-        Returns:
-            True if task was found and cancel was called, False otherwise.
-        """
         task = self._running_tasks.get(analysis_id)
         if task and not task.done():
             task.cancel()
@@ -129,86 +174,70 @@ class AnalysisTaskState:
         return False
 
     async def get_by_task_id(self, task_id: str) -> List[Dict[str, Any]]:
-        """Get all analysis tasks for a training task."""
-        async with self._lock:
-            return [
-                state.copy() for state in self._tasks.values()
-                if state["task_id"] == task_id
-            ]
-
-
+        r = get_redis()
+        results = []
+        async for key in r.scan_iter(match=make_key("analysis", "*")):
+            data = await r.hgetall(key)
+            if data and data.get("task_id") == task_id:
+                results.append(await self._hash_to_dict(data))
+        return results
 
     async def get_all(self, user_id: Optional[str] = None, max_age_minutes: int = 10) -> List[Dict[str, Any]]:
-        """Get all analysis tasks, optionally filtered by user.
+        r = get_redis()
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(minutes=max_age_minutes)
+        results = []
 
-        Args:
-            user_id: If provided, filter to this user's tasks. If None (admin), return all.
-            max_age_minutes: Only return completed/failed tasks within this age.
+        async for key in r.scan_iter(match=make_key("analysis", "*")):
+            data = await r.hgetall(key)
+            if not data:
+                continue
+            state = await self._hash_to_dict(data)
 
-        Returns:
-            List of analysis task states.
-        """
-        async with self._lock:
-            now = datetime.now(timezone.utc)
-            cutoff = now - timedelta(minutes=max_age_minutes)
-            results = []
-            # Debug: log total tasks in memory
-            if self._tasks:
-                logger.debug(f"AnalysisTaskState.get_all: {len(self._tasks)} tasks in memory, user_id_filter={user_id}")
-            for state in self._tasks.values():
-                # Filter by user if specified
-                if user_id and state.get("user_id") != user_id:
-                    logger.debug(f"AnalysisTaskState.get_all: skipping task {state.get('analysis_id')} - user mismatch ({state.get('user_id')} != {user_id})")
-                    continue
-                # For completed/failed tasks, only include recent ones
-                if state["status"] in (TaskStatus.COMPLETED, TaskStatus.FAILED):
-                    finished = state.get("finished_at")
-                    if finished:
-                        try:
-                            finished_dt = datetime.fromisoformat(finished.replace('Z', '+00:00'))
-                            if finished_dt < cutoff:
-                                logger.debug(f"AnalysisTaskState.get_all: skipping old completed task {state.get('analysis_id')}")
-                                continue
-                        except Exception:
-                            pass
-                results.append(state.copy())
-            if results:
-                logger.debug(f"AnalysisTaskState.get_all: returning {len(results)} tasks: {[(r.get('analysis_id'), r.get('status')) for r in results]}")
-            return results
+            if user_id and state.get("user_id") != user_id:
+                continue
+
+            if state["status"] in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+                finished = state.get("finished_at")
+                if finished:
+                    try:
+                        finished_dt = datetime.fromisoformat(finished.replace('Z', '+00:00'))
+                        if finished_dt < cutoff:
+                            continue
+                    except Exception:
+                        pass
+            results.append(state)
+        return results
 
     async def cleanup_old(self, max_age_hours: int = 24):
-        """Remove old completed/failed tasks from memory."""
-        async with self._lock:
-            cutoff = datetime.now(timezone.utc).timestamp() - (max_age_hours * 3600)
-            to_remove = []
-            for aid, state in self._tasks.items():
-                if state["status"] in (TaskStatus.COMPLETED, TaskStatus.FAILED):
-                    finished = state.get("finished_at")
-                    if finished:
-                        try:
-                            finished_ts = datetime.fromisoformat(finished.replace('Z', '+00:00')).timestamp()
-                            if finished_ts < cutoff:
-                                to_remove.append(aid)
-                        except Exception:
-                            pass
-            for aid in to_remove:
-                del self._tasks[aid]
+        r = get_redis()
+        cutoff = datetime.now(timezone.utc).timestamp() - (max_age_hours * 3600)
+        async for key in r.scan_iter(match=make_key("analysis", "*")):
+            data = await r.hgetall(key)
+            if not data:
+                continue
+            status_str = data.get("status", "")
+            if status_str in (TaskStatus.COMPLETED.value, TaskStatus.FAILED.value):
+                finished = data.get("finished_at", "")
+                if finished:
+                    try:
+                        finished_ts = datetime.fromisoformat(finished.replace('Z', '+00:00')).timestamp()
+                        if finished_ts < cutoff:
+                            await r.delete(key)
+                    except Exception:
+                        pass
 
 
-# Global analysis task state manager
 _analysis_state = AnalysisTaskState()
 
 
 def get_analysis_state() -> AnalysisTaskState:
-    """Get the global analysis state manager."""
     return _analysis_state
 
 
 class AnalysisRequest(BaseModel):
-    """Request body for running analysis on a task."""
     metrics: List[str] = ["accuracy", "precision", "recall", "specificity", "f1", "auc"]
     charts: List[str] = ["roc_curve", "confusion_matrix", "loss_curve"]
     description: Optional[str] = None
-    bootstrap_ci_metrics: List[str] = []  # List of metrics to compute 95% CI for (e.g., ["accuracy", "auc"])
-    # Legacy support: compute_bootstrap_ci=True will compute CI for all requested metrics
+    bootstrap_ci_metrics: List[str] = []
     compute_bootstrap_ci: bool = False

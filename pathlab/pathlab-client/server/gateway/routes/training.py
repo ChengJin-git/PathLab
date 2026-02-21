@@ -335,7 +335,7 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
 
                         # Read real-time progress from shared files (no HTTP, no DB lock)
                         from backend.common.progress_store import get_all_progress
-                        file_progress = get_all_progress()
+                        file_progress = await get_all_progress()
 
                         # Add WSI count and overlay file-based progress
                         result_tasks = []
@@ -441,7 +441,7 @@ async def get_training_task(
     from backend.common.progress_store import get_progress
     # Get task_id from dict or object depending on include_username
     task_id_for_progress = task["task_id"] if include_username else task.task_id
-    file_prog = get_progress(task_id_for_progress)
+    file_prog = await get_progress(task_id_for_progress)
     if file_prog is not None:
         result["progress"] = file_prog
 
@@ -547,7 +547,7 @@ async def delete_training_task(
 
         # Clean up progress file (ephemeral, may still exist if AI Service didn't finish cleanup)
         from backend.common.progress_store import clear_progress
-        clear_progress(task_id)
+        await clear_progress(task_id)
 
         return {
             "message": "Training task deleted successfully",
@@ -670,7 +670,7 @@ async def stream_training_logs(
                             task_dict["wsi_count"] = len(wsi_ids)
                         # Overlay real-time progress from shared file
                         from backend.common.progress_store import get_progress
-                        file_prog = get_progress(task.task_id)
+                        file_prog = await get_progress(task.task_id)
                         if file_prog is not None:
                             task_dict["progress"] = file_prog
 
@@ -723,7 +723,7 @@ async def stream_training_logs(
                                 task_dict["wsi_count"] = len(wsi_ids)
                             # Overlay real-time progress from shared file
                             from backend.common.progress_store import get_progress
-                            file_prog = get_progress(task.task_id)
+                            file_prog = await get_progress(task.task_id)
                             if file_prog is not None:
                                 task_dict["progress"] = file_prog
 

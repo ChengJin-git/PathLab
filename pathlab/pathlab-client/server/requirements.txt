@@ -70,6 +70,9 @@ openai>=2.5.0
 # Voice Recognition (DashScope)
 dashscope>=1.25.9
 
+# Redis (in-memory data store for caching, progress tracking, task state)
+redis>=6.0.0
+
 # Logging
 loguru>=0.7.3
 coloredlogs>=15.0.1

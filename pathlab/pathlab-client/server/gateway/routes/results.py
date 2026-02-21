@@ -2123,7 +2123,7 @@ async def get_validation_progress(
     # Overlay file-based progress if available (more up-to-date than DB during inference).
     # This mirrors the pattern used in the training SSE endpoint (training.py lines 306-308).
     from backend.common.progress_store import get_progress
-    file_prog = get_progress(task_id)
+    file_prog = await get_progress(task_id)
     progress = file_prog if file_prog is not None else task.progress
 
     # Calculate processed_wsi from progress when DB value is stale.
@@ -2490,7 +2490,7 @@ async def _run_external_validation_patch_classification(
                 await AIResultRepository.create(db, db_result_data)
             await db.commit()
 
-        clear_progress(task_id)
+        await clear_progress(task_id)
         await update_task_progress(TaskStatus.COMPLETED, 100, results_saved, results_saved)
 
         async with logger_manager.session() as (tl, _db):
@@ -2508,7 +2508,7 @@ async def _run_external_validation_patch_classification(
         import traceback
         logger.error(f"Patch classification external validation {task_id} failed: {e}\n{traceback.format_exc()}")
         try:
-            clear_progress(task_id)
+            await clear_progress(task_id)
             async with logger_manager.session() as (tl, _db):
                 await tl.error(f"Patch classification external validation failed: {e}")
         except Exception:
@@ -3268,7 +3268,7 @@ async def _run_external_validation(
 
             # Update progress via file-based store
             progress = int(chunk_end / total * 90)
-            set_progress(task_id, progress)
+            await set_progress(task_id, progress)
 
             # Yield to event loop - this is the KEY fix that prevents blocking
             await asyncio.sleep(0)
@@ -3305,7 +3305,7 @@ async def _run_external_validation(
         await update_task_progress(TaskStatus.RUNNING, 95, results_saved, results_saved)
 
         # Clear file-based progress (task is finishing)
-        clear_progress(task_id)
+        await clear_progress(task_id)
 
         # Mark as completed
         await update_task_progress(TaskStatus.COMPLETED, 100, results_saved, results_saved)
@@ -3328,7 +3328,7 @@ async def _run_external_validation(
         import traceback
         logger.error(f"External validation {task_id} failed: {e}\n{traceback.format_exc()}")
         try:
-            clear_progress(task_id)
+            await clear_progress(task_id)
             async with logger_manager.session() as (tl, _db):
                 await tl.error(f"External validation failed: {e}")
         except Exception:

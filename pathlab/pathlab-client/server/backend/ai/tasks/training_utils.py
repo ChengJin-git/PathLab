@@ -37,7 +37,7 @@ async def safe_update_progress(session_maker, task_id: str, status: str, progres
     """
     from backend.common.progress_store import set_progress
 
-    set_progress(task_id, progress)
+    await set_progress(task_id, progress)
 
 
 # Keep backward-compatible alias

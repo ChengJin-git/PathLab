@@ -54,6 +54,12 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("✓ Database initialized")
 
+    # Initialize Redis connection pool
+    from backend.common.redis_client import init_redis, close_redis
+    logger.info("Initializing Redis...")
+    await init_redis()
+    logger.info("✓ Redis initialized")
+
     # Detect GPU count and determine max_concurrent
     try:
         from backend.common.gpu_utils import get_gpu_count
@@ -83,7 +89,7 @@ async def lifespan(app: FastAPI):
     # and start writing progress files while resume_interrupted_tasks() is still awaiting.
     # If cleanup ran after resume, it could delete freshly-written progress files.
     from backend.common.progress_store import cleanup_all_progress
-    cleanup_all_progress()
+    await cleanup_all_progress()
 
     # Resume interrupted training tasks
     # Tasks with status 'pending', 'running', 'extracting', or 'training' were interrupted
@@ -103,6 +109,10 @@ async def lifespan(app: FastAPI):
     logger.info("Closing database connections...")
     await close_db()
     logger.info("✓ Database connections closed")
+
+    logger.info("Closing Redis connections...")
+    await close_redis()
+    logger.info("✓ Redis connections closed")
 
 
 # Create FastAPI app with lifespan
