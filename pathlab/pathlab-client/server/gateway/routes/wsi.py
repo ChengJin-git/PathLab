@@ -8,28 +8,26 @@ Authentication & Authorization:
 - Admin users can see all data
 - Upload operations require pathologist or admin role
 """
-import os
 import csv
 import io
 import httpx
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import delete as sql_delete, select
+from sqlalchemy import delete as sql_delete
 
 from backend.database import get_db
 from backend.database.repositories import (
     WSIRepository,
     DatasetRepository,
     DataGroupRepository,
-    AITaskRepository,
     AIResultRepository,
     DatasetPermissionRepository,
 )
-from backend.database.models import AIResult, AITask, TrainingTaskWSI, WSISlide
+from backend.database.models import AIResult, AITask, TrainingTaskWSI
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, get_user_id_filter, check_wsi_access_permission
-from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL
+from ..dependencies import logger, storage_manager, PREPROCESSING_SERVICE_URL
 from ..models import DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest
 
 router = APIRouter(prefix="/wsi", tags=["WSI Management"])
@@ -796,9 +794,6 @@ async def upload_dataset_splits(
         # Check columns exist
         if not reader.fieldnames:
             raise HTTPException(status_code=400, detail="CSV is empty or has no header row")
-
-        # Normalize headers
-        headers = [h.strip().lower() for h in reader.fieldnames]
 
         # Identify filename column (required)
         filename_key = next((h for h in reader.fieldnames if h.strip().lower() in ['filename', 'file_name', 'original_filename']), None)

@@ -9,6 +9,7 @@ Extracted from main.py to reduce file size. Handles:
 """
 import json
 import logging
+import re
 import struct
 from pathlib import Path
 from typing import Dict, Optional
@@ -65,11 +66,12 @@ def _get_npy_shape_fast(filepath: Path) -> Optional[tuple]:
 
             # Read and parse header
             header = f.read(header_len).decode('latin1')
-            # Parse the dict-like string to extract shape
+            # Parse the dict-like string to extract shape using regex
             # Format: {'descr': '<f4', 'fortran_order': False, 'shape': (10, 20), }
-            import ast
-            header_dict = ast.literal_eval(header.strip())
-            return header_dict.get('shape')
+            shape_match = re.search(r"'shape':\s*\((\d+),\s*(\d+)\)", header)
+            if shape_match:
+                return (int(shape_match.group(1)), int(shape_match.group(2)))
+            return None
     except Exception:
         return None
 

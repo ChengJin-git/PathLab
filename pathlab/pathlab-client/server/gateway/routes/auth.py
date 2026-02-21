@@ -26,8 +26,7 @@ import time
 import os
 import shutil
 import httpx
-from pathlib import Path
-from fastapi import APIRouter, Depends, Form, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -46,7 +45,7 @@ from backend.auth import (
     require_admin,
 )
 from backend.auth.schemas import UserReadAdmin
-from backend.auth.users import get_jwt_strategy, JWT_SECRET
+from backend.auth.users import get_jwt_strategy
 from backend.common.config import Config
 from ..dependencies import logger
 
@@ -217,8 +216,6 @@ async def secure_login(
     - access_token: JWT token for authentication
     - token_type: "bearer"
     """
-    from fastapi_users.password import PasswordHelper
-
     # Verify reCAPTCHA if enabled
     settings = Config.get_global_settings()
     recaptcha_enabled = settings.get("recaptcha_enabled", False)
@@ -299,8 +296,6 @@ async def secure_login(
 
     # For backward compatibility, check if user has password_sha256 field
     # If not, fall back to requiring password update
-
-    password_helper = PasswordHelper()
 
     # Verify password hash
     if not user.password_sha256:

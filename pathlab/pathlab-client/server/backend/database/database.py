@@ -11,10 +11,13 @@ Key features:
 """
 
 import os
+import logging
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 from .models import Base
+
+logger = logging.getLogger(__name__)
 
 
 def get_database_url() -> str:
@@ -139,7 +142,7 @@ async def init_db():
     # Mask password in URL for logging
     import re
     safe_url = re.sub(r'://([^:]+):([^@]+)@', r'://\1:***@', DATABASE_URL)
-    print(f"[Database] Using PostgreSQL: {safe_url}")
+    logger.info(f"Using PostgreSQL: {safe_url}")
     # Import all models to register them in Base.metadata BEFORE create_all.
     # User model lives in backend.auth.models but shares the same Base.
     # Without this import, the "users" table won't be created.
@@ -148,7 +151,7 @@ async def init_db():
     async with engine.begin() as conn:
         # Create all tables
         await conn.run_sync(Base.metadata.create_all)
-        print("[Database] All tables created/verified successfully")
+        logger.info("All tables created/verified successfully")
 
     # Create default admin user if no users exist
     await _create_default_admin()
@@ -169,11 +172,11 @@ async def _create_default_admin():
             user_count = result.scalar()
 
             if user_count == 0:
-                print("[Auth] No users found, creating default admin user...")
+                logger.info("No users found, creating default admin user...")
 
-                # Create password hash
+                # Create password hash - use environment variable or fallback
                 password_helper = PasswordHelper()
-                default_password = "password"
+                default_password = os.getenv("DEFAULT_ADMIN_PASSWORD", "pathlab_default_change_me")
                 hashed_password = password_helper.hash(default_password)
 
                 # Create SHA256 hash for secure login
@@ -196,12 +199,11 @@ async def _create_default_admin():
 
                 session.add(admin_user)
                 await session.commit()
-                print(f"[Auth] ✓ Default admin user created (username: admin, password: password)")
-                print("[Auth] ⚠ Please change the default password after first login!")
+                logger.warning("Default admin user created (username: admin). Please change the default password after first login!")
             else:
-                print(f"[Auth] Found {user_count} existing user(s), skipping default admin creation")
+                logger.info(f"Found {user_count} existing user(s), skipping default admin creation")
     except Exception as e:
-        print(f"[Auth] Warning: Could not create default admin user: {e}")
+        logger.error(f"Could not create default admin user: {e}")
 
 
 async def drop_all_tables():
@@ -211,7 +213,7 @@ async def drop_all_tables():
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
-        print("[Database] ⚠ All tables dropped")
+        logger.warning("All tables dropped")
 
 
 async def close_db():
