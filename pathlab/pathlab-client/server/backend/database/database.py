@@ -176,7 +176,7 @@ async def _create_default_admin():
 
                 # Create password hash - use environment variable or fallback
                 password_helper = PasswordHelper()
-                default_password = os.getenv("DEFAULT_ADMIN_PASSWORD", "pathlab_default_change_me")
+                default_password = os.getenv("DEFAULT_ADMIN_PASSWORD", "pathlab_default_password123")
                 hashed_password = password_helper.hash(default_password)
 
                 # Create SHA256 hash for secure login
