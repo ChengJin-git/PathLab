@@ -36,6 +36,7 @@ PathLab 采用统一代码库，支持两种运行模式：
 | 推理分析系统 | ✅ | WSI 分类、注意力热图可视化、外部验证 |
 | 模型管理 | ✅ | 训练模型保存、加载、默认模型切换 |
 | PostgreSQL 数据库 | ✅ | 17 个表，Repository 模式，asyncpg 异步驱动 |
+| Redis 缓存层 | ✅ | 训练日志 (Streams)、任务进度 (KV)、分析状态 (Hash)，异步非阻塞 |
 | 存储管理系统 | ✅ | 文件生命周期管理、级联删除、孤立文件检测 |
 | 生存分析 | ✅ | WSI-level survival analysis (lifelines) |
 | 消息反馈系统 | ✅ | 用户对 AI 消息的反馈收集 |
@@ -72,6 +73,7 @@ pathlab/
 | 前端 | Electron + React + TypeScript + Vite |
 | 后端 | Python + FastAPI + SQLAlchemy |
 | 数据库 | PostgreSQL + asyncpg (异步) |
+| 缓存 | Redis (训练日志、任务进度、分析状态) |
 | AI | PyTorch + timm + transformers |
 | WSI | ASlide (OpenSlide wrapper) + OpenSeadragon |
 
@@ -178,7 +180,7 @@ pathlab/
 | `training_tasks` | 训练任务配置（分类/生存）|
 | `training_task_wsi` | 训练任务与 WSI 多对多关联 |
 | `trained_models` | 训练生成的模型检查点 |
-| `training_logs` | 训练日志（SSE 流式）|
+| `training_logs` | 训练日志（运行时通过 Redis Streams 读写，SSE 流式）|
 | `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
 
 ---

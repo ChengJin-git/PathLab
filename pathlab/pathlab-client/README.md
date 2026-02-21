@@ -99,6 +99,8 @@ pathlab-client/
         ├── storage/          # 文件存储管理
         │   └── manager.py        # 存储管理器 (级联删除)
         └── common/           # 公共模块
+            ├── redis_client.py   # Redis 异步连接池
+            ├── progress_store.py # 任务进度存储 (Redis)
             ├── port_utils.py     # 端口发现工具
             ├── config.py         # 配置管理
             └── auth.py           # 认证模块
@@ -127,9 +129,10 @@ cd server && python main.py
 # 输出: PORT=xxxxx  ← Electron 通过此解析端口
 ```
 
-**注意**: 使用 PostgreSQL 数据库，需确保 PostgreSQL 服务已运行：
-- 默认连接：`postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab`
-- 可通过 `DATABASE_URL` 环境变量配置
+**注意**: 需确保 PostgreSQL 和 Redis 服务已运行：
+- PostgreSQL 默认连接：`postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab`
+- Redis 默认连接：`redis://localhost:6379/0`
+- 可通过 `DATABASE_URL` 环境变量配置 PostgreSQL
 
 ## 服务架构
 
@@ -139,6 +142,7 @@ cd server && python main.py
 | **Preprocessing** | 内部 | WSI 切片、DZI 生成、组织掩膜、坐标提取 |
 | **AI** | 内部 | 特征提取 (17种)、模型训练、推理分析、热图生成 |
 | **PostgreSQL** | - | PostgreSQL 数据库（17 表，asyncpg 异步驱动） |
+| **Redis** | 6379 | 缓存层（训练日志 Streams、任务进度 KV、分析状态 Hash） |
 
 ### 数据库表 (17 个)
 
@@ -159,7 +163,7 @@ cd server && python main.py
 | `training_tasks` | 训练任务配置和状态 (分类/生存) |
 | `training_task_wsi` | 训练任务与 WSI 多对多关联 |
 | `trained_models` | 训练生成的模型信息 |
-| `training_logs` | 训练日志 (实时流式) |
+| `training_logs` | 训练日志（运行时通过 Redis Streams 读写，SSE 流式） |
 | `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
 
 ### 特征提取器 (17 种)

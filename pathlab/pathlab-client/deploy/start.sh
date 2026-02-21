@@ -37,7 +37,7 @@ echo ""
 mkdir -p "$LOG_DIR"
 
 # ========== Step 1: 停止旧进程 ==========
-echo -e "${YELLOW}[1/4]${NC} 停止旧进程..."
+echo -e "${YELLOW}[1/5]${NC} 停止旧进程..."
 
 # Function to kill process by port
 kill_by_port() {
@@ -88,8 +88,46 @@ fi
 
 echo -e "${GREEN}[✓]${NC} 旧进程已清理"
 
-# ========== Step 2: 构建前端 ==========
-echo -e "${YELLOW}[2/4]${NC} 构建前端..."
+# ========== Step 2: 确保 Redis 运行 ==========
+echo -e "${YELLOW}[2/5]${NC} 检查 Redis..."
+
+if command -v redis-cli &> /dev/null && redis-cli ping &> /dev/null; then
+    echo -e "${GREEN}[✓]${NC} Redis 已运行"
+else
+    # Try to start via systemd
+    if systemctl is-active --quiet redis-server 2>/dev/null || systemctl is-active --quiet redis 2>/dev/null; then
+        echo -e "${GREEN}[✓]${NC} Redis 已运行 (systemd)"
+    else
+        echo -n "  启动 Redis..."
+        if sudo systemctl start redis-server 2>/dev/null || sudo systemctl start redis 2>/dev/null; then
+            sleep 1
+            if redis-cli ping &> /dev/null; then
+                echo ""
+                echo -e "${GREEN}[✓]${NC} Redis 启动成功"
+            else
+                echo ""
+                echo -e "${RED}[✗] Redis 启动后无法连接，请检查 Redis 配置${NC}"
+                exit 1
+            fi
+        else
+            # Fallback: try redis-server directly
+            echo ""
+            echo -e "${YELLOW}[!]${NC} systemd 启动失败，尝试直接启动 redis-server..."
+            redis-server --daemonize yes --loglevel warning 2>/dev/null
+            sleep 1
+            if redis-cli ping &> /dev/null; then
+                echo -e "${GREEN}[✓]${NC} Redis 启动成功 (standalone)"
+            else
+                echo -e "${RED}[✗] Redis 启动失败，请手动安装/启动 Redis:${NC}"
+                echo -e "    sudo apt install redis-server && sudo systemctl enable redis-server"
+                exit 1
+            fi
+        fi
+    fi
+fi
+
+# ========== Step 3: 构建前端 ==========
+echo -e "${YELLOW}[3/5]${NC} 构建前端..."
 
 cd "$PROJECT_DIR"
 
@@ -109,8 +147,8 @@ cp -r public/images dist/ 2>/dev/null || true
 
 echo -e "${GREEN}[✓]${NC} 前端构建完成: $RENDERER_DIR/dist"
 
-# ========== Step 3: 启动后端 ==========
-echo -e "${YELLOW}[3/4]${NC} 启动后端服务..."
+# ========== Step 4: 启动后端 ==========
+echo -e "${YELLOW}[4/5]${NC} 启动后端服务..."
 
 cd "$SERVER_DIR"
 
@@ -149,8 +187,8 @@ if ! curl -s http://127.0.0.1:6100/health > /dev/null 2>&1; then
     exit 1
 fi
 
-# ========== Step 4: 检查 Nginx ==========
-echo -e "${YELLOW}[4/4]${NC} 检查 Nginx..."
+# ========== Step 5: 检查 Nginx ==========
+echo -e "${YELLOW}[5/5]${NC} 检查 Nginx..."
 
 if systemctl is-active --quiet nginx 2>/dev/null; then
     echo -e "${GREEN}[✓]${NC} Nginx 运行中"

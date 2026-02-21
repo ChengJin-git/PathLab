@@ -60,7 +60,7 @@ DATABASE_URL=postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab
 13. **training_tasks**: Training task configuration and status (classification/survival)
 14. **training_task_wsi**: Training task to WSI many-to-many relationship
 15. **trained_models**: User-trained model metadata
-16. **training_logs**: Training log entries (real-time SSE streaming)
+16. **training_logs**: Training log entries (runtime reads/writes via Redis Streams, SSE streaming)
 17. **storage_tasks**: Storage operation task tracking (batch import/delete)
 
 See `models.py` for detailed schema definitions.
@@ -155,7 +155,7 @@ The repository pattern provides a clean abstraction over database operations.
 - **ExportTaskRepository**: Export task operations
 - **TrainingTaskRepository**: Training task operations
 - **TrainedModelRepository**: Trained model operations
-- **TrainingLogRepository**: Training log operations
+- **TrainingLogRepository**: Training log operations (backed by Redis Streams at runtime)
 - **StorageTaskRepository**: Storage task operations (batch import/delete)
 - **OrphanedRecordsRepository**: Orphaned database records detection
 

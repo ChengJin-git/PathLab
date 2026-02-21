@@ -5,6 +5,7 @@
 - Ubuntu 20.04+ / Debian 11+
 - Python 3.10+ (推荐使用 Conda)
 - Node.js 18+
+- Redis 6+
 - Nginx
 - 开放端口: 80 (HTTP), 443 (HTTPS)
 - 可选: CrowdSec (安全防护)
@@ -29,10 +30,10 @@
                      ▼                    ▼
               localhost:6100       localhost:6101
               (Gateway)            (Preprocessing)
-                                         │
-                                         ▼
-                                  localhost:6102
-                                  (AI Service)
+                     │                    │
+                     ▼                    ▼
+              localhost:6379       localhost:6102
+              (Redis)             (AI Service)
 ```
 
 ## 文件结构
@@ -174,6 +175,7 @@ curl http://your-domain.com/api/health
 | Gateway | 6100 | API 网关 |
 | Preprocessing | 6101 | WSI 处理、瓦片服务 |
 | AI | 6102 | 模型训练、推理 |
+| Redis | 6379 | 缓存层（训练日志、任务进度、分析状态） |
 
 ## 日志位置
 

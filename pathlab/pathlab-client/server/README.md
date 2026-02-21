@@ -12,6 +12,7 @@ PathLab 的 Python 后端服务，提供 WSI 处理、AI 推理和 API 网关功
 ## 核心特性
 
 - **零配置**: PostgreSQL 数据库 (17 表)，asyncpg 异步驱动
+- **Redis 缓存**: 训练日志 (Streams)、任务进度 (KV)、分析状态 (Hash)，异步非阻塞
 - **动态端口**: 自动寻找可用端口，避免端口冲突
 - **单进程架构**: 统一入口 `main.py`，简化部署
 - **特征缓存**: 全局特征缓存，跨任务复用
@@ -65,6 +66,8 @@ server/
     ├── storage/          # 文件存储管理
     │   └── manager.py        # 存储管理器 (级联删除)
     └── common/           # 公共模块
+        ├── redis_client.py   # Redis 异步连接池
+        ├── progress_store.py # 任务进度存储 (Redis)
         ├── port_utils.py     # 端口发现工具
         ├── auth.py           # 认证工具
         ├── config.py         # 配置管理
@@ -90,7 +93,7 @@ server/
 | `training_tasks` | 训练任务配置和状态 (classification/survival) |
 | `training_task_wsi` | 训练任务与 WSI 多对多关联 |
 | `trained_models` | 训练生成的模型信息 |
-| `training_logs` | 训练日志（实时流式） |
+| `training_logs` | 训练日志（运行时通过 Redis Streams 读写，SSE 流式） |
 | `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
 
 ## GPU 任务队列
@@ -119,7 +122,7 @@ cd server && python main.py
 npm run dev  # 在父目录执行
 ```
 
-**注意**: 需确保 PostgreSQL 服务已运行，默认连接 `postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab`。
+**注意**: 需确保 PostgreSQL 和 Redis 服务已运行，PostgreSQL 默认连接 `postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab`，Redis 默认连接 `redis://localhost:6379/0`。
 
 ## 数据库配置
 

@@ -236,7 +236,7 @@ PostgreSQL 数据库包含 17 个表（自动创建）：
 | `training_tasks` | 训练任务配置（分类/生存） |
 | `training_task_wsi` | 训练任务与 WSI 多对多关联 |
 | `trained_models` | 模型检查点元数据 |
-| `training_logs` | 训练日志条目（SSE 流式） |
+| `training_logs` | 训练日志条目（运行时通过 Redis Streams 读写，SSE 流式） |
 | `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
 
 ---
@@ -257,6 +257,7 @@ PostgreSQL 数据库包含 17 个表（自动创建）：
 - **框架**: FastAPI (Python 3.12)
 - **认证**: FastAPI-Users + JWT
 - **数据库**: PostgreSQL + asyncpg (异步)
+- **缓存**: Redis (训练日志 Streams、任务进度 KV、分析状态 Hash)
 - **ORM**: SQLAlchemy 2.0+
 - **LLM**: OpenRouter API
 - **ASR**: DashScope Qwen3-ASR
