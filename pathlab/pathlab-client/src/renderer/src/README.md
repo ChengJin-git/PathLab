@@ -13,8 +13,9 @@ src/
 │   ├── WSIViewer.tsx        # OpenSeadragon wrapper
 │   ├── PageHeader.tsx       # Page header component
 │   └── ...
-├── pages/               # Page components (13 pages)
-│   ├── LoginPage.tsx             # Login welcome page (default)
+├── pages/               # Page components (14 pages)
+│   ├── IntroductionPage.tsx      # Product introduction (/)
+│   ├── LoginPage.tsx             # Login welcome page (/login)
 │   ├── DashboardPage.tsx         # Dashboard overview
 │   ├── AIChatPage.tsx            # AI assistant (SSE streaming)
 │   ├── ToolsPage.tsx             # Utility tools
@@ -46,11 +47,12 @@ src/
 - **WSI Viewer**: OpenSeadragon
 - **State Management**: React Hooks + Context
 
-## Page Routes (13 pages)
+## Page Routes (14 pages)
 
 | Route | Page | Description |
 |-------|------|-------------|
-| `/` `/login` | LoginPage | Login welcome page (public) |
+| `/` | IntroductionPage | Product introduction page (public) |
+| `/login` | LoginPage | Login welcome page (public) |
 | `/dashboard` | DashboardPage | Dashboard overview |
 | `/ai-chat` | AIChatPage | AI assistant (SSE streaming) |
 | `/tools` | ToolsPage | Utility tools |

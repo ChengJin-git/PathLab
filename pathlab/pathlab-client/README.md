@@ -24,7 +24,7 @@ PathLab 采用统一代码库，支持两种运行模式：
 - **GPU 任务队列**: 并发控制、断电恢复、任务状态实时更新 (SSE)
 - **语音识别**: 集成 DashScope Qwen3-ASR 语音转文字
 - **本地认证**: FastAPI-Users + JWT，客户端 SHA256 密码哈希
-- **零配置**: SQLite 数据库 (17 个表)、动态端口发现，开箱即用
+- **零配置**: PostgreSQL 数据库 (17 个表)、动态端口发现，开箱即用
 
 ## 技术架构
 
@@ -92,10 +92,10 @@ pathlab-client/
         ├── preprocessing/    # 预处理服务 (内部端口)
         │   ├── main.py           # 预处理 FastAPI 应用
         │   └── tiling.py         # WSI 切片 + 坐标提取
-        ├── database/         # SQLite ORM (零配置)
-        │   ├── database.py       # 异步 SQLite 连接
+        ├── database/         # PostgreSQL ORM
+        │   ├── database.py       # 异步 PostgreSQL 连接 (asyncpg)
         │   ├── models.py         # 数据模型 (17 个表)
-        │   └── repositories.py   # 数据访问层 (Repository 模式)
+        │   └── repositories/     # 数据访问层 (Repository 模式，模块化目录)
         ├── storage/          # 文件存储管理
         │   └── manager.py        # 存储管理器 (级联删除)
         └── common/           # 公共模块
@@ -127,10 +127,9 @@ cd server && python main.py
 # 输出: PORT=xxxxx  ← Electron 通过此解析端口
 ```
 
-**注意**: 使用内嵌 SQLite 数据库，数据存储在：
-- Linux: `~/.local/share/PathLab/pathlab.db`
-- macOS: `~/Library/Application Support/PathLab/pathlab.db`
-- Windows: `%APPDATA%/PathLab/pathlab.db`
+**注意**: 使用 PostgreSQL 数据库，需确保 PostgreSQL 服务已运行：
+- 默认连接：`postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab`
+- 可通过 `DATABASE_URL` 环境变量配置
 
 ## 服务架构
 
@@ -139,7 +138,7 @@ cd server && python main.py
 | **Gateway** | 动态 | API 网关、业务编排、Chat、WSI/训练/结果管理 |
 | **Preprocessing** | 内部 | WSI 切片、DZI 生成、组织掩膜、坐标提取 |
 | **AI** | 内部 | 特征提取 (17种)、模型训练、推理分析、热图生成 |
-| **SQLite** | - | 零配置本地数据库（17 表，自动创建） |
+| **PostgreSQL** | - | PostgreSQL 数据库（17 表，asyncpg 异步驱动） |
 
 ### 数据库表 (17 个)
 

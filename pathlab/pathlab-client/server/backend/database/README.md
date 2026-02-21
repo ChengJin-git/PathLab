@@ -24,7 +24,7 @@ backend/database/
 ├── __init__.py                 # Package exports
 ├── database.py                 # PostgreSQL connection management (async engine)
 ├── models.py                   # SQLAlchemy ORM models
-└── repositories.py             # Data access layer (Repository pattern)
+└── repositories/               # Data access layer (Repository pattern, modular directory)
 ```
 
 ## Database Connection

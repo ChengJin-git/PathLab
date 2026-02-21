@@ -35,7 +35,7 @@ PathLab 采用统一代码库，支持两种运行模式：
 | 训练任务系统 | ✅ | 17 种特征提取器 + 8 种 MIL 聚合器，特征缓存复用 |
 | 推理分析系统 | ✅ | WSI 分类、注意力热图可视化、外部验证 |
 | 模型管理 | ✅ | 训练模型保存、加载、默认模型切换 |
-| SQLite 数据库 | ✅ | 17 个表，Repository 模式 |
+| PostgreSQL 数据库 | ✅ | 17 个表，Repository 模式，asyncpg 异步驱动 |
 | 存储管理系统 | ✅ | 文件生命周期管理、级联删除、孤立文件检测 |
 | 生存分析 | ✅ | WSI-level survival analysis (lifelines) |
 | 消息反馈系统 | ✅ | 用户对 AI 消息的反馈收集 |
@@ -59,7 +59,7 @@ pathlab/
         └── backend/          # 核心服务
             ├── ai/           # AI 推理与训练
             ├── preprocessing/# WSI 预处理
-            ├── database/     # SQLite ORM (17 个表)
+            ├── database/     # PostgreSQL ORM (17 个表)
             └── storage/      # 文件存储管理
 ```
 
@@ -71,7 +71,7 @@ pathlab/
 |------|------|
 | 前端 | Electron + React + TypeScript + Vite |
 | 后端 | Python + FastAPI + SQLAlchemy |
-| 数据库 | SQLite (零配置) |
+| 数据库 | PostgreSQL + asyncpg (异步) |
 | AI | PyTorch + timm + transformers |
 | WSI | ASlide (OpenSlide wrapper) + OpenSeadragon |
 
@@ -116,11 +116,12 @@ pathlab/
 
 ---
 
-## 页面路由 (13 页)
+## 页面路由 (14 页)
 
 | 路由 | 页面 | 说明 |
 |------|------|------|
-| `/` `/login` | LoginPage | 登录欢迎页 |
+| `/` | IntroductionPage | 产品介绍页 |
+| `/login` | LoginPage | 登录欢迎页 |
 | `/dashboard` | DashboardPage | 仪表盘概览 |
 | `/ai-chat` | AIChatPage | PathLab Agent 智能助手 |
 | `/task-setup` | NewTaskPage | 任务配置 |

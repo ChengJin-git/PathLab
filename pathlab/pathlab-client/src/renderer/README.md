@@ -33,7 +33,7 @@
    - Streaming LLM responses
    - Task description parsing
    - Automatic parameter extraction
-   - Conversation history (in-memory)
+   - Conversation history (database-persisted)
 
 3. **Dashboard** - System overview and statistics
    - WSI count and label distribution
@@ -53,15 +53,16 @@
 ## Project Structure
 
 ```
-pathlab/services/frontend/
+pathlab/pathlab-client/src/renderer/
 ├── src/
 │   ├── components/          # Reusable UI components
 │   │   ├── Layout.tsx       # Main layout with sidebar navigation
 │   │   ├── WSIViewer.tsx    # OpenSeadragon wrapper component
 │   │   ├── PageHeader.tsx   # Page header component
 │   │   └── ...
-│   ├── pages/               # Route-level page components
-│   │   ├── LoginPage.tsx             # Login/welcome page (default)
+│   ├── pages/               # Route-level page components (14 pages)
+│   │   ├── IntroductionPage.tsx      # Product introduction (/)
+│   │   ├── LoginPage.tsx             # Login/welcome page (/login)
 │   │   ├── DashboardPage.tsx         # System overview
 │   │   ├── AIChatPage.tsx            # AI assistant interface
 │   │   ├── ToolsPage.tsx             # Utility tools
@@ -155,7 +156,7 @@ export async function analyzeWSI(wsi_id: string, params: any): Promise<{ task_id
 
 ```bash
 # Navigate to frontend directory
-cd pathlab/services/frontend
+cd pathlab/pathlab-client/src/renderer
 
 # Install dependencies
 npm install
@@ -343,12 +344,12 @@ Currently no automated tests. Recommended setup:
 - ✅ Task submission
 - ✅ Results display
 
-### Phase 2 (Planned)
+### Phase 2 (Partially Complete)
 - [ ] Multi-user collaboration features
 - [ ] Annotation tools (drawing, measurements)
-- [ ] Advanced visualization (heatmaps, overlays)
+- ✅ Advanced visualization (heatmaps, overlays)
 - [ ] Batch analysis support
-- [ ] Export functionality (PDF reports, CSV)
+- ✅ Export functionality (PDF reports, CSV)
 
 ### Phase 3 (Future)
 - [ ] Real-time collaboration (WebSocket)

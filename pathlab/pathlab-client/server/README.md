@@ -11,7 +11,7 @@ PathLab 的 Python 后端服务，提供 WSI 处理、AI 推理和 API 网关功
 
 ## 核心特性
 
-- **零配置**: SQLite 数据库 (17 表)，无需安装 PostgreSQL
+- **零配置**: PostgreSQL 数据库 (17 表)，asyncpg 异步驱动
 - **动态端口**: 自动寻找可用端口，避免端口冲突
 - **单进程架构**: 统一入口 `main.py`，简化部署
 - **特征缓存**: 全局特征缓存，跨任务复用
@@ -58,10 +58,10 @@ server/
     ├── preprocessing/    # 预处理服务 (内部端口)
     │   ├── main.py           # 预处理 FastAPI 应用
     │   └── tiling.py         # WSI 切片、坐标提取
-    ├── database/         # SQLite ORM (零配置)
-    │   ├── database.py       # 异步连接管理
+    ├── database/         # PostgreSQL ORM
+    │   ├── database.py       # 异步连接管理 (asyncpg)
     │   ├── models.py         # 数据模型 (17 个表)
-    │   └── repositories.py   # 数据访问层 (Repository 模式)
+    │   └── repositories/     # 数据访问层 (Repository 模式，模块化目录)
     ├── storage/          # 文件存储管理
     │   └── manager.py        # 存储管理器 (级联删除)
     └── common/           # 公共模块
@@ -113,21 +113,22 @@ cd server && python main.py
 # PORT=48427              ← Electron 通过此解析端口
 # [Gateway] Starting on port 48427
 # [Services] Gateway: 48427, Preprocessing: 47001, AI: 53633
-# [Database] Using SQLite: sqlite+aiosqlite:///~/.local/share/PathLab/pathlab.db
+# [Database] Using PostgreSQL: postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab
 
 # 方式二：Electron 开发模式自动启动
 npm run dev  # 在父目录执行
 ```
 
-**注意**: 数据自动存储在平台特定目录。
+**注意**: 需确保 PostgreSQL 服务已运行，默认连接 `postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab`。
 
-## 数据库存储位置
+## 数据库配置
 
-| 平台 | 数据库路径 |
-|------|-----------|
-| Linux | `~/.local/share/PathLab/pathlab.db` |
-| macOS | `~/Library/Application Support/PathLab/pathlab.db` |
-| Windows | `%APPDATA%/PathLab/pathlab.db` |
+通过 `DATABASE_URL` 环境变量配置：
+
+```bash
+# 默认 (本地开发)
+DATABASE_URL=postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab
+```
 
 ## 动态端口发现
 

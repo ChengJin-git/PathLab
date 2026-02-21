@@ -158,7 +158,7 @@ GET /storage/stats
 ### Using in Python Code
 
 ```python
-from pathlab.services.backend.storage import StorageManager
+from backend.storage.manager import StorageManager
 
 # Initialize storage manager
 storage_manager = StorageManager("/path/to/uploads")

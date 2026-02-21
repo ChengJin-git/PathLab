@@ -21,7 +21,7 @@
 │  └──────────────┘  └──────────────────┘  └──────────────┘   │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │         SQLite Database (zero-config, 16 tables)     │   │
+│  │       PostgreSQL Database (asyncpg, 17 tables)       │   │
 │  └──────────────────────────────────────────────────────┘   │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -34,7 +34,7 @@
 
 - **框架**: FastAPI (Python 3.12)
 - **ASGI**: Uvicorn
-- **数据库**: SQLite + aiosqlite (异步)
+- **数据库**: PostgreSQL + asyncpg (异步)
 - **ORM**: SQLAlchemy 2.0+
 - **WSI 处理**: ASlide, OpenSlide
 - **AI 框架**: PyTorch 2.x
@@ -103,10 +103,10 @@
 | Phikon | `phikon` | 768 | Owkin |
 | Phikon2 | `phikon2` | 1024 | Owkin |
 | PLIP | `plip` | 512 | PathLAIA |
-| OpenMidnight | `openmidnight` | 1536 | OpenMidnight |
+| OpenMidnight | `openmidnight` | 1536 | SophontAI |
 | mSTAR | `mSTAR` | 1024 | Smartlab |
 | GPFM | `GPFM` | 1024 | Smartlab |
-| Prov-GigaPath | `gigapath` | 1536 | Microsoft |
+| PathoCLIP | `patho_clip` | 512 | PathLAIA |
 
 ### 支持的聚合器（8 种）
 
@@ -131,7 +131,7 @@
 
 ## 数据库架构
 
-SQLite 数据库包含 17 个表（零配置，自动创建）：
+PostgreSQL 数据库包含 17 个表（自动创建）：
 
 | 表名 | 用途 |
 |------|------|
@@ -153,12 +153,11 @@ SQLite 数据库包含 17 个表（零配置，自动创建）：
 | `training_logs` | 训练日志条目（SSE 流式） |
 | `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
 
-### 数据库路径
+### 数据库连接
 
 ```bash
-# Linux:   ~/.local/share/PathLab/pathlab.db
-# macOS:   ~/Library/Application Support/PathLab/pathlab.db
-# Windows: %APPDATA%/PathLab/pathlab.db
+# 默认连接（本地开发）
+DATABASE_URL=postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab
 ```
 
 ---

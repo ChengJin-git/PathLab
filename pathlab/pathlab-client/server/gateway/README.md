@@ -13,7 +13,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 - **请求路由**: 转发请求到 Preprocessing/AI 服务
 - **数据聚合**: 合并多服务响应
-- **元数据管理**: WSI/Dataset CRUD（SQLite，17 表）
+- **元数据管理**: WSI/Dataset CRUD（PostgreSQL，17 表）
 - **用户认证**: FastAPI-Users + JWT，本地邮箱密码登录，客户端 SHA256 哈希
 - **AI 聊天**: OpenRouter LLM 集成，对话持久化
 - **训练管理**: 训练任务生命周期，SSE 实时日志
@@ -217,7 +217,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ## 数据库架构
 
-SQLite 数据库包含 17 个表（零配置，自动创建）：
+PostgreSQL 数据库包含 17 个表（自动创建）：
 
 | 表名 | 用途 |
 |------|------|
@@ -256,7 +256,7 @@ SQLite 数据库包含 17 个表（零配置，自动创建）：
 
 - **框架**: FastAPI (Python 3.12)
 - **认证**: FastAPI-Users + JWT
-- **数据库**: SQLite + aiosqlite (异步)
+- **数据库**: PostgreSQL + asyncpg (异步)
 - **ORM**: SQLAlchemy 2.0+
 - **LLM**: OpenRouter API
 - **ASR**: DashScope Qwen3-ASR
