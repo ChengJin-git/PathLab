@@ -247,7 +247,7 @@ def find_cached_features(
     return None
 
 
-def save_features(feature_path: Path, features: torch.Tensor) -> None:
+def save_features(feature_path: Path, features: torch.Tensor) -> bool:
     """
     Save features to PyTorch .pt file using atomic write pattern.
 
@@ -256,10 +256,26 @@ def save_features(feature_path: Path, features: torch.Tensor) -> None:
     the incomplete file is clearly identifiable and won't be mistaken
     for a valid cache entry.
 
+    Refuses to save empty tensors (shape[0] == 0) to prevent polluting the
+    cache with features from WSIs where tissue segmentation failed.
+
     Args:
         feature_path: Path to save the .pt file
         features: Feature tensor of shape (num_patches, feature_dim)
+
+    Returns:
+        True if saved successfully, False if refused (empty tensor).
     """
+    # Guard: refuse to cache empty feature tensors.
+    # These result from WSIs with 0 valid patches (segmentation failure)
+    # and would crash the training aggregator downstream.
+    if features.ndim >= 1 and features.shape[0] == 0:
+        logger.warning(
+            f"[Fallback] Refusing to save empty feature tensor {tuple(features.shape)} "
+            f"to {feature_path}. The source WSI likely has no detectable tissue."
+        )
+        return False
+
     feature_path = Path(feature_path)
     feature_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -267,6 +283,7 @@ def save_features(feature_path: Path, features: torch.Tensor) -> None:
     partial_path = feature_path.parent / f"{feature_path.stem}.pt.partial"
     torch.save(features.cpu(), partial_path)
     partial_path.rename(feature_path)
+    return True
 
 
 def safe_load_features(

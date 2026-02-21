@@ -186,14 +186,22 @@ class WSIFeatureDataset(Dataset):
         self._feature_dim = loaded_feats.shape[1]
         return self._feature_dim
 
-    def validate_features(self) -> List[str]:
+    def validate_features(self, min_patches: int = 0) -> Tuple[List[str], List[str]]:
         """
         Validate all feature files can be loaded. Delete corrupted files.
+        Optionally check for minimum patch count.
+
+        Args:
+            min_patches: Minimum number of patches required. WSIs with fewer
+                         patches are considered low-quality. 0 = no threshold.
 
         Returns:
-            List of wsi_ids that had corrupted feature files (now deleted).
+            Tuple of (corrupted_ids, low_patch_ids):
+            - corrupted_ids: wsi_ids with corrupted/missing feature files (deleted)
+            - low_patch_ids: wsi_ids with fewer than min_patches patches
         """
         corrupted_ids = []
+        low_patch_ids = []
         for wsi_id in self.wsi_ids:
             feat_path = self.features_dir / f"{wsi_id}.pt"
             if not feat_path.exists():
@@ -205,7 +213,13 @@ class WSIFeatureDataset(Dataset):
             if loaded_feats is None:
                 logger.warning(f"Corrupted feature file for {wsi_id}: {load_error}")
                 corrupted_ids.append(wsi_id)
-        return corrupted_ids
+            elif min_patches > 0 and loaded_feats.shape[0] < min_patches:
+                logger.warning(
+                    f"Low-quality features for {wsi_id}: {loaded_feats.shape[0]} patches "
+                    f"< minimum {min_patches}"
+                )
+                low_patch_ids.append(wsi_id)
+        return corrupted_ids, low_patch_ids
 
 
 class CaseFeatureDataset(Dataset):
@@ -327,14 +341,22 @@ class CaseFeatureDataset(Dataset):
         self._feature_dim = loaded_feats.shape[1]
         return self._feature_dim
 
-    def validate_features(self) -> List[str]:
+    def validate_features(self, min_patches: int = 0) -> Tuple[List[str], List[str]]:
         """
         Validate all feature files can be loaded. Delete corrupted files.
+        Optionally check for minimum patch count.
+
+        Args:
+            min_patches: Minimum number of patches required. WSIs with fewer
+                         patches are considered low-quality. 0 = no threshold.
 
         Returns:
-            List of wsi_ids that had corrupted feature files (now deleted).
+            Tuple of (corrupted_ids, low_patch_ids):
+            - corrupted_ids: wsi_ids with corrupted/missing feature files (deleted)
+            - low_patch_ids: wsi_ids with fewer than min_patches patches
         """
         corrupted_ids = []
+        low_patch_ids = []
         for case_id in self.case_ids:
             for wsi_id in self.case_to_wsi.get(case_id, []):
                 feat_path = self.features_dir / f"{wsi_id}.pt"
@@ -347,5 +369,11 @@ class CaseFeatureDataset(Dataset):
                 if loaded_feats is None:
                     logger.warning(f"Corrupted feature file for {wsi_id}: {load_error}")
                     corrupted_ids.append(wsi_id)
-        return corrupted_ids
+                elif min_patches > 0 and loaded_feats.shape[0] < min_patches:
+                    logger.warning(
+                        f"Low-quality features for {wsi_id}: {loaded_feats.shape[0]} patches "
+                        f"< minimum {min_patches}"
+                    )
+                    low_patch_ids.append(wsi_id)
+        return corrupted_ids, low_patch_ids
 

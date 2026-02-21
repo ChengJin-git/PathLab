@@ -31,8 +31,9 @@ from backend.ai.tasks.feature_cache import (
     get_cache_save_path,
     create_symlink_to_cache,
     read_params_from_coords_h5,
+    safe_load_features,
 )
-from backend.ai.tasks.wsi_classification.trainer import WSIClassificationTrainer
+from backend.ai.tasks.wsi_classification.trainer import WSIClassificationTrainer, MIN_PATCHES_THRESHOLD
 from backend.ai.tasks.training_utils import scoped_db, safe_update_progress as _safe_update_progress
 from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
@@ -231,10 +232,65 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         features_dir = self.uploads_root / "training" / self.task_id / "features"
 
         # Validate feature files and re-extract any corrupted ones
+        unrepaired_ids: List[str] = []
         if feature_extractor:
-            await self._validate_and_repair_features(
+            unrepaired_ids = await self._validate_and_repair_features(
                 features_dir, all_wsi_ids, feature_extractor, logger, session_maker
             )
+
+        # Layer 6: Final pre-training filter — runs in thread to avoid blocking event loop
+        def _final_feature_filter_sync(wsi_ids, already_invalid, feat_dir):
+            invalid = set(already_invalid)
+            low_quality_details = []
+            for wsi_id in wsi_ids:
+                if wsi_id in invalid:
+                    continue
+                feat_path = feat_dir / f"{wsi_id}.pt"
+                if not feat_path.exists():
+                    invalid.add(wsi_id)
+                    continue
+                loaded_feats, _ = safe_load_features(feat_path, delete_if_corrupted=False)
+                if loaded_feats is None:
+                    invalid.add(wsi_id)
+                elif loaded_feats.shape[0] < MIN_PATCHES_THRESHOLD:
+                    low_quality_details.append((wsi_id, loaded_feats.shape[0]))
+                    invalid.add(wsi_id)
+            return invalid, low_quality_details
+
+        invalid_wsi_ids, low_quality_details = await asyncio.to_thread(
+            _final_feature_filter_sync, all_wsi_ids, unrepaired_ids, features_dir
+        )
+
+        for wsi_id, patch_count in low_quality_details:
+            await logger.warning(
+                f"Low-quality WSI {wsi_id}: {patch_count} patches < {MIN_PATCHES_THRESHOLD}",
+            )
+
+        if invalid_wsi_ids:
+            original_count = len(all_wsi_ids)
+            all_wsi_ids = [wid for wid in all_wsi_ids if wid not in invalid_wsi_ids]
+            valid_ratio = len(all_wsi_ids) / original_count if original_count > 0 else 0
+
+            await logger.warning(
+                f"Filtered {len(invalid_wsi_ids)} invalid WSIs: {len(all_wsi_ids)}/{original_count} remaining ({valid_ratio:.1%})",
+                metadata={
+                    "filtered_count": len(invalid_wsi_ids),
+                    "remaining_count": len(all_wsi_ids),
+                    "valid_ratio": round(valid_ratio, 4),
+                    "filtered_ids": sorted(invalid_wsi_ids)[:20],
+                }
+            )
+
+            if valid_ratio < 0.30:
+                raise ValueError(
+                    f"有效 WSI 不足 30%（当前 {valid_ratio:.1%}，{len(all_wsi_ids)}/{original_count}），"
+                    f"请检查数据质量。被过滤的 WSI: {sorted(invalid_wsi_ids)[:10]}"
+                )
+
+            splits_map = {
+                split_name: [wid for wid in ids if wid not in invalid_wsi_ids]
+                for split_name, ids in splits_map.items()
+            }
 
         # Load survival data using batch query (avoid N+1 problem) - short-lived session
         async with scoped_db(session_maker) as db:

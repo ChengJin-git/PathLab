@@ -53,6 +53,11 @@ from backend.ai.tasks.training_utils import (
 )
 import logging
 
+# Minimum number of patches required for a WSI to be considered valid.
+# WSIs with fewer patches are skipped during feature extraction and training
+# to avoid low-quality inputs that would degrade model performance.
+MIN_PATCHES_THRESHOLD = 500
+
 
 class WSIClassificationTrainer(BaseTrainer):
     """
@@ -111,6 +116,7 @@ class WSIClassificationTrainer(BaseTrainer):
         extractor = await asyncio.to_thread(_load_extractor)
 
         results = []
+        skipped_wsi_ids = []
         total = len(wsi_ids)
         task_features_dir = self.uploads_root / "training" / self.task_id / "features"
         task_features_dir.mkdir(parents=True, exist_ok=True)
@@ -266,6 +272,19 @@ class WSIClassificationTrainer(BaseTrainer):
                         batch_size=batch_size,
                     )
 
+                    num_patches = feats.shape[0]
+                    if num_patches < MIN_PATCHES_THRESHOLD:
+                        await logger.warning(
+                            f"[{i}/{total}] Skipping {wsi_id}: only {num_patches} patches "
+                            f"(minimum {MIN_PATCHES_THRESHOLD}). WSI may lack detectable tissue.",
+                            metadata={"wsi_id": wsi_id, "num_patches": num_patches,
+                                      "threshold": MIN_PATCHES_THRESHOLD}
+                        )
+                        skipped_wsi_ids.append(wsi_id)
+                        progress = 33 + int(i / total * 33)
+                        await _safe_update_progress(session_maker, self.task_id, TaskStatus.EXTRACTING, progress)
+                        continue
+
                     # Save to global cache (blocking disk I/O → thread)
                     cache_feat_path = get_cache_save_path(
                         self.uploads_root, extractor_name, params_hash, wsi_id
@@ -327,7 +346,18 @@ class WSIClassificationTrainer(BaseTrainer):
                     metadata={"count": len(processed_wsi_ids)}
                 )
 
-        return self._build_feature_response(results)
+        if skipped_wsi_ids:
+            await logger.warning(
+                f"[Fallback] {len(skipped_wsi_ids)}/{total} WSIs skipped due to insufficient patches "
+                f"(< {MIN_PATCHES_THRESHOLD}): {skipped_wsi_ids[:20]}",
+                metadata={"skipped_count": len(skipped_wsi_ids), "total": total,
+                          "threshold": MIN_PATCHES_THRESHOLD,
+                          "skipped_wsi_ids": skipped_wsi_ids}
+            )
+
+        response = self._build_feature_response(results)
+        response.skipped_wsi_ids = skipped_wsi_ids
+        return response
 
     def _extract_wsi_features(
         self,
@@ -923,47 +953,73 @@ class WSIClassificationTrainer(BaseTrainer):
         feature_extractor: str,
         logger: Any,
         session_maker: Any,
-    ) -> None:
+    ) -> List[str]:
         """
-        Validate all feature files and re-extract any corrupted or missing ones.
+        Validate all feature files and re-extract any corrupted, empty, or low-quality ones.
 
-        This prevents training from crashing due to corrupted .pt files
-        (e.g., from incomplete writes before the atomic .partial mechanism was added).
+        Detects:
+        - Missing feature files
+        - Corrupted/unloadable .pt files
+        - Legacy empty features with shape [0, feat_dim] (from before fallback was added)
+        - Features with fewer than MIN_PATCHES_THRESHOLD patches
+
+        All detected WSIs are re-extracted with force_recompute=True, which triggers
+        full re-patching (with seg_level adaptive fallback) and re-extraction.
+
+        Returns list of WSI IDs that could not be repaired (still missing/invalid after re-extraction).
         """
-        corrupted_ids = []
-        for wsi_id in all_wsi_ids:
-            feat_path = features_dir / f"{wsi_id}.pt"
-            if not feat_path.exists():
-                corrupted_ids.append(wsi_id)
-                continue
-            loaded_feats, load_error = safe_load_features(
-                feat_path, delete_if_corrupted=True
-            )
-            if loaded_feats is None:
-                await logger.warning(
-                    f"Corrupted feature file detected for {wsi_id}: {load_error}"
+        def _scan_features_sync() -> tuple:
+            needs_reextract = []
+            reasons = {}
+            for wsi_id in all_wsi_ids:
+                feat_path = features_dir / f"{wsi_id}.pt"
+                if not feat_path.exists():
+                    needs_reextract.append(wsi_id)
+                    reasons[wsi_id] = "missing"
+                    continue
+                loaded_feats, load_error = safe_load_features(
+                    feat_path, delete_if_corrupted=True
                 )
-                corrupted_ids.append(wsi_id)
+                if loaded_feats is None:
+                    needs_reextract.append(wsi_id)
+                    reasons[wsi_id] = f"corrupted: {load_error}"
+                elif loaded_feats.shape[0] == 0:
+                    feat_path.unlink(missing_ok=True)
+                    needs_reextract.append(wsi_id)
+                    reasons[wsi_id] = "empty [0, feat_dim] (legacy)"
+                elif loaded_feats.shape[0] < MIN_PATCHES_THRESHOLD:
+                    feat_path.unlink(missing_ok=True)
+                    needs_reextract.append(wsi_id)
+                    reasons[wsi_id] = f"low patches ({loaded_feats.shape[0]} < {MIN_PATCHES_THRESHOLD})"
+            return needs_reextract, reasons
 
-        if not corrupted_ids:
-            return
+        needs_reextract, reasons = await asyncio.to_thread(_scan_features_sync)
+
+        for wsi_id in needs_reextract:
+            await logger.warning(
+                f"Feature repair needed for {wsi_id}: {reasons[wsi_id]}"
+            )
+
+        if not needs_reextract:
+            return []
 
         await logger.info(
-            f"Re-extracting features for {len(corrupted_ids)} corrupted/missing WSIs",
-            metadata={"count": len(corrupted_ids), "wsi_ids": corrupted_ids[:10]}
+            f"Re-extracting features for {len(needs_reextract)} invalid WSIs (with seg_level fallback)",
+            metadata={
+                "count": len(needs_reextract),
+                "wsi_ids": needs_reextract[:10],
+                "reasons": {k: reasons[k] for k in needs_reextract[:10]},
+            }
         )
 
-        # Get hf_token from global settings
         hf_token = Config.get_global_settings().get("huggingface_token", "")
 
-        # Get preprocessing_config from task
         async with scoped_db(session_maker) as db:
             task = await TrainingTaskRepository.get_by_id(db, self.task_id)
         preprocessing_config = task.preprocessing_config if task else None
 
-        # Re-extract features for corrupted WSIs
         await self.extract_features(
-            wsi_ids=corrupted_ids,
+            wsi_ids=needs_reextract,
             extractor_name=feature_extractor,
             batch_size=32,
             force_recompute=True,
@@ -972,6 +1028,26 @@ class WSIClassificationTrainer(BaseTrainer):
             hf_token=hf_token,
             preprocessing_config=preprocessing_config,
         )
+
+        def _post_repair_check_sync() -> list:
+            still_bad = []
+            for wsi_id in needs_reextract:
+                feat_path = features_dir / f"{wsi_id}.pt"
+                if not feat_path.exists():
+                    still_bad.append(wsi_id)
+                    continue
+                loaded_feats, _ = safe_load_features(feat_path, delete_if_corrupted=False)
+                if loaded_feats is None or loaded_feats.shape[0] == 0:
+                    still_bad.append(wsi_id)
+            return still_bad
+
+        still_bad = await asyncio.to_thread(_post_repair_check_sync)
+        if still_bad:
+            await logger.warning(
+                f"{len(still_bad)} WSIs still invalid after re-extraction (likely empty/low-quality slides with no tissue at any seg_level)",
+                metadata={"count": len(still_bad), "wsi_ids": still_bad[:10]}
+            )
+        return still_bad
 
     async def train_model(
         self,
@@ -1021,10 +1097,65 @@ class WSIClassificationTrainer(BaseTrainer):
         features_dir = self.uploads_root / "training" / self.task_id / "features"
 
         # Validate feature files and re-extract any corrupted ones
+        unrepaired_ids: List[str] = []
         if feature_extractor:
-            await self._validate_and_repair_features(
+            unrepaired_ids = await self._validate_and_repair_features(
                 features_dir, all_wsi_ids, feature_extractor, logger, session_maker
             )
+
+        # Layer 5: Final pre-training filter — runs in thread to avoid blocking event loop
+        def _final_feature_filter_sync(wsi_ids, already_invalid, feat_dir):
+            invalid = set(already_invalid)
+            low_quality_details = []
+            for wsi_id in wsi_ids:
+                if wsi_id in invalid:
+                    continue
+                feat_path = feat_dir / f"{wsi_id}.pt"
+                if not feat_path.exists():
+                    invalid.add(wsi_id)
+                    continue
+                loaded_feats, _ = safe_load_features(feat_path, delete_if_corrupted=False)
+                if loaded_feats is None:
+                    invalid.add(wsi_id)
+                elif loaded_feats.shape[0] < MIN_PATCHES_THRESHOLD:
+                    low_quality_details.append((wsi_id, loaded_feats.shape[0]))
+                    invalid.add(wsi_id)
+            return invalid, low_quality_details
+
+        invalid_wsi_ids, low_quality_details = await asyncio.to_thread(
+            _final_feature_filter_sync, all_wsi_ids, unrepaired_ids, features_dir
+        )
+
+        for wsi_id, patch_count in low_quality_details:
+            await logger.warning(
+                f"Low-quality WSI {wsi_id}: {patch_count} patches < {MIN_PATCHES_THRESHOLD}",
+            )
+
+        if invalid_wsi_ids:
+            original_count = len(all_wsi_ids)
+            all_wsi_ids = [wid for wid in all_wsi_ids if wid not in invalid_wsi_ids]
+            valid_ratio = len(all_wsi_ids) / original_count if original_count > 0 else 0
+
+            await logger.warning(
+                f"Filtered {len(invalid_wsi_ids)} invalid WSIs: {len(all_wsi_ids)}/{original_count} remaining ({valid_ratio:.1%})",
+                metadata={
+                    "filtered_count": len(invalid_wsi_ids),
+                    "remaining_count": len(all_wsi_ids),
+                    "valid_ratio": round(valid_ratio, 4),
+                    "filtered_ids": sorted(invalid_wsi_ids)[:20],
+                }
+            )
+
+            if valid_ratio < 0.30:
+                raise ValueError(
+                    f"有效 WSI 不足 30%（当前 {valid_ratio:.1%}，{len(all_wsi_ids)}/{original_count}），"
+                    f"请检查数据质量。被过滤的 WSI: {sorted(invalid_wsi_ids)[:10]}"
+                )
+
+            splits_map = {
+                split_name: [wid for wid in ids if wid not in invalid_wsi_ids]
+                for split_name, ids in splits_map.items()
+            }
 
         # Get labels from database using batch query (avoid N+1 problem)
         async with scoped_db(session_maker) as db:

@@ -460,11 +460,19 @@ def get_or_compute_coordinates(
                 f"for {wsi_id}. The slide may not contain detectable tissue."
             )
 
-    # Save coordinates using original tiler (preserves original seg_level for cache consistency)
-    tiler._save_coordinates(
-        coordinates, coords_file,
-        seg_params=seg_params, filter_params=filter_params
-    )
+    # Only save coordinates if we actually found tissue patches.
+    # Saving 0-coordinate files pollutes the cache and causes downstream
+    # feature extraction to produce empty [0, feat_dim] tensors that crash training.
+    if len(coordinates) > 0:
+        tiler._save_coordinates(
+            coordinates, coords_file,
+            seg_params=seg_params, filter_params=filter_params
+        )
+    else:
+        logger.warning(
+            f"[Fallback] Skipping coordinate save for {wsi_id} — 0 patches found "
+            f"after exhausting all seg_levels. The slide may not contain detectable tissue."
+        )
 
     return coordinates, coords_file
 
