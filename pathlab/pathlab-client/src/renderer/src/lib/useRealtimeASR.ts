@@ -93,6 +93,8 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
   const isMountedRef = useRef(true)
   // Track pending async cleanup (AudioContext.close) so startRecording can await it
   const cleanupPromiseRef = useRef<Promise<void>>(Promise.resolve())
+  // Resolve function for session.updated promise - called when server is ready for audio
+  const sessionUpdatedResolveRef = useRef<(() => void) | null>(null)
 
   // Store all callbacks in refs so they are always fresh
   const optionsRef = useRef(options)
@@ -116,6 +118,7 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
   // ---------------------------------------------------------------------------
   const cleanup = useCallback(() => {
     startingRef.current = false
+    sessionUpdatedResolveRef.current = null
 
     if (maxTimeoutRef.current) {
       clearTimeout(maxTimeoutRef.current)
@@ -244,7 +247,12 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
               }
               break
             case 'session.updated':
-              // console.log('[ASR] Session updated, ready for audio')
+              console.log('[ASR] Session updated, ready for audio')
+              // Notify waiting code that server is ready for audio
+              if (sessionUpdatedResolveRef.current) {
+                sessionUpdatedResolveRef.current()
+                sessionUpdatedResolveRef.current = null
+              }
               break
             case 'input_audio_buffer.speech_started':
               // console.log('[ASR] Speech started')
@@ -307,6 +315,30 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
         const origErr = ws.onerror
         ws.onerror = (err) => { clearTimeout(timeout); origErr?.call(ws, err); reject(new Error('WebSocket connection failed')) }
       })
+
+      // Wait for session.updated from server (indicates server is ready for audio)
+      // This is critical: the server needs to complete session setup before we send audio
+      console.log('[ASR] Waiting for session.updated...')
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Session setup timeout - server did not respond'))
+        }, 10000)
+        sessionUpdatedResolveRef.current = () => {
+          clearTimeout(timeout)
+          resolve()
+        }
+        // Also reject if WebSocket closes during wait
+        const origOnClose = ws.onclose
+        ws.onclose = (event) => {
+          clearTimeout(timeout)
+          if (sessionUpdatedResolveRef.current) {
+            sessionUpdatedResolveRef.current = null
+            reject(new Error('WebSocket closed during session setup'))
+          }
+          origOnClose?.call(ws, event)
+        }
+      })
+      console.log('[ASR] Session ready, starting audio capture')
 
       // Audio capture
       const stream = await navigator.mediaDevices.getUserMedia({
