@@ -707,7 +707,7 @@ async def chat_with_ai(
     )
 
     # Log the user_data_context for debugging
-    logger.info(f"[Chat] User data context for agent:\n{user_data_context}")
+    # logger.info(f"[Chat] User data context for agent:\n{user_data_context}")
 
     # Add system prompt if not present
     messages = req.messages.copy()
