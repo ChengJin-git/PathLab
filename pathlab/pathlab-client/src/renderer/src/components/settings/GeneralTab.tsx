@@ -22,6 +22,8 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [model, setModel] = useState('qwen/qwen3.5-plus-02-15')
   const [huggingfaceToken, setHuggingfaceToken] = useState('')
   const [dashscopeApiKey, setDashscopeApiKey] = useState('')
+  // Exa Search API key for web search
+  const [exaApiKey, setExaApiKey] = useState('')
   const [aiSaved, setAiSaved] = useState(false)
   const [aiSaving, setAiSaving] = useState(false)
 
@@ -89,6 +91,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       const s = await getGlobalSettings()
       setApiKey(s.openrouter_api_key); setBaseUrl(s.openrouter_base_url); setModel(s.openrouter_model)
       setHuggingfaceToken(s.huggingface_token); setDashscopeApiKey(s.dashscope_api_key)
+      setExaApiKey(s.exa_api_key || '')
       setLocalVllmEnabled(s.local_vllm_enabled); setLocalVllmBaseUrl(s.local_vllm_base_url)
       setLocalVllmModel(s.local_vllm_model); setLocalVllmApiKey(s.local_vllm_api_key)
       setLocalAsrEnabled(s.local_asr_enabled); setLocalAsrBaseUrl(s.local_asr_base_url)
@@ -118,6 +121,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       await updateGlobalSettings({
         openrouter_api_key: apiKey, openrouter_base_url: baseUrl, openrouter_model: model,
         huggingface_token: huggingfaceToken, dashscope_api_key: dashscopeApiKey,
+        exa_api_key: exaApiKey,
         local_vllm_enabled: localVllmEnabled, local_vllm_base_url: localVllmBaseUrl,
         local_vllm_model: localVllmModel, local_vllm_api_key: localVllmApiKey,
         local_asr_enabled: localAsrEnabled, local_asr_base_url: localAsrBaseUrl,
@@ -227,6 +231,13 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                       <Input type="password" value={huggingfaceToken} onChange={(e) => setHuggingfaceToken(e.target.value)} placeholder="hf_..." />
                       <p className="text-xs text-gray-500">
                         {t('settings.general.forDownloadingGated')} <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-primary-600 hover:underline">{t('common.getToken')}</a>
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{t('settings.general.exaApiKey')}</Label>
+                      <Input type="password" value={exaApiKey} onChange={(e) => setExaApiKey(e.target.value)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+                      <p className="text-xs text-gray-500">
+                        {t('settings.general.forWebSearch')} <a href="https://exa.ai" target="_blank" className="text-primary-600 hover:underline">{t('common.getKey')}</a>
                       </p>
                     </div>
                   </CardContent>
