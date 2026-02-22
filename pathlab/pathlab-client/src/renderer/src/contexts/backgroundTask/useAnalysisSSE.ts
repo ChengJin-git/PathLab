@@ -39,6 +39,7 @@ export function useAnalysisSSE(isLoggedIn: boolean, enabled: boolean) {
           task_id: string;  // training_task_id
           title?: string;  // Human-readable title from backend
           analysis_type?: string;  // "internal" or "external"
+          task_category?: string;  // "classification" or "survival" (internal analysis only)
           status: string;
           progress: number;
           created_at?: string;
@@ -70,6 +71,7 @@ export function useAnalysisSSE(isLoggedIn: boolean, enabled: boolean) {
             serverTaskStatus: task.status as TrainingTaskStatus,
             // Store analysis_type and training task ID for merging external validation
             analysisType: task.analysis_type,
+            taskCategory: task.task_category as 'classification' | 'survival' | undefined,
             trainingTaskId: task.task_id
           }
         })

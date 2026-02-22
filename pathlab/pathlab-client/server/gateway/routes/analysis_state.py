@@ -38,6 +38,7 @@ class AnalysisTaskState:
             "user_id": data.get("user_id", ""),
             "title": data.get("title", ""),
             "analysis_type": data.get("analysis_type", "internal"),
+            "task_category": data.get("task_category") or None,
             "status": TaskStatus(data.get("status", "pending")),
             "progress": int(progress) if progress else 0,
             "error_message": data.get("error_message") or None,
@@ -55,6 +56,7 @@ class AnalysisTaskState:
             "user_id": state.get("user_id", ""),
             "title": state.get("title", ""),
             "analysis_type": state.get("analysis_type", "internal"),
+            "task_category": state.get("task_category") or "",
             "status": status_str,
             "progress": str(state.get("progress", 0)),
             "error_message": state.get("error_message") or "",
@@ -69,7 +71,8 @@ class AnalysisTaskState:
         task_id: str,
         user_id: str,
         title: str = "",
-        analysis_type: str = "internal"
+        analysis_type: str = "internal",
+        task_category: Optional[str] = None
     ) -> Dict[str, Any]:
         state = {
             "analysis_id": analysis_id,
@@ -77,6 +80,7 @@ class AnalysisTaskState:
             "user_id": user_id,
             "title": title or f"Analyzing task {task_id}",
             "analysis_type": analysis_type,
+            "task_category": task_category,
             "status": TaskStatus.PENDING,
             "progress": 0,
             "error_message": None,

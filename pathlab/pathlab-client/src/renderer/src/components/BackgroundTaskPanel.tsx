@@ -215,6 +215,11 @@ const TaskCard: React.FC<{
                 ) : (
                   <div className="text-sm font-semibold text-gray-900 break-words text-left leading-normal w-full">
                     {task.title}
+                    {task.taskCategory && (
+                      <span className="text-xs font-normal text-gray-400 ml-1">
+                        ({t(`backgroundTask.taskCategory.${task.taskCategory}`, { defaultValue: task.taskCategory })})
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
@@ -225,7 +230,9 @@ const TaskCard: React.FC<{
                    task.type === 'batch_update_metadata' ? t('backgroundTask.typeLabels.metadata') : typeLabel}
                 </span>
                 <span className="text-sm font-medium text-gray-700 truncate flex-1 min-w-0 leading-none">
-                  {task.title}
+                  {task.taskCategory
+                    ? `${task.title} (${t(`backgroundTask.taskCategory.${task.taskCategory}`, { defaultValue: task.taskCategory })})`
+                    : task.title}
                 </span>
                 <div className="flex items-center gap-2 flex-shrink-0 leading-none">
                   {task.successCount > 0 && (

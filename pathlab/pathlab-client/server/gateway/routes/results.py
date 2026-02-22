@@ -3637,14 +3637,15 @@ async def run_task_analysis(
 
         title = f"{source_name} → {target_name}"
         analysis_type = "external"
+        task_category = None
     else:
-        # Internal analysis: use task name with validation type
-        task_type_label = "Survival" if task_type_str in ("wsi_survival", "survival") else "Classification"
-        title = f"{task.task_name} ({task_type_label})"
+        # Internal analysis: use task name only (category sent as separate field for i18n)
+        task_category = "survival" if task_type_str in ("wsi_survival", "survival") else "classification"
+        title = task.task_name
         analysis_type = "internal"
 
     # Create analysis state entry
-    await state.create(analysis_id, task_id, str(user.id), title=title, analysis_type=analysis_type)
+    await state.create(analysis_id, task_id, str(user.id), title=title, analysis_type=analysis_type, task_category=task_category)
 
     # Check if GPU inference is needed (AI results missing)
     # External validation does not need GPU check here as it handles its own inference flow

@@ -554,7 +554,7 @@
       "invalid": "無效",
       "taskType": "任務類型",
       "classification": "分類",
-      "survivalAnalysis": "生存分析",
+      "survivalAnalysis": "存活預測",
       "classificationInfo": "每個檔案將被分配一個類別標籤",
       "survivalInfo": "每個檔案將具有事件時間和狀態",
       "filesSelected": "已選擇 {{count}} 個檔案",
@@ -913,7 +913,7 @@
       "batchSizePositive": "批次大小必須大於 0",
       "smallDataset": "資料集過小（<10 個檔案）可能導致泛化能力不足",
       "classificationMinClasses": "分類任務至少需要 2 個不同的類別。請為切片分配不同的標籤。",
-      "survivalBothRequired": "生存預測任務需要同時包含事件樣本和刪失樣本。{{missingType}} 的樣本數為 0。",
+      "survivalBothRequired": "存活預測任務需要同時包含事件樣本和刪失樣本。{{missingType}} 的樣本數為 0。",
       "kFoldUnavailable": "K 折交叉驗證不可用",
       "kFoldExceedsMax": "K={{k}} 超過了允許的最大值（{{maxK}}）",
       "randomSplitUnavailable": "隨機分割不可用"
@@ -1166,7 +1166,7 @@
     "uploadMetadataDescription": "上傳包含切片中繼資料的 CSV 或 Excel 檔案（.csv、.xlsx）。",
     "fileFormatTitle": "{{mode}}模式的必需欄位：",
     "classification": "分類",
-    "survival": "生存分析",
+    "survival": "存活預測",
     "optionalFields": "可選欄位：",
     "removeFile": "移除檔案",
     "ready": "就緒",
@@ -1615,7 +1615,7 @@
       "taskTypeLabel": "任務類型",
       "classification": "分類",
       "categoricalLabels": "分類標籤",
-      "survivalPrediction": "生存預測",
+      "survivalPrediction": "存活預測",
       "timeToEvent": "事件時間分析",
       "segmentation": "分割",
       "comingSoon": "即將推出",
@@ -1737,7 +1737,7 @@
         "epochsRange": "訓練輪數必須在 1 到 1000 之間",
         "batchSizeRange": "批次大小必須在 1 到 512 之間",
         "classificationMinClasses": "分類任務至少需要 2 個類別（發現 {{count}} 個）：{{labels}}",
-        "survivalBothRequired": "生存預測需要同時包含事件和刪失樣本。{{missingType}} 有 0 個樣本（事件：{{eventCount}}，刪失：{{censoredCount}}）"
+        "survivalBothRequired": "存活預測需要同時包含事件和刪失樣本。{{missingType}} 有 0 個樣本（事件：{{eventCount}}，刪失：{{censoredCount}}）"
       }
     },
     "taskHistory": {
@@ -1855,7 +1855,7 @@
       "dragAndDrop": "將 CSV 或 Excel 檔案拖放到此處",
       "orClickToBrowse": "或點擊瀏覽",
       "downloadTemplate": "下載範本",
-      "survival": "生存分析",
+      "survival": "存活預測",
       "classification": "分類",
       "dataset": "資料集"
     },
@@ -1874,7 +1874,7 @@
     "modelList": {
       "noModelsFound": "未找到模型",
       "title": "可用模型",
-      "survival": "生存分析",
+      "survival": "存活預測",
       "classification": "分類",
       "modelId": "模型 ID",
       "taskId": "任務 ID",
@@ -1978,7 +1978,7 @@
       "dragDropFolder": "拖放資料夾到此處",
       "dragDropFolderDesc": "或點擊瀏覽 WSI 檔案",
       "classification": "分類",
-      "survival": "生存分析",
+      "survival": "存活預測",
       "downloadTemplate": "下載{{mode}}範本",
       "formatIssue": "格式問題",
       "startRegistration": "開始註冊",
@@ -2323,6 +2323,10 @@
         "failed": "失敗",
         "cancelled": "已取消"
       }
+    },
+    "taskCategory": {
+      "classification": "分類",
+      "survival": "存活預測"
     },
     "statusSummary": {
       "running": "運行中",

@@ -46,6 +46,7 @@ export interface BackgroundTask {
   dataLevel?: 'wsi' | 'patch' // For progress calculation
   // For analysis tasks
   analysisType?: 'internal' | 'external'  // Type of analysis
+  taskCategory?: 'classification' | 'survival'  // Task category for i18n display (internal analysis only)
   trainingTaskId?: string  // The training task ID this analysis belongs to (for merging external validation)
 }
 

@@ -2324,6 +2324,10 @@
         "cancelled": "已取消"
       }
     },
+    "taskCategory": {
+      "classification": "分类",
+      "survival": "生存分析"
+    },
     "statusSummary": {
       "running": "运行中",
       "queued": "排队中",

@@ -2374,6 +2374,10 @@
         "cancelled": "Cancelled"
       }
     },
+    "taskCategory": {
+      "classification": "Classification",
+      "survival": "Survival"
+    },
     "statusSummary": {
       "running": "running",
       "queued": "queued",
