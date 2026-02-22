@@ -473,7 +473,10 @@
       "noUsersFound": "No users found",
       "rowsPerPage": "Rows per page",
       "pageOf": "Page {{current}} of {{total}}",
-      "totalCount": "{{count}} total"
+      "totalCount": "{{count}} total",
+      "role_admin": "Admin",
+      "role_pathologist": "Pathologist",
+      "role_guest": "Guest"
     },
     "storage": {
       "deselectAll": "Deselect all",

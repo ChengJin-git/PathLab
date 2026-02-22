@@ -473,7 +473,10 @@
       "noUsersFound": "未找到使用者",
       "rowsPerPage": "每頁行數",
       "pageOf": "第 {{current}} 頁 / 共 {{total}} 頁",
-      "totalCount": "共 {{count}} 條"
+      "totalCount": "共 {{count}} 條",
+      "role_admin": "管理員",
+      "role_pathologist": "病理學家",
+      "role_guest": "訪客"
     },
     "storage": {
       "deselectAll": "取消全選",
