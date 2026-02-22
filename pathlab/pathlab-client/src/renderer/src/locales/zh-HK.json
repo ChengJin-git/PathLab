@@ -194,7 +194,7 @@
       "displayNameOptional": "顯示名稱（可選）",
       "role": "角色",
       "roleAdmin": "管理員",
-      "rolePathologist": "病理學家",
+      "rolePathologist": "醫護人員",
       "roleGuest": "訪客",
       "cancel": "取消",
       "creating": "建立中...",
