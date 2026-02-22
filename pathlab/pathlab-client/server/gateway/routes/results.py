@@ -2096,62 +2096,6 @@ async def start_external_validation(
     }
 
 
-@router.get("/external-validation/{task_id}")
-async def get_validation_progress(
-    task_id: str,
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get the progress of an external validation task. Users can only view their own tasks."""
-    task = await TrainingTaskRepository.get_by_id(db, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"Validation task not found: {task_id}")
-
-    # Check ownership (supports temporary elevated dataset permissions)
-    mc = task.model_config or {}
-    if not await check_task_access_permission(user, task.user_id, mc.get("dataset_id"), db):
-        raise HTTPException(status_code=403, detail="You don't have permission to view this task")
-
-    # Check if this is an external validation task via DataGroup
-    task_data_group = task.data_group
-    task_type = task_data_group.task_type if task_data_group else None
-    if task_type != "external_validation":
-        raise HTTPException(status_code=400, detail=f"Task {task_id} is not an external validation task")
-
-    model_config = task.model_config or {}
-
-    # Overlay file-based progress if available (more up-to-date than DB during inference).
-    # This mirrors the pattern used in the training SSE endpoint (training.py lines 306-308).
-    from backend.common.progress_store import get_progress
-    file_prog = await get_progress(task_id)
-    progress = file_prog if file_prog is not None else task.progress
-
-    # Calculate processed_wsi from progress when DB value is stale.
-    # During chunked inference, set_progress() updates file-based progress (0-90%)
-    # but update_task_progress() only writes to DB at milestones, so processed_wsi stays at 0.
-    total_wsi = model_config.get("total_wsi", 0)
-    processed_wsi = model_config.get("processed_wsi", 0)
-    if processed_wsi == 0 and progress > 0 and total_wsi > 0:
-        # 0-90% maps to inference progress, 90-100% is post-processing
-        if progress <= 90:
-            processed_wsi = int(total_wsi * progress / 90)
-        else:
-            processed_wsi = total_wsi
-
-    return {
-        "task_id": task.task_id,
-        "status": task.status,
-        "progress": progress,
-        "total_wsi": total_wsi,
-        "processed_wsi": processed_wsi,
-        "model_id": model_config.get("model_id"),
-        "model_task_id": model_config.get("model_task_id"),
-        "dataset_id": model_config.get("dataset_id"),
-        "error": task.error_message,
-        "results_count": model_config.get("results_count"),
-    }
-
-
 @router.get("/external-validation/completed")
 async def get_completed_external_validations(
     user: User = Depends(current_active_user),
@@ -2217,6 +2161,62 @@ async def get_completed_external_validations(
         })
 
     return {"items": items}
+
+
+@router.get("/external-validation/{task_id}")
+async def get_validation_progress(
+    task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get the progress of an external validation task. Users can only view their own tasks."""
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Validation task not found: {task_id}")
+
+    # Check ownership (supports temporary elevated dataset permissions)
+    mc = task.model_config or {}
+    if not await check_task_access_permission(user, task.user_id, mc.get("dataset_id"), db):
+        raise HTTPException(status_code=403, detail="You don't have permission to view this task")
+
+    # Check if this is an external validation task via DataGroup
+    task_data_group = task.data_group
+    task_type = task_data_group.task_type if task_data_group else None
+    if task_type != "external_validation":
+        raise HTTPException(status_code=400, detail=f"Task {task_id} is not an external validation task")
+
+    model_config = task.model_config or {}
+
+    # Overlay file-based progress if available (more up-to-date than DB during inference).
+    # This mirrors the pattern used in the training SSE endpoint (training.py lines 306-308).
+    from backend.common.progress_store import get_progress
+    file_prog = await get_progress(task_id)
+    progress = file_prog if file_prog is not None else task.progress
+
+    # Calculate processed_wsi from progress when DB value is stale.
+    # During chunked inference, set_progress() updates file-based progress (0-90%)
+    # but update_task_progress() only writes to DB at milestones, so processed_wsi stays at 0.
+    total_wsi = model_config.get("total_wsi", 0)
+    processed_wsi = model_config.get("processed_wsi", 0)
+    if processed_wsi == 0 and progress > 0 and total_wsi > 0:
+        # 0-90% maps to inference progress, 90-100% is post-processing
+        if progress <= 90:
+            processed_wsi = int(total_wsi * progress / 90)
+        else:
+            processed_wsi = total_wsi
+
+    return {
+        "task_id": task.task_id,
+        "status": task.status,
+        "progress": progress,
+        "total_wsi": total_wsi,
+        "processed_wsi": processed_wsi,
+        "model_id": model_config.get("model_id"),
+        "model_task_id": model_config.get("model_task_id"),
+        "dataset_id": model_config.get("dataset_id"),
+        "error": task.error_message,
+        "results_count": model_config.get("results_count"),
+    }
 
 
 async def _run_external_validation_patch_classification(
@@ -3654,7 +3654,7 @@ async def run_task_analysis(
     if needs_gpu:
         # GPU inference needed - submit to GPU queue for queuing
         await state.set_queued(analysis_id)
-        await task_queue.submit_task(
+        await task_queue.submit(
             task_id=analysis_id,
             task_type=TaskType.ANALYSIS,
             coro_func=run_analysis_pipeline,
@@ -3874,7 +3874,7 @@ async def get_quick_analysis(
         if needs_gpu:
             # GPU inference needed - submit to GPU queue for queuing
             await state.set_queued(analysis_id)
-            await task_queue.submit_task(
+            await task_queue.submit(
                 task_id=analysis_id,
                 task_type=TaskType.ANALYSIS,
                 coro_func=run_analysis_pipeline,
