@@ -1357,7 +1357,7 @@
     "allPageSelected": "已選中本頁全部 {{count}} 項。",
     "selectAllItems": "選擇全部 {{count}} 項",
     "allItemsSelected": "已選中全部 {{count}} 項。",
-    "caseLabel": "病例：{{caseId}}",
+    "caseLabel": "病例 ID：{{caseId}}",
     "wsi": "WSI",
     "patch": "切片塊",
     "notSet": "未設定",

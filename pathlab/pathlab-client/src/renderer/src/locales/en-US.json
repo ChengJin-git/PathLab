@@ -1357,7 +1357,7 @@
     "allPageSelected": "All {{count}} items on this page are selected.",
     "selectAllItems": "Select all {{count}} items",
     "allItemsSelected": "All {{count}} items are selected.",
-    "caseLabel": "Case: {{caseId}}",
+    "caseLabel": "Case ID: {{caseId}}",
     "wsi": "WSI",
     "patch": "Patch",
     "notSet": "Not set",
