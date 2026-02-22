@@ -215,6 +215,108 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ---
 
+### 16. WSI 权限 API (`/wsi/permissions/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/wsi/permissions` | 获取 WSI 权限列表 | 已登录 |
+| POST | `/wsi/permissions` | 创建 WSI 权限 | 已登录 |
+| DELETE | `/wsi/permissions/{id}` | 删除 WSI 权限 | 已登录 |
+
+---
+
+### 17. 消息反馈 API (`/feedback/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| POST | `/feedback` | 提交消息反馈 | 已登录 |
+| GET | `/feedback` | 获取反馈列表 | 已登录 |
+| GET | `/feedback/{id}` | 获取反馈详情 | 已登录 |
+
+---
+
+### 18. 存储任务 API (`/storage/tasks/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/storage/tasks` | 获取存储任务列表 | 已登录 |
+| GET | `/storage/tasks/{id}` | 获取存储任务详情 | 已登录 |
+
+---
+
+### 19. 存储扫描 API (`/storage/scan/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| POST | `/storage/scan` | 启动存储扫描 | 管理员 |
+| GET | `/storage/scan/status` | 获取扫描状态 | 已登录 |
+
+---
+
+### 20. 分类分析 API (`/analysis/classification/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| POST | `/analysis/classification` | 运行分类分析 | 已登录 |
+| GET | `/analysis/classification/{id}` | 获取分析结果 | 已登录 |
+
+---
+
+### 21. 生存分析 API (`/analysis/survival/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| POST | `/analysis/survival` | 运行生存分析 | 已登录 |
+| GET | `/analysis/survival/{id}` | 获取分析结果 | 已登录 |
+
+---
+
+### 22. 外部验证分析 API (`/analysis/external-validation/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| POST | `/analysis/external-validation` | 运行外部验证 | 已登录 |
+| GET | `/analysis/external-validation/{id}` | 获取验证结果 | 已登录 |
+
+---
+
+### 23. 分析指标 API (`/analysis/metrics/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/analysis/metrics` | 获取分析指标 | 已登录 |
+| GET | `/analysis/metrics/{task_id}` | 获取任务指标 | 已登录 |
+
+---
+
+### 24. 分析状态 API (`/analysis/state/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/analysis/state` | 获取分析状态 | 已登录 |
+| PUT | `/analysis/state` | 更新分析状态 | 已登录 |
+
+---
+
+### 25. 数据组 API (`/data-groups/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/data-groups` | 获取数据组列表 | 已登录 |
+| POST | `/data-groups` | 创建数据组 | 已登录 |
+| GET | `/data-groups/{id}` | 获取数据组详情 | 已登录 |
+
+---
+
+### 26. 数据集权限 API (`/datasets/permissions/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/datasets/{id}/permissions` | 获取数据集权限 | 已登录 |
+| POST | `/datasets/{id}/permissions` | 创建数据集权限 | 已登录 |
+
+---
+
 ## 数据库架构
 
 PostgreSQL 数据库包含 17 个表（自动创建）：

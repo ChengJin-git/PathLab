@@ -56,7 +56,7 @@ pathlab/
     │
     └── server/               # Python 后端 (FastAPI)
         ├── main.py           # 统一入口
-        ├── gateway/          # API 网关 (15 个路由模块)
+        ├── gateway/          # API 网关 (26 个路由模块)
         └── backend/          # 核心服务
             ├── ai/           # AI 推理与训练
             ├── preprocessing/# WSI 预处理
@@ -118,7 +118,7 @@ pathlab/
 
 ---
 
-## 页面路由 (14 页)
+## 页面路由 (15 页)
 
 | 路由 | 页面 | 说明 |
 |------|------|------|
@@ -135,29 +135,40 @@ pathlab/
 | `/results` | ResultsViewerPage | 结果查看器 |
 | `/reports` | ReportGeneratorPage | 报告生成器 |
 | `/tools` | ToolsPage | 实用工具集 |
+| `/storage` | StorageManagementPage | 存储管理 |
 | `/settings` | SettingsPage | 系统设置 |
 
 ---
 
-## Gateway 路由模块 (15 个)
+## Gateway 路由模块 (26 个)
 
 | 模块 | 路由前缀 | 功能 |
 |------|---------|------|
 | auth | `/auth` | 用户认证 (FastAPI-Users + JWT) |
 | wsi | `/wsi` | WSI CRUD、数据集管理 |
 | wsi_upload | `/wsi/upload` | 文件/路径/CSV 批量上传 |
+| wsi_permissions | `/wsi/permissions` | WSI 权限管理 |
 | training | `/training` | 训练任务 CRUD、SSE 日志流 |
 | ai_tasks | `/tasks` | AI 推理任务、提取器列表 |
 | results | `/results` | 结果查询、外部验证 |
 | models | `/models` | 训练模型管理 |
 | chat | `/chat`, `/conversations` | AI 对话、会话管理 |
+| chat_feedback | `/feedback` | 消息反馈管理 |
 | queue | `/queue` | GPU 队列状态、配置 |
 | storage | `/storage` | 存储统计、迁移、清理 |
+| storage_tasks | `/storage/tasks` | 存储任务管理 |
+| storage_scan | `/storage/scan` | 存储扫描 |
 | heatmap | `/heatmap` | 热图数据、Patch 图像 |
 | asr | `/asr` | 语音转文字 (DashScope Qwen3-ASR) |
 | stats | `/stats` | 系统统计 |
 | settings | `/settings` | 全局设置 |
 | gpu | `/gpu` | GPU 信息和状态 |
+| classification_analysis | `/analysis/classification` | 分类分析 |
+| survival_analysis | `/analysis/survival` | 生存分析 |
+| external_validation_analysis | `/analysis/external-validation` | 外部验证分析 |
+| analysis_metrics | `/analysis/metrics` | 分析指标 |
+| analysis_state | `/analysis/state` | 分析状态 |
+| analysis_helpers | (内部) | 分析辅助函数 |
 
 ---
 

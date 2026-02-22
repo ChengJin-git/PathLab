@@ -64,7 +64,7 @@ pathlab-client/
     │   ├── main.py           # Gateway FastAPI 应用
     │   ├── task_queue.py     # GPU 任务队列管理器
     │   ├── models.py         # Pydantic 请求/响应模型
-    │   ├── routes/           # 模块化路由 (15 个模块)
+    │   ├── routes/           # 模块化路由 (26 个模块)
     │   │   ├── auth.py           # 认证 (FastAPI-Users)
     │   │   ├── wsi.py            # WSI CRUD + 数据集管理
     │   │   ├── wsi_upload.py     # WSI 上传 (文件/路径/CSV)
@@ -188,25 +188,35 @@ cd server && python main.py
 | mSTAR | mSTAR | 1024 | Smartlab |
 | GPFM | GPFM | 1024 | Smartlab |
 
-### Gateway 路由模块 (15 个)
+### Gateway 路由模块 (26 个)
 
 | 模块 | 路由前缀 | 功能 |
 |------|---------|------|
 | auth | `/auth` | 用户认证 (FastAPI-Users + JWT) |
 | wsi | `/wsi` | WSI CRUD、数据集管理 |
 | wsi_upload | `/wsi/upload` | 文件/路径/CSV 批量上传 |
+| wsi_permissions | `/wsi/permissions` | WSI 权限管理 |
 | training | `/training` | 训练任务 CRUD、SSE 日志流 |
 | ai_tasks | `/tasks` | AI 推理任务、提取器列表 |
 | results | `/results` | 结果查询、外部验证 |
 | models | `/models` | 训练模型管理 |
 | chat | `/chat`, `/conversations` | AI 对话、会话管理 |
+| chat_feedback | `/feedback` | 消息反馈管理 |
 | queue | `/queue` | GPU 队列状态、配置 |
 | storage | `/storage` | 存储统计、迁移、清理 |
+| storage_tasks | `/storage/tasks` | 存储任务管理 |
+| storage_scan | `/storage/scan` | 存储扫描 |
 | heatmap | `/heatmap` | 热图数据、Patch 图像 |
 | asr | `/asr` | 语音转文字 (DashScope Qwen3-ASR) |
 | stats | `/stats` | 系统统计 |
 | settings | `/settings` | 全局设置 |
 | gpu | `/gpu` | GPU 信息和状态 |
+| classification_analysis | `/analysis/classification` | 分类分析 |
+| survival_analysis | `/analysis/survival` | 生存分析 |
+| external_validation_analysis | `/analysis/external-validation` | 外部验证分析 |
+| analysis_metrics | `/analysis/metrics` | 分析指标 |
+| analysis_state | `/analysis/state` | 分析状态 |
+| analysis_helpers | (内部) | 分析辅助函数 |
 
 ### 动态端口发现
 

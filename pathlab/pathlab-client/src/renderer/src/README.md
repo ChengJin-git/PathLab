@@ -13,7 +13,7 @@ src/
 │   ├── WSIViewer.tsx        # OpenSeadragon wrapper
 │   ├── PageHeader.tsx       # Page header component
 │   └── ...
-├── pages/               # Page components (14 pages)
+├── pages/               # Page components (15 pages)
 │   ├── IntroductionPage.tsx      # Product introduction (/)
 │   ├── LoginPage.tsx             # Login welcome page (/login)
 │   ├── DashboardPage.tsx         # Dashboard overview
@@ -27,6 +27,7 @@ src/
 │   ├── TaskDetailPage.tsx        # Task details (/task/:task_id)
 │   ├── ResultsViewerPage.tsx     # Results viewer (/results)
 │   ├── ReportGeneratorPage.tsx   # Report generator (/reports)
+│   ├── StorageManagementPage.tsx # Storage management (/storage)
 │   └── SettingsPage.tsx          # System settings (/settings)
 ├── contexts/            # React Context
 │   ├── AuthContext.tsx           # Authentication state management
@@ -47,7 +48,7 @@ src/
 - **WSI Viewer**: OpenSeadragon
 - **State Management**: React Hooks + Context
 
-## Page Routes (14 pages)
+## Page Routes (15 pages)
 
 | Route | Page | Description |
 |-------|------|-------------|
@@ -56,6 +57,7 @@ src/
 | `/dashboard` | DashboardPage | Dashboard overview |
 | `/ai-chat` | AIChatPage | AI assistant (SSE streaming) |
 | `/tools` | ToolsPage | Utility tools |
+| `/storage` | StorageManagementPage | Storage management |
 | `/settings` | SettingsPage | System settings |
 | `/task-setup` | NewTaskPage | Task configuration |
 | `/task-list` | TaskListPage | Task list |

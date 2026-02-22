@@ -60,7 +60,7 @@ pathlab/pathlab-client/src/renderer/
 │   │   ├── WSIViewer.tsx    # OpenSeadragon wrapper component
 │   │   ├── PageHeader.tsx   # Page header component
 │   │   └── ...
-│   ├── pages/               # Route-level page components (14 pages)
+│   ├── pages/               # Route-level page components (15 pages)
 │   │   ├── IntroductionPage.tsx      # Product introduction (/)
 │   │   ├── LoginPage.tsx             # Login/welcome page (/login)
 │   │   ├── DashboardPage.tsx         # System overview

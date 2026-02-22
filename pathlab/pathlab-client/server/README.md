@@ -27,7 +27,7 @@ server/
 │   ├── main.py           # Gateway FastAPI 应用
 │   ├── task_queue.py     # GPU 任务队列管理器
 │   ├── models.py         # Pydantic 请求/响应模型
-│   ├── routes/           # 模块化路由 (15 个模块)
+│   ├── routes/           # 模块化路由 (26 个模块)
 │   │   ├── auth.py           # 认证 (FastAPI-Users)
 │   │   ├── wsi.py            # WSI CRUD + 数据集
 │   │   ├── wsi_upload.py     # WSI 上传 (文件/路径/CSV)
