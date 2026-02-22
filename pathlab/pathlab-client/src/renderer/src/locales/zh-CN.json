@@ -971,15 +971,15 @@
     },
     "columns": {
       "data": "数据",
-      "extractor": "提取器",
+      "extractor": "特征提取器",
       "model": "模型",
       "duration": "时长"
     },
     "progress": {
-      "extracting": "提取中",
-      "testing": "测试中",
-      "patching": "切片中",
-      "training": "训练中",
+      "extracting": "提取特征中",
+      "testing": "测试模型中",
+      "patching": "图像切片中",
+      "training": "训练模型中",
       "progress": "进度"
     },
     "deleteModal": {

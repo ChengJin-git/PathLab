@@ -971,15 +971,15 @@
     },
     "columns": {
       "data": "Data",
-      "extractor": "Extractor",
+      "extractor": "Feature Extractor",
       "model": "Model",
       "duration": "Duration"
     },
     "progress": {
-      "extracting": "Extracting",
-      "testing": "Testing",
-      "patching": "Patching",
-      "training": "Training",
+      "extracting": "Extracting Features",
+      "testing": "Testing Model",
+      "patching": "Patching Images",
+      "training": "Training Model",
       "progress": "Progress"
     },
     "deleteModal": {
