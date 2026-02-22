@@ -551,7 +551,7 @@ export default function AIChatPage() {
   }
 
   const handleScenarioCardClick = (card: typeof SCENARIO_CARDS[number]) => {
-    setInput(card.prompt)
+    setInput(t(card.promptKey))
     setShowWelcomeHero(false)
     // Focus the textarea
     setTimeout(() => textareaRef.current?.focus(), 100)
@@ -1839,8 +1839,8 @@ export default function AIChatPage() {
                         <div className={`w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center mb-3 group-hover:shadow-md transition-shadow`}>
                           <Icon className={`w-5 h-5 ${card.iconColor}`} />
                         </div>
-                        <h3 className="font-semibold text-gray-900 mb-1">{card.title}</h3>
-                        <p className="text-sm text-gray-600">{card.description}</p>
+                        <h3 className="font-semibold text-gray-900 mb-1">{t(card.titleKey)}</h3>
+                        <p className="text-sm text-gray-600">{t(card.descriptionKey)}</p>
                       </button>
                     )
                   })}

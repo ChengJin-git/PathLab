@@ -1058,7 +1058,29 @@
     "deleteAllHistoryTitle": "删除所有历史记录",
     "deleteConversationTitle": "删除对话",
     "deleteAllHistoryConfirm": "确定要删除所有聊天历史记录吗？此操作无法撤销。",
-    "deleteConversationConfirm": "确定要删除此对话吗？此操作无法撤销。"
+    "deleteConversationConfirm": "确定要删除此对话吗？此操作无法撤销。",
+    "scenarioCards": {
+      "startFresh": {
+        "title": "全新开始",
+        "description": "开启一个新的病理学研究项目",
+        "prompt": "我想开始一个新的病理学研究项目，你能帮我了解有哪些选项吗？"
+      },
+      "trainModel": {
+        "title": "训练模型",
+        "description": "我有数据集，准备开始训练",
+        "prompt": "我有一批病理图像数据集，想要训练一个深度学习模型，需要配置哪些参数？"
+      },
+      "testModel": {
+        "title": "测试模型",
+        "description": "使用已训练的模型进行推理",
+        "prompt": "我有一个已训练好的模型，想要运行推理，该如何操作？"
+      },
+      "browseImages": {
+        "title": "浏览图像",
+        "description": "浏览和分析全切片图像或图块",
+        "prompt": "我想浏览和分析一些病理图像，你能帮我根据需求找到合适的图像吗？"
+      }
+    }
   },
   "uploadPage": {
     "datasetNameRequired": "数据集名称不能为空。",

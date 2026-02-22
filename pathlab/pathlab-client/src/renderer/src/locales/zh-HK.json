@@ -1058,7 +1058,29 @@
     "deleteAllHistoryTitle": "刪除所有歷史記錄",
     "deleteConversationTitle": "刪除對話",
     "deleteAllHistoryConfirm": "確定要刪除所有聊天歷史記錄嗎？此操作無法撤銷。",
-    "deleteConversationConfirm": "確定要刪除此對話嗎？此操作無法撤銷。"
+    "deleteConversationConfirm": "確定要刪除此對話嗎？此操作無法撤銷。",
+    "scenarioCards": {
+      "startFresh": {
+        "title": "全新開始",
+        "description": "開啟一個新的病理學研究項目",
+        "prompt": "我想開始一個新的病理學研究項目，你能幫我了解有哪些選項嗎？"
+      },
+      "trainModel": {
+        "title": "訓練模型",
+        "description": "我有資料集，準備開始訓練",
+        "prompt": "我有一批病理圖像資料集，想要訓練一個深度學習模型，需要配置哪些參數？"
+      },
+      "testModel": {
+        "title": "測試模型",
+        "description": "使用已訓練的模型進行推理",
+        "prompt": "我有一個已訓練好的模型，想要執行推理，該如何操作？"
+      },
+      "browseImages": {
+        "title": "瀏覽圖像",
+        "description": "瀏覽和分析全切片圖像或圖塊",
+        "prompt": "我想瀏覽和分析一些病理圖像，你能幫我根據需求找到合適的圖像嗎？"
+      }
+    }
   },
   "uploadPage": {
     "datasetNameRequired": "資料集名稱不能為空。",
