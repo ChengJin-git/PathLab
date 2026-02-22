@@ -93,14 +93,18 @@ const getTypeLabel = (task: BackgroundTask, t: TFunction): string => {
         return t(`backgroundTask.serverStatus.validation.${task.serverTaskStatus}`, { defaultValue: VALIDATION_STATUS_LABELS[task.serverTaskStatus] || task.serverTaskStatus })
       }
       return t('backgroundTask.typeLabels.externalValidation')
-    case 'analysis':
+    case 'analysis': {
       const analysisTypeLabel = task.analysisType === 'external'
         ? t('backgroundTask.typeLabels.externalAnalysis')
         : t('backgroundTask.typeLabels.internalAnalysis')
-      if (task.serverTaskStatus) {
-        return `${analysisTypeLabel}`
+      if (task.serverTaskStatus === 'cancelled') {
+        return t('backgroundTask.serverStatus.training.cancelled', { defaultValue: TRAINING_STATUS_LABELS['cancelled'] || 'Cancelled' })
+      }
+      if (task.serverTaskStatus === 'failed') {
+        return t('backgroundTask.serverStatus.training.failed', { defaultValue: TRAINING_STATUS_LABELS['failed'] || 'Failed' })
       }
       return analysisTypeLabel
+    }
     case 'migration':
       return t('backgroundTask.typeLabels.storage')
     case 'batch_import':
@@ -133,6 +137,13 @@ const TaskCard: React.FC<{
 
     const typeLabel = getTypeLabel(task, t)
 
+    // Preprocessing is actively running (patching WSIs) — show spinner even though
+    // mapTrainingStatus maps it to 'pending' for counting purposes.
+    const effectiveIconStatus: TaskStatus =
+      (task.status === 'pending' && task.serverTaskStatus === 'preprocessing')
+        ? 'running'
+        : task.status
+
     const getProgressBarColor = () => {
       if (task.type === 'training') {
         switch (task.serverTaskStatus) {
@@ -159,7 +170,7 @@ const TaskCard: React.FC<{
           onClick={() => setExpanded(!expanded)}
         >
           <div className={cn(expanded ? "mt-1" : "flex-shrink-0")}>
-            <StatusIcon status={task.status} />
+            <StatusIcon status={effectiveIconStatus} />
           </div>
           <div className="flex-1 min-w-0">
             {expanded ? (
