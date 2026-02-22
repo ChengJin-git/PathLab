@@ -71,7 +71,7 @@ class AITaskRepository:
         if error_message is not None:
             update_data["error_message"] = error_message
 
-        if status == TaskStatus.RUNNING and not await AITaskRepository._has_started(db, task_id):
+        if status == TaskStatus.PATCHING and not await AITaskRepository._has_started(db, task_id):
             update_data["started_at"] = utc_now()
 
         if status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
@@ -161,7 +161,7 @@ class AITaskRepository:
         query = select(
             func.count(AITask.id).label("total"),
             func.sum(case((AITask.status == TaskStatus.COMPLETED, 1), else_=0)).label("completed"),
-            func.sum(case((AITask.status == TaskStatus.RUNNING, 1), else_=0)).label("running"),
+            func.sum(case((AITask.status == TaskStatus.PATCHING, 1), else_=0)).label("running"),
             func.sum(case((AITask.status == TaskStatus.PENDING, 1), else_=0)).label("pending"),
             func.sum(case((AITask.status == TaskStatus.FAILED, 1), else_=0)).label("failed"),
         )

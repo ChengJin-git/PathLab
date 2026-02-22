@@ -92,7 +92,7 @@ async def lifespan(app: FastAPI):
     await cleanup_all_progress()
 
     # Resume interrupted training tasks
-    # Tasks with status 'pending', 'running', 'extracting', or 'training' were interrupted
+    # Tasks with status 'pending', 'patching', 'extracting', or 'training' were interrupted
     # by system shutdown/crash and need to be resumed (pending tasks lose their queue position)
     await resume_interrupted_tasks()
 
@@ -219,7 +219,7 @@ async def resume_interrupted_tasks():
     """
     Resume training tasks that were interrupted by system shutdown or crash.
 
-    Recoverable tasks are those with status 'pending', 'running', 'extracting',
+    Recoverable tasks are those with status 'pending', 'patching', 'extracting',
     'training', or 'resuming'.
     - 'pending' tasks are included because the in-memory queue is lost on restart
     - 'resuming' tasks are included because a previous restart may have claimed them

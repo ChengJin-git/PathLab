@@ -444,9 +444,9 @@ class TaskQueueManager:
         and force-update it to 'failed' if so.
 
         This handles the case where the pipeline's own error handler also failed
-        (e.g., DB connection issue), leaving the task stuck in 'resuming'/'pending'/'running'.
+        (e.g., DB connection issue), leaving the task stuck in 'resuming'/'pending'/'patching'.
         """
-        NON_TERMINAL = {'pending', 'queued', 'running', 'resuming', 'preprocessing', 'extracting', 'training'}
+        NON_TERMINAL = {'pending', 'queued', 'patching', 'resuming', 'extracting', 'training'}
         try:
             from backend.database import async_session
             from backend.ai.schemas.base import TaskStatus

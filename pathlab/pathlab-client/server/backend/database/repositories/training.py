@@ -353,14 +353,14 @@ class TrainingTaskRepository:
 
         Returns:
             Dict with keys: total, completed, running, failed, pending
-            Note: "running" includes all in-progress statuses: running, training, pending, queued, preprocessing, extracting
+            Note: "running" includes all in-progress statuses: patching, training, pending, queued, extracting
         """
         from sqlalchemy import case, or_
 
         # Define in-progress statuses (tasks that are actively running or waiting to run)
         in_progress_statuses = [
-            TaskStatus.RUNNING, TaskStatus.TRAINING, TaskStatus.PENDING,
-            TaskStatus.QUEUED, TaskStatus.PREPROCESSING, TaskStatus.EXTRACTING,
+            TaskStatus.PATCHING, TaskStatus.TRAINING, TaskStatus.PENDING,
+            TaskStatus.QUEUED, TaskStatus.EXTRACTING,
         ]
 
         query = select(
@@ -553,7 +553,7 @@ class TrainingTaskRepository:
         if error_message is not None:
             update_data["error_message"] = error_message
 
-        if status == TaskStatus.RUNNING:
+        if status == TaskStatus.PATCHING:
             update_data["started_at"] = utc_now()
 
         if status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
@@ -601,10 +601,10 @@ class TrainingTaskRepository:
 
     # Status values that indicate a task was interrupted (not failed normally)
     # - 'pending': task was queued but not yet started (queue is in-memory, lost on restart)
-    # - 'running', 'extracting', 'training': task was actively processing
+    # - 'patching', 'extracting', 'training': task was actively processing
     # Note: 'resuming' is intentionally excluded here to preserve CAS (compare-and-swap)
     # safety in try_claim_for_resume(). See RECOVERABLE_STATUSES for the full set.
-    INTERRUPTED_STATUSES = [TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.EXTRACTING, TaskStatus.TRAINING]
+    INTERRUPTED_STATUSES = [TaskStatus.PENDING, TaskStatus.PATCHING, TaskStatus.EXTRACTING, TaskStatus.TRAINING]
 
     # All statuses that need recovery on restart, including 'resuming'.
     # 'resuming' means a previous restart claimed the task but the pipeline never started
@@ -617,7 +617,7 @@ class TrainingTaskRepository:
         """
         Get all training tasks that need recovery (e.g., after system shutdown).
 
-        These are tasks with status 'pending', 'running', 'extracting', 'training',
+        These are tasks with status 'pending', 'patching', 'extracting', 'training',
         or 'resuming' - states that indicate the task was queued, in progress, or
         claimed for resume but never completed or failed.
 
@@ -647,7 +647,7 @@ class TrainingTaskRepository:
            this UPDATE will affect 0 rows
 
         The task is set to 'resuming' status temporarily. The pipeline will
-        update it to 'running' when it starts.
+        update it to 'patching' (WSI tasks) or 'training' (patch tasks) when it starts.
 
         Returns:
             True if this instance successfully claimed the task

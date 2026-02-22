@@ -66,7 +66,7 @@ class ScopedSession:
         
         # For simple DB operations:
         async with scoped.session() as (training_logger, db):
-            await TrainingTaskRepository.update_status(db, task_id, TaskStatus.RUNNING)
+            await TrainingTaskRepository.update_status(db, task_id, TaskStatus.PATCHING)
         # Session is automatically closed after the block
         
         # For trainers that need to create their own sessions:

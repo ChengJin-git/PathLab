@@ -188,7 +188,7 @@ async def revoke_dataset_permission(
     affected_task_ids = []
     if dataset_wsi_ids:
         # Get running tasks for target user
-        running_statuses = ['pending', 'running', 'extracting', 'training', 'resuming']
+        running_statuses = ['pending', 'patching', 'extracting', 'training', 'resuming']
         running_tasks_result = await db.execute(
             select(TrainingTask.task_id)
             .where(TrainingTask.user_id == target_user_id)

@@ -530,7 +530,7 @@ async def delete_training_task(
             raise HTTPException(status_code=403, detail="You don't have permission to delete this task")
 
         # If task is still running or queued, cancel it first to release GPU
-        if task.status in [TaskStatus.PENDING, TaskStatus.RESUMING, TaskStatus.RUNNING, TaskStatus.PREPROCESSING, TaskStatus.EXTRACTING, TaskStatus.TRAINING]:
+        if task.status in [TaskStatus.PENDING, TaskStatus.RESUMING, TaskStatus.PATCHING, TaskStatus.EXTRACTING, TaskStatus.TRAINING]:
             await cancel_ai_service_training(task_id)
 
         # Get all trained models for this task

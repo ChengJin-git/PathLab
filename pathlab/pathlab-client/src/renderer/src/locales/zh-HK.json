@@ -2301,10 +2301,10 @@
     "serverStatus": {
       "training": {
         "queued": "排隊中",
-        "pending": "排隊中",
+        "pending": "等待中",
+        "patching": "圖像切片中",
         "extracting": "擷取特徵中",
         "training": "訓練模型中",
-        "running": "圖像切片中",
         "resuming": "恢復中",
         "completed": "已完成",
         "failed": "失敗",
@@ -2312,11 +2312,10 @@
       },
       "validation": {
         "queued": "排隊中",
-        "pending": "排隊中",
-        "preprocessing": "前處理中",
+        "pending": "等待中",
+        "patching": "推論中",
         "extracting": "擷取特徵中",
         "training": "推論中",
-        "running": "推論中",
         "resuming": "恢復中",
         "completed": "已完成",
         "failed": "失敗",

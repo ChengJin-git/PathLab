@@ -12,7 +12,7 @@ export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelle
 export type StorageTaskType = 'batch_import' | 'delete_external' | 'batch_update_metadata'
 
 // Training task status from backend (more granular)
-export type TrainingTaskStatus = 'pending' | 'queued' | 'preprocessing' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled' | 'running'
+export type TrainingTaskStatus = 'pending' | 'queued' | 'patching' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
 
 // Server task type from backend
 export type ServerTaskType = 'classification' | 'survival' | 'external_validation'

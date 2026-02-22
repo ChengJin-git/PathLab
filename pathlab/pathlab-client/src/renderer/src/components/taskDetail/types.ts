@@ -14,7 +14,7 @@ export interface TaskDetail {
   task_type: 'classification' | 'survival' | 'segmentation' | 'external_validation'
   data_type: 'wsi' | 'patch'
   task_description: string
-  status: 'pending' | 'running' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled' | 'resuming'
+  status: 'pending' | 'queued' | 'patching' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled' | 'resuming'
   progress: number
   created_at: string
   updated_at: string

@@ -99,8 +99,6 @@ async def run_training_pipeline(
     try:
         # Initialize training and log start
         async with logger_manager.session() as (logger, db):
-            # Update task status to running
-            await TrainingTaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=0)
             await logger.info(f"Starting training pipeline for task: {task_id} (data_type: {data_type})")
 
         # For patch-level tasks, use Feature Extractor + Linear Probe training
@@ -198,6 +196,7 @@ async def run_training_pipeline(
         max_n_holes = preprocessing_config.get('max_n_holes', 100)
 
         async with logger_manager.session() as (logger, db):
+            await TrainingTaskRepository.update_status(db, task_id, TaskStatus.PATCHING, progress=0)
             await logger.info(f"Extracting patches from {total_wsi} WSI slides")
             await logger.info(
                 f"Level: {level}",
@@ -281,7 +280,7 @@ async def run_training_pipeline(
 
                     # Update progress (0-33%)
                     progress = int((idx / total_wsi) * 33)
-                    await TrainingTaskRepository.update_status(db, task_id, TaskStatus.PREPROCESSING, progress=progress)
+                    await TrainingTaskRepository.update_status(db, task_id, TaskStatus.PATCHING, progress=progress)
 
             except Exception as e:
                 err_type = type(e).__name__

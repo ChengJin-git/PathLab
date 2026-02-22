@@ -82,9 +82,7 @@ const getTypeLabel = (task: BackgroundTask, t: TFunction): string => {
       return t('backgroundTask.typeLabels.deleteTasks')
     case 'training':
       if (task.serverTaskStatus) {
-        // Normalize preprocessing → running: both represent the patching phase for WSI tasks
-        const trainingStatus = task.serverTaskStatus === 'preprocessing' ? 'running' : task.serverTaskStatus
-        return t(`backgroundTask.serverStatus.training.${trainingStatus}`, { defaultValue: TRAINING_STATUS_LABELS[trainingStatus] || trainingStatus })
+        return t(`backgroundTask.serverStatus.training.${task.serverTaskStatus}`, { defaultValue: TRAINING_STATUS_LABELS[task.serverTaskStatus] || task.serverTaskStatus })
       }
       return t('backgroundTask.typeLabels.training')
     case 'external_validation':

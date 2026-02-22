@@ -135,7 +135,7 @@ class AnalysisTaskState:
     async def set_running(self, analysis_id: str) -> Optional[Dict[str, Any]]:
         return await self.update(
             analysis_id,
-            status=TaskStatus.RUNNING,
+            status=TaskStatus.PATCHING,
             progress=10,
             started_at=datetime.now(timezone.utc).isoformat()
         )

@@ -141,21 +141,19 @@ export default function TaskDetailPage() {
   }
 
   const getStatusBadge = (status: TaskDetail['status'], taskType?: string) => {
-    // Normalize preprocessing → running: both represent the patching phase for WSI tasks
-    const normalizedStatus = status === 'preprocessing' ? 'running' : status
-    const badge = TASK_DETAIL_STATUS_BADGES[normalizedStatus] || { bg: 'bg-gray-100', text: 'text-gray-800', label: normalizedStatus }
+    const badge = TASK_DETAIL_STATUS_BADGES[status] || { bg: 'bg-gray-100', text: 'text-gray-800', label: status }
 
     // Use the same i18n key strategy as TaskListPage for consistency
     let label: string
     if (taskType === 'external_validation') {
-      if (normalizedStatus === 'extracting') label = t('taskList.progress.extracting')
-      else if (normalizedStatus === 'running' || normalizedStatus === 'training') label = t('taskList.progress.testing')
-      else label = t(`backgroundTask.serverStatus.validation.${normalizedStatus}`, { defaultValue: badge.label })
+      if (status === 'extracting') label = t('taskList.progress.extracting')
+      else if (status === 'patching' || status === 'training') label = t('taskList.progress.testing')
+      else label = t(`backgroundTask.serverStatus.validation.${status}`, { defaultValue: badge.label })
     } else {
-      if (normalizedStatus === 'running') label = t('taskList.progress.patching')
-      else if (normalizedStatus === 'extracting') label = t('taskList.progress.extracting')
-      else if (normalizedStatus === 'training') label = t('taskList.progress.training')
-      else label = t(`backgroundTask.serverStatus.training.${normalizedStatus}`, { defaultValue: badge.label })
+      if (status === 'patching') label = t('taskList.progress.patching')
+      else if (status === 'extracting') label = t('taskList.progress.extracting')
+      else if (status === 'training') label = t('taskList.progress.training')
+      else label = t(`backgroundTask.serverStatus.training.${status}`, { defaultValue: badge.label })
     }
 
     // Determine icon based on status

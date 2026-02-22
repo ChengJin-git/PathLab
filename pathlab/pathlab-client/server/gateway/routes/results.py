@@ -2364,7 +2364,7 @@ async def _run_external_validation_patch_classification(
         async with logger_manager.session() as (tl, _db):
             await tl.info(f"Running inference on {len(image_paths)} images (extractor: {extractor_name})")
 
-        await update_task_progress(TaskStatus.RUNNING, 10)
+        await update_task_progress(TaskStatus.PATCHING, 10)
 
         # Delete old AIResult records for this task
         async with safe_session() as db:
@@ -2596,7 +2596,7 @@ async def _run_external_validation(
 
     try:
         # Mark as running and log start
-        await update_task_progress(TaskStatus.RUNNING, 0)
+        await update_task_progress(TaskStatus.PATCHING, 0)
         async with logger_manager.session() as (tl, _db):
             await tl.info(f"Starting external validation for task: {task_id}")
             await tl.info(f"Model: {model_id} | Dataset: {dataset_id} | WSIs: {len(wsi_ids)} | Data type: {model_data_type} | Task type: {model_task_type}")
@@ -2928,8 +2928,8 @@ async def _run_external_validation(
 
             await asyncio.to_thread(_symlink_newly_extracted)
 
-        # Update status back to RUNNING for inference phase
-        await update_task_progress(TaskStatus.RUNNING, 35)
+        # Update status back to PATCHING for inference phase
+        await update_task_progress(TaskStatus.PATCHING, 35)
         async with logger_manager.session() as (tl, _db):
             await tl.info(f"All features ready. Starting inference...")
 
@@ -3306,7 +3306,7 @@ async def _run_external_validation(
                 await db.commit()
             logger.info(f"Saved {len(db_records)} results to database")
 
-        await update_task_progress(TaskStatus.RUNNING, 95, results_saved, results_saved)
+        await update_task_progress(TaskStatus.PATCHING, 95, results_saved, results_saved)
 
         # Clear file-based progress (task is finishing)
         await clear_progress(task_id)
@@ -3598,7 +3598,7 @@ async def run_task_analysis(
     state = get_analysis_state()
     existing_analyses = await state.get_by_task_id(task_id)
     for existing in existing_analyses:
-        if existing["status"] in (TaskStatus.PENDING, TaskStatus.QUEUED, TaskStatus.RUNNING):
+        if existing["status"] in (TaskStatus.PENDING, TaskStatus.QUEUED, TaskStatus.PATCHING):
             # Return existing pending/queued/running analysis
             return {
                 "task_id": task_id,
@@ -3835,7 +3835,7 @@ async def get_quick_analysis(
         state = get_analysis_state()
         existing_analyses = await state.get_by_task_id(task_id)
         for existing in existing_analyses:
-            if existing["status"] in (TaskStatus.PENDING, TaskStatus.QUEUED, TaskStatus.RUNNING):
+            if existing["status"] in (TaskStatus.PENDING, TaskStatus.QUEUED, TaskStatus.PATCHING):
                 # Return existing pending/queued/running analysis
                 return {
                     "task_id": task_id,
@@ -4131,7 +4131,7 @@ def _get_analysis_status_message(status: str, progress: int) -> str:
     """Get human-readable status message for analysis."""
     if status == TaskStatus.PENDING:
         return "Analysis queued, waiting to start..."
-    elif status == TaskStatus.RUNNING:
+    elif status == TaskStatus.PATCHING:
         if progress < 30:
             return "Initializing analysis..."
         elif progress < 60:
