@@ -633,8 +633,8 @@
       "cancelled": "已取消"
     },
     "types": {
-      "wsi_classification": "WSI 分类",
-      "patch_classification": "Patch 分类",
+      "wsi_classification": "全切片图像分类",
+      "patch_classification": "普通图像分类",
       "survival_prediction": "生存预测"
     }
   },
@@ -716,7 +716,7 @@
     "zoomOut": "缩小",
     "resetView": "重置视图",
     "fullscreen": "全屏",
-    "patchAlt": "图块",
+    "patchAlt": "普通图像",
     "heatmapOverlayAlt": "热图叠加",
     "showHeatmap": "显示热图",
     "hideHeatmap": "隐藏热图",
@@ -783,7 +783,7 @@
     "taskId": "任务 ID",
     "copied": "已复制！",
     "data": "数据",
-    "patches": "图块",
+    "patches": "图像",
     "slides": "切片",
     "created": "创建时间",
     "updated": "更新时间",
@@ -928,7 +928,7 @@
     "na": "N/A",
     "inProgress": "进行中",
     "updated": "已更新",
-    "patches": "切片块",
+    "patches": "图像",
     "slides": "切片",
     "linearProbe": "线性探针",
     "editTaskNameTitle": "编辑任务名称",
@@ -1078,8 +1078,8 @@
     "backToDashboard": "返回仪表盘",
     "back": "返回",
     "appendingData": "正在追加数据至",
-    "patchCollection": "切片块集合",
-    "wsiCollection": "WSI 集合",
+    "patchCollection": "普通图像数据",
+    "wsiCollection": "全切片图像数据",
     "dataset": "数据集",
     "changeInfo": "修改信息",
     "labelFileReady": "标签文件已就绪",
@@ -1229,8 +1229,8 @@
     "noDatasetsDescription": "注册您的第一个数据集以开始 WSI 分析。",
     "editDataset": "编辑数据集",
     "deleteDataset": "删除数据集",
-    "wholeSlideImaging": "全切片成像",
-    "patchCollection": "切片块集合",
+    "wholeSlideImaging": "全切片图像数据",
+    "patchCollection": "普通图像数据",
     "survival": "生存分析",
     "classification": "分类",
     "caseLevel": "病例级别",
@@ -1522,8 +1522,8 @@
       "config": "配置",
       "epochsCount": "{{count}} 轮次",
       "pipelineStatus": "流水线状态",
-      "patching": "切块",
-      "patchingDesc": "从 WSI 中提取组织切块",
+      "patching": "提取图像块",
+      "patchingDesc": "从全切片图像中提取组织图像块",
       "featureExtraction": "特征提取",
       "featureExtractionDesc": "使用选定模型计算特征",
       "modelTraining": "模型训练",
@@ -1543,9 +1543,9 @@
       "segmentation": "分割",
       "comingSoon": "即将推出",
       "dataLevelLabel": "数据层级",
-      "wsiLevel": "WSI 级别",
+      "wsiLevel": "全切片图像级别",
       "wholeSlides": "全切片图像",
-      "patchLevel": "Patch 级别",
+      "patchLevel": "普通图像级别",
       "imagePatches": "图像块",
       "descriptionLabel": "描述",
       "descriptionPlaceholder": "描述您的训练任务...",
@@ -2109,9 +2109,9 @@
       "survivalDesc": "生存时间预测",
       "dataLevel": "数据级别",
       "caseLevel": "病例级别",
-      "caseLevelDesc": "按患者病例分组切片",
+      "caseLevelDesc": "存在病例级别图像标签",
       "fileLevel": "文件级别",
-      "fileLevelDesc": "每张切片独立",
+      "fileLevelDesc": "存在文件级别图像标签",
       "nextChooseFiles": "下一步：选择文件"
     },
     "successStep": {
@@ -2140,7 +2140,7 @@
       "failedToLoadTiles": "加载切片失败",
       "failedToInitialize": "初始化查看器失败",
       "failedToLoadImage": "加载图像失败",
-      "patchImageAlt": "切片图像"
+      "patchImageAlt": "普通图像"
     },
     "attentionClassSelector": {
       "attentionClass": "注意力类别",
@@ -2157,11 +2157,11 @@
       "activation": "激活度",
       "lowToHigh": "低 → 高",
       "highAttentionRegions": "高注意力区域",
-      "top10": "注意力最高的前 10 个切片",
-      "exportTopPatches": "导出高注意力切片",
+      "top10": "注意力最高的前 10 个图像块",
+      "exportTopPatches": "导出高注意力图像块",
       "lowAttentionRegions": "低注意力区域",
-      "bottom10": "注意力最低的后 10 个切片",
-      "exportBottomPatches": "导出低注意力切片"
+      "bottom10": "注意力最低的后 10 个图像块",
+      "exportBottomPatches": "导出低注意力图像块"
     },
     "deleteResults": {
       "deleteAIResults": "删除 AI 结果",
@@ -2186,8 +2186,8 @@
       "folds": "折",
       "riskGroup": "风险分组",
       "prediction": "预测",
-      "patchHeatmap": "切片热力图",
-      "patches": "切片",
+      "patchHeatmap": "普通图像热力图",
+      "patches": "图像块",
       "riskScore": "风险评分"
     }
   },
