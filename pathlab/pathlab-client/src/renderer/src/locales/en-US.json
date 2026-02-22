@@ -2360,7 +2360,7 @@
     "serverStatus": {
       "training": {
         "queued": "Queued",
-        "pending": "Waiting",
+        "pending": "Pending",
         "patching": "Patching Images",
         "extracting": "Extracting Features",
         "training": "Training Model",
@@ -2371,8 +2371,8 @@
       },
       "validation": {
         "queued": "Queued",
-        "pending": "Waiting",
-        "patching": "Running Inference",
+        "pending": "Pending",
+        "patching": "Patching Images",
         "extracting": "Extracting Features",
         "training": "Running Inference",
         "resuming": "Resuming",

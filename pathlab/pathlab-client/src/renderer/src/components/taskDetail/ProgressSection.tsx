@@ -42,38 +42,61 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
     {/* Stage Progress */}
     <div className="space-y-3">
       {isExternalValidation ? (
-        /* External validation: Feature Extraction + Running Inference stages for WSI; single stage for patch */
+        /* External validation stages:
+           - Patch dataset: directly Running Inference (training status)
+           - WSI dataset: Patch Extraction (patching) → Feature Extraction (extracting) → Running Inference (training) */
         <>
           {!isPatchLevel && (
-            <div className="flex items-center justify-between text-sm">
-              <div className="flex items-center space-x-2">
-                <span className={
-                  (task.status === 'patching' || task.status === 'training' || task.status === 'completed') ? 'text-green-600' :
-                  (task.status === 'extracting') ? 'text-blue-600' :
-                  (task.status === 'failed' && task.progress <= 35) ? 'text-red-600' : 'text-gray-400'
-                }>
-                  { (task.status === 'patching' || task.status === 'training' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
-                    (task.status === 'extracting') ? <Loader2 className="w-4 h-4 animate-spin" /> :
-                    (task.status === 'failed' && task.progress <= 35) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
-                </span>
-                <span className={(task.status === 'extracting' || task.status === 'patching' || task.status === 'training' || task.status === 'completed') ? 'text-gray-900' : 'text-gray-500'}>
-                  {t('taskDetail.progressSection.featureExtraction')}
-                </span>
+            <>
+              {/* Stage 1: Patch Extraction */}
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center space-x-2">
+                  <span className={
+                    (task.status === 'extracting' || task.status === 'training' || task.status === 'completed') ? 'text-green-600' :
+                    (task.status === 'patching') ? 'text-blue-600' :
+                    (task.status === 'failed' && task.progress < 30) ? 'text-red-600' : 'text-gray-400'
+                  }>
+                    { (task.status === 'extracting' || task.status === 'training' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
+                      (task.status === 'patching') ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                      (task.status === 'failed' && task.progress < 30) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
+                  </span>
+                  <span className={(task.status !== 'pending' && task.status !== 'queued') ? 'text-gray-900' : 'text-gray-500'}>
+                    {t('taskDetail.progressSection.patchExtraction')}
+                  </span>
+                </div>
               </div>
-            </div>
+              {/* Stage 2: Feature Extraction */}
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center space-x-2">
+                  <span className={
+                    (task.status === 'training' || task.status === 'completed') ? 'text-green-600' :
+                    (task.status === 'extracting') ? 'text-blue-600' :
+                    (task.status === 'failed' && task.progress >= 30 && task.progress < 70) ? 'text-red-600' : 'text-gray-400'
+                  }>
+                    { (task.status === 'training' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
+                      (task.status === 'extracting') ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                      (task.status === 'failed' && task.progress >= 30 && task.progress < 70) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
+                  </span>
+                  <span className={(task.status === 'extracting' || task.status === 'training' || task.status === 'completed') ? 'text-gray-900' : 'text-gray-500'}>
+                    {t('taskDetail.progressSection.featureExtraction')}
+                  </span>
+                </div>
+              </div>
+            </>
           )}
+          {/* Stage 3 (or only stage for patch): Running Inference */}
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center space-x-2">
               <span className={
                 (task.status === 'completed') ? 'text-green-600' :
-                (task.status === 'patching' || task.status === 'training') ? 'text-blue-600' :
-                (task.status === 'failed' && (isPatchLevel || task.progress > 35)) ? 'text-red-600' : 'text-gray-400'
+                (task.status === 'training') ? 'text-blue-600' :
+                (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? 'text-red-600' : 'text-gray-400'
               }>
                 { (task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
-                  (task.status === 'patching' || task.status === 'training') ? <Loader2 className="w-4 h-4 animate-spin" /> :
-                  (task.status === 'failed' && (isPatchLevel || task.progress > 35)) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
+                  (task.status === 'training') ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                  (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
               </span>
-              <span className={(task.status === 'completed' || task.status === 'patching' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
+              <span className={(task.status === 'completed' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
                 {t('taskDetail.progressSection.runningInference')}
               </span>
             </div>

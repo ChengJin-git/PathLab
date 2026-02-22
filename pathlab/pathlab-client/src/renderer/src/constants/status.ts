@@ -13,7 +13,7 @@
  * Training task status labels for display.
  */
 export const TRAINING_STATUS_LABELS: Record<string, string> = {
-  pending: 'Waiting',
+  pending: 'Pending',
   queued: 'Queued',
   patching: 'Patching Images',
   extracting: 'Extracting Features',
@@ -28,9 +28,9 @@ export const TRAINING_STATUS_LABELS: Record<string, string> = {
  * External validation (inference) status labels.
  */
 export const VALIDATION_STATUS_LABELS: Record<string, string> = {
-  pending: 'Waiting',
+  pending: 'Pending',
   queued: 'Queued',
-  patching: 'Running Inference',
+  patching: 'Patching Images',
   extracting: 'Extracting Features',
   training: 'Running Inference',
   completed: 'Completed',
@@ -43,7 +43,7 @@ export const VALIDATION_STATUS_LABELS: Record<string, string> = {
  * Analysis task status labels.
  */
 export const ANALYSIS_STATUS_LABELS: Record<string, string> = {
-  pending: 'Waiting',
+  pending: 'Pending',
   queued: 'Queued',
   patching: 'Analyzing',
   extracting: 'Processing',
@@ -69,8 +69,8 @@ export interface StatusBadgeConfig {
  * Includes background color, text color, and label.
  */
 export const TASK_DETAIL_STATUS_BADGES: Record<string, StatusBadgeConfig> = {
-  pending: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Waiting' },
-  queued: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Queued' },
+  pending: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Pending' },
+  queued: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Queued' },
 
   resuming: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Resuming' },
   patching: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Patching' },
@@ -86,8 +86,8 @@ export const TASK_DETAIL_STATUS_BADGES: Record<string, StatusBadgeConfig> = {
  * Uses combined color class for simpler styling.
  */
 export const TASK_LIST_STATUS_BADGES: Record<string, { color: string; label: string }> = {
-  pending: { color: 'bg-gray-100 text-gray-800', label: 'Waiting' },
-  queued: { color: 'bg-gray-100 text-gray-800', label: 'Queued' },
+  pending: { color: 'bg-gray-100 text-gray-800', label: 'Pending' },
+  queued: { color: 'bg-yellow-100 text-yellow-800', label: 'Queued' },
 
   resuming: { color: 'bg-yellow-100 text-yellow-800', label: 'Resuming' },
   patching: { color: 'bg-blue-100 text-blue-800', label: 'Patching' },

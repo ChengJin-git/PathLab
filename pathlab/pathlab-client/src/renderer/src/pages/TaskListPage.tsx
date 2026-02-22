@@ -229,8 +229,9 @@ export default function TaskListPage() {
     // so the badge label stays consistent with the progress label beneath it.
     let label: string
     if (taskType === 'external_validation') {
-      if (status === 'extracting') label = t('taskList.progress.extracting')
-      else if (status === 'patching' || status === 'training') label = t('taskList.progress.testing')
+      if (status === 'patching') label = t('taskList.progress.patching')
+      else if (status === 'extracting') label = t('taskList.progress.extracting')
+      else if (status === 'training') label = t('taskList.progress.testing')
       else label = t(`backgroundTask.serverStatus.validation.${status}`, { defaultValue: badge.label })
     } else {
       if (status === 'patching') label = t('taskList.progress.patching')
@@ -591,8 +592,9 @@ export default function TaskListPage() {
                       <div className="flex flex-col gap-0.5 w-full col-span-2 md:col-span-1">
                         <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">
                           {task.task_type === 'external_validation'
-                            ? (task.status === 'extracting' ? t('taskList.progress.extracting') :
-                              task.status === 'patching' || task.status === 'training' ? t('taskList.progress.testing') : t('taskList.progress.progress'))
+                            ? (task.status === 'patching' ? t('taskList.progress.patching') :
+                              task.status === 'extracting' ? t('taskList.progress.extracting') :
+                              task.status === 'training' ? t('taskList.progress.testing') : t('taskList.progress.progress'))
                             : (task.status === 'patching' ? t('taskList.progress.patching') :
                               task.status === 'extracting' ? t('taskList.progress.extracting') :
                                 task.status === 'training' ? t('taskList.progress.training') : t('taskList.progress.progress'))}

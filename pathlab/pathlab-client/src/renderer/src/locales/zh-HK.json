@@ -2310,7 +2310,7 @@
     "serverStatus": {
       "training": {
         "queued": "排隊中",
-        "pending": "等待中",
+        "pending": "待處理",
         "patching": "圖像切片中",
         "extracting": "擷取特徵中",
         "training": "訓練模型中",
@@ -2321,8 +2321,8 @@
       },
       "validation": {
         "queued": "排隊中",
-        "pending": "等待中",
-        "patching": "推論中",
+        "pending": "待處理",
+        "patching": "圖像切片中",
         "extracting": "擷取特徵中",
         "training": "推論中",
         "resuming": "恢復中",
