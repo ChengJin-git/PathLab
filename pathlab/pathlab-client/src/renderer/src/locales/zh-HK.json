@@ -810,8 +810,8 @@
       "cancelled": "已取消"
     },
     "logViewer": {
-      "liveLogs": "直播日誌",
-      "liveStream": "直播流",
+      "liveLogs": "實時日誌",
+      "liveStream": "任務流狀態",
       "connecting": "正在連接任務流...",
       "error": "錯誤: "
     }

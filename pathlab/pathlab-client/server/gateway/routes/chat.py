@@ -20,7 +20,7 @@ from backend.auth.dependencies import check_data_ownership, get_user_id_filter
 from backend.common.config import Config
 from backend.common.gpu_utils import get_gpu_summary_for_prompt
 from ..dependencies import logger
-from ..prompts import get_chat_system_prompt, format_user_data_context
+from ..prompts import get_chat_system_prompt, format_user_data_context, detect_language
 from ..models import ChatRequest, CreateConversationRequest, UpdateMessageRequest, AddMessageRequest
 
 router = APIRouter(tags=["Chat & Conversations"])
@@ -709,11 +709,19 @@ async def chat_with_ai(
     # Log the user_data_context for debugging
     # logger.info(f"[Chat] User data context for agent:\n{user_data_context}")
 
+    # Detect user language from the last user message
+    detected_lang = "en"
+    for msg in reversed(req.messages):
+        if msg.get("role") == "user":
+            user_text = extract_text_from_content(msg.get("content", ""))
+            detected_lang = detect_language(user_text)
+            break
+
     # Add system prompt if not present
     messages = req.messages.copy()
     if not messages or messages[0].get("role") != "system":
-        # Load system prompt from template file
-        base_system_prompt = get_chat_system_prompt()
+        # Load language-specific system prompt from template file
+        base_system_prompt = get_chat_system_prompt(detected_lang)
 
         system_prompt = {
             "role": "system",
