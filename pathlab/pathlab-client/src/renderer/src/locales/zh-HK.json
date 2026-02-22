@@ -1604,7 +1604,7 @@
       "censored": "刪失",
       "noLabel": "無標籤",
       "notSpecified": "未指定",
-      "casePrefix": "病例：",
+      "casePrefix": "病例 ID：",
       "editMetadata": "編輯元數據",
       "deleteFile": "刪除檔案",
       "sourcePrefix": "來源：",

@@ -1604,7 +1604,7 @@
       "censored": "Censored",
       "noLabel": "No label",
       "notSpecified": "Not specified",
-      "casePrefix": "Case: ",
+      "casePrefix": "Case ID: ",
       "editMetadata": "Edit metadata",
       "deleteFile": "Delete file",
       "sourcePrefix": "Source: ",
