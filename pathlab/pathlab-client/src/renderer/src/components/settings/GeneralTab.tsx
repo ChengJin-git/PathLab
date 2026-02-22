@@ -14,8 +14,8 @@ export interface GeneralTabProps {
   closeConfirmDialog: () => void
 }
 
-  const { t } = useTranslation()
 export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTabProps) {
+  const { t } = useTranslation()
   // Remote LLM state
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('https://openrouter.ai/api/v1')
