@@ -281,7 +281,7 @@ async def run_training_pipeline(
 
                     # Update progress (0-33%)
                     progress = int((idx / total_wsi) * 33)
-                    await TrainingTaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=progress)
+                    await TrainingTaskRepository.update_status(db, task_id, TaskStatus.PREPROCESSING, progress=progress)
 
             except Exception as e:
                 err_type = type(e).__name__
