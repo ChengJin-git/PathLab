@@ -2302,7 +2302,6 @@
       "training": {
         "queued": "排隊中",
         "pending": "排隊中",
-        "preprocessing": "前處理中",
         "extracting": "擷取特徵中",
         "training": "訓練模型中",
         "running": "圖像切片中",

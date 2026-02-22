@@ -15,13 +15,12 @@
 export const TRAINING_STATUS_LABELS: Record<string, string> = {
   pending: 'Queued',
   queued: 'Queued',
-  preprocessing: 'Preprocessing',
   extracting: 'Extracting Features',
   training: 'Training',
   completed: 'Completed',
   failed: 'Failed',
   cancelled: 'Cancelled',
-  running: 'Running',
+  running: 'Patching Images',
   resuming: 'Resuming'
 }
 
@@ -73,8 +72,10 @@ export interface StatusBadgeConfig {
  */
 export const TASK_DETAIL_STATUS_BADGES: Record<string, StatusBadgeConfig> = {
   pending: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Pending' },
+  queued: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Queued' },
+
   resuming: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Resuming' },
-  running: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Running' },
+  running: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Patching' },
   extracting: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Extracting Features' },
   training: { bg: 'bg-purple-100', text: 'text-purple-800', label: 'Training Model' },
   completed: { bg: 'bg-green-100', text: 'text-green-800', label: 'Success' },
@@ -89,7 +90,7 @@ export const TASK_DETAIL_STATUS_BADGES: Record<string, StatusBadgeConfig> = {
 export const TASK_LIST_STATUS_BADGES: Record<string, { color: string; label: string }> = {
   pending: { color: 'bg-gray-100 text-gray-800', label: 'Pending' },
   queued: { color: 'bg-gray-100 text-gray-800', label: 'Queued' },
-  preprocessing: { color: 'bg-blue-100 text-blue-800', label: 'Preprocessing' },
+
   resuming: { color: 'bg-yellow-100 text-yellow-800', label: 'Resuming' },
   running: { color: 'bg-blue-100 text-blue-800', label: 'Patching' },
   extracting: { color: 'bg-purple-100 text-purple-800', label: 'Extracting' },

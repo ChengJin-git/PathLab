@@ -223,20 +223,22 @@ export default function TaskListPage() {
   }
 
   const getStatusBadge = (status: Task['status'], taskType?: string) => {
-    const badge = TASK_LIST_STATUS_BADGES[status] ?? TASK_LIST_STATUS_BADGES.pending
+    // Normalize preprocessing → running: both represent the patching phase for WSI tasks
+    const normalizedStatus = status === 'preprocessing' ? 'running' : status
+    const badge = TASK_LIST_STATUS_BADGES[normalizedStatus] ?? TASK_LIST_STATUS_BADGES.pending
 
     // Use the same taskList.progress keys that the progress section uses for active statuses,
     // so the badge label stays consistent with the progress label beneath it.
     let label: string
     if (taskType === 'external_validation') {
-      if (status === 'extracting') label = t('taskList.progress.extracting')
-      else if (status === 'running' || status === 'training') label = t('taskList.progress.testing')
-      else label = t(`backgroundTask.serverStatus.validation.${status}`, { defaultValue: badge.label })
+      if (normalizedStatus === 'extracting') label = t('taskList.progress.extracting')
+      else if (normalizedStatus === 'running' || normalizedStatus === 'training') label = t('taskList.progress.testing')
+      else label = t(`backgroundTask.serverStatus.validation.${normalizedStatus}`, { defaultValue: badge.label })
     } else {
-      if (status === 'running') label = t('taskList.progress.patching')
-      else if (status === 'extracting') label = t('taskList.progress.extracting')
-      else if (status === 'training') label = t('taskList.progress.training')
-      else label = t(`backgroundTask.serverStatus.training.${status}`, { defaultValue: badge.label })
+      if (normalizedStatus === 'running') label = t('taskList.progress.patching')
+      else if (normalizedStatus === 'extracting') label = t('taskList.progress.extracting')
+      else if (normalizedStatus === 'training') label = t('taskList.progress.training')
+      else label = t(`backgroundTask.serverStatus.training.${normalizedStatus}`, { defaultValue: badge.label })
     }
 
     // Determine icon based on status

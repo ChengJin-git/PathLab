@@ -2352,7 +2352,6 @@
       "training": {
         "queued": "Queued",
         "pending": "Queued",
-        "preprocessing": "Preprocessing",
         "extracting": "Extracting Features",
         "training": "Training Model",
         "running": "Patching Images",

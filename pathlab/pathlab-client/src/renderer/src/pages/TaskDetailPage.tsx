@@ -140,23 +140,27 @@ export default function TaskDetailPage() {
     }
   }
 
-  const getStatusBadge = (status: TaskDetail['status']) => {
-    const badge = TASK_DETAIL_STATUS_BADGES[status] || { bg: 'bg-gray-100', text: 'text-gray-800', label: status }
+  const getStatusBadge = (status: TaskDetail['status'], taskType?: string) => {
+    // Normalize preprocessing → running: both represent the patching phase for WSI tasks
+    const normalizedStatus = status === 'preprocessing' ? 'running' : status
+    const badge = TASK_DETAIL_STATUS_BADGES[normalizedStatus] || { bg: 'bg-gray-100', text: 'text-gray-800', label: normalizedStatus }
 
-    const statusLabelMap: Record<string, string> = {
-      pending: t('taskDetail.status.pending'),
-      resuming: t('taskDetail.status.resuming'),
-      running: t('taskDetail.status.running'),
-      extracting: t('taskDetail.status.extracting'),
-      training: t('taskDetail.status.training'),
-      completed: t('taskDetail.status.completed'),
-      failed: t('taskDetail.status.failed'),
-      cancelled: t('taskDetail.status.cancelled'),
+    // Use the same i18n key strategy as TaskListPage for consistency
+    let label: string
+    if (taskType === 'external_validation') {
+      if (normalizedStatus === 'extracting') label = t('taskList.progress.extracting')
+      else if (normalizedStatus === 'running' || normalizedStatus === 'training') label = t('taskList.progress.testing')
+      else label = t(`backgroundTask.serverStatus.validation.${normalizedStatus}`, { defaultValue: badge.label })
+    } else {
+      if (normalizedStatus === 'running') label = t('taskList.progress.patching')
+      else if (normalizedStatus === 'extracting') label = t('taskList.progress.extracting')
+      else if (normalizedStatus === 'training') label = t('taskList.progress.training')
+      else label = t(`backgroundTask.serverStatus.training.${normalizedStatus}`, { defaultValue: badge.label })
     }
 
     // Determine icon based on status
     const getIcon = () => {
-      if (status === 'pending') return <Clock className="w-4 h-4 mr-1.5" />
+      if (status === 'pending' || status === 'queued') return <Clock className="w-4 h-4 mr-1.5" />
       if (isActiveStatus(status)) return <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
       if (status === 'completed') return <CheckCircle2 className="w-4 h-4 mr-1.5" />
       return <XCircle className="w-4 h-4 mr-1.5" />
@@ -165,7 +169,7 @@ export default function TaskDetailPage() {
     return (
       <span className={`inline-flex items-center px-4 py-2 rounded-full text-sm font-semibold shadow-sm ${badge.bg} ${badge.text}`}>
         {getIcon()}
-        {statusLabelMap[status] || badge.label}
+        {label}
       </span>
     )
   }
@@ -324,7 +328,7 @@ export default function TaskDetailPage() {
             <p className="text-xs sm:text-sm text-gray-500 line-clamp-2">{task.task_description}</p>
           </div>
           <div className="flex items-center gap-3 shrink-0">
-            {getStatusBadge(task.status)}
+            {getStatusBadge(task.status, task.task_type)}
             {task.status === 'failed' && (
               <Button
                 variant="outline"
