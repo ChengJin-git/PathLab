@@ -14,7 +14,11 @@ export interface NavigationConfig {
     csvFileName?: string
   }
   buttonText: string
+  /** i18n key for buttonText — takes priority over buttonText when present */
+  buttonTextKey?: string
   description?: string
+  /** i18n key for description — takes priority over description when present */
+  descriptionKey?: string
   /** Navigation type: 'register' for upload page, 'task' for task detail page */
   type?: 'register' | 'task'
   /** Task ID for task navigation */
@@ -68,6 +72,9 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
   const { t } = useTranslation()
   const navigate = useNavigate()
 
+  const resolvedButtonText = config.buttonTextKey ? t(config.buttonTextKey) : config.buttonText
+  const resolvedDescription = config.descriptionKey ? t(config.descriptionKey) : config.description
+
   const handleNavigate = () => {
     // Save scroll position and conversation ID before navigating
     const messagesContainer = document.querySelector('[data-chat-messages-container]')
@@ -96,8 +103,8 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
   if (config.type === 'task') {
     return (
       <div className="my-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl shadow-sm">
-        {config.description && (
-          <p className="text-sm text-slate-600 mb-3">{config.description}</p>
+        {resolvedDescription && (
+          <p className="text-sm text-slate-600 mb-3">{resolvedDescription}</p>
         )}
 
         <Button
@@ -105,7 +112,7 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
           className="w-full bg-green-600 hover:bg-green-700 text-white font-medium py-3 rounded-lg flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all"
         >
           <PlayCircle className="w-4 h-4" />
-          {config.buttonText}
+          {resolvedButtonText}
           <ArrowRight className="w-4 h-4" />
         </Button>
 
@@ -133,8 +140,8 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
   // Default: Registration navigation card (blue theme)
   return (
     <div className="my-4 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl shadow-sm">
-      {config.description && (
-        <p className="text-sm text-slate-600 mb-3">{config.description}</p>
+      {resolvedDescription && (
+        <p className="text-sm text-slate-600 mb-3">{resolvedDescription}</p>
       )}
 
       <Button
@@ -142,7 +149,7 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
         className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all"
       >
         <Upload className="w-4 h-4" />
-        {config.buttonText}
+        {resolvedButtonText}
         <ArrowRight className="w-4 h-4" />
       </Button>
 

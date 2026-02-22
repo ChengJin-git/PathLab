@@ -1083,6 +1083,19 @@
         "description": "瀏覽和分析病理圖像",
         "prompt": "我想瀏覽和分析一些病理圖像，你能幫我根據需求找到合適的圖像嗎？"
       }
+    },
+    "taskSuccess": {
+      "trainingCreated": "訓練任務建立成功！",
+      "viewTrainingProgress": "查看訓練進度",
+      "trainingSubmittedDesc": "您的訓練任務已成功提交！點擊下方按鈕即時監控進度。",
+      "inferenceSubmitted": "推理任務提交成功！任務 ID：`{{taskId}}`\n\n推理完成後，您可以在結果檢視器中查看分析結果。",
+      "viewResults": "查看結果",
+      "inferenceResultsDesc": "點擊開啟結果檢視器，分析推理結果。",
+      "externalValidationStarted": "外部驗證已啟動！任務 ID：`{{taskId}}`\n\n模型將在目標資料集上執行推理，然後自動分析結果。您可以在背景任務面板中追蹤進度。",
+      "validationResultsDesc": "點擊開啟結果檢視器。驗證完成後結果將會顯示。",
+      "analysisCompleted": "分析已成功完成！\n\n您可以在結果檢視器中查看包含指標和圖表的詳細結果。",
+      "viewAnalysisResults": "查看分析結果",
+      "analysisResultsDesc": "點擊開啟結果檢視器，查看您的分析結果。"
     }
   },
   "uploadPage": {
@@ -1644,7 +1657,7 @@
       "splitKFold": "K 摺交叉驗證",
       "splitKFoldDesc": "使用 K 摺進行交叉驗證",
       "splitCustom": "自訂劃分",
-      "splitFromCSV": "從上傳的 CSV 檔案匯入",
+      "splitFromCSV": "從上傳的文件匯入",
       "splitNoSplitsFound": "未找到預定義的劃分方案",
       "trainPercent": "訓練集 70%",
       "valPercent": "驗證集 10%",

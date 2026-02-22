@@ -1083,6 +1083,19 @@
         "description": "浏览和分析病理图像",
         "prompt": "我想浏览和分析一些病理图像，你能帮我根据需求找到合适的图像吗？"
       }
+    },
+    "taskSuccess": {
+      "trainingCreated": "训练任务创建成功！",
+      "viewTrainingProgress": "查看训练进度",
+      "trainingSubmittedDesc": "您的训练任务已成功提交！点击下方按钮实时监控进度。",
+      "inferenceSubmitted": "推理任务提交成功！任务 ID：`{{taskId}}`\n\n推理完成后，您可以在结果查看器中查看分析结果。",
+      "viewResults": "查看结果",
+      "inferenceResultsDesc": "点击打开结果查看器，分析推理结果。",
+      "externalValidationStarted": "外部验证已启动！任务 ID：`{{taskId}}`\n\n模型将在目标数据集上运行推理，然后自动分析结果。您可以在后台任务面板中追踪进度。",
+      "validationResultsDesc": "点击打开结果查看器。验证完成后结果将会显示。",
+      "analysisCompleted": "分析已成功完成！\n\n您可以在结果查看器中查看包含指标和图表的详细结果。",
+      "viewAnalysisResults": "查看分析结果",
+      "analysisResultsDesc": "点击打开结果查看器，查看您的分析结果。"
     }
   },
   "uploadPage": {
@@ -1644,7 +1657,7 @@
       "splitKFold": "K 折交叉验证",
       "splitKFoldDesc": "使用 K 折进行交叉验证",
       "splitCustom": "自定义划分",
-      "splitFromCSV": "从上传的 CSV 文件导入",
+      "splitFromCSV": "从上传的文件导入",
       "splitNoSplitsFound": "未找到预定义的划分方案",
       "trainPercent": "训练集 70%",
       "valPercent": "验证集 10%",

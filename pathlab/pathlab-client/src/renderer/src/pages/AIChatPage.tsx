@@ -1200,12 +1200,12 @@ export default function AIChatPage() {
     // Add a success message with navigation card to the chat and persist to backend
     const navigateBlock = JSON.stringify({
       target: `/task/${taskId}`,
-      buttonText: 'View Training Progress',
-      description: 'Your training task has been submitted successfully! Click below to monitor the progress in real-time.',
+      buttonTextKey: 'aiChat.taskSuccess.viewTrainingProgress',
+      descriptionKey: 'aiChat.taskSuccess.trainingSubmittedDesc',
       type: 'task',
       taskId: taskId
     }, null, 2)
-    const successContent = `Training task created successfully!\n\n[NAVIGATE]\n${navigateBlock}\n[/NAVIGATE]`
+    const successContent = `${t('aiChat.taskSuccess.trainingCreated')}\n\n[NAVIGATE]\n${navigateBlock}\n[/NAVIGATE]`
     const successMessage: Message = {
       id: Date.now().toString(),
       role: 'assistant',
@@ -1451,11 +1451,11 @@ export default function AIChatPage() {
     }
 
     // Add a success message with navigation card to Results Viewer and persist to backend
-    const successContent = `Inference task submitted successfully! Task ID: \`${taskId}\`\n\nOnce the inference is complete, you can view the analysis results in the Results Viewer.\n\n[NAVIGATE]\n${JSON.stringify({
+    const successContent = `${t('aiChat.taskSuccess.inferenceSubmitted', { taskId })}\n\n[NAVIGATE]\n${JSON.stringify({
       target: '/results',
       state: { selectedTaskId: taskId },
-      buttonText: 'View Results',
-      description: 'Click to open the Results Viewer and analyze the inference results.'
+      buttonTextKey: 'aiChat.taskSuccess.viewResults',
+      descriptionKey: 'aiChat.taskSuccess.inferenceResultsDesc'
     }, null, 2)}\n[/NAVIGATE]`
     const successMessage: Message = {
       id: Date.now().toString(),
@@ -1557,17 +1557,17 @@ export default function AIChatPage() {
     // Add success message with navigation card to Results Viewer
     // Different message for external validation vs internal analysis
     const successContent = isExternalValidation
-      ? `External validation started! Task ID: \`${taskId}\`\n\nThe model will run inference on the target dataset, then automatically analyze the results. You can track progress in the Background Tasks panel.${quickAnalysisBlock}\n\n[NAVIGATE]\n${JSON.stringify({
+      ? `${t('aiChat.taskSuccess.externalValidationStarted', { taskId })}${quickAnalysisBlock}\n\n[NAVIGATE]\n${JSON.stringify({
           target: '/results',
           state: { selectedTaskId: taskId },
-          buttonText: 'View Results',
-          description: 'Click to open the Results Viewer. Results will appear once validation completes.'
+          buttonTextKey: 'aiChat.taskSuccess.viewResults',
+          descriptionKey: 'aiChat.taskSuccess.validationResultsDesc'
         }, null, 2)}\n[/NAVIGATE]`
-      : `Analysis completed successfully!\n\nYou can view the detailed results including metrics and charts in the Results Viewer.\n\n[NAVIGATE]\n${JSON.stringify({
+      : `${t('aiChat.taskSuccess.analysisCompleted')}\n\n[NAVIGATE]\n${JSON.stringify({
           target: '/results',
           state: { selectedTaskId: taskId },
-          buttonText: 'View Analysis Results',
-          description: 'Click to open the Results Viewer and see your analysis results.'
+          buttonTextKey: 'aiChat.taskSuccess.viewAnalysisResults',
+          descriptionKey: 'aiChat.taskSuccess.analysisResultsDesc'
         }, null, 2)}\n[/NAVIGATE]`
 
     const successMessage: Message = {

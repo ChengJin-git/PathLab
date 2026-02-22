@@ -1083,6 +1083,19 @@
         "description": "Browse and analyze WSI or patches",
         "prompt": "I want to browse and analyze some pathology images (WSI or patches). Can you help me find the right ones based on my needs?"
       }
+    },
+    "taskSuccess": {
+      "trainingCreated": "Training task created successfully!",
+      "viewTrainingProgress": "View Training Progress",
+      "trainingSubmittedDesc": "Your training task has been submitted successfully! Click below to monitor the progress in real-time.",
+      "inferenceSubmitted": "Inference task submitted successfully! Task ID: `{{taskId}}`\n\nOnce the inference is complete, you can view the analysis results in the Results Viewer.",
+      "viewResults": "View Results",
+      "inferenceResultsDesc": "Click to open the Results Viewer and analyze the inference results.",
+      "externalValidationStarted": "External validation started! Task ID: `{{taskId}}`\n\nThe model will run inference on the target dataset, then automatically analyze the results. You can track progress in the Background Tasks panel.",
+      "validationResultsDesc": "Click to open the Results Viewer. Results will appear once validation completes.",
+      "analysisCompleted": "Analysis completed successfully!\n\nYou can view the detailed results including metrics and charts in the Results Viewer.",
+      "viewAnalysisResults": "View Analysis Results",
+      "analysisResultsDesc": "Click to open the Results Viewer and see your analysis results."
     }
   },
   "uploadPage": {
@@ -1644,7 +1657,7 @@
       "splitKFold": "K-Fold CV",
       "splitKFoldDesc": "Cross-validation with K folds",
       "splitCustom": "Custom Split",
-      "splitFromCSV": "From uploaded CSV",
+      "splitFromCSV": "From uploaded file",
       "splitNoSplitsFound": "No pre-defined splits found",
       "trainPercent": "Train 70%",
       "valPercent": "Val 10%",
