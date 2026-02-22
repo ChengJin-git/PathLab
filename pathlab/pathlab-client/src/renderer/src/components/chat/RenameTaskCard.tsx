@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Loader2, Edit2, CheckCircle2, XCircle } from 'lucide-react'
 import { updateTrainingTaskName } from '../../api'
 
@@ -38,13 +39,14 @@ export function removeRenameTaskBlock(content: string): string {
 }
 
 export function RenameTaskCard({ config, onSuccess, onError }: RenameTaskCardProps) {
+  const { t } = useTranslation()
   const [isRenaming, setIsRenaming] = useState(false)
   const [isRenamed, setIsRenamed] = useState(false)
   const [error, setError] = useState<string>('')
 
   const handleRename = async () => {
     if (!config.new_name.trim()) {
-      const errorMsg = 'Task name cannot be empty'
+      const errorMsg = t('chatComponents.renameTask.nameCannotBeEmpty')
       setError(errorMsg)
       onError?.(errorMsg)
       return
@@ -58,7 +60,7 @@ export function RenameTaskCard({ config, onSuccess, onError }: RenameTaskCardPro
       setIsRenamed(true)
       onSuccess?.(config.task_id, config.new_name.trim())
     } catch (err: any) {
-      const errorMsg = err.message || 'Failed to rename task'
+      const errorMsg = err.message || t('chatComponents.renameTask.failedToRename')
       setError(errorMsg)
       onError?.(errorMsg)
     } finally {
@@ -75,9 +77,9 @@ export function RenameTaskCard({ config, onSuccess, onError }: RenameTaskCardPro
             <Edit2 className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600" />
           </div>
           <div className="min-w-0 flex-1">
-            <h3 className="font-semibold text-gray-900 text-sm sm:text-base">Rename Training Task</h3>
+            <h3 className="font-semibold text-gray-900 text-sm sm:text-base">{t('chatComponents.renameTask.title')}</h3>
             <p className="text-xs sm:text-sm text-gray-600 mt-0.5 truncate">
-              Update task name from "{config.old_name}"
+              {t('chatComponents.renameTask.updateTaskNameFrom', { name: config.old_name })}
             </p>
           </div>
         </div>
@@ -89,7 +91,7 @@ export function RenameTaskCard({ config, onSuccess, onError }: RenameTaskCardPro
           {/* Old Name */}
           <div>
             <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1.5">
-              Current Name
+              {t('chatComponents.renameTask.currentName')}
             </label>
             <div className="px-3 sm:px-4 py-2 sm:py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600">
               {config.old_name}
@@ -99,7 +101,7 @@ export function RenameTaskCard({ config, onSuccess, onError }: RenameTaskCardPro
           {/* New Name */}
           <div>
             <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1.5">
-              New Name
+              {t('chatComponents.renameTask.newName')}
             </label>
             <div className="px-3 sm:px-4 py-2 sm:py-2.5 bg-indigo-50 border border-indigo-200 rounded-lg text-sm font-medium text-indigo-900">
               {config.new_name}
@@ -118,7 +120,7 @@ export function RenameTaskCard({ config, onSuccess, onError }: RenameTaskCardPro
           {isRenamed && (
             <div className="p-3 bg-green-50 border border-green-200 rounded-lg flex items-start gap-2">
               <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-green-700">Task renamed successfully!</p>
+              <p className="text-sm text-green-700">{t('chatComponents.renameTask.renamedSuccessfully')}</p>
             </div>
           )}
 
@@ -130,7 +132,7 @@ export function RenameTaskCard({ config, onSuccess, onError }: RenameTaskCardPro
               className="w-full px-4 py-2.5 sm:py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm sm:text-base"
             >
               {isRenaming && <Loader2 className="w-4 h-4 animate-spin" />}
-              {isRenaming ? 'Renaming...' : 'Rename Task'}
+              {isRenaming ? t('chatComponents.renameTask.renaming') : t('chatComponents.renameTask.renameTask')}
             </button>
           )}
         </div>

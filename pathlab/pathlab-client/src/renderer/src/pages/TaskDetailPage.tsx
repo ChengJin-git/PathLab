@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCircle, User } from 'lucide-react'
 import { Card } from '../components/ui/card'
@@ -13,6 +14,7 @@ import { ProgressSection } from '../components/taskDetail/ProgressSection'
 import { ConfigurationPanel } from '../components/taskDetail/ConfigurationPanel'
 import { LogViewer } from '../components/taskDetail/LogViewer'
 export default function TaskDetailPage() {
+  const { t } = useTranslation()
   const { task_id } = useParams<{ task_id: string }>()
   const navigate = useNavigate()
   const location = useLocation()
@@ -141,6 +143,17 @@ export default function TaskDetailPage() {
   const getStatusBadge = (status: TaskDetail['status']) => {
     const badge = TASK_DETAIL_STATUS_BADGES[status] || { bg: 'bg-gray-100', text: 'text-gray-800', label: status }
 
+    const statusLabelMap: Record<string, string> = {
+      pending: t('taskDetail.status.pending'),
+      resuming: t('taskDetail.status.resuming'),
+      running: t('taskDetail.status.running'),
+      extracting: t('taskDetail.status.extracting'),
+      training: t('taskDetail.status.training'),
+      completed: t('taskDetail.status.completed'),
+      failed: t('taskDetail.status.failed'),
+      cancelled: t('taskDetail.status.cancelled'),
+    }
+
     // Determine icon based on status
     const getIcon = () => {
       if (status === 'pending') return <Clock className="w-4 h-4 mr-1.5" />
@@ -152,7 +165,7 @@ export default function TaskDetailPage() {
     return (
       <span className={`inline-flex items-center px-4 py-2 rounded-full text-sm font-semibold shadow-sm ${badge.bg} ${badge.text}`}>
         {getIcon()}
-        {badge.label}
+        {statusLabelMap[status] || badge.label}
       </span>
     )
   }
@@ -179,12 +192,12 @@ export default function TaskDetailPage() {
   const handleRerun = async () => {
     setRerunError(null)
     if (!task || !task.wsi_ids || task.wsi_ids.length === 0) {
-      setRerunError('Cannot rerun: missing WSI IDs')
+      setRerunError(t('taskDetail.rerunErrorMissingWsi'))
       return
     }
 
     if (!task.preprocessing_config || !task.model_config) {
-      setRerunError('Cannot rerun: missing configuration')
+      setRerunError(t('taskDetail.rerunErrorMissingConfig'))
       return
     }
 
@@ -236,7 +249,7 @@ export default function TaskDetailPage() {
       if (parsed.isStorageError) {
         setRerunError(parsed.userFriendlyMessage + ' ' + (parsed.suggestion || ''))
       } else {
-        setRerunError('Failed to rerun task. Please try again.')
+        setRerunError(t('taskDetail.rerunErrorGeneric'))
       }
     } finally {
       setRerunning(false)
@@ -270,10 +283,10 @@ export default function TaskDetailPage() {
     return (
       <div className="flex flex-col items-center justify-center h-64 space-y-4">
         <AlertCircle className="w-12 h-12 text-red-500" />
-        <div className="text-xl font-semibold text-gray-900">Task Not Found</div>
-        <p className="text-gray-500">The task you are looking for does not exist or could not be loaded.</p>
+        <div className="text-xl font-semibold text-gray-900">{t('taskDetail.taskNotFound')}</div>
+        <p className="text-gray-500">{t('taskDetail.taskNotFoundDescription')}</p>
         <Button onClick={() => navigate(fromAIChat ? '/ai-chat' : '/task-list')} variant="outline">
-          {fromAIChat ? 'Back to Chat' : 'Back to Task List'}
+          {fromAIChat ? t('taskDetail.backToChat') : t('taskDetail.backToTaskList')}
         </Button>
       </div>
     )
@@ -303,7 +316,7 @@ export default function TaskDetailPage() {
           <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-          {fromAIChat ? 'Back to Chat' : 'Tasks'}
+          {fromAIChat ? t('taskDetail.backToChat') : t('taskDetail.tasks')}
         </Button>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex-1 min-w-0">
@@ -324,7 +337,7 @@ export default function TaskDetailPage() {
                 ) : (
                   <RotateCcw className="w-4 h-4 text-gray-500" />
                 )}
-                Rerun
+                {t('taskDetail.rerun')}
               </Button>
             )}
             {['pending', 'running', 'preprocessing', 'extracting', 'training', 'resuming'].includes(task.status) && (
@@ -339,7 +352,7 @@ export default function TaskDetailPage() {
                 ) : (
                   <StopCircle className="w-4 h-4" />
                 )}
-                Cancel
+                {t('common.cancel')}
               </Button>
             )}
           </div>
@@ -361,7 +374,7 @@ export default function TaskDetailPage() {
       <Card className="p-4 sm:p-6 overflow-hidden border-gray-100 shadow-sm">
         <div className={`grid grid-cols-2 ${isAdmin && task.username ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-4 sm:gap-6`}>
           <div className="min-w-0">
-            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Task ID</div>
+            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.taskId')}</div>
             <div className="flex items-center gap-1.5 overflow-hidden">
               <div className="font-mono text-[11px] sm:text-sm font-bold text-gray-700 truncate">{task.task_id}</div>
               <button
@@ -390,29 +403,29 @@ export default function TaskDetailPage() {
               </button>
             </div>
             {copySuccess && (
-              <div className="text-[9px] text-green-600 font-bold mt-1">Copied!</div>
+              <div className="text-[9px] text-green-600 font-bold mt-1">{t('taskDetail.copied')}</div>
             )}
           </div>
           <div>
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">
-              {task.data_type === 'patch' ? 'Data' : 'Data'}
+              {t('taskDetail.data')}
             </div>
             <div className="flex items-end gap-1.5">
               <span className="text-lg sm:text-2xl font-bold text-gray-900 leading-none">{task.wsi_count}</span>
-              <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{task.data_type === 'patch' ? 'patches' : 'slides'}</span>
+              <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{task.data_type === 'patch' ? t('taskDetail.patches') : t('taskDetail.slides')}</span>
             </div>
           </div>
           <div>
-            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Created</div>
+            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.created')}</div>
             <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDate(task.created_at)}</div>
           </div>
           <div>
-            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Updated</div>
+            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.updated')}</div>
             <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDate(task.updated_at)}</div>
           </div>
           {isAdmin && task.username && (
             <div>
-              <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Creator</div>
+              <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.creator')}</div>
               <div className="flex items-center gap-1.5">
                 <User className="w-3.5 h-3.5 text-gray-400" />
                 <div className="text-xs sm:text-sm font-bold text-gray-700 truncate" title={task.username}>{task.username}</div>
@@ -438,26 +451,25 @@ export default function TaskDetailPage() {
             <div className="flex items-start gap-3">
               <XCircle className="w-6 h-6 text-red-500 flex-shrink-0 mt-0.5" />
               <div className="flex-1">
-                <h3 className="text-lg font-semibold text-red-800 mb-2">Task Failed</h3>
+                <h3 className="text-lg font-semibold text-red-800 mb-2">{t('taskDetail.taskFailed')}</h3>
                 <p className="text-red-700 mb-3">{errorInfo.userFriendlyMessage}</p>
                 {errorInfo.isVRAMError && errorInfo.suggestedBatchSize && (
                   <div className="bg-red-100 border border-red-200 rounded-lg p-3 mb-3">
                     <p className="text-sm text-red-800">
-                      <strong>Suggestion:</strong> When creating a new task, set the Feature Batch Size to{' '}
-                      <span className="font-mono font-bold">{errorInfo.suggestedBatchSize}</span> or lower.
+                      <strong>{t('taskDetail.suggestion')}:</strong> {t('taskDetail.vramSuggestion', { batchSize: errorInfo.suggestedBatchSize })}
                     </p>
                   </div>
                 )}
                 {errorInfo.isStorageError && errorInfo.suggestion && (
                   <div className="bg-red-100 border border-red-200 rounded-lg p-3 mb-3">
                     <p className="text-sm text-red-800">
-                      <strong>💡 Suggestion:</strong> {errorInfo.suggestion}
+                      <strong>💡 {t('taskDetail.suggestion')}:</strong> {errorInfo.suggestion}
                     </p>
                   </div>
                 )}
                 <details className="text-sm">
                   <summary className="text-red-600 cursor-pointer hover:text-red-800">
-                    Show technical details
+                    {t('taskDetail.showTechnicalDetails')}
                   </summary>
                   <pre className="mt-2 p-3 bg-red-100 rounded text-xs text-red-800 overflow-x-auto whitespace-pre-wrap">
                     {task.error_message}
@@ -489,18 +501,17 @@ export default function TaskDetailPage() {
                 <AlertCircle className="w-7 h-7 sm:w-10 sm:h-10 text-red-600" />
               </div>
               <h2 className="text-lg sm:text-2xl font-bold text-gray-900 leading-tight">
-                Cancel Training Task?
+                {t('taskDetail.cancelModalTitle')}
               </h2>
               <p className="text-sm text-gray-500 mt-2">
-                This action cannot be undone
+                {t('taskDetail.cancelModalSubtitle')}
               </p>
             </div>
 
             {/* Warning Message */}
             <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6">
               <p className="text-sm text-red-800">
-                Cancelling this training task will stop the current training process and release GPU resources.
-                Any progress that has not been saved will be lost.
+                {t('taskDetail.cancelModalWarning')}
               </p>
             </div>
 
@@ -511,13 +522,13 @@ export default function TaskDetailPage() {
                 onClick={() => setShowCancelConfirm(false)}
                 className="flex-1 h-11"
               >
-                Keep Running
+                {t('taskDetail.keepRunning')}
               </Button>
               <Button
                 onClick={handleCancelTask}
                 className="flex-1 h-11 bg-red-600 hover:bg-red-700 text-white"
               >
-                Cancel Task
+                {t('taskDetail.cancelTask')}
               </Button>
             </div>
           </div>
@@ -526,4 +537,3 @@ export default function TaskDetailPage() {
     </div>
   )
 }
-

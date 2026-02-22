@@ -5,6 +5,7 @@
  */
 
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
@@ -101,62 +102,63 @@ export function TaskSetupStep({
   canProceed,
   onNext,
 }: TaskSetupStepProps) {
+  const { t } = useTranslation()
   const navigate = useNavigate()
 
   return (
     <>
       <Card className="p-4 sm:p-8 border-gray-100 shadow-sm">
-        <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-4 sm:mb-6">Task Configuration</h3>
+        <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-4 sm:mb-6">{t('training.taskSetup.taskConfiguration')}</h3>
 
         <div className="space-y-4 sm:space-y-6">
           {/* Task Name */}
           <div>
-            <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">Task Name *</label>
+            <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">{t('training.taskSetup.taskName')}</label>
             <input
               type="text"
               className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm sm:text-base border-gray-200 bg-gray-50/50 rounded-xl focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 focus:bg-white transition-all shadow-sm"
               value={taskName}
               onChange={(e) => setTaskName(e.target.value)}
-              placeholder="e.g., Lung Cancer Survival Prediction"
+              placeholder={t('training.taskSetup.taskNamePlaceholder')}
             />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-8">
             {/* Task Type */}
             <div>
-              <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">Task Type *</label>
+              <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">{t('training.taskSetup.taskTypeLabel')}</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <RadioOption
                   selected={taskType === 'classification'}
                   onClick={() => setTaskType('classification')}
-                  title="Classification"
-                  subtitle="Categorical labels"
+                  title={t('training.taskSetup.classification')}
+                  subtitle={t('training.taskSetup.categoricalLabels')}
                 />
                 <RadioOption
                   selected={taskType === 'survival'}
                   disabled={dataLevel === 'patch'}
                   onClick={() => setTaskType('survival')}
-                  title={dataLevel === 'patch' ? 'Segmentation' : 'Survival Prediction'}
-                  subtitle={dataLevel === 'patch' ? 'Coming soon' : 'Time-to-event outcomes'}
+                  title={dataLevel === 'patch' ? t('training.taskSetup.segmentation') : t('training.taskSetup.survivalPrediction')}
+                  subtitle={dataLevel === 'patch' ? t('training.taskSetup.comingSoon') : t('training.taskSetup.timeToEvent')}
                 />
               </div>
             </div>
 
             {/* Data Level */}
             <div>
-              <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">Data Level *</label>
+              <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">{t('training.taskSetup.dataLevelLabel')}</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <RadioOption
                   selected={dataLevel === 'wsi'}
                   onClick={() => setDataLevel('wsi')}
-                  title="WSI-level"
-                  subtitle="Whole slides"
+                  title={t('training.taskSetup.wsiLevel')}
+                  subtitle={t('training.taskSetup.wholeSlides')}
                 />
                 <RadioOption
                   selected={dataLevel === 'patch'}
                   onClick={() => setDataLevel('patch')}
-                  title="Patch-level"
-                  subtitle="Image patches"
+                  title={t('training.taskSetup.patchLevel')}
+                  subtitle={t('training.taskSetup.imagePatches')}
                 />
               </div>
             </div>
@@ -164,12 +166,12 @@ export function TaskSetupStep({
 
           {/* Description */}
           <div>
-            <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">Description *</label>
+            <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">{t('training.taskSetup.descriptionLabel')}</label>
             <textarea
               className="w-full px-3 sm:px-4 py-2 sm:py-3 text-sm sm:text-base border-gray-200 bg-gray-50/50 rounded-xl focus:ring-4 focus:ring-primary-500/10 focus:border-primary-500 focus:bg-white transition-all shadow-sm"
               value={taskDescription}
               onChange={(e) => setTaskDescription(e.target.value)}
-              placeholder="e.g., Classify lung cancer pathology slides into LUAD, LUSC, and Normal tissue..."
+              placeholder={t('training.taskSetup.descriptionPlaceholder')}
               rows={3}
             />
           </div>
@@ -183,17 +185,16 @@ export function TaskSetupStep({
           onClick={() => navigate(-1)}
           className="w-full sm:w-auto px-6 py-2 sm:py-2.5 text-sm sm:text-base order-2 sm:order-1"
         >
-          Cancel
+          {t('training.taskSetup.cancel')}
         </Button>
         <Button
           onClick={onNext}
           disabled={!canProceed}
           className="w-full sm:w-auto px-6 py-2 sm:py-2.5 text-sm sm:text-base order-1 sm:order-2"
         >
-          Next: Select Data →
+          {t('training.taskSetup.nextSelectData')}
         </Button>
       </div>
     </>
   )
 }
-

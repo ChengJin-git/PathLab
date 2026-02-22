@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { FolderSearch, Search, RefreshCw, AlertCircle } from 'lucide-react'
 import { Card } from '../../ui/card'
 import { Button } from '../../ui/button'
@@ -37,7 +38,6 @@ interface BatchRegisterCardProps {
   handleBatchRegister: () => Promise<void>
   formatFileSize: (bytes: number) => string
   hasSelectDirectoryApi: boolean
-  // External Datasets
   externalDatasets: ExternalDatasetInfo[]
   loadingExternalDatasets: boolean
   externalDatasetsLoaded: boolean
@@ -91,99 +91,99 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
   handleUnbindDataset,
   handleUnbindSelectedDatasets,
   navigate
-}) => (
-  <Card className="p-4 sm:p-6 mt-6">
-    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
-      <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center gap-2">
-        <FolderSearch className="w-5 h-5 sm:w-6 sm:h-6 text-gray-700" />
-        Batch Register WSI Files
-      </h2>
-    </div>
+}) => {
+  const { t } = useTranslation()
 
-    <p className="text-sm text-gray-600 mb-3">
-      Scan a directory for WSI files hosted on the server and register them to a dataset.
-    </p>
-
-    {/* Directory Selection */}
-    <div className="flex gap-2 mb-4">
-      <Input
-        value={batchScanPath}
-        onChange={(e) => setBatchScanPath(e.target.value)}
-        placeholder="Enter directory path to scan..."
-        className="flex-1"
-      />
-      {hasSelectDirectoryApi && (
-        <Button variant="outline" onClick={handleSelectBatchScanDir}>
-          Browse
-        </Button>
-      )}
-      <Button
-        onClick={handleBatchScan}
-        disabled={!batchScanPath.trim() || batchScanning}
-        className="gap-2"
-        variant="primary"
-      >
-        {batchScanning ? (
-          <>
-            <RefreshCw className="w-4 h-4 animate-spin" />
-            Scanning...
-          </>
-        ) : (
-          <>
-            <Search className="w-4 h-4" />
-            Scan
-          </>
-        )}
-      </Button>
-    </div>
-
-    {batchScanError && (
-      <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
-        <AlertCircle className="w-4 h-4" />
-        {batchScanError}
+  return (
+    <Card className="p-4 sm:p-6 mt-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+        <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center gap-2">
+          <FolderSearch className="w-5 h-5 sm:w-6 sm:h-6 text-gray-700" />
+          {t('settings.storage.batchRegisterTitle')}
+        </h2>
       </div>
-    )}
 
-    {/* Scan Results */}
-    {batchScanResult && (
-      <BatchScanResults
-        batchScanResult={batchScanResult}
-        batchSelectedFiles={batchSelectedFiles}
-        batchDatasetMode={batchDatasetMode}
-        setBatchDatasetMode={setBatchDatasetMode}
-        batchSelectedDatasetId={batchSelectedDatasetId}
-        setBatchSelectedDatasetId={setBatchSelectedDatasetId}
-        batchNewDatasetNameRef={batchNewDatasetNameRef}
-        batchRegistering={batchRegistering}
-        batchImportTaskId={batchImportTaskId}
-        batchDatasets={batchDatasets}
-        batchTaskType={batchTaskType}
-        setBatchTaskType={setBatchTaskType}
-        batchDataLevel={batchDataLevel}
-        setBatchDataLevel={setBatchDataLevel}
-        handleBatchFileToggle={handleBatchFileToggle}
-        handleBatchSelectAll={handleBatchSelectAll}
-        handleBatchDeselectAll={handleBatchDeselectAll}
-        handleBatchRegister={handleBatchRegister}
-        formatFileSize={formatFileSize}
+      <p className="text-sm text-gray-600 mb-3">
+        {t('settings.storage.batchRegisterDescription')}
+      </p>
+
+      <div className="flex gap-2 mb-4">
+        <Input
+          value={batchScanPath}
+          onChange={(e) => setBatchScanPath(e.target.value)}
+          placeholder={t('settings.storage.enterDirectoryPath')}
+          className="flex-1"
+        />
+        {hasSelectDirectoryApi && (
+          <Button variant="outline" onClick={handleSelectBatchScanDir}>
+            {t('settings.storage.browse')}
+          </Button>
+        )}
+        <Button
+          onClick={handleBatchScan}
+          disabled={!batchScanPath.trim() || batchScanning}
+          className="gap-2"
+          variant="primary"
+        >
+          {batchScanning ? (
+            <>
+              <RefreshCw className="w-4 h-4 animate-spin" />
+              {t('settings.storage.scanning')}
+            </>
+          ) : (
+            <>
+              <Search className="w-4 h-4" />
+              {t('settings.storage.scan')}
+            </>
+          )}
+        </Button>
+      </div>
+
+      {batchScanError && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
+          <AlertCircle className="w-4 h-4" />
+          {batchScanError}
+        </div>
+      )}
+
+      {batchScanResult && (
+        <BatchScanResults
+          batchScanResult={batchScanResult}
+          batchSelectedFiles={batchSelectedFiles}
+          batchDatasetMode={batchDatasetMode}
+          setBatchDatasetMode={setBatchDatasetMode}
+          batchSelectedDatasetId={batchSelectedDatasetId}
+          setBatchSelectedDatasetId={setBatchSelectedDatasetId}
+          batchNewDatasetNameRef={batchNewDatasetNameRef}
+          batchRegistering={batchRegistering}
+          batchImportTaskId={batchImportTaskId}
+          batchDatasets={batchDatasets}
+          batchTaskType={batchTaskType}
+          setBatchTaskType={setBatchTaskType}
+          batchDataLevel={batchDataLevel}
+          setBatchDataLevel={setBatchDataLevel}
+          handleBatchFileToggle={handleBatchFileToggle}
+          handleBatchSelectAll={handleBatchSelectAll}
+          handleBatchDeselectAll={handleBatchDeselectAll}
+          handleBatchRegister={handleBatchRegister}
+          formatFileSize={formatFileSize}
+        />
+      )}
+
+      <ExternalDatasetsTable
+        externalDatasets={externalDatasets}
+        loadingExternalDatasets={loadingExternalDatasets}
+        externalDatasetsLoaded={externalDatasetsLoaded}
+        loadExternalDatasets={loadExternalDatasets}
+        selectedExternalDatasets={selectedExternalDatasets}
+        unbindingDatasets={unbindingDatasets}
+        refreshExternalDatasets={refreshExternalDatasets}
+        handleExternalDatasetToggle={handleExternalDatasetToggle}
+        handleExternalDatasetSelectAll={handleExternalDatasetSelectAll}
+        handleUnbindDataset={handleUnbindDataset}
+        handleUnbindSelectedDatasets={handleUnbindSelectedDatasets}
+        navigate={navigate}
       />
-    )}
-
-    {/* External Datasets Table */}
-    <ExternalDatasetsTable
-      externalDatasets={externalDatasets}
-      loadingExternalDatasets={loadingExternalDatasets}
-      externalDatasetsLoaded={externalDatasetsLoaded}
-      loadExternalDatasets={loadExternalDatasets}
-      selectedExternalDatasets={selectedExternalDatasets}
-      unbindingDatasets={unbindingDatasets}
-      refreshExternalDatasets={refreshExternalDatasets}
-      handleExternalDatasetToggle={handleExternalDatasetToggle}
-      handleExternalDatasetSelectAll={handleExternalDatasetSelectAll}
-      handleUnbindDataset={handleUnbindDataset}
-      handleUnbindSelectedDatasets={handleUnbindSelectedDatasets}
-      navigate={navigate}
-    />
-  </Card>
-)
-
+    </Card>
+  )
+}

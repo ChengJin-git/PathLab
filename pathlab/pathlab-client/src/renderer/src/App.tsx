@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { Routes, Route, Link } from 'react-router-dom'
 import Layout from './components/Layout'
 import { ProtectedRoute } from './components/ProtectedRoute'
@@ -16,6 +17,18 @@ import RegisterPage from './pages/UploadPage'
 import ResultsViewerPage from './pages/ResultsViewerPage'
 import ReportGeneratorPage from './pages/ReportGeneratorPage'
 import ToolsPage from './pages/ToolsPage'
+
+function NotFoundPage() {
+  const { t } = useTranslation()
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[60vh]">
+      <h2 className="text-4xl font-bold text-gray-900 mb-4">{t('common.notFound')}</h2>
+      <Link to="/" className="text-primary-600 hover:text-primary-700 font-medium">
+        {t('common.backToHome')}
+      </Link>
+    </div>
+  )
+}
 
 export default function App() {
   return (
@@ -45,12 +58,7 @@ export default function App() {
       <Route path="*" element={
         <ProtectedRoute>
           <Layout>
-            <div className="flex flex-col items-center justify-center min-h-[60vh]">
-              <h2 className="text-4xl font-bold text-gray-900 mb-4">404 - Not Found</h2>
-              <Link to="/" className="text-primary-600 hover:text-primary-700 font-medium">
-                ← Back to Home
-              </Link>
-            </div>
+            <NotFoundPage />
           </Layout>
         </ProtectedRoute>
       } />

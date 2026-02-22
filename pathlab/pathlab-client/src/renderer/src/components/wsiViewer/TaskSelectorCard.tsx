@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { AvailableHeatmap, HeatmapData, PatchCAMData } from '../../api'
 import { Card } from '../common'
 import { Badge } from '../ui/badge'
@@ -35,18 +36,19 @@ export function TaskSelectorCard({
   patchCAMData,
   isPatchLevel
 }: TaskSelectorCardProps) {
+  const { t } = useTranslation()
   return (
     <Card className="mb-4 overflow-visible">
       <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 bg-gradient-to-br from-gray-50 to-white">
         <Layers className="w-4 h-4 text-indigo-500" />
-        <h3 className="m-0 text-sm font-semibold text-gray-900">Select Task</h3>
+        <h3 className="m-0 text-sm font-semibold text-gray-900">{t('wsiViewerComponents.taskSelector.selectTask')}</h3>
         <span className="ml-auto text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-          {uniqueTasks.length} available
+          {uniqueTasks.length} {t('wsiViewerComponents.taskSelector.available')}
         </span>
         <button
           onClick={() => setShowDeleteConfirm(true)}
           className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-          title="Delete AI Results"
+          title={t('wsiViewerComponents.taskSelector.deleteAIResults')}
         >
           <Trash2 className="w-4 h-4" />
         </button>
@@ -62,7 +64,7 @@ export function TaskSelectorCard({
               <span className="text-gray-900 font-semibold text-sm tracking-tight text-left capitalize">
                 {(() => {
                   const task = availableHeatmaps.find(h => h.task_id === selectedTaskId);
-                  if (!task) return 'Select a task...';
+                  if (!task) return t('wsiViewerComponents.taskSelector.selectATask');
                   return formatClasses(task.classes) || task.task_name || task.task_type?.replace(/_/g, ' ');
                 })()}
               </span>
@@ -163,7 +165,7 @@ export function TaskSelectorCard({
                       <div className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center">
                         <History className="w-4 h-4 text-gray-400" />
                       </div>
-                      <p>No tasks available</p>
+                      <p>{t('wsiViewerComponents.taskSelector.noTasksAvailable')}</p>
                     </div>
                   )}
                 </div>
@@ -176,8 +178,8 @@ export function TaskSelectorCard({
         {availableFolds.length > 1 && (
           <div className="mt-3">
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-xs text-gray-500 font-medium uppercase tracking-wider">K-Fold</span>
-              <span className="text-xs text-gray-400">({availableFolds.length} folds)</span>
+              <span className="text-xs text-gray-500 font-medium uppercase tracking-wider">{t('wsiViewerComponents.taskSelector.kFold')}</span>
+              <span className="text-xs text-gray-400">({availableFolds.length} {t('wsiViewerComponents.taskSelector.folds')})</span>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {availableFolds.map((foldKey) => (
@@ -206,7 +208,7 @@ export function TaskSelectorCard({
               <div className="flex items-center gap-2">
                 <span className={`text-xs font-semibold uppercase tracking-wider ${heatmapData?.task_type === 'survival' ? 'text-emerald-700' : 'text-indigo-700'
                   }`}>
-                  {heatmapData?.task_type === 'survival' ? 'Risk Group' : 'Prediction'}
+                  {heatmapData?.task_type === 'survival' ? t('wsiViewerComponents.taskSelector.riskGroup') : t('wsiViewerComponents.taskSelector.prediction')}
                 </span>
                 {/* Show fold info for K-Fold trained models */}
                 {heatmapData?.fold_key && (
@@ -217,10 +219,10 @@ export function TaskSelectorCard({
               </div>
               {isPatchLevel ? (
                 <Badge variant="secondary" className="bg-orange-50 text-orange-700 text-[10px]">
-                  Patch Heatmap
+                  {t('wsiViewerComponents.taskSelector.patchHeatmap')}
                 </Badge>
               ) : (
-                <span className="text-xs text-gray-500">{heatmapData?.num_patches?.toLocaleString()} patches</span>
+                <span className="text-xs text-gray-500">{heatmapData?.num_patches?.toLocaleString()} {t('wsiViewerComponents.taskSelector.patches')}</span>
               )}
             </div>
             {/* Survival task: show risk group and risk score */}
@@ -233,7 +235,7 @@ export function TaskSelectorCard({
                 {heatmapData?.risk_score != null && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     <span className="text-xs bg-white/70 px-2 py-0.5 rounded border border-emerald-100">
-                      Risk Score: {heatmapData.risk_score.toFixed(4)}
+                      {t('wsiViewerComponents.taskSelector.riskScore')}: {heatmapData.risk_score.toFixed(4)}
                     </span>
                   </div>
                 )}

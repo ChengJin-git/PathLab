@@ -1,7 +1,9 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { ClipboardList } from 'lucide-react'
 import { Card } from '../ui/card'
 import { LogEntry } from './types'
+
 
 interface LogViewerProps {
   logs: LogEntry[]
@@ -13,22 +15,24 @@ export const LogViewer: React.FC<LogViewerProps> = ({
   logs,
   logsContainerRef,
   logsEndRef
-}) => (
+}) => {
+  const { t } = useTranslation()
+  return (
   <Card className="p-4 sm:p-6 border-gray-100 shadow-sm overflow-hidden">
     <div className="flex items-center justify-between mb-4">
       <h3 className="text-sm sm:text-lg font-bold text-gray-900 flex items-center gap-2">
         <ClipboardList className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
-        Live Logs
+        {t('taskDetail.logViewer.liveLogs')}
       </h3>
       <div className="flex items-center space-x-1.5 sm:space-x-2 text-[10px] sm:text-xs text-gray-400 font-medium">
         <span className="inline-block w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-        <span>Live Stream</span>
+        <span>{t('taskDetail.logViewer.liveStream')}</span>
       </div>
     </div>
     <div ref={logsContainerRef} className="bg-gray-950 rounded-xl p-3 sm:p-4 h-[300px] sm:h-[450px] overflow-y-auto font-mono text-[10px] sm:text-xs leading-relaxed border border-gray-800 shadow-inner scrollbar-thin scrollbar-track-gray-900 scrollbar-thumb-gray-700">
       {logs.length === 0 ? (
         <div className="flex items-center justify-center h-full text-gray-600 italic">
-          Connecting to task stream...
+          {t('taskDetail.logViewer.connecting')}
         </div>
       ) : (
         logs.map((log) => (
@@ -57,7 +61,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
             {log.metadata && Object.keys(log.metadata).length > 0 && (
               <div className="ml-4 mt-1 bg-white/5 p-2 rounded border border-white/5">
                 {log.metadata.error && (
-                  <div className="text-red-300 font-bold">Error: {log.metadata.error}</div>
+                  <div className="text-red-300 font-bold">{t('taskDetail.logViewer.error')} {log.metadata.error}</div>
                 )}
                 {log.metadata.traceback && (
                   <pre className="mt-1 whitespace-pre-wrap text-red-300/60 overflow-x-auto text-[9px] sm:text-[10px]">
@@ -87,5 +91,6 @@ export const LogViewer: React.FC<LogViewerProps> = ({
       <div ref={logsEndRef} />
     </div>
   </Card>
-)
+  )
+}
 

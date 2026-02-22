@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import {
   fetchExtractors,
@@ -45,6 +46,7 @@ import { WSIItem } from '../types/training'
 
 export default function NewTaskPage() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const { addDeleteWSITask, hasUploadingTasks } = useBackgroundTask()
 
   // ========== Custom Hooks ==========
@@ -204,25 +206,25 @@ export default function NewTaskPage() {
     // External storage connectivity errors (check first - most specific)
     if (errorLower.includes('external storage not responding') ||
         (errorLower.includes('storage') && errorLower.includes('timed out'))) {
-      return 'The storage appears to be unreachable. Please contact the administrator.'
+      return t('newTask.errors.storageUnreachable')
     }
     if (errorLower.includes('not accessible') && errorLower.includes('file')) {
-      return 'Some files could not be accessed. Please contact the administrator.'
+      return t('newTask.errors.filesNotAccessible')
     }
     if (errorLower.includes('network') || errorLower.includes('fetch')) {
-      return 'Check your network connection and try again.'
+      return t('newTask.errors.networkError')
     }
     if (errorLower.includes('wsi') || errorLower.includes('slide')) {
-      return 'Ensure all selected WSI files have valid labels.'
+      return t('newTask.errors.invalidLabels')
     }
     if (errorLower.includes('gpu') || errorLower.includes('cuda')) {
-      return 'A CUDA-capable GPU is required. Please check GPU availability and CUDA driver installation.'
+      return t('newTask.errors.gpuRequired')
     }
     if (errorLower.includes('vram') || errorLower.includes('out of memory') || errorLower.includes('oom')) {
-      return 'GPU memory exceeded. Please reduce the batch size and try again.'
+      return t('newTask.errors.gpuMemoryExceeded')
     }
     if (errorLower.includes('timeout') || errorLower.includes('timed out')) {
-      return 'The server is taking too long to respond. Please try again later.'
+      return t('newTask.errors.serverTimeout')
     }
     return null
   }
@@ -245,7 +247,7 @@ export default function NewTaskPage() {
       }
     } catch (err) {
       console.error('Failed to delete WSI:', err)
-      alert(`Failed to delete WSI: ${err}`)
+      alert(t('newTask.errors.failedDeleteWsi', { error: String(err) }))
     } finally {
       setDeleting(false)
     }
@@ -253,11 +255,11 @@ export default function NewTaskPage() {
 
   const handleBatchDeleteClick = () => {
     if (dataSelection.selectedIds.size === 0) {
-      alert('Please select at least one slide to delete')
+      alert(t('newTask.errors.selectAtLeastOneToDelete'))
       return
     }
     // Use inline confirmation for batch delete
-    if (confirm(`Are you sure you want to delete ${dataSelection.selectedIds.size} selected items?`)) {
+    if (confirm(t('newTask.errors.confirmBatchDelete', { count: dataSelection.selectedIds.size }))) {
       handleConfirmBatchDelete()
     }
   }
@@ -272,7 +274,7 @@ export default function NewTaskPage() {
       }
     } catch (err) {
       console.error('Failed to batch delete:', err)
-      alert(`Failed to batch delete: ${err}`)
+      alert(t('newTask.errors.failedBatchDelete', { error: String(err) }))
     }
   }
 
@@ -323,7 +325,7 @@ export default function NewTaskPage() {
       }
     } catch (err) {
       console.error('Failed to update WSI metadata:', err)
-      alert(`Failed to update metadata: ${err}`)
+      alert(t('newTask.errors.failedUpdateMetadata', { error: String(err) }))
     } finally {
       setUpdating(false)
     }
@@ -331,7 +333,7 @@ export default function NewTaskPage() {
 
   const handleBatchEditClick = () => {
     if (dataSelection.selectedIds.size === 0) {
-      alert('Please select at least one slide to edit')
+      alert(t('newTask.errors.selectAtLeastOneToEdit'))
       return
     }
     setShowBatchEditModal(true)
@@ -379,10 +381,10 @@ export default function NewTaskPage() {
       await startBatchUpdateMetadataTask(request)
       setShowBatchEditModal(false)
       dataSelection.clearSelection()
-      alert(`Metadata update started for ${request.wsi_ids.length} items. Check notification center for progress.`)
+      alert(t('newTask.errors.batchUpdateStarted', { count: request.wsi_ids.length }))
     } catch (err) {
       console.error('Failed to start batch edit:', err)
-      alert(`Failed to start batch edit: ${err}`)
+      alert(t('newTask.errors.failedBatchEdit', { error: String(err) }))
     } finally {
       setBatchUpdating(false)
     }
@@ -396,7 +398,7 @@ export default function NewTaskPage() {
 
     // Check if there are any uploading tasks (upload or batch_import)
     if (hasUploadingTasks()) {
-      wizard.setSubmitError('Cannot submit training task while files are being uploaded or imported. Please wait for all uploads to complete.')
+      wizard.setSubmitError(t('newTask.errors.uploadInProgress'))
       wizard.setTrainingStatus('failed')
       return
     }
@@ -409,7 +411,7 @@ export default function NewTaskPage() {
       let splitConfig: any = undefined
       if (trainingConfig.splitStrategy === 'manual') {
         if (!dataSelection.hasPreDefinedSplits) {
-          throw new Error('No pre-defined splits found. Please upload a split CSV in the dataset view.')
+          throw new Error(t('newTask.errors.noPreDefinedSplits'))
         }
         const manualSplits: Record<string, string> = {}
         dataSelection.items
@@ -493,39 +495,39 @@ export default function NewTaskPage() {
     const errors: string[] = []
 
     if (trainingConfig.epochs <= 0) {
-      errors.push('Epochs must be greater than 0')
+      errors.push(t('newTask.validation.epochsPositive'))
     } else if (trainingConfig.epochs > 200) {
-      warnings.push('High epoch count (>200) may lead to overfitting')
+      warnings.push(t('newTask.validation.highEpochs'))
     }
 
     if (trainingConfig.learningRate <= 0) {
-      errors.push('Learning rate must be greater than 0')
+      errors.push(t('newTask.validation.learningRatePositive'))
     } else if (trainingConfig.learningRate > 0.01) {
-      warnings.push('High learning rate (>0.01) may cause training instability')
+      warnings.push(t('newTask.validation.highLearningRate'))
     } else if (trainingConfig.learningRate < 0.00001) {
-      warnings.push('Very low learning rate (<0.00001) may result in slow convergence')
+      warnings.push(t('newTask.validation.lowLearningRate'))
     }
 
     if (trainingConfig.trainBatchSize <= 0) {
-      errors.push('Batch size must be greater than 0')
+      errors.push(t('newTask.validation.batchSizePositive'))
     }
 
     if (dataSelection.selectedIds.size < 10) {
-      warnings.push('Small dataset (<10 files) may lead to poor generalization')
+      warnings.push(t('newTask.validation.smallDataset'))
     }
 
     // Check for single-class tasks (classification or survival)
     if (wizard.taskType === 'classification') {
       const classes = Object.keys(splitValidation.classDistribution).filter((k) => k !== '__unlabeled__')
       if (classes.length < 2) {
-        errors.push('Classification tasks require at least 2 different classes. Please assign different labels to your slides.')
+        errors.push(t('newTask.validation.classificationMinClasses'))
       }
     } else if (wizard.taskType === 'survival') {
       const eventCount = splitValidation.classDistribution['__event__'] || 0
       const censoredCount = splitValidation.classDistribution['__censored__'] || 0
       if (eventCount === 0 || censoredCount === 0) {
         const missingType = eventCount === 0 ? 'Event (status=1)' : 'Censored (status=0)'
-        errors.push(`Survival prediction tasks require both Event and Censored samples. ${missingType} has 0 samples.`)
+        errors.push(t('newTask.validation.survivalBothRequired', { missingType }))
       }
     }
 
@@ -533,15 +535,15 @@ export default function NewTaskPage() {
 
     if (trainingConfig.splitStrategy === 'k_fold') {
       if (!splitValidation.kFoldValidation.isValid) {
-        errors.push(splitValidation.kFoldValidation.message || 'K-Fold cross-validation is not available')
+        errors.push(splitValidation.kFoldValidation.message || t('newTask.validation.kFoldUnavailable'))
       } else if (trainingConfig.kFoldSplits > splitValidation.kFoldValidation.maxK) {
-        errors.push(`K=${trainingConfig.kFoldSplits} exceeds maximum allowed (${splitValidation.kFoldValidation.maxK})`)
+        errors.push(t('newTask.validation.kFoldExceedsMax', { k: trainingConfig.kFoldSplits, maxK: splitValidation.kFoldValidation.maxK }))
       }
     }
 
     if (trainingConfig.splitStrategy === 'random') {
       if (!splitValidation.randomSplitValidation.isValid) {
-        errors.push(splitValidation.randomSplitValidation.message || 'Random split is not available')
+        errors.push(splitValidation.randomSplitValidation.message || t('newTask.validation.randomSplitUnavailable'))
       }
     }
 
@@ -557,6 +559,7 @@ export default function NewTaskPage() {
     splitValidation.randomSplitValidation,
     splitValidation.classDistribution,
     wizard.taskType,
+    t,
   ])
 
   const canProceedStep1 = useMemo(() => {
@@ -590,8 +593,8 @@ export default function NewTaskPage() {
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <PageHeader
-              title="New Analysis Task"
-              description="Create and train a new analysis model"
+              title={t('newTask.title')}
+              description={t('newTask.description')}
               className="flex-1"
             >
               <Button
@@ -601,7 +604,7 @@ export default function NewTaskPage() {
                 className="gap-2 w-full sm:w-auto"
               >
                 <ArrowLeft className="w-4 h-4" />
-                Back to Dashboard
+                {t('newTask.backToDashboard')}
               </Button>
             </PageHeader>
           </div>

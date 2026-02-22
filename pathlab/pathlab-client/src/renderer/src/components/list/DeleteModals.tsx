@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { AlertCircle, Loader2 } from 'lucide-react'
 import { WSIStorageInfo } from '../../api'
 import { formatBytes } from '../../lib/utils'
@@ -19,6 +20,7 @@ export function DeleteConfirmModal({
   wsiToDelete, wsiStorageInfo, loadingStorageInfo, deleteMode,
   onDeleteModeChange, onCancel, onConfirm,
 }: DeleteConfirmModalProps) {
+  const { t } = useTranslation()
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
       <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
@@ -27,20 +29,20 @@ export function DeleteConfirmModal({
           <div className="w-10 h-10 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
             <AlertCircle className="w-6 h-6 sm:w-10 sm:h-10 text-red-600" />
           </div>
-          <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2 leading-tight">Delete Slide?</h3>
-          <p className="text-xs sm:text-base text-gray-600">This action cannot be undone</p>
+          <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2 leading-tight">{t('listComponents.deleteSlide')}</h3>
+          <p className="text-xs sm:text-base text-gray-600">{t('listComponents.cannotBeUndone')}</p>
         </div>
 
         {/* WSI Info */}
         <div className="bg-gray-50 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4 border border-gray-100">
           <div className="space-y-1 sm:space-y-2">
             <div className="flex justify-between items-start gap-4">
-              <span className="text-xs sm:text-sm font-medium text-gray-500 whitespace-nowrap">File:</span>
+              <span className="text-xs sm:text-sm font-medium text-gray-500 whitespace-nowrap">{t('listComponents.file')}:</span>
               <span className="text-xs sm:text-sm text-gray-900 font-semibold break-all text-right">{wsiToDelete.original_filename || wsiToDelete.wsi_id}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-xs sm:text-sm font-medium text-gray-500">Label:</span>
-              <span className="text-xs sm:text-sm text-gray-900 font-medium">{wsiToDelete.label || 'Unknown'}</span>
+              <span className="text-xs sm:text-sm font-medium text-gray-500">{t('listComponents.label')}:</span>
+              <span className="text-xs sm:text-sm text-gray-900 font-medium">{wsiToDelete.label || t('listComponents.unknown')}</span>
             </div>
           </div>
         </div>
@@ -50,7 +52,7 @@ export function DeleteConfirmModal({
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4 mb-3 sm:mb-4">
             <div className="flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
-              <span className="text-xs sm:text-sm text-blue-800">Calculating size...</span>
+              <span className="text-xs sm:text-sm text-blue-800">{t('listComponents.calculatingSize')}</span>
             </div>
           </div>
         )}
@@ -63,30 +65,30 @@ export function DeleteConfirmModal({
           return (
             <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs sm:text-sm font-semibold text-blue-900">Reduced Storage:</span>
+                <span className="text-xs sm:text-sm font-semibold text-blue-900">{t('listComponents.reducedStorage')}:</span>
                 <span className="text-base sm:text-lg font-bold text-blue-900">
                   {formatBytes(displaySize)}
                 </span>
               </div>
               <details className="text-xs sm:text-sm">
                 <summary className="cursor-pointer text-blue-700 hover:text-blue-900 font-medium">
-                  Files to be removed ({displayFiles})
+                  {t('listComponents.filesToBeRemoved', { count: displayFiles })}
                 </summary>
                 <ul className="mt-2 space-y-1 text-blue-600/80 ml-4 border-l border-blue-100 pl-3">
                   {wsiStorageInfo.wsi_file.exists && (
-                    <li>• WSI file ({formatBytes(wsiStorageInfo.wsi_file.size)})</li>
+                    <li>• {t('listComponents.wsiFile')} ({formatBytes(wsiStorageInfo.wsi_file.size)})</li>
                   )}
                   {wsiStorageInfo.coordinates.exists && (
-                    <li>• Coordinates cache ({formatBytes(wsiStorageInfo.coordinates.size)})</li>
+                    <li>• {t('listComponents.coordinatesCache')} ({formatBytes(wsiStorageInfo.coordinates.size)})</li>
                   )}
                   {wsiStorageInfo.mask.exists && (
-                    <li>• Tissue mask ({formatBytes(wsiStorageInfo.mask.size)})</li>
+                    <li>• {t('listComponents.tissueMask')} ({formatBytes(wsiStorageInfo.mask.size)})</li>
                   )}
                   {wsiStorageInfo.ai_results.file_count > 0 && (
-                    <li>• AI results ({wsiStorageInfo.ai_results.file_count} files, {formatBytes(wsiStorageInfo.ai_results.size)})</li>
+                    <li>• {t('listComponents.aiResults')} ({wsiStorageInfo.ai_results.file_count} {t('listComponents.filesLower')}, {formatBytes(wsiStorageInfo.ai_results.size)})</li>
                   )}
                   {deleteMode === 'complete' && wsiStorageInfo.features.length > 0 && (
-                    <li>• Features ({wsiStorageInfo.features.length} files, {formatBytes(wsiStorageInfo.features.reduce((sum, f) => sum + f.size, 0))})</li>
+                    <li>• {t('listComponents.features')} ({wsiStorageInfo.features.length} {t('listComponents.filesLower')}, {formatBytes(wsiStorageInfo.features.reduce((sum, f) => sum + f.size, 0))})</li>
                   )}
                 </ul>
               </details>
@@ -97,7 +99,7 @@ export function DeleteConfirmModal({
         {/* Delete Mode Selection */}
         <div className="mb-4">
           <label className="block text-xs sm:text-sm font-bold text-gray-700 mb-2">
-            Deletion Mode
+            {t('listComponents.deletionMode')}
           </label>
           <div className="space-y-2">
             <label className={`flex items-start gap-3 p-2 sm:p-3 border-2 rounded-xl cursor-pointer hover:bg-gray-50 transition-all ${deleteMode === 'standard' ? 'border-blue-500 bg-blue-50/20' : 'border-gray-100'}`}>
@@ -110,9 +112,9 @@ export function DeleteConfirmModal({
                 className="mt-1 h-4 w-4 text-blue-600"
               />
               <div className="flex-1 min-w-0">
-                <div className="font-bold text-gray-900 text-sm">Standard Delete</div>
+                <div className="font-bold text-gray-900 text-sm">{t('listComponents.standardDelete')}</div>
                 <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
-                  Removes slide and results. <span className="text-blue-600 font-semibold">Keeps training features</span> for future research.
+                  {t('listComponents.standardDeleteDesc')} <span className="text-blue-600 font-semibold">{t('listComponents.keepsTrainingFeatures')}</span> {t('listComponents.forFutureResearch')}
                 </div>
               </div>
             </label>
@@ -127,9 +129,9 @@ export function DeleteConfirmModal({
                 className="mt-1 h-4 w-4 text-red-600"
               />
               <div className="flex-1 min-w-0">
-                <div className="font-bold text-gray-900 text-sm">Complete Delete</div>
+                <div className="font-bold text-gray-900 text-sm">{t('listComponents.completeDelete')}</div>
                 <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
-                  Permanently wipes all data including training features. <span className="text-red-500 font-bold">Irreversible.</span>
+                  {t('listComponents.completeDeleteDesc')} <span className="text-red-500 font-bold">{t('listComponents.irreversible')}</span>
                 </div>
               </div>
             </label>
@@ -139,7 +141,7 @@ export function DeleteConfirmModal({
         {/* Warning - only on mobile */}
         <div className="sm:hidden bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-4">
           <p className="text-[10px] text-amber-800 leading-tight">
-            <strong>Attention:</strong> This permanent action cannot be undone.
+            <strong>{t('listComponents.attention')}:</strong> {t('listComponents.permanentAction')}
           </p>
         </div>
 
@@ -149,13 +151,13 @@ export function DeleteConfirmModal({
             onClick={onCancel}
             className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold"
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             onClick={onConfirm}
             className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-bold shadow-sm"
           >
-            Delete
+            {t('common.delete')}
           </button>
         </div>
       </div>
@@ -180,6 +182,7 @@ export function BatchDeleteModal({
   selectedIds, datasetToDeleteId, datasetToDeleteName, deleteMode,
   onDeleteModeChange, deleting, onCancel, onConfirm,
 }: BatchDeleteModalProps) {
+  const { t } = useTranslation()
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
       <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
@@ -189,18 +192,18 @@ export function BatchDeleteModal({
             <AlertCircle className="w-6 h-6 sm:w-10 sm:h-10 text-red-600" />
           </div>
           <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2 text-balance leading-tight">
-            {datasetToDeleteId ? 'Delete Dataset?' : 'Delete Multiple Slides?'}
+            {datasetToDeleteId ? t('listComponents.deleteDataset') : t('listComponents.deleteMultipleSlides')}
           </h3>
-          <p className="text-xs sm:text-base text-gray-600">This action cannot be undone</p>
+          <p className="text-xs sm:text-base text-gray-600">{t('listComponents.cannotBeUndone')}</p>
         </div>
 
         {/* Selection Info */}
         <div className="bg-gray-50 rounded-xl p-3 sm:p-4 mb-4 sm:mb-6 border border-gray-100 text-center">
           <p className="text-xs sm:text-sm text-gray-700 leading-relaxed">
             {datasetToDeleteId ? (
-              <>You are about to delete dataset <span className="font-bold text-red-600">{datasetToDeleteName}</span> and all its <span className="font-bold">{selectedIds.size}</span> files</>
+              <>{t('listComponents.aboutToDeleteDataset')} <span className="font-bold text-red-600">{datasetToDeleteName}</span> {t('listComponents.andAllIts')} <span className="font-bold">{selectedIds.size}</span> {t('listComponents.filesLower')}</>
             ) : (
-              <>You are about to delete <span className="font-bold text-red-600">{selectedIds.size}</span> file{selectedIds.size > 1 ? 's' : ''}</>
+              <>{t('listComponents.aboutToDelete')} <span className="font-bold text-red-600">{selectedIds.size}</span> {t('listComponents.fileCount', { count: selectedIds.size })}</>
             )}
           </p>
         </div>
@@ -208,7 +211,7 @@ export function BatchDeleteModal({
         {/* Delete Mode Selection */}
         <div className="mb-4">
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Deletion Mode
+            {t('listComponents.deletionMode')}
           </label>
           <div className="space-y-2">
             <label className="flex items-start gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
@@ -222,9 +225,9 @@ export function BatchDeleteModal({
                 className="mt-1 h-4 w-4 text-blue-600"
               />
               <div className="flex-1 min-w-0">
-                <div className="font-bold text-gray-900 text-sm">Standard Delete</div>
+                <div className="font-bold text-gray-900 text-sm">{t('listComponents.standardDelete')}</div>
                 <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
-                  Removes slide and results. <span className="text-blue-600 font-semibold">Keeps training features</span> for future research.
+                  {t('listComponents.standardDeleteDesc')} <span className="text-blue-600 font-semibold">{t('listComponents.keepsTrainingFeatures')}</span> {t('listComponents.forFutureResearch')}
                 </div>
               </div>
             </label>
@@ -239,9 +242,9 @@ export function BatchDeleteModal({
                 className="mt-1 h-4 w-4 text-red-600"
               />
               <div className="flex-1 min-w-0">
-                <div className="font-bold text-gray-900 text-sm">Complete Delete</div>
+                <div className="font-bold text-gray-900 text-sm">{t('listComponents.completeDelete')}</div>
                 <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
-                  Permanently wipes all data including training features. <span className="text-red-500 font-bold">Irreversible.</span>
+                  {t('listComponents.completeDeleteDesc')} <span className="text-red-500 font-bold">{t('listComponents.irreversible')}</span>
                 </div>
               </div>
             </label>
@@ -251,7 +254,7 @@ export function BatchDeleteModal({
         {/* Warning - only on mobile */}
         <div className="sm:hidden bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-4">
           <p className="text-[10px] text-amber-800 leading-tight">
-            <strong>Attention:</strong> This permanent action cannot be undone.
+            <strong>{t('listComponents.attention')}:</strong> {t('listComponents.permanentAction')}
           </p>
         </div>
 
@@ -262,7 +265,7 @@ export function BatchDeleteModal({
             disabled={deleting}
             className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             onClick={onConfirm}
@@ -270,11 +273,10 @@ export function BatchDeleteModal({
             className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-bold disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
           >
             {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
-            {deleting ? 'Deleting...' : (datasetToDeleteId ? 'Delete' : `Delete ${selectedIds.size}`)}
+            {deleting ? t('listComponents.deleting') : (datasetToDeleteId ? t('common.delete') : t('listComponents.deleteCount', { count: selectedIds.size }))}
           </button>
         </div>
       </div>
     </div>
   )
 }
-

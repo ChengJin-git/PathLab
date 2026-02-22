@@ -7,6 +7,7 @@ import { BackgroundTaskPanel } from './components/BackgroundTaskPanel'
 import App from './App'
 import './index.css'
 import { initializeApiConfig, updateApiBase } from './config'
+import './i18n'
 
 // Use the base URL from Vite config
 const basename = import.meta.env.BASE_URL

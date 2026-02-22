@@ -3,6 +3,7 @@ import {
   FileSpreadsheet, UploadCloud, AlertCircle, CheckCircle,
   Download, AlertTriangle
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { downloadCSVTemplate, UploadSplitsResponse } from '../../api'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
 import * as XLSX from 'xlsx'
@@ -43,6 +44,7 @@ export interface MetadataUploadCardProps {
 }
 
 export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploadCardProps) {
+  const { t } = useTranslation()
   const { tasks, addMetadataUploadTask, getMetadataUploadResult } = useBackgroundTask()
 
   // Local UI state only
@@ -61,8 +63,8 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
     const datasetName = config.dataset_name
     if (!datasetName) return
 
-    const existingTask = tasks.find(t =>
-      t.type === 'metadata_upload' && t.title === `Metadata: ${datasetName}`
+    const existingTask = tasks.find(task =>
+      task.type === 'metadata_upload' && task.title === `Metadata: ${datasetName}`
     )
     if (existingTask) {
       setBgTaskId(existingTask.id)
@@ -70,7 +72,7 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
   }, [tasks, bgTaskId, config.dataset_name])
 
   // Find the background task for this card (if running)
-  const bgTask = bgTaskId ? tasks.find(t => t.id === bgTaskId) : null
+  const bgTask = bgTaskId ? tasks.find(task => task.id === bgTaskId) : null
   const bgTaskRunning = bgTask?.status === 'running'
   const bgTaskError = bgTask?.status === 'error' ? bgTask.items[0]?.error : null
   const bgTaskSuccess = bgTask?.status === 'success'
@@ -117,7 +119,7 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
       if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
         const workbook = XLSX.read(arrayBuffer, { type: 'array' })
         if (workbook.SheetNames.length > 1) {
-          return 'Excel file has multiple sheets. Please use a file with only one sheet.'
+          return t('chatComponents.metadataUpload.multipleSheets')
         }
         const worksheet = workbook.Sheets[workbook.SheetNames[0]]
         csvContent = XLSX.utils.sheet_to_csv(worksheet)
@@ -126,23 +128,23 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
       }
 
       const lines = csvContent.split('\n').filter(line => line.trim() !== '')
-      if (lines.length < 2) return 'File is empty or has no data rows'
+      if (lines.length < 2) return t('chatComponents.metadataUpload.emptyFile')
 
       const headers = lines[0].toLowerCase().split(',').map(h => h.trim())
-      if (!headers.includes('filename')) return 'File must contain a "filename" column'
+      if (!headers.includes('filename')) return t('chatComponents.metadataUpload.missingFilename')
 
       if (uploadMode === 'classification') {
-        if (!headers.includes('label')) return 'File must contain a "label" column for classification'
+        if (!headers.includes('label')) return t('chatComponents.metadataUpload.missingLabel')
       } else {
-        if (!headers.includes('event_time')) return 'File must contain an "event_time" column for survival'
-        if (!headers.includes('event_status')) return 'File must contain an "event_status" column for survival'
+        if (!headers.includes('event_time')) return t('chatComponents.metadataUpload.missingEventTime')
+        if (!headers.includes('event_status')) return t('chatComponents.metadataUpload.missingEventStatus')
       }
 
       return null // valid
     } catch (err) {
-      return `Failed to read file: ${err instanceof Error ? err.message : String(err)}`
+      return t('chatComponents.metadataUpload.failedToRead', { error: err instanceof Error ? err.message : String(err) })
     }
-  }, [uploadMode])
+  }, [uploadMode, t])
 
   // Convert Excel to CSV File object for background task
   const convertToCSV = async (file: File): Promise<File> => {
@@ -180,7 +182,7 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
       })
       setBgTaskId(taskId)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to start upload'
+      const msg = err instanceof Error ? err.message : t('chatComponents.metadataUpload.failedToStartUpload')
       onError?.(msg)
     }
   }
@@ -224,20 +226,20 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden w-full max-w-2xl mb-4">
         <div className="px-5 py-4 bg-gradient-to-r from-green-50 to-emerald-50 border-b border-gray-100 flex items-center gap-2">
           <FileSpreadsheet className="w-4 h-4 text-green-600" />
-          <h3 className="font-semibold text-gray-900">Metadata Upload</h3>
+          <h3 className="font-semibold text-gray-900">{t('chatComponents.metadataUpload.title')}</h3>
         </div>
         <div className="p-5 space-y-3">
           <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
             <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
             <div>
-              <h4 className="text-sm font-semibold text-green-800">Metadata Uploaded Successfully</h4>
+              <h4 className="text-sm font-semibold text-green-800">{t('chatComponents.metadataUpload.uploadedSuccessfully')}</h4>
               <p className="text-xs text-green-700 mt-1 leading-relaxed">
-                Updated <span className="font-medium">{uploadResult.updated_count}</span> files
+                {t('chatComponents.metadataUpload.updatedFiles', { count: uploadResult.updated_count })}
                 {uploadResult.auto_val_count > 0 && (
-                  <>, auto-assigned <span className="font-medium">{uploadResult.auto_val_count}</span> to validation</>
+                  <>, {t('chatComponents.metadataUpload.autoAssignedValidation', { count: uploadResult.auto_val_count })}</>
                 )}
                 {uploadResult.not_found_count > 0 && (
-                  <>, <span className="font-medium text-amber-700">{uploadResult.not_found_count}</span> files not found in dataset</>
+                  <>, <span className="font-medium text-amber-700">{t('chatComponents.metadataUpload.filesNotFoundCount', { count: uploadResult.not_found_count })}</span></>
                 )}
               </p>
             </div>
@@ -246,14 +248,14 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
               <div className="flex items-center gap-2 mb-1">
                 <AlertTriangle className="w-4 h-4 text-amber-600" />
-                <span className="text-xs font-bold text-amber-800">Files Not Found in Dataset</span>
+                <span className="text-xs font-bold text-amber-800">{t('chatComponents.metadataUpload.filesNotFoundInDataset')}</span>
               </div>
               <div className="max-h-24 overflow-y-auto">
                 {uploadResult.not_found_files.slice(0, 10).map((f, i) => (
                   <p key={i} className="text-xs text-amber-700 ml-6">• {f}</p>
                 ))}
                 {uploadResult.not_found_files.length > 10 && (
-                  <p className="text-xs text-amber-600 ml-6 italic">...and {uploadResult.not_found_files.length - 10} more</p>
+                  <p className="text-xs text-amber-600 ml-6 italic">{t('chatComponents.metadataUpload.andMore', { count: uploadResult.not_found_files.length - 10 })}</p>
                 )}
               </div>
             </div>
@@ -272,20 +274,20 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden w-full max-w-2xl mb-4">
           <div className="px-5 py-4 bg-gradient-to-r from-green-50 to-emerald-50 border-b border-gray-100 flex items-center gap-2">
             <FileSpreadsheet className="w-4 h-4 text-green-600" />
-            <h3 className="font-semibold text-gray-900">Metadata Upload</h3>
+            <h3 className="font-semibold text-gray-900">{t('chatComponents.metadataUpload.title')}</h3>
           </div>
           <div className="p-5 space-y-3">
             <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
               <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
               <div>
-                <h4 className="text-sm font-semibold text-green-800">Metadata Uploaded Successfully</h4>
+                <h4 className="text-sm font-semibold text-green-800">{t('chatComponents.metadataUpload.uploadedSuccessfully')}</h4>
                 <p className="text-xs text-green-700 mt-1 leading-relaxed">
-                  Updated <span className="font-medium">{result.updated_count}</span> files
+                  {t('chatComponents.metadataUpload.updatedFiles', { count: result.updated_count })}
                   {result.auto_val_count > 0 && (
-                    <>, auto-assigned <span className="font-medium">{result.auto_val_count}</span> to validation</>
+                    <>, {t('chatComponents.metadataUpload.autoAssignedValidation', { count: result.auto_val_count })}</>
                   )}
                   {result.not_found_count > 0 && (
-                    <>, <span className="font-medium text-amber-700">{result.not_found_count}</span> files not found in dataset</>
+                    <>, <span className="font-medium text-amber-700">{t('chatComponents.metadataUpload.filesNotFoundCount', { count: result.not_found_count })}</span></>
                   )}
                 </p>
               </div>
@@ -301,10 +303,10 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
       {/* Header */}
       <div className="px-5 py-4 bg-gradient-to-r from-primary-50 to-blue-50 border-b border-gray-100 flex items-center gap-2">
         <FileSpreadsheet className="w-4 h-4 text-primary-600" />
-        <h3 className="font-semibold text-gray-900">Upload Metadata (CSV / Excel)</h3>
+        <h3 className="font-semibold text-gray-900">{t('chatComponents.metadataUpload.uploadTitle')}</h3>
         {config.dataset_name && (
           <span className="ml-auto text-xs text-gray-500">
-            Dataset: <span className="font-medium text-gray-700">{config.dataset_name}</span>
+            {t('chatComponents.metadataUpload.dataset')}: <span className="font-medium text-gray-700">{config.dataset_name}</span>
           </span>
         )}
       </div>
@@ -323,12 +325,12 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
           <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 flex items-start gap-3">
             <CheckCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
             <div>
-              <h4 className="text-sm font-semibold text-blue-800">File Submitted</h4>
+              <h4 className="text-sm font-semibold text-blue-800">{t('chatComponents.metadataUpload.fileSubmitted')}</h4>
               {submittedFileName && (
                 <p className="text-xs text-blue-600 mt-0.5">{submittedFileName}</p>
               )}
               <p className="text-xs text-blue-500 mt-1">
-                Processing in the background. The dataset will be ready to bind metadata afterward. You can switch to other pages.
+                {t('chatComponents.metadataUpload.processingInBackground')}
               </p>
             </div>
           </div>
@@ -355,9 +357,9 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
             <div className="space-y-2">
               <UploadCloud className="w-8 h-8 text-gray-400 mx-auto" />
               <div>
-                <p className="text-sm font-medium text-gray-900">Drag & Drop CSV / Excel File</p>
+                <p className="text-sm font-medium text-gray-900">{t('chatComponents.metadataUpload.dragAndDrop')}</p>
                 <p className="text-xs text-gray-500 mt-1">
-                  or click to browse. Required columns: <code className="bg-gray-100 px-1 rounded">filename</code>
+                  {t('chatComponents.metadataUpload.orClickToBrowse')} <code className="bg-gray-100 px-1 rounded">filename</code>
                   {uploadMode === 'classification'
                     ? <>, <code className="bg-gray-100 px-1 rounded">label</code></>
                     : <>, <code className="bg-gray-100 px-1 rounded">event_time</code>, <code className="bg-gray-100 px-1 rounded">event_status</code></>
@@ -376,7 +378,7 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
               className="flex items-center gap-1.5 text-xs text-primary-600 hover:text-primary-700 hover:underline"
             >
               <Download className="w-3 h-3" />
-              Download {uploadMode === 'survival' ? 'Survival' : 'Classification'} Template
+              {t('chatComponents.metadataUpload.downloadTemplate', { type: uploadMode === 'survival' ? t('chatComponents.metadataUpload.survival') : t('chatComponents.metadataUpload.classification') })}
             </button>
           </div>
         )}

@@ -1,7 +1,10 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { fetchStats, fetchRecentActivity, invalidateRecentActivityCache, hasValidStatsCache, hasValidRecentActivityCache, RecentUpload, RecentTask } from '../api'
 import { Microscope, CheckCircle, Settings as SettingsIcon, BarChart3, Bot, Rocket, ClipboardList, FolderOpen, Settings, TrendingUp, FileText, Upload, LayoutGrid, Mic, MicOff, Loader2, Bell, ArrowRight, X, RefreshCw, Brain, Database, LineChart, ChevronRight, Sparkles, XCircle, Clock } from 'lucide-react'
+
+
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '../components/ui/card'
 import { Input } from '../components/ui/input'
@@ -26,6 +29,8 @@ interface QuickAction {
 
 export default function DashboardPage() {
     const navigate = useNavigate()
+    const { t } = useTranslation()
+
     const [stats, setStats] = useState<Stats | null>(null)
     const [loading, setLoading] = useState(!hasValidStatsCache())
     const [error, setError] = useState<string | null>(null)
@@ -43,17 +48,17 @@ export default function DashboardPage() {
     }, [])
 
     const placeholders = isMobile ? [
-        "Train a classifier...",
-        "Survival model...",
-        "Classify tissue...",
-        "Validate model...",
-        "Analyze results..."
+        t('dashboard.aiCommandPlaceholder.mobile1'),
+        t('dashboard.aiCommandPlaceholder.mobile2'),
+        t('dashboard.aiCommandPlaceholder.mobile3'),
+        t('dashboard.aiCommandPlaceholder.mobile4'),
+        t('dashboard.aiCommandPlaceholder.mobile5'),
     ] : [
-        "e.g. Train a classifier to distinguish tumor from normal tissue...",
-        "e.g. Build a survival prediction model for this cohort...",
-        "e.g. Classify tissue into tumor, stroma and necrosis...",
-        "e.g. Validate my model on an external dataset...",
-        "e.g. Analyze the performance of my trained model..."
+        t('dashboard.aiCommandPlaceholder.desktop1'),
+        t('dashboard.aiCommandPlaceholder.desktop2'),
+        t('dashboard.aiCommandPlaceholder.desktop3'),
+        t('dashboard.aiCommandPlaceholder.desktop4'),
+        t('dashboard.aiCommandPlaceholder.desktop5'),
     ]
 
     useEffect(() => {
@@ -164,10 +169,10 @@ export default function DashboardPage() {
         const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
         const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
 
-        if (diffMins < 1) return 'Just now'
-        if (diffMins < 60) return `${diffMins} minutes ago`
-        if (diffHours < 24) return `${diffHours} hours ago`
-        if (diffDays < 7) return `${diffDays} days ago`
+        if (diffMins < 1) return t('time.justNow')
+        if (diffMins < 60) return t('time.minutesAgo', { count: diffMins })
+        if (diffHours < 24) return t('time.hoursAgo', { count: diffHours })
+        if (diffDays < 7) return t('time.daysAgo', { count: diffDays })
         return date.toLocaleDateString()
     }
 
@@ -213,32 +218,32 @@ export default function DashboardPage() {
 
     const workflowModules = [
         {
-            title: 'Data Repository',
-            description: 'Manage registered datasets',
+            title: t('dashboard.dataRepository'),
+            description: t('dashboard.dataRepositoryDesc'),
             icon: Database,
-            mainAction: { label: 'Browse', path: '/wsi-list' },
-            subAction: { label: 'Register', path: '/register' },
+            mainAction: { label: t('dashboard.browse'), path: '/wsi-list' },
+            subAction: { label: t('dashboard.registerData'), path: '/register' },
             color: 'text-blue-600',
             bg: 'bg-blue-50',
             border: 'border-blue-100',
             ring: 'focus-within:ring-blue-500',
         },
         {
-            title: 'Analysis Lab',
-            description: 'Run & monitor tasks',
+            title: t('dashboard.analysisLab'),
+            description: t('dashboard.analysisLabDesc'),
             icon: Brain,
-            mainAction: { label: 'Tasks', path: '/task-list' },
-            subAction: { label: 'New Run', path: '/ai-chat' },
+            mainAction: { label: t('dashboard.viewTasks'), path: '/task-list' },
+            subAction: { label: t('dashboard.newRun'), path: '/ai-chat' },
             color: 'text-violet-600',
             bg: 'bg-violet-50',
             border: 'border-violet-100',
             ring: 'focus-within:ring-violet-500',
         },
         {
-            title: 'Insights & Reports',
-            description: 'Visualize findings',
+            title: t('dashboard.insightsReports'),
+            description: t('dashboard.insightsReportsDesc'),
             icon: LineChart,
-            mainAction: { label: 'Reports', path: '/tools' }, // Placeholder for reports
+            mainAction: { label: t('dashboard.viewReports'), path: '/tools' },
             subAction: null,
             color: 'text-emerald-600',
             bg: 'bg-emerald-50',
@@ -249,19 +254,20 @@ export default function DashboardPage() {
 
     const greeting = () => {
         const hour = new Date().getHours()
-        if (hour < 12) return 'Good morning'
-        if (hour < 18) return 'Good afternoon'
-        return 'Good evening'
+        if (hour < 12) return t('dashboard.greeting.morning')
+        if (hour < 18) return t('dashboard.greeting.afternoon')
+        return t('dashboard.greeting.evening')
     }
+
 
     return (
         <div className="flex-1 flex flex-col w-full max-w-[1600px] mx-auto px-4 sm:px-8 py-6 space-y-8">
             {/* Header Section */}
             <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-4">
                 <div className="space-y-1">
-                    <h1 className="text-3xl font-bold tracking-tight text-gray-900">{greeting()}, Researcher</h1>
+                    <h1 className="text-3xl font-bold tracking-tight text-gray-900">{greeting()}, {t('dashboard.title')}</h1>
                     <p className="text-gray-500 text-lg">
-                        What would you like to discover today?
+                        {t('dashboard.subtitle')}
                     </p>
                 </div>
                 {/* Optional: System Status or simple date could go here */}
@@ -353,7 +359,7 @@ export default function DashboardPage() {
             <div>
                 <div className="flex items-center gap-2 mb-4 px-1">
                     <LayoutGrid className="w-4 h-4 text-gray-400" />
-                    <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-widest">Workflow</h3>
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-widest">{t('dashboard.workflow')}</h3>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -406,7 +412,7 @@ export default function DashboardPage() {
                     <div className="flex items-center justify-between px-1">
                         <div className="flex items-center gap-2">
                             <FolderOpen className="w-4 h-4 text-gray-400" />
-                            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-widest">Recent Data</h3>
+                             <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-widest">{t('dashboard.recentData')}</h3>
                         </div>
                         <div className="flex items-center gap-2">
                             <Button
@@ -419,7 +425,7 @@ export default function DashboardPage() {
                                 <RefreshCw className={`w-3.5 h-3.5 ${activityLoading ? 'animate-spin' : ''}`} />
                             </Button>
                             <Button variant="link" className="text-xs h-auto p-0 text-indigo-600" onClick={() => navigate('/wsi-list')}>
-                                View all
+                                 {t('dashboard.viewAll')}
                             </Button>
                         </div>
                     </div>
@@ -429,7 +435,7 @@ export default function DashboardPage() {
                             {activityLoading ? (
                                 <div className="p-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-gray-300" /></div>
                             ) : visibleUploads.length === 0 ? (
-                                <div className="p-8 text-center text-gray-400 text-sm">No recent files</div>
+                                 <div className="p-8 text-center text-gray-400 text-sm">{t('dashboard.noRecentFiles')}</div>
                             ) : (
                                 visibleUploads.slice(0, 4).map((img) => (
                                     <div
@@ -457,7 +463,7 @@ export default function DashboardPage() {
                     <div className="flex items-center justify-between px-1">
                         <div className="flex items-center gap-2">
                             <Brain className="w-4 h-4 text-gray-400" />
-                            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-widest">Recent Analysis</h3>
+                             <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-widest">{t('dashboard.recentAnalysis')}</h3>
                         </div>
                         <div className="flex items-center gap-2">
                             <Button
@@ -470,7 +476,7 @@ export default function DashboardPage() {
                                 <RefreshCw className={`w-3.5 h-3.5 ${activityLoading ? 'animate-spin' : ''}`} />
                             </Button>
                             <Button variant="link" className="text-xs h-auto p-0 text-indigo-600" onClick={() => navigate('/task-list')}>
-                                View all
+                                 {t('dashboard.viewAll')}
                             </Button>
                         </div>
                     </div>
@@ -480,7 +486,7 @@ export default function DashboardPage() {
                             {activityLoading ? (
                                 <div className="p-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-gray-300" /></div>
                             ) : visibleTasks.length === 0 ? (
-                                <div className="p-8 text-center text-gray-400 text-sm">No recent tasks</div>
+                                 <div className="p-8 text-center text-gray-400 text-sm">{t('dashboard.noRecentTasks')}</div>
                             ) : (
                                 visibleTasks.slice(0, 4).map((task) => (
                                     <div
@@ -501,7 +507,7 @@ export default function DashboardPage() {
                                                             <Loader2 className="w-5 h-5 animate-spin" />}
                                         </div>
                                         <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium text-gray-900 truncate">{task.task_name || 'Untitled Task'}</p>
+                                             <p className="text-sm font-medium text-gray-900 truncate">{task.task_name || t('dashboard.untitledTask')}</p>
                                             <div className="flex items-center gap-2">
                                                 <Badge variant="outline" className="text-[10px] px-1 py-0 border-gray-200 text-gray-500 capitalize">
                                                     {task.task_type?.replace(/_/g, ' ')}

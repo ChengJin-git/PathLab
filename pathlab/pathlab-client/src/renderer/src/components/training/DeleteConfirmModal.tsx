@@ -5,6 +5,7 @@
  */
 
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { AlertTriangle } from 'lucide-react'
 
 export interface WSIDeleteInfo {
@@ -39,9 +40,14 @@ export function DeleteConfirmModal({
   onConfirm,
   onCancel,
 }: DeleteConfirmModalProps) {
+  const { t } = useTranslation()
   const isBatch = mode === 'batch'
-  const title = isBatch ? 'Delete Multiple Slides?' : 'Delete Slide?'
-  const buttonText = deleting ? 'Deleting...' : isBatch ? `Delete ${selectedCount}` : 'Delete'
+  const title = isBatch ? t('training.deleteConfirm.titleBatch') : t('training.deleteConfirm.titleSingle')
+  const buttonText = deleting
+    ? t('training.deleteConfirm.deleting')
+    : isBatch
+      ? t('training.deleteConfirm.deleteCount', { count: selectedCount })
+      : t('common.delete')
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -52,7 +58,7 @@ export function DeleteConfirmModal({
             <AlertTriangle className="w-8 h-8 text-red-600" />
           </div>
           <h3 className="text-2xl font-bold text-gray-900 mb-2">{title}</h3>
-          <p className="text-gray-600">This action cannot be undone</p>
+          <p className="text-gray-600">{t('training.deleteConfirm.cannotUndo')}</p>
         </div>
 
         {/* Info */}
@@ -60,12 +66,12 @@ export function DeleteConfirmModal({
           <div className="bg-gray-50 rounded-lg p-4 mb-6">
             <div className="space-y-2">
               <div className="flex justify-between">
-                <span className="text-sm font-medium text-gray-700">Filename:</span>
+                <span className="text-sm font-medium text-gray-700">{t('training.deleteConfirm.filename')}:</span>
                 <span className="text-sm text-gray-900 font-semibold">{wsiToDelete.original_filename || wsiToDelete.wsi_id}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-sm font-medium text-gray-700">Label:</span>
-                <span className="text-sm text-gray-900">{wsiToDelete.label || 'Unknown'}</span>
+                <span className="text-sm font-medium text-gray-700">{t('training.deleteConfirm.label')}:</span>
+                <span className="text-sm text-gray-900">{wsiToDelete.label || t('training.deleteConfirm.unknown')}</span>
               </div>
             </div>
           </div>
@@ -74,7 +80,7 @@ export function DeleteConfirmModal({
         {isBatch && (
           <div className="bg-gray-50 rounded-lg p-4 mb-6">
             <p className="text-sm text-gray-900">
-              You are about to delete <strong>{selectedCount} file(s)</strong>
+              {t('training.deleteConfirm.aboutToDelete', { count: selectedCount })}
             </p>
           </div>
         )}
@@ -82,10 +88,10 @@ export function DeleteConfirmModal({
         {/* Warning */}
         <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-6">
           <p className="text-sm text-red-800">
-            <strong>Warning:</strong>{' '}
+            <strong>{t('training.deleteConfirm.warning')}:</strong>{' '}
             {isBatch
-              ? 'This will permanently delete all selected slides, their files, analysis results, and associated data.'
-              : 'This will permanently delete the slide file, all analysis results, and associated data.'}
+              ? t('training.deleteConfirm.warningBatchText')
+              : t('training.deleteConfirm.warningSingleText')}
           </p>
         </div>
 
@@ -96,7 +102,7 @@ export function DeleteConfirmModal({
             disabled={deleting}
             className="flex-1 px-6 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium disabled:opacity-50"
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             onClick={onConfirm}
@@ -110,4 +116,3 @@ export function DeleteConfirmModal({
     </div>
   )
 }
-

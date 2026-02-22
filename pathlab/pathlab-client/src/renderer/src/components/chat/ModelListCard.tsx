@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Box, Database, Tag, Brain, ChevronDown, ChevronUp, Network, Fingerprint, Activity, Clock } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { Card, CardContent } from '../ui/card'
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
@@ -44,6 +45,7 @@ export function removeModelListBlock(content: string): string {
 }
 
 export function ModelListCard({ config }: { config: ModelListConfig }) {
+  const { t } = useTranslation()
   const { models } = config
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
@@ -56,7 +58,7 @@ export function ModelListCard({ config }: { config: ModelListConfig }) {
       <Card className="w-full max-w-full border-dashed bg-muted/20">
         <CardContent className="flex flex-col items-center justify-center py-8 text-muted-foreground">
           <Box className="w-10 h-10 mb-2 opacity-20" />
-          <p className="text-sm">No trained models found.</p>
+          <p className="text-sm">{t('chatComponents.modelList.noModelsFound')}</p>
         </CardContent>
       </Card>
     )
@@ -67,7 +69,7 @@ export function ModelListCard({ config }: { config: ModelListConfig }) {
       <div className="flex items-center justify-between px-1">
         <h3 className="text-sm font-medium text-foreground/80 flex items-center gap-2">
           <Brain className="w-4 h-4 text-primary" />
-          Trained Models ({models.length})
+          {t('chatComponents.modelList.title', { count: models.length })}
         </h3>
       </div>
 
@@ -97,7 +99,7 @@ export function ModelListCard({ config }: { config: ModelListConfig }) {
                         "text-[10px] h-5 px-1.5 font-normal shrink-0",
                         model.task_type === 'survival' ? "bg-orange-50 text-orange-700 border-orange-200" : "bg-blue-50 text-blue-700 border-blue-200"
                       )}>
-                        {model.task_type === 'survival' ? 'Survival' : 'Classification'}
+                        {model.task_type === 'survival' ? t('chatComponents.modelList.survival') : t('chatComponents.modelList.classification')}
                       </Badge>
                     </div>
                     
@@ -133,7 +135,7 @@ export function ModelListCard({ config }: { config: ModelListConfig }) {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div className="space-y-1">
                             <span className="text-xs text-muted-foreground flex items-center gap-1">
-                              <Fingerprint className="w-3 h-3" /> Model ID
+                              <Fingerprint className="w-3 h-3" /> {t('chatComponents.modelList.modelId')}
                             </span>
                             <p className="font-mono text-[10px] sm:text-xs bg-muted/50 p-1.5 rounded break-all select-all">
                               {model.id}
@@ -143,7 +145,7 @@ export function ModelListCard({ config }: { config: ModelListConfig }) {
                           {model.task_id && (
                             <div className="space-y-1">
                               <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                <Activity className="w-3 h-3" /> Task ID
+                                <Activity className="w-3 h-3" /> {t('chatComponents.modelList.taskId')}
                               </span>
                               <p className="font-mono text-[10px] sm:text-xs bg-muted/50 p-1.5 rounded break-all select-all">
                                 {model.task_id}
@@ -155,7 +157,7 @@ export function ModelListCard({ config }: { config: ModelListConfig }) {
                         {model.classes && model.classes.length > 0 && (
                           <div className="space-y-1.5">
                             <span className="text-xs text-muted-foreground flex items-center gap-1">
-                              <Tag className="w-3 h-3" /> Classes ({model.classes.length})
+                              <Tag className="w-3 h-3" /> {t('chatComponents.modelList.classes', { count: model.classes.length })}
                             </span>
                             <div className="flex flex-wrap gap-1.5">
                               {model.classes.map((cls, i) => (
@@ -170,7 +172,7 @@ export function ModelListCard({ config }: { config: ModelListConfig }) {
                         <div className="flex flex-wrap gap-3 text-xs text-muted-foreground pt-1">
                           {model.embedding_dim && (
                             <div className="bg-muted/30 px-2 py-1 rounded">
-                              Emb: <span className="text-foreground font-mono">{model.embedding_dim}</span>
+                              {t('chatComponents.modelList.embeddingDim')}: <span className="text-foreground font-mono">{model.embedding_dim}</span>
                             </div>
                           )}
                           {model.created_at && (

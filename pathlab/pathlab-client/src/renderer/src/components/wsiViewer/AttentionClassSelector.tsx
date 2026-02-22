@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { HeatmapData } from '../../api'
 import { Card } from '../common'
 import { Layers, ChevronDown, CheckCircle2 } from 'lucide-react'
@@ -17,13 +18,14 @@ export function AttentionClassSelector({
   isClassDropdownOpen,
   setIsClassDropdownOpen
 }: AttentionClassSelectorProps) {
+  const { t } = useTranslation()
   return (
     <Card className="mb-4 overflow-visible">
       <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 bg-gradient-to-br from-purple-50 to-white">
         <Layers className="w-4 h-4 text-purple-500" />
-        <h3 className="m-0 text-sm font-semibold text-gray-900">Attention Class</h3>
+        <h3 className="m-0 text-sm font-semibold text-gray-900">{t('wsiViewerComponents.attentionClassSelector.attentionClass')}</h3>
         <span className="ml-auto text-xs text-gray-500 bg-purple-100 px-2 py-0.5 rounded">
-          {heatmapData.aggregator || 'multi-class'}
+          {heatmapData.aggregator || t('wsiViewerComponents.attentionClassSelector.multiClass')}
         </span>
       </div>
       <div className="p-3 relative">
@@ -37,10 +39,10 @@ export function AttentionClassSelector({
               <span className="text-gray-900 font-semibold text-sm tracking-tight text-left">
                 {selectedClassIdx !== undefined && heatmapData.classes[selectedClassIdx]
                   ? heatmapData.classes[selectedClassIdx]
-                  : 'Select a class...'}
+                  : t('wsiViewerComponents.attentionClassSelector.selectAClass')}
               </span>
               <span className="text-xs text-gray-500">
-                Class {(selectedClassIdx ?? 0) + 1} of {heatmapData.num_attention_classes}
+                {t('wsiViewerComponents.attentionClassSelector.classOfTotal', { current: (selectedClassIdx ?? 0) + 1, total: heatmapData.num_attention_classes })}
               </span>
             </div>
             <ChevronDown
@@ -81,7 +83,7 @@ export function AttentionClassSelector({
                             ? 'bg-white/20 text-white'
                             : 'bg-purple-50 text-purple-700'
                             }`}>
-                            Class {idx + 1}
+                            {t('wsiViewerComponents.attentionClassSelector.classN', { n: idx + 1 })}
                           </span>
                         </div>
                         {selectedClassIdx === idx && (
@@ -96,10 +98,9 @@ export function AttentionClassSelector({
           )}
         </div>
         <p className="mt-2 text-xs text-gray-500">
-          Select which class's attention to visualize on the slide.
+          {t('wsiViewerComponents.attentionClassSelector.selectClassHint')}
         </p>
       </div>
     </Card>
   )
 }
-

@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import {
   fetchWSIDetail,
   fetchAvailableHeatmaps,
@@ -23,6 +24,7 @@ import { AttentionPatchesPanel } from '../components/wsiViewer/AttentionPatchesP
 import { DeleteResultsModal } from '../components/wsiViewer/DeleteResultsModal'
 
 export default function WSIViewerPage() {
+  const { t } = useTranslation()
   const { wsi_id = '' } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
@@ -192,7 +194,7 @@ export default function WSIViewerPage() {
       setShowDeleteConfirm(false)
     } catch (err) {
       console.error('Failed to delete results:', err)
-      alert(`Failed to delete results: ${err}`)
+      alert(t('wsiViewer.deleteResultsFailed', { error: String(err) }))
     } finally {
       setDeletingResults(false)
     }
@@ -314,7 +316,7 @@ export default function WSIViewerPage() {
       <div className="flex h-screen w-full items-center justify-center bg-gray-50">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-          <p className="text-gray-500 font-medium">Loading file information...</p>
+          <p className="text-gray-500 font-medium">{t('wsiViewer.loadingFileInfo')}</p>
         </div>
       </div>
     )
@@ -343,7 +345,7 @@ export default function WSIViewerPage() {
           >
             <ArrowLeft className="w-4 h-4" />
             <span className="hidden sm:inline">
-              {fromAIChat ? 'Back to Chat' : fromDataset && datasetName ? `Back to ${datasetName}` : 'Back'}
+              {fromAIChat ? t('wsiViewer.backToChat') : fromDataset && datasetName ? t('wsiViewer.backToDataset', { name: datasetName }) : t('common.back')}
             </span>
           </button>
           <div className="w-px h-6 bg-gray-100"></div>
@@ -368,7 +370,7 @@ export default function WSIViewerPage() {
                 })}
                 disabled={!prevWSI}
                 className="p-1 sm:p-1.5 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all"
-                title={prevWSI ? `Previous` : 'No previous slide'}
+                title={prevWSI ? t('common.previous') : t('wsiViewer.noPreviousSlide')}
               >
                 <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
@@ -384,7 +386,7 @@ export default function WSIViewerPage() {
                 })}
                 disabled={!nextWSI}
                 className="p-1 sm:p-1.5 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all"
-                title={nextWSI ? `Next` : 'No next slide'}
+                title={nextWSI ? t('common.next') : t('wsiViewer.noNextSlide')}
               >
                 <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
@@ -421,14 +423,14 @@ export default function WSIViewerPage() {
                 <button
                   onClick={handlePatchZoomIn}
                   className="p-2 hover:bg-gray-100 rounded transition-colors text-gray-600 hover:text-gray-900"
-                  title="Zoom In"
+                  title={t('wsiViewer.zoomIn')}
                 >
                   <Plus className="w-4 h-4" />
                 </button>
                 <button
                   onClick={handlePatchZoomOut}
                   className="p-2 hover:bg-gray-100 rounded transition-colors text-gray-600 hover:text-gray-900"
-                  title="Zoom Out"
+                  title={t('wsiViewer.zoomOut')}
                 >
                   <Minus className="w-4 h-4" />
                 </button>
@@ -436,14 +438,14 @@ export default function WSIViewerPage() {
                 <button
                   onClick={handlePatchReset}
                   className="p-2 hover:bg-gray-100 rounded transition-colors text-gray-600 hover:text-gray-900"
-                  title="Reset View"
+                  title={t('wsiViewer.resetView')}
                 >
                   <RotateCcw className="w-4 h-4" />
                 </button>
                 <button
                   onClick={handlePatchFullscreen}
                   className="p-2 hover:bg-gray-100 rounded transition-colors text-gray-600 hover:text-gray-900"
-                  title="Fullscreen"
+                  title={t('wsiViewer.fullscreen')}
                 >
                   <Maximize2 className="w-4 h-4" />
                 </button>
@@ -459,7 +461,7 @@ export default function WSIViewerPage() {
                 {/* Patch image */}
                 <img
                   src={getPatchFileImageUrl(wsi_id)}
-                  alt="Patch"
+                  alt={t('wsiViewer.patchAlt')}
                   className="w-full h-full object-contain rounded-xl shadow-lg select-none"
                   draggable={false}
                 />
@@ -467,7 +469,7 @@ export default function WSIViewerPage() {
                 {showHeatmap && selectedTaskId && (
                   <img
                     src={getPatchCAMImageUrl(wsi_id, selectedTaskId, selectedFoldKey)}
-                    alt="Heatmap Overlay"
+                    alt={t('wsiViewer.heatmapOverlayAlt')}
                     className="absolute inset-0 w-full h-full object-contain rounded-xl pointer-events-none select-none"
                     style={{ opacity: heatmapOpacity }}
                     draggable={false}
@@ -501,12 +503,12 @@ export default function WSIViewerPage() {
                     }`}
                 >
                   <Layers className="w-4 h-4" />
-                  {showHeatmap ? 'Hide' : 'Show'} Heatmap
+                  {showHeatmap ? t('wsiViewer.hideHeatmap') : t('wsiViewer.showHeatmap')}
                 </button>
 
                 {showHeatmap && (
                   <div className="flex items-center gap-2 px-2 sm:px-0 sm:pl-3 border-t sm:border-t-0 sm:border-l border-gray-200 pt-2 sm:pt-0">
-                    <span className="text-[10px] sm:text-xs text-gray-500 whitespace-nowrap">Opacity:</span>
+                    <span className="text-[10px] sm:text-xs text-gray-500 whitespace-nowrap">{t('wsiViewer.opacity')}:</span>
                     <input
                       type="range"
                       min="0.1"
@@ -524,9 +526,9 @@ export default function WSIViewerPage() {
               {showHeatmap && (
                 <div className="mt-2 pt-2 border-t border-gray-100">
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-gray-400 uppercase tracking-wide">Activation:</span>
+                    <span className="text-[10px] text-gray-400 uppercase tracking-wide">{t('wsiViewer.activation')}:</span>
                     <div className="flex-1 h-2 rounded-full bg-gradient-to-r from-blue-500 via-green-500 via-yellow-500 to-red-500"></div>
-                    <span className="text-[10px] text-gray-500">Low → High</span>
+                    <span className="text-[10px] text-gray-500">{t('wsiViewer.lowToHigh')}</span>
                   </div>
                 </div>
               )}
@@ -538,7 +540,7 @@ export default function WSIViewerPage() {
       {/* Right: Attention Analysis Panel */}
       <div className={`fixed inset-y-0 right-0 lg:relative z-40 lg:z-0 w-full sm:w-[500px] bg-gray-50 border-l border-gray-200 overflow-y-auto p-4 sm:p-6 flex flex-col gap-4 sm:gap-6 transition-transform duration-300 shadow-2xl lg:shadow-none ${isSidebarOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}`}>
         <div className="flex lg:hidden items-center justify-between mb-2">
-          <h2 className="text-lg font-bold text-gray-900">Analysis Data</h2>
+          <h2 className="text-lg font-bold text-gray-900">{t('wsiViewer.analysisData')}</h2>
           <button
             onClick={() => setIsSidebarOpen(false)}
             className="p-2 rounded-lg bg-white border border-gray-200 text-gray-400"
@@ -551,7 +553,7 @@ export default function WSIViewerPage() {
           <div className="flex items-center justify-center py-12">
             <div className="flex flex-col items-center gap-3">
               <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
-              <p className="text-sm text-gray-500">Loading analysis data...</p>
+              <p className="text-sm text-gray-500">{t('wsiViewer.loadingAnalysisData')}</p>
             </div>
           </div>
         )}
@@ -561,10 +563,9 @@ export default function WSIViewerPage() {
           <Card className="overflow-hidden">
             <div className="p-8 text-center">
               <Layers className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <h3 className="text-sm font-semibold text-gray-700 mb-2">No Attention Data Available</h3>
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">{t('wsiViewer.noAttentionData')}</h3>
               <p className="text-xs text-gray-500">
-                This slide has no AI analysis results with attention data.
-                Please run an analysis task first.
+                {t('wsiViewer.noAttentionDataDesc')}
               </p>
             </div>
           </Card>

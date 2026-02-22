@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Rocket, TrendingUp, FileText, ChevronRight, ArrowLeft } from 'lucide-react'
@@ -15,25 +16,26 @@ interface Tool {
 
 export default function ToolsPage() {
     const navigate = useNavigate()
+    const { t } = useTranslation()
 
     const tools: Tool[] = [
         {
-            title: 'Custom Analysis',
-            description: 'Configure and run specific AI models manually.',
+            title: t('toolsPage.tools.customAnalysis'),
+            description: t('toolsPage.tools.customAnalysisDesc'),
             icon: Rocket,
             path: '/task-setup',
             color: 'text-rose-500',
         },
         {
-            title: 'Results Viewer',
-            description: 'Explore detailed heatmaps and classification results.',
+            title: t('toolsPage.tools.resultsViewer'),
+            description: t('toolsPage.tools.resultsViewerDesc'),
             icon: TrendingUp,
             path: '/results',
             color: 'text-indigo-500',
         },
         {
-            title: 'Report Generator',
-            description: 'Create PDF reports from your analysis data.',
+            title: t('toolsPage.tools.reportGenerator'),
+            description: t('toolsPage.tools.reportGeneratorDesc'),
             icon: FileText,
             path: '/reports',
             color: 'text-emerald-500',
@@ -45,8 +47,8 @@ export default function ToolsPage() {
         <div className="w-full py-4 sm:py-8 px-4 sm:px-6 max-w-7xl mx-auto flex flex-col h-full overflow-hidden">
             <div className="mb-4 sm:mb-8">
                 <PageHeader
-                    title="Insights & Reports"
-                    description="Visualize findings and generate reports."
+                    title={t('toolsPage.title')}
+                    description={t('toolsPage.description')}
                 >
                     <Button
                         variant="outline"
@@ -55,7 +57,7 @@ export default function ToolsPage() {
                         className="gap-2 w-full sm:w-auto"
                     >
                         <ArrowLeft className="w-4 h-4" />
-                        Back to Dashboard
+                        {t('toolsPage.backToDashboard')}
                     </Button>
                 </PageHeader>
             </div>
@@ -83,7 +85,7 @@ export default function ToolsPage() {
                                         <CardTitle className={`text-lg sm:text-xl font-bold tracking-tight ${isDisabled ? 'text-gray-400' : 'text-gray-900 group-hover:text-primary-600'} transition-colors`}>{tool.title}</CardTitle>
                                         {isDisabled && (
                                             <span className="inline-flex items-center rounded-full bg-orange-50 px-2.5 py-1 text-xs font-medium text-orange-400 ring-1 ring-inset ring-orange-200">
-                                                Coming Soon
+                                                {t('toolsPage.comingSoon')}
                                             </span>
                                         )}
                                     </div>

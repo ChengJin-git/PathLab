@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { X, Share, PlusSquare, Download, MoreVertical, Smartphone, ExternalLink, Copy, Check } from 'lucide-react'
 import { Button } from './ui/button'
 
@@ -54,6 +55,7 @@ function isRealPWABrowser(ua: string): boolean {
 
 
 export function InstallPWA() {
+    const { t } = useTranslation()
     const [supportsPWA, setSupportsPWA] = useState(false)
     const [promptInstall, setPromptInstall] = useState<any>(null)
     const [isIOS, setIsIOS] = useState(false)
@@ -178,9 +180,11 @@ export function InstallPWA() {
     // ---- Render: In-app browser overlay (WeChat, QQ, etc.) ----
     if (inAppBrowser) {
         const inAppName: Record<string, string> = {
-            wechat: '微信', qq: 'QQ', weibo: '微博', alipay: '支付宝',
-            dingtalk: '钉钉', douyin: '抖音', line: 'LINE',
-            facebook: 'Facebook', instagram: 'Instagram', twitter: 'X/Twitter',
+            wechat: t('installPWA.inAppNames.wechat'), qq: t('installPWA.inAppNames.qq'),
+            weibo: t('installPWA.inAppNames.weibo'), alipay: t('installPWA.inAppNames.alipay'),
+            dingtalk: t('installPWA.inAppNames.dingtalk'), douyin: t('installPWA.inAppNames.douyin'),
+            line: t('installPWA.inAppNames.line'), facebook: t('installPWA.inAppNames.facebook'),
+            instagram: t('installPWA.inAppNames.instagram'), twitter: t('installPWA.inAppNames.twitter'),
         }
         const browserName = inAppName[inAppBrowser] || inAppBrowser
 
@@ -208,10 +212,10 @@ export function InstallPWA() {
                         </div>
 
                         <h2 className="text-xl font-bold text-white mb-3 text-center">
-                            PathLab 支持安装为应用
+                            {t('installPWA.supportsInstall')}
                         </h2>
                         <p className="text-white/70 text-sm text-center mb-6 max-w-[280px]">
-                            {browserName} 内置浏览器不支持安装，请点击右上角菜单，选择在浏览器中打开
+                            {t('installPWA.inAppBrowserNotSupported', { browser: browserName })}
                         </p>
 
                         {/* Step-by-step guide */}
@@ -221,9 +225,9 @@ export function InstallPWA() {
                                     <span className="text-sm font-bold text-white">1</span>
                                 </div>
                                 <div className="flex items-center gap-1.5 text-sm text-white">
-                                    <span>点击右上角</span>
+                                    <span>{t('installPWA.inApp.step1Prefix')}</span>
                                     <span className="font-bold text-lg tracking-wider">···</span>
-                                    <span>按钮</span>
+                                    <span>{t('installPWA.inApp.step1Suffix')}</span>
                                 </div>
                             </div>
                             <div className="flex items-center gap-3 p-3 bg-white/10 backdrop-blur rounded-xl">
@@ -231,10 +235,10 @@ export function InstallPWA() {
                                     <span className="text-sm font-bold text-white">2</span>
                                 </div>
                                 <div className="flex items-center gap-1.5 text-sm text-white">
-                                    <span>选择</span>
+                                    <span>{t('installPWA.inApp.step2Prefix')}</span>
                                     <ExternalLink className="w-4 h-4 text-blue-300" />
                                     <span className="font-semibold text-blue-300">
-                                        {isIOS ? '在 Safari 中打开' : '在浏览器中打开'}
+                                        {isIOS ? t('installPWA.inApp.openInSafari') : t('installPWA.inApp.openInBrowser')}
                                     </span>
                                 </div>
                             </div>
@@ -246,7 +250,7 @@ export function InstallPWA() {
                             className="flex items-center gap-2 px-4 py-2.5 bg-white/10 hover:bg-white/20 rounded-xl text-white/80 text-sm transition-colors"
                         >
                             {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
-                            {copied ? '已复制链接' : '复制链接到剪贴板'}
+                            {copied ? t('installPWA.linkCopied') : t('installPWA.copyLink')}
                         </button>
                     </div>
 
@@ -256,7 +260,7 @@ export function InstallPWA() {
                             onClick={handleDismiss}
                             className="text-white/40 text-sm hover:text-white/60 transition-colors"
                         >
-                            暂不安装
+                            {t('installPWA.notNow')}
                         </button>
                     </div>
                 </div>
@@ -297,12 +301,12 @@ export function InstallPWA() {
                             <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-50 to-cyan-50 border border-gray-200 flex items-center justify-center mb-3 shadow-sm">
                                 <img src="/images/pwa-icon.png" alt="PathLab" className="w-12 h-12 object-contain" />
                             </div>
-                            <h3 className="text-lg font-bold text-gray-900">PathLab 支持安装为应用</h3>
+                            <h3 className="text-lg font-bold text-gray-900">{t('installPWA.supportsInstall')}</h3>
                             <p className="text-sm text-gray-500 mt-2 max-w-[280px] leading-relaxed">
-                                当前浏览器暂不支持此功能，你可以继续使用网页版，体验完全一致。
+                                {t('installPWA.unsupported.description')}
                             </p>
                             <p className="text-xs text-gray-400 mt-1.5 max-w-[280px] leading-relaxed">
-                                或者换用 <a href="https://sj.qq.com/appdetail/com.android.chrome/" target="_blank" rel="noopener noreferrer" className="text-blue-500 underline">Chrome</a>、<a href="https://sj.qq.com/appdetail/com.tencent.pcgame.msedgepc/" target="_blank" rel="noopener noreferrer" className="text-blue-500 underline">Edge</a> 等浏览器安装
+                                {t('installPWA.unsupported.switchBrowserPrefix')}<a href="https://sj.qq.com/appdetail/com.android.chrome/" target="_blank" rel="noopener noreferrer" className="text-blue-500 underline">Chrome</a>{t('installPWA.unsupported.switchBrowserSeparator')}<a href="https://sj.qq.com/appdetail/com.tencent.pcgame.msedgepc/" target="_blank" rel="noopener noreferrer" className="text-blue-500 underline">Edge</a>{t('installPWA.unsupported.switchBrowserSuffix')}
                             </p>
                         </div>
 
@@ -310,7 +314,7 @@ export function InstallPWA() {
                             onClick={handleDismiss}
                             className="w-full h-12 bg-gray-900 hover:bg-gray-800 text-white font-semibold text-base rounded-xl transition-all"
                         >
-                            知道了，继续使用网页版
+                            {t('installPWA.unsupported.continueWeb')}
                         </Button>
                     </div>
                 </div>
@@ -353,11 +357,11 @@ export function InstallPWA() {
                         <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-50 to-cyan-50 border border-gray-200 flex items-center justify-center mb-3 shadow-sm">
                             <img src="/images/pwa-icon.png" alt="PathLab" className="w-12 h-12 object-contain" />
                         </div>
-                        <h3 className="text-lg font-bold text-gray-900">PathLab 支持安装为应用</h3>
+                        <h3 className="text-lg font-bold text-gray-900">{t('installPWA.supportsInstall')}</h3>
                         <p className="text-sm text-gray-500 mt-1 max-w-[260px]">
                             {isIOS
-                                ? '将 PathLab 添加到主屏幕，获得最佳体验'
-                                : '将 PathLab 安装到设备，方便快速访问'}
+                                ? t('installPWA.iosSubtitle')
+                                : t('installPWA.androidSubtitle')}
                         </p>
                     </div>
 
@@ -369,10 +373,10 @@ export function InstallPWA() {
                                     <span className="text-sm font-bold text-blue-600">1</span>
                                 </div>
                                 <div className="flex items-center gap-1.5 text-sm text-gray-700">
-                                    <span>Tap the</span>
+                                    <span>{t('installPWA.ios.step1Prefix')}</span>
                                     <Share className="w-4 h-4 text-blue-600" />
-                                    <span className="font-semibold">Share</span>
-                                    <span>button below</span>
+                                    <span className="font-semibold">{t('installPWA.ios.share')}</span>
+                                    <span>{t('installPWA.ios.step1Suffix')}</span>
                                 </div>
                             </div>
                             <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
@@ -380,9 +384,9 @@ export function InstallPWA() {
                                     <span className="text-sm font-bold text-blue-600">2</span>
                                 </div>
                                 <div className="flex items-center gap-1.5 text-sm text-gray-700">
-                                    <span>Scroll and tap</span>
+                                    <span>{t('installPWA.ios.step2Prefix')}</span>
                                     <PlusSquare className="w-4 h-4 text-blue-600" />
-                                    <span className="font-semibold">Add to Home Screen</span>
+                                    <span className="font-semibold">{t('installPWA.ios.addToHomeScreen')}</span>
                                 </div>
                             </div>
                         </div>
@@ -396,9 +400,9 @@ export function InstallPWA() {
                                     <span className="text-sm font-bold text-blue-600">1</span>
                                 </div>
                                 <div className="flex items-center gap-1.5 text-sm text-gray-700">
-                                    <span>Tap the</span>
+                                    <span>{t('installPWA.android.step1Prefix')}</span>
                                     <MoreVertical className="w-4 h-4 text-gray-800" />
-                                    <span className="font-semibold">menu button</span>
+                                    <span className="font-semibold">{t('installPWA.android.menuButton')}</span>
                                 </div>
                             </div>
                             <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
@@ -406,9 +410,9 @@ export function InstallPWA() {
                                     <span className="text-sm font-bold text-blue-600">2</span>
                                 </div>
                                 <div className="flex items-center gap-1.5 text-sm text-gray-700">
-                                    <span>Tap</span>
+                                    <span>{t('installPWA.android.step2Prefix')}</span>
                                     <Download className="w-4 h-4 text-blue-600" />
-                                    <span className="font-semibold">Install App</span>
+                                    <span className="font-semibold">{t('installPWA.android.installApp')}</span>
                                 </div>
                             </div>
                         </div>
@@ -421,7 +425,7 @@ export function InstallPWA() {
                             className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-base rounded-xl shadow-lg shadow-blue-200 flex items-center justify-center gap-2 transition-all"
                         >
                             <Download className="w-5 h-5" />
-                            Install Now
+                            {t('installPWA.installNow')}
                         </Button>
                     )}
 
@@ -429,7 +433,7 @@ export function InstallPWA() {
                     {!isIOS && !isAndroid && !canOneClickInstall && (
                         <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl text-sm text-gray-600">
                             <Smartphone className="w-4 h-4 text-gray-500" />
-                            <span>Use your browser menu to install this app</span>
+                            <span>{t('installPWA.useBrowserMenu')}</span>
                         </div>
                     )}
 
@@ -438,7 +442,7 @@ export function InstallPWA() {
                         onClick={handleDismiss}
                         className="w-full mt-3 py-2 text-sm text-gray-400 hover:text-gray-600 transition-colors text-center"
                     >
-                        Not now
+                        {t('installPWA.notNow')}
                     </button>
                 </div>
             </div>

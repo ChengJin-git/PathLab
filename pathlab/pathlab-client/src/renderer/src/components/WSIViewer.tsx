@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { PREPROCESSING_BASE, API_BASE } from '../config'
 import { HeatmapData, getAuthToken, getPatchFileImageUrl } from '../api'
 import { Plus, Minus, RotateCcw, Maximize, Minimize, Loader2 } from 'lucide-react'
@@ -130,6 +131,7 @@ export default function WSIViewer({
   dataLevel = 'wsi',
   onHeatmapLoaded
 }: WSIViewerProps) {
+  const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<HTMLDivElement>(null)
   const patchImageRef = useRef<HTMLImageElement>(null)
@@ -237,7 +239,7 @@ export default function WSIViewer({
 
         osdViewer.addHandler('open-failed', (event: any) => {
           setLoading(false)
-          setError('Failed to load tiles')
+          setError(t('wsiViewerComponents.viewer.failedToLoadTiles'))
           console.error('OpenSeadragon failed to open:', event)
         })
 
@@ -245,7 +247,7 @@ export default function WSIViewer({
       } catch (err: any) {
         if (!cancelled) {
           setLoading(false)
-          setError(err.message || 'Failed to initialize viewer')
+          setError(err.message || t('wsiViewerComponents.viewer.failedToInitialize'))
         }
       }
     }
@@ -483,7 +485,7 @@ export default function WSIViewer({
         {loading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50/80 backdrop-blur-sm z-50">
             <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mb-2" />
-            <span className="text-gray-500 font-medium text-sm">Loading Image...</span>
+            <span className="text-gray-500 font-medium text-sm">{t('wsiViewerComponents.viewer.loadingImage')}</span>
           </div>
         )}
 
@@ -501,14 +503,14 @@ export default function WSIViewer({
             <button
               onClick={handlePatchZoomIn}
               className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
-              title="Zoom In"
+              title={t('wsiViewerComponents.viewer.zoomIn')}
             >
               <Plus className="w-5 h-5" />
             </button>
             <button
               onClick={handlePatchZoomOut}
               className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
-              title="Zoom Out"
+              title={t('wsiViewerComponents.viewer.zoomOut')}
             >
               <Minus className="w-5 h-5" />
             </button>
@@ -516,14 +518,14 @@ export default function WSIViewer({
             <button
               onClick={handlePatchReset}
               className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
-              title="Reset View"
+              title={t('wsiViewerComponents.viewer.resetView')}
             >
               <RotateCcw className="w-4 h-4" />
             </button>
             <button
               onClick={handleFullScreen}
               className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
-              title={isFullScreen ? "Exit Full Screen" : "Full Screen"}
+              title={isFullScreen ? t('wsiViewerComponents.viewer.exitFullScreen') : t('wsiViewerComponents.viewer.fullScreen')}
             >
               {isFullScreen ? (
                 <Minimize className="w-4 h-4" />
@@ -539,7 +541,7 @@ export default function WSIViewer({
           <img
             ref={patchImageRef}
             src={patchImageUrl}
-            alt="Patch Image"
+            alt={t('wsiViewerComponents.viewer.patchImageAlt')}
             className="transition-transform duration-200 max-w-full max-h-full object-contain"
             style={{
               cursor: patchZoom > 1 ? 'grab' : 'default',
@@ -550,7 +552,7 @@ export default function WSIViewer({
             onLoad={() => setLoading(false)}
             onError={() => {
               setLoading(false)
-              setError('Failed to load image')
+              setError(t('wsiViewerComponents.viewer.failedToLoadImage'))
             }}
           />
         </div>
@@ -564,7 +566,7 @@ export default function WSIViewer({
       {loading && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50/80 backdrop-blur-sm z-50">
            <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mb-2" />
-           <span className="text-gray-500 font-medium text-sm">Loading Preview...</span>
+           <span className="text-gray-500 font-medium text-sm">{t('wsiViewerComponents.viewer.loadingPreview')}</span>
         </div>
       )}
 
@@ -582,14 +584,14 @@ export default function WSIViewer({
           <button
             onClick={handleZoomIn}
             className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
-            title="Zoom In"
+            title={t('wsiViewerComponents.viewer.zoomIn')}
           >
             <Plus className="w-5 h-5" />
           </button>
           <button
             onClick={handleZoomOut}
             className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
-            title="Zoom Out"
+            title={t('wsiViewerComponents.viewer.zoomOut')}
           >
             <Minus className="w-5 h-5" />
           </button>
@@ -597,14 +599,14 @@ export default function WSIViewer({
           <button
             onClick={handleReset}
             className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
-            title="Reset View"
+            title={t('wsiViewerComponents.viewer.resetView')}
           >
             <RotateCcw className="w-4 h-4" />
           </button>
           <button
             onClick={handleFullScreen}
             className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
-            title={isFullScreen ? "Exit Full Screen" : "Full Screen"}
+            title={isFullScreen ? t('wsiViewerComponents.viewer.exitFullScreen') : t('wsiViewerComponents.viewer.fullScreen')}
           >
             {isFullScreen ? (
               <Minimize className="w-4 h-4" />
@@ -618,7 +620,7 @@ export default function WSIViewer({
         {heatmapLoading && showHeatmap && (
            <div className="bg-white/90 backdrop-blur-xl border border-indigo-100 shadow-lg rounded-xl px-4 py-2.5 flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
              <Loader2 className="w-4 h-4 text-indigo-600 animate-spin" />
-             <span className="text-sm font-medium text-indigo-900">Loading Heatmap...</span>
+             <span className="text-sm font-medium text-indigo-900">{t('wsiViewerComponents.viewer.loadingHeatmap')}</span>
            </div>
         )}
       </div>
@@ -629,4 +631,3 @@ export default function WSIViewer({
 }
 
 // Remove old styles object as we use Tailwind classes now
-

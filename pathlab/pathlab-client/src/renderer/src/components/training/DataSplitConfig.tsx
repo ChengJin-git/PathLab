@@ -5,6 +5,7 @@
  */
 
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
@@ -37,13 +38,14 @@ export function DataSplitConfig({
   selectedDatasetId,
   selectedDatasetName,
 }: DataSplitConfigProps) {
+  const { t } = useTranslation()
   const navigate = useNavigate()
 
   return (
     <Card className="mt-6 p-6">
       <h3 className="text-md font-semibold text-gray-900 mb-4 flex items-center gap-2">
         <Layers className="w-5 h-5 text-gray-500" />
-        Data Split Configuration
+        {t('training.dataSplit.title')}
       </h3>
 
       <div className="space-y-4">
@@ -52,16 +54,16 @@ export function DataSplitConfig({
           <SplitOption
             selected={splitStrategy === 'random'}
             onClick={() => setSplitStrategy('random')}
-            title="Random Split"
-            description="Standard 70/10/20 split (Train/Val/Test)."
+            title={t('training.dataSplit.randomSplit')}
+            description={t('training.dataSplit.randomSplitDesc')}
           />
 
           {/* K-Fold */}
           <SplitOption
             selected={splitStrategy === 'k_fold'}
             onClick={() => setSplitStrategy('k_fold')}
-            title="K-Fold CV"
-            description="Cross-validation with K folds."
+            title={t('training.dataSplit.kFoldCV')}
+            description={t('training.dataSplit.kFoldCVDesc')}
           />
 
           {/* Manual Split */}
@@ -69,8 +71,8 @@ export function DataSplitConfig({
             <SplitOption
               selected={splitStrategy === 'manual'}
               onClick={() => setSplitStrategy('manual')}
-              title="Custom Split"
-              description="Use existing defined splits."
+              title={t('training.dataSplit.customSplit')}
+              description={t('training.dataSplit.customSplitDesc')}
             />
           ) : (
             <div
@@ -79,9 +81,9 @@ export function DataSplitConfig({
             >
               <div className="flex items-center gap-2 mb-1">
                 <UploadCloud className="w-4 h-4 text-gray-500" />
-                <span className="font-medium text-sm text-gray-600">Upload Splits</span>
+                <span className="font-medium text-sm text-gray-600">{t('training.dataSplit.uploadSplits')}</span>
               </div>
-              <p className="text-xs text-blue-600">No splits found. Click to upload CSV.</p>
+              <p className="text-xs text-blue-600">{t('training.dataSplit.noSplitsFound')}</p>
             </div>
           )}
         </div>
@@ -140,20 +142,22 @@ function SplitOption({
 
 /** Random split configuration details */
 function RandomSplitDetails({ validation }: { validation: RandomSplitValidation }) {
+  const { t } = useTranslation()
+
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-4 text-sm text-gray-600 bg-gray-50 p-3 rounded-lg border border-gray-100">
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-green-500"></span>
-          <span>Train: 70%</span>
+          <span>{t('training.dataSplit.train70')}</span>
         </div>
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-          <span>Val: 10%</span>
+          <span>{t('training.dataSplit.val10')}</span>
         </div>
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-          <span>Test: 20%</span>
+          <span>{t('training.dataSplit.test20')}</span>
         </div>
       </div>
 
@@ -162,7 +166,7 @@ function RandomSplitDetails({ validation }: { validation: RandomSplitValidation 
           <div className="flex items-start gap-2">
             <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
             <div className="text-sm text-red-700">
-              <p className="font-medium">Cannot use Random 7:1:2 split</p>
+              <p className="font-medium">{t('training.dataSplit.cannotRandomSplit')}</p>
               <p className="text-xs mt-1">{validation.message}</p>
             </div>
           </div>
@@ -173,11 +177,10 @@ function RandomSplitDetails({ validation }: { validation: RandomSplitValidation 
         <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
           <div className="text-xs text-blue-700">
             <p className="font-medium mb-1">
-              {validation.numClasses} classes, {validation.totalLabeled} labeled samples
+              {t('training.dataSplit.classesAndSamples', { classes: validation.numClasses, samples: validation.totalLabeled })}
             </p>
             <p className="text-blue-600">
-              Expected: ~{Math.floor(validation.totalLabeled * 0.7)} train, ~{Math.floor(validation.totalLabeled * 0.1)} val, ~
-              {Math.floor(validation.totalLabeled * 0.2)} test
+              {t('training.dataSplit.expectedSplit', { train: Math.floor(validation.totalLabeled * 0.7), val: Math.floor(validation.totalLabeled * 0.1), test: Math.floor(validation.totalLabeled * 0.2) })}
             </p>
           </div>
         </div>
@@ -196,12 +199,13 @@ function KFoldDetails({
   setKFoldSplits: (k: number) => void
   validation: KFoldValidation
 }) {
+  const { t } = useTranslation()
   const maxAllowed = Math.min(10, validation.maxK || 10)
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-4">
-        <label className="text-sm font-medium text-gray-700">Number of Folds (K):</label>
+        <label className="text-sm font-medium text-gray-700">{t('training.dataSplit.numberOfFolds')}</label>
         <input
           type="number"
           min={2}
@@ -214,7 +218,7 @@ function KFoldDetails({
           }`}
         />
         {validation.isValid && validation.maxK < 10 && (
-          <span className="text-xs text-amber-600">(max {validation.maxK} based on class distribution)</span>
+          <span className="text-xs text-amber-600">{t('training.dataSplit.maxKNote', { maxK: validation.maxK })}</span>
         )}
       </div>
 
@@ -223,7 +227,7 @@ function KFoldDetails({
           <div className="flex items-start gap-2">
             <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
             <div className="text-sm text-red-700">
-              <p className="font-medium">Cannot use K-Fold cross-validation</p>
+              <p className="font-medium">{t('training.dataSplit.cannotKFold')}</p>
               <p className="text-xs mt-1">{validation.message}</p>
             </div>
           </div>
@@ -234,9 +238,9 @@ function KFoldDetails({
         <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
           <div className="text-xs text-blue-700">
             <p className="font-medium mb-1">
-              {kFoldSplits}-Fold CV: {validation.numClasses} classes, {validation.totalLabeled} labeled samples
+              {t('training.dataSplit.kFoldSummary', { k: kFoldSplits, classes: validation.numClasses, samples: validation.totalLabeled })}
             </p>
-            <p className="text-blue-600">Each fold will have ~{Math.floor(validation.totalLabeled / kFoldSplits)} samples for validation</p>
+            <p className="text-blue-600">{t('training.dataSplit.kFoldEachFold', { count: Math.floor(validation.totalLabeled / kFoldSplits) })}</p>
           </div>
         </div>
       )}
@@ -256,6 +260,7 @@ function ManualSplitDetails({
   selectedDatasetId: string | null
   selectedDatasetName: string
 }) {
+  const { t } = useTranslation()
   const navigate = useNavigate()
 
   return (
@@ -264,19 +269,19 @@ function ManualSplitDetails({
         <div className="p-3 bg-green-50 border border-green-100 rounded-lg">
           <div className="flex items-center gap-2 mb-2">
             <CheckCircle2 className="w-4 h-4 text-green-600" />
-            <span className="text-sm font-medium text-green-800">Ready to use pre-defined splits</span>
+            <span className="text-sm font-medium text-green-800">{t('training.dataSplit.readyPreDefined')}</span>
           </div>
           <div className="grid grid-cols-3 gap-2 text-xs">
             <div className="bg-white p-2 rounded border border-green-100">
-              <span className="text-gray-500 block">Train</span>
+              <span className="text-gray-500 block">{t('training.dataSplit.train')}</span>
               <span className="font-semibold text-gray-900">{predefinedSplitCounts.train}</span>
             </div>
             <div className="bg-white p-2 rounded border border-green-100">
-              <span className="text-gray-500 block">Val</span>
+              <span className="text-gray-500 block">{t('training.dataSplit.val')}</span>
               <span className="font-semibold text-gray-900">{predefinedSplitCounts.val}</span>
             </div>
             <div className="bg-white p-2 rounded border border-green-100">
-              <span className="text-gray-500 block">Test</span>
+              <span className="text-gray-500 block">{t('training.dataSplit.test')}</span>
               <span className="font-semibold text-gray-900">{predefinedSplitCounts.test}</span>
             </div>
           </div>
@@ -286,8 +291,7 @@ function ManualSplitDetails({
           <div className="flex items-start gap-2">
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
             <span>
-              No split configuration found for this dataset. You can upload a CSV file with split assignments (train/val/test) in the
-              Registration page.
+              {t('training.dataSplit.noSplitConfig')}
             </span>
           </div>
           <Button
@@ -296,11 +300,10 @@ function ManualSplitDetails({
             onClick={() => navigate('/register', { state: { datasetId: selectedDatasetId, datasetName: selectedDatasetName } })}
             className="self-start ml-6 bg-white hover:bg-amber-50 border-amber-200 text-amber-700"
           >
-            Go to Registration & Upload Splits
+            {t('training.dataSplit.goToRegistration')}
           </Button>
         </div>
       )}
     </div>
   )
 }
-

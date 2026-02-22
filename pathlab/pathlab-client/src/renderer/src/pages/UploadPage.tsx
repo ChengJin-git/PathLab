@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import * as XLSX from 'xlsx'
 import {
   Download,
@@ -42,6 +43,7 @@ export default function RegisterPage() {
   const { error: toastError, warning: toastWarning } = useToast()
   const navigate = useNavigate()
   const { addUploadTask } = useBackgroundTask()
+  const { t } = useTranslation()
 
   // Upload mode state (classification or survival)
   const [uploadMode, setUploadMode] = useState<UploadMode>('classification')
@@ -479,7 +481,7 @@ export default function RegisterPage() {
 
     // Validate dataset name is required
     if (!datasetName.trim()) {
-      setSubmitError('Dataset name is required')
+      setSubmitError(t('uploadPage.datasetNameRequired'))
       return
     }
 
@@ -493,7 +495,7 @@ export default function RegisterPage() {
     if (splitFile && datasetId) {
       const success = await handleUploadSplit()
       if (!success) {
-         setSubmitError('Failed to upload CSV')
+         setSubmitError(t('uploadPage.failedUploadCsv'))
          return 
       }
       
@@ -511,7 +513,7 @@ export default function RegisterPage() {
         console.log(`[Upload] Parsed ${csvMetadataMap.size} entries from CSV for binding`)
       } catch (err) {
         console.error("Failed to parse split file for binding", err)
-        setSubmitError(`Failed to parse CSV: ${err}`)
+        setSubmitError(t('uploadPage.failedParseCsv', { error: String(err) }))
         return
       }
     }
@@ -555,7 +557,7 @@ export default function RegisterPage() {
         // If NO CSV, we obviously block.
         // We set error message to help user
         if (csvMetadataMap.size > 0) {
-           setSubmitError(`Validation failed: ${missingLabels.length} files are missing labels (checked CSV and UI). Check filename matching.`)
+           setSubmitError(t('uploadPage.validationMissingLabels', { count: missingLabels.length }))
         }
         return
       }
@@ -566,7 +568,7 @@ export default function RegisterPage() {
       })
       if (missingSurvival.length > 0) {
         if (csvMetadataMap.size > 0) {
-           setSubmitError(`Validation failed: ${missingSurvival.length} files are missing event info (checked CSV and UI). Check filename matching.`)
+           setSubmitError(t('uploadPage.validationMissingSurvival', { count: missingSurvival.length }))
         }
         return
       }
@@ -610,7 +612,7 @@ export default function RegisterPage() {
       })
 
       // Show warning about not refreshing during upload
-      toastWarning('File Uploading... Do not refresh or close this page. You can track progress in the notification panel.', 8000)
+      toastWarning(t('uploadPage.uploadingWarning'), 8000)
 
       // Clear the form
       resetUpload()
@@ -675,7 +677,7 @@ export default function RegisterPage() {
           const workbook = XLSX.read(arrayBuffer, { type: 'array' })
 
           if (workbook.SheetNames.length > 1) {
-            setSplitFileError('Excel file has multiple sheets. Please use a file with only one sheet.')
+            setSplitFileError(t('uploadPage.excelMultipleSheets'))
             return
           }
 
@@ -693,7 +695,7 @@ export default function RegisterPage() {
         const lines = csvContent.split('\n').filter(line => line.trim() !== '')
 
         if (lines.length < 2) {
-          setSplitFileError('File is empty or has no data rows')
+          setSplitFileError(t('uploadPage.fileEmptyOrNoData'))
           return
         }
 
@@ -701,30 +703,30 @@ export default function RegisterPage() {
 
         // Validate required columns based on upload mode
         if (!headers.includes('filename')) {
-          setSplitFileError('File must contain "filename" column')
+          setSplitFileError(t('uploadPage.missingFilenameColumn'))
           return
         }
 
         if (uploadMode === 'classification') {
           if (!headers.includes('label')) {
-            setSplitFileError('File must contain "label" column for classification')
+            setSplitFileError(t('uploadPage.missingLabelColumn'))
             return
           }
         } else {
           // survival mode
           if (!headers.includes('event_time')) {
-            setSplitFileError('File must contain "event_time" column for survival')
+            setSplitFileError(t('uploadPage.missingEventTimeColumn'))
             return
           }
           if (!headers.includes('event_status')) {
-            setSplitFileError('File must contain "event_status" column for survival')
+            setSplitFileError(t('uploadPage.missingEventStatusColumn'))
             return
           }
         }
 
         setSplitFile(finalFile)
       } catch (err) {
-        setSplitFileError('Failed to read file: ' + String(err))
+        setSplitFileError(t('uploadPage.failedReadFile', { error: String(err) }))
       }
     }
   }
@@ -734,7 +736,7 @@ export default function RegisterPage() {
       await downloadCSVTemplate(uploadMode)
     } catch (e) {
       console.error("Failed to download template", e)
-      toastError(e instanceof Error ? e.message : "Failed to download template")
+      toastError(e instanceof Error ? e.message : t('uploadPage.failedDownloadTemplate'))
     }
   }
 
@@ -745,7 +747,7 @@ export default function RegisterPage() {
 
     // uploadDatasetSplits requires dataset_id - only works for existing datasets
     if (!datasetId) {
-      setSplitFileError('Cannot upload splits for a new dataset. Please upload files first to create the dataset, then upload splits from the Dataset page.')
+      setSplitFileError(t('uploadPage.cannotUploadSplitsNewDataset'))
       return false
     }
 
@@ -755,12 +757,12 @@ export default function RegisterPage() {
     try {
       const result = await uploadDatasetSplits(datasetId, splitFile)
       // Build detailed success message
-      let successMsg = `Updated ${result.updated_count} slides`
+      let successMsg = t('uploadPage.splitUpdatedSlides', { count: result.updated_count })
       if (result.auto_val_count > 0) {
-        successMsg += `. Auto-assigned ${result.auto_val_count} samples to val (10% from train)`
+        successMsg += `. ${t('uploadPage.splitAutoAssignedVal', { count: result.auto_val_count })}`
       }
       if (result.not_found_count > 0) {
-        successMsg += `. Warning: ${result.not_found_count} files not found`
+        successMsg += `. ${t('uploadPage.splitFilesNotFound', { count: result.not_found_count })}`
       }
       setSplitUploadSuccess(successMsg)
       setSplitFile(null)
@@ -818,8 +820,8 @@ export default function RegisterPage() {
         <>
           <div className="flex-none mb-2 px-2 sm:px-0">
             <PageHeader
-              title="Register Files"
-              description={<span className="text-xs sm:text-base">Prepare and register local files.</span>}
+              title={t('uploadPage.title')}
+              description={<span className="text-xs sm:text-base">{t('uploadPage.description')}</span>}
             >
               <Button
                 variant="outline"
@@ -827,8 +829,8 @@ export default function RegisterPage() {
                 className="gap-2 h-9 sm:h-10 text-xs sm:text-sm"
               >
                 <ArrowLeft className="w-4 h-4" />
-                <span className="hidden sm:inline">{fromAIChat ? 'Back to Chat' : 'Back to Dashboard'}</span>
-                <span className="sm:hidden">Back</span>
+                <span className="hidden sm:inline">{fromAIChat ? t('uploadPage.backToChat') : t('uploadPage.backToDashboard')}</span>
+                <span className="sm:hidden">{t('uploadPage.back')}</span>
               </Button>
             </PageHeader>
           </div>
@@ -847,19 +849,19 @@ export default function RegisterPage() {
                     <h2 className="text-lg sm:text-xl font-bold text-slate-900 truncate max-w-[150px] sm:max-w-none">{datasetName}</h2>
                     {isExistingDataset && (
                       <span className="px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full text-[9px] sm:text-[10px] font-bold border border-amber-100 whitespace-nowrap">
-                        APPENDING DATA
+                        {t('uploadPage.appendingData')}
                       </span>
                     )}
                   </div>
                   <p className="text-xs sm:text-sm text-slate-500">
-                    {currentDataType === 'patch' ? 'Patch Collection' : currentDataType === 'wsi' ? 'WSI Collection' : 'Dataset'}
+                    {currentDataType === 'patch' ? t('uploadPage.patchCollection') : currentDataType === 'wsi' ? t('uploadPage.wsiCollection') : t('uploadPage.dataset')}
                     {' · '}
                     <span className="capitalize">{uploadMode}</span>
                   </p>
                 </div>
               </div>
               <Button variant="outline" size="sm" className="rounded-xl px-4 h-9 sm:h-10 w-full sm:w-auto shrink-0 justify-center" onClick={() => setStep(1)}>
-                <Edit2 className="w-4 h-4 mr-2" /> Change Info
+                <Edit2 className="w-4 h-4 mr-2" /> {t('uploadPage.changeInfo')}
               </Button>
             </div>
           </div>
@@ -875,12 +877,12 @@ export default function RegisterPage() {
                       <FileSpreadsheet className="w-5 h-5 text-green-600" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h4 className="font-semibold text-green-800">Label File Ready</h4>
+                      <h4 className="font-semibold text-green-800">{t('uploadPage.labelFileReady')}</h4>
                       <p className="text-sm text-green-700 mt-1">
-                        <span className="font-medium">{splitFile.name}</span> has been loaded with your labels and splits.
+                        <span className="font-medium">{splitFile.name}</span> {t('uploadPage.labelFileLoaded')}
                       </p>
                       <p className="text-xs text-green-600 mt-2">
-                        Now drop your image files below to match them with the CSV data.
+                        {t('uploadPage.dropImageFilesBelow')}
                       </p>
                     </div>
                   </div>
@@ -896,7 +898,7 @@ export default function RegisterPage() {
                   setIsDragging(false)
                   const result = await collectItemsFromDataTransfer(e.dataTransfer)
                   if (result.unsupportedFileNames && result.unsupportedFileNames.length > 0) {
-                    toastError(`Skipped ${result.unsupportedFileNames.length} unsupported files: ${result.unsupportedFileNames.slice(0, 3).join(', ')}${result.unsupportedFileNames.length > 3 ? '...' : ''}. Only supports: ${ALL_EXTENSIONS.join(', ')}`)
+                    toastError(t('uploadPage.skippedUnsupportedFiles', { count: result.unsupportedFileNames.length, files: result.unsupportedFileNames.slice(0, 3).join(', '), more: result.unsupportedFileNames.length > 3 ? '...' : '', extensions: ALL_EXTENSIONS.join(', ') }))
                   }
                   await processCollectionResult(result)
                 }}
@@ -905,13 +907,13 @@ export default function RegisterPage() {
                 <div className="w-16 h-16 sm:w-24 sm:h-24 bg-blue-50 rounded-full flex items-center justify-center mb-4 sm:mb-8">
                   <UploadCloud className="w-8 h-8 sm:w-12 sm:h-12 text-blue-600" />
                 </div>
-                <h3 className="text-xl sm:text-3xl font-bold text-slate-900 mb-2 sm:mb-4">Drop files here to begin</h3>
+                <h3 className="text-xl sm:text-3xl font-bold text-slate-900 mb-2 sm:mb-4">{t('uploadPage.dropFilesHere')}</h3>
                 <p className="text-sm sm:text-lg text-slate-500 mb-6 sm:mb-10 max-w-xl leading-relaxed px-4">
-                  Support for common WSI formats and image files. <br className="hidden sm:block" />
+                  {t('uploadPage.supportedFormats')} <br className="hidden sm:block" />
                 </p>
                 {supportsNativePicker && (
                   <Button size="lg" className="px-6 sm:px-10 h-12 sm:h-14 text-base sm:text-lg rounded-full shadow-lg shadow-blue-500/20">
-                    Browse Files
+                    {t('uploadPage.browseFiles')}
                   </Button>
                 )}
               </div>
@@ -926,12 +928,12 @@ export default function RegisterPage() {
                       checked={selectedItems.size === localItems.length && localItems.length > 0}
                       onCheckedChange={() => toggleSelectAll()}
                     />
-                    <span className="hidden sm:inline">Select All ({localItems.length})</span>
-                    <span className="sm:hidden">{localItems.length} Files</span>
+                    <span className="hidden sm:inline">{t('uploadPage.selectAll', { count: localItems.length })}</span>
+                    <span className="sm:hidden">{t('uploadPage.fileCount', { count: localItems.length })}</span>
                   </label>
                   {skippedDuplicateCount > 0 && (
                     <span className="text-[10px] sm:text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full border border-amber-200 whitespace-nowrap">
-                      {skippedDuplicateCount} duplicate{skippedDuplicateCount > 1 ? 's' : ''}
+                      {t('uploadPage.duplicateCount', { count: skippedDuplicateCount })}
                     </span>
                   )}
                   {selectedItems.size > 0 && (
@@ -939,18 +941,18 @@ export default function RegisterPage() {
                       <div className="h-4 w-px bg-slate-300 mx-1 hidden sm:block" />
                       <Button size="sm" variant="secondary" onClick={() => setShowBulkEdit(true)} className="h-7 sm:h-8 text-[10px] sm:text-xs font-medium px-2 sm:px-3">
                         <Edit2 className="w-3 h-3 mr-1 sm:mr-1.5" />
-                        Edit
+                        {t('uploadPage.edit')}
                       </Button>
                       <Button size="sm" variant="destructive" onClick={removeSelectedItems} className="h-7 sm:h-8 text-[10px] sm:text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-2 sm:px-3">
                         <Trash2 className="w-3 h-3 mr-1 sm:mr-1.5" />
-                        Delete
+                        {t('uploadPage.delete')}
                       </Button>
                     </div>
                   )}
                 </div>
                 <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-blue-50 text-blue-700 rounded-full text-[10px] sm:text-sm font-semibold border border-blue-100 shadow-sm justify-center sm:justify-start">
                   <UploadCloud className="w-3 h-3 sm:w-4 sm:h-4" />
-                  Drop more files to add to list
+                  {t('uploadPage.dropMoreFiles')}
                 </div>
               </div>
 
@@ -966,7 +968,7 @@ export default function RegisterPage() {
                     setIsDragging(false)
                     const result = await collectItemsFromDataTransfer(e.dataTransfer)
                     if (result.unsupportedFileNames && result.unsupportedFileNames.length > 0) {
-                      toastError(`Skipped ${result.unsupportedFileNames.length} unsupported files: ${result.unsupportedFileNames.slice(0, 3).join(', ')}${result.unsupportedFileNames.length > 3 ? '...' : ''}`)
+                      toastError(t('uploadPage.skippedUnsupportedFilesShort', { count: result.unsupportedFileNames.length, files: result.unsupportedFileNames.slice(0, 3).join(', '), more: result.unsupportedFileNames.length > 3 ? '...' : '' }))
                     }
                     await processCollectionResult(result)
                   }}
@@ -975,7 +977,7 @@ export default function RegisterPage() {
                     <div className="absolute inset-0 z-40 bg-blue-500/10 backdrop-blur-[1px] flex items-center justify-center border-4 border-blue-500 border-dashed m-4 rounded-xl pointer-events-none">
                       <div className="bg-white px-8 py-4 rounded-full shadow-xl font-bold text-blue-600 flex items-center gap-3">
                         <UploadCloud className="w-6 h-6" />
-                        Drop to add files
+                        {t('uploadPage.dropToAddFiles')}
                       </div>
                     </div>
                   )}
@@ -986,19 +988,19 @@ export default function RegisterPage() {
                         <th className="w-10 px-3 sm:px-4 py-2 bg-slate-50">
                           <div className="sr-only">Select</div>
                         </th>
-                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[180px] sm:min-w-[200px]">File Name</th>
+                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[180px] sm:min-w-[200px]">{t('uploadPage.fileName')}</th>
                         {uploadMode === 'classification' ? (
-                          <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[120px] sm:min-w-[150px]">Label <span className="text-red-500">*</span></th>
+                          <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[120px] sm:min-w-[150px]">{t('uploadPage.label')} <span className="text-red-500">*</span></th>
                         ) : (
                           <>
-                            <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">Event Time <span className="text-red-500">*</span></th>
-                            <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[80px] sm:min-w-[90px]">Status <span className="text-red-500">*</span></th>
+                            <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">{t('uploadPage.eventTime')} <span className="text-red-500">*</span></th>
+                            <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[80px] sm:min-w-[90px]">{t('uploadPage.status')} <span className="text-red-500">*</span></th>
                           </>
                         )}
-                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[100px] sm:min-w-[120px]">Case ID</th>
-                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[70px] sm:min-w-[80px]">Age</th>
-                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">Gender</th>
-                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[120px] sm:min-w-[140px]">Source</th>
+                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[100px] sm:min-w-[120px]">{t('uploadPage.caseId')}</th>
+                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[70px] sm:min-w-[80px]">{t('uploadPage.age')}</th>
+                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">{t('uploadPage.gender')}</th>
+                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[120px] sm:min-w-[140px]">{t('uploadPage.source')}</th>
                         <th className="w-10 px-3 py-2 bg-slate-50"></th>
                       </tr>
                     </thead>
@@ -1032,9 +1034,9 @@ export default function RegisterPage() {
                                   {item.type === 'mrxs' && item.missingAssociated && (
                                     <span
                                       className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold flex items-center gap-1"
-                                      title={`Missing data folder: Please drag the "${getBaseName(item.name)}" folder`}
+                                      title={t('uploadPage.missingDataFolder', { folder: getBaseName(item.name) })}
                                     >
-                                      ⚠ DATA MISSING
+                                      {t('uploadPage.dataMissing')}
                                     </span>
                                   )}
                                 </div>
@@ -1045,7 +1047,7 @@ export default function RegisterPage() {
                               <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                                 <input
                                   className={`w-full px-2 py-1.5 text-sm border rounded-lg hover:border-blue-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all ${hasError ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-slate-50/50 hover:bg-white focus:bg-white'}`}
-                                  placeholder="Enter label"
+                                  placeholder={t('uploadPage.enterLabel')}
                                   value={meta.label}
                                   onChange={e => handleMetadataChange(item.key, 'label', e.target.value)}
                                 />
@@ -1057,7 +1059,7 @@ export default function RegisterPage() {
                                     type="number"
                                     step="0.1"
                                     className={`w-full px-2 py-1.5 text-sm border rounded-lg hover:border-emerald-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all ${hasError && !meta.event_time.trim() ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-slate-50/50 hover:bg-white focus:bg-white'}`}
-                                    placeholder="Months"
+                                    placeholder={t('uploadPage.months')}
                                     value={meta.event_time}
                                     onChange={e => handleMetadataChange(item.key, 'event_time', e.target.value)}
                                   />
@@ -1068,9 +1070,9 @@ export default function RegisterPage() {
                                     value={meta.event_status}
                                     onChange={e => handleMetadataChange(item.key, 'event_status', e.target.value)}
                                   >
-                                    <option value="">Status</option>
-                                    <option value="1">Event (1)</option>
-                                    <option value="0">Censored (0)</option>
+                                    <option value="">{t('uploadPage.statusDefault')}</option>
+                                    <option value="1">{t('uploadPage.eventOption')}</option>
+                                    <option value="0">{t('uploadPage.censoredOption')}</option>
                                   </select>
                                 </td>
                               </>
@@ -1078,7 +1080,7 @@ export default function RegisterPage() {
                             <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                               <input
                                 className="w-full px-2 py-1.5 text-sm border border-slate-100 rounded-lg bg-slate-50/50 hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
-                                placeholder="Case ID"
+                                placeholder={t('uploadPage.caseIdPlaceholder')}
                                 value={meta.case_id}
                                 onChange={e => handleMetadataChange(item.key, 'case_id', e.target.value)}
                               />
@@ -1087,7 +1089,7 @@ export default function RegisterPage() {
                               <input
                                 type="number"
                                 className="w-full px-2 py-1.5 text-sm border border-slate-100 rounded-lg bg-slate-50/50 hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
-                                placeholder="Age"
+                                placeholder={t('uploadPage.agePlaceholder')}
                                 value={meta.age}
                                 onChange={e => handleMetadataChange(item.key, 'age', e.target.value)}
                               />
@@ -1099,8 +1101,8 @@ export default function RegisterPage() {
                                 onChange={e => handleMetadataChange(item.key, 'gender', e.target.value)}
                               >
                                 <option value="">-</option>
-                                <option value="Male">M</option>
-                                <option value="Female">F</option>
+                                 <option value="Male">{t('uploadPage.genderM')}</option>
+                                 <option value="Female">{t('uploadPage.genderF')}</option>
                                 <option value="Unspecified">?</option>
                               </select>
                             </td>
@@ -1110,7 +1112,7 @@ export default function RegisterPage() {
                                 value={meta.source}
                                 onChange={e => handleMetadataChange(item.key, 'source', e.target.value)}
                               >
-                                <option value="">Source</option>
+                                <option value="">{t('uploadPage.sourceDefault')}</option>
                                 {organSources.map(o => <option key={o} value={o}>{o}</option>)}
                               </select>
                             </td>
@@ -1140,11 +1142,11 @@ export default function RegisterPage() {
                     <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 shrink-0" />
                     <div className="min-w-0">
                       <h2 className="text-sm sm:text-base font-semibold text-slate-900 truncate">
-                        Dataset Metadata Configuration
+                        {t('uploadPage.datasetMetadataConfig')}
                       </h2>
                       {!showSplitConfig && (
                         <p className="text-[10px] sm:text-xs text-slate-500 truncate">
-                          Optional: Metadata File Upload
+                          {t('uploadPage.optionalMetadataUpload')}
                         </p>
                       )}
                     </div>
@@ -1161,7 +1163,7 @@ export default function RegisterPage() {
                         className="text-[10px] sm:text-xs h-7 gap-1 px-2"
                       >
                         <Download className="w-3 h-3" />
-                        Template
+                        {t('uploadPage.template')}
                       </Button>
                     )}
                     {showSplitConfig ? (
@@ -1175,18 +1177,18 @@ export default function RegisterPage() {
                 {showSplitConfig && (
                   <div className="mt-4 animate-in slide-in-from-top-2 duration-200">
                     <p className="text-xs sm:text-sm text-gray-500 mb-3 leading-relaxed">
-                      Upload a file to update metadata in batch. Supports CSV and Excel (.xlsx) formats.
+                      {t('uploadPage.uploadMetadataDescription')}
                     </p>
 
                 {/* Help text - different for classification vs survival */}
                 <div className="mb-4 p-2 sm:p-3 bg-blue-50 rounded-lg text-[10px] sm:text-sm text-blue-800">
-                  <p className="font-bold mb-1">File Format ({uploadMode === 'classification' ? 'Classification' : 'Survival'}):</p>
+                  <p className="font-bold mb-1">{t('uploadPage.fileFormatTitle', { mode: uploadMode === 'classification' ? t('uploadPage.classification') : t('uploadPage.survival') })}</p>
                   <ul className="list-disc list-inside space-y-0.5 text-blue-700">
                     <li><code className="bg-blue-100 px-1 rounded">filename</code>{uploadMode === 'classification' ? ', ' : ''}{uploadMode === 'classification' && <code className="bg-blue-100 px-1 rounded">label</code>}</li>
                     {uploadMode === 'survival' && (
                       <li><code className="bg-blue-100 px-1 rounded">event_time</code>, <code className="bg-blue-100 px-1 rounded">event_status</code></li>
                     )}
-                    <li className="hidden sm:list-item">Optional: <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
+                    <li className="hidden sm:list-item">{t('uploadPage.optionalFields')} <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
                   </ul>
                 </div>
 
@@ -1204,7 +1206,7 @@ export default function RegisterPage() {
                       <button
                         onClick={() => setSplitFile(null)}
                         className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
-                        title="Remove file"
+                        title={t('uploadPage.removeFile')}
                       >
                         <X className="w-4 h-4" />
                       </button>
@@ -1223,7 +1225,7 @@ export default function RegisterPage() {
                   {splitFile && (
                      <div className="flex items-center gap-2 text-[10px] sm:text-sm text-green-600 font-medium bg-green-50 px-3 py-1.5 rounded-lg border border-green-100 justify-center">
                         <CheckCircle2 className="w-3 h-3 sm:w-4 sm:h-4" />
-                        Ready
+                        {t('uploadPage.ready')}
                      </div>
                   )}
                 </div>
@@ -1231,14 +1233,14 @@ export default function RegisterPage() {
                 {/* Error message */}
                 {splitFileError && (
                   <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-                    <span className="font-medium">Error: </span>{splitFileError}
+                    <span className="font-medium">{t('uploadPage.errorPrefix')} </span>{splitFileError}
                   </div>
                 )}
 
                 {/* Success message */}
                 {splitUploadSuccess && (
                   <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
-                    <span className="font-medium">Success: </span>{splitUploadSuccess}
+                    <span className="font-medium">{t('uploadPage.successPrefix')} </span>{splitUploadSuccess}
                   </div>
                 )}
                   </div>
@@ -1249,7 +1251,7 @@ export default function RegisterPage() {
               <div className="flex-none bg-white border border-slate-200 rounded-xl px-4 sm:px-8 py-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between shadow-sm z-30 gap-4 sm:gap-0 mt-2">
                 <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-8">
                   <div className="text-xs sm:text-sm text-slate-500 whitespace-nowrap">
-                    Ready to register <strong className="text-slate-900">{localItems.length}</strong> file(s).
+                    {t('uploadPage.readyToRegister', { count: localItems.length })}
                   </div>
                   {totalPages > 1 && (
                     <div className="flex items-center gap-3">
@@ -1265,7 +1267,7 @@ export default function RegisterPage() {
                           <ChevronLeft className="h-4 w-4 text-slate-600" />
                         </Button>
                         <span className="text-[10px] sm:text-xs font-semibold text-slate-600 min-w-[70px] sm:min-w-[80px] text-center whitespace-nowrap">
-                          PAGE {currentPage} / {totalPages}
+                          {t('uploadPage.pageIndicator', { current: currentPage, total: totalPages })}
                         </span>
                         <Button
                           variant="outline"
@@ -1289,7 +1291,7 @@ export default function RegisterPage() {
                   )}
                   <div className="flex gap-2">
                     <Button variant="ghost" className="h-10 flex-1 sm:flex-none" onClick={resetUpload}>
-                      Cancel
+                      {t('uploadPage.cancel')}
                     </Button>
                     <Button
                       onClick={handleUpload}
@@ -1299,12 +1301,12 @@ export default function RegisterPage() {
                       {isExistingDataset ? (
                         <>
                           <Plus className="w-4 h-4 mr-2 shrink-0" />
-                          <span className="truncate">{localItems.length === 0 && splitFile ? 'Upload CSV' : 'Add to Dataset'}</span>
+                          <span className="truncate">{localItems.length === 0 && splitFile ? t('uploadPage.uploadCsv') : t('uploadPage.addToDataset')}</span>
                         </>
                       ) : (
                         <>
                           <Download className="w-4 h-4 mr-2 shrink-0" />
-                          <span className="truncate">{localItems.length === 0 && splitFile ? 'Upload CSV' : 'Register All'}</span>
+                          <span className="truncate">{localItems.length === 0 && splitFile ? t('uploadPage.uploadCsv') : t('uploadPage.registerAll')}</span>
                         </>
                       )}
                     </Button>

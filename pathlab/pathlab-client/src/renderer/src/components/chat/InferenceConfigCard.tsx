@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Play, AlertCircle, CheckCircle, Loader2, Brain, Database, ThumbsUp, ThumbsDown } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import {
   getTrainedModels,
   getTrainingTasks,
@@ -70,6 +71,7 @@ export function InferenceConfigCard({
   onHelpfulnessFeedback,
   savedHelpfulnessFeedback
 }: InferenceConfigCardProps) {
+  const { t } = useTranslation()
   const [config, setConfig] = useState<AgentInferenceConfig>(initialConfig)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitStatus, setSubmitStatus] = useState<'idle' | 'success' | 'error'>(
@@ -170,9 +172,9 @@ export function InferenceConfigCard({
     try {
       const result = await getTrainingTasks()
       // Filter to completed tasks only, exclude the model's own task
-      const completedTasks = result.filter(t =>
-        t.status === 'completed' &&
-        t.task_id !== selectedModel?.task_id
+      const completedTasks = result.filter(task =>
+        task.status === 'completed' &&
+        task.task_id !== selectedModel?.task_id
       )
       setTasks(completedTasks)
     } catch (error) {
@@ -193,13 +195,13 @@ export function InferenceConfigCard({
     const errors: ValidationError[] = []
 
     if (!config.model_id) {
-      errors.push({ field: 'model_id', message: 'Model is required' })
+      errors.push({ field: 'model_id', message: t('chatComponents.inferenceConfig.modelRequired') })
     } else if (!selectedModel) {
-      errors.push({ field: 'model_id', message: 'Selected model not found or inactive' })
+      errors.push({ field: 'model_id', message: t('chatComponents.inferenceConfig.modelNotFoundOrInactive') })
     }
 
     if (!config.data_task_id) {
-      errors.push({ field: 'data_task_id', message: 'Please select a dataset for external validation' })
+      errors.push({ field: 'data_task_id', message: t('chatComponents.inferenceConfig.selectDatasetRequired') })
     }
 
     setValidationErrors(errors)
@@ -222,7 +224,7 @@ export function InferenceConfigCard({
       onConfigChange?.(updatedConfig)
       onSubmitSuccess?.(result.task_id)
     } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Failed to start external validation'
+      const msg = error instanceof Error ? error.message : t('chatComponents.inferenceConfig.failedToStartValidation')
       setSubmitStatus('error')
       setErrorMessage(msg)
       onSubmitError?.(msg)
@@ -248,7 +250,7 @@ export function InferenceConfigCard({
       onConfigChange?.(updatedConfig)
       onSubmitSuccess?.(result.task_id)
     } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Failed to start external validation'
+      const msg = error instanceof Error ? error.message : t('chatComponents.inferenceConfig.failedToStartValidation')
       setSubmitStatus('error')
       setErrorMessage(msg)
       onSubmitError?.(msg)
@@ -263,13 +265,13 @@ export function InferenceConfigCard({
   const isFormDisabled = submitStatus === 'success' || isSubmitting
 
   // Get selected task info for display
-  const selectedTask = tasks.find(t => t.task_id === config.data_task_id)
+  const selectedTask = tasks.find(task => task.task_id === config.data_task_id)
 
   if (isLoadingModels) {
     return (
       <div className="mt-4 bg-white border border-gray-200 rounded-2xl shadow-sm p-6 flex items-center justify-center gap-2">
         <Loader2 className="w-5 h-5 animate-spin text-primary-600" />
-        <span className="text-gray-600">Loading inference configuration...</span>
+        <span className="text-gray-600">{t('chatComponents.inferenceConfig.loadingConfig')}</span>
       </div>
     )
   }
@@ -283,12 +285,12 @@ export function InferenceConfigCard({
       <div className="px-5 py-4 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-gray-100">
         <h3 className="font-semibold text-gray-900 flex items-center gap-2">
           <Brain className="w-4 h-4 text-purple-600" />
-          External Validation
+          {t('chatComponents.inferenceConfig.title')}
         </h3>
         <p className="text-sm text-gray-500 mt-1">
           {submitStatus === 'success'
-            ? 'External validation task submitted successfully'
-            : 'Validate a trained model on a different dataset'}
+            ? t('chatComponents.inferenceConfig.submitSuccess')
+            : t('chatComponents.inferenceConfig.subtitle')}
         </p>
       </div>
 
@@ -298,29 +300,29 @@ export function InferenceConfigCard({
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1.5">
             <Brain className="w-4 h-4 text-gray-500" />
-            Selected Model
+            {t('chatComponents.inferenceConfig.selectedModel')}
           </label>
           {modelNotFound ? (
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
               <p className="text-sm text-red-700">
-                Model not found: {config.model_name || config.model_id}
+                {t('chatComponents.inferenceConfig.modelNotFound', { name: config.model_name || config.model_id })}
               </p>
               <p className="text-xs text-red-600 mt-1">
-                The selected model may have been deleted or deactivated.
+                {t('chatComponents.inferenceConfig.modelDeletedOrDeactivated')}
               </p>
             </div>
           ) : selectedModel ? (
             <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
               <div className="font-medium text-gray-900">{selectedModel.model_name}</div>
               <div className="text-xs text-gray-500 mt-1 flex flex-wrap gap-2">
-                <span>Classes: {selectedModel.classes?.join(', ') || 'N/A'}</span>
+                <span>{t('chatComponents.inferenceConfig.classes')}: {selectedModel.classes?.join(', ') || t('chatComponents.inferenceConfig.na')}</span>
                 <span>•</span>
-                <span>Encoder: {selectedModel.feature_extractor || 'N/A'}</span>
+                <span>{t('chatComponents.inferenceConfig.encoder')}: {selectedModel.feature_extractor || t('chatComponents.inferenceConfig.na')}</span>
               </div>
             </div>
           ) : (
             <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-              <p className="text-sm text-yellow-700">No model specified in configuration</p>
+              <p className="text-sm text-yellow-700">{t('chatComponents.inferenceConfig.noModelSpecified')}</p>
             </div>
           )}
           {getFieldError('model_id') && (
@@ -332,15 +334,15 @@ export function InferenceConfigCard({
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1.5">
             <Database className="w-4 h-4 text-gray-500" />
-            Validation Dataset
+            {t('chatComponents.inferenceConfig.validationDataset')}
           </label>
           <p className="text-xs text-gray-500 mb-2">
-            Select a dataset to validate the model on. This must be different from the model's training dataset.
+            {t('chatComponents.inferenceConfig.validationDatasetDescription')}
           </p>
           {isLoadingTasks ? (
             <div className="p-3 border border-gray-200 rounded-lg flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin text-gray-500" />
-              <span className="text-sm text-gray-500">Loading datasets...</span>
+              <span className="text-sm text-gray-500">{t('chatComponents.inferenceConfig.loadingDatasets')}</span>
             </div>
           ) : (
             <select
@@ -350,7 +352,7 @@ export function InferenceConfigCard({
               className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-purple-100 focus:border-purple-400 ${getFieldError('data_task_id') ? 'border-red-300 bg-red-50' : 'border-gray-200'
                 } ${isFormDisabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
             >
-              <option value="">Select a dataset...</option>
+              <option value="">{t('chatComponents.inferenceConfig.selectDataset')}</option>
               {tasks.map(task => (
                 <option key={task.task_id} value={task.task_id}>
                   {task.task_name} ({task.task_type})
@@ -363,7 +365,7 @@ export function InferenceConfigCard({
           )}
           {selectedTask && (
             <div className="mt-2 text-xs text-gray-500">
-              Task Type: {selectedTask.task_type} | Status: {selectedTask.status}
+              {t('chatComponents.inferenceConfig.taskType')}: {selectedTask.task_type} | {t('chatComponents.inferenceConfig.status')}: {selectedTask.status}
             </div>
           )}
         </div>
@@ -374,7 +376,7 @@ export function InferenceConfigCard({
         <div className="mx-5 mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
           <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
           <div>
-            <p className="text-sm font-medium text-red-700">Failed to start inference</p>
+            <p className="text-sm font-medium text-red-700">{t('chatComponents.inferenceConfig.failedToStartInference')}</p>
             <p className="text-xs text-red-600 mt-0.5">{errorMessage}</p>
           </div>
         </div>
@@ -384,14 +386,14 @@ export function InferenceConfigCard({
       {submitStatus === 'success' && (
         <div className="mx-5 mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
           <CheckCircle className="w-4 h-4 text-green-500" />
-          <p className="text-sm font-medium text-green-700">Inference task submitted successfully!</p>
+          <p className="text-sm font-medium text-green-700">{t('chatComponents.inferenceConfig.inferenceSubmittedSuccess')}</p>
         </div>
       )}
 
       {/* Helpfulness Feedback */}
       {submitStatus === 'success' && !helpfulnessFeedback && (
         <div className="mx-5 mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <p className="text-sm font-medium text-blue-800 mb-3">Do you find AI helpful for setting up this inference task?</p>
+          <p className="text-sm font-medium text-blue-800 mb-3">{t('chatComponents.inferenceConfig.helpfulnessQuestion')}</p>
           <div className="flex gap-2">
             <button
               onClick={() => {
@@ -404,7 +406,7 @@ export function InferenceConfigCard({
               className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-blue-200 hover:bg-green-50 hover:border-green-300 hover:text-green-700 text-blue-700 rounded-md text-sm font-medium transition-all shadow-sm"
             >
               <ThumbsUp className="w-3.5 h-3.5" />
-              Yes
+              {t('chatComponents.inferenceConfig.yes')}
             </button>
             <button
               onClick={() => {
@@ -417,7 +419,7 @@ export function InferenceConfigCard({
               className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-blue-200 hover:bg-red-50 hover:border-red-300 hover:text-red-700 text-blue-700 rounded-md text-sm font-medium transition-all shadow-sm"
             >
               <ThumbsDown className="w-3.5 h-3.5" />
-              No
+              {t('chatComponents.inferenceConfig.no')}
             </button>
           </div>
         </div>
@@ -432,7 +434,7 @@ export function InferenceConfigCard({
             <ThumbsDown className="w-4 h-4 text-red-500" />
           )}
           <p className="text-sm text-gray-600">
-            Thank you for your feedback!
+            {t('chatComponents.inferenceConfig.thankYouFeedback')}
           </p>
         </div>
       )}
@@ -450,17 +452,17 @@ export function InferenceConfigCard({
           {isSubmitting ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              Starting Inference...
+              {t('chatComponents.inferenceConfig.startingInference')}
             </>
           ) : submitStatus === 'success' ? (
             <>
               <CheckCircle className="w-4 h-4" />
-              Inference Started
+              {t('chatComponents.inferenceConfig.inferenceStarted')}
             </>
           ) : (
             <>
               <Play className="w-4 h-4" />
-              Run Inference
+              {t('chatComponents.inferenceConfig.runInference')}
             </>
           )}
         </button>
@@ -468,4 +470,3 @@ export function InferenceConfigCard({
     </div>
   )
 }
-

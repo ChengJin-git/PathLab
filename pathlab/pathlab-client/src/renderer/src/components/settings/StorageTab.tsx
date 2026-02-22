@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import {
   Database,
   HardDrive,
@@ -66,11 +67,11 @@ export interface StorageTabProps {
 
 export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, closeConfirmDialog }) => {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const { addMigrationTask } = useBackgroundTask()
   const [isDangerZoneOpen, setIsDangerZoneOpen] = React.useState(false)
   const hasSelectDirectoryApi = !!window.api?.files?.selectDirectory
 
-  // Storage Management State
   const [stats, setStats] = useState<StorageStats | null>(null)
   const [loadingStorage, setLoadingStorage] = useState(false)
   const [storageError, setStorageError] = useState<string | null>(null)
@@ -120,8 +121,6 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const [deletingUnavailableFiles, setDeletingUnavailableFiles] = useState(false)
   const [externalFilesError, setExternalFilesError] = useState<string | null>(null)
 
-  // --- Data Loading ---
-
   const loadBatchDatasets = async () => {
     try {
       const response = await fetchDatasets()
@@ -158,7 +157,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       setStats(data)
     } catch (err) {
       console.error('Failed to load storage stats:', err)
-      setStorageError(err instanceof Error ? err.message : 'Failed to load storage stats')
+      setStorageError(err instanceof Error ? err.message : t('settings.storageTab.failedToLoadStats'))
     } finally {
       setLoadingStorage(false)
     }
@@ -172,15 +171,13 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       setStoragePath(config.uploads_dir)
     } catch (err) {
       console.error('Failed to load storage config:', err)
-      setStorageConfigError(err instanceof Error ? err.message : 'Failed to load storage config')
+      setStorageConfigError(err instanceof Error ? err.message : t('settings.storageTab.failedToLoadConfig'))
     }
   }
 
-  // --- Batch Scan & Register ---
-
   const handleSelectBatchScanDir = async () => {
     if (!window.api?.files?.selectDirectory) return
-    const selected = await window.api.files.selectDirectory({ title: 'Select directory to scan for WSI files' })
+    const selected = await window.api.files.selectDirectory({ title: t('settings.storageTab.selectDirToScan') })
     if (selected) {
       setBatchScanPath(selected)
       setBatchScanResult(null)
@@ -204,7 +201,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       setBatchSelectedFiles(validFiles)
     } catch (err) {
       console.error('Failed to scan directory:', err)
-      setBatchScanError(err instanceof Error ? err.message : 'Failed to scan directory')
+      setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir'))
     } finally {
       setBatchScanning(false)
     }
@@ -230,12 +227,12 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const handleBatchRegister = async () => {
     if (batchSelectedFiles.size === 0) return
     if (batchDatasetMode === 'existing' && !batchSelectedDatasetId) {
-      setBatchScanError('Please select an existing dataset')
+      setBatchScanError(t('settings.storageTab.pleaseSelectDataset'))
       return
     }
     const datasetNameToUse = batchNewDatasetNameRef.current?.value.trim() || ''
     if (batchDatasetMode === 'new' && !datasetNameToUse) {
-      setBatchScanError('Please enter a name for the new dataset')
+      setBatchScanError(t('settings.storageTab.pleaseEnterDatasetName'))
       return
     }
     setBatchRegistering(true)
@@ -259,13 +256,11 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       setTimeout(() => { loadBatchDatasets(); refreshExternalDatasets() }, 2000)
     } catch (err) {
       console.error('Failed to start batch import task:', err)
-      setBatchScanError(err instanceof Error ? err.message : 'Failed to start batch import task')
+      setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToStartImport'))
     } finally {
       setBatchRegistering(false)
     }
   }
-
-  // --- External Files ---
 
   const handleCheckExternalFiles = async () => {
     setCheckingExternalFiles(true)
@@ -280,7 +275,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       }
     } catch (err) {
       console.error('Failed to check external files:', err)
-      setExternalFilesError(err instanceof Error ? err.message : 'Failed to check external files')
+      setExternalFilesError(err instanceof Error ? err.message : t('settings.storageTab.failedToCheckFiles'))
     } finally {
       setCheckingExternalFiles(false)
     }
@@ -289,8 +284,8 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const handleDeleteUnavailableFiles = async () => {
     if (selectedUnavailableFiles.size === 0) return
     showConfirmDialog({
-      title: 'Delete records',
-      message: `Are you sure you want to delete ${selectedUnavailableFiles.size} unavailable file record(s)? This action cannot be undone. Progress will be shown in the notification center.`,
+      title: t('settings.storageTab.deleteRecords'),
+      message: t('settings.storageTab.deleteRecordsConfirm', { count: selectedUnavailableFiles.size }),
       confirmVariant: 'danger',
       onConfirm: async () => {
         closeConfirmDialog()
@@ -302,7 +297,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
           setTimeout(() => handleCheckExternalFiles(), 2000)
         } catch (err) {
           console.error('Failed to start delete external task:', err)
-          setExternalFilesError(err instanceof Error ? err.message : 'Failed to start delete task')
+          setExternalFilesError(err instanceof Error ? err.message : t('settings.storageTab.failedToStartDelete'))
         } finally {
           setDeletingUnavailableFiles(false)
         }
@@ -329,8 +324,8 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
 
   const handleUnbindDataset = async (datasetId: string, datasetName: string) => {
     showConfirmDialog({
-      title: 'Unbind dataset',
-      message: `Are you sure you want to unbind dataset "${datasetName}"? This will remove all external file records from this dataset. The actual files on the external drive will NOT be deleted. Progress will be shown in the notification center.`,
+      title: t('settings.storageTab.unbindDataset'),
+      message: t('settings.storageTab.unbindDatasetConfirm', { name: datasetName }),
       confirmVariant: 'danger',
       onConfirm: async () => {
         closeConfirmDialog()
@@ -341,8 +336,8 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         } catch (err) {
           console.error('Failed to start unbind dataset task:', err)
           showConfirmDialog({
-            title: 'Unbind Failed',
-            message: err instanceof Error ? err.message : 'Failed to start unbind task',
+            title: t('settings.storageTab.unbindFailed'),
+            message: err instanceof Error ? err.message : t('settings.storageTab.failedToStartUnbind'),
             confirmVariant: 'info',
             showCancel: false,
             onConfirm: () => closeConfirmDialog()
@@ -361,8 +356,8 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       .map(d => d.dataset_name)
       .join(', ')
     showConfirmDialog({
-      title: 'Unbind datasets',
-      message: `Are you sure you want to unbind ${selectedExternalDatasets.size} dataset(s): ${datasetNames}? This will remove all external file records from these datasets. The actual files on the external drive will NOT be deleted. Progress will be shown in the notification center.`,
+      title: t('settings.storageTab.unbindDatasets'),
+      message: t('settings.storageTab.unbindDatasetsConfirm', { count: selectedExternalDatasets.size, names: datasetNames }),
       confirmVariant: 'danger',
       onConfirm: async () => {
         closeConfirmDialog()
@@ -376,8 +371,8 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         } catch (err) {
           console.error('Failed to start unbind dataset tasks:', err)
           showConfirmDialog({
-            title: 'Unbind Failed',
-            message: err instanceof Error ? err.message : 'Failed to start unbind tasks',
+            title: t('settings.storageTab.unbindFailed'),
+            message: err instanceof Error ? err.message : t('settings.storageTab.failedToStartUnbind'),
             confirmVariant: 'info',
             showCancel: false,
             onConfirm: () => closeConfirmDialog()
@@ -389,11 +384,9 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     })
   }
 
-  // --- Storage Config ---
-
   const handleSelectStorageDir = async () => {
     if (!window.api?.files?.selectDirectory) return
-    const selected = await window.api.files.selectDirectory({ title: 'Select storage location' })
+    const selected = await window.api.files.selectDirectory({ title: t('settings.storageTab.selectStorageLocation') })
     if (selected) { setStoragePath(selected) }
   }
 
@@ -409,7 +402,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       setTimeout(() => setStorageSaved(false), 3000)
     } catch (err) {
       console.error('Failed to update storage config:', err)
-      setStorageConfigError(err instanceof Error ? err.message : 'Failed to update storage config')
+      setStorageConfigError(err instanceof Error ? err.message : t('settings.storageTab.failedToUpdateConfig'))
     } finally {
       setStorageSaving(false)
     }
@@ -435,7 +428,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       setTimeout(() => setStorageSaved(false), 3000)
     } catch (err) {
       console.error('Failed to start migration:', err)
-      setStorageConfigError(err instanceof Error ? err.message : 'Failed to start migration')
+      setStorageConfigError(err instanceof Error ? err.message : t('settings.storageTab.failedToStartMigration'))
     } finally {
       setStorageSaving(false)
     }
@@ -446,8 +439,6 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     await performStorageUpdate(migrationTarget)
   }
 
-  // --- Orphaned Files & Records ---
-
   const detectOrphaned = async (clearCleanupResult: boolean = true) => {
     setLoadingOrphaned(true)
     setStorageError(null)
@@ -457,7 +448,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       setOrphanedFiles(data)
     } catch (err) {
       console.error('Failed to detect orphaned files:', err)
-      setStorageError(err instanceof Error ? err.message : 'Failed to detect orphaned files')
+      setStorageError(err instanceof Error ? err.message : t('settings.storageTab.failedToDetectOrphanedFiles'))
     } finally {
       setLoadingOrphaned(false)
     }
@@ -475,7 +466,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       loadStats()
     } catch (err) {
       console.error('Failed to cleanup orphaned files:', err)
-      setStorageError(err instanceof Error ? err.message : 'Failed to cleanup orphaned files')
+      setStorageError(err instanceof Error ? err.message : t('settings.storageTab.failedToCleanupFiles'))
     } finally {
       setIsCleaningUp(false)
     }
@@ -490,7 +481,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       setOrphanedRecords(data)
     } catch (err) {
       console.error('Failed to detect orphaned records:', err)
-      setStorageError(err instanceof Error ? err.message : 'Failed to detect orphaned records')
+      setStorageError(err instanceof Error ? err.message : t('settings.storageTab.failedToDetectOrphanedRecords'))
     } finally {
       setLoadingOrphanedRecords(false)
     }
@@ -507,19 +498,17 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       await detectOrphanedRecordsHandler(false)
     } catch (err) {
       console.error('Failed to cleanup orphaned records:', err)
-      setStorageError(err instanceof Error ? err.message : 'Failed to cleanup orphaned records')
+      setStorageError(err instanceof Error ? err.message : t('settings.storageTab.failedToCleanupRecords'))
     } finally {
       setIsCleaningUpRecords(false)
     }
   }
 
-  // --- Reset Derived Data ---
-
   const handleResetDerivedData = async () => {
     showConfirmDialog({
-      title: 'Reset All Derived Data?',
-      message: 'This will DELETE ALL processed data (coordinates, masks, features, AI results, training data, models, logs) while keeping original WSI files. This operation CANNOT be undone. Are you absolutely sure?',
-      confirmText: 'Yes, Reset All Data',
+      title: t('settings.storageTab.resetDerivedDataTitle'),
+      message: t('settings.storageTab.resetDerivedDataConfirm'),
+      confirmText: t('settings.storageTab.resetDerivedDataButton'),
       confirmVariant: 'danger',
       onConfirm: async () => {
         closeConfirmDialog()
@@ -529,13 +518,11 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
           console.log('Reset derived data task started:', response.task_id)
         } catch (err) {
           console.error('Failed to start reset derived data task:', err)
-          setStorageError(err instanceof Error ? err.message : 'Failed to start reset derived data task')
+          setStorageError(err instanceof Error ? err.message : t('settings.storageTab.failedToResetDerivedData'))
         }
       }
     })
   }
-
-  // --- Load data on mount ---
 
   useEffect(() => {
     if (!stats) loadStats()
@@ -550,15 +537,14 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
 
   return (
     <>
-      {/* Storage Location Configuration */}
       <Card className="p-4 sm:p-6 mb-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
           <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
             <Database className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700 font-shrink-0" />
-            Storage Location
+            {t('settings.storageTab.storageLocation')}
           </h2>
           {storageConfig?.source && (
-            <span className="text-xs text-gray-500">Source: {storageConfig.source}</span>
+            <span className="text-xs text-gray-500">{t('settings.storageTab.source')}: {storageConfig.source}</span>
           )}
         </div>
         <form onSubmit={handleStorageSave} className="space-y-3">
@@ -571,28 +557,27 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
             />
             <div className="flex gap-2">
               <Button type="button" onClick={handleSelectStorageDir} disabled={storageSaving || !hasSelectDirectoryApi} className="bg-gray-100 text-gray-800 hover:bg-gray-200">
-                Browse
+                {t('settings.storageTab.browse')}
               </Button>
               <Button type="submit" disabled={storageSaving || !storagePath.trim()}>
-                {storageSaving ? 'Saving...' : 'Save'}
+                {storageSaving ? t('settings.storageTab.saving') : t('settings.storageTab.save')}
               </Button>
             </div>
           </div>
           {storageConfigError && <div className="text-sm text-red-600">{storageConfigError}</div>}
-          {storageSaved && <div className="text-sm text-green-600">Storage location saved. Restart services to apply fully.</div>}
+          {storageSaved && <div className="text-sm text-green-600">{t('settings.storageTab.savedMessage')}</div>}
           <p className="text-xs text-gray-500">
-            This directory stores derived data (coordinates, masks, results, models, logs). Image files can remain in their original locations.
+            {t('settings.storageTab.storageLocationDescription')}
           </p>
         </form>
       </Card>
 
-      {/* Storage Stats */}
       <Card className="p-4 sm:p-6 mb-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-3">
             <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
               <HardDrive className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700 font-shrink-0" />
-              Storage Overview
+              {t('settings.storageTab.storageOverview')}
             </h2>
           </div>
           <button
@@ -604,30 +589,29 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
             <svg className={`w-4 h-4 ${loadingStorage ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
-            {loadingStorage ? 'Loading...' : 'Refresh'}
+            {loadingStorage ? t('settings.storageTab.loading') : t('settings.storageTab.refresh')}
           </button>
         </div>
         {loadingStorage ? (
           <div className="flex items-center justify-center py-8">
             <div className="text-center">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-3"></div>
-              <p className="text-gray-500 text-sm">Loading storage statistics...</p>
+              <p className="text-gray-500 text-sm">{t('settings.storageTab.loadingStorageStats')}</p>
             </div>
           </div>
         ) : storageError ? (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <h3 className="text-red-800 font-semibold mb-2">Error</h3>
+            <h3 className="text-red-800 font-semibold mb-2">{t('settings.storageTab.error')}</h3>
             <p className="text-red-600 text-sm">{storageError}</p>
-            <button type="button" onClick={loadStats} className="mt-3 px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700">Retry</button>
+            <button type="button" onClick={loadStats} className="mt-3 px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700">{t('settings.storageTab.retry')}</button>
           </div>
         ) : stats ? (
           <StorageStatsDisplay stats={stats} formatBytes={formatBytes} />
         ) : (
-          <div className="text-center py-8 text-gray-500"><p>No storage data available.</p></div>
+          <div className="text-center py-8 text-gray-500"><p>{t('settings.storageTab.noStorageData')}</p></div>
         )}
       </Card>
 
-      {/* Orphaned Files & Orphaned Records Management - Side by Side */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
         <OrphanedFilesCard
           orphanedFiles={orphanedFiles}
@@ -650,7 +634,6 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         />
       </div>
 
-      {/* Reset Derived Data - Danger Zone */}
       <Card className="p-4 sm:p-6 mb-6 border-2 border-red-200 bg-red-50/30">
         <button
           type="button"
@@ -659,7 +642,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         >
           <h2 className="text-lg sm:text-xl font-semibold text-red-800 flex items-center">
             <AlertCircle className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-red-600 flex-shrink-0" />
-            Danger Zone
+            {t('settings.storageTab.dangerZone')}
           </h2>
           {isDangerZoneOpen ? (
             <ChevronUp className="w-5 h-5 text-red-600" />
@@ -672,10 +655,10 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
               <h3 className="text-red-800 font-semibold mb-2 flex items-center">
                 <Trash2 className="w-4 h-4 mr-2" />
-                Reset All Derived Data
+                {t('settings.storageTab.resetDerivedData')}
               </h3>
               <p className="text-sm text-red-700 mb-3">
-                This will delete ALL processed data (coordinates, masks, features, AI results, training data, models, logs) while keeping original WSI files. This cannot be undone.
+                {t('settings.storageTab.resetDerivedDataDescription')}
               </p>
               <Button
                 type="button"
@@ -683,14 +666,13 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
                 className="bg-red-600 text-white hover:bg-red-700"
               >
                 <Trash2 className="w-4 h-4 mr-2" />
-                Reset All Derived Data
+                {t('settings.storageTab.resetDerivedData')}
               </Button>
             </div>
           </div>
         )}
       </Card>
 
-      {/* Batch Scan & Register WSI Files */}
       <BatchRegisterCard
         batchScanPath={batchScanPath}
         setBatchScanPath={setBatchScanPath}
@@ -732,7 +714,6 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         navigate={navigate}
       />
 
-      {/* Check External Files */}
       <ExternalFilesHealthCheckCard
         checkingExternalFiles={checkingExternalFiles}
         externalFilesResult={externalFilesResult}
@@ -744,7 +725,6 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         handleDeleteUnavailableFiles={handleDeleteUnavailableFiles}
       />
 
-      {/* Migration Confirmation Modal */}
       <MigrationModal
         isOpen={showMigrationPrompt}
         currentPath={storageConfig?.uploads_dir}
@@ -758,4 +738,3 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     </>
   )
 }
-

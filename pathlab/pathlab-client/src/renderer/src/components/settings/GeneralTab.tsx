@@ -7,12 +7,14 @@ import { Label } from '../ui/label'
 import { getGlobalSettings, updateGlobalSettings, getAuthToken } from '../../api'
 import { API_BASE } from '../../config'
 import { ShowConfirmDialog } from './ConfirmDialog'
+import { useTranslation } from 'react-i18next'
 
 export interface GeneralTabProps {
   showConfirmDialog: ShowConfirmDialog
   closeConfirmDialog: () => void
 }
 
+  const { t } = useTranslation()
 export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTabProps) {
   // Remote LLM state
   const [apiKey, setApiKey] = useState('')
@@ -136,13 +138,14 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   return (
     <div className="space-y-6">
       <form onSubmit={handleAISave} className="space-y-6">
+
         {/* Stacked Layout: Remote Services then Local Services */}
         <div className="space-y-8">
           {/* Remote Services Section */}
           <div className="space-y-4">
             <h2 className="text-lg font-semibold text-gray-700 flex items-center">
               <Cloud className="w-5 h-5 mr-2 text-blue-600" />
-              Remote Services
+              {t('settings.remoteServices')}
             </h2>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
@@ -151,34 +154,34 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center text-base">
                     <Server className="w-4 h-4 mr-2 text-primary-600" />
-                    LLM (OpenRouter)
+                    {t('settings.general.llmOpenRouter')}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
-                    <Label>API Key</Label>
+                    <Label>{t('settings.general.apiKey')}</Label>
                     <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." />
                     <p className="text-xs text-gray-500">
-                      <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline">Get Key</a>
+                      <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline">{t('common.getKey')}</a>
                     </p>
                   </div>
                   <div className="space-y-2">
-                    <Label>Base URL</Label>
+                    <Label>{t('settings.general.baseUrl')}</Label>
                     <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://openrouter.ai/api/v1" className="font-mono text-sm" />
                   </div>
                   <div className="space-y-2">
-                    <Label>Model</Label>
+                    <Label>{t('settings.general.model')}</Label>
                     <select
                       value={model}
                       onChange={(e) => setModel(e.target.value)}
                       className="flex h-9 w-full rounded-lg border border-gray-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950"
                     >
-                      <optgroup label="Multimodal Models">
+                      <optgroup label={t('settings.general.multimodalModels')}>
                         <option value="qwen/qwen3.5-plus-02-15">Qwen3.5-Plus-02-15</option>
                         <option value="z-ai/glm-5">GLM-5</option>
                         <option value="moonshotai/kimi-k2.5">Kimi-K2.5</option>
                       </optgroup>
-                      <optgroup label="Text Models">
+                      <optgroup label={t('settings.general.textModels')}>
                         <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
                         <option value="stepfun/step-3.5-flash:free">Step-3.5-Flash</option>
                         <option value="z-ai/glm-4.7-flash">GLM-4.7-Flash</option>
@@ -196,15 +199,15 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                   <CardHeader className="pb-3">
                     <CardTitle className="flex items-center text-base">
                       <Mic className="w-4 h-4 mr-2 text-orange-600" />
-                      ASR (DashScope)
+                      {t('settings.general.asrDashScope')}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="space-y-2">
-                      <Label>DashScope API Key</Label>
+                      <Label>{t('settings.general.dashscopeApiKey')}</Label>
                       <Input type="password" value={dashscopeApiKey} onChange={(e) => setDashscopeApiKey(e.target.value)} placeholder="sk-..." />
                       <p className="text-xs text-gray-500">
-                        For Qwen3-ASR realtime. <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-primary-600 hover:underline">Get Key</a>
+                        {t('settings.general.forQwen3Asr')} <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-primary-600 hover:underline">{t('common.getKey')}</a>
                       </p>
                     </div>
                   </CardContent>
@@ -215,15 +218,15 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                   <CardHeader className="pb-3">
                     <CardTitle className="flex items-center text-base">
                       <Key className="w-4 h-4 mr-2 text-amber-600" />
-                      Shared Credentials
+                      {t('settings.general.sharedCredentials')}
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-2">
-                      <Label>HuggingFace Token</Label>
+                      <Label>{t('settings.general.huggingfaceToken')}</Label>
                       <Input type="password" value={huggingfaceToken} onChange={(e) => setHuggingfaceToken(e.target.value)} placeholder="hf_..." />
                       <p className="text-xs text-gray-500">
-                        For downloading gated models. <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-primary-600 hover:underline">Get Token</a>
+                        {t('settings.general.forDownloadingGated')} <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-primary-600 hover:underline">{t('common.getToken')}</a>
                       </p>
                     </div>
                   </CardContent>
@@ -236,7 +239,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
           <div className="space-y-4">
             <h2 className="text-lg font-semibold text-gray-700 flex items-center">
               <Server className="w-5 h-5 mr-2 text-green-600" />
-              Local Services
+              {t('settings.localServices')}
             </h2>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -246,7 +249,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                   <div className="flex items-center justify-between">
                     <CardTitle className="flex items-center text-base">
                       <Server className="w-4 h-4 mr-2 text-green-600" />
-                      LLM (vLLM)
+                      {t('settings.general.llmVllm')}
                     </CardTitle>
                     <div className="flex items-center space-x-3">
                       <div className={`flex items-center space-x-1.5 px-2 py-0.5 rounded-full text-xs font-medium border ${localVllmStatus === 'online' ? 'bg-green-50 text-green-700 border-green-200' :
@@ -254,7 +257,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                           'bg-gray-100 text-gray-600 border-gray-200'
                         }`}>
                         <div className={`w-1.5 h-1.5 rounded-full ${localVllmStatus === 'online' ? 'bg-green-500' : localVllmStatus === 'checking' ? 'bg-yellow-500' : 'bg-gray-400'}`} />
-                        <span>{localVllmStatus === 'online' ? 'Online' : localVllmStatus === 'checking' ? '...' : 'Offline'}</span>
+                        <span>{localVllmStatus === 'online' ? t('common.online') : localVllmStatus === 'checking' ? '...' : t('common.offline')}</span>
                       </div>
                       <div
                         className={`w-10 h-5 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-300 ${localVllmEnabled ? 'bg-green-600' : 'bg-gray-200'}`}
@@ -268,17 +271,17 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                 {localVllmEnabled && (
                   <CardContent className="pt-2 space-y-4">
                     <div className="space-y-2">
-                      <Label>Base URL</Label>
+                      <Label>{t('settings.general.baseUrl')}</Label>
                       <div className="flex gap-2">
                         <Input value={localVllmBaseUrl} onChange={(e) => setLocalVllmBaseUrl(e.target.value)} placeholder="http://127.0.0.1:8000/v1" className="font-mono text-sm" />
                         <Button type="button" variant="outline" size="sm" onClick={checkLocalVllmStatus} className="bg-white whitespace-nowrap">
-                          Test
+                          {t('common.test')}
                         </Button>
                       </div>
                     </div>
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
-                        <Label>Model</Label>
+                        <Label>{t('settings.general.model')}</Label>
                         {localVllmDetectedModel && (
                           <span className="text-xs font-mono bg-green-100 text-green-800 px-1.5 py-0.5 rounded">
                             {localVllmDetectedModel}
@@ -288,7 +291,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                       <Input value={localVllmModel} onChange={(e) => setLocalVllmModel(e.target.value)} placeholder={localVllmDetectedModel || "Qwen/Qwen3.5-Plus-02-15"} />
                     </div>
                     <div className="space-y-2">
-                      <Label>API Key <span className="text-gray-400 font-normal">(Optional)</span></Label>
+                      <Label>{t('settings.general.apiKeyOptional')}</Label>
                       <Input type="password" value={localVllmApiKey} onChange={(e) => setLocalVllmApiKey(e.target.value)} placeholder="token-..." />
                     </div>
                   </CardContent>
@@ -301,7 +304,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                   <div className="flex items-center justify-between">
                     <CardTitle className="flex items-center text-base">
                       <Mic className="w-4 h-4 mr-2 text-purple-600" />
-                      ASR (WebSocket)
+                      {t('settings.general.asrWebSocket')}
                     </CardTitle>
                     <div className="flex items-center space-x-3">
                       <div className={`flex items-center space-x-1.5 px-2 py-0.5 rounded-full text-xs font-medium border ${localAsrStatus === 'online' ? 'bg-green-50 text-green-700 border-green-200' :
@@ -309,7 +312,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                           'bg-gray-100 text-gray-600 border-gray-200'
                         }`}>
                         <div className={`w-1.5 h-1.5 rounded-full ${localAsrStatus === 'online' ? 'bg-green-500' : localAsrStatus === 'checking' ? 'bg-yellow-500' : 'bg-gray-400'}`} />
-                        <span>{localAsrStatus === 'online' ? 'Online' : localAsrStatus === 'checking' ? '...' : 'Offline'}</span>
+                        <span>{localAsrStatus === 'online' ? t('common.online') : localAsrStatus === 'checking' ? '...' : t('common.offline')}</span>
                       </div>
                       <div
                         className={`w-10 h-5 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-300 ${localAsrEnabled ? 'bg-purple-600' : 'bg-gray-200'}`}
@@ -323,20 +326,20 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                 {localAsrEnabled && (
                   <CardContent className="pt-2 space-y-4">
                     <div className="space-y-2">
-                      <Label>WebSocket URL</Label>
+                      <Label>{t('settings.general.webSocketUrl')}</Label>
                       <div className="flex gap-2">
                         <Input value={localAsrBaseUrl} onChange={(e) => setLocalAsrBaseUrl(e.target.value)} placeholder="ws://127.0.0.1:8001/api-ws/v1/realtime" className="font-mono text-sm" />
                         <Button type="button" variant="outline" size="sm" onClick={checkLocalAsrStatus} className="bg-white whitespace-nowrap">
-                          Test
+                          {t('common.test')}
                         </Button>
                       </div>
                       <p className="text-xs text-gray-500">
-                        WebSocket endpoint for realtime ASR (e.g., ws://host:port/api-ws/v1/realtime)
+                        {t('settings.general.webSocketEndpointInfo')}
                       </p>
                     </div>
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
-                        <Label>Model</Label>
+                        <Label>{t('settings.general.model')}</Label>
                         {localAsrDetectedModel && (
                           <span className="text-xs font-mono bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded">
                             {localAsrDetectedModel}
@@ -345,11 +348,11 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                       </div>
                       <Input value={localAsrModel} onChange={(e) => setLocalAsrModel(e.target.value)} placeholder={localAsrDetectedModel || "Qwen/Qwen3-ASR-1.7B"} />
                       <p className="text-xs text-gray-500">
-                        Model name will be appended as ?model=... to the URL
+                        {t('settings.general.modelNameWillBeAppended')}
                       </p>
                     </div>
                     <div className="space-y-2">
-                      <Label>API Key <span className="text-gray-400 font-normal">(Optional)</span></Label>
+                      <Label>{t('settings.general.apiKeyOptional')}</Label>
                       <Input type="password" value={localAsrApiKey} onChange={(e) => setLocalAsrApiKey(e.target.value)} placeholder="token-..." />
                     </div>
                   </CardContent>
@@ -365,13 +368,13 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         <div className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg shadow-sm">
           <div className="flex items-center gap-2 text-sm text-gray-500">
             <Info className="w-4 h-4" />
-            <span>Local services have priority. Falls back to remote if unavailable.</span>
+            <span>{t('common.localServicePriority')}</span>
           </div>
           <div className="flex items-center space-x-3">
             {aiSaved && (
               <span className="text-sm text-green-600 flex items-center">
                 <CheckCircle className="w-5 h-5 mr-1" />
-                Saved!
+                {t('common.savedSuccess')}
               </span>
             )}
             <button
@@ -379,7 +382,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
               disabled={aiSaving}
               className="px-4 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white text-sm font-medium rounded-lg hover:from-primary-700 hover:to-primary-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-all shadow-sm disabled:opacity-50"
             >
-              {aiSaving ? 'Saving...' : 'Save Settings'}
+              {aiSaving ? t('common.savingText') : t('common.saveSettings')}
             </button>
           </div>
         </div>

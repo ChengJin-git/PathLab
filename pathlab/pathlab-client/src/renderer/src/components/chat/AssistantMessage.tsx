@@ -4,6 +4,7 @@
  * Extracted from AIChatPage.tsx to reduce file size.
  */
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -183,6 +184,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   submitTaskTrigger,
   cancelTaskTrigger
 }: AssistantMessageProps) {
+  const { t } = useTranslation()
   // Parse special blocks
   const options = parseOptions(content)
   const taskConfig = parseTaskConfig(content)
@@ -389,7 +391,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
               csvContent={csvContent}
               fileName={csvFileName}
               onSuccess={() => {
-                onToast({ type: 'success', message: 'CSV uploaded successfully!' })
+                onToast({ type: 'success', message: t('chatComponents.assistantMessage.csvUploadedSuccess') })
               }}
               onError={(error) => {
                 onToast({ type: 'error', message: error })
@@ -437,7 +439,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
           <motion.div key="cancel-task-real" {...cardTransition}>
             <CancelTaskCard
               config={cancelTaskConfig}
-              onSuccess={(taskId) => onToast({ type: 'success', message: `Task ${taskId} cancelled successfully` })}
+              onSuccess={(taskId) => onToast({ type: 'success', message: t('chatComponents.assistantMessage.taskCancelledSuccess', { taskId }) })}
               onError={(error) => onToast({ type: 'error', message: error })}
               cancelTrigger={cancelTaskTrigger}
             />
@@ -453,7 +455,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
           <motion.div key="rename-task-real" {...cardTransition}>
             <RenameTaskCard
               config={renameTaskConfig}
-              onSuccess={(taskId, newName) => onToast({ type: 'success', message: `Task renamed to "${newName}"` })}
+              onSuccess={(taskId, newName) => onToast({ type: 'success', message: t('chatComponents.assistantMessage.taskRenamedSuccess', { newName }) })}
               onError={(error) => onToast({ type: 'error', message: error })}
             />
           </motion.div>

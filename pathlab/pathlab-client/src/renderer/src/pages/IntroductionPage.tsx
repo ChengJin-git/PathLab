@@ -4,6 +4,8 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { useTranslation } from 'react-i18next'
+import { LanguageSwitcher } from '../components/common/LanguageSwitcher'
 import {
   Microscope, Brain, Shield, Zap, ArrowRight, Upload,
   BarChart3, Sparkles, Heart, ExternalLink, ChevronDown, Check,
@@ -25,19 +27,6 @@ function FadeInSection({ children, className = '', delay = 0 }: {
   )
 }
 
-const features = [
-  { icon: Microscope, title: 'WSI Visualization', description: 'View and navigate multi-gigapixel whole slide images with smooth pan and zoom.' },
-  { icon: Brain, title: 'AI-Powered Analysis', description: 'Train and deploy deep learning models for pathology classification.' },
-  { icon: Shield, title: 'Privacy First', description: 'Fully compliant with data privacy regulations — your research stays secure.' },
-  { icon: Zap, title: 'Smart Assistant', description: 'Describe your research in natural language and let AI set up the task.' },
-]
-
-const steps = [
-  { icon: Upload, num: '01', title: 'Upload Slides', description: 'Import your whole-slide images in any major format.' },
-  { icon: Sparkles, num: '02', title: 'AI Analyzes', description: 'Our agentic AI pipeline processes and classifies your data.' },
-  { icon: BarChart3, num: '03', title: 'Get Insights', description: 'Review results, generate reports, and export findings.' },
-]
-
 export default function IntroductionPage() {
   const navigate = useNavigate()
   const { isLoggedIn } = useAuth()
@@ -58,14 +47,16 @@ export default function IntroductionPage() {
 }
 
 function Navbar({ goToLogin }: { goToLogin: () => void }) {
+  const { t } = useTranslation()
   return (
     <nav className="sticky top-0 z-50 backdrop-blur-lg bg-white/80 border-b border-slate-200/60">
       <div className="max-w-6xl mx-auto flex items-center justify-between px-4 sm:px-6 h-14 sm:h-16">
         <img src="/images/pathlab-logo.png" alt="PathLab" className="h-7 sm:h-9 w-auto" />
         <div className="flex items-center gap-2 sm:gap-3">
+          <LanguageSwitcher />
           <Button onClick={goToLogin}
             className="bg-slate-900 hover:bg-slate-800 text-white font-semibold px-4 sm:px-5 h-8 sm:h-9 text-sm sm:text-base rounded-full shadow-md">
-            Sign In
+            {t('introduction.signIn')}
           </Button>
         </div>
       </div>
@@ -74,6 +65,7 @@ function Navbar({ goToLogin }: { goToLogin: () => void }) {
 }
 
 function HeroSection() {
+  const { t } = useTranslation()
   return (
     <section className="relative overflow-hidden">
       <div className="absolute inset-0 pointer-events-none">
@@ -83,25 +75,25 @@ function HeroSection() {
       <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-16 sm:pt-24 pb-16 sm:pb-20 lg:pt-32 lg:pb-28 text-center">
         <FadeInSection>
           <div className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-blue-600 text-white shadow-lg shadow-blue-200 text-xs sm:text-sm font-bold uppercase tracking-wider mb-6 sm:mb-8">
-            <Zap className="w-3 h-3 sm:w-4 sm:h-4 fill-current" /><span>Agentic AI Powered</span>
+            <Zap className="w-3 h-3 sm:w-4 sm:h-4 fill-current" /><span>{t('introduction.agenticAI')}</span>
           </div>
         </FadeInSection>
         <FadeInSection delay={0.1}>
           <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold leading-[1.1] sm:leading-[1.08] tracking-tight mb-4 sm:mb-6 px-2">
-            Digital Pathology{' '}
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500">Reimagined</span>
+            {t('introduction.heroTitle1')}{' '}
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500">{t('introduction.heroTitle2')}</span>
           </h1>
         </FadeInSection>
         <FadeInSection delay={0.2}>
           <p className="text-slate-600 text-base sm:text-lg md:text-xl leading-relaxed max-w-2xl mx-auto mb-8 sm:mb-10 px-4">
-            Train, analyze, and gain insights while keeping your data private. Experience the future of medical research today.
+            {t('introduction.heroSubtitle')}
           </p>
         </FadeInSection>
         <FadeInSection delay={0.3}>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 px-4">
             <a href="#features" className="inline-block w-full sm:w-auto">
               <Button className="w-full sm:w-auto bg-slate-900 hover:bg-slate-800 text-white font-semibold px-6 sm:px-8 h-11 sm:h-12 rounded-full shadow-xl hover:shadow-2xl transition-all text-sm sm:text-base flex items-center justify-center gap-2">
-                Learn more <ChevronDown className="w-4 h-4" />
+                {t('introduction.learnMore')} <ChevronDown className="w-4 h-4" />
               </Button>
             </a>
           </div>
@@ -112,13 +104,20 @@ function HeroSection() {
 }
 
 function FeaturesSection() {
+  const { t } = useTranslation()
+  const features = [
+    { icon: Microscope, title: t('introduction.features.wsiVisualization'), description: t('introduction.features.wsiVisualizationDesc') },
+    { icon: Brain, title: t('introduction.features.aiAnalysis'), description: t('introduction.features.aiAnalysisDesc') },
+    { icon: Shield, title: t('introduction.features.privacyFirst'), description: t('introduction.features.privacyFirstDesc') },
+    { icon: Zap, title: t('introduction.features.smartAssistant'), description: t('introduction.features.smartAssistantDesc') },
+  ]
   return (
     <section id="features" className="relative py-16 sm:py-24 lg:py-32">
       <div className="max-w-6xl mx-auto px-4 sm:px-6">
         <FadeInSection>
           <div className="text-center mb-12 sm:mb-16 px-4">
-            <p className="text-blue-600 font-bold text-xs sm:text-sm uppercase tracking-wider mb-2 sm:mb-3">Core Capabilities</p>
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight">Everything you need for digital pathology</h2>
+            <p className="text-blue-600 font-bold text-xs sm:text-sm uppercase tracking-wider mb-2 sm:mb-3">{t('introduction.coreCapabilities')}</p>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight">{t('introduction.coreCapabilitiesTitle')}</h2>
           </div>
         </FadeInSection>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
@@ -143,13 +142,19 @@ function FeaturesSection() {
 }
 
 function HowItWorksSection() {
+  const { t } = useTranslation()
+  const steps = [
+    { icon: Upload, num: '01', title: t('introduction.steps.uploadSlides'), description: t('introduction.steps.uploadSlidesDesc') },
+    { icon: Sparkles, num: '02', title: t('introduction.steps.aiAnalyzes'), description: t('introduction.steps.aiAnalyzesDesc') },
+    { icon: BarChart3, num: '03', title: t('introduction.steps.getInsights'), description: t('introduction.steps.getInsightsDesc') },
+  ]
   return (
     <section className="relative py-16 sm:py-24 lg:py-32 bg-white">
       <div className="max-w-6xl mx-auto px-4 sm:px-6">
         <FadeInSection>
           <div className="text-center mb-12 sm:mb-16 px-4">
-            <p className="text-blue-600 font-bold text-xs sm:text-sm uppercase tracking-wider mb-2 sm:mb-3">How It Works</p>
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight">From slide to insight in three steps</h2>
+            <p className="text-blue-600 font-bold text-xs sm:text-sm uppercase tracking-wider mb-2 sm:mb-3">{t('introduction.howItWorks')}</p>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight">{t('introduction.howItWorksTitle')}</h2>
           </div>
         </FadeInSection>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-10 sm:gap-8 lg:gap-12">
@@ -179,30 +184,29 @@ function HowItWorksSection() {
   )
 }
 
-const individualFeatures = [
-  'WSI Visualization',
-  'AI-Powered Analysis',
-  'Privacy First — Regulatory compliant',
-  'Smart Assistant',
-]
-
-const enterpriseFeatures = [
-  'Custom integrations',
-  'Priority support',
-  'SSO & access controls',
-  'Enterprise-grade security',
-  'Multi-tenant deployment',
-  'Dedicated account manager',
-]
-
 function PricingSection({ goToLogin }: { goToLogin: () => void }) {
+  const { t } = useTranslation()
+  const individualFeatures = [
+    t('introduction.features.wsiVisualization'),
+    t('introduction.features.aiAnalysis'),
+    t('introduction.features.privacyFirstDesc'),
+    t('introduction.features.smartAssistant'),
+  ]
+  const enterpriseFeatures = [
+    t('introduction.enterpriseFeatures.customIntegrations'),
+    t('introduction.enterpriseFeatures.prioritySupport'),
+    t('introduction.enterpriseFeatures.ssoAccessControls'),
+    t('introduction.enterpriseFeatures.enterpriseSecurity'),
+    t('introduction.enterpriseFeatures.multiTenant'),
+    t('introduction.enterpriseFeatures.dedicatedManager'),
+  ]
   return (
     <section className="relative py-16 sm:py-24 lg:py-32">
       <div className="max-w-5xl mx-auto px-4 sm:px-6">
         <FadeInSection>
           <div className="text-center mb-12 sm:mb-16 px-4">
-            <p className="text-blue-600 font-bold text-xs sm:text-sm uppercase tracking-wider mb-2 sm:mb-3">Pricing</p>
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight">Simple, transparent pricing</h2>
+            <p className="text-blue-600 font-bold text-xs sm:text-sm uppercase tracking-wider mb-2 sm:mb-3">{t('introduction.pricing')}</p>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight">{t('introduction.pricingTitle')}</h2>
           </div>
         </FadeInSection>
 
@@ -210,12 +214,12 @@ function PricingSection({ goToLogin }: { goToLogin: () => void }) {
           {/* Individual / Free */}
           <FadeInSection delay={0.08}>
             <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 h-full flex flex-col hover:border-blue-300 hover:shadow-lg hover:shadow-blue-500/5 transition-all duration-300">
-              <p className="text-blue-600 font-bold text-xs sm:text-sm uppercase tracking-wider mb-2">Individual</p>
+              <p className="text-blue-600 font-bold text-xs sm:text-sm uppercase tracking-wider mb-2">{t('introduction.individual')}</p>
               <div className="flex items-baseline gap-1 mb-2 sm:mb-3">
-                <span className="text-3xl sm:text-4xl font-extrabold tracking-tight">Free</span>
+                <span className="text-3xl sm:text-4xl font-extrabold tracking-tight">{t('introduction.free')}</span>
               </div>
               <p className="text-slate-500 text-xs sm:text-sm leading-relaxed mb-5 sm:mb-6">
-                PathLab is free for individual clinicans with a daily usage limit, while in research preview. We encourage individual clinicans to try it out, explore its capabilities, and share their feedback.
+                {t('introduction.individualDesc')}
               </p>
               <ul className="space-y-2.5 sm:space-y-3 mb-6 sm:mb-8 flex-1">
                 {individualFeatures.map((feat) => (
@@ -232,11 +236,11 @@ function PricingSection({ goToLogin }: { goToLogin: () => void }) {
                 <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
                   <div className="flex items-center gap-2 flex-1 min-w-0">
                     <Heart className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-500 fill-rose-500 animate-pulse flex-shrink-0" />
-                    <p className="text-slate-700 text-xs font-semibold">Help us keep PathLab free for everyone.</p>
+                    <p className="text-slate-700 text-xs font-semibold">{t('introduction.keepFree')}</p>
                   </div>
                   <a href="https://ko-fi.com/pathlab" target="_blank" rel="noopener noreferrer" className="w-full sm:w-auto flex-shrink-0">
                     <Button className="w-full sm:w-auto bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs px-4 h-8 rounded-lg transition-all flex items-center justify-center gap-1.5">
-                      Donate <ExternalLink className="w-3 h-3 opacity-70" />
+                      {t('introduction.donate')} <ExternalLink className="w-3 h-3 opacity-70" />
                     </Button>
                   </a>
                 </div>
@@ -244,7 +248,7 @@ function PricingSection({ goToLogin }: { goToLogin: () => void }) {
 
               <Button onClick={goToLogin}
                 className="w-full bg-white hover:bg-slate-50 text-slate-900 font-semibold h-10 sm:h-11 text-sm sm:text-base rounded-xl border border-slate-300 hover:border-slate-400 transition-all flex items-center justify-center gap-2">
-                Get Started <ArrowRight className="w-4 h-4" />
+                {t('introduction.getStarted')} <ArrowRight className="w-4 h-4" />
               </Button>
             </div>
           </FadeInSection>
@@ -257,12 +261,12 @@ function PricingSection({ goToLogin }: { goToLogin: () => void }) {
                 <div className="absolute left-0 bottom-0 w-40 sm:w-56 h-40 sm:h-56 bg-cyan-500/10 rounded-full blur-3xl -translate-x-1/3 translate-y-1/3" />
               </div>
               <div className="relative z-10 flex flex-col h-full">
-                <p className="text-blue-400 font-bold text-xs sm:text-sm uppercase tracking-wider mb-2">Enterprise</p>
+                <p className="text-blue-400 font-bold text-xs sm:text-sm uppercase tracking-wider mb-2">{t('introduction.enterprise')}</p>
                 <div className="flex items-baseline gap-1 mb-2 sm:mb-3">
-                  <span className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">Custom</span>
+                  <span className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">{t('introduction.custom')}</span>
                 </div>
                 <p className="text-slate-400 text-xs sm:text-sm leading-relaxed mb-5 sm:mb-6">
-                  Secure, on-premise deployment tailored for your organization&apos;s needs.
+                  {t('introduction.enterpriseDesc')}
                 </p>
                 <ul className="space-y-2.5 sm:space-y-3 mb-6 sm:mb-8 flex-1">
                   {enterpriseFeatures.map((feat) => (
@@ -274,7 +278,7 @@ function PricingSection({ goToLogin }: { goToLogin: () => void }) {
                 </ul>
                 <a href="mailto:jhc@ust.hk" className="block">
                   <Button className="w-full bg-white/10 hover:bg-white/20 text-white font-semibold h-10 sm:h-11 text-sm sm:text-base rounded-xl border border-white/20 hover:border-white/30 backdrop-blur transition-all flex items-center justify-center gap-2">
-                    Contact Our Team <ArrowRight className="w-4 h-4" />
+                    {t('introduction.contactTeam')} <ArrowRight className="w-4 h-4" />
                   </Button>
                 </a>
               </div>
@@ -287,6 +291,7 @@ function PricingSection({ goToLogin }: { goToLogin: () => void }) {
 }
 
 function Footer() {
+  const { t } = useTranslation()
   return (
     <footer className="border-t border-slate-200 bg-white py-8 sm:py-10">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
@@ -298,7 +303,7 @@ function Footer() {
             <img src="/images/smartlab-logo.svg" alt="SmartLab" className="h-10 sm:h-12 w-auto" />
           </a>
         </div>
-        <p className="text-slate-400 text-xs text-center sm:text-left">© 2026 <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer">SmartLab</a> · All rights reserved</p>
+        <p className="text-slate-400 text-xs text-center sm:text-left">© 2026 <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer">SmartLab</a> · {t('introduction.allRightsReserved')}</p>
       </div>
     </footer>
   )

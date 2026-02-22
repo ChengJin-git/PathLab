@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName } from '../api'
 import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles, User, Edit2 } from 'lucide-react'
 import { TASK_LIST_STATUS_BADGES, isActiveStatus } from '../constants/status'
@@ -30,6 +31,7 @@ interface Task {
 export default function TaskListPage() {
   const navigate = useNavigate()
   const { isAdmin, user } = useAuth()
+  const { t } = useTranslation()
 
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
@@ -119,7 +121,7 @@ export default function TaskListPage() {
   // Save edited task name
   const handleSaveTaskName = async () => {
     if (!taskToEdit || !editedTaskName.trim()) {
-      setEditError('Task name cannot be empty')
+      setEditError(t('taskList.editTaskNameEmpty'))
       return
     }
 
@@ -143,7 +145,7 @@ export default function TaskListPage() {
       setTaskToEdit(null)
     } catch (err: any) {
       console.error('Failed to update task name:', err)
-      setEditError(err.message || 'Failed to update task name')
+      setEditError(err.message || t('taskList.editTaskNameFailed'))
     } finally {
       setIsEditingSaving(false)
     }
@@ -214,7 +216,7 @@ export default function TaskListPage() {
       setDeleteMode('standard')
     } catch (error) {
       console.error('Failed to delete task:', error)
-      setDeleteError(error instanceof Error ? error.message : 'Failed to delete task. Please try again.')
+      setDeleteError(error instanceof Error ? error.message : t('taskList.deleteTaskFailed'))
     } finally {
       setIsDeleting(false)
     }
@@ -279,8 +281,8 @@ export default function TaskListPage() {
   })
 
   const calculateDuration = (start: string | null, end: string | null, status: Task['status']) => {
-    if (!start || !end) return 'N/A'
-    if (isActiveStatus(status) || status === 'pending') return 'In Progress'
+    if (!start || !end) return t('taskList.na')
+    if (isActiveStatus(status) || status === 'pending') return t('taskList.inProgress')
     const duration = new Date(end).getTime() - new Date(start).getTime()
     const hours = Math.floor(duration / (1000 * 60 * 60))
     const minutes = Math.floor((duration % (1000 * 60 * 60)) / (1000 * 60))
@@ -307,8 +309,8 @@ export default function TaskListPage() {
     <div className="w-full">
       {/* Header */}
       <PageHeader
-        title="Analysis Lab"
-        description="Coordinate, run, and monitor AI analysis tasks"
+        title={t('taskList.title')}
+        description={t('taskList.description')}
       >
         <Button
           variant="outline"
@@ -316,37 +318,37 @@ export default function TaskListPage() {
           className="gap-2"
         >
           <ArrowLeft className="w-4 h-4" />
-          Back to Dashboard
+          {t('taskList.backToDashboard')}
         </Button>
         <Button
           onClick={() => navigate('/ai-chat')}
           className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white"
         >
           <Sparkles className="w-4 h-4" />
-          New Task
+          {t('taskList.newTask')}
         </Button>
       </PageHeader>
 
       {/* Statistics Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-6 mb-4 sm:mb-8">
         <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">Total Tasks</div>
+          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.totalTasks')}</div>
           <div className="text-xl sm:text-3xl font-semibold text-gray-900">{stats.total}</div>
         </Card>
         <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">Running</div>
+          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.running')}</div>
           <div className="text-xl sm:text-3xl font-semibold text-purple-600">{stats.running}</div>
         </Card>
         <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">Completed</div>
+          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.completed')}</div>
           <div className="text-xl sm:text-3xl font-semibold text-green-600">{stats.completed}</div>
         </Card>
         <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">Failed</div>
+          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.failed')}</div>
           <div className="text-xl sm:text-3xl font-semibold text-red-600">{stats.failed}</div>
         </Card>
         <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100 col-span-2 md:col-span-1">
-          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 text-center md:text-left uppercase tracking-tight sm:tracking-normal">Cancelled</div>
+          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 text-center md:text-left uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.cancelled')}</div>
           <div className="text-xl sm:text-3xl font-semibold text-gray-500 text-center md:text-left">{stats.cancelled}</div>
         </Card>
       </div>
@@ -359,14 +361,14 @@ export default function TaskListPage() {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search tasks..."
+            placeholder={t('taskList.searchPlaceholder')}
             className="w-full pl-9 sm:pl-12 pr-4 py-2 sm:py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 text-sm sm:text-base transition-all"
           />
           {searchQuery && (
             <button
               onClick={() => setSearchQuery('')}
               className="absolute right-3 sm:right-4 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-              title="Clear search"
+              title={t('taskList.clearSearch')}
             >
               <XCircle className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
@@ -386,7 +388,7 @@ export default function TaskListPage() {
                 : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
                 }`}
             >
-              {f.charAt(0).toUpperCase() + f.slice(1)}
+              {t(`taskList.filters.${f}`)}
             </button>
           ))}
         </div>
@@ -400,23 +402,23 @@ export default function TaskListPage() {
               className="h-4 w-4 data-[state=checked]:bg-gray-900 data-[state=checked]:border-gray-900"
             />
             <label htmlFor="select-all" className="text-[11px] sm:text-sm font-bold text-gray-600 cursor-pointer select-none">
-              All
+              {t('taskList.selectAll')}
             </label>
           </div>
 
           <div className="h-4 w-px bg-gray-200"></div>
 
           <div className="flex items-center space-x-1 sm:space-x-2">
-            <span className="text-[11px] sm:text-sm font-medium text-gray-400">Sort:</span>
+            <span className="text-[11px] sm:text-sm font-medium text-gray-400">{t('taskList.sort')}:</span>
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
               className="pl-1 pr-6 py-1 text-[11px] sm:text-sm font-bold border-none bg-transparent focus:ring-0 text-gray-700 cursor-pointer hover:bg-gray-100 rounded-md transition-colors"
               style={{ backgroundImage: 'none' }}
             >
-              <option value="updated">Updated</option>
-              <option value="created">Created</option>
-              <option value="name">Name</option>
+              <option value="updated">{t('taskList.sortOptions.updated')}</option>
+              <option value="created">{t('taskList.sortOptions.created')}</option>
+              <option value="name">{t('taskList.sortOptions.name')}</option>
             </select>
           </div>
 
@@ -430,7 +432,7 @@ export default function TaskListPage() {
                 className="text-red-600 hover:text-red-700 hover:bg-red-50 h-7 sm:h-8 px-2 text-[11px] sm:text-sm font-bold animate-in fade-in slide-in-from-right-4"
               >
                 <Trash2 className="w-3.5 h-3.5 mr-1" />
-                Delete ({selectedTasks.length})
+                {t('taskList.deleteCount', { count: selectedTasks.length })}
               </Button>
             </>
           )}
@@ -441,22 +443,22 @@ export default function TaskListPage() {
       {loading ? (
         <Card className="p-12 text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading tasks...</p>
+          <p className="text-gray-600">{t('taskList.loadingTasks')}</p>
         </Card>
       ) : sortedTasks.length === 0 ? (
         <Card className="p-12 text-center">
           <ClipboardList className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">No tasks found</h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('taskList.noTasksFound')}</h3>
           <p className="text-gray-600 mb-6">
             {filter === 'all'
-              ? 'Create your first analysis task to get started'
-              : `No ${filter} tasks found`}
+              ? t('taskList.createFirstTask')
+              : t('taskList.noFilteredTasks', { filter: t(`taskList.filters.${filter}`) })}
           </p>
           <button
             onClick={() => navigate('/ai-chat')}
             className="px-6 py-2.5 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors"
           >
-            Create New Task
+            {t('taskList.createNewTask')}
           </button>
         </Card>
       ) : (
@@ -511,13 +513,13 @@ export default function TaskListPage() {
                             setTimeout(() => setCopiedId(null), 2000)
                           }}
                           className="sm:opacity-0 group-hover/id:opacity-100 p-1 hover:bg-gray-100 rounded transition-opacity"
-                          title="Copy ID"
+                          title={t('taskList.copyId')}
                         >
                           <Copy className="w-3 h-3" />
                         </button>
                         {copiedId === task.task_id && (
                           <div className="absolute left-1/2 -translate-x-1/2 -top-8 px-2 py-1 bg-gray-900 text-white text-[10px] rounded shadow-lg animate-in fade-in slide-in-from-bottom-1 duration-200 z-10">
-                            Copied!
+                            {t('taskList.copied')}
                           </div>
                         )}
                       </div>
@@ -534,38 +536,38 @@ export default function TaskListPage() {
                 <div className="flex-1 min-w-0 border-l border-gray-100 pl-4 sm:pl-6 xl:ml-0 overflow-hidden">
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-y-3 sm:gap-y-4 gap-x-4 sm:gap-x-8 text-sm text-gray-600">
 
-                    <div className="flex flex-col gap-0.5" title="Dataset Size">
-                      <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">Data</span>
+                    <div className="flex flex-col gap-0.5" title={t('taskList.columns.data')}>
+                      <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskList.columns.data')}</span>
                       <div className="flex items-center gap-1.5 sm:gap-2">
                         <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
                         <span className="text-sm sm:text-base font-bold text-gray-900">{task.wsi_count}</span>
-                        <span className="text-[11px] sm:text-sm text-gray-500">{task.data_type === 'patch' ? 'patches' : 'slides'}</span>
+                        <span className="text-[11px] sm:text-sm text-gray-500">{task.data_type === 'patch' ? t('taskList.patches') : t('taskList.slides')}</span>
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-0.5" title="Feature Extractor">
-                      <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">Extractor</span>
+                    <div className="flex flex-col gap-0.5" title={t('taskList.columns.extractor')}>
+                      <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskList.columns.extractor')}</span>
                       <div className="flex items-center gap-1.5 sm:gap-2">
                         <Microscope className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
-                        <span className="text-sm sm:text-base font-bold truncate text-gray-900">{task.preprocessing_config?.feature_extractor || 'N/A'}</span>
+                        <span className="text-sm sm:text-base font-bold truncate text-gray-900">{task.preprocessing_config?.feature_extractor || t('taskList.na')}</span>
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-0.5" title="Model">
-                      <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">Model</span>
+                    <div className="flex flex-col gap-0.5" title={t('taskList.columns.model')}>
+                      <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskList.columns.model')}</span>
                       <div className="flex items-center gap-1.5 sm:gap-2">
                         <Brain className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
                         <span className="text-sm sm:text-base font-bold truncate text-gray-900">
                           {task.data_type === 'patch'
-                            ? 'Linear Probe'
-                            : (task.model_config?.aggregator?.toUpperCase() || 'N/A')}
+                            ? t('taskList.linearProbe')
+                            : (task.model_config?.aggregator?.toUpperCase() || t('taskList.na'))}
                         </span>
                       </div>
                     </div>
 
                     {(task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') ? (
-                      <div className="flex flex-col gap-0.5" title="Duration">
-                        <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">Duration</span>
+                      <div className="flex flex-col gap-0.5" title={t('taskList.columns.duration')}>
+                        <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskList.columns.duration')}</span>
                         <div className="flex items-center gap-1.5 sm:gap-2">
                           <Timer className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
                           <span className="text-sm sm:text-base font-bold text-gray-900">{calculateDuration(task.created_at, task.updated_at, task.status)}</span>
@@ -575,11 +577,11 @@ export default function TaskListPage() {
                       <div className="flex flex-col gap-0.5 w-full col-span-2 md:col-span-1">
                         <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">
                           {task.task_type === 'external_validation'
-                            ? (task.status === 'extracting' ? 'Extracting' :
-                              task.status === 'running' || task.status === 'training' ? 'Testing' : 'Progress')
-                            : (task.status === 'running' ? 'Patching' :
-                              task.status === 'extracting' ? 'Extracting' :
-                                task.status === 'training' ? 'Training' : 'Progress')}
+                            ? (task.status === 'extracting' ? t('taskList.progress.extracting') :
+                              task.status === 'running' || task.status === 'training' ? t('taskList.progress.testing') : t('taskList.progress.progress'))
+                            : (task.status === 'running' ? t('taskList.progress.patching') :
+                              task.status === 'extracting' ? t('taskList.progress.extracting') :
+                                task.status === 'training' ? t('taskList.progress.training') : t('taskList.progress.progress'))}
                         </span>
                         <div className="flex items-center gap-2 w-full mt-1">
                           <div className="w-full bg-gray-100 rounded-full h-1.5 sm:h-2 overflow-hidden flex-1">
@@ -606,8 +608,8 @@ export default function TaskListPage() {
                 <div className="flex xl:flex-col items-center xl:items-end justify-between xl:justify-center gap-3 sm:gap-4 xl:w-32 xl:border-l xl:border-gray-100 xl:pl-6 pt-3 sm:pt-4 xl:pt-0 border-t xl:border-t-0 border-gray-50/50 mt-1 sm:mt-2 xl:mt-0">
                   <div className="flex flex-col gap-2 text-[10px] sm:text-xs text-gray-400 text-left xl:text-right">
                     <div className="flex flex-col">
-                      <span className="font-medium text-gray-500">{task.updated_at ? new Date(task.updated_at).toLocaleDateString() : 'N/A'}</span>
-                      <span className="text-[9px] sm:text-[10px] text-gray-300 uppercase tracking-wide">Updated</span>
+                      <span className="font-medium text-gray-500">{task.updated_at ? new Date(task.updated_at).toLocaleDateString() : t('taskList.na')}</span>
+                      <span className="text-[9px] sm:text-[10px] text-gray-300 uppercase tracking-wide">{t('taskList.updated')}</span>
                     </div>
                   </div>
 
@@ -617,7 +619,7 @@ export default function TaskListPage() {
                       <button
                         onClick={(e) => handleEditTask(task, e)}
                         className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors"
-                        title="Edit Task Name"
+                        title={t('taskList.editTaskNameTitle')}
                       >
                         <Edit2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                       </button>
@@ -629,7 +631,7 @@ export default function TaskListPage() {
                         onClick={(e) => handleCancelTask(task.task_id, e)}
                         disabled={cancellingTaskId === task.task_id}
                         className="p-2 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors disabled:opacity-50"
-                        title="Cancel Task"
+                        title={t('taskList.cancelTask')}
                       >
                         {cancellingTaskId === task.task_id ? (
                           <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" />
@@ -642,7 +644,7 @@ export default function TaskListPage() {
                     <button
                       onClick={(e) => handleDeleteTask(task.task_id, e)}
                       className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors group/delete"
-                      title="Delete Task"
+                      title={t('taskList.deleteTask')}
                     >
                       <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                     </button>
@@ -664,16 +666,16 @@ export default function TaskListPage() {
                 <AlertCircle className="w-7 h-7 sm:w-10 sm:h-10 text-red-600" />
               </div>
               <h2 className="text-lg sm:text-2xl font-bold text-gray-900 leading-tight">
-                {isBatchDelete ? `Delete ${selectedTasks.length} Tasks?` : 'Delete Task?'}
+                {isBatchDelete ? t('taskList.deleteModal.batchTitle', { count: selectedTasks.length }) : t('taskList.deleteModal.singleTitle')}
               </h2>
-              <p className="text-xs sm:text-sm text-gray-500 mt-1">This action cannot be undone</p>
+              <p className="text-xs sm:text-sm text-gray-500 mt-1">{t('taskList.deleteModal.cannotBeUndone')}</p>
             </div>
 
             {/* Batch Delete Warning */}
             {isBatchDelete && (
               <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4">
                 <p className="text-[11px] sm:text-sm text-orange-800 leading-relaxed">
-                  You are about to delete <strong>{selectedTasks.length}</strong> tasks. All associated data will be removed according to the selected mode.
+                  {t('taskList.deleteModal.batchWarning', { count: selectedTasks.length })}
                 </p>
               </div>
             )}
@@ -682,7 +684,7 @@ export default function TaskListPage() {
             {!isBatchDelete && loadingStorageInfo && (
               <div className="flex items-center justify-center py-4 mb-3 sm:mb-4">
                 <Loader2 className="w-4 h-4 animate-spin text-blue-600 mr-2" />
-                <span className="text-xs sm:text-sm text-gray-600 font-medium">Loading storage info...</span>
+                <span className="text-xs sm:text-sm text-gray-600 font-medium">{t('taskList.deleteModal.loadingStorageInfo')}</span>
               </div>
             )}
 
@@ -695,24 +697,24 @@ export default function TaskListPage() {
               return (
                 <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4">
                   <div className="flex items-center justify-between mb-2 sm:mb-3">
-                    <span className="text-[11px] sm:text-sm font-semibold text-blue-900">Frees Surface:</span>
+                    <span className="text-[11px] sm:text-sm font-semibold text-blue-900">{t('taskList.deleteModal.freesSurface')}:</span>
                     <span className="text-base sm:text-lg font-bold text-blue-900">
                       {formatBytes(displaySize)}
                     </span>
                   </div>
                   <details className="text-[11px] sm:text-sm">
                     <summary className="cursor-pointer text-blue-800 hover:text-blue-900 font-bold">
-                      Files ({displayFiles})
+                      {t('taskList.deleteModal.files', { count: displayFiles })}
                     </summary>
                     <ul className="mt-2 space-y-1 text-blue-700/80 ml-4 border-l border-blue-100 pl-3">
                       {taskStorageInfo.training_dir.exists && (
-                        <li>• Training data ({formatBytes(taskStorageInfo.training_dir.size)})</li>
+                        <li>• {t('taskList.deleteModal.trainingData', { size: formatBytes(taskStorageInfo.training_dir.size) })}</li>
                       )}
                       {taskStorageInfo.training_logs.exists && (
-                        <li>• Logs ({formatBytes(taskStorageInfo.training_logs.size)})</li>
+                        <li>• {t('taskList.deleteModal.logs', { size: formatBytes(taskStorageInfo.training_logs.size) })}</li>
                       )}
                       {deleteMode === 'complete' && taskStorageInfo.models.length > 0 && (
-                        <li>• Models ({formatBytes(modelsSize)})</li>
+                        <li>• {t('taskList.deleteModal.models', { size: formatBytes(modelsSize) })}</li>
                       )}
                     </ul>
                   </details>
@@ -723,7 +725,7 @@ export default function TaskListPage() {
             {/* Delete Mode Selection */}
             <div className="mb-4">
               <label className="block text-[11px] sm:text-sm font-bold text-gray-700 mb-2">
-                Deletion Mode
+                {t('taskList.deleteModal.deletionMode')}
               </label>
               <div className="space-y-2">
                 <label className={`flex items-start gap-3 p-2 sm:p-3 border-2 rounded-xl cursor-pointer hover:bg-gray-50 transition-all ${deleteMode === 'standard' ? 'border-blue-500 bg-blue-50/20' : 'border-gray-100'}`}>
@@ -736,10 +738,10 @@ export default function TaskListPage() {
                     className="mt-1 w-4 h-4 text-blue-600"
                   />
                   <div className="flex-1 min-w-0">
-                    <div className="font-bold text-gray-900 text-sm">Standard (Recommended)</div>
+                    <div className="font-bold text-gray-900 text-sm">{t('taskList.deleteModal.standardMode')}</div>
                     <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
-                      Deletes training directory and logs.
-                      <span className="text-blue-600 font-semibold"> Keeps trained models</span>.
+                      {t('taskList.deleteModal.standardDesc')}
+                      <span className="text-blue-600 font-semibold"> {t('taskList.deleteModal.keepsModels')}</span>.
                     </div>
                   </div>
                 </label>
@@ -754,10 +756,10 @@ export default function TaskListPage() {
                     className="mt-1 w-4 h-4 text-red-600"
                   />
                   <div className="flex-1 min-w-0">
-                    <div className="font-bold text-gray-900 text-sm">Complete Delete</div>
+                    <div className="font-bold text-gray-900 text-sm">{t('taskList.deleteModal.completeMode')}</div>
                     <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
-                      Deletes all files including trained models.
-                      <strong className="text-red-600"> IRREVERSIBLE.</strong>
+                      {t('taskList.deleteModal.completeDesc')}
+                      <strong className="text-red-600"> {t('taskList.deleteModal.irreversible')}</strong>
                     </div>
                   </div>
                 </label>
@@ -778,7 +780,7 @@ export default function TaskListPage() {
                 disabled={isDeleting}
                 className="flex-1 px-4 py-2 sm:py-2.5 bg-white border border-gray-300 text-gray-700 text-xs sm:text-sm font-bold rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 onClick={confirmDelete}
@@ -788,10 +790,10 @@ export default function TaskListPage() {
                 {isDeleting ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Deleting...
+                    {t('taskList.deleting')}
                   </>
                 ) : (
-                  'Delete'
+                  t('common.delete')
                 )}
               </button>
             </div>
@@ -809,17 +811,17 @@ export default function TaskListPage() {
                 <div className="w-10 h-10 sm:w-12 sm:h-12 bg-indigo-100 rounded-full flex items-center justify-center">
                   <Edit2 className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-600" />
                 </div>
-                <h2 className="text-lg sm:text-xl font-bold text-gray-900">Edit Task Name</h2>
+                <h2 className="text-lg sm:text-xl font-bold text-gray-900">{t('taskList.editModal.title')}</h2>
               </div>
               <p className="text-xs sm:text-sm text-gray-500 ml-13 sm:ml-15">
-                Update the name for this task
+                {t('taskList.editModal.subtitle')}
               </p>
             </div>
 
             {/* Input */}
             <div className="mb-4 sm:mb-6">
               <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-2">
-                Task Name
+                {t('taskList.editModal.taskName')}
               </label>
               <input
                 type="text"
@@ -831,7 +833,7 @@ export default function TaskListPage() {
                   }
                 }}
                 className="w-full px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                placeholder="Enter task name"
+                placeholder={t('taskList.editModal.placeholder')}
                 autoFocus
                 disabled={isEditingSaving}
               />
@@ -855,7 +857,7 @@ export default function TaskListPage() {
                 disabled={isEditingSaving}
                 className="flex-1 px-4 py-2 sm:py-2.5 bg-gray-100 text-gray-700 text-xs sm:text-sm font-semibold rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleSaveTaskName}
@@ -865,10 +867,10 @@ export default function TaskListPage() {
                 {isEditingSaving ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Saving...
+                    {t('taskList.saving')}
                   </>
                 ) : (
-                  'Save'
+                  t('common.save')
                 )}
               </button>
             </div>
@@ -878,4 +880,3 @@ export default function TaskListPage() {
     </div>
   )
 }
-

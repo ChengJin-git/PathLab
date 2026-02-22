@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { AvailableHeatmap } from '../../api'
 import { Trash2, Loader2 } from 'lucide-react'
 
@@ -22,6 +23,7 @@ export function DeleteResultsModal({
   availableHeatmaps,
   selectedTaskId
 }: DeleteResultsModalProps) {
+  const { t } = useTranslation()
   if (!showDeleteConfirm) return null
 
   return (
@@ -32,11 +34,11 @@ export function DeleteResultsModal({
             <div className="p-2 bg-red-100 rounded-lg">
               <Trash2 className="w-5 h-5 text-red-600" />
             </div>
-            <h3 className="text-lg font-semibold text-gray-900">Delete AI Results</h3>
+            <h3 className="text-lg font-semibold text-gray-900">{t('wsiViewerComponents.deleteResults.deleteAIResults')}</h3>
           </div>
 
           <p className="text-gray-600 mb-4">
-            Choose what to delete for this slide:
+            {t('wsiViewerComponents.deleteResults.chooseWhatToDelete')}
           </p>
 
           <div className="space-y-2 mb-6">
@@ -49,9 +51,9 @@ export function DeleteResultsModal({
                 className="w-4 h-4 text-red-600"
               />
               <div>
-                <div className="font-medium text-gray-900">Delete selected task only</div>
+                <div className="font-medium text-gray-900">{t('wsiViewerComponents.deleteResults.deleteSelectedTaskOnly')}</div>
                 <div className="text-sm text-gray-500">
-                  Remove results for: {availableHeatmaps.find(h => h.task_id === selectedTaskId)?.task_name || selectedTaskId || 'N/A'}
+                  {t('wsiViewerComponents.deleteResults.removeResultsFor', { taskName: availableHeatmaps.find(h => h.task_id === selectedTaskId)?.task_name || selectedTaskId || 'N/A' })}
                 </div>
               </div>
             </label>
@@ -65,9 +67,9 @@ export function DeleteResultsModal({
                 className="w-4 h-4 text-red-600"
               />
               <div>
-                <div className="font-medium text-gray-900">Delete all results</div>
+                <div className="font-medium text-gray-900">{t('wsiViewerComponents.deleteResults.deleteAllResults')}</div>
                 <div className="text-sm text-gray-500">
-                  Remove all {availableHeatmaps.length} analysis results for this slide
+                  {t('wsiViewerComponents.deleteResults.removeAllResults', { count: availableHeatmaps.length })}
                 </div>
               </div>
             </label>
@@ -75,7 +77,7 @@ export function DeleteResultsModal({
 
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6">
             <p className="text-sm text-amber-800">
-              <strong>Warning:</strong> This will permanently delete the attention weights and prediction data. This action cannot be undone.
+              <strong>{t('wsiViewerComponents.deleteResults.warning')}:</strong> {t('wsiViewerComponents.deleteResults.warningMessage')}
             </p>
           </div>
         </div>
@@ -86,7 +88,7 @@ export function DeleteResultsModal({
             disabled={deletingResults}
             className="flex-1 px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
           >
-            Cancel
+            {t('wsiViewerComponents.deleteResults.cancel')}
           </button>
           <button
             onClick={handleDeleteResults}
@@ -96,12 +98,12 @@ export function DeleteResultsModal({
             {deletingResults ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Deleting...
+                {t('wsiViewerComponents.deleteResults.deleting')}
               </>
             ) : (
               <>
                 <Trash2 className="w-4 h-4" />
-                Delete
+                {t('wsiViewerComponents.deleteResults.delete')}
               </>
             )}
           </button>

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Database, RefreshCw, Layers, Calendar, Star, ToggleRight, ToggleLeft, Trash2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckCircle, XCircle, BarChart3, FlaskConical } from 'lucide-react'
 import { Card } from '../ui/card'
 import { TrainedModel, getTrainedModels, updateTrainedModel, deleteTrainedModel, getAuthToken } from '../../api'
@@ -19,6 +20,7 @@ export interface ModelsTabProps {
 
 export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabProps) {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const [trainedModels, setTrainedModels] = useState<TrainedModel[]>([])
   const [loadingModels, setLoadingModels] = useState(false)
   const [modelsError, setModelsError] = useState<string | null>(null)
@@ -54,11 +56,11 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
       setModelsTotal(response.total)
     } catch (err) {
       console.error('Failed to load trained models:', err)
-      setModelsError(err instanceof Error ? err.message : 'Failed to load models')
+      setModelsError(err instanceof Error ? err.message : t('settings.modelsTab.failedToLoadModels'))
     } finally {
       setLoadingModels(false)
     }
-  }, [page, pageSize])
+  }, [page, pageSize, t])
 
   const handleViewAnalysis = (model: TrainedModel) => {
     navigate(`/results?task_id=${model.task_id}`)
@@ -78,24 +80,24 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
       await updateTrainedModel(model.model_id, { is_default: true })
       await loadTrainedModels()
     } catch (err) {
-      setModelsError(err instanceof Error ? err.message : 'Failed to set default')
+      setModelsError(err instanceof Error ? err.message : t('settings.modelsTab.failedToSetDefault'))
     }
-  }, [loadTrainedModels])
+  }, [loadTrainedModels, t])
 
   const handleToggleModelActive = useCallback(async (model: TrainedModel) => {
     try {
       await updateTrainedModel(model.model_id, { is_active: !model.is_active })
       await loadTrainedModels()
     } catch (err) {
-      setModelsError(err instanceof Error ? err.message : 'Failed to update status')
+      setModelsError(err instanceof Error ? err.message : t('settings.modelsTab.failedToUpdateStatus'))
     }
-  }, [loadTrainedModels])
+  }, [loadTrainedModels, t])
 
   const handleDeleteModel = useCallback((model: TrainedModel) => {
     showConfirmDialog({
-      title: 'Delete Model',
-      message: `Are you sure you want to delete "${model.model_name}"? This cannot be undone.`,
-      confirmText: 'Delete',
+      title: t('settings.modelsTab.deleteModel'),
+      message: t('settings.modelsTab.deleteModelConfirm', { name: model.model_name }),
+      confirmText: t('settings.modelsTab.delete'),
       confirmVariant: 'danger',
       onConfirm: async () => {
         closeConfirmDialog()
@@ -108,11 +110,11 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
             await loadTrainedModels()
           }
         } catch (err) {
-          setModelsError(err instanceof Error ? err.message : 'Failed to delete')
+          setModelsError(err instanceof Error ? err.message : t('settings.modelsTab.failedToDelete'))
         }
       }
     })
-  }, [loadTrainedModels, showConfirmDialog, closeConfirmDialog, trainedModels.length, page])
+  }, [loadTrainedModels, showConfirmDialog, closeConfirmDialog, trainedModels.length, page, t])
 
   useEffect(() => {
     loadTrainedModels()
@@ -133,17 +135,17 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
         <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-start">
           <Database className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700 mt-1" />
           <div className="flex flex-col">
-            <span>Model Management</span>
-            <span className="text-gray-500 font-normal text-sm mt-0.5">(for External Validation)</span>
+            <span>{t('settings.modelsTab.title')}</span>
+            <span className="text-gray-500 font-normal text-sm mt-0.5">{t('settings.modelsTab.subtitle')}</span>
           </div>
         </h2>
         <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-500">{modelsTotal} model{modelsTotal !== 1 ? 's' : ''}</span>
+          <span className="text-sm text-gray-500">{t('settings.modelsTab.modelCount', { count: modelsTotal })}</span>
           <button
             onClick={loadTrainedModels}
             disabled={loadingModels}
             className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-            title="Refresh models"
+            title={t('settings.modelsTab.refreshModels')}
           >
             <RefreshCw className={`w-4 h-4 ${loadingModels ? 'animate-spin' : ''}`} />
           </button>
@@ -160,15 +162,15 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
         <div className="flex items-center justify-center py-12">
           <div className="text-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div>
-            <p className="text-gray-500 text-sm">Loading models...</p>
+            <p className="text-gray-500 text-sm">{t('settings.modelsTab.loadingModels')}</p>
           </div>
         </div>
       ) : trainedModels.length === 0 ? (
         <div className="text-center py-12">
           <Database className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-          <p className="text-gray-500">No trained models yet</p>
+          <p className="text-gray-500">{t('settings.modelsTab.noModels')}</p>
           <p className="text-gray-400 text-sm mt-1">
-            Complete a training task to see models here
+            {t('settings.modelsTab.noModelsHint')}
           </p>
         </div>
       ) : (
@@ -176,8 +178,8 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
           {/* Mobile Card View */}
           <div className="block sm:hidden space-y-4">
             {trainedModels.map((model) => {
-              const task = tasks.find(t => t.task_id === model.task_id)
-              const taskName = task?.name || task?.task_name || 'Unknown Task'
+              const task = tasks.find(item => item.task_id === model.task_id)
+              const taskName = task?.name || task?.task_name || t('settings.modelsTab.unknownTask')
 
               const metrics = model.val_metrics || {}
               const isSurvival = (metrics as Record<string, unknown>).c_index !== undefined
@@ -219,7 +221,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                           : 'bg-gray-50 text-gray-500 border-gray-200'}
                       `}>
                          <div className={`w-1.5 h-1.5 rounded-full ${model.is_active ? 'bg-emerald-500' : 'bg-gray-400'}`} />
-                         {model.is_active ? 'Active' : 'Inactive'}
+                         {model.is_active ? t('settings.modelsTab.active') : t('settings.modelsTab.inactive')}
                       </div>
                    </div>
                    
@@ -256,14 +258,14 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                       <button
                             onClick={() => handleViewAnalysis(model)}
                             className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-all"
-                            title="View Training Results"
+                            title={t('settings.modelsTab.viewTrainingResults')}
                           >
                             <BarChart3 className="w-5 h-5" />
                       </button>
                       <button
                             onClick={() => handleExternalValidation(model)}
                             className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-                            title="Run External Validation"
+                            title={t('settings.modelsTab.runExternalValidation')}
                           >
                             <FlaskConical className="w-5 h-5" />
                       </button>
@@ -271,7 +273,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                           <button
                             onClick={() => handleSetDefaultModel(model)}
                             className="p-2 text-gray-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-all"
-                            title="Set as default"
+                            title={t('settings.modelsTab.setAsDefault')}
                           >
                             <Star className="w-5 h-5" />
                           </button>
@@ -282,14 +284,14 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                             ? 'text-emerald-600 hover:bg-emerald-50'
                             : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'
                           }`}
-                          title={model.is_active ? 'Deactivate' : 'Activate'}
+                          title={model.is_active ? t('settings.modelsTab.deactivate') : t('settings.modelsTab.activate')}
                         >
                           {model.is_active ? <CheckCircle className="w-5 h-5 text-emerald-600" /> : <XCircle className="w-5 h-5" />}
                         </button>
                         <button
                           onClick={() => handleDeleteModel(model)}
                           className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                          title="Delete model"
+                          title={t('settings.modelsTab.deleteModelAction')}
                         >
                           <Trash2 className="w-5 h-5" />
                         </button>
@@ -304,17 +306,17 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
             <table className="w-full min-w-[600px]">
               <thead>
                 <tr className="border-b border-gray-200 text-left text-base font-semibold text-gray-900 tracking-wide bg-gray-50/50">
-                  <th className="px-5 py-4">Model</th>
-                  <th className="px-5 py-4 hidden md:table-cell">Classes</th>
-                  <th className="px-5 py-4 hidden lg:table-cell">Metrics</th>
-                  <th className="px-5 py-4">Status</th>
-                  <th className="px-5 py-4 text-right">Actions</th>
+                  <th className="px-5 py-4">{t('settings.modelsTab.columnModel')}</th>
+                  <th className="px-5 py-4 hidden md:table-cell">{t('settings.modelsTab.columnClasses')}</th>
+                  <th className="px-5 py-4 hidden lg:table-cell">{t('settings.modelsTab.columnMetrics')}</th>
+                  <th className="px-5 py-4">{t('settings.modelsTab.columnStatus')}</th>
+                  <th className="px-5 py-4 text-right">{t('settings.modelsTab.columnActions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {trainedModels.map((model) => {
-                  const task = tasks.find(t => t.task_id === model.task_id)
-                  const taskName = task?.name || task?.task_name || 'Unknown Task'
+                  const task = tasks.find(item => item.task_id === model.task_id)
+                  const taskName = task?.name || task?.task_name || t('settings.modelsTab.unknownTask')
 
                   const metrics = model.val_metrics || {}
                   const isSurvival = (metrics as Record<string, unknown>).c_index !== undefined
@@ -347,7 +349,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                           </div>
                         <div 
                           className="text-lg font-bold text-gray-900 truncate max-w-[200px] sm:max-w-[320px] cursor-pointer hover:text-primary-600 hover:underline"
-                          title={`View Results for ${model.model_name}`}
+                          title={t('settings.modelsTab.viewResultsFor', { name: model.model_name })}
                           onClick={() => handleViewAnalysis(model)}
                         >
                             {model.model_name}
@@ -368,7 +370,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                         <div className="flex flex-wrap gap-1.5 max-w-[240px]">
                           {isSurvival ? (
                             <span className="inline-flex items-center bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded text-xs font-medium border border-emerald-100">
-                              {model.classes?.length || 4} Time Intervals
+                              {t('settings.modelsTab.timeIntervals', { count: model.classes?.length || 4 })}
                             </span>
                           ) : (
                             <>
@@ -404,7 +406,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                             )}
                           </div>
                         ) : (
-                          <span className="text-sm text-gray-300 italic">No metrics</span>
+                          <span className="text-sm text-gray-300 italic">{t('settings.modelsTab.noMetrics')}</span>
                         )}
                       </td>
 
@@ -413,7 +415,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                           {model.is_default && (
                             <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold uppercase tracking-wide shadow-sm">
                               <Star className="w-3 h-3 fill-current" />
-                              Default
+                              {t('settings.modelsTab.default')}
                             </div>
                           )}
                           <div className={`
@@ -423,7 +425,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                               : 'bg-gray-50 text-gray-500 border-gray-200'}
                           `}>
                             <div className={`w-1.5 h-1.5 rounded-full ${model.is_active ? 'bg-emerald-500' : 'bg-gray-400'}`} />
-                            {model.is_active ? 'Active' : 'Inactive'}
+                            {model.is_active ? t('settings.modelsTab.active') : t('settings.modelsTab.inactive')}
                           </div>
                         </div>
                       </td>
@@ -433,14 +435,14 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                           <button
                             onClick={() => handleViewAnalysis(model)}
                             className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-all"
-                            title="View Training Results"
+                            title={t('settings.modelsTab.viewTrainingResults')}
                           >
                             <BarChart3 className="w-5 h-5" />
                           </button>
                           <button
                              onClick={() => handleExternalValidation(model)}
                              className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-                             title="Run External Validation"
+                             title={t('settings.modelsTab.runExternalValidation')}
                            >
                             <FlaskConical className="w-5 h-5" />
                           </button>
@@ -448,7 +450,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                             <button
                               onClick={() => handleSetDefaultModel(model)}
                               className="p-2 text-gray-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-all"
-                              title="Set as default"
+                              title={t('settings.modelsTab.setAsDefault')}
                             >
                               <Star className="w-5 h-5" />
                             </button>
@@ -459,14 +461,14 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                               ? 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
                               : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'
                             }`}
-                            title={model.is_active ? 'Deactivate' : 'Activate'}
+                            title={model.is_active ? t('settings.modelsTab.deactivate') : t('settings.modelsTab.activate')}
                           >
                             {model.is_active ? <CheckCircle className="w-5 h-5 text-emerald-600" /> : <XCircle className="w-5 h-5" />}
                           </button>
                           <button
                             onClick={() => handleDeleteModel(model)}
                             className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                            title="Delete model"
+                            title={t('settings.modelsTab.deleteModelAction')}
                           >
                             <Trash2 className="w-5 h-5" />
                           </button>
@@ -483,12 +485,12 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-6 pt-4 border-t border-gray-100">
             <div className="flex flex-col sm:flex-row items-center gap-2 text-sm text-gray-500">
                <span>
-                  Showing <span className="font-medium mx-1">{modelsTotal > 0 ? (page - 1) * pageSize + 1 : 0}</span> 
-                  to <span className="font-medium mx-1">{Math.min(page * pageSize, modelsTotal)}</span> 
-                  of <span className="font-medium mx-1">{modelsTotal}</span> entries
+                  {t('settings.modelsTab.showing')} <span className="font-medium mx-1">{modelsTotal > 0 ? (page - 1) * pageSize + 1 : 0}</span> 
+                  {t('settings.modelsTab.to')} <span className="font-medium mx-1">{Math.min(page * pageSize, modelsTotal)}</span> 
+                  {t('settings.modelsTab.of')} <span className="font-medium mx-1">{modelsTotal}</span> {t('settings.modelsTab.entries')}
                </span>
                <div className="flex items-center mt-2 sm:mt-0">
-                  <span className="text-sm text-gray-500 mr-2">Show:</span>
+                  <span className="text-sm text-gray-500 mr-2">{t('settings.modelsTab.show')}:</span>
                   <select
                     value={pageSize}
                     onChange={(e) => {
@@ -509,7 +511,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                   onClick={() => setPage(1)}
                   disabled={page === 1}
                   className="p-1 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                  title="First page"
+                  title={t('settings.modelsTab.firstPage')}
                 >
                   <ChevronsLeft className="w-5 h-5" />
                 </button>
@@ -517,7 +519,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                   onClick={() => setPage(p => Math.max(1, p - 1))}
                   disabled={page === 1}
                   className="p-1 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                  title="Previous page"
+                  title={t('settings.modelsTab.previousPage')}
                 >
                   <ChevronLeft className="w-5 h-5" />
                 </button>
@@ -536,7 +538,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                   onClick={() => setPage(p => Math.min(totalPages, p + 1))}
                   disabled={page === totalPages || totalPages === 0}
                   className="p-1 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                  title="Next page"
+                  title={t('settings.modelsTab.nextPage')}
                 >
                   <ChevronRight className="w-5 h-5" />
                 </button>
@@ -544,7 +546,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                   onClick={() => setPage(totalPages)}
                   disabled={page === totalPages || totalPages === 0}
                   className="p-1 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                  title="Last page"
+                  title={t('settings.modelsTab.lastPage')}
                 >
                   <ChevronsRight className="w-5 h-5" />
                 </button>

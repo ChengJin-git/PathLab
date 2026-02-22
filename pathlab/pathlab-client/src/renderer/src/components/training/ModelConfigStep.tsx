@@ -5,6 +5,7 @@
  */
 
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { CheckCircle2, Settings, Search } from 'lucide-react'
@@ -73,6 +74,8 @@ export function ModelConfigStep({
   onBack,
   onNext,
 }: ModelConfigStepProps) {
+  const { t } = useTranslation()
+
   return (
     <>
       <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 mb-6">
@@ -82,14 +85,14 @@ export function ModelConfigStep({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
               <h3 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-primary-600" />
-                {dataLevel === 'wsi' ? 'Aggregation Method' : 'Feature Extractor'}
+                {dataLevel === 'wsi' ? t('training.modelConfig.aggregationMethod') : t('training.modelConfig.featureExtractor')}
               </h3>
               {dataLevel === 'patch' && (
                 <div className="relative w-full sm:w-48">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                   <input
                     type="text"
-                    placeholder="Search..."
+                    placeholder={t('training.modelConfig.search')}
                     className="w-full pl-8 pr-3 py-1.5 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 transition-all bg-white"
                     value={extractorSearch}
                     onChange={(e) => setExtractorSearch(e.target.value)}
@@ -150,12 +153,12 @@ export function ModelConfigStep({
         <Card className="flex-1 lg:max-w-md p-4 sm:p-5 flex flex-col bg-white overflow-hidden shadow-sm border-gray-100">
           <h3 className="text-sm sm:text-base font-bold text-gray-900 mb-4 flex items-center gap-2">
             <Settings className="w-4 h-4 text-primary-600" />
-            Training Params
+            {t('training.modelConfig.trainingParams')}
           </h3>
 
           <div className="space-y-4">
             <div>
-              <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Learning Rate</label>
+              <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">{t('training.modelConfig.learningRate')}</label>
               <input
                 type="number"
                 className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none transition-all"
@@ -169,7 +172,7 @@ export function ModelConfigStep({
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Epochs</label>
+                <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">{t('training.modelConfig.epochs')}</label>
                 <input
                   type="number"
                   className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
@@ -180,7 +183,7 @@ export function ModelConfigStep({
                 />
               </div>
               <div>
-                <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Training Batch Size</label>
+                <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">{t('training.modelConfig.trainBatchSize')}</label>
                 <input
                   type="number"
                   className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
@@ -193,7 +196,7 @@ export function ModelConfigStep({
             </div>
 
             <div>
-              <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Optimizer</label>
+              <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">{t('training.modelConfig.optimizer')}</label>
               <select
                 className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
                 value={optimizer}
@@ -208,7 +211,7 @@ export function ModelConfigStep({
             <div className="pt-3 border-t border-gray-50 space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Patience</label>
+                  <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">{t('training.modelConfig.patience')}</label>
                   <input
                     type="number"
                     className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
@@ -219,7 +222,7 @@ export function ModelConfigStep({
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">Random Seed</label>
+                  <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">{t('training.modelConfig.randomSeed')}</label>
                   <input
                     type="number"
                     className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
@@ -239,7 +242,7 @@ export function ModelConfigStep({
                   className="rounded border-gray-300 text-primary-600 focus:ring-primary-500 w-3.5 h-3.5 cursor-pointer"
                 />
                 <label htmlFor="autoBalance" className="text-[11px] sm:text-xs text-gray-600 font-bold cursor-pointer select-none">
-                  Auto-balance classes
+                  {t('training.modelConfig.autoBalance')}
                 </label>
               </div>
             </div>
@@ -250,17 +253,16 @@ export function ModelConfigStep({
       {/* Navigation */}
       <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
         <Button variant="outline" onClick={onBack} className="w-full sm:w-auto px-6 py-2 sm:py-2.5 text-xs sm:text-sm order-2 sm:order-1">
-          ← Back
+          {t('training.modelConfig.back')}
         </Button>
         <Button
           onClick={onNext}
           disabled={!canProceed}
           className="w-full sm:w-auto px-8 py-2 sm:py-2.5 bg-primary-600 hover:bg-primary-700 text-white shadow-lg shadow-primary-500/20 text-xs sm:text-sm order-1 sm:order-2"
         >
-          Next: Review Task →
+          {t('training.modelConfig.nextReview')}
         </Button>
       </div>
     </>
   )
 }
-

@@ -8,10 +8,12 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { GoogleReCaptchaProvider, useGoogleReCaptcha } from 'react-google-recaptcha-v3'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '../contexts/AuthContext'
 import { Microscope, Brain, Shield, Zap, LogIn, Loader2, User, Lock, Heart, ExternalLink, AlertTriangle } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
+import { LanguageSwitcher } from '../components/common/LanguageSwitcher'
 import { getPublicSettings, ApiError } from '../api'
 
 /**
@@ -22,6 +24,7 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
   const navigate = useNavigate()
   const { login, isLoading, error, isLoggedIn } = useAuth()
   const { executeRecaptcha } = useGoogleReCaptcha()
+  const { t } = useTranslation()
 
   // Form state
   const [username, setUsername] = React.useState('')
@@ -50,7 +53,7 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
     setFormError(null)
 
     if (!username || !password) {
-      setFormError('Please enter username and password')
+      setFormError(t('common.pleaseEnterUsernameAndPassword'))
       return
     }
 
@@ -73,28 +76,33 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
   const features = [
     {
       icon: Microscope,
-      title: 'WSI Visualization',
-      description: 'View and navigate multi-gigapixel whole slide images with smooth pan and zoom',
+      title: t('loginPage.features.wsiVisualization'),
+      description: t('loginPage.features.wsiVisualizationDesc'),
     },
     {
       icon: Brain,
-      title: 'AI-Powered Analysis',
-      description: 'Train and deploy deep learning models for pathology classification',
+      title: t('loginPage.features.aiAnalysis'),
+      description: t('loginPage.features.aiAnalysisDesc'),
     },
     {
       icon: Shield,
-      title: 'Privacy First',
-      description: 'Fully compliant with data privacy regulations ensuring your research remains secure.',
+      title: t('loginPage.features.privacyFirst'),
+      description: t('loginPage.features.privacyFirstDesc'),
     },
     {
       icon: Zap,
-      title: 'Smart Assistant',
-      description: 'Describe your research in natural language, let AI set up the task',
+      title: t('loginPage.features.smartAssistant'),
+      description: t('loginPage.features.smartAssistantDesc'),
     },
   ]
 
   return (
-    <div className="h-screen flex flex-col lg:flex-row bg-slate-50 overflow-hidden">
+    <div className="h-screen flex flex-col lg:flex-row bg-slate-50 overflow-hidden relative">
+
+      {/* Language Switcher */}
+      <div className="absolute top-3 right-3 z-50">
+        <LanguageSwitcher />
+      </div>
 
       {/* Left: Login Section */}
       <div className="flex-1 flex flex-col justify-center px-6 py-12 lg:px-12 relative bg-white lg:max-w-[480px] xl:max-w-[560px] border-r border-slate-100 z-10 shadow-xl overflow-hidden">
@@ -112,19 +120,19 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
                 className="h-12 w-auto"
               />
             </div>
-            <h2 className="text-3xl font-bold text-slate-900 mb-2">Welcome back</h2>
+            <h2 className="text-3xl font-bold text-slate-900 mb-2">{t('auth.welcomeBack')}</h2>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-6">
             <div className="space-y-4">
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500 ml-1">Username</label>
+                <label className="text-xs font-semibold text-slate-500 ml-1">{t('auth.username')}</label>
                 <div className="relative group">
                   <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
                   <Input
                     id="username"
                     type="text"
-                    placeholder="Enter your username"
+                    placeholder={t('loginPage.enterUsername')}
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     className="pl-10 h-11 bg-slate-50 border-slate-200 focus:bg-white focus:ring-2 focus:ring-blue-100 focus:border-blue-500 rounded-lg transition-all"
@@ -136,14 +144,14 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
 
               <div className="space-y-1">
                 <div className="flex items-center justify-between ml-1">
-                  <label className="text-xs font-semibold text-slate-500">Password</label>
+                  <label className="text-xs font-semibold text-slate-500">{t('auth.password')}</label>
                 </div>
                 <div className="relative group">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
                   <Input
                     id="password"
                     type="password"
-                    placeholder="Enter your password"
+                    placeholder={t('loginPage.enterPassword')}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="pl-10 h-11 bg-slate-50 border-slate-200 focus:bg-white focus:ring-2 focus:ring-blue-100 focus:border-blue-500 rounded-lg transition-all"
@@ -158,7 +166,7 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
             {backendUnavailable && (
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm font-medium flex items-start gap-2 animate-in fade-in slide-in-from-top-2">
                 <AlertTriangle className="w-4 h-4 mt-0.5 text-amber-500 flex-shrink-0" />
-                <p>System is under maintenance. Please try again later.</p>
+                <p>{t('auth.systemMaintenance')}</p>
               </div>
             )}
 
@@ -176,11 +184,11 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
               className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2"
             >
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
-              Sign In
+              {t('common.signIn')}
             </Button>
 
             <p className="text-center text-xs text-slate-400 mt-6">
-              © 2026 <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer">SmartLab</a> · protected by reCAPTCHA
+              © 2026 <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer">SmartLab</a> · {t('common.protectedByRecaptcha')}
             </p>
           </form>
         </div>
@@ -201,16 +209,16 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
           <div className="mb-12">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-600 text-white shadow-lg shadow-blue-200 text-sm font-bold uppercase tracking-wider mb-6 transform hover:scale-105 transition-transform cursor-default">
               <Zap className="w-4 h-4 fill-current" />
-              <span>Agentic AI Powered</span>
+              <span>{t('loginPage.agenticAI')}</span>
             </div>
             <h2 className="text-4xl xl:text-5xl font-bold text-slate-900 mb-6 leading-tight">
-              Digital Pathology <br />
+              {t('loginPage.title')} <br />
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500">
-                Reimagined
+                {t('loginPage.reimagined')}
               </span>
             </h2>
             <p className="text-slate-600 text-lg leading-relaxed max-w-lg">
-              Train, analyze, and gain insights while keeping your data private. Experience the future of medical research today.
+              {t('loginPage.subtitle')}
             </p>
           </div>
 
@@ -237,13 +245,13 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
               <div className="flex-1 relative z-10">
                 <div className="flex items-center gap-2 mb-2">
                   <Heart className="w-4 h-4 text-rose-500 fill-rose-500 animate-pulse" />
-                  <span className="text-[10px] font-black uppercase tracking-wider text-rose-500">Support Our Mission</span>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-rose-500">{t('loginPage.supportMission')}</span>
                 </div>
                 <p className="text-slate-800 font-bold text-sm mb-1">
-                  Help us keep PathLab free for everyone.
+                  {t('loginPage.keepFree')}
                 </p>
                 <p className="text-slate-500 text-xs italic font-medium">
-                  "Without your support our project cannot last."
+                  {t('loginPage.quote')}
                 </p>
               </div>
               <a
@@ -253,7 +261,7 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
                 className="flex-shrink-0 relative z-10"
               >
                 <Button className="bg-slate-900 hover:bg-slate-800 text-white font-bold shadow-lg shadow-slate-300 px-6 h-11 rounded-xl transition-all flex items-center gap-2">
-                  Donate
+                  {t('loginPage.donate')}
                   <ExternalLink className="w-3 h-3 opacity-70" />
                 </Button>
               </a>
@@ -264,7 +272,7 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
 
         {/* Footer Text */}
         <div className="relative z-10 mt-8 text-center lg:text-left">
-          <p className="text-slate-400 text-xs font-mono font-medium">Build v1.0.0-stable</p>
+          <p className="text-slate-400 text-xs font-mono font-medium">{t('loginPage.buildVersion')}</p>
         </div>
       </div>
 

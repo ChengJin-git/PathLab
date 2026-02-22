@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { createTrainingTask, fetchWSIList, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type SplitConfig } from '../../api'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
@@ -116,6 +117,7 @@ export function removeTaskConfigBlock(content: string): string {
 }
 
 export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange, messageId, onHelpfulnessFeedback, savedHelpfulnessFeedback, submitTrigger }: TaskConfigCardProps) {
+  const { t } = useTranslation()
   const { hasUploadingTasks } = useBackgroundTask()
   const [config, setConfig] = useState<AgentTaskConfig>(initialConfig)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -272,22 +274,22 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const validate = (): boolean => {
     const errors: ValidationError[] = []
     if (!config.task_name?.trim()) {
-      errors.push({ field: 'task_name', message: 'Task name is required' })
+      errors.push({ field: 'task_name', message: t('chatComponents.taskConfig.validation.taskNameRequired') })
     }
     if (!selectedDatasetId) {
-      errors.push({ field: 'dataset_id', message: 'Please select a dataset' })
+      errors.push({ field: 'dataset_id', message: t('chatComponents.taskConfig.validation.selectDataset') })
     }
     if (splitStrategy === 'manual' && !hasPreDefinedSplits) {
-      errors.push({ field: 'split', message: 'No pre-defined splits found. Please upload a split CSV or use Random/K-Fold split.' })
+      errors.push({ field: 'split', message: t('chatComponents.taskConfig.validation.noPreDefinedSplits') })
     }
     if (config.learning_rate && (config.learning_rate <= 0 || config.learning_rate > 1)) {
-      errors.push({ field: 'learning_rate', message: 'Learning rate must be between 0 and 1' })
+      errors.push({ field: 'learning_rate', message: t('chatComponents.taskConfig.validation.learningRateRange') })
     }
     if (config.epochs && (config.epochs < 1 || config.epochs > 1000)) {
-      errors.push({ field: 'epochs', message: 'Epochs must be between 1 and 1000' })
+      errors.push({ field: 'epochs', message: t('chatComponents.taskConfig.validation.epochsRange') })
     }
     if (config.batch_size && (config.batch_size < 1 || config.batch_size > 512)) {
-      errors.push({ field: 'batch_size', message: 'Batch size must be between 1 and 512' })
+      errors.push({ field: 'batch_size', message: t('chatComponents.taskConfig.validation.batchSizeRange') })
     }
     setValidationErrors(errors)
     return errors.length === 0
@@ -300,7 +302,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     // Check if there are any uploading tasks (upload or batch_import)
     if (hasUploadingTasks()) {
       setSubmitStatus('error')
-      setErrorMessage('Cannot submit training task while files are being uploaded or imported. Please wait for all uploads to complete.')
+      setErrorMessage(t('chatComponents.taskConfig.errors.uploadInProgress'))
       return
     }
 
@@ -330,7 +332,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           const labelList = Array.from(labels).join(', ')
           errors.push({
             field: 'dataset_id',
-            message: `Classification tasks require at least 2 different classes. Found ${labels.size} class(es): ${labelList || 'none'}. Please assign different labels to your slides.`
+            message: t('chatComponents.taskConfig.validation.classificationMinClasses', { count: labels.size, labels: labelList || t('chatComponents.taskConfig.none') })
           })
         }
       } else if (config.task_type === 'survival') {
@@ -349,10 +351,10 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         })
 
         if (eventCount === 0 || censoredCount === 0) {
-          const missingType = eventCount === 0 ? 'Event (status=1)' : 'Censored (status=0)'
+          const missingType = eventCount === 0 ? t('chatComponents.taskConfig.eventStatus1') : t('chatComponents.taskConfig.censoredStatus0')
           errors.push({
             field: 'dataset_id',
-            message: `Survival prediction tasks require both Event and Censored samples. ${missingType} has 0 samples. Current distribution: Event=${eventCount}, Censored=${censoredCount}.`
+            message: t('chatComponents.taskConfig.validation.survivalBothRequired', { missingType, eventCount, censoredCount })
           })
         }
       }
@@ -419,7 +421,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       setSubmitStatus('success')
       onSubmitSuccess?.(result.task_id)
     } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Failed to create task'
+      const msg = error instanceof Error ? error.message : t('chatComponents.taskConfig.errors.failedToCreate')
       setSubmitStatus('error')
       setErrorMessage(msg)
       onSubmitError?.(msg)
@@ -450,10 +452,10 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       <div className="px-5 py-4 bg-gradient-to-r from-primary-50 to-blue-50 border-b border-gray-100">
         <h3 className="font-semibold text-gray-900 flex items-center gap-2">
           <Play className="w-4 h-4 text-primary-600" />
-          Training Configuration
+          {t('chatComponents.taskConfig.title')}
         </h3>
         <p className="text-sm text-gray-500 mt-1">
-          {submitStatus === 'success' ? 'Task submitted successfully' : 'Review and edit settings, then start training'}
+          {submitStatus === 'success' ? t('chatComponents.taskConfig.subtitleSuccess') : t('chatComponents.taskConfig.subtitleDefault')}
         </p>
       </div>
 
@@ -461,7 +463,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       <div className="p-5 space-y-4">
         {/* Task Name */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Task Name</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.taskName')}</label>
           <input
             type="text"
             value={config.task_name || ''}
@@ -469,7 +471,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             disabled={isFormDisabled}
             className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-100 focus:border-primary-400 ${getFieldError('task_name') ? 'border-red-300 bg-red-50' : 'border-gray-200'
               } ${disabledInputClass}`}
-            placeholder="e.g., Lung Cancer Classification"
+            placeholder={t('chatComponents.taskConfig.taskNamePlaceholder')}
           />
           {getFieldError('task_name') && (
             <p className="text-xs text-red-500 mt-1">{getFieldError('task_name')}</p>
@@ -479,7 +481,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         {/* Task Type & Data Level - Locked when AI recommends */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Task Type</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.taskType')}</label>
             <select
               value={config.task_type}
               onChange={(e) => updateConfig('task_type', e.target.value)}
@@ -492,7 +494,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Data Level</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.dataLevel')}</label>
             <select
               value={config.data_type}
               onChange={(e) => updateConfig('data_type', e.target.value)}
@@ -509,19 +511,19 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         {/* Dataset Selection - Locked when AI recommends */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Select Dataset {selectedDataset && (
+            {t('chatComponents.taskConfig.selectDataset')} {selectedDataset && (
               <span className="text-gray-500 font-normal">
-                ({selectedDataset.file_count} files will be used)
+                ({t('chatComponents.taskConfig.filesWillBeUsed', { count: selectedDataset.file_count })})
               </span>
             )}
           </label>
           {isLoadingDatasets ? (
             <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
               <Loader2 className="w-4 h-4 animate-spin" />
-              Loading datasets...
+              {t('chatComponents.taskConfig.loadingDatasets')}
             </div>
           ) : availableDatasets.length === 0 ? (
-            <p className="text-sm text-amber-600 py-2">No datasets available. Please upload data first.</p>
+            <p className="text-sm text-amber-600 py-2">{t('chatComponents.taskConfig.noDatasetsAvailable')}</p>
           ) : (
             <select
               value={selectedDatasetId || ''}
@@ -552,10 +554,10 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
               className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${getFieldError('dataset_id') ? 'border-red-300 bg-red-50' : 'border-gray-200'
                 } ${lockedSelectClass}`}
             >
-              <option value="">-- Select a dataset --</option>
+              <option value="">{t('chatComponents.taskConfig.selectDatasetPlaceholder')}</option>
               {availableDatasets.map(dataset => (
                 <option key={dataset.dataset_id || 'uncategorized'} value={dataset.dataset_id || ''}>
-                  {dataset.dataset_name} ({dataset.file_count} files)
+                  {dataset.dataset_name} ({t('chatComponents.taskConfig.filesCount', { count: dataset.file_count })})
                 </option>
               ))}
             </select>
@@ -570,7 +572,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           <div className={`border border-gray-100 rounded-lg p-4 bg-gray-50 ${isFormDisabled ? 'opacity-70' : ''}`}>
             <div className="flex items-center gap-2 mb-3">
               <Layers className="w-4 h-4 text-gray-500" />
-              <span className="text-sm font-medium text-gray-700">Data Split Strategy</span>
+              <span className="text-sm font-medium text-gray-700">{t('chatComponents.taskConfig.splitStrategy')}</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -589,9 +591,9 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                     }`}>
                     {splitStrategy === 'random' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
                   </div>
-                  <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>Random</span>
+                  <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>{t('chatComponents.taskConfig.splitRandom')}</span>
                 </div>
-                <p className="text-[10px] text-gray-500 ml-4.5">70/10/20 split</p>
+                <p className="text-[10px] text-gray-500 ml-4.5">{t('chatComponents.taskConfig.splitRandomDesc')}</p>
               </button>
 
               {/* K-Fold */}
@@ -609,9 +611,9 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                     }`}>
                     {splitStrategy === 'k_fold' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
                   </div>
-                  <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>K-Fold CV</span>
+                  <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>{t('chatComponents.taskConfig.splitKFold')}</span>
                 </div>
-                <p className="text-[10px] text-gray-500 ml-4.5">Cross-validation</p>
+                <p className="text-[10px] text-gray-500 ml-4.5">{t('chatComponents.taskConfig.splitKFoldDesc')}</p>
               </button>
 
               {/* Manual Split (CSV) */}
@@ -631,10 +633,10 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                     }`}>
                     {splitStrategy === 'manual' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
                   </div>
-                  <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>Custom</span>
+                  <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>{t('chatComponents.taskConfig.splitCustom')}</span>
                 </div>
                 <p className="text-[10px] text-gray-500 ml-4.5">
-                  {hasPreDefinedSplits ? 'From CSV' : 'No splits found'}
+                  {hasPreDefinedSplits ? t('chatComponents.taskConfig.splitFromCSV') : t('chatComponents.taskConfig.splitNoSplitsFound')}
                 </p>
               </button>
             </div>
@@ -644,13 +646,13 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
               {splitStrategy === 'random' && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-3 text-xs p-2 rounded border bg-white border-gray-100 text-gray-600">
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span>Train: 70%</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span>Val: 10%</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span>Test: 20%</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span>{t('chatComponents.taskConfig.trainPercent')}</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span>{t('chatComponents.taskConfig.valPercent')}</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span>{t('chatComponents.taskConfig.testPercent')}</span>
                   </div>
                   {selectedDataset && (
                     <div className="text-[10px] text-gray-500">
-                      {selectedDataset.file_count} samples
+                      {t('chatComponents.taskConfig.sampleCount', { count: selectedDataset.file_count })}
                     </div>
                   )}
                 </div>
@@ -658,7 +660,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
               {splitStrategy === 'k_fold' && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 bg-white p-2 rounded border border-gray-100">
-                    <label className="text-xs text-gray-600">Folds (K):</label>
+                    <label className="text-xs text-gray-600">{t('chatComponents.taskConfig.foldsK')}:</label>
                     <input
                       type="number"
                       min={2}
@@ -673,7 +675,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                   </div>
                   {selectedDataset && (
                     <div className="text-[10px] text-blue-600">
-                      {kFoldSplits}-Fold CV: {selectedDataset.file_count} samples
+                      {t('chatComponents.taskConfig.kFoldInfo', { k: kFoldSplits, count: selectedDataset.file_count })}
                     </div>
                   )}
                 </div>
@@ -682,12 +684,12 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 p-2 rounded border border-green-100">
                     <CheckCircle className="w-3.5 h-3.5 text-green-600 shrink-0" />
-                    <span className="font-medium">Ready to use pre-defined splits</span>
+                    <span className="font-medium">{t('chatComponents.taskConfig.readyToUseSplits')}</span>
                   </div>
                   <div className="flex items-center gap-3 text-xs text-gray-600 bg-white p-2 rounded border border-gray-100">
-                    <span>Train: {predefinedSplitCounts.train}</span>
-                    <span>Val: {predefinedSplitCounts.val}</span>
-                    <span>Test: {predefinedSplitCounts.test}</span>
+                    <span>{t('chatComponents.taskConfig.trainLabel')}: {predefinedSplitCounts.train}</span>
+                    <span>{t('chatComponents.taskConfig.valLabel')}: {predefinedSplitCounts.val}</span>
+                    <span>{t('chatComponents.taskConfig.testLabel')}: {predefinedSplitCounts.test}</span>
                   </div>
                 </div>
               )}
@@ -699,7 +701,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              {config.data_type === 'patch' ? 'Feature Extractor' : 'Encoder'}
+              {config.data_type === 'patch' ? t('chatComponents.taskConfig.featureExtractor') : t('chatComponents.taskConfig.encoder')}
             </label>
             <select
               value={config.encoder || 'resnet50'}
@@ -714,7 +716,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           </div>
           {config.data_type === 'wsi' ? (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Aggregator</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.aggregator')}</label>
               <select
                 value={config.aggregator || 'abmil'}
                 onChange={(e) => updateConfig('aggregator', e.target.value)}
@@ -728,11 +730,11 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             </div>
           ) : (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Model</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.model')}</label>
               <div className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-100 text-gray-500">
-                Linear Probe
+                {t('chatComponents.taskConfig.linearProbe')}
               </div>
-              <p className="text-[10px] text-gray-400 mt-1">Frozen extractor + trainable linear layer</p>
+              <p className="text-[10px] text-gray-400 mt-1">{t('chatComponents.taskConfig.linearProbeDesc')}</p>
             </div>
           )}
         </div>
@@ -744,14 +746,14 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           className={`flex items-center gap-1 text-sm ${isFormDisabled ? 'text-gray-400' : 'text-gray-500 hover:text-gray-700'}`}
         >
           {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          Advanced Settings
+          {t('chatComponents.taskConfig.advancedSettings')}
         </button>
 
         {/* Advanced Settings */}
         {showAdvanced && (
           <div className="grid grid-cols-2 gap-4 pt-2 border-t border-gray-100">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Learning Rate</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">{t('chatComponents.taskConfig.learningRate')}</label>
               <input
                 type="text"
                 inputMode="decimal"
@@ -785,7 +787,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Epochs</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">{t('chatComponents.taskConfig.epochs')}</label>
               <input
                 type="number"
                 value={config.epochs || 50}
@@ -796,7 +798,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Batch Size</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">{t('chatComponents.taskConfig.batchSize')}</label>
               <input
                 type="number"
                 value={config.batch_size ?? (config.data_type === 'wsi' ? 1 : TRAINING_DEFAULTS.batchSize)}
@@ -807,7 +809,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Random Seed</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">{t('chatComponents.taskConfig.randomSeed')}</label>
               <input
                 type="number"
                 value={randomSeed}
@@ -825,7 +827,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         <div className="mx-5 mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
           <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
           <div>
-            <p className="text-sm font-medium text-red-700">Failed to create task</p>
+            <p className="text-sm font-medium text-red-700">{t('chatComponents.taskConfig.errors.failedToCreateTitle')}</p>
             <p className="text-xs text-red-600 mt-0.5">{errorMessage}</p>
             {(() => {
               const lower = errorMessage.toLowerCase()
@@ -834,7 +836,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                   (lower.includes('not accessible') && lower.includes('file'))) {
                 return (
                   <p className="text-xs text-red-500 mt-1.5 flex items-start gap-1">
-                    <span>The storage appears to be unreachable. Please contact the administrator.</span>
+                    <span>{t('chatComponents.taskConfig.errors.storageUnreachable')}</span>
                   </p>
                 )
               }
@@ -848,14 +850,14 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       {submitStatus === 'success' && (
         <div className="mx-5 mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
           <CheckCircle className="w-4 h-4 text-green-500" />
-          <p className="text-sm font-medium text-green-700">Task created successfully!</p>
+          <p className="text-sm font-medium text-green-700">{t('chatComponents.taskConfig.taskCreatedSuccess')}</p>
         </div>
       )}
 
       {/* Helpfulness Feedback */}
       {submitStatus === 'success' && !helpfulnessFeedback && (
         <div className="mx-5 mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <p className="text-sm font-medium text-blue-800 mb-3">Do you find AI helpful for setting up this task?</p>
+          <p className="text-sm font-medium text-blue-800 mb-3">{t('chatComponents.taskConfig.helpfulnessQuestion')}</p>
           <div className="flex gap-2">
             <button
               onClick={() => {
@@ -868,7 +870,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
               className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-blue-200 hover:bg-green-50 hover:border-green-300 hover:text-green-700 text-blue-700 rounded-md text-sm font-medium transition-all shadow-sm"
             >
               <ThumbsUp className="w-3.5 h-3.5" />
-              Yes
+              {t('chatComponents.taskConfig.yes')}
             </button>
             <button
               onClick={() => {
@@ -881,7 +883,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
               className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-blue-200 hover:bg-red-50 hover:border-red-300 hover:text-red-700 text-blue-700 rounded-md text-sm font-medium transition-all shadow-sm"
             >
               <ThumbsDown className="w-3.5 h-3.5" />
-              No
+              {t('chatComponents.taskConfig.no')}
             </button>
           </div>
         </div>
@@ -896,7 +898,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             <ThumbsDown className="w-4 h-4 text-red-500" />
           )}
           <p className="text-sm text-gray-600">
-            Thank you for your feedback!
+            {t('chatComponents.taskConfig.feedbackThanks')}
           </p>
         </div>
       )}
@@ -914,17 +916,17 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           {isSubmitting ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              Creating Task...
+              {t('chatComponents.taskConfig.creatingTask')}
             </>
           ) : submitStatus === 'success' ? (
             <>
               <CheckCircle className="w-4 h-4" />
-              Task Created
+              {t('chatComponents.taskConfig.taskCreated')}
             </>
           ) : (
             <>
               <Play className="w-4 h-4" />
-              Start Training
+              {t('chatComponents.taskConfig.startTraining')}
             </>
           )}
         </button>

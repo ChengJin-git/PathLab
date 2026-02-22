@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { ArrowLeft, ArrowRight, Tags, Activity, Users, FileImage, Plus } from 'lucide-react'
 import { PageHeader } from '../PageHeader'
 import { Card } from '../ui/card'
@@ -25,27 +26,28 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
   dataLevel, onDataLevelChange, isExistingDataset, existingDatasets,
   showValidation, fromAIChat, onNext, onBack
 }) => {
+  const { t } = useTranslation()
   return (
     <>
       <div className="flex-none mb-6">
-        <PageHeader title="Register Files" description="Prepare and register local files.">
+        <PageHeader title={t('uploadComponents.datasetConfig.registerFiles')} description={t('uploadComponents.datasetConfig.prepareAndRegister')}>
           <Button variant="outline" onClick={onBack} className="gap-2">
             <ArrowLeft className="w-4 h-4" />
-            {fromAIChat ? 'Back to Chat' : 'Back to Dashboard'}
+            {fromAIChat ? t('uploadComponents.datasetConfig.backToChat') : t('uploadComponents.datasetConfig.backToDashboard')}
           </Button>
         </PageHeader>
       </div>
       <div className="flex-1 flex flex-col items-center p-4">
         <div className="w-full max-w-4xl">
           <div className="text-center mb-6 sm:mb-8">
-            <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-2 sm:mb-3">Create Dataset</h1>
-            <p className="text-base sm:text-lg text-slate-500 px-4">Define a dataset name and analysis type to get started.</p>
+            <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-2 sm:mb-3">{t('uploadComponents.datasetConfig.createDataset')}</h1>
+            <p className="text-base sm:text-lg text-slate-500 px-4">{t('uploadComponents.datasetConfig.defineDatasetDescription')}</p>
           </div>
 
           <Card className="p-5 sm:p-8 shadow-xl border-slate-100 rounded-[1.5rem] sm:rounded-[2rem] overflow-hidden">
             <div className="flex flex-col gap-6 sm:gap-8">
               <div>
-                <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Dataset Name</label>
+                <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">{t('uploadComponents.datasetConfig.datasetName')}</label>
                 <div className="relative">
                   <input
                     type="text"
@@ -53,7 +55,7 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                       ? 'border-red-500 bg-red-50'
                       : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
                       }`}
-                    placeholder="e.g., Lung Cancer Trial 2024"
+                    placeholder={t('uploadComponents.datasetConfig.datasetNamePlaceholder')}
                     value={datasetName}
                     onChange={e => onDatasetNameChange(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && datasetName.trim() && onNext()}
@@ -62,13 +64,13 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                   {isExistingDataset && (
                     <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-600 rounded-full text-xs font-bold border border-amber-100">
                       <Plus className="w-3 h-3" />
-                      EXISTING DATASET
+                      {t('uploadComponents.datasetConfig.existingDataset')}
                     </div>
                   )}
                 </div>
                 {existingDatasets.length > 0 && !datasetName.trim() && (
                   <div className="mt-4">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Or select existing</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">{t('uploadComponents.datasetConfig.orSelectExisting')}</p>
                     <div className="flex flex-wrap gap-2">
                       {existingDatasets.slice(0, 8).map(name => (
                         <button
@@ -85,14 +87,14 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                 )}
                 <p className="mt-3 text-sm text-slate-400">
                   {isExistingDataset
-                    ? 'This dataset already exists. New files will be appended to it.'
-                    : 'Choose a unique name to identify this collection of slides.'}
+                    ? t('uploadComponents.datasetConfig.existingDatasetHint')
+                    : t('uploadComponents.datasetConfig.newDatasetHint')}
                 </p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
               <div>
-                <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Analysis Type</label>
+                <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">{t('uploadComponents.datasetConfig.analysisType')}</label>
                 <div className="grid grid-cols-1 gap-3 sm:gap-4">
                   <button
                     onClick={() => !isExistingDataset && onUploadModeChange('classification')}
@@ -106,8 +108,8 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                       <Tags className="w-5 h-5" />
                     </div>
                     <div>
-                      <span className={`font-bold block ${uploadMode === 'classification' ? 'text-blue-900' : 'text-slate-900'}`}>Classification</span>
-                      <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Diagnostic labels & categories</span>
+                      <span className={`font-bold block ${uploadMode === 'classification' ? 'text-blue-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.classification')}</span>
+                      <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.classificationDesc')}</span>
                     </div>
                   </button>
 
@@ -123,15 +125,15 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                       <Activity className="w-5 h-5" />
                     </div>
                     <div>
-                      <span className={`font-bold block ${uploadMode === 'survival' ? 'text-emerald-900' : 'text-slate-900'}`}>Survival Analysis</span>
-                      <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Event time & status tracking</span>
+                      <span className={`font-bold block ${uploadMode === 'survival' ? 'text-emerald-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.survivalAnalysis')}</span>
+                      <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.survivalDesc')}</span>
                     </div>
                   </button>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Data Level</label>
+                <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">{t('uploadComponents.datasetConfig.dataLevel')}</label>
                 <div className="grid grid-cols-1 gap-3 sm:gap-4">
                   <button
                     onClick={() => !isExistingDataset && onDataLevelChange('case')}
@@ -145,8 +147,8 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                       <Users className="w-5 h-5" />
                     </div>
                     <div>
-                      <span className={`font-bold block ${dataLevel === 'case' ? 'text-purple-900' : 'text-slate-900'}`}>Case-Level</span>
-                      <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Files grouped by case ID</span>
+                      <span className={`font-bold block ${dataLevel === 'case' ? 'text-purple-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.caseLevel')}</span>
+                      <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.caseLevelDesc')}</span>
                     </div>
                   </button>
 
@@ -163,8 +165,8 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                       <FileImage className="w-5 h-5" />
                     </div>
                     <div>
-                      <span className={`font-bold block ${dataLevel === 'file' ? 'text-orange-900' : 'text-slate-900'}`}>File-Level</span>
-                      <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Each file is independent</span>
+                      <span className={`font-bold block ${dataLevel === 'file' ? 'text-orange-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.fileLevel')}</span>
+                      <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.fileLevelDesc')}</span>
                     </div>
                   </button>
                 </div>
@@ -177,7 +179,7 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                 disabled={!datasetName.trim()}
                 onClick={onNext}
               >
-                Next: Choose Files <ArrowRight className="ml-2 w-4 h-4 sm:w-5 sm:h-5" />
+                {t('uploadComponents.datasetConfig.nextChooseFiles')} <ArrowRight className="ml-2 w-4 h-4 sm:w-5 sm:h-5" />
               </Button>
             </div>
           </Card>

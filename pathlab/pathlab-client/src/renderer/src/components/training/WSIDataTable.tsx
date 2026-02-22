@@ -5,6 +5,7 @@
  */
 
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '../ui/button'
 import { Loader2, ChevronLeft, ChevronRight, ChevronDown, Edit2, Trash2, Users } from 'lucide-react'
 import { TaskType } from '../../constants/training'
@@ -85,6 +86,8 @@ export function WSIDataTable({
   handleDeleteClick,
   getFileType,
 }: WSIDataTableProps) {
+  const { t } = useTranslation()
+
   return (
     <div className="space-y-4">
       <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shadow-sm flex flex-col">
@@ -103,28 +106,28 @@ export function WSIDataTable({
                 {selectedIds.size > 0 ? (
                   <th colSpan={10} className="px-3 sm:px-6 py-3 text-left">
                     <div className="flex items-center gap-4">
-                      <span className="text-xs sm:text-sm font-bold text-primary-900">{selectedIds.size} selected</span>
+                      <span className="text-xs sm:text-sm font-bold text-primary-900">{t('training.wsiTable.selected', { count: selectedIds.size })}</span>
                       {selectedIds.size > 0 && !allFilteredSelected && (
                         <button onClick={() => setSelectedIds(new Set())} className="text-[10px] sm:text-xs font-medium text-gray-500 hover:text-gray-700 underline">
-                          Clear selection
+                          {t('training.wsiTable.clearSelection')}
                         </button>
                       )}
                     </div>
                   </th>
                 ) : (
                   <>
-                    <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Slide ID</th>
-                    <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Type</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('training.wsiTable.slideId')}</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('training.wsiTable.type')}</th>
                     {taskType === 'survival' ? (
                       <>
-                        <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Time (M)</th>
-                        <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Status</th>
+                        <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('training.wsiTable.timeM')}</th>
+                        <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('training.wsiTable.status')}</th>
                       </>
                     ) : (
-                      <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Label</th>
+                      <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('training.wsiTable.label')}</th>
                     )}
-                    <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Patient Info</th>
-                    <th className="px-3 sm:px-6 py-3 text-right text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Action</th>
+                    <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('training.wsiTable.patientInfo')}</th>
+                    <th className="px-3 sm:px-6 py-3 text-right text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('training.wsiTable.action')}</th>
                   </>
                 )}
               </tr>
@@ -145,13 +148,13 @@ export function WSIDataTable({
                 <tr>
                   <td colSpan={100} className="py-12 sm:py-20 text-center">
                     <Loader2 className="w-8 h-8 text-primary-600 animate-spin mx-auto mb-3" />
-                    <span className="text-xs sm:text-sm text-gray-500 font-medium italic">Loading files...</span>
+                    <span className="text-xs sm:text-sm text-gray-500 font-medium italic">{t('training.wsiTable.loadingFiles')}</span>
                   </td>
                 </tr>
               ) : filteredItems.length === 0 ? (
                 <tr>
                   <td colSpan={100} className="py-12 sm:py-20 text-center text-gray-500 italic text-xs sm:text-sm">
-                    No files found.
+                    {t('training.wsiTable.noFilesFound')}
                   </td>
                 </tr>
               ) : (
@@ -167,7 +170,7 @@ export function WSIDataTable({
           setCurrentPage={setCurrentPage}
           pageSize={pageSize}
           totalCount={hasMultiSlideCases ? totalCases : filteredItems.length}
-          itemLabel={hasMultiSlideCases ? 'Cases' : 'Items'}
+          itemLabel={hasMultiSlideCases ? t('training.wsiTable.cases') : t('training.wsiTable.items')}
         />
       </div>
     </div>
@@ -190,13 +193,15 @@ function BatchSelectionBanner({
   onSelectAll: () => void
   onClearSelection: () => void
 }) {
+  const { t } = useTranslation()
+
   if (allPageSelected && !allFilteredSelected) {
     return (
       <tr className="bg-blue-50/50">
         <td colSpan={100} className="px-4 py-2 text-center text-xs sm:text-sm text-gray-700 border-b border-blue-100">
-          <span className="font-medium">All {pageCount} items on this page are selected.</span>
+          <span className="font-medium">{t('training.wsiTable.allPageSelected', { count: pageCount })}</span>
           <button onClick={onSelectAll} className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none">
-            Select all {totalCount} items in list
+            {t('training.wsiTable.selectAllItems', { count: totalCount })}
           </button>
         </td>
       </tr>
@@ -207,9 +212,9 @@ function BatchSelectionBanner({
     return (
       <tr className="bg-blue-50/50">
         <td colSpan={100} className="px-4 py-2 text-center text-xs sm:text-sm text-gray-700 border-b border-blue-100">
-          <span className="font-medium">All {totalCount} items in list are selected.</span>
+          <span className="font-medium">{t('training.wsiTable.allItemsSelected', { count: totalCount })}</span>
           <button onClick={onClearSelection} className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none">
-            Clear selection
+            {t('training.wsiTable.clearSelection')}
           </button>
         </td>
       </tr>
@@ -233,13 +238,14 @@ function PaginationFooter({
   totalCount: number
   itemLabel: string
 }) {
+  const { t } = useTranslation()
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
 
   return (
     <div className="border-t border-gray-100 bg-gray-50/50 px-4 py-3 sm:px-6 sm:py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
       <div className="text-[10px] sm:text-xs text-gray-500 font-medium">
-        Showing <span className="font-bold text-gray-900">{Math.min(totalCount, (currentPage - 1) * pageSize + 1)}</span>-
-        <span className="font-bold text-gray-900">{Math.min(currentPage * pageSize, totalCount)}</span> of
+        {t('training.wsiTable.showing')} <span className="font-bold text-gray-900">{Math.min(totalCount, (currentPage - 1) * pageSize + 1)}</span>-
+        <span className="font-bold text-gray-900">{Math.min(currentPage * pageSize, totalCount)}</span>{' '}
         <span className="font-bold text-gray-900 ml-1">
           {totalCount} {itemLabel}
         </span>
@@ -362,6 +368,7 @@ function SlideRow({
   getFileType: (fileExtension: string, size: number) => 'WSI' | 'Patch'
   nested?: boolean
 }) {
+  const { t } = useTranslation()
   const fileType = getFileType(item.file_extension, item.file_size)
 
   return (
@@ -393,8 +400,8 @@ function SlideRow({
             {item.original_filename}
           </span>
           {item.case_id && !isPatchDataset && !nested && (
-            <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={`Case: ${item.case_id}`}>
-              Case: {item.case_id}
+            <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={`${t('training.wsiTable.casePrefix')}${item.case_id}`}>
+              {t('training.wsiTable.casePrefix')}{item.case_id}
             </span>
           )}
         </div>
@@ -418,7 +425,7 @@ function SlideRow({
                 {item.event_time}
               </span>
             ) : (
-              <span className={`text-gray-300 text-[10px] ${nested ? '' : 'sm:text-sm'} italic`}>Not set</span>
+              <span className={`text-gray-300 text-[10px] ${nested ? '' : 'sm:text-sm'} italic`}>{t('training.wsiTable.notSet')}</span>
             )}
           </td>
           <td className={`px-3 sm:px-6 py-${nested ? '3' : '4'} sm:py-${nested ? '4' : '5'}`}>
@@ -428,10 +435,10 @@ function SlideRow({
                   item.event_status === 1 ? 'bg-red-100/80 text-red-700 border-red-200/60' : 'bg-green-100/80 text-green-700 border-green-200/60'
                 }`}
               >
-                {item.event_status === 1 ? 'Event' : 'Censored'}
+                {item.event_status === 1 ? t('training.wsiTable.event') : t('training.wsiTable.censored')}
               </span>
             ) : (
-              <span className={`text-gray-300 text-[10px] ${nested ? '' : 'sm:text-sm'} italic`}>Not set</span>
+              <span className={`text-gray-300 text-[10px] ${nested ? '' : 'sm:text-sm'} italic`}>{t('training.wsiTable.notSet')}</span>
             )}
           </td>
         </>
@@ -442,7 +449,7 @@ function SlideRow({
               {item.label}
             </span>
           ) : (
-            <span className={`text-gray-300 text-[10px] ${nested ? '' : 'sm:text-sm'} italic`}>No Label</span>
+            <span className={`text-gray-300 text-[10px] ${nested ? '' : 'sm:text-sm'} italic`}>{t('training.wsiTable.noLabel')}</span>
           )}
         </td>
       )}
@@ -455,7 +462,7 @@ function SlideRow({
             variant="ghost"
             size="icon"
             className={`h-${nested ? '6' : '7'} w-${nested ? '6' : '7'} sm:h-${nested ? '7' : '9'} sm:w-${nested ? '7' : '9'} text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg`}
-            title="Edit Metadata"
+            title={t('training.wsiTable.editMetadata')}
             onClick={(e) => {
               e.preventDefault()
               handleEditClick(item)
@@ -467,7 +474,7 @@ function SlideRow({
             variant="ghost"
             size="icon"
             className={`h-${nested ? '6' : '7'} w-${nested ? '6' : '7'} sm:h-${nested ? '7' : '9'} sm:w-${nested ? '7' : '9'} text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg`}
-            title="Delete File"
+            title={t('training.wsiTable.deleteFile')}
             onClick={(e) => {
               e.preventDefault()
               handleDeleteClick(item.wsi_id, item.label, item.original_filename)
@@ -483,15 +490,17 @@ function SlideRow({
 
 /** Patient info badges */
 function PatientInfoBadges({ item, nested }: { item: WSIItem; nested: boolean }) {
+  const { t } = useTranslation()
+
   if (!(item.age || item.gender || item.source)) {
-    return <span className={`text-gray-300 text-[10px] ${nested ? '' : 'sm:text-sm'} italic`}>{nested ? '-' : 'Not specified'}</span>
+    return <span className={`text-gray-300 text-[10px] ${nested ? '' : 'sm:text-sm'} italic`}>{nested ? '-' : t('training.wsiTable.notSpecified')}</span>
   }
 
   return (
     <div className={`flex flex-wrap gap-1 ${nested ? '' : 'sm:gap-2'} items-center min-w-[${nested ? '80' : '100'}px]`}>
       {item.source && (
         <span className={`inline-flex items-center px-${nested ? '1.5' : '2'} ${nested ? '' : 'sm:px-3'} py-0.5 ${nested ? '' : 'sm:py-1'} rounded-md text-[10px] ${nested ? '' : 'sm:text-sm'} font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap`}>
-          {nested ? item.source : <><span className="hidden sm:inline">Source: </span><span className="sm:ml-1 text-blue-900">{item.source}</span></>}
+          {nested ? item.source : <><span className="hidden sm:inline">{t('training.wsiTable.sourcePrefix')}</span><span className="sm:ml-1 text-blue-900">{item.source}</span></>}
         </span>
       )}
       {item.age && (
@@ -534,6 +543,7 @@ function CaseRow({
   handleDeleteClick: (wsiId: string, label?: string, filename?: string) => void
   getFileType: (fileExtension: string, size: number) => 'WSI' | 'Patch'
 }) {
+  const { t } = useTranslation()
   const isNoCase = caseId === '__no_case__'
   const isMultiSlide = slides.length > 1
   const allSelected = slides.every((s) => selectedIds.has(s.wsi_id))
@@ -569,7 +579,7 @@ function CaseRow({
 
   // Get file types for the case
   const types = new Set(slides.map((s) => getFileType(s.file_extension, s.file_size)))
-  const typeLabel = types.has('WSI') && types.has('Patch') ? 'Mixed' : types.values().next().value || 'WSI'
+  const typeLabel = types.has('WSI') && types.has('Patch') ? t('training.wsiTable.mixed') : types.values().next().value || 'WSI'
 
   return (
     <React.Fragment>
@@ -597,10 +607,10 @@ function CaseRow({
             <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3">
               <div className="flex items-center gap-2">
                 <Users className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />
-                <span className="text-sm sm:text-base font-semibold text-gray-900">{isNoCase ? 'No Case ID' : `Case: ${caseId}`}</span>
+                <span className="text-sm sm:text-base font-semibold text-gray-900">{isNoCase ? t('training.wsiTable.noCaseId') : t('training.wsiTable.caseLabel', { id: caseId })}</span>
               </div>
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 border border-blue-200">
-                {slides.length} slides
+                {t('training.wsiTable.slidesCount', { count: slides.length })}
               </span>
             </div>
           </div>
@@ -608,7 +618,7 @@ function CaseRow({
         <td className="px-3 sm:px-6 py-4 sm:py-5">
           <span
             className={`inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium border whitespace-nowrap ${
-              typeLabel === 'Mixed'
+              typeLabel === t('training.wsiTable.mixed')
                 ? 'bg-gray-100 text-gray-700 border-gray-200'
                 : typeLabel === 'WSI'
                   ? 'bg-purple-100 text-purple-700 border-purple-200'
@@ -621,7 +631,7 @@ function CaseRow({
         <CaseLabelCell slides={slides} taskType={taskType} />
         <CasePatientInfoCell slides={slides} />
         <td className="px-3 sm:px-6 py-4 sm:py-5 text-right">
-          <span className="text-xs text-gray-400 whitespace-nowrap">{isExpanded ? 'Collapse' : 'Expand'}</span>
+          <span className="text-xs text-gray-400 whitespace-nowrap">{isExpanded ? t('training.wsiTable.collapse') : t('training.wsiTable.expand')}</span>
         </td>
       </tr>
 
@@ -647,6 +657,8 @@ function CaseRow({
 
 /** Case label cell */
 function CaseLabelCell({ slides, taskType }: { slides: WSIItem[]; taskType: TaskType }) {
+  const { t } = useTranslation()
+
   if (taskType === 'survival') {
     const events = slides.filter((s) => s.event_status === 1).length
     const censored = slides.filter((s) => s.event_status === 0).length
@@ -654,19 +666,19 @@ function CaseLabelCell({ slides, taskType }: { slides: WSIItem[]; taskType: Task
     return (
       <>
         <td className="px-3 sm:px-6 py-4 sm:py-5">
-          <span className="text-gray-400 text-xs italic">See slides</span>
+          <span className="text-gray-400 text-xs italic">{t('training.wsiTable.seeSlides')}</span>
         </td>
         <td className="px-3 sm:px-6 py-4 sm:py-5">
           {events === 0 && censored === 0 ? (
-            <span className="text-gray-300 text-xs italic">Not set</span>
+            <span className="text-gray-300 text-xs italic">{t('training.wsiTable.notSet')}</span>
           ) : (
             <div className="flex flex-col gap-1">
               {events > 0 && (
                 <span className="text-xs text-red-600 font-medium">
-                  {events} Event{events > 1 ? 's' : ''}
+                  {t('training.wsiTable.eventsCount', { count: events })}
                 </span>
               )}
-              {censored > 0 && <span className="text-xs text-green-600 font-medium">{censored} Censored</span>}
+              {censored > 0 && <span className="text-xs text-green-600 font-medium">{t('training.wsiTable.censoredCount', { count: censored })}</span>}
             </div>
           )}
         </td>
@@ -679,7 +691,7 @@ function CaseLabelCell({ slides, taskType }: { slides: WSIItem[]; taskType: Task
   return (
     <td className="px-3 sm:px-6 py-4 sm:py-5">
       {labels.length === 0 ? (
-        <span className="text-gray-300 text-xs italic">No Label</span>
+        <span className="text-gray-300 text-xs italic">{t('training.wsiTable.noLabel')}</span>
       ) : labels.length === 1 ? (
         <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">
           {labels[0]}
@@ -700,6 +712,7 @@ function CaseLabelCell({ slides, taskType }: { slides: WSIItem[]; taskType: Task
 
 /** Case patient info cell */
 function CasePatientInfoCell({ slides }: { slides: WSIItem[] }) {
+  const { t } = useTranslation()
   const sources = Array.from(new Set(slides.map((s) => s.source as string).filter(Boolean)))
   const ages = Array.from(new Set(slides.map((s) => s.age).filter((a): a is number => a !== null && a !== undefined)))
   const genders = Array.from(new Set(slides.map((s) => s.gender as string).filter(Boolean)))
@@ -707,7 +720,7 @@ function CasePatientInfoCell({ slides }: { slides: WSIItem[] }) {
   if (sources.length === 0 && ages.length === 0 && genders.length === 0) {
     return (
       <td className="px-3 sm:px-6 py-4 sm:py-5">
-        <span className="text-gray-300 text-[10px] sm:text-sm italic">Not specified</span>
+        <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('training.wsiTable.notSpecified')}</span>
       </td>
     )
   }
@@ -719,11 +732,11 @@ function CasePatientInfoCell({ slides }: { slides: WSIItem[] }) {
           <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
             {sources.length === 1 ? (
               <>
-                <span className="hidden sm:inline">Source: </span>
+                <span className="hidden sm:inline">{t('training.wsiTable.sourcePrefix')}</span>
                 <span className="sm:ml-1 text-blue-900">{sources[0]}</span>
               </>
             ) : (
-              `${sources.length} Sources`
+              t('training.wsiTable.sourcesCount', { count: sources.length })
             )}
           </span>
         )}
@@ -734,11 +747,10 @@ function CasePatientInfoCell({ slides }: { slides: WSIItem[] }) {
         )}
         {genders.length > 0 && (
           <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
-            {genders.length === 1 ? genders[0] : 'Mixed'}
+            {genders.length === 1 ? genders[0] : t('training.wsiTable.mixed')}
           </span>
         )}
       </div>
     </td>
   )
 }
-

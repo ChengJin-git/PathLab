@@ -6,6 +6,7 @@
  */
 
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
@@ -108,6 +109,7 @@ export interface DataSelectionStepProps {
 }
 
 export function DataSelectionStep(props: DataSelectionStepProps) {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const {
     taskType,
@@ -186,7 +188,7 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
               className="w-full sm:w-auto px-4 py-2 sm:py-2.5 bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition-all text-xs sm:text-sm font-bold shadow-md shadow-primary-500/20 flex items-center justify-center gap-2 group"
             >
               <Plus className="w-4 h-4 group-hover:rotate-90 transition-transform duration-300" />
-              Register Files
+              {t('training.dataSelection.registerFiles')}
             </button>
           </div>
         </div>
@@ -258,14 +260,14 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
           className="w-full sm:w-auto px-6 py-2.5 border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-50 transition-all font-bold text-xs sm:text-sm flex items-center justify-center gap-2"
         >
           <ChevronLeft className="w-4 h-4" />
-          Back to Parameters
+          {t('training.dataSelection.backToParameters')}
         </button>
         <button
           onClick={onNext}
           disabled={!canProceed}
           className="w-full sm:w-auto px-8 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-xl shadow-lg shadow-primary-500/20 transition-all font-bold text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-50"
         >
-          {dataLevel === 'patch' ? 'Next: Model Config' : 'Next: Preprocessing'}
+          {dataLevel === 'patch' ? t('training.dataSelection.nextModelConfig') : t('training.dataSelection.nextPreprocessing')}
           <ChevronRight className="w-4 h-4" />
         </button>
       </div>
@@ -287,11 +289,13 @@ function DatasetGrid({
   onSelectDataset: (id: string | null, name: string) => void
   formatBytes: (bytes: number) => string
 }) {
+  const { t } = useTranslation()
+
   if (datasetsLoading) {
     return (
       <div className="flex flex-col items-center justify-center py-12">
         <Loader2 className="w-8 h-8 text-primary-600 animate-spin mb-3" />
-        <p className="text-sm text-gray-500 font-medium">Loading datasets...</p>
+        <p className="text-sm text-gray-500 font-medium">{t('training.dataSelection.loadingDatasets')}</p>
       </div>
     )
   }
@@ -301,12 +305,14 @@ function DatasetGrid({
       <div className="text-center py-12 sm:py-16 bg-gray-50/50 rounded-2xl border-2 border-dashed border-gray-200">
         <FolderOpen className="w-12 h-12 mx-auto mb-4 text-gray-300" />
         <p className="text-base sm:text-lg font-bold text-gray-700">
-          {`No ${taskType === 'survival' ? 'survival' : 'classification'} datasets found`}
+          {taskType === 'survival'
+            ? t('training.dataSelection.noSurvivalDatasets')
+            : t('training.dataSelection.noClassificationDatasets')}
         </p>
         <p className="text-xs sm:text-sm text-gray-500 mt-1">
           {taskType === 'survival'
-            ? 'Register datasets with event_time and event_status for survival analysis.'
-            : 'Register datasets with class labels for classification tasks.'}
+            ? t('training.dataSelection.registerSurvivalHint')
+            : t('training.dataSelection.registerClassificationHint')}
         </p>
       </div>
     )
@@ -332,7 +338,7 @@ function DatasetGrid({
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 sm:mt-2">
                 <span className="text-[10px] sm:text-xs font-semibold text-gray-500 flex items-center gap-1">
                   <FileText className="w-3 h-3" />
-                  {dataset.file_count} slides
+                  {t('training.dataSelection.slidesCount', { count: dataset.file_count })}
                 </span>
                 <span className="hidden sm:inline w-1 h-1 bg-gray-300 rounded-full"></span>
                 <span className="text-[10px] sm:text-xs font-semibold text-gray-500">{formatBytes(dataset.total_size)}</span>
@@ -347,12 +353,13 @@ function DatasetGrid({
 
 /** Header when no dataset selected */
 function DatasetSelectHeader({ selectedCount }: { selectedCount: number }) {
+  const { t } = useTranslation()
   return (
     <>
-      <h3 className="text-base sm:text-lg font-bold text-gray-900">Select Dataset</h3>
+      <h3 className="text-base sm:text-lg font-bold text-gray-900">{t('training.dataSelection.selectDataset')}</h3>
       <p className="text-[11px] sm:text-sm text-gray-500 mt-1">
-        Choose a source dataset for your analysis task
-        {selectedCount > 0 && <span className="ml-2 text-primary-600 font-bold">({selectedCount} files selected)</span>}
+        {t('training.dataSelection.chooseSource')}
+        {selectedCount > 0 && <span className="ml-2 text-primary-600 font-bold">({t('training.dataSelection.filesSelected', { count: selectedCount })})</span>}
       </p>
     </>
   )
@@ -368,17 +375,17 @@ function DatasetSelectedHeader({
   selectedCount: number
   onBack: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <>
       <div className="flex items-center gap-2 mb-1.5">
         <button onClick={onBack} className="text-xs sm:text-sm text-primary-600 hover:text-primary-700 font-semibold flex items-center gap-1 transition-colors">
           <ChevronLeft className="w-3.5 h-3.5" />
-          Back to Datasets
+          {t('training.dataSelection.backToDatasets')}
         </button>
       </div>
-      <h3 className="text-base sm:text-lg font-bold text-gray-900 truncate">Dataset: {selectedDatasetName}</h3>
-      <p className="text-[11px] sm:text-sm text-gray-500 mt-1">Select slides for training ({selectedCount} currently selected)</p>
+      <h3 className="text-base sm:text-lg font-bold text-gray-900 truncate">{t('training.dataSelection.datasetName', { name: selectedDatasetName })}</h3>
+      <p className="text-[11px] sm:text-sm text-gray-500 mt-1">{t('training.dataSelection.selectSlides', { count: selectedCount })}</p>
     </>
   )
 }
-

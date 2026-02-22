@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
 import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, invalidateWSIListCache, getFileType } from '../api'
@@ -12,6 +13,7 @@ import { formatBytes } from '../lib/utils'
 import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal } from '../components/list'
 
 export default function ListPage() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const location = useLocation()
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
@@ -358,7 +360,7 @@ export default function ListPage() {
       setTimeout(() => reloadCurrentDataset(), 500)
     } catch (err) {
       console.error('Failed to add delete task:', err)
-      alert(`Failed to delete WSI: ${err}`)
+      alert(t('listPage.failedDeleteWsi', { error: String(err) }))
     }
   }
 
@@ -374,7 +376,7 @@ export default function ListPage() {
 
   const handleBatchDeleteClick = () => {
     if (selectedIds.size === 0) {
-      alert('Please select at least one file to delete')
+      alert(t('listPage.selectAtLeastOneToDelete'))
       return
     }
     setDeleteMode('standard')
@@ -402,7 +404,7 @@ export default function ListPage() {
       }
     } catch (err) {
       console.error('Batch delete error:', err)
-      alert(`Failed to delete files: ${err}`)
+      alert(t('listPage.failedDeleteFiles', { error: String(err) }))
     } finally {
       setDeleting(false)
     }
@@ -413,14 +415,14 @@ export default function ListPage() {
   const handleDatasetDeleteClick = async (e: React.MouseEvent, datasetId: string | null, datasetName: string) => {
     e.stopPropagation()
     if (!datasetId) {
-      alert("Cannot delete uncategorized dataset")
+      alert(t('listPage.cannotDeleteUncategorized'))
       return
     }
     setDeleting(true)
     try {
       const d = await fetchWSIList(datasetId)
       if (!d.items || d.items.length === 0) {
-        alert("Dataset is empty or could not be loaded")
+        alert(t('listPage.datasetEmptyOrNotLoaded'))
         return
       }
       const allIds = new Set(d.items.map((it: any) => it.wsi_id))
@@ -431,7 +433,7 @@ export default function ListPage() {
       setShowBatchDeleteModal(true)
     } catch (err) {
       console.error('Failed to prepare dataset delete:', err)
-      alert(`Failed to load dataset files: ${err}`)
+      alert(t('listPage.failedLoadDatasetFiles', { error: String(err) }))
     } finally {
       setDeleting(false)
     }
@@ -472,7 +474,7 @@ export default function ListPage() {
       await reloadCurrentDataset()
     } catch (err) {
       console.error('Failed to update WSI metadata:', err)
-      alert(`Failed to update metadata: ${err}`)
+      alert(t('listPage.failedUpdateMetadata', { error: String(err) }))
     } finally {
       setUpdating(false)
     }
@@ -480,7 +482,7 @@ export default function ListPage() {
 
   const handleBatchEditClick = () => {
     if (selectedIds.size === 0) {
-      alert('Please select at least one file to edit')
+      alert(t('listPage.selectAtLeastOneToEdit'))
       return
     }
     setBatchEditLabel('')
@@ -520,10 +522,10 @@ export default function ListPage() {
       // Close modal and clear selection immediately
       setShowBatchEditModal(false)
       setSelectedIds(new Set())
-      toastSuccess(`Metadata update started for ${request.wsi_ids.length} items. Check notification center for progress.`)
+      toastSuccess(t('listPage.batchUpdateStarted', { count: request.wsi_ids.length }))
     } catch (err) {
       console.error('Failed to start batch edit:', err)
-      toastError(err instanceof Error ? err.message : `Failed to start batch edit: ${err}`)
+      toastError(err instanceof Error ? err.message : t('listPage.failedBatchEdit', { error: String(err) }))
     } finally {
       setBatchUpdating(false)
     }
@@ -587,10 +589,10 @@ export default function ListPage() {
         setSelectedDatasetType(editingDatasetType)
       }
 
-      toastSuccess('Dataset updated successfully')
+      toastSuccess(t('listPage.datasetUpdatedSuccess'))
     } catch (err) {
       console.error('Failed to update dataset:', err)
-      toastError(`Failed to update dataset: ${err}`)
+      toastError(t('listPage.failedUpdateDataset', { error: String(err) }))
     } finally {
       handleEditDatasetCancel()
     }
@@ -624,7 +626,7 @@ export default function ListPage() {
       }
     } catch (err) {
       console.error('Failed to rename dataset:', err)
-      alert(`Failed to rename dataset: ${err}`)
+      alert(t('listPage.failedRenameDataset', { error: String(err) }))
     } finally {
       handleRenameCancel()
     }
@@ -710,7 +712,7 @@ export default function ListPage() {
       const allIds = new Set((d.items || []).map((item: any) => item.wsi_id))
       setSelectedIds(allIds)
     } catch (e) {
-      toastError('Failed to select all items')
+      toastError(t('listPage.failedSelectAll'))
       console.error(e)
     }
   }
@@ -732,18 +734,18 @@ export default function ListPage() {
     <div className="w-full space-y-6 h-full flex flex-col">
       <div className="flex-none">
         <PageHeader
-          title={selectedDatasetId ? selectedDatasetName : "Data Repository"}
+          title={selectedDatasetId ? selectedDatasetName : t('listPage.title')}
           description={
             <>
               {selectedDatasetId ? (
-                loading ? 'Loading files...' :
-                  error ? 'Error loading files' :
+                loading ? t('listPage.loadingFiles') :
+                  error ? t('listPage.errorLoadingFiles') :
                     <span className="flex items-center gap-2">
                       <FolderOpen className="w-4 h-4" />
-                      {totalCount} files stored in this dataset
+                      {t('listPage.filesInDataset', { count: totalCount })}
                     </span>
               ) : (
-                'Manage your datasets and images.'
+                t('listPage.description')
               )}
             </>
           }
@@ -757,7 +759,7 @@ export default function ListPage() {
                   className="gap-2"
                 >
                   <ArrowLeft className="w-4 h-4" />
-                  {fromAIChat ? 'Back to Chat' : 'Back to Repository'}
+                  {fromAIChat ? t('listPage.backToChat') : t('listPage.backToRepository')}
                 </Button>
               </>
             ) : (
@@ -768,14 +770,14 @@ export default function ListPage() {
                   className="gap-2"
                 >
                   <ArrowLeft className="w-4 h-4" />
-                  Back to Dashboard
+                  {t('listPage.backToDashboard')}
                 </Button>
                 <Button
                   onClick={() => navigate('/register')}
                   className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white"
                 >
                   <Upload className="w-4 h-4" />
-                  Register Files
+                  {t('listPage.registerFiles')}
                 </Button>
               </>
             )}
@@ -787,7 +789,7 @@ export default function ListPage() {
       {uploadingFiles.size > 0 && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Registering Files ({Array.from(uploadingFiles.values()).filter(f => f.status === 'success').length}/{uploadingFiles.size})
+            {t('listPage.registeringFiles', { success: Array.from(uploadingFiles.values()).filter(f => f.status === 'success').length, total: uploadingFiles.size })}
           </h3>
           <div className="space-y-3">
             {Array.from(uploadingFiles.entries()).map(([fileName, fileStatus]) => (
@@ -806,9 +808,9 @@ export default function ListPage() {
                     <span className="text-sm font-medium text-gray-900 truncate">{fileName}</span>
                   </div>
                   <span className="text-xs text-gray-500 ml-2">
-                    {fileStatus.status === 'uploading' && 'Registering...'}
-                    {fileStatus.status === 'success' && 'Complete'}
-                    {fileStatus.status === 'error' && 'Failed'}
+                    {fileStatus.status === 'uploading' && t('listPage.registering')}
+                    {fileStatus.status === 'success' && t('listPage.complete')}
+                    {fileStatus.status === 'error' && t('listPage.failed')}
                   </span>
                 </div>
                 {/* Progress Bar */}
@@ -853,7 +855,7 @@ export default function ListPage() {
           {/* Datasets Error State */}
           {datasetsError && !datasetsLoading && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-              <p className="font-medium">Error loading datasets</p>
+              <p className="font-medium">{t('listPage.errorLoadingDatasets')}</p>
               <p className="text-sm">{datasetsError}</p>
             </div>
           )}
@@ -864,9 +866,9 @@ export default function ListPage() {
               <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
                 <Database className="w-8 h-8 text-gray-400" />
               </div>
-              <h3 className="text-lg font-medium text-gray-900 mb-1">No datasets found</h3>
+              <h3 className="text-lg font-medium text-gray-900 mb-1">{t('listPage.noDatasetsFound')}</h3>
               <p className="text-sm text-gray-500 max-w-sm text-center">
-                Register files using the button above to create your first dataset.
+                {t('listPage.noDatasetsDescription')}
               </p>
             </div>
           )}
@@ -952,7 +954,7 @@ export default function ListPage() {
                                   size="icon"
                                   className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-blue-600"
                                   onClick={(e) => handleEditDatasetClick(e, dataset)}
-                                  title="Edit dataset"
+                  title={t('listPage.editDataset')}
                                 >
                                   <Pencil className="w-3.5 h-3.5" />
                                 </Button>
@@ -961,7 +963,7 @@ export default function ListPage() {
                                   size="icon"
                                   className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
                                   onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name)}
-                                  title="Delete dataset"
+                  title={t('listPage.deleteDataset')}
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </Button>
@@ -972,7 +974,7 @@ export default function ListPage() {
                       </div>
                       <div className="flex items-center gap-2 mb-3 sm:mb-4 flex-wrap">
                         <p className="text-xs sm:text-sm text-slate-500 font-medium whitespace-nowrap">
-                          {itemType === 'slides' ? 'Whole Slide Imaging' : 'Patch Collection'}
+                          {itemType === 'slides' ? t('listPage.wholeSlideImaging') : t('listPage.patchCollection')}
                         </p>
                         <div className="w-1 h-1 rounded-full bg-slate-300" />
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
@@ -980,7 +982,7 @@ export default function ListPage() {
                             ? 'bg-amber-50 text-amber-700 border border-amber-100/50'
                             : 'bg-indigo-50 text-indigo-700 border border-indigo-100/50'
                         }`}>
-                          {dataset.task_type === 'survival' ? 'Survival' : 'Classification'}
+                          {dataset.task_type === 'survival' ? t('listPage.survival') : t('listPage.classification')}
                         </span>
                         {itemType === 'slides' && (
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
@@ -989,9 +991,9 @@ export default function ListPage() {
                               : 'bg-orange-50 text-orange-700 border border-orange-100/50'
                           }`}>
                             {dataset.aggregation_level === 'case' ? (
-                              <><Users className="w-3 h-3" />Case-Level</>
+                              <><Users className="w-3 h-3" />{t('listPage.caseLevel')}</>
                             ) : (
-                              <><FileImage className="w-3 h-3" />File-Level</>
+                              <><FileImage className="w-3 h-3" />{t('listPage.fileLevel')}</>
                             )}
                           </span>
                         )}
@@ -1020,9 +1022,9 @@ export default function ListPage() {
                 <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-4 group-hover:bg-white group-hover:shadow-md transition-all">
                   <Upload className="w-6 h-6 text-slate-400 group-hover:text-blue-600" />
                 </div>
-                <h3 className="text-lg font-bold text-slate-600 group-hover:text-blue-700">New Dataset</h3>
+                <h3 className="text-lg font-bold text-slate-600 group-hover:text-blue-700">{t('listPage.newDataset')}</h3>
                 <p className="text-sm text-slate-400 text-center mt-2 group-hover:text-slate-500">
-                  Register new files to create a collection
+                  {t('listPage.newDatasetDescription')}
                 </p>
               </button>
             </div>
@@ -1043,7 +1045,7 @@ export default function ListPage() {
           {/* Error State */}
           {error && !loading && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-              <p className="font-medium">Error loading files</p>
+              <p className="font-medium">{t('listPage.errorLoadingFiles')}</p>
               <p className="text-sm">{error}</p>
             </div>
           )}
@@ -1054,9 +1056,9 @@ export default function ListPage() {
               <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
                 <Microscope className="w-8 h-8 text-gray-400" />
               </div>
-              <h3 className="text-lg font-medium text-gray-900 mb-1">No files in this dataset</h3>
+              <h3 className="text-lg font-medium text-gray-900 mb-1">{t('listPage.noFilesInDataset')}</h3>
               <p className="text-sm text-gray-500 max-w-sm text-center">
-                This dataset appears to be empty.
+                {t('listPage.datasetEmptyDescription')}
               </p>
             </div>
           )}
@@ -1073,7 +1075,7 @@ export default function ListPage() {
             <input
               type="text"
               className="block w-full pl-9 sm:pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm transition-all shadow-sm"
-              placeholder="Search files..."
+              placeholder={t('listPage.searchPlaceholder')}
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value)
@@ -1109,14 +1111,14 @@ export default function ListPage() {
           {items.length === 0 ? (
             <Card className="p-12 flex flex-col items-center justify-center bg-gray-50/50 border-dashed border-2 border-gray-200 rounded-2xl">
               <Search className="w-12 h-12 text-gray-300 mb-4" />
-              <h3 className="text-lg font-medium text-gray-900">No matching files</h3>
-              <p className="text-gray-500 text-sm mt-1">Try adjusting your search terms</p>
+              <h3 className="text-lg font-medium text-gray-900">{t('listPage.noMatchingFiles')}</h3>
+              <p className="text-gray-500 text-sm mt-1">{t('listPage.adjustSearchTerms')}</p>
               <Button
                 variant="ghost"
                 className="mt-4 text-primary-600 hover:text-primary-700"
                 onClick={() => setSearchQuery('')}
               >
-                Clear Search
+                {t('listPage.clearSearch')}
               </Button>
             </Card>
           ) : (
@@ -1138,14 +1140,14 @@ export default function ListPage() {
                            <div className="flex items-center justify-between w-full">
                             <div className="flex items-center gap-4">
                                <span className="text-xs sm:text-sm font-bold text-blue-900">
-                                {selectedIds.size} selected
+                                 {t('listPage.selectedCount', { count: selectedIds.size })}
                               </span>
                               {!allFilteredSelected && (
                                  <button
                                   onClick={() => setSelectedIds(new Set())}
                                   className="text-[10px] sm:text-xs font-medium text-gray-500 hover:text-gray-700 underline"
                                 >
-                                  Clear selection
+                                   {t('listPage.clearSelection')}
                                 </button>
                               )}
                             </div>
@@ -1155,32 +1157,32 @@ export default function ListPage() {
                                 className="text-blue-600 hover:text-blue-700 text-xs sm:text-sm font-semibold flex items-center gap-1"
                               >
                                 <Edit className="w-3.5 h-3.5" />
-                                Edit
+                                 {t('listPage.edit')}
                               </button>
                               <button
                                 onClick={handleBatchDeleteClick}
                                 className="text-red-600 hover:text-red-700 text-xs sm:text-sm font-semibold flex items-center gap-1"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
-                                Delete
+                                 {t('listPage.delete')}
                               </button>
                             </div>
                           </div>
                         </th>
                       ) : (
                         <>
-                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Slide ID</th>
-                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Type</th>
+                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.slideId')}</th>
+                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.type')}</th>
                           {selectedDatasetType === 'survival' ? (
                             <>
-                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Time (M)</th>
-                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Status</th>
+                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.timeMonths')}</th>
+                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.status')}</th>
                             </>
                           ) : (
-                            <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Label</th>
+                            <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.label')}</th>
                           )}
-                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Patient Info</th>
-                          <th className="px-3 sm:px-6 py-3 text-right text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Action</th>
+                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.patientInfo')}</th>
+                          <th className="px-3 sm:px-6 py-3 text-right text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.action')}</th>
                         </>
                       )}
                     </tr>
@@ -1190,12 +1192,12 @@ export default function ListPage() {
                       {allPageSelected && !allFilteredSelected && totalCount > pageSlides.length && (
                         <tr className="bg-blue-50/50">
                           <td colSpan={100} className="px-4 py-2 text-center text-xs sm:text-sm text-gray-700 border-b border-blue-100">
-                            <span className="font-medium">All {pageSlides.length} items on this page are selected.</span>
+                            <span className="font-medium">{t('listPage.allPageSelected', { count: pageSlides.length })}</span>
                             <button
                               onClick={handleSelectAllFiltered}
                               className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none"
                             >
-                              Select all {totalCount} items
+                              {t('listPage.selectAllItems', { count: totalCount })}
                             </button>
                           </td>
                         </tr>
@@ -1204,12 +1206,12 @@ export default function ListPage() {
                       {allFilteredSelected && totalCount > pageSlides.length && (
                         <tr className="bg-blue-50/50">
                           <td colSpan={100} className="px-4 py-2 text-center text-xs sm:text-sm text-gray-700 border-b border-blue-100">
-                            <span className="font-medium">All {totalCount} items are selected.</span>
+                            <span className="font-medium">{t('listPage.allItemsSelected', { count: totalCount })}</span>
                             <button
                               onClick={() => setSelectedIds(new Set())}
                               className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none"
                             >
-                              Clear selection
+                              {t('listPage.clearSelection')}
                             </button>
                           </td>
                         </tr>
@@ -1246,8 +1248,8 @@ export default function ListPage() {
                                   <span className="text-sm sm:text-base font-semibold text-gray-900 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
                                   <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
                                   {it.case_id && !isNoCase && (
-                                    <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={`Case: ${it.case_id}`}>
-                                      Case: {it.case_id}
+                                    <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={t('listPage.caseLabel', { caseId: it.case_id })}>
+                                      {t('listPage.caseLabel', { caseId: it.case_id })}
                                     </span>
                                   )}
                                 </div>
@@ -1256,9 +1258,9 @@ export default function ListPage() {
                                 {(() => {
                                   const fileType = getFileType(it.file_extension, it.file_size)
                                   return fileType === 'WSI' ? (
-                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">WSI</span>
+                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">{t('listPage.wsi')}</span>
                                   ) : (
-                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">Patch</span>
+                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">{t('listPage.patch')}</span>
                                   )
                                 })()}
                               </td>
@@ -1268,16 +1270,16 @@ export default function ListPage() {
                                     {it.event_time != null ? (
                                       <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-blue-100/80 text-blue-700 border border-blue-200/60 shadow-sm whitespace-nowrap">{it.event_time}</span>
                                     ) : (
-                                      <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
+                                      <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSet')}</span>
                                     )}
                                   </td>
                                   <td className="px-3 sm:px-6 py-4 sm:py-5">
                                     {it.event_status != null ? (
                                       <span className={`inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium border shadow-sm whitespace-nowrap ${it.event_status === 1 ? 'bg-red-100/80 text-red-700 border-red-200/60' : 'bg-green-100/80 text-green-700 border-green-200/60'}`}>
-                                        {it.event_status === 1 ? 'Event' : 'Censored'}
+                                        {it.event_status === 1 ? t('listPage.event') : t('listPage.censored')}
                                       </span>
                                     ) : (
-                                      <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
+                                      <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSet')}</span>
                                     )}
                                   </td>
                                 </>
@@ -1286,17 +1288,17 @@ export default function ListPage() {
                                   {it.label ? (
                                     <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">{it.label}</span>
                                   ) : (
-                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">No Label</span>
+                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.noLabel')}</span>
                                   )}
                                 </td>
                               )}
                               <td className="px-3 sm:px-6 py-4 sm:py-5">
                                 <div className="flex flex-wrap gap-1 sm:gap-2 items-center min-w-[100px]">
                                   {!(it.age || it.gender || it.source) ? (
-                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">Not specified</span>
+                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSpecified')}</span>
                                   ) : (
                                     <>
-                                      {it.source && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap"><span className="hidden sm:inline">Source: </span><span className="sm:ml-1 text-blue-900">{it.source}</span></span>}
+                                      {it.source && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap"><span className="hidden sm:inline">{t('listPage.sourcePrefix')}</span><span className="sm:ml-1 text-blue-900">{it.source}</span></span>}
                                       {it.age && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.age}y</span>}
                                       {it.gender && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.gender}</span>}
                                     </>
@@ -1312,12 +1314,12 @@ export default function ListPage() {
                                       datasetId: selectedDatasetId,
                                       datasetName: selectedDatasetName
                                     }}
-                                    title="View File"
+                                    title={t('listPage.viewFile')}
                                   >
                                     <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Microscope className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>
                                   </Link>
-                                  {it.can_delete && <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title="Edit Metadata" onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>}
-                                  {it.can_delete && <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Delete File" onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}><Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>}
+                                  {it.can_delete && <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title={t('listPage.editMetadata')} onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>}
+                                  {it.can_delete && <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title={t('listPage.deleteFile')} onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}><Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>}
                                 </div>
                               </td>
                             </tr>
@@ -1356,11 +1358,11 @@ export default function ListPage() {
                                     <div className="flex items-center gap-2">
                                       <Users className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />
                                       <span className="text-sm sm:text-base font-semibold text-gray-900">
-                                        {isNoCase ? 'No Case ID' : `Case: ${caseId}`}
+                                        {isNoCase ? t('listPage.noCaseId') : t('listPage.caseLabel', { caseId })}
                                       </span>
                                     </div>
                                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 border border-blue-200">
-                                      {slides.length} slides
+                                      {t('listPage.slidesCount', { count: slides.length })}
                                     </span>
                                   </div>
                                 </div>
@@ -1371,13 +1373,13 @@ export default function ListPage() {
                                   // eslint-disable-next-line
                                   const types = new Set(slides.map(s => getFileType(s.file_extension, s.file_size)))
                                   if (types.has('WSI') && types.has('Patch')) {
-                                    return <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">Mixed</span>
+                                    return <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">{t('listPage.mixed')}</span>
                                   }
                                   const type = types.values().next().value || 'WSI'
                                   return type === 'WSI' ? (
-                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">WSI</span>
+                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">{t('listPage.wsi')}</span>
                                   ) : (
-                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">Patch</span>
+                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">{t('listPage.patch')}</span>
                                   )
                                 })()}
                               </td>
@@ -1385,17 +1387,17 @@ export default function ListPage() {
                               {selectedDatasetType === 'survival' ? (
                                 <>
                                   <td className="px-3 sm:px-6 py-4 sm:py-5">
-                                    <span className="text-gray-400 text-xs italic">See slides</span>
+                                    <span className="text-gray-400 text-xs italic">{t('listPage.seeSlides')}</span>
                                   </td>
                                   <td className="px-3 sm:px-6 py-4 sm:py-5">
                                     {(() => {
                                       const events = slides.filter(s => s.event_status === 1).length
                                       const censored = slides.filter(s => s.event_status === 0).length
-                                      if (events === 0 && censored === 0) return <span className="text-gray-300 text-xs italic">Not set</span>
+                                      if (events === 0 && censored === 0) return <span className="text-gray-300 text-xs italic">{t('listPage.notSet')}</span>
                                       return (
                                         <div className="flex flex-col gap-1">
-                                          {events > 0 && <span className="text-xs text-red-600 font-medium">{events} Event{events > 1 ? 's' : ''}</span>}
-                                          {censored > 0 && <span className="text-xs text-green-600 font-medium">{censored} Censored</span>}
+                                          {events > 0 && <span className="text-xs text-red-600 font-medium">{t('listPage.eventCount', { count: events })}</span>}
+                                          {censored > 0 && <span className="text-xs text-green-600 font-medium">{t('listPage.censoredCount', { count: censored })}</span>}
                                         </div>
                                       )
                                     })()}
@@ -1405,7 +1407,7 @@ export default function ListPage() {
                                 <td className="px-3 sm:px-6 py-4 sm:py-5">
                                   {(() => {
                                     const labels = Array.from(new Set(slides.map(s => s.label).filter(Boolean)))
-                                    if (labels.length === 0) return <span className="text-gray-300 text-xs italic">No Label</span>
+                                    if (labels.length === 0) return <span className="text-gray-300 text-xs italic">{t('listPage.noLabel')}</span>
                                     if (labels.length === 1) return <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">{labels[0]}</span>
                                     return (
                                       <div className="flex flex-wrap gap-1">
@@ -1427,14 +1429,14 @@ export default function ListPage() {
                                     const genders = Array.from(new Set(slides.map(s => s.gender as string).filter(Boolean)))
 
                                     if (sources.length === 0 && ages.length === 0 && genders.length === 0) {
-                                      return <span className="text-gray-300 text-[10px] sm:text-sm italic">Not specified</span>
+                                      return <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSpecified')}</span>
                                     }
 
                                     return (
                                       <>
                                         {sources.length > 0 && (
                                           <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
-                                            {sources.length === 1 ? <><span className="hidden sm:inline">Source: </span><span className="sm:ml-1 text-blue-900">{sources[0]}</span></> : `${sources.length} Sources`}
+                                            {sources.length === 1 ? <><span className="hidden sm:inline">{t('listPage.sourcePrefix')}</span><span className="sm:ml-1 text-blue-900">{sources[0]}</span></> : t('listPage.sourcesCount', { count: sources.length })}
                                           </span>
                                         )}
                                         {ages.length > 0 && (
@@ -1444,7 +1446,7 @@ export default function ListPage() {
                                         )}
                                         {genders.length > 0 && (
                                           <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
-                                            {genders.length === 1 ? genders[0] : 'Mixed'}
+                                            {genders.length === 1 ? genders[0] : t('listPage.mixed')}
                                           </span>
                                         )}
                                       </>
@@ -1454,7 +1456,7 @@ export default function ListPage() {
                               </td>
 
                               <td className="px-3 sm:px-6 py-4 sm:py-5 text-right">
-                                <span className="text-xs text-gray-400 whitespace-nowrap">{isExpanded ? 'Collapse' : 'Expand'}</span>
+                                <span className="text-xs text-gray-400 whitespace-nowrap">{isExpanded ? t('listPage.collapse') : t('listPage.expand')}</span>
                               </td>
                             </tr>
                             {/* Expanded slides */}
@@ -1483,9 +1485,9 @@ export default function ListPage() {
                                     {(() => {
                                       const fileType = getFileType(it.file_extension, it.file_size)
                                       return fileType === 'WSI' ? (
-                                        <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">WSI</span>
+                                        <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">{t('listPage.wsi')}</span>
                                       ) : (
-                                        <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">Patch</span>
+                                        <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">{t('listPage.patch')}</span>
                                       )
                                     })()}
                                   </td>
@@ -1495,16 +1497,16 @@ export default function ListPage() {
                                         {it.event_time != null ? (
                                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100/80 text-blue-700 border border-blue-200/60 whitespace-nowrap">{it.event_time}</span>
                                         ) : (
-                                          <span className="text-gray-300 text-[10px] italic">Not set</span>
+                                          <span className="text-gray-300 text-[10px] italic">{t('listPage.notSet')}</span>
                                         )}
                                       </td>
                                       <td className="px-3 sm:px-6 py-3 sm:py-4">
                                         {it.event_status != null ? (
                                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap ${it.event_status === 1 ? 'bg-red-100/80 text-red-700 border-red-200/60' : 'bg-green-100/80 text-green-700 border-green-200/60'}`}>
-                                            {it.event_status === 1 ? 'Event' : 'Censored'}
+                                            {it.event_status === 1 ? t('listPage.event') : t('listPage.censored')}
                                           </span>
                                         ) : (
-                                          <span className="text-gray-300 text-[10px] italic">Not set</span>
+                                          <span className="text-gray-300 text-[10px] italic">{t('listPage.notSet')}</span>
                                         )}
                                       </td>
                                     </>
@@ -1513,7 +1515,7 @@ export default function ListPage() {
                                       {it.label ? (
                                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 whitespace-nowrap">{it.label}</span>
                                       ) : (
-                                        <span className="text-gray-300 text-[10px] italic">No Label</span>
+                                        <span className="text-gray-300 text-[10px] italic">{t('listPage.noLabel')}</span>
                                       )}
                                     </td>
                                   )}
@@ -1539,12 +1541,12 @@ export default function ListPage() {
                                           datasetId: selectedDatasetId,
                                           datasetName: selectedDatasetName
                                         }}
-                                        title="View File"
+                                        title={t('listPage.viewFile')}
                                       >
                                         <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Microscope className="w-3 h-3 sm:w-4 sm:h-4" /></Button>
                                       </Link>
-                                      {it.can_delete && <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title="Edit Metadata" onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit className="w-3 h-3 sm:w-4 sm:h-4" /></Button>}
-                                      {it.can_delete && <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Delete File" onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}><Trash2 className="w-3 h-3 sm:w-4 sm:h-4" /></Button>}
+                                      {it.can_delete && <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title={t('listPage.editMetadata')} onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit className="w-3 h-3 sm:w-4 sm:h-4" /></Button>}
+                                      {it.can_delete && <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title={t('listPage.deleteFile')} onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}><Trash2 className="w-3 h-3 sm:w-4 sm:h-4" /></Button>}
                                     </div>
                                   </td>
                                 </tr>
@@ -1575,8 +1577,8 @@ export default function ListPage() {
                                 <span className="text-sm sm:text-base font-semibold text-gray-900 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
                                 <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
                                 {it.case_id && !isPatchDataset && (
-                                  <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={`Case: ${it.case_id}`}>
-                                    Case: {it.case_id}
+                                   <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={t('listPage.caseLabel', { caseId: it.case_id })}>
+                                     {t('listPage.caseLabel', { caseId: it.case_id })}
                                   </span>
                                 )}
                               </div>
@@ -1586,11 +1588,11 @@ export default function ListPage() {
                                 const fileType = getFileType(it.file_extension, it.file_size)
                                 return fileType === 'WSI' ? (
                                   <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">
-                                    WSI
+                                    {t('listPage.wsi')}
                                   </span>
                                 ) : (
                                   <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">
-                                    Patch
+                                    {t('listPage.patch')}
                                   </span>
                                 )
                               })()}
@@ -1603,7 +1605,7 @@ export default function ListPage() {
                                       {it.event_time}
                                     </span>
                                   ) : (
-                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
+                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSet')}</span>
                                   )}
                                 </td>
                                 <td className="px-3 sm:px-6 py-4 sm:py-5">
@@ -1612,10 +1614,10 @@ export default function ListPage() {
                                       ? 'bg-red-100/80 text-red-700 border-red-200/60'
                                       : 'bg-green-100/80 text-green-700 border-green-200/60'
                                       }`}>
-                                      {it.event_status === 1 ? 'Event' : 'Censored'}
+                                      {it.event_status === 1 ? t('listPage.event') : t('listPage.censored')}
                                     </span>
                                   ) : (
-                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
+                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSet')}</span>
                                   )}
                                 </td>
                               </>
@@ -1626,19 +1628,19 @@ export default function ListPage() {
                                     {it.label}
                                   </span>
                                 ) : (
-                                  <span className="text-gray-300 text-[10px] sm:text-sm italic">No Label</span>
+                                  <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.noLabel')}</span>
                                 )}
                               </td>
                             )}
                             <td className="px-3 sm:px-6 py-4 sm:py-5">
                               <div className="flex flex-wrap gap-1 sm:gap-2 items-center min-w-[100px]">
                                 {!(it.age || it.gender || it.source) ? (
-                                  <span className="text-gray-300 text-[10px] sm:text-sm italic">Not specified</span>
+                                  <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSpecified')}</span>
                                 ) : (
                                   <>
                                     {it.source && (
                                       <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
-                                        <span className="hidden sm:inline">Source: </span><span className="sm:ml-1 text-blue-900">{it.source}</span>
+                                        <span className="hidden sm:inline">{t('listPage.sourcePrefix')} </span><span className="sm:ml-1 text-blue-900">{it.source}</span>
                                       </span>
                                     )}
                                     {it.age && (
@@ -1664,7 +1666,7 @@ export default function ListPage() {
                                     datasetId: selectedDatasetId,
                                     datasetName: selectedDatasetName
                                   }}
-                                  title="View File"
+                                  title={t('listPage.viewFile')}
                                 >
                                   <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
                                     <Microscope className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
@@ -1676,7 +1678,7 @@ export default function ListPage() {
                                     variant="ghost"
                                     size="icon"
                                     className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
-                                    title="Edit Metadata"
+                                    title={t('listPage.editMetadata')}
                                     onClick={(e) => { e.preventDefault(); handleEditClick(it); }}
                                   >
                                     <Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
@@ -1688,7 +1690,7 @@ export default function ListPage() {
                                     variant="ghost"
                                     size="icon"
                                     className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                                    title="Delete File"
+                                    title={t('listPage.deleteFile')}
                                     onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}
                                   >
                                     <Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
@@ -1709,16 +1711,16 @@ export default function ListPage() {
                 <div className="text-[11px] sm:text-sm text-gray-500 font-medium order-3 lg:order-1 text-center lg:text-left">
                   {hasMultiSlideCases ? (
                     <>
-                      Showing <span className="text-gray-900">{totalCases === 0 ? 0 : startIndex + 1}</span> to{' '}
-                      <span className="text-gray-900">{Math.min(startIndex + itemsPerPage, totalCases)}</span>{' '}
-                      of <span className="text-gray-900">{totalCases}</span> cases
-                      <span className="text-gray-400 font-normal ml-1 whitespace-nowrap">({totalCount} slides total)</span>
+                       {t('listPage.showing')} <span className="text-gray-900">{totalCases === 0 ? 0 : startIndex + 1}</span> {t('listPage.to')}{' '}
+                       <span className="text-gray-900">{Math.min(startIndex + itemsPerPage, totalCases)}</span>{' '}
+                       {t('listPage.of')} <span className="text-gray-900">{totalCases}</span> {t('listPage.cases')}
+                       <span className="text-gray-400 font-normal ml-1 whitespace-nowrap">({t('listPage.slidesTotal', { count: totalCount })})</span>
                     </>
                   ) : (
                     <>
-                      Showing <span className="text-gray-900">{totalCount === 0 ? 0 : startIndex + 1}</span> to{' '}
-                      <span className="text-gray-900">{Math.min(startIndex + itemsPerPage, totalCount)}</span>{' '}
-                      of <span className="text-gray-900">{totalCount}</span> files
+                       {t('listPage.showing')} <span className="text-gray-900">{totalCount === 0 ? 0 : startIndex + 1}</span> {t('listPage.to')}{' '}
+                       <span className="text-gray-900">{Math.min(startIndex + itemsPerPage, totalCount)}</span>{' '}
+                       {t('listPage.of')} <span className="text-gray-900">{totalCount}</span> {t('listPage.files')}
                     </>
                   )}
                 </div>
@@ -1727,7 +1729,7 @@ export default function ListPage() {
                   <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 order-1 lg:order-2 w-full lg:w-auto justify-center">
                     {/* Goto Page */}
                     <div className="flex items-center justify-center gap-1.5 sm:gap-2 bg-white/50 px-3 py-1.5 rounded-full border border-gray-100 sm:border-transparent">
-                      <span className="text-[11px] sm:text-sm text-gray-500 whitespace-nowrap">Go to</span>
+                      <span className="text-[11px] sm:text-sm text-gray-500 whitespace-nowrap">{t('listPage.goTo')}</span>
                       <input
                         type="number"
                         min={1}

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { BarChart3, Play, History, ChevronDown, ChevronUp, Loader2, CheckCircle2, CheckCircle, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star, Plus, Check } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
@@ -97,6 +98,7 @@ export default function ResultsViewerPage() {
   const [searchParams] = useSearchParams()
   const { analysisTasks, subscribeAnalysisSSE } = useBackgroundTask()
   const { isAdmin } = useAuth()
+  const { t } = useTranslation()
 
   // Subscribe to analysis SSE when this page is mounted
   useEffect(() => {
@@ -456,7 +458,7 @@ export default function ResultsViewerPage() {
       if (error instanceof Error) {
         setValidationError(error.message)
       } else {
-        setValidationError('Failed to connect to the server. Please try again.')
+        setValidationError(t('resultsPage.failedToConnect'))
       }
     } finally {
       setRunning(false)
@@ -544,7 +546,7 @@ export default function ResultsViewerPage() {
           setAnalysisError(null)
           setCurrentResult({
             ...result,
-            message: 'Analysis submitted! Track progress in the Background Tasks panel.',
+            message: t('resultsPage.analysisSubmittedTrack'),
             _pending: true
           })
         } else {
@@ -555,11 +557,11 @@ export default function ResultsViewerPage() {
         }
       } else {
         const error = await response.json()
-        setAnalysisError(error.detail || 'Unknown error occurred')
+        setAnalysisError(error.detail || t('resultsPage.unknownError'))
       }
     } catch (error) {
       console.error('Failed to run analysis:', error)
-      setAnalysisError('Failed to connect to the server. Please try again.')
+      setAnalysisError(t('resultsPage.failedToConnect'))
     } finally {
       setRunning(false)
     }
@@ -649,11 +651,11 @@ export default function ResultsViewerPage() {
         setDeleteConfirmId(null)
       } else {
         const error = await response.json()
-        setAnalysisError(`Failed to delete analysis: ${error.detail || 'Unknown error'}`)
+        setAnalysisError(t('resultsPage.failedToDeleteDetail', { detail: error.detail || t('resultsPage.unknownError') }))
       }
     } catch (error) {
       console.error('Failed to delete analysis:', error)
-      setAnalysisError('Failed to delete analysis. Please try again.')
+      setAnalysisError(t('resultsPage.failedToDeleteRetry'))
     } finally {
       setDeleting(false)
     }
@@ -670,7 +672,7 @@ export default function ResultsViewerPage() {
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="text-center">
           <Loader2 className="w-12 h-12 animate-spin text-indigo-600 mx-auto mb-4" />
-          <p className="text-gray-600">Loading tasks...</p>
+          <p className="text-gray-600">{t('resultsPage.loadingTasks')}</p>
         </div>
       </div>
     )
@@ -679,8 +681,8 @@ export default function ResultsViewerPage() {
   return (
     <div className="max-w-[1600px] mx-auto px-4 sm:px-6">
       <PageHeader
-        title="Results Analysis"
-        description="Analyze training task results with customizable metrics and visualizations"
+        title={t('resultsPage.title')}
+        description={t('resultsPage.description')}
       >
         <Button
           variant="outline"
@@ -688,7 +690,7 @@ export default function ResultsViewerPage() {
           className="gap-2"
         >
           <ArrowLeft className="w-4 h-4" />
-          {fromAIChat ? 'Back to Chat' : 'Back to Dashboard'}
+          {fromAIChat ? t('resultsPage.backToChat') : t('resultsPage.backToDashboard')}
         </Button>
       </PageHeader>
 
@@ -703,7 +705,7 @@ export default function ResultsViewerPage() {
           }`}
         >
           <BarChart3 className="w-4 h-4" />
-          Internal Analysis
+          {t('resultsPage.internalAnalysis')}
         </button>
         <button
           onClick={() => setPageMode('external-validation')}
@@ -714,15 +716,15 @@ export default function ResultsViewerPage() {
           }`}
         >
           <FlaskConical className="w-4 h-4" />
-          External Validation
+          {t('resultsPage.externalValidation')}
         </button>
       </div>
 
       {tasks.length === 0 ? (
         <Card className="p-12 text-center">
           <BarChart3 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">No Completed Tasks</h3>
-          <p className="text-gray-500">Complete a training task to analyze its results.</p>
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('resultsPage.noCompletedTasks')}</h3>
+          <p className="text-gray-500">{t('resultsPage.completeTaskHint')}</p>
         </Card>
       ) : pageMode === 'external-validation' ? (
         /* External Validation Mode — 4-col layout matching Internal Analysis */
@@ -732,7 +734,7 @@ export default function ResultsViewerPage() {
             <div className="space-y-6 flex-1">
             {/* Model Selection */}
             <Card className="p-4 sm:p-6 overflow-visible">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Select Model</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.selectModel')}</h3>
               <div className="relative">
                 <button
                   onClick={() => { setIsModelDropdownOpen(!isModelDropdownOpen); setIsDataDropdownOpen(false); }}
@@ -742,11 +744,11 @@ export default function ResultsViewerPage() {
                 >
                   <div className="flex flex-col items-start">
                     <span className={selectedModel ? 'text-gray-900 font-medium' : 'text-gray-400'}>
-                      {selectedModel ? selectedModel.model_name : 'Select model...'}
+                      {selectedModel ? selectedModel.model_name : t('resultsPage.selectModelPlaceholder')}
                     </span>
                     {selectedModel && (
                       <span className="text-xs text-gray-500">
-                        Trained on: {tasks.find(t => t.task_id === selectedModel.task_id)?.name || 'Unknown'}
+                        {t('resultsPage.trainedOn', { name: tasks.find(tt => tt.task_id === selectedModel.task_id)?.name || t('resultsPage.unknown') })}
                       </span>
                     )}
                   </div>
@@ -764,7 +766,7 @@ export default function ResultsViewerPage() {
                         const metricValue = isSurvival
                           ? metrics?.c_index
                           : (metrics?.macro_auc || metrics?.auc)
-                        const metricLabel = isSurvival ? 'C-Index' : 'AUC'
+                        const metricLabel = isSurvival ? t('resultsPage.cIndex') : t('resultsPage.auc')
 
                         return (
                           <button
@@ -780,7 +782,7 @@ export default function ResultsViewerPage() {
                                 {model.is_default && <Star className="w-3 h-3 text-gray-500 flex-shrink-0" />}
                               </div>
                               <div className="text-xs text-gray-500 truncate">
-                                Trained on: {trainTask?.name || 'Unknown'}
+                                {t('resultsPage.trainedOn', { name: trainTask?.name || t('resultsPage.unknown') })}
                               </div>
                             </div>
                             <div className="flex items-center gap-3 ml-2">
@@ -795,7 +797,7 @@ export default function ResultsViewerPage() {
                         )
                       })}
                       {trainedModels.length === 0 && (
-                        <div className="px-4 py-8 text-center text-gray-500">No active models. Train a model first.</div>
+                        <div className="px-4 py-8 text-center text-gray-500">{t('resultsPage.noActiveModels')}</div>
                       )}
                     </div>
                   </>
@@ -805,7 +807,7 @@ export default function ResultsViewerPage() {
 
             {/* Target Dataset Selection */}
             <Card className="p-4 sm:p-6 overflow-visible">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Target Dataset</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.targetDataset')}</h3>
               <div className="relative">
                 <button
                   onClick={() => { setIsDataDropdownOpen(!isDataDropdownOpen); setIsModelDropdownOpen(false); }}
@@ -817,7 +819,7 @@ export default function ResultsViewerPage() {
                 >
                   <div className="flex flex-col items-start">
                     <span className={selectedDataset ? 'text-gray-900 font-medium' : 'text-gray-400'}>
-                      {selectedDataset ? selectedDataset.name : (selectedModelId ? 'Select dataset...' : 'Select model first')}
+                      {selectedDataset ? selectedDataset.name : (selectedModelId ? t('resultsPage.selectDatasetPlaceholder') : t('resultsPage.selectModelFirst'))}
                     </span>
                   </div>
                   <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${isDataDropdownOpen ? 'rotate-180' : ''}`} />
@@ -845,7 +847,7 @@ export default function ResultsViewerPage() {
                           <div>
                             <div className="font-medium text-gray-900">{dataset.name}</div>
                             <div className="text-xs text-gray-500">
-                              {dataset.display_count || 0} {dataset.aggregation_level === 'case' ? 'cases' : 'slides'} • {dataset.data_type?.toUpperCase() || 'WSI'}
+                              {dataset.display_count || 0} {dataset.aggregation_level === 'case' ? t('resultsPage.cases') : t('resultsPage.slides')} • {dataset.data_type?.toUpperCase() || 'WSI'}
                             </div>
                           </div>
                           {datasetId === dataset.dataset_id && <CheckCircle2 className="w-4 h-4 text-orange-600" />}
@@ -853,15 +855,15 @@ export default function ResultsViewerPage() {
                       ))}
                       {compatibleDatasets.length === 0 && (
                         <div className="px-4 py-8 text-center text-gray-500">
-                          <p className="font-medium">No compatible datasets found</p>
+                          <p className="font-medium">{t('resultsPage.noCompatibleDatasets')}</p>
                           <p className="text-xs mt-1">
-                            Please check that the target dataset labels match the model's training labels.
+                            {t('resultsPage.checkDatasetLabels')}
                           </p>
                           <button
                             onClick={(e) => { e.stopPropagation(); navigate('/wsi-list') }}
                             className="text-xs text-orange-600 hover:text-orange-700 underline mt-2 inline-block"
                           >
-                            Go to Data Repository →
+                            {t('resultsPage.goToDataRepository')}
                           </button>
                         </div>
                       )}
@@ -875,7 +877,7 @@ export default function ResultsViewerPage() {
             {/* Metrics Selection — shown when model is selected */}
             {selectedModel && (
               <Card className="p-4 sm:p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Metrics</h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.metrics')}</h3>
                 <div className="space-y-3">
                   {(isSurvivalTask(modelTask?.task_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
                     <div key={metric.id} className="flex items-start gap-3 group">
@@ -921,7 +923,7 @@ export default function ResultsViewerPage() {
                 {bootstrapCIMetrics.length > 0 && (
                   <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                     <p className="text-xs text-amber-700">
-                      <span className="font-semibold">Note:</span> Computing 95% CI with 1000 bootstrap samples would take longer time.
+                      <span className="font-semibold">{t('resultsPage.note')}</span> {t('resultsPage.bootstrapCINote')}
                     </p>
                   </div>
                 )}
@@ -931,7 +933,7 @@ export default function ResultsViewerPage() {
             {/* Charts Selection — shown when model is selected */}
             {selectedModel && (
               <Card className="p-4 sm:p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Charts</h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.charts')}</h3>
                 <div className="space-y-3">
                   {(isSurvivalTask(modelTask?.task_type) ? EXTERNAL_VALIDATION_SURVIVAL_CHARTS : EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS).map(chart => (
                     <label key={chart.id} className="flex items-start gap-3 cursor-pointer group">
@@ -956,11 +958,11 @@ export default function ResultsViewerPage() {
             {/* Description */}
             {selectedModel && (
               <Card className="p-4 sm:p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Description (Optional)</h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.descriptionOptional')}</h3>
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Add notes about this external validation..."
+                  placeholder={t('resultsPage.addNotesExternal')}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 resize-none"
                   rows={3}
                 />
@@ -979,17 +981,17 @@ export default function ResultsViewerPage() {
                 {running ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    Submitting...
+                    {t('resultsPage.submitting')}
                   </>
                 ) : validationProgress?.status === 'running' || validationProgress?.status === 'pending' ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    Validation in Progress...
+                    {t('resultsPage.validationInProgressBtn')}
                   </>
                 ) : (
                   <>
                     <FlaskConical className="w-5 h-5" />
-                    Run External Validation
+                    {t('resultsPage.runExternalValidation')}
                   </>
                 )}
               </Button>
@@ -1015,14 +1017,14 @@ export default function ResultsViewerPage() {
             {/* History Toggle */}
             <div className="flex-none flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900">
-                {showExtHistory ? 'Analysis History' : 'Latest Result'}
+                {showExtHistory ? t('resultsPage.analysisHistory') : t('resultsPage.latestResult')}
               </h3>
               <button
                 onClick={() => setShowExtHistory(!showExtHistory)}
                 className="flex items-center gap-2 text-sm text-orange-600 hover:text-orange-800"
               >
                 <History className="w-4 h-4" />
-                {showExtHistory ? 'Show Latest' : 'View History'}
+                {showExtHistory ? t('resultsPage.showLatest') : t('resultsPage.viewHistory')}
               </button>
             </div>
 
@@ -1030,10 +1032,10 @@ export default function ResultsViewerPage() {
               {/* Progress — shown while validation is running/pending */}
               {validationProgress && (validationProgress.status === 'running' || validationProgress.status === 'pending') ? (
                 <Card className="p-6">
-                  <h4 className="font-semibold text-gray-900 mb-4">Validation in Progress</h4>
+                  <h4 className="font-semibold text-gray-900 mb-4">{t('resultsPage.validationInProgress')}</h4>
                   <div className="space-y-4">
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-gray-600">Status</span>
+                      <span className="text-gray-600">{t('resultsPage.status')}</span>
                       <Badge variant="secondary" className={
                         validationProgress.status === 'running' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'
                       }>
@@ -1042,8 +1044,8 @@ export default function ResultsViewerPage() {
                     </div>
                     <div>
                       <div className="flex items-center justify-between text-sm mb-2">
-                        <span className="text-gray-600">Progress</span>
-                        <span className="font-medium">{validationProgress.processed_wsi} / {validationProgress.total_wsi} WSIs</span>
+                        <span className="text-gray-600">{t('resultsPage.progress')}</span>
+                        <span className="font-medium">{validationProgress.processed_wsi} / {validationProgress.total_wsi} {t('resultsPage.wsis')}</span>
                       </div>
                       <div className="w-full bg-gray-200 rounded-full h-3">
                         <div className="h-3 rounded-full transition-all duration-300 bg-orange-500" style={{ width: `${validationProgress.progress}%` }} />
@@ -1057,7 +1059,7 @@ export default function ResultsViewerPage() {
                   <div className="p-4 bg-red-50 rounded-lg border border-red-200">
                     <div className="flex items-center gap-2 text-red-700">
                       <AlertCircle className="w-5 h-5" />
-                      <span className="font-medium">Validation failed</span>
+                      <span className="font-medium">{t('resultsPage.validationFailed')}</span>
                     </div>
                     {validationProgress.error && (
                       <p className="text-sm text-red-600 mt-2">{validationProgress.error}</p>
@@ -1071,7 +1073,7 @@ export default function ResultsViewerPage() {
                   {extAnalyses.length === 0 ? (
                     <Card className="p-8 text-center">
                       <History className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                      <p className="text-gray-500">No analysis history</p>
+                      <p className="text-gray-500">{t('resultsPage.noAnalysisHistory')}</p>
                     </Card>
                   ) : (
                     extAnalyses.map(analysis => (
@@ -1087,7 +1089,7 @@ export default function ResultsViewerPage() {
                               {formatDate(analysis.timestamp)}
                             </p>
                             <p className="text-sm text-gray-500">
-                              {analysis.num_samples} samples{analysis.classes && ` • ${analysis.classes.length} classes`}
+                              {t('resultsPage.samples', { count: analysis.num_samples })}{analysis.classes && ` • ${t('resultsPage.classesCount', { count: analysis.classes.length })}`}
                               {isAdmin && analysis.submitted_by && (
                                 <span className="ml-2 text-orange-600">• {analysis.submitted_by}</span>
                               )}
@@ -1100,7 +1102,7 @@ export default function ResultsViewerPage() {
                             <button
                               onClick={(e) => handleDeleteAnalysis(analysis.analysis_id, e)}
                               className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                              title="Delete this analysis"
+                              title={t('resultsPage.deleteThisAnalysis')}
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -1134,7 +1136,7 @@ export default function ResultsViewerPage() {
                   <Card className="h-full flex flex-col p-4 sm:p-6 overflow-hidden">
                     <div className="flex-none flex items-center justify-between mb-6">
                       <div>
-                        <h4 className="font-semibold text-gray-900">Analysis Complete</h4>
+                        <h4 className="font-semibold text-gray-900">{t('resultsPage.analysisComplete')}</h4>
                         <p className="text-sm text-gray-500">
                           {formatDate(currentResult.summary.timestamp)}
                         </p>
@@ -1149,7 +1151,7 @@ export default function ResultsViewerPage() {
                   <Card className="h-full flex flex-col p-4 sm:p-6 overflow-hidden">
                     <div className="flex-none flex items-center justify-between mb-6">
                       <div>
-                        <h4 className="font-semibold text-gray-900">Latest Analysis</h4>
+                        <h4 className="font-semibold text-gray-900">{t('resultsPage.latestAnalysis')}</h4>
                         <p className="text-sm text-gray-500">
                           {formatDate(extAnalyses[0].timestamp)}
                         </p>
@@ -1162,8 +1164,8 @@ export default function ResultsViewerPage() {
                 ) : (
                   <Card className="p-12 text-center h-full flex flex-col items-center justify-center">
                     <FlaskConical className="w-16 h-16 text-gray-300 mb-4" />
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">External Validation</h3>
-                    <p className="text-gray-500">Select a model and dataset, configure metrics, then run validation.</p>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('resultsPage.externalValidation')}</h3>
+                    <p className="text-gray-500">{t('resultsPage.externalValidationEmptyHint')}</p>
                   </Card>
                 )
               )}
@@ -1180,10 +1182,10 @@ export default function ResultsViewerPage() {
               <Card className="p-4 sm:p-6 overflow-visible">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
-                  <h3 className="text-lg font-semibold text-gray-900">Select Task</h3>
+                  <h3 className="text-lg font-semibold text-gray-900">{t('resultsPage.selectTask')}</h3>
                 </div>
                 <span className="bg-gray-100 text-gray-600 text-xs px-2.5 py-0.5 rounded-full font-medium">
-                  {tasks.length} available
+                  {t('resultsPage.available', { count: tasks.length })}
                 </span>
               </div>
               
@@ -1196,7 +1198,7 @@ export default function ResultsViewerPage() {
                 >
                   <div className="flex flex-col items-start gap-1.5">
                     <span className="text-gray-900 font-semibold text-[15px] tracking-tight">
-                      {selectedTask ? selectedTask.name : 'Select a task...'}
+                      {selectedTask ? selectedTask.name : t('resultsPage.selectTaskPlaceholder')}
                     </span>
                     {selectedTask && (
                       <div className="flex items-center gap-2 flex-wrap">
@@ -1283,7 +1285,7 @@ export default function ResultsViewerPage() {
                                         ? 'bg-green-50 text-green-700'
                                         : 'bg-amber-50 text-amber-700'
                                   }`}>
-                                    {task.has_ai_results ? `${task.ai_results_count} results` : 'no results'}
+                                    {task.has_ai_results ? t('resultsPage.resultsCount', { count: task.ai_results_count }) : t('resultsPage.noResults')}
                                   </span>
                                 </div>
                               </div>
@@ -1301,7 +1303,7 @@ export default function ResultsViewerPage() {
                              <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center">
                                <History className="w-5 h-5 text-gray-400" />
                              </div>
-                             <p>No tasks available</p>
+                             <p>{t('resultsPage.noTasksAvailable')}</p>
                           </div>
                         )}
                       </div>
@@ -1314,7 +1316,7 @@ export default function ResultsViewerPage() {
             {/* Metrics Selection */}
             <Card className="p-4 sm:p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                Metrics
+                {t('resultsPage.metrics')}
                 {selectedTask && isSurvivalTask(selectedTask.task_type) && (
                   <span className="ml-2 text-xs font-normal text-emerald-600"></span>
                 )}
@@ -1365,7 +1367,7 @@ export default function ResultsViewerPage() {
               {bootstrapCIMetrics.length > 0 && (
                 <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                   <p className="text-xs text-amber-700">
-                    <span className="font-semibold">Note:</span> Computing 95% CI with 1000 bootstrap samples would take longer time.
+                    <span className="font-semibold">{t('resultsPage.note')}</span> {t('resultsPage.bootstrapCINote')}
                   </p>
                 </div>
               )}
@@ -1374,7 +1376,7 @@ export default function ResultsViewerPage() {
             {/* Charts Selection */}
             <Card className="p-4 sm:p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                Charts
+                {t('resultsPage.charts')}
               </h3>
               <div className="space-y-3">
                 {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_CHARTS : CLASSIFICATION_CHARTS).map(chart => (
@@ -1398,11 +1400,11 @@ export default function ResultsViewerPage() {
 
             {/* Description */}
             <Card className="p-4 sm:p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Description (Optional)</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.descriptionOptional')}</h3>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Add notes about this analysis..."
+                placeholder={t('resultsPage.addNotesInternal')}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 resize-none"
                 rows={3}
               />
@@ -1420,17 +1422,17 @@ export default function ResultsViewerPage() {
                 {running ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    Submitting...
+                    {t('resultsPage.submitting')}
                   </>
                 ) : currentResult?._pending ? (
                   <>
                     <CheckCircle className="w-5 h-5" />
-                    Analysis Submitted
+                    {t('resultsPage.analysisSubmitted')}
                   </>
                 ) : (
                   <>
                     <Play className="w-5 h-5" />
-                    Run Analysis
+                    {t('resultsPage.runAnalysis')}
                   </>
                 )}
               </Button>
@@ -1441,7 +1443,7 @@ export default function ResultsViewerPage() {
                   <div className="flex items-center gap-3">
                     <CheckCircle className="w-5 h-5 text-blue-500 flex-shrink-0" />
                     <p className="text-sm text-blue-700">
-                      Analysis submitted! Track progress in the Background Tasks panel.
+                      {t('resultsPage.analysisSubmittedTrack')}
                     </p>
                   </div>
                 </Card>
@@ -1453,7 +1455,7 @@ export default function ResultsViewerPage() {
                   <div className="flex items-start gap-3">
                     <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
-                      <h4 className="text-sm font-medium text-red-800">Analysis Failed</h4>
+                      <h4 className="text-sm font-medium text-red-800">{t('resultsPage.analysisFailed')}</h4>
                       <p className="text-sm text-red-600 mt-1">{analysisError}</p>
                     </div>
                     <button
@@ -1473,14 +1475,14 @@ export default function ResultsViewerPage() {
             {/* History Toggle */}
             <div className="flex-none flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900">
-                {showHistory ? 'Analysis History' : 'Latest Result'}
+                {showHistory ? t('resultsPage.analysisHistory') : t('resultsPage.latestResult')}
               </h3>
               <button
                 onClick={() => setShowHistory(!showHistory)}
                 className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-800"
               >
                 <History className="w-4 h-4" />
-                {showHistory ? 'Show Latest' : 'View History'}
+                {showHistory ? t('resultsPage.showLatest') : t('resultsPage.viewHistory')}
               </button>
             </div>
 
@@ -1491,7 +1493,7 @@ export default function ResultsViewerPage() {
                   {analyses.length === 0 ? (
                     <Card className="p-8 text-center">
                       <History className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                      <p className="text-gray-500">No analysis history for this task</p>
+                      <p className="text-gray-500">{t('resultsPage.noAnalysisHistoryTask')}</p>
                     </Card>
                   ) : (
                     analyses.map(analysis => (
@@ -1507,7 +1509,7 @@ export default function ResultsViewerPage() {
                               {formatDate(analysis.timestamp)}
                             </p>
                             <p className="text-sm text-gray-500">
-                              {analysis.num_samples} samples{analysis.classes && ` • ${analysis.classes.length} classes`}
+                              {t('resultsPage.samples', { count: analysis.num_samples })}{analysis.classes && ` • ${t('resultsPage.classesCount', { count: analysis.classes.length })}`}
                               {isAdmin && analysis.submitted_by && (
                                 <span className="ml-2 text-indigo-600">• {analysis.submitted_by}</span>
                               )}
@@ -1520,7 +1522,7 @@ export default function ResultsViewerPage() {
                             <button
                               onClick={(e) => handleDeleteAnalysis(analysis.analysis_id, e)}
                               className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                              title="Delete this analysis"
+                              title={t('resultsPage.deleteThisAnalysis')}
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -1554,7 +1556,7 @@ export default function ResultsViewerPage() {
                   <Card className="h-full flex flex-col p-4 sm:p-6 overflow-hidden">
                     <div className="flex-none flex items-center justify-between mb-6">
                       <div>
-                        <h4 className="font-semibold text-gray-900">Analysis Complete</h4>
+                        <h4 className="font-semibold text-gray-900">{t('resultsPage.analysisComplete')}</h4>
                         <p className="text-sm text-gray-500">
                           {formatDate(currentResult.summary.timestamp)}
                         </p>
@@ -1569,7 +1571,7 @@ export default function ResultsViewerPage() {
                   <Card className="h-full flex flex-col p-4 sm:p-6 overflow-hidden">
                     <div className="flex-none flex items-center justify-between mb-6">
                       <div>
-                        <h4 className="font-semibold text-gray-900">Latest Analysis</h4>
+                        <h4 className="font-semibold text-gray-900">{t('resultsPage.latestAnalysis')}</h4>
                         <p className="text-sm text-gray-500">
                           {formatDate(analyses[0].timestamp)}
                         </p>
@@ -1582,8 +1584,8 @@ export default function ResultsViewerPage() {
                 ) : (
                   <Card className="p-12 text-center h-full flex flex-col items-center justify-center">
                     <BarChart3 className="w-16 h-16 text-gray-300 mb-4" />
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">No Analysis Yet</h3>
-                    <p className="text-gray-500">Configure metrics and charts, then run analysis.</p>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('resultsPage.noAnalysisYet')}</h3>
+                    <p className="text-gray-500">{t('resultsPage.configureAndRun')}</p>
                   </Card>
                 )
               )}
@@ -1600,10 +1602,10 @@ export default function ResultsViewerPage() {
               <div className="p-2 bg-red-100 rounded-full">
                 <Trash2 className="w-6 h-6 text-red-600" />
               </div>
-              <h3 className="text-lg font-semibold text-gray-900">Delete Analysis</h3>
+              <h3 className="text-lg font-semibold text-gray-900">{t('resultsPage.deleteAnalysis')}</h3>
             </div>
             <p className="text-gray-600 mb-6">
-              Are you sure you want to delete this analysis? This action cannot be undone.
+              {t('resultsPage.deleteConfirmMessage')}
             </p>
             <div className="flex justify-end gap-3">
               <Button
@@ -1611,7 +1613,7 @@ export default function ResultsViewerPage() {
                 onClick={cancelDelete}
                 disabled={deleting}
               >
-                Cancel
+                {t('resultsPage.cancel')}
               </Button>
               <Button
                 onClick={confirmDeleteAnalysis}
@@ -1621,10 +1623,10 @@ export default function ResultsViewerPage() {
                 {deleting ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    Deleting...
+                    {t('resultsPage.deleting')}
                   </>
                 ) : (
-                  'Delete'
+                  t('resultsPage.delete')
                 )}
               </Button>
             </div>

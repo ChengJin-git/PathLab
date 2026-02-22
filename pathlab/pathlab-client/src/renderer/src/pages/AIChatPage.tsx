@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 
 import {
   chatWithAI,
@@ -79,6 +80,7 @@ export default function AIChatPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const { conversationId: urlConversationId } = useParams<{ conversationId?: string }>()
+  const { t } = useTranslation()
 
   // Chat state
   const [messages, setMessages] = useState<Message[]>([])
@@ -181,7 +183,7 @@ export default function AIChatPage() {
       }, 50)
     },
     onError: (error) => {
-      showToastRef.current('error', `Voice input error: ${error}`)
+      showToastRef.current('error', t('aiChat.voiceInputError', { error }))
     },
     silenceDurationMs: 800,
     maxRecordingSeconds: 120,
@@ -490,9 +492,9 @@ export default function AIChatPage() {
               type: 'xlsx',
               content: `__MULTIPLE_SHEETS__:${sheetNames.join(',')}`,
               preview: [
-                `Excel file has ${sheetNames.length} sheets:`,
+                t('aiChat.excelMultipleSheets', { count: sheetNames.length }),
                 ...sheetNames.slice(0, 5).map(s => `  • ${s}`),
-                sheetNames.length > 5 ? `  ... and ${sheetNames.length - 5} more` : ''
+                sheetNames.length > 5 ? t('aiChat.excelMoreSheets', { count: sheetNames.length - 5 }) : ''
               ].filter(Boolean)
             })
           } else {
@@ -521,7 +523,7 @@ export default function AIChatPage() {
             name: file.name,
             type: 'xlsx',
             content: `__PARSE_ERROR__:${error instanceof Error ? error.message : 'Unknown error'}`,
-            preview: [`Failed to parse Excel file: ${file.name}`]
+            preview: [t('aiChat.failedToParseExcel', { name: file.name })]
           })
         }
       }
@@ -624,7 +626,7 @@ export default function AIChatPage() {
         // Generate title from first message (truncate if too long)
         const title = userMessage.content.length > 50
           ? userMessage.content.substring(0, 50) + '...'
-          : userMessage.content || 'Image Analysis'
+          : userMessage.content || t('aiChat.imageAnalysis')
         const newConv = await createConversation(title)
         conversationId = newConv.conversation_id
         setCurrentConversationId(conversationId)
@@ -709,7 +711,7 @@ export default function AIChatPage() {
         setMessages(prev =>
           prev.map(m =>
             m.id === aiMessageId
-              ? { ...m, content: m.content || 'Sorry, I encountered an error. Please try again.' }
+              ? { ...m, content: m.content || t('aiChat.aiErrorFallback') }
               : m
           )
         )
@@ -803,10 +805,10 @@ export default function AIChatPage() {
         document.execCommand('copy')
         document.body.removeChild(textArea)
       }
-      showToast('success', 'Copied to clipboard')
+      showToast('success', t('aiChat.copiedToClipboard'))
     } catch (error) {
       console.error('Failed to copy:', error)
-      showToast('error', 'Failed to copy to clipboard')
+      showToast('error', t('aiChat.failedToCopy'))
     }
   }
 
@@ -814,7 +816,7 @@ export default function AIChatPage() {
   const handleFeedback = async (messageId: string, feedbackType: 'thumbs_up' | 'thumbs_down') => {
     const numericId = parseInt(messageId, 10)
     if (isNaN(numericId)) {
-      showToast('error', 'Invalid message ID')
+      showToast('error', t('aiChat.invalidMessageId'))
       return
     }
 
@@ -893,7 +895,7 @@ export default function AIChatPage() {
           return newMap
         })
       }
-      showToast('error', 'Failed to submit feedback')
+      showToast('error', t('aiChat.failedToSubmitFeedback'))
     }
   }
 
@@ -905,12 +907,12 @@ export default function AIChatPage() {
     const diffHours = Math.floor(diffMs / 3600000)
     const diffDays = Math.floor(diffMs / 86400000)
 
-    if (diffMins < 1) return 'just now'
-    if (diffMins < 60) return `${diffMins}m ago`
-    if (diffHours < 24) return `${diffHours}h ago`
-    if (diffDays < 7) return `${diffDays}d ago`
+    if (diffMins < 1) return t('aiChat.justNow')
+    if (diffMins < 60) return t('aiChat.minutesAgo', { count: diffMins })
+    if (diffHours < 24) return t('aiChat.hoursAgo', { count: diffHours })
+    if (diffDays < 7) return t('aiChat.daysAgo', { count: diffDays })
 
-    return date.toLocaleDateString('en-US', {
+    return date.toLocaleDateString(undefined, {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
@@ -928,7 +930,7 @@ export default function AIChatPage() {
   ) => {
     const numericId = parseInt(messageId, 10)
     if (isNaN(numericId)) {
-      showToast('error', 'Invalid message ID')
+      showToast('error', t('aiChat.invalidMessageId'))
       return
     }
 
@@ -968,7 +970,7 @@ export default function AIChatPage() {
         newMap.delete(numericId)
         return newMap
       })
-      showToast('error', 'Failed to submit feedback')
+      showToast('error', t('aiChat.failedToSubmitFeedback'))
     }
   }
 
@@ -989,7 +991,7 @@ export default function AIChatPage() {
           await deleteMessagesFrom(currentConversationId, messageId)
         } catch (error) {
           console.error('Failed to delete messages from backend:', error)
-          showToast('error', 'Failed to delete message')
+          showToast('error', t('aiChat.failedToDeleteMessage'))
           return
         }
       }
@@ -998,7 +1000,7 @@ export default function AIChatPage() {
     // Update local state
     const newMessages = messages.slice(0, messageIndex)
     setMessages(newMessages)
-    showToast('info', 'Message deleted')
+    showToast('info', t('aiChat.messageDeleted'))
   }
 
   // Regenerate AI response for a specific message
@@ -1008,7 +1010,7 @@ export default function AIChatPage() {
     // Find the user message that prompted this response
     const userMessageIndex = messageIndex - 1
     if (userMessageIndex < 0 || messages[userMessageIndex].role !== 'user') {
-      showToast('error', 'Cannot regenerate: no user message found')
+      showToast('error', t('aiChat.cannotRegenerate'))
       return
     }
 
@@ -1082,7 +1084,7 @@ export default function AIChatPage() {
         setMessages(prev =>
           prev.map(m =>
             m.id === aiMessageId
-              ? { ...m, content: m.content || 'Sorry, I encountered an error. Please try again.' }
+              ? { ...m, content: m.content || t('aiChat.aiErrorFallback') }
               : m
           )
         )
@@ -1188,7 +1190,7 @@ export default function AIChatPage() {
         } catch (error) {
           // Silently fail - local state is already updated
           console.warn('Failed to persist message update to backend:', error)
-          showToast('error', 'Failed to save task status to server')
+          showToast('error', t('aiChat.failedToSaveTaskStatus'))
         }
       } else {
         console.warn(`Skipping persistence for temporary message ID: ${messageId}`)
@@ -1301,14 +1303,14 @@ export default function AIChatPage() {
           await updateMessage(currentConversationId, numericId, updatedContent)
         } catch (error) {
           console.warn('Failed to persist registration update:', error)
-          showToast('error', 'Failed to save registration status to server')
+          showToast('error', t('aiChat.failedToSaveRegistrationStatus'))
         }
       } else {
         console.warn(`Skipping persistence for temporary message ID: ${messageId}`)
       }
     }
 
-    showToast('info', 'Registration started in background')
+    showToast('info', t('aiChat.registrationStarted'))
 
     // Auto-send message to trigger AI's STEP 6 response (METADATA_UPLOAD card)
     const autoMessage = `Registration submitted. ${fileCount} Files are uploading in the background.`
@@ -1387,12 +1389,12 @@ export default function AIChatPage() {
           await updateMessage(currentConversationId, numericId, updatedContent)
         } catch (error) {
           console.warn('Failed to persist metadata upload update:', error)
-          showToast('error', 'Failed to save metadata upload status to server')
+          showToast('error', t('aiChat.failedToSaveMetadataStatus'))
         }
       }
     }
 
-    showToast('success', `Metadata uploaded: ${result.updated_count} files updated`)
+    showToast('success', t('aiChat.metadataUploaded', { count: result.updated_count }))
   }
 
   // Handle task submission error
@@ -1443,7 +1445,7 @@ export default function AIChatPage() {
           await updateMessage(currentConversationId, numericId, updatedContent)
         } catch (error) {
           console.warn('Failed to persist message update to backend:', error)
-          showToast('error', 'Failed to save task status to server')
+          showToast('error', t('aiChat.failedToSaveTaskStatus'))
         }
       }
     }
@@ -1525,7 +1527,7 @@ export default function AIChatPage() {
           await updateMessage(currentConversationId, numericId, updatedContent)
         } catch (error) {
           console.warn('Failed to persist message update to backend:', error)
-          showToast('error', 'Failed to save analysis status to server')
+          showToast('error', t('aiChat.failedToSaveAnalysisStatus'))
         }
       }
     }
@@ -1686,17 +1688,17 @@ export default function AIChatPage() {
                   <button
                     onClick={() => setShowHistory(false)}
                     className="p-2 -ml-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors"
-                    title="Close history"
+                    title={t('aiChat.closeHistory')}
                   >
                     <PanelLeft className="w-5 h-5" />
                   </button>
-                  <h2 className="text-lg font-semibold text-gray-900">History</h2>
+                  <h2 className="text-lg font-semibold text-gray-900">{t('aiChat.history')}</h2>
                 </div>
                 {conversations.length > 0 && (
                   <button
                     onClick={handleDeleteAllHistory}
                     className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                    title="Delete all history"
+                    title={t('aiChat.deleteAllHistory')}
                   >
                     <Trash2 className="w-5 h-5" />
                   </button>
@@ -1707,7 +1709,7 @@ export default function AIChatPage() {
                 className="w-full px-4 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 transition-all shadow-sm flex items-center justify-center gap-2"
               >
                 <Plus className="w-4 h-4" />
-                New Research Task
+                {t('aiChat.newResearchTask')}
               </button>
             </div>
 
@@ -1715,15 +1717,15 @@ export default function AIChatPage() {
               {isLoadingConversations ? (
                 <div className="flex flex-col items-center justify-center py-12">
                   <Loader2 className="w-8 h-8 text-primary-500 animate-spin mb-3" />
-                  <p className="text-sm text-gray-500">Loading conversations...</p>
+                  <p className="text-sm text-gray-500">{t('aiChat.loadingConversations')}</p>
                 </div>
               ) : conversations.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <div className="w-16 h-16 rounded-full bg-gray-50 flex items-center justify-center mb-3">
                     <MessageSquare className="w-8 h-8 text-gray-300" />
                   </div>
-                  <p className="text-sm font-medium text-gray-900 mb-1">No conversations yet</p>
-                  <p className="text-xs text-gray-500">Start a new chat to begin</p>
+                  <p className="text-sm font-medium text-gray-900 mb-1">{t('aiChat.noConversationsYet')}</p>
+                  <p className="text-xs text-gray-500">{t('aiChat.startNewChat')}</p>
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -1755,7 +1757,7 @@ export default function AIChatPage() {
                         <button
                           onClick={(e) => handleDeleteConversation(conv.conversation_id, e)}
                           className="sm:opacity-0 sm:group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                          title="Delete conversation"
+                          title={t('aiChat.deleteConversation')}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -1779,14 +1781,14 @@ export default function AIChatPage() {
                 onClick={() => setShowHistory(!showHistory)}
                 className={`p-2 -ml-2 rounded-full text-gray-500 hover:text-gray-900 hover:bg-white/50 transition-all ${showHistory ? 'bg-white/50 text-gray-900' : ''
                   }`}
-                title={showHistory ? 'Close chat history' : 'Open chat history'}
+                title={showHistory ? t('aiChat.closeChatHistory') : t('aiChat.openChatHistory')}
               >
                 <History className="w-5 h-5" />
               </button>
               <h1 className="text-base font-semibold text-gray-900 leading-tight">
                 {currentConversationId
-                  ? conversations.find(c => c.conversation_id === currentConversationId)?.title || 'Chat'
-                  : 'New Research Task'
+                  ? conversations.find(c => c.conversation_id === currentConversationId)?.title || t('aiChat.chat')
+                  : t('aiChat.newResearchTask')
                 }
               </h1>
             </div>
@@ -1797,7 +1799,7 @@ export default function AIChatPage() {
                 className="gap-2 text-xs font-medium rounded-full border-gray-200 bg-white/50 hover:bg-white transition-all shadow-sm"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
-                Back
+                {t('aiChat.back')}
               </Button>
             </div>
           </div>
@@ -1817,10 +1819,10 @@ export default function AIChatPage() {
                     </div>
                   </div>
                   <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 via-gray-700 to-gray-900 bg-clip-text text-transparent">
-                    Hello, I'm PathLab Agent
+                    {t('aiChat.welcomeTitle')}
                   </h1>
                   <p className="text-gray-500 max-w-lg mx-auto text-base">
-                    Your AI assistant for pathology research. I can help you train models, run inference, and analyze whole slide images.
+                    {t('aiChat.welcomeDescription')}
                   </p>
                 </div>
 
@@ -1900,7 +1902,7 @@ export default function AIChatPage() {
                         <img
                           key={idx}
                           src={img}
-                          alt={`Attachment ${idx + 1}`}
+                          alt={t('aiChat.attachmentAlt', { index: idx + 1 })}
                           className="max-w-[200px] max-h-[200px] rounded-xl object-cover border border-gray-200 shadow-sm"
                         />
                       ))}
@@ -1937,7 +1939,7 @@ export default function AIChatPage() {
                       // ChatGPT-like Thinking Indicator
                       <div className="flex items-center gap-2 py-2">
                         <div className="w-2.5 h-2.5 bg-gray-400 rounded-full animate-pulse"></div>
-                        <span className="text-sm font-medium text-gray-500 animate-pulse">Thinking...</span>
+                        <span className="text-sm font-medium text-gray-500 animate-pulse">{t('aiChat.thinking')}</span>
                       </div>
                     ) : (
                       <AssistantMessage
@@ -1982,7 +1984,7 @@ export default function AIChatPage() {
                           ? 'text-green-500'
                           : 'hover:text-gray-600'
                           }`}
-                        title="Good response"
+                        title={t('aiChat.goodResponse')}
                       >
                         <ThumbsUp className="w-4 h-4" />
                       </button>
@@ -1992,7 +1994,7 @@ export default function AIChatPage() {
                           ? 'text-red-500'
                           : 'hover:text-gray-600'
                           }`}
-                        title="Bad response"
+                        title={t('aiChat.badResponse')}
                       >
                         <ThumbsDown className="w-4 h-4" />
                       </button>
@@ -2002,7 +2004,7 @@ export default function AIChatPage() {
                       <button
                         onClick={() => handleCopy(message.content)}
                         className="hover:text-gray-600 transition-colors"
-                        title="Copy"
+                        title={t('aiChat.copy')}
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
@@ -2010,7 +2012,7 @@ export default function AIChatPage() {
                         onClick={() => handleRegenerate(index)}
                         disabled={isGenerating}
                         className={`hover:text-gray-600 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        title="Regenerate"
+                        title={t('aiChat.regenerate')}
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
                       </button>
@@ -2018,7 +2020,7 @@ export default function AIChatPage() {
                         onClick={() => handleDeleteMessage(index)}
                         disabled={isGenerating}
                         className={`hover:text-red-500 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        title="Delete this message and continue from here"
+                        title={t('aiChat.deleteMessageAndContinue')}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -2039,7 +2041,7 @@ export default function AIChatPage() {
                         onClick={() => handleDeleteMessage(index)}
                         disabled={isGenerating}
                         className={`hover:text-red-500 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        title="Delete this message and continue from here"
+                        title={t('aiChat.deleteMessageAndContinue')}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -2097,7 +2099,7 @@ export default function AIChatPage() {
                   <div key={attachment.id} className="relative group">
                     <img
                       src={attachment.preview}
-                      alt="Attachment"
+                      alt={t('aiChat.attachment')}
                       className="w-14 h-14 object-cover rounded-xl border border-white/50 shadow-sm"
                     />
                     <button
@@ -2147,7 +2149,7 @@ export default function AIChatPage() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={voiceSessionActive ? "Listening..." : "Describe your research task..."}
+                  placeholder={voiceSessionActive ? t('aiChat.listening') : t('aiChat.inputPlaceholder')}
                   className={`
                     w-full bg-transparent border-none focus:outline-none resize-none 
                     text-gray-900 placeholder-gray-400 transition-all 
@@ -2197,7 +2199,7 @@ export default function AIChatPage() {
                       <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '0ms' }} />
                       <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '150ms' }} />
                       <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '300ms' }} />
-                      Thinking
+                      {t('aiChat.thinking')}
                     </span>
                   </div>
                 )}
@@ -2244,7 +2246,7 @@ export default function AIChatPage() {
                       type="button"
                       onClick={handleStopGeneration}
                       className="p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm bg-gray-800 text-white hover:bg-gray-900 shadow-md active:scale-95"
-                      title="Stop generating"
+                      title={t('aiChat.stopGenerating')}
                     >
                       <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="currentColor" />
                     </button>
@@ -2268,7 +2270,7 @@ export default function AIChatPage() {
             </form>
 
             <div className="mt-2 text-center text-[8px] sm:text-xs text-gray-400/80 font-medium truncate px-4">
-              PathLab Agent can make mistakes. Consider checking important information.
+              {t('aiChat.disclaimer')}
             </div>
           </div>
         </div>
@@ -2286,25 +2288,25 @@ export default function AIChatPage() {
               </div>
               <div className="flex-1">
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  {deleteConfirmId === 'all-conversations' ? 'Delete All History' : 'Delete Conversation'}
+                  {deleteConfirmId === 'all-conversations' ? t('aiChat.deleteAllHistoryTitle') : t('aiChat.deleteConversationTitle')}
                 </h3>
                 <p className="text-sm text-gray-600 mb-6">
                   {deleteConfirmId === 'all-conversations'
-                    ? 'Are you sure you want to delete all chat history? This action cannot be undone.'
-                    : 'Are you sure you want to delete this conversation? This action cannot be undone.'}
+                    ? t('aiChat.deleteAllHistoryConfirm')
+                    : t('aiChat.deleteConversationConfirm')}
                 </p>
                 <div className="flex gap-3 justify-end">
                   <button
                     onClick={cancelDelete}
                     className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
                   >
-                    Cancel
+                    {t('common.cancel')}
                   </button>
                   <button
                     onClick={confirmDelete}
                     className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors shadow-sm"
                   >
-                    Delete
+                    {t('common.delete')}
                   </button>
                 </div>
               </div>

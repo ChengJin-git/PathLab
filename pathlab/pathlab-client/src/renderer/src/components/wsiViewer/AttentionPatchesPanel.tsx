@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { HeatmapData, PatchCAMData, getPatchImageUrl } from '../../api'
 import { Card } from '../common'
 import { Badge } from '../ui/badge'
@@ -24,6 +25,7 @@ export function AttentionPatchesPanel({
   handleExportTop,
   handleExportBottom
 }: AttentionPatchesPanelProps) {
+  const { t } = useTranslation()
   return (
     <>
       {/* Patch Heatmap Info Card - only for patch-level tasks */}
@@ -33,20 +35,20 @@ export function AttentionPatchesPanel({
             <div className="p-1.5 bg-orange-100/50 rounded-md">
               <Layers className="w-4 h-4 text-orange-600" />
             </div>
-            <h3 className="text-sm font-semibold text-gray-900 tracking-tight">Class Activation Map</h3>
+            <h3 className="text-sm font-semibold text-gray-900 tracking-tight">{t('wsiViewerComponents.attentionPatchesPanel.classActivationMap')}</h3>
           </div>
           <div className="p-5">
             <p className="text-sm text-gray-600 mb-3">
-              The heatmap overlay shows which regions of the patch contributed most to the classification decision.
+              {t('wsiViewerComponents.attentionPatchesPanel.heatmapDescription')}
             </p>
             <div className="flex items-center gap-2 text-xs text-gray-500">
-              <span className="font-medium">Heatmap Size:</span>
+              <span className="font-medium">{t('wsiViewerComponents.attentionPatchesPanel.heatmapSize')}:</span>
               <span>{patchCAMData.cam_size?.[0]} × {patchCAMData.cam_size?.[1]}</span>
             </div>
             <div className="mt-3 flex items-center gap-2">
-              <span className="text-[10px] text-gray-400 uppercase tracking-wide">Activation:</span>
+              <span className="text-[10px] text-gray-400 uppercase tracking-wide">{t('wsiViewerComponents.attentionPatchesPanel.activation')}:</span>
               <div className="flex-1 h-2 rounded-full bg-gradient-to-r from-blue-500 via-green-500 via-yellow-500 to-red-500"></div>
-              <span className="text-[10px] text-gray-500">Low → High</span>
+              <span className="text-[10px] text-gray-500">{t('wsiViewerComponents.attentionPatchesPanel.lowToHigh')}</span>
             </div>
           </div>
         </Card>
@@ -59,16 +61,16 @@ export function AttentionPatchesPanel({
             <div className="p-1.5 bg-red-100/50 rounded-md">
               <TrendingUp className="w-4 h-4 text-red-600" />
             </div>
-            <h3 className="text-sm font-semibold text-gray-900 tracking-tight">High Attention Regions</h3>
+            <h3 className="text-sm font-semibold text-gray-900 tracking-tight">{t('wsiViewerComponents.attentionPatchesPanel.highAttentionRegions')}</h3>
             <div className="ml-auto flex items-center gap-2 sm:gap-3">
               <Badge variant="secondary" className="bg-red-50 text-red-700 hover:bg-red-100 px-2 sm:px-2.5 font-semibold text-[10px] sm:text-xs">
-                Top 10
+                {t('wsiViewerComponents.attentionPatchesPanel.top10')}
               </Badge>
               <button
                 onClick={handleExportTop}
                 disabled={exportingTop}
                 className="text-gray-400 hover:text-red-600 transition-colors"
-                title="Export Top 10 patches as ZIP"
+                title={t('wsiViewerComponents.attentionPatchesPanel.exportTopPatches')}
               >
                 {exportingTop ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -114,16 +116,16 @@ export function AttentionPatchesPanel({
             <div className="p-1.5 bg-blue-100/50 rounded-md">
               <TrendingDown className="w-4 h-4 text-blue-600" />
             </div>
-            <h3 className="text-sm font-semibold text-gray-900 tracking-tight">Low Attention Regions</h3>
+            <h3 className="text-sm font-semibold text-gray-900 tracking-tight">{t('wsiViewerComponents.attentionPatchesPanel.lowAttentionRegions')}</h3>
             <div className="ml-auto flex items-center gap-2 sm:gap-3">
               <Badge variant="secondary" className="bg-blue-50 text-blue-700 hover:bg-blue-100 px-2 sm:px-2.5 font-semibold text-[10px] sm:text-xs">
-                Bottom 10
+                {t('wsiViewerComponents.attentionPatchesPanel.bottom10')}
               </Badge>
               <button
                 onClick={handleExportBottom}
                 disabled={exportingBottom}
                 className="text-gray-400 hover:text-blue-600 transition-colors"
-                title="Export Bottom 10 patches as ZIP"
+                title={t('wsiViewerComponents.attentionPatchesPanel.exportBottomPatches')}
               >
                 {exportingBottom ? (
                   <Loader2 className="w-4 h-4 animate-spin" />

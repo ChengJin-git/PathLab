@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Loader2, Image as ImageIcon, ExternalLink, AlertCircle, ImageOff, Layers } from 'lucide-react'
 import {
   fetchWSIList,
@@ -69,6 +70,7 @@ const imageCache = new Map<string, { images: ImageWithHeatmap[]; error: string |
 
 export function ImageRecommendationCard({ recommendation }: ImageRecommendationCardProps) {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const [imagesWithHeatmaps, setImagesWithHeatmaps] = useState<ImageWithHeatmap[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -260,10 +262,10 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
       // Cache the result
       imageCache.set(filterKey, { images: imagesWithHeatmapInfo, error: null })
     } catch (err) {
-      setError('Failed to load images')
+      setError(t('chatComponents.imageRecommendation.failedToLoad'))
       console.error('Failed to load images:', err)
       // Cache the error state too
-      imageCache.set(filterKey, { images: [], error: 'Failed to load images' })
+      imageCache.set(filterKey, { images: [], error: t('chatComponents.imageRecommendation.failedToLoad') })
     } finally {
       setIsLoading(false)
     }
@@ -291,10 +293,10 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
       <div className="px-5 py-4 bg-gradient-to-r from-orange-50 to-amber-50 border-b border-gray-100">
         <h3 className="font-semibold text-gray-900 flex items-center gap-2">
           <ImageIcon className="w-4 h-4 text-orange-600" />
-          Recommended Images
+          {t('chatComponents.imageRecommendation.recommendedImages')}
           {imagesWithHeatmaps.length > 0 && (
             <span className="text-xs font-normal text-gray-500">
-              ({imagesWithHeatmaps.length} image{imagesWithHeatmaps.length > 1 ? 's' : ''})
+              ({t('chatComponents.imageRecommendation.imageCount', { count: imagesWithHeatmaps.length })})
             </span>
           )}
         </h3>
@@ -307,7 +309,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
             {imagesWithHeatmapCount > 0 && (
               <span className="flex items-center gap-1 text-green-600">
                 <Layers className="w-3 h-3" />
-                {imagesWithHeatmapCount} with heatmap
+                {t('chatComponents.imageRecommendation.withHeatmap', { count: imagesWithHeatmapCount })}
               </span>
             )}
           </div>
@@ -317,7 +319,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
           <div className="flex items-center gap-2 mt-2 text-xs text-amber-600 bg-amber-50 px-2 py-1.5 rounded-lg">
             <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
             <span>
-              No heatmaps found for the specified model
+              {t('chatComponents.imageRecommendation.noHeatmapsFound')}
               {recommendation.heatmap_filter.feature_extractor && ` (${recommendation.heatmap_filter.feature_extractor})`}
               {recommendation.heatmap_filter.aggregator && ` + ${recommendation.heatmap_filter.aggregator.toUpperCase()}`}
             </span>
@@ -330,7 +332,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         {isLoading ? (
           <div className="flex items-center justify-center py-8 text-gray-500">
             <Loader2 className="w-5 h-5 animate-spin mr-2" />
-            Loading images...
+            {t('chatComponents.imageRecommendation.loadingImages')}
           </div>
         ) : error ? (
           <div className="flex items-center gap-2 text-red-600 py-4">
@@ -339,7 +341,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
           </div>
         ) : imagesWithHeatmaps.length === 0 ? (
           <p className="text-sm text-gray-500 py-4 text-center">
-            No images found matching your criteria. Try adjusting your search.
+            {t('chatComponents.imageRecommendation.noImagesFound')}
           </p>
         ) : (
           <div className="space-y-4">
@@ -382,7 +384,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                         {fileType}
                       </span>
                       <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-medium rounded bg-white/80 text-gray-600">
-                        Original
+                        {t('chatComponents.imageRecommendation.original')}
                       </span>
                     </button>
 
@@ -412,7 +414,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                           </div>
                         </div>
                         <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-medium rounded bg-green-100 text-green-700 border border-green-200">
-                          Heatmap
+                          {t('chatComponents.imageRecommendation.heatmap')}
                         </span>
                       </button>
                     )}
@@ -428,7 +430,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                         <div className="flex flex-wrap gap-1 mt-2">
                           {image.label && (
                             <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded-full">
-                              Label: {image.label}
+                              {t('chatComponents.imageRecommendation.label')}: {image.label}
                             </span>
                           )}
                           {image.event_status !== null && image.event_status !== undefined && (
@@ -437,23 +439,23 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                                 ? 'bg-red-100 text-red-700'
                                 : 'bg-teal-100 text-teal-700'
                             }`}>
-                              {image.event_status === 1 ? 'Event' : 'Censored'}
+                              {image.event_status === 1 ? t('chatComponents.imageRecommendation.event') : t('chatComponents.imageRecommendation.censored')}
                             </span>
                           )}
                           {image.event_time !== null && image.event_time !== undefined && (
                             <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full">
-                              Time: {image.event_time}
+                              {t('chatComponents.imageRecommendation.time')}: {image.event_time}
                             </span>
                           )}
                           {hasHeatmap && latestHeatmap?.prediction && (
                             <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">
-                              Pred: {latestHeatmap.prediction}
+                              {t('chatComponents.imageRecommendation.pred')}: {latestHeatmap.prediction}
                             </span>
                           )}
                         </div>
                         {image.dataset_name && (
                           <p className="text-xs text-gray-500 mt-2 truncate">
-                            Dataset: {image.dataset_name}
+                            {t('chatComponents.imageRecommendation.dataset')}: {image.dataset_name}
                           </p>
                         )}
                       </div>
@@ -461,7 +463,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                         onClick={() => handleImageClick(image.wsi_id)}
                         className="self-start mt-2 text-xs text-orange-600 hover:text-orange-700 font-medium flex items-center gap-1"
                       >
-                        View details <ExternalLink className="w-3 h-3" />
+                        {t('chatComponents.imageRecommendation.viewDetails')} <ExternalLink className="w-3 h-3" />
                       </button>
                     </div>
                   </div>
@@ -496,11 +498,10 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
             }}
             className="text-sm text-orange-600 hover:text-orange-700 font-medium"
           >
-            View all images →
+            {t('chatComponents.imageRecommendation.viewAllImages')}
           </button>
         </div>
       )}
     </div>
   )
 }
-

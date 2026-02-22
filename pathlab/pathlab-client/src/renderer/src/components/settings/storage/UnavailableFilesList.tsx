@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { AlertCircle, Trash2, RefreshCw } from 'lucide-react'
 import { Button } from '../../ui/button'
 import { Checkbox } from '../../ui/checkbox'
@@ -19,6 +20,8 @@ export const UnavailableFilesList: React.FC<UnavailableFilesListProps> = ({
   deletingUnavailableFiles,
   handleDeleteUnavailableFiles
 }) => {
+  const { t } = useTranslation()
+
   const handleToggle = (wsiId: string) => {
     setSelectedUnavailableFiles((prev) => {
       const next = new Set(prev)
@@ -48,10 +51,10 @@ export const UnavailableFilesList: React.FC<UnavailableFilesListProps> = ({
           </div>
           <div>
             <h3 className="font-bold text-rose-900 text-sm">
-              Unavailable Files ({unavailableFiles.length})
+              {t('settings.storage.unavailableFilesTitle', { count: unavailableFiles.length })}
             </h3>
             <p className="text-xs text-rose-600/70 mt-0.5">
-              These files are registered but no longer accessible at their original location
+              {t('settings.storage.unavailableFilesDescription')}
             </p>
           </div>
         </div>
@@ -62,7 +65,7 @@ export const UnavailableFilesList: React.FC<UnavailableFilesListProps> = ({
             onClick={handleSelectAll}
             className="text-xs text-rose-700 hover:bg-rose-100"
           >
-            {selectedUnavailableFiles.size === unavailableFiles.length ? 'Deselect All' : 'Select All'}
+            {selectedUnavailableFiles.size === unavailableFiles.length ? t('settings.storage.deselectAll') : t('settings.storage.selectAll')}
           </Button>
           <Button
             variant="outline"
@@ -74,12 +77,12 @@ export const UnavailableFilesList: React.FC<UnavailableFilesListProps> = ({
             {deletingUnavailableFiles ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                Deleting...
+                {t('settings.storage.deleting')}
               </>
             ) : (
               <>
                 <Trash2 className="w-3.5 h-3.5" />
-                Delete Selected ({selectedUnavailableFiles.size})
+                {t('settings.storage.deleteSelected', { count: selectedUnavailableFiles.size })}
               </>
             )}
           </Button>
@@ -91,9 +94,9 @@ export const UnavailableFilesList: React.FC<UnavailableFilesListProps> = ({
           <thead className="bg-rose-50/30 backdrop-blur-sm sticky top-0 border-b border-rose-100">
             <tr>
               <th className="px-4 py-3 text-left w-10"></th>
-              <th className="px-4 py-3 text-left font-semibold text-rose-800 text-xs uppercase tracking-wider">Filename</th>
-              <th className="px-4 py-3 text-left font-semibold text-rose-800 text-xs uppercase tracking-wider">Dataset</th>
-              <th className="px-4 py-3 text-left font-semibold text-rose-800 text-xs uppercase tracking-wider max-w-xs">Path</th>
+              <th className="px-4 py-3 text-left font-semibold text-rose-800 text-xs uppercase tracking-wider">{t('settings.storage.filename')}</th>
+              <th className="px-4 py-3 text-left font-semibold text-rose-800 text-xs uppercase tracking-wider">{t('settings.storage.dataset')}</th>
+              <th className="px-4 py-3 text-left font-semibold text-rose-800 text-xs uppercase tracking-wider max-w-xs">{t('settings.storage.path')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-rose-50">
@@ -112,7 +115,7 @@ export const UnavailableFilesList: React.FC<UnavailableFilesListProps> = ({
                   {file.original_filename}
                 </td>
                 <td className="px-4 py-3 text-rose-700/80">
-                  {file.dataset_name || <span className="text-rose-400 italic">Uncategorized</span>}
+                  {file.dataset_name || <span className="text-rose-400 italic">{t('settings.storage.uncategorized')}</span>}
                 </td>
                 <td className="px-4 py-3 text-rose-600/70 text-xs font-mono truncate max-w-xs" title={file.wsi_path}>
                   {file.wsi_path}
@@ -124,9 +127,8 @@ export const UnavailableFilesList: React.FC<UnavailableFilesListProps> = ({
       </div>
 
       <div className="px-5 py-3 bg-rose-50/30 border-t border-rose-100 text-xs text-rose-600/80">
-        <strong>Delete</strong> removes database records only. Original files (if they exist elsewhere) are not affected.
+        {t('settings.storage.deleteFooter')}
       </div>
     </div>
   )
 }
-

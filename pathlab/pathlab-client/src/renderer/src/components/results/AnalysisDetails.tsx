@@ -1,4 +1,5 @@
 import { Download, FlaskConical } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, type LossCurveData, type KFoldLossCurveData } from '../charts/AnalysisCharts'
 import { getAuthToken } from '../../api'
 import { API_BASE } from '../../config'
@@ -93,6 +94,7 @@ export interface AnalysisDetailsProps {
 }
 
 export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts, isExternal = false }: AnalysisDetailsProps) {
+  const { t } = useTranslation()
   const effectiveTaskId = analysis.task_id || taskId
   const isSurvival = analysis.task_type === 'wsi_survival' || analysis.task_type === 'survival' || analysis.task_type === 'external_validation_survival'
 
@@ -173,14 +175,14 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
         <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
           <h5 className="text-sm font-semibold text-purple-800 mb-3 flex items-center gap-2">
             <FlaskConical className="w-4 h-4" />
-            K-Fold Cross-Validation Results ({analysis.kfold_training.num_folds} folds)
+            {t('analysisDetails.kFoldResults', { folds: analysis.kfold_training.num_folds })}
           </h5>
 
           {/* Aggregated Statistics */}
           {Object.entries(analysis.kfold_training.aggregated)
             .filter(([key]) => key !== 'loss' && shouldShowMetric(key)).length > 0 && (
           <div className="mb-4">
-            <p className="text-xs text-purple-600 font-medium mb-2">Aggregated Statistics (mean ± std)</p>
+            <p className="text-xs text-purple-600 font-medium mb-2">{t('analysisDetails.aggregatedStatistics')}</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {Object.entries(analysis.kfold_training.aggregated)
                 .filter(([key]) => key !== 'loss' && shouldShowMetric(key))
@@ -204,13 +206,13 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
             .filter(key => key !== 'loss' && shouldShowMetric(key)).length > 0 && (
           <details className="group">
             <summary className="text-xs text-purple-600 font-medium cursor-pointer hover:text-purple-800">
-              Show per-fold details
+              {t('analysisDetails.showPerFoldDetails')}
             </summary>
             <div className="mt-3 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-purple-200">
-                    <th className="py-2 text-left text-gray-500">Fold</th>
+                    <th className="py-2 text-left text-gray-500">{t('analysisDetails.fold')}</th>
                     {Object.keys(analysis.kfold_training.aggregated)
                       .filter(key => key !== 'loss' && shouldShowMetric(key))
                       .map(key => (
@@ -224,7 +226,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                     .map(([foldName, foldData]) => {
                       // Convert fold_0 to Fold 1, fold_1 to Fold 2, etc.
                       const foldNumber = parseInt(foldName.replace('fold_', ''), 10) + 1
-                      const displayName = `Fold ${foldNumber}`
+                      const displayName = `${t('analysisDetails.fold')} ${foldNumber}`
                       return (
                     <tr key={foldName} className="border-b border-purple-100">
                       <td className="py-2 font-medium text-purple-700">
@@ -260,7 +262,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
       <div className="pt-4">
         <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
           <div className={`w-1.5 h-6 ${accentBg} rounded-full`} />
-          Metrics
+          {t('analysisDetails.metrics')}
         </h5>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {Object.entries(analysis.metrics)
@@ -305,17 +307,17 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
         <div className="pt-8">
           <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
             <div className={`w-1.5 h-6 ${accentBg} rounded-full`} />
-            Per-Class Performance
+            {t('analysisDetails.perClassPerformance')}
           </h5>
           <div className="overflow-x-auto rounded-2xl border border-gray-100 shadow-sm bg-white">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50/50 border-b border-gray-100">
-                  <th className="px-4 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Class</th>
+                  <th className="px-4 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">{t('analysisDetails.class')}</th>
                   {visibleColumns.map(col => (
                     <th key={col.id} className="px-4 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">{col.label}</th>
                   ))}
-                  <th className="px-4 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">Support</th>
+                  <th className="px-4 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">{t('analysisDetails.support')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -353,16 +355,16 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
         <div className="pt-8 mb-8">
           <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
             <div className={`w-1.5 h-6 ${accentBg} rounded-full`} />
-            Analysis Charts
+            {t('analysisDetails.analysisCharts')}
           </h5>
           <div className={`grid grid-cols-1 ${isSurvival ? 'xl:grid-cols-2 lg:max-w-5xl' : 'xl:grid-cols-2 2xl:grid-cols-3'} gap-8`}>
             {/* Confusion Matrix */}
             {shouldShowChart('confusion_matrix') && (analysis.chart_data?.confusion_matrix ? (
-              <ConfusionMatrixChart data={analysis.chart_data.confusion_matrix} title="Confusion Matrix" />
+              <ConfusionMatrixChart data={analysis.chart_data.confusion_matrix} title={t('analysisDetails.confusionMatrix')} />
             ) : analysis.chart_paths?.confusion_matrix && (
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">Confusion Matrix</span>
+                  <span className="text-sm font-medium text-gray-700">{t('analysisDetails.confusionMatrix')}</span>
                   <button
                     onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`, 'confusion_matrix.png')}
                     className={`${accentText} ${accentTextHover}`}
@@ -370,17 +372,17 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`)} alt="Confusion Matrix" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`)} alt={t('analysisDetails.confusionMatrix')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             ))}
 
             {/* ROC Curve */}
             {shouldShowChart('roc_curve') && (analysis.chart_data?.roc_curve ? (
-              <RocCurveChart data={analysis.chart_data.roc_curve} title="ROC Curve" />
+              <RocCurveChart data={analysis.chart_data.roc_curve} title={t('analysisDetails.rocCurve')} />
             ) : analysis.chart_paths?.roc_curve && (
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">ROC Curve</span>
+                  <span className="text-sm font-medium text-gray-700">{t('analysisDetails.rocCurve')}</span>
                   <button
                     onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`, 'roc_curve.png')}
                     className={`${accentText} ${accentTextHover}`}
@@ -388,21 +390,21 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`)} alt="ROC Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`)} alt={t('analysisDetails.rocCurve')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             ))}
 
             {/* Loss Curve */}
             {shouldShowChart('loss_curve') && (analysis.chart_data?.loss_curve ? (
               'is_kfold' in analysis.chart_data.loss_curve && analysis.chart_data.loss_curve.is_kfold ? (
-                <KFoldLossCurveChart data={analysis.chart_data.loss_curve as KFoldLossCurveData} title="K-Fold Training Loss Curve" />
+                <KFoldLossCurveChart data={analysis.chart_data.loss_curve as KFoldLossCurveData} title={t('analysisDetails.kFoldLossCurve')} />
               ) : (
-                <LossCurveChart data={analysis.chart_data.loss_curve as LossCurveData} title="Training Loss Curve" />
+                <LossCurveChart data={analysis.chart_data.loss_curve as LossCurveData} title={t('analysisDetails.trainingLossCurve')} />
               )
             ) : analysis.chart_paths?.loss_curve && (
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">Loss Curve</span>
+                  <span className="text-sm font-medium text-gray-700">{t('analysisDetails.lossCurve')}</span>
                   <button
                     onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`, 'loss_curve.png')}
                     className={`${accentText} ${accentTextHover}`}
@@ -410,17 +412,17 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`)} alt="Loss Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`)} alt={t('analysisDetails.lossCurve')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             ))}
 
             {/* KM Curve - Survival Analysis */}
             {shouldShowChart('km_curve') && (analysis.chart_data?.km_curve ? (
-              <KMCurveChart data={analysis.chart_data.km_curve} title="Kaplan-Meier Survival Curve" />
+              <KMCurveChart data={analysis.chart_data.km_curve} title={t('analysisDetails.kmSurvivalCurve')} />
             ) : analysis.chart_paths?.km_curve && (
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">KM Curve</span>
+                  <span className="text-sm font-medium text-gray-700">{t('analysisDetails.kmCurve')}</span>
                   <button
                     onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/km_curve.png`, 'km_curve.png')}
                     className="text-emerald-600 hover:text-emerald-800"
@@ -428,7 +430,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/km_curve.png`)} alt="KM Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/km_curve.png`)} alt={t('analysisDetails.kmCurve')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             ))}
           </div>
@@ -446,8 +448,8 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
             <Download className="w-5 h-5" />
           </div>
           <div className="text-left">
-            <div className="text-[10px] uppercase tracking-wider opacity-60">Metadata</div>
-            Download Summary (JSON)
+            <div className="text-[10px] uppercase tracking-wider opacity-60">{t('analysisDetails.metadata')}</div>
+            {t('analysisDetails.downloadSummary')}
           </div>
         </button>
         <button
@@ -458,8 +460,8 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
             <Download className="w-5 h-5" />
           </div>
           <div className="text-left">
-            <div className="text-[10px] uppercase tracking-wider opacity-60">Raw Data</div>
-            Download Full Results (JSON)
+            <div className="text-[10px] uppercase tracking-wider opacity-60">{t('analysisDetails.rawData')}</div>
+            {t('analysisDetails.downloadFullResults')}
           </div>
         </button>
       </div>

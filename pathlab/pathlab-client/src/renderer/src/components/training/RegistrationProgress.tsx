@@ -5,6 +5,7 @@
  */
 
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
 import { UploadingFileStatus } from '../../types/training'
 
@@ -13,12 +14,13 @@ export interface RegistrationProgressProps {
 }
 
 export function RegistrationProgress({ uploadingFiles }: RegistrationProgressProps) {
+  const { t } = useTranslation()
   const successCount = Array.from(uploadingFiles.values()).filter((f) => f.status === 'success').length
 
   return (
     <div className="mb-6 bg-gray-50/50 rounded-xl border border-gray-100 p-4 sm:p-6">
       <h3 className="text-sm sm:text-base font-bold text-gray-900 mb-4">
-        Registering Files ({successCount}/{uploadingFiles.size})
+        {t('training.registrationProgress.title', { success: successCount, total: uploadingFiles.size })}
       </h3>
       <div className="space-y-4">
         {Array.from(uploadingFiles.entries()).map(([fileName, fileStatus]) => (
@@ -36,11 +38,10 @@ export function RegistrationProgress({ uploadingFiles }: RegistrationProgressPro
                 }`}
               >
                 {fileStatus.status === 'uploading' && `${Math.round(fileStatus.progress)}%`}
-                {fileStatus.status === 'success' && 'DONE'}
-                {fileStatus.status === 'error' && 'FAILED'}
+                {fileStatus.status === 'success' && t('training.registrationProgress.done')}
+                {fileStatus.status === 'error' && t('training.registrationProgress.failed')}
               </span>
             </div>
-            {/* Progress Bar */}
             <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all duration-300 ${
@@ -55,4 +56,3 @@ export function RegistrationProgress({ uploadingFiles }: RegistrationProgressPro
     </div>
   )
 }
-

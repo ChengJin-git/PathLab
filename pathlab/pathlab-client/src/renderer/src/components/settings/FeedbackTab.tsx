@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { MessageSquare, RefreshCw, Trash2, Download, X, ThumbsUp, ThumbsDown, Clock, Search, Calendar } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
@@ -18,6 +19,7 @@ export interface FeedbackTabProps {
 }
 
 export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackTabProps) {
+  const { t } = useTranslation()
   // State
   const [feedbacks, setFeedbacks] = useState<MessageFeedback[]>([])
   const [feedbackStats, setFeedbackStats] = useState<FeedbackStats | null>(null)
@@ -51,7 +53,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
       setFeedbackTotal(feedbackResponse.total)
       setFeedbackStats(statsResponse)
     } catch (err) {
-      setFeedbackError(err instanceof Error ? err.message : 'Failed to load feedbacks')
+      setFeedbackError(err instanceof Error ? err.message : t('settings.feedbackTab.failedToLoad'))
     } finally {
       setLoadingFeedbacks(false)
     }
@@ -86,14 +88,14 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
           } else if (status.status === 'failed') {
             if (exportPollingInterval) { clearInterval(exportPollingInterval); setExportPollingInterval(null) }
-            setExportingFeedbacks(false); setFeedbackError(status.error_message || 'Export failed')
+            setExportingFeedbacks(false); setFeedbackError(status.error_message || t('settings.feedbackTab.exportFailed'))
           }
         } catch { /* continue polling */ }
       }
       const interval = setInterval(pollStatus, 2000); setExportPollingInterval(interval)
       await pollStatus()
     } catch (err) {
-      setFeedbackError(err instanceof Error ? err.message : 'Failed to start export'); setExportingFeedbacks(false)
+      setFeedbackError(err instanceof Error ? err.message : t('settings.feedbackTab.failedToStartExport')); setExportingFeedbacks(false)
     }
   }
 
@@ -114,16 +116,16 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
         document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
       }
     } catch (err) {
-      setFeedbackError(err instanceof Error ? err.message : 'Failed to export feedbacks')
+      setFeedbackError(err instanceof Error ? err.message : t('settings.feedbackTab.failedToExport'))
     } finally { setExportingFeedbacks(false) }
   }
 
   // Reset all feedbacks
   const handleResetFeedbacks = () => {
     showConfirmDialog({
-      title: 'Reset All Feedbacks',
-      message: 'Are you sure you want to delete ALL feedback data? This action cannot be undone.',
-      confirmText: 'Delete All', confirmVariant: 'danger', showCancel: true,
+      title: t('settings.feedbackTab.resetAllTitle'),
+      message: t('settings.feedbackTab.resetAllMessage'),
+      confirmText: t('settings.feedbackTab.deleteAll'), confirmVariant: 'danger', showCancel: true,
       onConfirm: async () => {
         closeConfirmDialog()
         setResettingFeedbacks(true)
@@ -131,14 +133,14 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
           const result = await resetAllFeedbacks()
           setTimeout(() => {
             showConfirmDialog({
-              title: 'Success', message: `Successfully deleted ${result.deleted_count} feedbacks.`,
-              confirmText: 'OK', confirmVariant: 'info', showCancel: false,
+              title: t('common.success'), message: t('settings.feedbackTab.deletedSuccess', { count: result.deleted_count }),
+              confirmText: t('settings.feedbackTab.ok'), confirmVariant: 'info', showCancel: false,
               onConfirm: () => closeConfirmDialog()
             })
           }, 100)
           await loadFeedbacks()
         } catch (err) {
-          setFeedbackError(err instanceof Error ? err.message : 'Failed to reset feedbacks')
+          setFeedbackError(err instanceof Error ? err.message : t('settings.feedbackTab.failedToReset'))
         } finally { setResettingFeedbacks(false) }
       }
     })
@@ -150,16 +152,16 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
         <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
           <MessageSquare className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700 font-shrink-0" />
           <div className="flex flex-col">
-            <span>User Feedback Analytics</span>
+            <span>{t('settings.feedbackTab.title')}</span>
             <span className="text-gray-500 font-normal text-sm mt-0.5 sm:hidden">
-                Manage and analyze user feedback
+                {t('settings.feedbackTab.subtitle')}
             </span>
           </div>
         </h2>
         <div className="flex gap-2 w-full sm:w-auto">
           <Button variant="outline" onClick={loadFeedbacks} disabled={loadingFeedbacks} className="flex-1 sm:flex-none gap-2">
             <RefreshCw className={`w-4 h-4 ${loadingFeedbacks ? 'animate-spin' : ''}`} />
-            <span className="sm:hidden lg:inline">Refresh</span>
+            <span className="sm:hidden lg:inline">{t('common.refresh')}</span>
           </Button>
           <Button
             variant="outline"
@@ -168,7 +170,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
             className="flex-1 sm:flex-none gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
           >
             <Trash2 className={`w-4 h-4 ${resettingFeedbacks ? 'animate-pulse' : ''}`} />
-            <span className="sm:hidden lg:inline">Reset All</span>
+            <span className="sm:hidden lg:inline">{t('settings.feedbackTab.resetAll')}</span>
           </Button>
         </div>
       </div>
@@ -185,26 +187,26 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
             {/* Left: Filters Group */}
             <div className="flex flex-col md:flex-row gap-4 flex-1">
                 <div className="w-full md:w-48 space-y-1.5">
-                    <Label className="text-xs font-medium text-gray-500 uppercase tracking-wider ml-0.5">Type</Label>
+                    <Label className="text-xs font-medium text-gray-500 uppercase tracking-wider ml-0.5">{t('common.type')}</Label>
                     <Select
                         value={feedbackTypeFilter || ''}
                         onChange={(val) => { setFeedbackTypeFilter(val ? val as 'thumbs_up' | 'thumbs_down' : null); setFeedbackPage(0) }}
                         options={[
-                        { value: '', label: 'All Types' },
-                        { value: 'thumbs_up', label: 'Thumbs Up' },
-                        { value: 'thumbs_down', label: 'Thumbs Down' }
+                        { value: '', label: t('settings.feedbackTab.allTypes') },
+                        { value: 'thumbs_up', label: t('settings.feedbackTab.thumbsUp') },
+                        { value: 'thumbs_down', label: t('settings.feedbackTab.thumbsDown') }
                         ]}
                     />
                 </div>
                 <div className="w-full md:w-48 space-y-1.5">
-                    <Label className="text-xs font-medium text-gray-500 uppercase tracking-wider ml-0.5">Helpfulness</Label>
+                    <Label className="text-xs font-medium text-gray-500 uppercase tracking-wider ml-0.5">{t('settings.feedbackTab.helpfulness')}</Label>
                     <Select
                         value={helpfulnessFilter || ''}
                         onChange={(val) => { setHelpfulnessFilter(val ? val as 'helpful' | 'not_helpful' : null); setFeedbackPage(0) }}
                         options={[
-                        { value: '', label: 'All Ratings' },
-                        { value: 'helpful', label: 'Helpful' },
-                        { value: 'not_helpful', label: 'Not Helpful' }
+                        { value: '', label: t('settings.feedbackTab.allRatings') },
+                        { value: 'helpful', label: t('settings.feedbackTab.helpful') },
+                        { value: 'not_helpful', label: t('settings.feedbackTab.notHelpful') }
                         ]}
                     />
                 </div>
@@ -213,7 +215,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
             {/* Right: Date & Export Group */}
             <div className="flex flex-col md:flex-row gap-4 pt-4 xl:pt-0 border-t xl:border-t-0 border-gray-200 xl:border-l xl:pl-6">
                  <div className="space-y-1.5 flex-grow sm:flex-grow-0">
-                     <Label className="text-xs font-medium text-gray-500 uppercase tracking-wider ml-0.5">Date Range</Label>
+                     <Label className="text-xs font-medium text-gray-500 uppercase tracking-wider ml-0.5">{t('settings.feedbackTab.dateRange')}</Label>
                      <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
                         <div className="relative flex-1 w-full sm:w-36">
                             <input
@@ -238,7 +240,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                             <button
                                 onClick={() => { setExportDateFrom(''); setExportDateTo('') }}
                                 className="hidden sm:block p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors"
-                                title="Clear dates"
+                                title={t('settings.feedbackTab.clearDates')}
                             >
                                 <X className="w-4 h-4" />
                             </button>
@@ -251,7 +253,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                                 onClick={() => { setExportDateFrom(''); setExportDateTo('') }}
                                 className="sm:hidden h-8 w-full text-gray-500 border border-dashed border-gray-300"
                             >
-                                <X className="w-3.5 h-3.5 mr-1.5" /> Clear Dates
+                                <X className="w-3.5 h-3.5 mr-1.5" /> {t('settings.feedbackTab.clearDates')}
                             </Button>
                         )}
                      </div>
@@ -277,15 +279,15 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
       {loadingFeedbacks ? (
         <div className="flex flex-col items-center justify-center py-12 text-gray-500">
            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mb-3"></div>
-           <p className="text-sm">Loading user feedback...</p>
+           <p className="text-sm">{t('settings.feedbackTab.loading')}</p>
         </div>
       ) : feedbacks.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-gray-400 bg-gray-50/30 rounded-lg border border-dashed border-gray-200">
           <div className="bg-gray-50 p-3 rounded-full mb-3">
              <MessageSquare className="w-6 h-6 text-gray-300" />
           </div>
-          <p className="font-medium text-gray-600">No feedback data found</p>
-          <p className="text-sm mt-1">Try adjusting your filters</p>
+          <p className="font-medium text-gray-600">{t('settings.feedbackTab.noData')}</p>
+          <p className="text-sm mt-1">{t('settings.feedbackTab.tryAdjustingFilters')}</p>
         </div>
       ) : (
         <>
@@ -315,20 +317,20 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                     </span>
                   )}
                   {feedback.task_helpfulness === 'helpful' && (
-                      <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">Helpful</span>
+                      <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">{t('settings.feedbackTab.helpful')}</span>
                   )}
                   {feedback.task_helpfulness === 'not_helpful' && (
-                      <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-orange-50 text-orange-700 border border-orange-100">Not Helpful</span>
+                      <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-orange-50 text-orange-700 border border-orange-100">{t('settings.feedbackTab.notHelpful')}</span>
                   )}
                 </div>
 
                 <div className="p-3 bg-gray-50 rounded-lg text-sm text-gray-800 leading-relaxed break-words">
-                  {feedback.message_content || <span className="text-gray-400 italic">No content</span>}
+                  {feedback.message_content || <span className="text-gray-400 italic">{t('settings.feedbackTab.noContent')}</span>}
                 </div>
                 
                 <div className="flex justify-between items-center text-xs text-gray-500 pt-2 border-t border-gray-100">
                   <div className="flex items-center gap-1">
-                    <span className="uppercase tracking-wider">Task:</span>
+                    <span className="uppercase tracking-wider">{t('settings.feedbackTab.task')}:</span>
                     <span className="font-mono">{feedback.related_task_id || '-'}</span>
                   </div>
                    {feedback.time_to_action_seconds && (
@@ -348,14 +350,14 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
               <table className="w-full text-sm table-fixed">
                 <thead className="bg-gray-50/80">
                   <tr className="border-b border-gray-200">
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-16">ID</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-[40%]">Message Content</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-[15%]">User</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">Type</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">Helpfulness</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">Task</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24 text-right">Duration</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-28 text-right">Created</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-16">{t('settings.feedbackTab.columnId')}</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-[40%]">{t('settings.feedbackTab.columnMessageContent')}</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-[15%]">{t('settings.feedbackTab.columnUser')}</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">{t('common.type')}</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">{t('settings.feedbackTab.helpfulness')}</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">{t('settings.feedbackTab.task')}</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-24 text-right">{t('settings.feedbackTab.columnDuration')}</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-28 text-right">{t('settings.feedbackTab.columnCreated')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 bg-white">
@@ -364,7 +366,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                       <td className="px-4 py-3 text-gray-500 font-mono text-xs align-top pt-3.5">{feedback.id}</td>
                       <td className="px-4 py-3 align-top">
                       <div className="text-gray-900 text-xs leading-relaxed break-words whitespace-normal line-clamp-4 hover:line-clamp-none transition-all duration-200" title={feedback.message_content || ''}>
-                              {feedback.message_content ? feedback.message_content.replace(/\s+/g, ' ') : <span className="text-gray-300 italic">No content</span>}
+                              {feedback.message_content ? feedback.message_content.replace(/\s+/g, ' ') : <span className="text-gray-300 italic">{t('settings.feedbackTab.noContent')}</span>}
                           </div>
                       </td>
                       <td className="px-4 py-3 text-gray-700 text-xs font-medium align-top pt-3.5 truncate">
@@ -385,10 +387,10 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                       </td>
                       <td className="px-4 py-3 align-top pt-3.5">
                         {feedback.task_helpfulness === 'helpful' && (
-                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">Helpful</span>
+                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">{t('settings.feedbackTab.helpful')}</span>
                         )}
                         {feedback.task_helpfulness === 'not_helpful' && (
-                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-50 text-orange-700 border border-orange-100">Not Helpful</span>
+                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-50 text-orange-700 border border-orange-100">{t('settings.feedbackTab.notHelpful')}</span>
                         )}
                         {!feedback.task_helpfulness && <span className="text-gray-300 text-xs">-</span>}
                       </td>

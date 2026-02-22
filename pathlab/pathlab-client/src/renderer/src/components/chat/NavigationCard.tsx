@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { ArrowRight, Upload, PlayCircle } from 'lucide-react'
 import { Button } from '../ui/button'
@@ -64,6 +65,7 @@ export function removeNavigateBlock(content: string): string {
  * Used by AI Chat to guide users to Registration Page or Task Detail Page
  */
 export function NavigationCard({ config, csvContent, csvFileName }: NavigationCardProps) {
+  const { t } = useTranslation()
   const navigate = useNavigate()
 
   const handleNavigate = () => {
@@ -111,16 +113,16 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
           <div className="mt-3 flex flex-wrap gap-2 text-xs">
             {config.taskName && (
               <span className="px-2 py-1 bg-white rounded-md border border-slate-200 text-slate-600">
-                Task: <strong className="text-slate-800">{config.taskName}</strong>
+                {t('chatComponents.navigationCard.task')}{' '}<strong className="text-slate-800">{config.taskName}</strong>
               </span>
             )}
             {config.taskId && (
               <span className="px-2 py-1 bg-white rounded-md border border-slate-200 text-slate-600">
-                ID: <strong className="text-slate-800 font-mono text-[10px]">{config.taskId}</strong>
+                {t('chatComponents.navigationCard.id')}{' '}<strong className="text-slate-800 font-mono text-[10px]">{config.taskId}</strong>
               </span>
             )}
             <span className="px-2 py-1 bg-green-50 rounded-md border border-green-200 text-green-700">
-              ✓ Training Started
+              ✓ {t('chatComponents.navigationCard.trainingStarted')}
             </span>
           </div>
         )}
@@ -147,16 +149,16 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
       {config.state?.datasetName && (
         <div className="mt-3 flex flex-wrap gap-2 text-xs">
           <span className="px-2 py-1 bg-white rounded-md border border-slate-200 text-slate-600">
-            Dataset: <strong className="text-slate-800">{config.state.datasetName}</strong>
+            {t('chatComponents.navigationCard.dataset')}{' '}<strong className="text-slate-800">{config.state.datasetName}</strong>
           </span>
           {config.state.uploadMode && (
             <span className="px-2 py-1 bg-white rounded-md border border-slate-200 text-slate-600">
-              Type: <strong className="text-slate-800 capitalize">{config.state.uploadMode}</strong>
+              {t('chatComponents.navigationCard.type')}{' '}<strong className="text-slate-800 capitalize">{config.state.uploadMode}</strong>
             </span>
           )}
           {(csvContent || config.state.csvContent) && (
             <span className="px-2 py-1 bg-green-50 rounded-md border border-green-200 text-green-700">
-              ✓ CSV Ready
+              ✓ {t('chatComponents.navigationCard.csvReady')}
             </span>
           )}
         </div>
