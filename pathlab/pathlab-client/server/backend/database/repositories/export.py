@@ -83,12 +83,15 @@ class ExportTaskRepository:
 
     @staticmethod
     async def cleanup_old_tasks(db: AsyncSession, days: int = 7) -> int:
-        """Delete export tasks older than specified days"""
+        """Delete failed export tasks older than specified days (keep completed tasks permanently)"""
         from datetime import timedelta
         cutoff = utc_now() - timedelta(days=days)
 
         result = await db.execute(
-            delete(ExportTask).where(ExportTask.created_at < cutoff)
+            delete(ExportTask).where(
+                ExportTask.status.in_(['failed']),
+                ExportTask.completed_at < cutoff
+            )
         )
         return result.rowcount
 

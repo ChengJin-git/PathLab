@@ -119,12 +119,15 @@ class StorageTaskRepository:
 
     @staticmethod
     async def cleanup_old_tasks(db: AsyncSession, days: int = 7) -> int:
-        """Delete storage tasks older than specified days"""
+        """Delete failed/cancelled storage tasks older than specified days (keep completed tasks permanently)"""
         from datetime import timedelta
         cutoff = utc_now() - timedelta(days=days)
 
         result = await db.execute(
-            delete(StorageTask).where(StorageTask.created_at < cutoff)
+            delete(StorageTask).where(
+                StorageTask.status.in_(['failed', 'cancelled']),
+                StorageTask.completed_at < cutoff
+            )
         )
         return result.rowcount
 

@@ -717,8 +717,8 @@ class TrainingTaskRepository:
         from datetime import timedelta
         cutoff = utc_now() - timedelta(days=days)
 
-        # Only delete finished tasks (completed, failed, cancelled) older than cutoff
-        finished_statuses = ['completed', 'failed', 'cancelled']
+        # Only delete failed/cancelled tasks older than cutoff (keep completed tasks permanently)
+        finished_statuses = ['failed', 'cancelled']
 
         # First get task_ids to delete (for cascade cleanup)
         result = await db.execute(
