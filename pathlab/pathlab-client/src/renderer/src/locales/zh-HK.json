@@ -140,7 +140,7 @@
       "smartAssistant": "智能助手",
       "smartAssistantDesc": "用自然語言描述您的研究，讓 AI 為您設定任務"
     },
-    "agenticAI": "智能體 AI 驅動",
+    "agenticAI": "由 AI 智能體驅動",
     "reimagined": "重新定義",
     "supportMission": "支持我們的項目",
     "keepFree": "幫助我們保持 PathLab 免費供所有人使用。",
@@ -647,7 +647,7 @@
     "heroTitle2": "重新定義",
     "heroTitle3": "數位病理學",
     "heroSubtitle": "在保護資料私隱的同時進行訓練、分析和獲取洞察。體驗醫學研究的未來。",
-    "agenticAI": "智能體 AI 驅動",
+    "agenticAI": "由 AI 智能體驅動",
     "coreCapabilities": "核心能力",
     "coreCapabilitiesTitle": "數位病理學所需的一切",
     "features": {
