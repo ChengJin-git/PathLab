@@ -129,6 +129,7 @@
   },
   "loginPage": {
     "title": "Digital Pathology",
+    "titleSuffix": "",
     "subtitle": "Train, analyze, and gain insights while keeping your data private. Experience the future of medical research today.",
     "features": {
       "wsiVisualization": "WSI Visualization",

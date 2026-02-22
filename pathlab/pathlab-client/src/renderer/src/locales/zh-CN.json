@@ -128,7 +128,8 @@
     "untitledTask": "未命名任务"
   },
   "loginPage": {
-    "title": "数字病理学",
+    "title": "",
+    "titleSuffix": "数字病理学",
     "subtitle": "在保护数据隐私的同时进行训练、分析和获取洞察。体验医学研究的未来。",
     "features": {
       "wsiVisualization": "WSI 可视化",

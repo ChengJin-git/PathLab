@@ -128,7 +128,8 @@
     "untitledTask": "未命名任務"
   },
   "loginPage": {
-    "title": "數位病理學",
+    "title": "",
+    "titleSuffix": "數位病理學",
     "subtitle": "在保護資料私隱的同時進行訓練、分析和獲取洞察。體驗醫學研究的未來。",
     "features": {
       "wsiVisualization": "WSI 可視化",
