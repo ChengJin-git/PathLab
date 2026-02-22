@@ -2568,6 +2568,9 @@ async def _run_external_validation(
 
     wsi_ids = wsi_ids or []
 
+    # Minimum patches threshold for valid WSI (same as trainer.py)
+    MIN_PATCHES_THRESHOLD = 100
+
     # ScopedLogger writes to training_logs table so SSE log stream works
     logger_manager = ScopedLogger(task_id)
 
@@ -2821,117 +2824,290 @@ async def _run_external_validation(
             await tl.info(f"Feature cache: {len(cached_wsi_ids)}/{len(wsi_ids)} WSIs found in global cache (hash={params_hash})")
 
         # Step 2: If features are missing, extract them via preprocessing + AI services
+        # with resilient fallback: skip problematic WSIs instead of failing the entire task
+        failed_wsi_ids = []  # Track WSIs that failed extraction
+        failed_reasons = {}  # Track reasons for failure
+
         if missing_wsi_ids:
             async with logger_manager.session() as (tl, _db):
                 await tl.info(f"Extracting features for {len(missing_wsi_ids)} WSIs missing from cache...")
 
             # Update status to EXTRACTING so frontend shows feature extraction stage
             await update_task_progress(TaskStatus.EXTRACTING, 5)
+            await set_progress(task_id, 5)
 
-            # Step 2a: Patch extraction via preprocessing service
+            # Step 2a: Patch extraction via preprocessing service (with fallback logic)
+            # This mirrors the training pipeline pattern from pipeline.py
             total_missing = len(missing_wsi_ids)
+            coords_success_wsi_ids = []  # WSIs where coords extraction succeeded
+
             for idx, wsi_id in enumerate(missing_wsi_ids, 1):
                 await asyncio.sleep(0)  # Yield to event loop
-                try:
-                    async with httpx.AsyncClient(timeout=600.0) as client:
-                        response = await client.post(
-                            f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
-                            params={
-                                "level": level,
-                                "force_recompute": False,
-                                "sthresh": seg_params["sthresh"],
-                                "mthresh": seg_params["mthresh"],
-                                "close": seg_params["close"],
-                                "use_otsu": seg_params["use_otsu"],
-                                "contour_fn": contour_fn,
-                                "use_padding": use_padding,
-                                "a_t": filter_params["a_t"],
-                                "a_h": filter_params["a_h"],
-                                "max_n_holes": filter_params["max_n_holes"],
-                                "save_mask": True,
-                            },
-                        )
-                        response.raise_for_status()
-                except Exception as e:
-                    err_type = type(e).__name__
-                    err_msg = str(e) or repr(e)
-                    err_tb = traceback.format_exc()
-                    resp_body = ""
-                    if isinstance(e, httpx.HTTPStatusError):
+
+                # Retry logic: If preprocessing worker crashes, retry with backoff
+                max_retries = 3
+                coords_result = None
+                coords_error = None
+
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        async with httpx.AsyncClient(timeout=600.0) as client:
+                            response = await client.post(
+                                f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
+                                params={
+                                    "level": level,
+                                    "force_recompute": False,  # Allow cache reuse
+                                    "sthresh": seg_params["sthresh"],
+                                    "mthresh": seg_params["mthresh"],
+                                    "close": seg_params["close"],
+                                    "use_otsu": seg_params["use_otsu"],
+                                    "contour_fn": contour_fn,
+                                    "use_padding": use_padding,
+                                    "a_t": filter_params["a_t"],
+                                    "a_h": filter_params["a_h"],
+                                    "max_n_holes": filter_params["max_n_holes"],
+                                    "save_mask": True,
+                                },
+                            )
+                            response.raise_for_status()
+                            coords_result = response.json()
+                            break  # Success, exit retry loop
+                    except (httpx.RemoteProtocolError, httpx.ConnectError) as retry_err:
+                        # Worker crash (segfault) or connection refused (worker restarting)
+                        coords_error = retry_err
+                        if attempt < max_retries:
+                            wait_secs = attempt * 3  # 3s, 6s, 9s backoff
+                            async with logger_manager.session() as (tl, _db):
+                                await tl.warning(
+                                    f"[{idx}/{total_missing}] compute_patches attempt {attempt}/{max_retries} "
+                                    f"failed for {wsi_id}: {type(retry_err).__name__}. "
+                                    f"Retrying in {wait_secs}s (cached coords will be used on retry)...",
+                                    metadata={"wsi_id": wsi_id, "attempt": attempt, "error": str(retry_err)}
+                                )
+                            await asyncio.sleep(wait_secs)
+                        else:
+                            # Final attempt failed
+                            pass
+                    except httpx.HTTPStatusError as http_err:
+                        # HTTP error (4xx, 5xx) - likely not recoverable with retry
+                        coords_error = http_err
                         try:
-                            resp_body = e.response.text[:1000]
+                            resp_body = http_err.response.text[:500] if http_err.response else ""
                         except Exception:
                             resp_body = "(unable to read response body)"
+                        async with logger_manager.session() as (tl, _db):
+                            await tl.warning(
+                                f"[{idx}/{total_missing}] Patch extraction failed for {wsi_id}: "
+                                f"HTTP {http_err.response.status_code if http_err.response else 'N/A'} - {resp_body}",
+                                metadata={"wsi_id": wsi_id, "error": str(http_err), "response_body": resp_body}
+                            )
+                        break  # Don't retry HTTP errors
+                    except Exception as e:
+                        coords_error = e
+                        break  # Unknown error, don't retry
+
+                # Handle result
+                if coords_result is not None:
+                    num_patches = coords_result.get('num_patches', 0)
+                    cached = coords_result.get('cached', False)
+
+                    if num_patches == 0:
+                        # 0 patches = no detectable tissue (even after adaptive seg_level fallback)
+                        async with logger_manager.session() as (tl, _db):
+                            await tl.warning(
+                                f"[{idx}/{total_missing}] Skipping {wsi_id}: 0 patches extracted "
+                                f"(no detectable tissue after adaptive seg_level fallback)",
+                                metadata={"wsi_id": wsi_id, "num_patches": 0}
+                            )
+                        failed_wsi_ids.append(wsi_id)
+                        failed_reasons[wsi_id] = "0 patches (no detectable tissue)"
+                    elif num_patches < MIN_PATCHES_THRESHOLD:
+                        # Too few patches for reliable inference
+                        async with logger_manager.session() as (tl, _db):
+                            await tl.warning(
+                                f"[{idx}/{total_missing}] Skipping {wsi_id}: only {num_patches} patches "
+                                f"(minimum {MIN_PATCHES_THRESHOLD} required for reliable inference)",
+                                metadata={"wsi_id": wsi_id, "num_patches": num_patches, "threshold": MIN_PATCHES_THRESHOLD}
+                            )
+                        failed_wsi_ids.append(wsi_id)
+                        failed_reasons[wsi_id] = f"low patches ({num_patches} < {MIN_PATCHES_THRESHOLD})"
+                    else:
+                        coords_success_wsi_ids.append(wsi_id)
+                        async with logger_manager.session() as (tl, _db):
+                            if cached:
+                                await tl.info(
+                                    f"[{idx}/{total_missing}] Coords cache hit for {wsi_id} ({num_patches} patches)",
+                                    metadata={"wsi_id": wsi_id, "num_patches": num_patches, "cached": True}
+                                )
+                            else:
+                                await tl.info(
+                                    f"[{idx}/{total_missing}] Extracted {num_patches} patches from {wsi_id}",
+                                    metadata={"wsi_id": wsi_id, "num_patches": num_patches, "cached": False}
+                                )
+                else:
+                    # Coords extraction failed after retries
+                    err_type = type(coords_error).__name__ if coords_error else "Unknown"
+                    err_msg = str(coords_error) if coords_error else "Unknown error"
                     async with logger_manager.session() as (tl, _db):
                         await tl.error(
-                            f"Failed to extract patches from {wsi_id}: [{err_type}] {err_msg}",
-                            metadata={
-                                "wsi_id": wsi_id,
-                                "error": err_msg,
-                                "error_type": err_type,
-                                "response_body": resp_body,
-                                "traceback": err_tb,
-                            }
+                            f"[{idx}/{total_missing}] Skipping {wsi_id}: coords extraction failed - [{err_type}] {err_msg}",
+                            metadata={"wsi_id": wsi_id, "error": err_msg, "error_type": err_type}
                         )
-                    raise
+                    failed_wsi_ids.append(wsi_id)
+                    failed_reasons[wsi_id] = f"coords failed: {err_type}"
 
                 # Update progress (5-30% for patch extraction)
                 progress = 5 + int((idx / total_missing) * 25)
                 await update_task_progress(TaskStatus.EXTRACTING, progress)
+                await set_progress(task_id, progress)
 
+            # Log summary of coords extraction
             async with logger_manager.session() as (tl, _db):
-                await tl.info(f"Patch extraction completed for {total_missing} WSIs")
+                await tl.info(
+                    f"Patch extraction phase complete: {len(coords_success_wsi_ids)}/{total_missing} WSIs succeeded, "
+                    f"{len(failed_wsi_ids)} failed/skipped",
+                    metadata={
+                        "success_count": len(coords_success_wsi_ids),
+                        "failed_count": len(failed_wsi_ids),
+                        "failed_wsi_ids": failed_wsi_ids[:20],  # Cap at 20 for log size
+                    }
+                )
 
-            # Step 2b: Feature extraction via AI service
-            feature_batch_size = preprocessing_config.get("feature_batch_size", 64)
-            from gateway.pipeline import get_training_timeout
-            timeout = get_training_timeout()
+            # Step 2b: Feature extraction via AI service (only for WSIs with valid coords)
+            if coords_success_wsi_ids:
+                feature_batch_size = preprocessing_config.get("feature_batch_size", 64)
+                from gateway.pipeline import get_training_timeout
+                timeout = get_training_timeout()
 
-            async with logger_manager.session() as (tl, _db):
-                await tl.info(f"Calling AI service for feature extraction (using {feature_extractor})")
-
-            try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
-                    resp = await client.post(
-                        f"{AI_SERVICE_URL}/api/ai/training/extract_features",
-                        json={
-                            "task_id": task_id,
-                            "wsi_ids": missing_wsi_ids,
-                            "feature_extractor": feature_extractor,
-                            "batch_size": feature_batch_size,
-                            "force_recompute": False,
-                            "huggingface_token": "",
-                            "preprocessing_config": preprocessing_config,
-                            "device": assigned_device or "",
-                        },
-                    )
-                    resp.raise_for_status()
-            except httpx.HTTPStatusError as e:
-                body = e.response.text if e.response is not None else str(e)
                 async with logger_manager.session() as (tl, _db):
-                    await tl.error(f"Feature extraction failed: {e}", metadata={"body": body})
-                raise
-            except httpx.TimeoutException as e:
+                    await tl.info(f"Calling AI service for feature extraction (using {feature_extractor}) on {len(coords_success_wsi_ids)} WSIs")
+
+                await update_task_progress(TaskStatus.EXTRACTING, 30)
+                await set_progress(task_id, 30)
+
+                try:
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        resp = await client.post(
+                            f"{AI_SERVICE_URL}/api/ai/training/extract_features",
+                            json={
+                                "task_id": task_id,
+                                "wsi_ids": coords_success_wsi_ids,
+                                "feature_extractor": feature_extractor,
+                                "batch_size": feature_batch_size,
+                                "force_recompute": False,
+                                "huggingface_token": "",
+                                "preprocessing_config": preprocessing_config,
+                                "device": assigned_device or "",
+                            },
+                        )
+                        resp.raise_for_status()
+                        feat_result = resp.json()
+                        # Check for skipped WSIs from feature extraction
+                        feat_skipped = feat_result.get("skipped_wsi_ids", []) if feat_result else []
+                        if feat_skipped:
+                            for skip_wsi in feat_skipped:
+                                if skip_wsi not in failed_wsi_ids:
+                                    failed_wsi_ids.append(skip_wsi)
+                                    failed_reasons[skip_wsi] = "feature extraction skipped (low patches)"
+                            async with logger_manager.session() as (tl, _db):
+                                await tl.warning(
+                                    f"AI service skipped {len(feat_skipped)} WSIs during feature extraction: {feat_skipped[:10]}",
+                                    metadata={"skipped_count": len(feat_skipped), "skipped_wsi_ids": feat_skipped[:20]}
+                                )
+                except httpx.HTTPStatusError as e:
+                    body = e.response.text if e.response is not None else str(e)
+                    async with logger_manager.session() as (tl, _db):
+                        await tl.error(f"Feature extraction failed: {e}", metadata={"body": body})
+                    raise
+                except httpx.TimeoutException as e:
+                    async with logger_manager.session() as (tl, _db):
+                        await tl.error(f"Feature extraction timeout: {e}")
+                    raise
+
                 async with logger_manager.session() as (tl, _db):
-                    await tl.error(f"Feature extraction timeout: {e}")
-                raise
+                    await tl.info(f"Feature extraction completed for {len(coords_success_wsi_ids)} WSIs")
 
-            async with logger_manager.session() as (tl, _db):
-                await tl.info(f"Feature extraction completed for {total_missing} WSIs")
+                await update_task_progress(TaskStatus.EXTRACTING, 33)
+                await set_progress(task_id, 33)
 
-            # After extraction, symlink newly created features
-            def _symlink_newly_extracted():
-                for wsi_id in missing_wsi_ids:
-                    cached_path = find_cached_features(uploads_dir, feature_extractor, params_hash, wsi_id)
-                    if cached_path is not None:
+                # Step 2c: Validate extracted features and symlink to task directory
+                from backend.ai.tasks.feature_cache import safe_load_features
+
+                def _validate_and_symlink_features():
+                    valid_wsi_ids = []
+                    invalid_wsi_ids = []
+                    for wsi_id in coords_success_wsi_ids:
+                        cached_path = find_cached_features(uploads_dir, feature_extractor, params_hash, wsi_id)
+                        if cached_path is None:
+                            invalid_wsi_ids.append((wsi_id, "no cached features found"))
+                            continue
+
+                        # Validate the feature file is not corrupted/empty
+                        feats, load_error = safe_load_features(cached_path, delete_if_corrupted=True)
+                        if feats is None:
+                            invalid_wsi_ids.append((wsi_id, f"corrupted: {load_error}"))
+                            continue
+
+                        if feats.shape[0] == 0:
+                            invalid_wsi_ids.append((wsi_id, "empty [0, feat_dim]"))
+                            continue
+
+                        if feats.shape[0] < MIN_PATCHES_THRESHOLD:
+                            invalid_wsi_ids.append((wsi_id, f"low patches ({feats.shape[0]} < {MIN_PATCHES_THRESHOLD})"))
+                            continue
+
+                        # Feature is valid - create symlink
                         create_symlink_to_cache(features_dir, wsi_id, cached_path)
+                        valid_wsi_ids.append(wsi_id)
 
-            await asyncio.to_thread(_symlink_newly_extracted)
+                    return valid_wsi_ids, invalid_wsi_ids
+
+                valid_wsi_ids, invalid_wsi_ids = await asyncio.to_thread(_validate_and_symlink_features)
+
+                # Update tracking for invalid features
+                for wsi_id, reason in invalid_wsi_ids:
+                    if wsi_id not in failed_wsi_ids:
+                        failed_wsi_ids.append(wsi_id)
+                        failed_reasons[wsi_id] = f"feature validation failed: {reason}"
+
+                if invalid_wsi_ids:
+                    async with logger_manager.session() as (tl, _db):
+                        await tl.warning(
+                            f"Feature validation: {len(invalid_wsi_ids)} WSIs have invalid features",
+                            metadata={
+                                "invalid_count": len(invalid_wsi_ids),
+                                "invalid_details": {w: r for w, r in invalid_wsi_ids[:20]},
+                            }
+                        )
+
+                # Move valid WSIs to cached list
+                for wsi_id in valid_wsi_ids:
+                    if wsi_id not in cached_wsi_ids:
+                        cached_wsi_ids.append(wsi_id)
+
+            # Log final fallback summary if any WSIs were skipped
+            if failed_wsi_ids:
+                async with logger_manager.session() as (tl, _db):
+                    await tl.warning(
+                        f"[Fallback Summary] {len(failed_wsi_ids)}/{len(wsi_ids)} WSIs skipped during extraction",
+                        metadata={
+                            "total_wsi": len(wsi_ids),
+                            "skipped_count": len(failed_wsi_ids),
+                            "skipped_wsi_ids": failed_wsi_ids[:50],
+                            "reasons": {k: v for k, v in list(failed_reasons.items())[:50]},
+                        }
+                    )
+        else:
+            # No missing WSIs - all features cached
+            await update_task_progress(TaskStatus.PATCHING, 35)
+            await set_progress(task_id, 35)
 
         # Update status back to PATCHING for inference phase
         await update_task_progress(TaskStatus.PATCHING, 35)
+        await set_progress(task_id, 35)
         async with logger_manager.session() as (tl, _db):
-            await tl.info(f"All features ready. Starting inference...")
+            valid_count = len(cached_wsi_ids)
+            await tl.info(f"Features ready for {valid_count}/{len(wsi_ids)} WSIs. Starting inference...")
 
         ai_results_root = uploads_dir / "ai_results"
 
