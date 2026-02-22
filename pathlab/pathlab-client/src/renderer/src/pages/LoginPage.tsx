@@ -218,7 +218,7 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
               </span>
               {t('loginPage.titleSuffix') ? <><br /></> : null}{t('loginPage.titleSuffix')}
             </h2>
-            <p className="text-slate-600 text-lg leading-relaxed max-w-lg">
+            <p className="text-slate-600 text-lg leading-relaxed max-w-lg break-keep">
               {t('loginPage.subtitle')}
             </p>
           </div>
