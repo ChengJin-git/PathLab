@@ -82,7 +82,7 @@ const getTypeLabel = (task: BackgroundTask, t: TFunction): string => {
       return t('backgroundTask.typeLabels.deleteTasks')
     case 'training':
       if (task.serverTaskStatus) {
-        return `${TRAINING_STATUS_LABELS[task.serverTaskStatus] || task.serverTaskStatus}`
+        return t(`backgroundTask.serverStatus.training.${task.serverTaskStatus}`, { defaultValue: TRAINING_STATUS_LABELS[task.serverTaskStatus] || task.serverTaskStatus })
       }
       return t('backgroundTask.typeLabels.training')
     case 'external_validation':
@@ -90,7 +90,7 @@ const getTypeLabel = (task: BackgroundTask, t: TFunction): string => {
         return t('backgroundTask.typeLabels.analyzingResults')
       }
       if (task.serverTaskStatus) {
-        return `${VALIDATION_STATUS_LABELS[task.serverTaskStatus] || task.serverTaskStatus}`
+        return t(`backgroundTask.serverStatus.validation.${task.serverTaskStatus}`, { defaultValue: VALIDATION_STATUS_LABELS[task.serverTaskStatus] || task.serverTaskStatus })
       }
       return t('backgroundTask.typeLabels.externalValidation')
     case 'analysis':

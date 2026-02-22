@@ -2348,6 +2348,32 @@
       "import": "Import",
       "metadata": "Metadata"
     },
+    "serverStatus": {
+      "training": {
+        "queued": "Queued",
+        "pending": "Queued",
+        "preprocessing": "Preprocessing",
+        "extracting": "Extracting Features",
+        "training": "Training Model",
+        "running": "Running",
+        "resuming": "Resuming",
+        "completed": "Completed",
+        "failed": "Failed",
+        "cancelled": "Cancelled"
+      },
+      "validation": {
+        "queued": "Queued",
+        "pending": "Queued",
+        "preprocessing": "Preprocessing",
+        "extracting": "Extracting Features",
+        "training": "Running Inference",
+        "running": "Running Inference",
+        "resuming": "Resuming",
+        "completed": "Completed",
+        "failed": "Failed",
+        "cancelled": "Cancelled"
+      }
+    },
     "statusSummary": {
       "running": "running",
       "queued": "queued",
