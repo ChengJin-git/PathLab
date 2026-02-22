@@ -141,10 +141,8 @@ const TaskCard: React.FC<{
     const typeLabel = getTypeLabel(task, t)
 
     const getProgressBarColor = () => {
-      if (task.type === 'training') {
+      if (task.type === 'training' && task.serverTaskStatus) {
         switch (task.serverTaskStatus) {
-          case 'preprocessing':
-            return 'bg-yellow-500'
           case 'extracting':
             return 'bg-orange-500'
           case 'training':

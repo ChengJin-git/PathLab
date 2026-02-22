@@ -210,8 +210,8 @@ export function TaskResultStep({
                     stepNumber={1}
                     title={t('training.taskResult.patching')}
                     description={t('training.taskResult.patchingDesc')}
-                    isActive={['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued')}
-                    isCompleted={!['queued', 'initializing', 'preprocessing'].includes(polledTask?.status || 'queued') && polledTask?.status !== 'failed'}
+                    isActive={['queued', 'patching'].includes(polledTask?.status || 'queued')}
+                    isCompleted={!['queued', 'patching'].includes(polledTask?.status || 'queued') && polledTask?.status !== 'failed'}
                     isFailed={false}
                   />
                 )}

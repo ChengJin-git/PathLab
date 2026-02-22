@@ -55,9 +55,8 @@ function getStatusDisplay(status: string, t: TFunction) {
   switch (status) {
     case 'completed':
       return { icon: <CheckCircle2 className="w-4 h-4" />, color: 'text-green-600 bg-green-50', label: t('chatComponents.taskHistory.statusCompleted') }
-    case 'running':
+    case 'patching':
     case 'training':
-    case 'preprocessing':
     case 'extracting':
       return { icon: <PlayCircle className="w-4 h-4" />, color: 'text-blue-600 bg-blue-50', label: t('chatComponents.taskHistory.statusRunning') }
     case 'pending':
@@ -159,7 +158,7 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
       try {
         const allTasks = await getTrainingTasks()
 
-        const inProgressStatuses = ['running', 'training', 'pending', 'queued', 'preprocessing', 'extracting']
+        const inProgressStatuses = ['patching', 'training', 'pending', 'queued', 'extracting']
 
         const filteredTasks = allTasks.filter(task => {
           let statusMatch = false
@@ -205,7 +204,7 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
     setError('')
     try {
       const allTasks = await getTrainingTasks()
-      const inProgressStatuses = ['running', 'training', 'pending', 'queued', 'preprocessing', 'extracting']
+      const inProgressStatuses = ['patching', 'training', 'pending', 'queued', 'extracting']
       const filteredTasks = allTasks.filter(task => {
         let statusMatch = false
         if (task.status === 'completed' && showCompleted) statusMatch = true

@@ -342,7 +342,7 @@ export default function TaskDetailPage() {
                 {t('taskDetail.rerun')}
               </Button>
             )}
-            {['pending', 'running', 'preprocessing', 'extracting', 'training', 'resuming'].includes(task.status) && (
+            {['pending', 'queued', 'patching', 'extracting', 'training', 'resuming'].includes(task.status) && (
               <Button
                 variant="outline"
                 onClick={() => setShowCancelConfirm(true)}

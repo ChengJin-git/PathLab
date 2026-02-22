@@ -592,8 +592,8 @@ export default function TaskListPage() {
                         <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">
                           {task.task_type === 'external_validation'
                             ? (task.status === 'extracting' ? t('taskList.progress.extracting') :
-                              task.status === 'running' || task.status === 'training' ? t('taskList.progress.testing') : t('taskList.progress.progress'))
-                            : (task.status === 'running' ? t('taskList.progress.patching') :
+                              task.status === 'patching' || task.status === 'training' ? t('taskList.progress.testing') : t('taskList.progress.progress'))
+                            : (task.status === 'patching' ? t('taskList.progress.patching') :
                               task.status === 'extracting' ? t('taskList.progress.extracting') :
                                 task.status === 'training' ? t('taskList.progress.training') : t('taskList.progress.progress'))}
                         </span>
@@ -640,7 +640,7 @@ export default function TaskListPage() {
                     )}
 
                     {/* Cancel button - only for running/pending tasks */}
-                    {['pending', 'running', 'preprocessing', 'extracting', 'training'].includes(task.status) && (
+                    {['pending', 'queued', 'patching', 'extracting', 'training'].includes(task.status) && (
                       <button
                         onClick={(e) => handleCancelTask(task.task_id, e)}
                         disabled={cancellingTaskId === task.task_id}
