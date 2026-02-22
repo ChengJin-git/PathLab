@@ -137,13 +137,6 @@ const TaskCard: React.FC<{
 
     const typeLabel = getTypeLabel(task, t)
 
-    // Preprocessing is actively running (patching WSIs) — show spinner even though
-    // mapTrainingStatus maps it to 'pending' for counting purposes.
-    const effectiveIconStatus: TaskStatus =
-      (task.status === 'pending' && task.serverTaskStatus === 'preprocessing')
-        ? 'running'
-        : task.status
-
     const getProgressBarColor = () => {
       if (task.type === 'training') {
         switch (task.serverTaskStatus) {
@@ -170,7 +163,7 @@ const TaskCard: React.FC<{
           onClick={() => setExpanded(!expanded)}
         >
           <div className={cn(expanded ? "mt-1" : "flex-shrink-0")}>
-            <StatusIcon status={effectiveIconStatus} />
+            <StatusIcon status={task.status} />
           </div>
           <div className="flex-1 min-w-0">
             {expanded ? (
