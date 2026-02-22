@@ -1042,7 +1042,7 @@
     "chat": "聊天",
     "back": "返回",
     "welcomeTitle": "你好，我是 PathLab 智能助手",
-    "welcomeDescription": "您的病理學研究 AI 助手。我可以幫助您訓練模型、運行推理和分析全切片圖像。",
+    "welcomeDescription": "您的病理學研究 AI 助手。我可以幫助您訓練模型、運行推理和分析病理圖像。",
     "attachmentAlt": "附件 {{index}}",
     "thinking": "思考中...",
     "goodResponse": "回答有幫助",
@@ -1077,7 +1077,7 @@
       },
       "browseImages": {
         "title": "瀏覽圖像",
-        "description": "瀏覽和分析全切片圖像或圖塊",
+        "description": "瀏覽和分析病理圖像",
         "prompt": "我想瀏覽和分析一些病理圖像，你能幫我根據需求找到合適的圖像嗎？"
       }
     }
