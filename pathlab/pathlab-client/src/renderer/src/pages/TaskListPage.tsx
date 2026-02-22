@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName } from '../api'
 import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles, User, Edit2 } from 'lucide-react'
-import { TASK_LIST_STATUS_BADGES, isActiveStatus } from '../constants/status'
+import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES, ANALYSIS_CANCELLABLE_STATUSES, CancellableStatus } from '../constants/status'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -229,7 +229,8 @@ export default function TaskListPage() {
     // so the badge label stays consistent with the progress label beneath it.
     let label: string
     if (taskType === 'external_validation') {
-      if (status === 'patching') label = t('taskList.progress.patching')
+      // For validation tasks, 'training' status means "Running Inference"
+      if (status === 'patching') label = t('taskList.progress.patching') 
       else if (status === 'extracting') label = t('taskList.progress.extracting')
       else if (status === 'training') label = t('taskList.progress.testing')
       else label = t(`backgroundTask.serverStatus.validation.${status}`, { defaultValue: badge.label })
@@ -642,7 +643,12 @@ export default function TaskListPage() {
                     )}
 
                     {/* Cancel button - only for running/pending tasks */}
-                    {['pending', 'queued', 'patching', 'extracting', 'training'].includes(task.status) && (
+                    {(() => {
+                      const taskType = task.task_type === 'external_validation' ? 'validation' : 'analysis'
+                      const cancellableStatuses = 
+                        taskType === 'validation' ? VALIDATION_CANCELLABLE_STATUSES :
+                        ANALYSIS_CANCELLABLE_STATUSES
+                      return cancellableStatuses.includes(task.status as CancellableStatus) && (
                       <button
                         onClick={(e) => handleCancelTask(task.task_id, e)}
                         disabled={cancellingTaskId === task.task_id}
@@ -655,7 +661,7 @@ export default function TaskListPage() {
                           <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                         )}
                       </button>
-                    )}
+                    )})()}
 
                     <button
                       onClick={(e) => handleDeleteTask(task.task_id, e)}

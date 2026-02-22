@@ -130,3 +130,65 @@ export function isActiveStatus(status: string): boolean {
   return status === 'patching' || status === 'extracting' || status === 'training' || status === 'resuming'
 }
 
+// ============================================================================
+// Cancellable Status Constants (for UI validation)
+// ============================================================================
+
+/**
+ * Statuses that can be cancelled for training tasks.
+ */
+export const TRAINING_CANCELLABLE_STATUSES = [
+  'pending',
+  'queued',
+  'patching',
+  'extracting',
+  'training',
+  'resuming'
+] as const
+
+/**
+ * Statuses that can be cancelled for validation/inference tasks.
+ * Note: Uses 'training' status from backend but displays as 'Running Inference'.
+ */
+export const VALIDATION_CANCELLABLE_STATUSES = [
+  'pending',
+  'queued',
+  'patching',
+  'extracting',
+  'training',  // Backend returns 'training' but UI shows 'Running Inference'
+  'resuming'
+] as const
+
+/**
+ * Statuses that can be cancelled for analysis tasks.
+ */
+export const ANALYSIS_CANCELLABLE_STATUSES = [
+  'pending',
+  'queued',
+  'patching',
+  'extracting',
+  'training',
+  'resuming'
+] as const
+
+/**
+ * Type for cancellable status arrays.
+ */
+export type CancellableStatus = typeof TRAINING_CANCELLABLE_STATUSES[number]
+
+/**
+ * Check if a status is cancellable based on task type.
+ */
+export function isCancellableStatus(status: string, taskType: 'training' | 'validation' | 'analysis'): boolean {
+  switch (taskType) {
+    case 'training':
+      return TRAINING_CANCELLABLE_STATUSES.includes(status as CancellableStatus)
+    case 'validation':
+      return VALIDATION_CANCELLABLE_STATUSES.includes(status as CancellableStatus)
+    case 'analysis':
+      return ANALYSIS_CANCELLABLE_STATUSES.includes(status as CancellableStatus)
+    default:
+      return false
+  }
+}
+

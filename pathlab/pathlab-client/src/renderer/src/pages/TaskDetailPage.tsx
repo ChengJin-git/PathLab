@@ -6,7 +6,7 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
 import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask } from '../api'
-import { TASK_DETAIL_STATUS_BADGES, isActiveStatus } from '../constants/status'
+import { TASK_DETAIL_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES, ANALYSIS_CANCELLABLE_STATUSES, CancellableStatus } from '../constants/status'
 import { useAuth } from '../contexts/AuthContext'
 import { TaskDetail, LogEntry } from '../components/taskDetail/types'
 import { parseTaskError } from '../components/taskDetail/parseTaskError'
@@ -343,8 +343,13 @@ export default function TaskDetailPage() {
                 {t('taskDetail.rerun')}
               </Button>
             )}
-            {['pending', 'queued', 'patching', 'extracting', 'training', 'resuming'].includes(task.status) && (
-              <Button
+            {(() => {
+              const taskType = isExternalValidation ? 'validation' : 'analysis'
+              const cancellableStatuses = 
+                taskType === 'validation' ? VALIDATION_CANCELLABLE_STATUSES :
+                ANALYSIS_CANCELLABLE_STATUSES
+              return cancellableStatuses.includes(task.status as CancellableStatus) && (
+                <Button
                 variant="outline"
                 onClick={() => setShowCancelConfirm(true)}
                 disabled={cancelling}
@@ -357,7 +362,7 @@ export default function TaskDetailPage() {
                 )}
                 {t('common.cancel')}
               </Button>
-            )}
+            )})()}
           </div>
         </div>
         {rerunError && (
