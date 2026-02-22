@@ -1253,7 +1253,39 @@
     "deleteConfirmMessage": "確定要刪除此分析嗎？此操作無法撤銷。",
     "cancel": "取消",
     "deleting": "正在刪除...",
-    "delete": "刪除"
+    "delete": "刪除",
+    "metricLabels": {
+      "accuracy": "準確率",
+      "precision": "精確率",
+      "sensitivity": "敏感性",
+      "specificity": "特異性",
+      "f1": "F1 分數",
+      "auc": "AUC",
+      "c_index": "C-Index",
+      "ibs": "IBS"
+    },
+    "metricDescriptions": {
+      "accuracy": "整體預測準確率",
+      "precision": "陽性預測值",
+      "sensitivity": "真陽性率",
+      "specificity": "真陰性率",
+      "f1": "精確率與召回率的調和平均數",
+      "auc": "ROC 曲線下面積",
+      "c_index": "存活預測的一致性指數",
+      "ibs": "整合 Brier 分數（越低越好）"
+    },
+    "chartLabels": {
+      "confusion_matrix": "混淆矩陣",
+      "roc_curve": "ROC 曲線",
+      "loss_curve": "損失曲線",
+      "km_curve": "KM 曲線"
+    },
+    "chartDescriptions": {
+      "confusion_matrix": "預測值與真實值矩陣",
+      "roc_curve": "受試者工作特徵曲線",
+      "loss_curve": "各輪次訓練損失",
+      "km_curve": "Kaplan-Meier 存活曲線"
+    }
   },
   "listPage": {
     "title": "資料庫",

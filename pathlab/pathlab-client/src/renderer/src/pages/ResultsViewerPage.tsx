@@ -893,7 +893,7 @@ export default function ResultsViewerPage() {
                             className="text-sm font-medium text-gray-900 group-hover:text-orange-600 cursor-pointer"
                             onClick={() => toggleMetric(metric.id)}
                           >
-                            {metric.label}
+                            {t(metric.labelKey, { defaultValue: metric.label })}
                           </span>
                           {/* 95% CI button — always available for external validation (no K-Fold concept) */}
                           {selectedMetrics.includes(metric.id) && (
@@ -915,7 +915,7 @@ export default function ResultsViewerPage() {
                             </button>
                           )}
                         </div>
-                        <p className="text-xs text-gray-500">{metric.description}</p>
+                        <p className="text-xs text-gray-500">{t(metric.descriptionKey, { defaultValue: metric.description })}</p>
                       </div>
                     </div>
                   ))}
@@ -945,9 +945,9 @@ export default function ResultsViewerPage() {
                       />
                       <div>
                         <span className="text-sm font-medium text-gray-900 group-hover:text-orange-600">
-                          {chart.label}
+                          {t(chart.labelKey, { defaultValue: chart.label })}
                         </span>
-                        <p className="text-xs text-gray-500">{chart.description}</p>
+                        <p className="text-xs text-gray-500">{t(chart.descriptionKey, { defaultValue: chart.description })}</p>
                       </div>
                     </label>
                   ))}
@@ -1336,7 +1336,7 @@ export default function ResultsViewerPage() {
                           className="text-sm font-medium text-gray-900 group-hover:text-indigo-600 cursor-pointer"
                           onClick={() => toggleMetric(metric.id)}
                         >
-                          {metric.label}
+                          {t(metric.labelKey, { defaultValue: metric.label })}
                         </span>
                         {/* 95% CI button only for non-K-Fold tasks (K-Fold uses mean ± std) */}
                         {selectedMetrics.includes(metric.id) && !selectedTask?.is_kfold && (
@@ -1358,7 +1358,7 @@ export default function ResultsViewerPage() {
                           </button>
                         )}
                       </div>
-                      <p className="text-xs text-gray-500">{metric.description}</p>
+                      <p className="text-xs text-gray-500">{t(metric.descriptionKey, { defaultValue: metric.description })}</p>
                     </div>
                   </div>
                 ))}
@@ -1389,9 +1389,9 @@ export default function ResultsViewerPage() {
                     />
                     <div>
                       <span className="text-sm font-medium text-gray-900 group-hover:text-indigo-600">
-                        {chart.label}
+                        {t(chart.labelKey, { defaultValue: chart.label })}
                       </span>
-                      <p className="text-xs text-gray-500">{chart.description}</p>
+                      <p className="text-xs text-gray-500">{t(chart.descriptionKey, { defaultValue: chart.description })}</p>
                     </div>
                   </label>
                 ))}

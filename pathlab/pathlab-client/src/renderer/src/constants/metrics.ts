@@ -13,26 +13,28 @@ export interface MetricDefinition {
   id: string
   label: string
   description: string
+  labelKey: string
+  descriptionKey: string
 }
 
 /**
  * Classification metrics available for model evaluation.
  */
 export const CLASSIFICATION_METRICS: readonly MetricDefinition[] = [
-  { id: 'accuracy', label: 'Accuracy', description: 'Overall prediction accuracy' },
-  { id: 'precision', label: 'Precision', description: 'Positive predictive value' },
-  { id: 'sensitivity', label: 'Sensitivity', description: 'True positive rate' },
-  { id: 'specificity', label: 'Specificity', description: 'True negative rate' },
-  { id: 'f1', label: 'F1 Score', description: 'Harmonic mean of precision and recall' },
-  { id: 'auc', label: 'AUC', description: 'Area under ROC curve' }
+  { id: 'accuracy', label: 'Accuracy', description: 'Overall prediction accuracy', labelKey: 'resultsPage.metricLabels.accuracy', descriptionKey: 'resultsPage.metricDescriptions.accuracy' },
+  { id: 'precision', label: 'Precision', description: 'Positive predictive value', labelKey: 'resultsPage.metricLabels.precision', descriptionKey: 'resultsPage.metricDescriptions.precision' },
+  { id: 'sensitivity', label: 'Sensitivity', description: 'True positive rate', labelKey: 'resultsPage.metricLabels.sensitivity', descriptionKey: 'resultsPage.metricDescriptions.sensitivity' },
+  { id: 'specificity', label: 'Specificity', description: 'True negative rate', labelKey: 'resultsPage.metricLabels.specificity', descriptionKey: 'resultsPage.metricDescriptions.specificity' },
+  { id: 'f1', label: 'F1 Score', description: 'Harmonic mean of precision and recall', labelKey: 'resultsPage.metricLabels.f1', descriptionKey: 'resultsPage.metricDescriptions.f1' },
+  { id: 'auc', label: 'AUC', description: 'Area under ROC curve', labelKey: 'resultsPage.metricLabels.auc', descriptionKey: 'resultsPage.metricDescriptions.auc' }
 ] as const
 
 /**
  * Survival analysis metrics.
  */
 export const SURVIVAL_METRICS: readonly MetricDefinition[] = [
-  { id: 'c_index', label: 'C-Index', description: 'Concordance index for survival prediction' },
-  { id: 'integrated_brier_score', label: 'IBS', description: 'Integrated Brier Score (lower is better)' }
+  { id: 'c_index', label: 'C-Index', description: 'Concordance index for survival prediction', labelKey: 'resultsPage.metricLabels.c_index', descriptionKey: 'resultsPage.metricDescriptions.c_index' },
+  { id: 'integrated_brier_score', label: 'IBS', description: 'Integrated Brier Score (lower is better)', labelKey: 'resultsPage.metricLabels.ibs', descriptionKey: 'resultsPage.metricDescriptions.ibs' }
 ] as const
 
 // ============================================================================
@@ -43,35 +45,37 @@ export interface ChartDefinition {
   id: string
   label: string
   description: string
+  labelKey: string
+  descriptionKey: string
 }
 
 /**
  * Charts available for classification tasks.
  */
 export const CLASSIFICATION_CHARTS: readonly ChartDefinition[] = [
-  { id: 'confusion_matrix', label: 'Confusion Matrix', description: 'Prediction vs ground truth matrix' },
-  { id: 'roc_curve', label: 'ROC Curve', description: 'Receiver operating characteristic curve' },
-  { id: 'loss_curve', label: 'Loss Curve', description: 'Training loss over epochs' }
+  { id: 'confusion_matrix', label: 'Confusion Matrix', description: 'Prediction vs ground truth matrix', labelKey: 'resultsPage.chartLabels.confusion_matrix', descriptionKey: 'resultsPage.chartDescriptions.confusion_matrix' },
+  { id: 'roc_curve', label: 'ROC Curve', description: 'Receiver operating characteristic curve', labelKey: 'resultsPage.chartLabels.roc_curve', descriptionKey: 'resultsPage.chartDescriptions.roc_curve' },
+  { id: 'loss_curve', label: 'Loss Curve', description: 'Training loss over epochs', labelKey: 'resultsPage.chartLabels.loss_curve', descriptionKey: 'resultsPage.chartDescriptions.loss_curve' }
 ] as const
 
 /**
  * Charts available for survival analysis tasks.
  */
 export const SURVIVAL_CHARTS: readonly ChartDefinition[] = [
-  { id: 'km_curve', label: 'KM Curve', description: 'Kaplan-Meier survival curve' },
-  { id: 'loss_curve', label: 'Loss Curve', description: 'Training loss over epochs' }
+  { id: 'km_curve', label: 'KM Curve', description: 'Kaplan-Meier survival curve', labelKey: 'resultsPage.chartLabels.km_curve', descriptionKey: 'resultsPage.chartDescriptions.km_curve' },
+  { id: 'loss_curve', label: 'Loss Curve', description: 'Training loss over epochs', labelKey: 'resultsPage.chartLabels.loss_curve', descriptionKey: 'resultsPage.chartDescriptions.loss_curve' }
 ] as const
 
 /**
  * Charts for external validation (no training, so no loss curve).
  */
 export const EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS: readonly ChartDefinition[] = [
-  { id: 'confusion_matrix', label: 'Confusion Matrix', description: 'Prediction vs ground truth matrix' },
-  { id: 'roc_curve', label: 'ROC Curve', description: 'Receiver operating characteristic curve' }
+  { id: 'confusion_matrix', label: 'Confusion Matrix', description: 'Prediction vs ground truth matrix', labelKey: 'resultsPage.chartLabels.confusion_matrix', descriptionKey: 'resultsPage.chartDescriptions.confusion_matrix' },
+  { id: 'roc_curve', label: 'ROC Curve', description: 'Receiver operating characteristic curve', labelKey: 'resultsPage.chartLabels.roc_curve', descriptionKey: 'resultsPage.chartDescriptions.roc_curve' }
 ] as const
 
 export const EXTERNAL_VALIDATION_SURVIVAL_CHARTS: readonly ChartDefinition[] = [
-  { id: 'km_curve', label: 'KM Curve', description: 'Kaplan-Meier survival curve' }
+  { id: 'km_curve', label: 'KM Curve', description: 'Kaplan-Meier survival curve', labelKey: 'resultsPage.chartLabels.km_curve', descriptionKey: 'resultsPage.chartDescriptions.km_curve' }
 ] as const
 
 // ============================================================================

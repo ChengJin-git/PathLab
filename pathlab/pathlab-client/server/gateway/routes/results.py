@@ -673,7 +673,8 @@ def _split_case_attention_to_slides_static(
 
 
 async def _run_inference_if_needed(
-    task, db: AsyncSession, progress_callback: Optional[Callable[[float], Any]] = None
+    task, db: AsyncSession, progress_callback: Optional[Callable[[float], Any]] = None,
+    assigned_device: Optional[str] = None,
 ) -> bool:
     """
     Check if AI results are missing and run GPU inference if needed.
@@ -721,12 +722,12 @@ async def _run_inference_if_needed(
 
     # Route to appropriate inference handler based on data_type and task_type
     if data_type == "patch":
-        await _run_inference_patch_classification(task, wsi_ids, resources, db, progress_callback)
+        await _run_inference_patch_classification(task, wsi_ids, resources, db, progress_callback, assigned_device=assigned_device)
     elif task_type in ("wsi_survival", "survival"):
-        await _run_inference_wsi_survival(task, wsi_ids, resources, db, progress_callback)
+        await _run_inference_wsi_survival(task, wsi_ids, resources, db, progress_callback, assigned_device=assigned_device)
     else:
         # Default: WSI classification
-        await _run_inference_wsi_classification(task, wsi_ids, resources, db, progress_callback)
+        await _run_inference_wsi_classification(task, wsi_ids, resources, db, progress_callback, assigned_device=assigned_device)
 
     logger.info(f"GPU inference completed for task {task_id}")
     if progress_callback:
@@ -736,7 +737,8 @@ async def _run_inference_if_needed(
 
 async def _run_inference_wsi_classification(
     task, wsi_ids: List[str], resources: dict, db: AsyncSession,
-    progress_callback: Optional[Callable[[float], Any]] = None
+    progress_callback: Optional[Callable[[float], Any]] = None,
+    assigned_device: Optional[str] = None,
 ):
     """
     Run GPU inference to generate AI results for WSI classification task.
@@ -813,7 +815,7 @@ async def _run_inference_wsi_classification(
         raise HTTPException(status_code=400, detail="Could not find any feature files")
 
     # Load model checkpoint
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = assigned_device if assigned_device else ("cuda" if torch.cuda.is_available() else "cpu")
     checkpoint = torch.load(ckpt_path, map_location=device)
 
     # Get aggregator
@@ -1080,7 +1082,8 @@ async def _run_inference_wsi_classification(
 
 async def _run_inference_patch_classification(
     task, wsi_ids: List[str], resources: dict, db: AsyncSession,
-    progress_callback: Optional[Callable[[float], Any]] = None
+    progress_callback: Optional[Callable[[float], Any]] = None,
+    assigned_device: Optional[str] = None,
 ):
     """
     Run GPU inference to generate AI results for patch classification task.
@@ -1144,7 +1147,7 @@ async def _run_inference_patch_classification(
         raise HTTPException(status_code=400, detail="No image paths found")
 
     # Load checkpoint
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = assigned_device if assigned_device else ("cuda" if torch.cuda.is_available() else "cpu")
     checkpoint = torch.load(ckpt_path, map_location=device)
 
     extractor_name = checkpoint.get("extractor_name", config.get("extractor", "resnet50"))
@@ -1284,7 +1287,8 @@ async def _run_inference_patch_classification(
 
 async def _run_inference_wsi_survival(
     task, wsi_ids: List[str], resources: dict, db: AsyncSession,
-    progress_callback: Optional[Callable[[float], Any]] = None
+    progress_callback: Optional[Callable[[float], Any]] = None,
+    assigned_device: Optional[str] = None,
 ):
     """
     Run GPU inference to generate AI results for WSI survival prediction task.
@@ -1357,7 +1361,7 @@ async def _run_inference_wsi_survival(
             statuses_map[wsi_id] = 0
 
     # Load model checkpoint
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = assigned_device if assigned_device else ("cuda" if torch.cuda.is_available() else "cpu")
     checkpoint = torch.load(ckpt_path, map_location=device)
 
     # Get bin_edges from checkpoint (required for survival)
@@ -4271,6 +4275,7 @@ async def run_analysis_pipeline(
     description: Optional[str] = None,
     bootstrap_ci_metrics: Optional[List[str]] = None,
     submitted_by: Optional[str] = None,
+    assigned_device: Optional[str] = None,
 ):
     """
     Async pipeline for running analysis in background.
@@ -4373,7 +4378,7 @@ async def run_analysis_pipeline(
                     progress = int(fraction * inference_end)
                     await state.update(analysis_id, progress=progress)
 
-                await _run_inference_if_needed(task, db, progress_callback=inference_progress)
+                await _run_inference_if_needed(task, db, progress_callback=inference_progress, assigned_device=assigned_device)
                 await state.update(analysis_id, progress=inference_end)
 
             # Create analysis request
