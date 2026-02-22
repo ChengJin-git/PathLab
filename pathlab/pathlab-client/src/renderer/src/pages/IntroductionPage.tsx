@@ -86,7 +86,7 @@ function HeroSection() {
           </h1>
         </FadeInSection>
         <FadeInSection delay={0.2}>
-          <p className="text-slate-600 text-base sm:text-lg md:text-xl leading-relaxed max-w-2xl mx-auto mb-8 sm:mb-10 px-4">
+          <p className="text-slate-600 text-base sm:text-lg md:text-xl leading-relaxed max-w-3xl mx-auto mb-8 sm:mb-10 px-4 break-keep">
             {t('introduction.heroSubtitle')}
           </p>
         </FadeInSection>

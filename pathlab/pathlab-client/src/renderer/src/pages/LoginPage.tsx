@@ -212,10 +212,11 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
               <span>{t('loginPage.agenticAI')}</span>
             </div>
             <h2 className="text-4xl xl:text-5xl font-bold text-slate-900 mb-6 leading-tight">
-              {t('loginPage.title')} <br />
+              {t('loginPage.title')}{t('loginPage.title') ? <><br /></> : null}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500">
                 {t('loginPage.reimagined')}
               </span>
+              {t('loginPage.titleSuffix') ? <><br /></> : null}{t('loginPage.titleSuffix')}
             </h2>
             <p className="text-slate-600 text-lg leading-relaxed max-w-lg">
               {t('loginPage.subtitle')}
