@@ -222,12 +222,26 @@ export default function TaskListPage() {
     }
   }
 
-  const getStatusBadge = (status: Task['status']) => {
+  const getStatusBadge = (status: Task['status'], taskType?: string) => {
     const badge = TASK_LIST_STATUS_BADGES[status] ?? TASK_LIST_STATUS_BADGES.pending
+
+    // Use the same taskList.progress keys that the progress section uses for active statuses,
+    // so the badge label stays consistent with the progress label beneath it.
+    let label: string
+    if (taskType === 'external_validation') {
+      if (status === 'extracting') label = t('taskList.progress.extracting')
+      else if (status === 'running' || status === 'training') label = t('taskList.progress.testing')
+      else label = t(`backgroundTask.serverStatus.validation.${status}`, { defaultValue: badge.label })
+    } else {
+      if (status === 'running') label = t('taskList.progress.patching')
+      else if (status === 'extracting') label = t('taskList.progress.extracting')
+      else if (status === 'training') label = t('taskList.progress.training')
+      else label = t(`backgroundTask.serverStatus.training.${status}`, { defaultValue: badge.label })
+    }
 
     // Determine icon based on status
     const getIcon = () => {
-      if (status === 'pending') return <Clock className="w-3.5 h-3.5 mr-1" />
+      if (status === 'pending' || status === 'queued') return <Clock className="w-3.5 h-3.5 mr-1" />
       if (isActiveStatus(status)) return <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
       if (status === 'completed') return <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
       return <XCircle className="w-3.5 h-3.5 mr-1" />
@@ -236,7 +250,7 @@ export default function TaskListPage() {
     return (
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${badge.color}`}>
         {getIcon()}
-        {badge.label}
+        {label}
       </span>
     )
   }
@@ -485,7 +499,7 @@ export default function TaskListPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="text-sm sm:text-base font-bold text-gray-900 truncate max-w-[200px] sm:max-w-none" title={task.task_name}>{task.task_name}</h3>
                       <div className="sm:scale-90 origin-left">
-                        {getStatusBadge(task.status)}
+                        {getStatusBadge(task.status, task.task_type)}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 text-[10px] sm:text-xs text-gray-400 group/id">

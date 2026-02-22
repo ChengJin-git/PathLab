@@ -2355,7 +2355,7 @@
         "preprocessing": "Preprocessing",
         "extracting": "Extracting Features",
         "training": "Training Model",
-        "running": "Running",
+        "running": "Patching Images",
         "resuming": "Resuming",
         "completed": "Completed",
         "failed": "Failed",

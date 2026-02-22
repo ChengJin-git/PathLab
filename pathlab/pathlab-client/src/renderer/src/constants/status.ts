@@ -88,6 +88,8 @@ export const TASK_DETAIL_STATUS_BADGES: Record<string, StatusBadgeConfig> = {
  */
 export const TASK_LIST_STATUS_BADGES: Record<string, { color: string; label: string }> = {
   pending: { color: 'bg-gray-100 text-gray-800', label: 'Pending' },
+  queued: { color: 'bg-gray-100 text-gray-800', label: 'Queued' },
+  preprocessing: { color: 'bg-blue-100 text-blue-800', label: 'Preprocessing' },
   resuming: { color: 'bg-yellow-100 text-yellow-800', label: 'Resuming' },
   running: { color: 'bg-blue-100 text-blue-800', label: 'Patching' },
   extracting: { color: 'bg-purple-100 text-purple-800', label: 'Extracting' },
