@@ -826,8 +826,8 @@
     "progressSection": {
       "executionProgress": "執行進度",
       "overallCompletion": "整體完成度",
-      "patchExtraction": "切片提取",
-      "featureExtraction": "特徵提取",
+      "patchExtraction": "圖像切片",
+      "featureExtraction": "特徵擷取",
       "modelTraining": "模型訓練",
       "runningInference": "推論中",
       "dataLoading": "資料載入"
