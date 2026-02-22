@@ -13,7 +13,7 @@ export interface NavigationConfig {
     csvContent?: string
     csvFileName?: string
   }
-  buttonText: string
+  buttonText?: string
   /** i18n key for buttonText — takes priority over buttonText when present */
   buttonTextKey?: string
   description?: string
@@ -45,8 +45,8 @@ export function parseNavigateBlock(content: string): NavigationConfig | null {
     const config = JSON.parse(jsonStr) as NavigationConfig
     
     // Validate required fields
-    if (!config.target || !config.buttonText) {
-      console.error('NavigationCard: Missing required fields (target, buttonText)')
+    if (!config.target || (!config.buttonText && !config.buttonTextKey)) {
+      console.error('NavigationCard: Missing required fields (target, and one of buttonText/buttonTextKey)')
       return null
     }
     
