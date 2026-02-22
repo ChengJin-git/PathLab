@@ -97,11 +97,14 @@ const getTypeLabel = (task: BackgroundTask, t: TFunction): string => {
       const analysisTypeLabel = task.analysisType === 'external'
         ? t('backgroundTask.typeLabels.externalAnalysis')
         : t('backgroundTask.typeLabels.internalAnalysis')
+      if (task.serverTaskStatus === 'completed') {
+        return t('backgroundTask.serverStatus.training.completed', { defaultValue: ANALYSIS_STATUS_LABELS['completed'] || 'Completed' })
+      }
       if (task.serverTaskStatus === 'cancelled') {
-        return t('backgroundTask.serverStatus.training.cancelled', { defaultValue: TRAINING_STATUS_LABELS['cancelled'] || 'Cancelled' })
+        return t('backgroundTask.serverStatus.training.cancelled', { defaultValue: ANALYSIS_STATUS_LABELS['cancelled'] || 'Cancelled' })
       }
       if (task.serverTaskStatus === 'failed') {
-        return t('backgroundTask.serverStatus.training.failed', { defaultValue: TRAINING_STATUS_LABELS['failed'] || 'Failed' })
+        return t('backgroundTask.serverStatus.training.failed', { defaultValue: ANALYSIS_STATUS_LABELS['failed'] || 'Failed' })
       }
       return analysisTypeLabel
     }
