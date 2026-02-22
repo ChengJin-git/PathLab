@@ -636,7 +636,12 @@
     "types": {
       "wsi_classification": "全切片图像分类",
       "patch_classification": "普通图像分类",
-      "survival_prediction": "生存预测"
+      "survival_prediction": "生存预测",
+      "classification": "分类",
+      "survival": "生存预测",
+      "wsi_survival": "生存预测",
+      "external_validation": "外部验证",
+      "segmentation": "分割"
     }
   },
   "introduction": {

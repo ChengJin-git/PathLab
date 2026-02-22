@@ -510,7 +510,7 @@ export default function DashboardPage() {
                                              <p className="text-sm font-medium text-gray-900 truncate">{task.task_name || t('dashboard.untitledTask')}</p>
                                             <div className="flex items-center gap-2">
                                                 <Badge variant="outline" className="text-[10px] px-1 py-0 border-gray-200 text-gray-500 capitalize">
-                                                    {task.task_type?.replace(/_/g, ' ')}
+                                                    {task.task_type ? t(`task.types.${task.task_type}`, { defaultValue: task.task_type.replace(/_/g, ' ') }) : ''}
                                                 </Badge>
                                                 <span className="text-xs text-gray-400">{formatRelativeTime(task.created_at)}</span>
                                             </div>

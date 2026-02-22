@@ -636,7 +636,12 @@
     "types": {
       "wsi_classification": "WSI Classification",
       "patch_classification": "Patch Classification",
-      "survival_prediction": "Survival Prediction"
+      "survival_prediction": "Survival Prediction",
+      "classification": "Classification",
+      "survival": "Survival Prediction",
+      "wsi_survival": "Survival Prediction",
+      "external_validation": "External Validation",
+      "segmentation": "Segmentation"
     }
   },
   "introduction": {

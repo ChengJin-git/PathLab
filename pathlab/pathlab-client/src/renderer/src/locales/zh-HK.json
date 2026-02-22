@@ -636,7 +636,12 @@
     "types": {
       "wsi_classification": "WSI 分類",
       "patch_classification": "Patch 分類",
-      "survival_prediction": "存活預測"
+      "survival_prediction": "存活預測",
+      "classification": "分類",
+      "survival": "存活預測",
+      "wsi_survival": "存活預測",
+      "external_validation": "外部驗證",
+      "segmentation": "分割"
     }
   },
   "introduction": {
