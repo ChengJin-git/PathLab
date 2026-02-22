@@ -80,8 +80,9 @@ function HeroSection() {
         </FadeInSection>
         <FadeInSection delay={0.1}>
           <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold leading-[1.1] sm:leading-[1.08] tracking-tight mb-4 sm:mb-6 px-2">
-            {t('introduction.heroTitle1')}{' '}
+            {t('introduction.heroTitle1')}{t('introduction.heroTitle1') ? ' ' : ''}
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500">{t('introduction.heroTitle2')}</span>
+            {t('introduction.heroTitle3') ? ' ' : ''}{t('introduction.heroTitle3')}
           </h1>
         </FadeInSection>
         <FadeInSection delay={0.2}>

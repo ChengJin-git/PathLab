@@ -149,7 +149,7 @@ export default function Layout({ children }: LayoutProps) {
               )}
 
               {/* Language Switcher */}
-              <LanguageSwitcher />
+              <LanguageSwitcher variant="icon" />
 
               <div className="hidden sm:block h-6 w-px bg-gray-200 mx-1 sm:mx-2"></div>
 
