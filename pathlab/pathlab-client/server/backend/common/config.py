@@ -227,6 +227,8 @@ class Config:
             "openrouter_model": data.get("openrouter_model", "qwen/qwen3.5-plus-02-15"),
             "huggingface_token": data.get("huggingface_token", ""),
             "dashscope_api_key": data.get("dashscope_api_key", ""),
+            # Exa Search API key for web search functionality
+            "exa_api_key": data.get("exa_api_key", ""),
             # Local vLLM settings (OpenAI-compatible server for LLM)
             "local_vllm_enabled": data.get("local_vllm_enabled", False),
             "local_vllm_base_url": data.get("local_vllm_base_url", "http://127.0.0.1:8000/v1"),
@@ -252,6 +254,8 @@ class Config:
             "openrouter_model",
             "huggingface_token",
             "dashscope_api_key",
+            # Exa Search API key
+            "exa_api_key",
             # Local vLLM settings
             "local_vllm_enabled",
             "local_vllm_base_url",

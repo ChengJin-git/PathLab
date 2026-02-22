@@ -12,6 +12,8 @@ export interface GlobalSettings {
   openrouter_model: string
   huggingface_token: string
   dashscope_api_key: string
+  // Exa Search API key for web search functionality
+  exa_api_key: string
   // Local vLLM settings (OpenAI-compatible server for LLM)
   local_vllm_enabled: boolean
   local_vllm_base_url: string

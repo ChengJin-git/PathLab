@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Cloud, Server, Key, Info, CheckCircle, Mic } from 'lucide-react'
+import { Cloud, Server, Key, Info, CheckCircle, Mic, Search } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
