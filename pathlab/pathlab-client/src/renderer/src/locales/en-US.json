@@ -822,6 +822,15 @@
       "liveStream": "Live Stream",
       "connecting": "Connecting to task stream...",
       "error": "Error: "
+    },
+    "progressSection": {
+      "executionProgress": "Execution Progress",
+      "overallCompletion": "Overall Completion",
+      "patchExtraction": "Patch Extraction",
+      "featureExtraction": "Feature Extraction",
+      "modelTraining": "Model Training",
+      "runningInference": "Running Inference",
+      "dataLoading": "Data Loading"
     }
   },
   "storagePage": {

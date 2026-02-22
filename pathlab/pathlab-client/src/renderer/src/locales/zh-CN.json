@@ -822,6 +822,15 @@
       "liveStream": "任务流状态",
       "connecting": "正在连接任务流...",
       "error": "错误: "
+    },
+    "progressSection": {
+      "executionProgress": "执行进度",
+      "overallCompletion": "整体完成度",
+      "patchExtraction": "切片提取",
+      "featureExtraction": "特征提取",
+      "modelTraining": "模型训练",
+      "runningInference": "推论中",
+      "dataLoading": "数据加载"
     }
   },
   "storagePage": {

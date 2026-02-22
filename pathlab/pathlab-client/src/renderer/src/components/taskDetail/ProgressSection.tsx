@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { CheckCircle2, Circle, Loader2, XCircle, Activity } from 'lucide-react'
 import { Card } from '../ui/card'
 import { TaskDetail } from './types'
@@ -15,17 +16,19 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
   displayProgress,
   isPatchLevel,
   isExternalValidation
-}) => (
+}) => {
+  const { t } = useTranslation()
+  return (
   <Card className="p-4 sm:p-6 border-gray-100 shadow-sm overflow-hidden">
     <h3 className="text-sm sm:text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
       <Activity className="w-4 h-4 sm:w-5 sm:h-5 text-primary-600" />
-      Execution Progress
+      {t('taskDetail.progressSection.executionProgress')}
     </h3>
 
     {/* Overall Progress */}
     <div className="mb-6 bg-gray-50/50 p-3 sm:p-4 rounded-xl border border-gray-100">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs sm:text-sm font-bold text-gray-600 uppercase tracking-wide">Overall Completion</span>
+        <span className="text-xs sm:text-sm font-bold text-gray-600 uppercase tracking-wide">{t('taskDetail.progressSection.overallCompletion')}</span>
         <span className="text-sm sm:text-lg font-black text-primary-600">{displayProgress}%</span>
       </div>
       <div className="w-full bg-gray-200 rounded-full h-2 sm:h-3 overflow-hidden">
@@ -54,7 +57,7 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
                     (task.status === 'failed' && task.progress <= 35) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
                 </span>
                 <span className={(task.status === 'extracting' || task.status === 'patching' || task.status === 'training' || task.status === 'completed') ? 'text-gray-900' : 'text-gray-500'}>
-                  Feature Extraction
+                  {t('taskDetail.progressSection.featureExtraction')}
                 </span>
               </div>
             </div>
@@ -71,7 +74,7 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
                   (task.status === 'failed' && (isPatchLevel || task.progress > 35)) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
               </span>
               <span className={(task.status === 'completed' || task.status === 'patching' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
-                Running Inference
+                {t('taskDetail.progressSection.runningInference')}
               </span>
             </div>
           </div>
@@ -90,7 +93,7 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
                   (task.status === 'failed' && task.progress < 30) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
               </span>
               <span className={task.status !== 'pending' ? 'text-gray-900' : 'text-gray-500'}>
-                Patch Extraction
+                {t('taskDetail.progressSection.patchExtraction')}
               </span>
             </div>
             {task.patch_count && task.patch_count > 0 && (
@@ -110,7 +113,7 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
                   (task.status === 'failed' && task.progress >= 30 && task.progress < 70) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
               </span>
               <span className={(task.status === 'training' || task.status === 'completed' || task.status === 'extracting') ? 'text-gray-900' : 'text-gray-500'}>
-                Feature Extraction
+                {t('taskDetail.progressSection.featureExtraction')}
               </span>
             </div>
             {task.processed_patches && task.patch_count && (
@@ -125,7 +128,7 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
               <CheckCircle2 className="w-4 h-4" />
             </span>
             <span className="text-gray-900">
-              Data Loading
+              {t('taskDetail.progressSection.dataLoading')}
             </span>
           </div>
         </div>
@@ -145,7 +148,7 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
                 (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
             </span>
             <span className={(task.status === 'completed' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
-              Model Training
+              {t('taskDetail.progressSection.modelTraining')}
             </span>
           </div>
           {task.status === 'training' && task.current_epoch && (
@@ -155,5 +158,6 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
       )}
     </div>
   </Card>
-)
+  )
+}
 
