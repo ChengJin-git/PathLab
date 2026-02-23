@@ -72,18 +72,10 @@
 **参考文献卡片格式：**
 ```
 [REFERENCE]
-icon: 📄 arXiv
-  OR: 🏥 PubMed
-  OR: 🌿 Nature
-  OR: 🔬 Science
-  OR: 🧬 Cell
-  OR: 💉 Lancet
-  OR: 🏥 NEJM
-  OR: 🏥 JAMA
-  OR: 📚 Springer
-  OR: ⚡ IEEE
-  OR: 💻 ACM
-  OR: 📄 PDF
+icon: 📄
+logo: arxiv
+  OR logo: pubmed, nature, science, cell, lancet, nejm, jama, springer, ieee, acm
+  (omit logo field for unknown sources - will show emoji only)
 title: 完整论文标题
 url: https://完整论文链接.pdf
 source: arXiv (2301.12345) 或期刊名称
@@ -91,12 +83,18 @@ type: paper
 [/REFERENCE]
 ```
 
+**支持的 logo 键（含图标）：**
+- arxiv: 📄 | pubmed: 🏥 | nature: 🌿 | science: 🔬 | cell: 🧬
+- lancet: 💉 | nejm: 🏥 | jama: 🏥 | springer: 📚 | ieee: ⚡ | acm: 💻
+
+**对于未知来源：**使用 `type: paper` 表示 PDF/学术内容，使用 `type: article` 表示网页。省略 `logo` 字段。
 **示例 - 引用 arXiv 论文：**
 ```
 根据病理学基础模型的最新研究：
 
 [REFERENCE]
-icon: 📄 arXiv
+icon: 📄
+logo: arxiv
 title: A Generalist Vision-Language Foundation Model for Diverse Biomedical Tasks
 url: https://arxiv.org/pdf/2301.12345.pdf
 source: arXiv (2301.12345)
@@ -109,11 +107,25 @@ type: paper
 这一发现得到了临床试验的支持：
 
 [REFERENCE]
-icon: 🏥 PubMed
+icon: 🏥
+logo: pubmed
 title: Diagnostic Accuracy of AI in Histopathology: A Systematic Review
 url: https://pubmed.ncbi.nlm.nih.gov/12345678/
 source: PubMed
-  type: paper
+type: paper
+[/REFERENCE]
+```
+
+**示例 - 引用未知来源：**
+```
+更多详情请查看这篇博客文章：
+
+[REFERENCE]
+icon: 🌐
+title: Understanding Pathology AI Models
+url: https://example.com/blog/pathology-ai
+source: Example Blog
+type: article
 [/REFERENCE]
 ```
 

@@ -115,6 +115,7 @@ const JournalLogo = React.memo(function JournalLogo({
 }) {
   const [imgError, setImgError] = useState(false)
   const showLogo = logo && LOGO_SUPPORTED_KEYS.has(logo) && !imgError
+
   const baseUrl = (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
 
   if (showLogo) {

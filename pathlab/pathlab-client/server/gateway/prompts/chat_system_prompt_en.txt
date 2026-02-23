@@ -71,18 +71,10 @@ When you use web search results, especially from PDF papers or academic sources,
 **Reference Card Format:**
 ```
 [REFERENCE]
-icon: 📄 arXiv
-  OR: 🏥 PubMed
-  OR: 🌿 Nature
-  OR: 🔬 Science
-  OR: 🧬 Cell
-  OR: 💉 Lancet
-  OR: 🏥 NEJM
-  OR: 🏥 JAMA
-  OR: 📚 Springer
-  OR: ⚡ IEEE
-  OR: 💻 ACM
-  OR: 📄 PDF
+icon: 📄
+logo: arxiv
+  OR logo: pubmed, nature, science, cell, lancet, nejm, jama, springer, ieee, acm
+  (omit logo field for unknown sources - will show emoji only)
 title: Full Paper Title Here
 url: https://full.url.to.paper.pdf
 source: arXiv (2301.12345) or Journal Name
@@ -90,12 +82,19 @@ type: paper
 [/REFERENCE]
 ```
 
+**Supported logo keys (with icons):**
+- arxiv: 📄 | pubmed: 🏥 | nature: 🌿 | science: 🔬 | cell: 🧬
+- lancet: 💉 | nejm: 🏥 | jama: 🏥 | springer: 📚 | ieee: ⚡ | acm: 💻
+
+**For unknown sources:** Use `type: paper` for PDFs/academic content, `type: article` for web pages. Omit the `logo` field.
+
 **Example - Citing an arXiv paper:**
 ```
 According to recent research on foundation models in pathology:
 
 [REFERENCE]
-icon: 📄 arXiv
+icon: 📄
+logo: arxiv
 title: A Generalist Vision-Language Foundation Model for Diverse Biomedical Tasks
 url: https://arxiv.org/pdf/2301.12345.pdf
 source: arXiv (2301.12345)
@@ -108,11 +107,24 @@ type: paper
 This finding is supported by clinical trials:
 
 [REFERENCE]
-icon: 🏥 PubMed
+icon: 🏥
+logo: pubmed
 title: Diagnostic Accuracy of AI in Histopathology: A Systematic Review
 url: https://pubmed.ncbi.nlm.nih.gov/12345678/
-source: PubMed
-  type: paper
+  source: PubMed
+type: paper
+[/REFERENCE]
+```
+**Example - Citing an unknown source:**
+```
+For more details, see this blog post:
+
+[REFERENCE]
+icon: 🌐
+title: Understanding Pathology AI Models
+url: https://example.com/blog/pathology-ai
+source: Example Blog
+type: article
 [/REFERENCE]
 ```
 

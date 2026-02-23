@@ -528,7 +528,9 @@ After saving, return here and start chatting!"""
                 {"role": "user", "content": (
                     f"Here is the full content from the PDF papers that were being parsed in the background. "
                     f"Please supplement your previous response with specific details, page references (e.g. 'On Page 3, ...'), "
-                    f"and citations from these papers. Use [REFERENCE] blocks to cite sources. "
+                    f"and citations from these papers. "
+                    f"CRITICAL: The [REFERENCE] blocks in the context are already correctly formatted. "
+                    f"Copy them verbatim into your response - DO NOT modify their format or content. "
                     f"If any PDFs failed, briefly explain the issue to the user.\n\n{supplement_text}"
                 )}
             ]
