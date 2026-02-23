@@ -301,8 +301,6 @@ export const PdfParsingCompletedCard = React.memo(function PdfParsingCompletedCa
 }) {
   const { t } = useTranslation()
   const completedCount = items.filter(i => i.status === 'completed').length
-  const failedCount = items.length - completedCount
-  const cachedCount = items.filter(i => i.from_cache).length
 
   return (
     <motion.div
@@ -333,21 +331,9 @@ export const PdfParsingCompletedCard = React.memo(function PdfParsingCompletedCa
 
       {/* Completion info */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-green-700">
-            {t('settings.general.pdfParsedCount', { count: completedCount })}
-          </span>
-          {cachedCount > 0 && (
-            <span className="text-xs text-green-500">
-              ({t('settings.general.pdfFromCache', { count: cachedCount })})
-            </span>
-          )}
-        </div>
-        {failedCount > 0 && (
-          <p className="text-xs text-red-500/80 mt-0.5">
-            {t('settings.general.pdfParseFailed', { count: failedCount })}
-          </p>
-        )}
+        <span className="text-sm font-medium text-green-700">
+          {t('settings.general.pdfParsedCount', { count: completedCount })}
+        </span>
       </div>
     </motion.div>
   )

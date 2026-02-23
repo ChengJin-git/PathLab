@@ -493,6 +493,11 @@ After saving, return here and start chatting!"""
         successful_pdfs = [r for r in pdf_results if r.get("success")]
         failed_pdfs = [r for r in pdf_results if not r.get("success")]
 
+        # Log PDF processing summary
+        cached_count = sum(1 for r in successful_pdfs if r.get("from_cache"))
+        failed_count = len(failed_pdfs)
+        logger.info(f"PDF processing summary: {len(successful_pdfs)} successful ({cached_count} from cache), {failed_count} failed")
+
         if successful_pdfs or failed_pdfs:
             supplement_parts: list[str] = []
 
