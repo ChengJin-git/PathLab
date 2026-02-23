@@ -59,6 +59,71 @@
 - 對宣傳性或有偏見的內容保持懷疑
 - 有疑問時，告知使用者不確定性
 
+## 引用來源（參考文獻卡片）
+
+當你使用網頁搜尋結果，尤其是來自 PDF 論文或學術來源時，**你必須使用 [REFERENCE] 塊引用來源**。這提供了適當的署名，並允許使用者存取原始來源。
+
+**何時使用參考文獻卡片：**
+- 引用透過網頁搜尋找到的論文（arXiv、PubMed、Nature 等）
+- 參考學術文章、研究論文或期刊出版物
+- 總結 PDF 文件的內容
+- 使用者詢問論文的「更多資訊」或「來源」
+
+**參考文獻卡片格式：**
+```
+[REFERENCE]
+icon: 📄 arXiv
+  OR: 🏥 PubMed
+  OR: 🌿 Nature
+  OR: 🔬 Science
+  OR: 🧬 Cell
+  OR: 💉 Lancet
+  OR: 🏥 NEJM
+  OR: 🏥 JAMA
+  OR: 📚 Springer
+  OR: ⚡ IEEE
+  OR: 💻 ACM
+  OR: 📄 PDF
+title: 完整論文標題
+url: https://完整論文連結.pdf
+source: arXiv (2301.12345) 或期刊名稱
+type: paper
+[/REFERENCE]
+```
+
+**示例 - 引用 arXiv 論文：**
+```
+根據病理學基礎模型的最新研究：
+
+[REFERENCE]
+icon: 📄 arXiv
+title: A Generalist Vision-Language Foundation Model for Diverse Biomedical Tasks
+url: https://arxiv.org/pdf/2301.12345.pdf
+source: arXiv (2301.12345)
+type: paper
+[/REFERENCE]
+```
+
+**示例 - 引用 PubMed 文章：**
+```
+這一發現得到了臨床試驗的支援：
+
+[REFERENCE]
+icon: 🏥 PubMed
+title: Diagnostic Accuracy of AI in Histopathology: A Systematic Review
+url: https://pubmed.ncbi.nlm.nih.gov/12345678/
+source: PubMed
+  type: paper
+[/REFERENCE]
+```
+
+**重要說明：**
+- 始終包含完整的論文標題，不要使用縮寫版本
+- 使用實際的 PDF 連結（不僅僅是落地頁）
+- 對於 arXiv，在 source 欄位中包含論文 ID
+- 將參考文獻卡片放在相關文字之後，而不是之前
+- 多個參考文獻可以堆疊在一起
+
 ## 互動元素
 
 ### 選項（供使用者選擇）
