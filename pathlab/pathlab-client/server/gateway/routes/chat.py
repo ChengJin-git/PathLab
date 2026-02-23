@@ -553,10 +553,20 @@ After saving, return here and start chatting!"""
                 for sp in successful_pdfs:
                     supplement_parts.append(f"### {sp.get('title', 'Unknown')}")
                     supplement_parts.append(f"URL: {sp['url']}\n")
-                    # Include full content with page markers (truncated to 20k chars per PDF)
+                    # Include full content with page markers.
+                    # Head + tail strategy: 40 000 char budget (28k head + 12k tail).
+                    # This ensures both the beginning (abstract/intro/methods) and the
+                    # end (conclusions/author contributions/references) are always visible
+                    # to the AI, even for long papers (50+ pages).
+                    # Papers ≤ 40 000 chars (~20 pages) are included in full.
+                    _PDF_MAX_CHARS = 40000
+                    _PDF_HEAD_CHARS = 28000
+                    _PDF_TAIL_CHARS = 12000
                     content = sp.get("pdf_content") or sp.get("summary") or ""
-                    if len(content) > 20000:
-                        content = content[:20000] + "\n...[content truncated]"
+                    if len(content) > _PDF_MAX_CHARS:
+                        head = content[:_PDF_HEAD_CHARS]
+                        tail = content[-_PDF_TAIL_CHARS:]
+                        content = head + "\n\n...[middle pages omitted for length]...\n\n" + tail
                     supplement_parts.append(content)
                     # Include reference card
                     if sp.get("reference_card"):

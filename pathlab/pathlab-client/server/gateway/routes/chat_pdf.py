@@ -683,8 +683,13 @@ async def summarize_pdf_content(
     model: str,
     max_length: int = 3000
 ) -> str:
+    # Head + tail strategy: preserve both the beginning (abstract / intro) and the
+    # end of the document (conclusions / author contributions / references).
+    # 15 000 chars total budget: 10 000 head + 5 000 tail.
     if len(pdf_content) > 15000:
-        pdf_content = pdf_content[:15000] + "\n...[content truncated]"
+        head = pdf_content[:10000]
+        tail = pdf_content[-5000:]
+        pdf_content = head + "\n\n...[middle content omitted for length]...\n\n" + tail
     
     prompt = f"""Analyze this academic paper and provide a comprehensive summary.
 
@@ -861,7 +866,9 @@ async def process_pdf_url(
         else:
             # ── Two-tier parsing ──────────────────────────────────────────────
             # Tier 1: Fast pymupdf (CPU, <1 s).  Returns immediately.
-            pymupdf_result = _parse_pdf_with_pymupdf(pdf_bytes, max_pages=10)
+            # max_pages=0 means unlimited: PyMuPDF is pure text extraction and
+            # processes 50 pages just as fast as 10 pages (no OCR / GPU needed).
+            pymupdf_result = _parse_pdf_with_pymupdf(pdf_bytes, max_pages=0)
 
             if pymupdf_result is not None:
                 pdf_content = pymupdf_result
