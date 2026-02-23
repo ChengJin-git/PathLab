@@ -243,7 +243,7 @@ def _save_mineru_to_cache(url: str, markdown: str) -> None:
         logger.error(f"Error saving MinerU markdown to cache: {e}")
 
 
-async def _background_mineru_upgrade(url: str, pdf_bytes: bytes, max_pages: int = 10) -> None:
+async def _background_mineru_upgrade(url: str, pdf_bytes: bytes, max_pages: int = 0) -> None:
     """Background task: run MinerU on a PDF that was already served via pymupdf.
 
     Saves the high-precision result to {url_hash}.mineru.md so the *next* cache hit
@@ -252,6 +252,10 @@ async def _background_mineru_upgrade(url: str, pdf_bytes: bytes, max_pages: int 
     - No GPU with sufficient VRAM is available
     - The MinerU GPU lock cannot be acquired without blocking (another parse is
       already in progress — we just skip rather than queue indefinitely)
+
+    max_pages=0 means unlimited: this task runs in the background so there is no
+    UX penalty for parsing all pages.  MinerU's value (tables, formulas, layout)
+    is most visible in the later sections of a paper (results, conclusions, appendices).
     """
     if _has_mineru_cache(url):
         return  # already upgraded
@@ -878,7 +882,7 @@ async def process_pdf_url(
                 # request if no high-precision cache exists yet and GPU is free.
                 if use_cache and not _has_mineru_cache(url):
                     asyncio.create_task(
-                        _background_mineru_upgrade(url, pdf_bytes, max_pages=10)
+                        _background_mineru_upgrade(url, pdf_bytes)  # max_pages=0: unlimited in background
                     )
                     logger.info(f"[BG MinerU] Background upgrade scheduled for {url}")
             else:
