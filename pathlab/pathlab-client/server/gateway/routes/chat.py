@@ -552,8 +552,23 @@ After saving, return here and start chatting!"""
             if successful_pdfs:
                 supplement_parts.append("## PDF Paper Content (with page numbers):\n")
                 for sp in successful_pdfs:
-                    supplement_parts.append(f"### {sp.get('title', 'Unknown')}")
-                    supplement_parts.append(f"URL: {sp['url']}\n")
+                    # ── Compact metadata block ────────────────────────────────────
+                    # This block is emitted BEFORE the content so it is always
+                    # visible to the AI even after head-tail truncation.
+                    page_count = sp.get("page_count")
+                    parse_method = sp.get("parse_method", "pymupdf")
+                    quality_label = (
+                        "High-precision (MinerU — includes tables, formulas, images)"
+                        if parse_method == "mineru"
+                        else "Fast (PyMuPDF — text only, images not yet extracted)"
+                    )
+                    page_info = f"{page_count} pages" if page_count else "page count unknown"
+                    supplement_parts.append(
+                        f"### {sp.get('title', 'Unknown')}\n"
+                        f"- **URL**: {sp['url']}\n"
+                        f"- **Total pages**: {page_info}\n"
+                        f"- **Parse quality**: {quality_label}\n"
+                    )
                     # Include full content with page markers.
                     # Head + tail strategy: 40 000 char budget (28k head + 12k tail).
                     # This ensures both the beginning (abstract/intro/methods) and the

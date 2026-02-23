@@ -219,6 +219,38 @@ def _save_pdf_to_cache(url: str, pdf_bytes: bytes, title: str = "", markdown: st
         logger.error(f"Error saving PDF to cache: {e}")
 
 
+def _extract_page_count(markdown: str) -> int:
+    """Return the total page count from markdown with '--- Page X ---' markers.
+
+    Scans all '--- Page X ---' markers and returns the maximum X found, which
+    equals the total number of pages parsed.  Returns 0 if no markers are found.
+    """
+    page_nums = [int(m) for m in re.findall(r'--- Page (\d+) ---', markdown)]
+    return max(page_nums) if page_nums else 0
+
+
+def _update_meta_with_parse_info(url: str, page_count: int, parse_method: str) -> None:
+    """Update the cached JSON metadata with page_count and parse_method.
+
+    This is a best-effort update: failures are logged but never raised so that
+    the caller (cache-save path) is never disrupted.
+    """
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        meta_file = cache_dir / f"{url_hash}.json"
+        if not meta_file.exists():
+            return
+        with open(meta_file, 'r') as f:
+            meta = json.load(f)
+        meta['page_count'] = page_count
+        meta['parse_method'] = parse_method
+        with open(meta_file, 'w') as f:
+            json.dump(meta, f, indent=2)
+    except Exception as e:
+        logger.error(f"Error updating meta for {url}: {e}")
+
+
 def _save_markdown_to_cache(url: str, markdown: str) -> None:
     """Save pymupdf-parsed markdown to cache (fast tier)."""
     try:
@@ -226,7 +258,10 @@ def _save_markdown_to_cache(url: str, markdown: str) -> None:
         url_hash = _get_url_hash(url)
         md_file = cache_dir / f"{url_hash}.md"
         md_file.write_text(markdown, encoding='utf-8')
-        logger.info(f"Cached pymupdf markdown for {url}")
+        # Update JSON metadata with page count from this parse
+        page_count = _extract_page_count(markdown)
+        _update_meta_with_parse_info(url, page_count, 'pymupdf')
+        logger.info(f"Cached pymupdf markdown for {url} ({page_count} pages)")
     except Exception as e:
         logger.error(f"Error saving markdown to cache: {e}")
 
@@ -248,7 +283,10 @@ def _save_mineru_to_cache(url: str, markdown: str) -> None:
         url_hash = _get_url_hash(url)
         mineru_file = cache_dir / f"{url_hash}.mineru.md"
         mineru_file.write_text(markdown, encoding='utf-8')
-        logger.info(f"Cached MinerU high-precision markdown for {url}")
+        # MinerU supersedes pymupdf: update JSON meta with final page count
+        page_count = _extract_page_count(markdown)
+        _update_meta_with_parse_info(url, page_count, 'mineru')
+        logger.info(f"Cached MinerU high-precision markdown for {url} ({page_count} pages)")
     except Exception as e:
         logger.error(f"Error saving MinerU markdown to cache: {e}")
 
@@ -896,7 +934,7 @@ async def process_pdf_url(
 
     Returns a dict with keys:
         url, title, source_type, success, summary, pdf_content (full markdown with page markers),
-        error, error_detail, from_cache, reference_card
+        error, error_detail, from_cache, reference_card, page_count, parse_method
     """
     result: dict[str, Any] = {
         "url": url,
@@ -908,7 +946,9 @@ async def process_pdf_url(
         "error": None,
         "error_detail": None,  # Human-readable error explanation
         "from_cache": False,
-        "reference_card": None
+        "reference_card": None,
+        "page_count": None,    # Total pages parsed (int), filled after parsing
+        "parse_method": None,  # "pymupdf" or "mineru" — indicates quality tier
     }
 
     try:
@@ -921,6 +961,11 @@ async def process_pdf_url(
                 pdf_bytes, cache_meta, cached_markdown = cached
                 result["from_cache"] = True
                 result["title"] = cache_meta.get('title', title)
+                # Restore persisted metadata so callers always have it on cache hits
+                if cache_meta.get('page_count'):
+                    result["page_count"] = cache_meta['page_count']
+                if cache_meta.get('parse_method'):
+                    result["parse_method"] = cache_meta['parse_method']
                 logger.info(f"Using cached PDF for {url}" + (" (with cached markdown)" if cached_markdown else ""))
 
         if not pdf_bytes:
@@ -990,6 +1035,13 @@ async def process_pdf_url(
                 result["error"] = "parse_failed"
                 result["error_detail"] = f"PDF parsing failed for '{title}'. The file may be corrupted, scanned-only, or in an unsupported format."
             return result
+
+        # Extract page count from the raw content (before any appended status markers).
+        # _extract_page_count scans '--- Page X ---' markers; 0 means no markers found.
+        result["page_count"] = result["page_count"] or _extract_page_count(pdf_content)
+        # parse_method may already be set from cache_meta; set it from current parse if not.
+        if not result["parse_method"]:
+            result["parse_method"] = "mineru" if _has_mineru_cache(url) else "pymupdf"
 
         # Determine whether MinerU images are already available.
         # Images are only present when content comes from a MinerU parse (.mineru.md cache
