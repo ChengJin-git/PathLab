@@ -159,14 +159,19 @@ def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any], str | None] | None
 
         pdf_bytes = pdf_file.read_bytes()
 
-        # Also check for cached parsed markdown
-        md_file = cache_dir / f"{url_hash}.md"
+        # Prefer MinerU high-precision cache; fall back to pymupdf cache.
         cached_md = None
-        if md_file.exists():
-            try:
-                cached_md = md_file.read_text(encoding='utf-8')
-            except Exception:
-                pass
+        mineru_file = cache_dir / f"{url_hash}.mineru.md"
+        pymupdf_file = cache_dir / f"{url_hash}.md"
+        for md_candidate in (mineru_file, pymupdf_file):
+            if md_candidate.exists():
+                try:
+                    cached_md = md_candidate.read_text(encoding='utf-8')
+                    if md_candidate == mineru_file:
+                        logger.info(f"PDF cache: using high-precision MinerU result for {url}")
+                    break
+                except Exception:
+                    pass
 
         return pdf_bytes, meta, cached_md
     except Exception as e:
@@ -205,15 +210,85 @@ def _save_pdf_to_cache(url: str, pdf_bytes: bytes, title: str = "", markdown: st
 
 
 def _save_markdown_to_cache(url: str, markdown: str) -> None:
-    """Save parsed markdown to cache separately (after parsing a non-cached PDF)."""
+    """Save pymupdf-parsed markdown to cache (fast tier)."""
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
         md_file = cache_dir / f"{url_hash}.md"
         md_file.write_text(markdown, encoding='utf-8')
-        logger.info(f"Cached parsed markdown for {url}")
+        logger.info(f"Cached pymupdf markdown for {url}")
     except Exception as e:
         logger.error(f"Error saving markdown to cache: {e}")
+
+
+def _has_mineru_cache(url: str) -> bool:
+    """Return True if a high-precision MinerU result is already cached for this URL."""
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        return (cache_dir / f"{url_hash}.mineru.md").exists()
+    except Exception:
+        return False
+
+
+def _save_mineru_to_cache(url: str, markdown: str) -> None:
+    """Save MinerU high-precision parse result to cache (slow/high-quality tier)."""
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        mineru_file = cache_dir / f"{url_hash}.mineru.md"
+        mineru_file.write_text(markdown, encoding='utf-8')
+        logger.info(f"Cached MinerU high-precision markdown for {url}")
+    except Exception as e:
+        logger.error(f"Error saving MinerU markdown to cache: {e}")
+
+
+async def _background_mineru_upgrade(url: str, pdf_bytes: bytes, max_pages: int = 10) -> None:
+    """Background task: run MinerU on a PDF that was already served via pymupdf.
+
+    Saves the high-precision result to {url_hash}.mineru.md so the *next* cache hit
+    will automatically return the better parse.  Silently no-ops if:
+    - A MinerU cache already exists for this URL
+    - No GPU with sufficient VRAM is available
+    - The MinerU GPU lock cannot be acquired without blocking (another parse is
+      already in progress — we just skip rather than queue indefinitely)
+    """
+    if _has_mineru_cache(url):
+        return  # already upgraded
+
+    gpu_idx, free_mb = select_optimal_gpu_for_task(min_vram_mb=MIN_VRAM_MB_FOR_MINERU)
+    if gpu_idx == -1:
+        logger.info(
+            f"[BG MinerU] Skipping upgrade for {url}: "
+            f"no GPU with >= {MIN_VRAM_MB_FOR_MINERU} MB free (best: {free_mb:.0f} MB)"
+        )
+        return
+
+    # Non-blocking lock attempt: if another MinerU parse is running, skip.
+    acquired = _mineru_gpu_lock.acquire(blocking=False)
+    if not acquired:
+        logger.info(f"[BG MinerU] Skipping upgrade for {url}: MinerU GPU lock busy")
+        return
+
+    original_cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+    try:
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
+        logger.info(f"[BG MinerU] Starting upgrade for {url} on cuda:{gpu_idx}")
+        loop = asyncio.get_event_loop()
+        markdown = await loop.run_in_executor(None, _parse_pdf_sync_inner, pdf_bytes, max_pages)
+        if markdown and not markdown.startswith("[Error"):
+            _save_mineru_to_cache(url, markdown)
+            logger.info(f"[BG MinerU] Upgrade complete for {url} ({len(markdown)} chars)")
+        else:
+            logger.warning(f"[BG MinerU] Upgrade failed for {url}: {markdown[:80]}")
+    except Exception as e:
+        logger.error(f"[BG MinerU] Upgrade error for {url}: {e}")
+    finally:
+        _mineru_gpu_lock.release()
+        if original_cuda_devices is not None:
+            os.environ["CUDA_VISIBLE_DEVICES"] = original_cuda_devices
+        else:
+            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
 
 
 def cleanup_expired_pdf_cache() -> int:
@@ -236,10 +311,11 @@ def cleanup_expired_pdf_cache() -> int:
                     
                     if pdf_file.exists():
                         pdf_file.unlink()
-                    # Also remove cached markdown
-                    md_file = cache_dir / f"{url_hash}.md"
-                    if md_file.exists():
-                        md_file.unlink()
+                    # Remove pymupdf and MinerU cached markdown
+                    for suffix in (".md", ".mineru.md"):
+                        cached_file = cache_dir / f"{url_hash}{suffix}"
+                        if cached_file.exists():
+                            cached_file.unlink()
                     meta_file.unlink()
                     cleaned += 1
                     logger.info(f"Cleaned expired PDF cache: {meta.get('url', url_hash)}")
@@ -783,10 +859,27 @@ async def process_pdf_url(
             pdf_content = cached_markdown
             logger.info(f"Using cached parsed markdown for {url}")
         else:
-            pdf_content = await parse_pdf(pdf_bytes, max_pages=10)
-            # Cache the parsed markdown for future use
-            if not pdf_content.startswith("[Error") and use_cache:
-                _save_markdown_to_cache(url, pdf_content)
+            # ── Two-tier parsing ──────────────────────────────────────────────
+            # Tier 1: Fast pymupdf (CPU, <1 s).  Returns immediately.
+            pymupdf_result = _parse_pdf_with_pymupdf(pdf_bytes, max_pages=10)
+
+            if pymupdf_result is not None:
+                pdf_content = pymupdf_result
+                if use_cache:
+                    _save_markdown_to_cache(url, pdf_content)
+                # Tier 2 (background): Schedule MinerU upgrade for the *next*
+                # request if no high-precision cache exists yet and GPU is free.
+                if use_cache and not _has_mineru_cache(url):
+                    asyncio.create_task(
+                        _background_mineru_upgrade(url, pdf_bytes, max_pages=10)
+                    )
+                    logger.info(f"[BG MinerU] Background upgrade scheduled for {url}")
+            else:
+                # pymupdf insufficient — fall back to MinerU synchronously now
+                pdf_content = await parse_pdf(pdf_bytes, max_pages=10)
+                # Successful MinerU result goes to the high-precision cache slot
+                if not pdf_content.startswith("[Error") and use_cache:
+                    _save_mineru_to_cache(url, pdf_content)
 
         if pdf_content.startswith("[Error"):
             # Distinguish GPU unavailable from other parse errors
