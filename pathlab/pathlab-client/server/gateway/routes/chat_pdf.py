@@ -273,6 +273,11 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
 
 
 def _parse_pdf_sync(pdf_bytes: bytes, max_pages: int = 10) -> str:
+    """Parse PDF using MinerU hybrid_doc_analyze, preserving page boundaries.
+
+    Returns markdown with `--- Page X ---` markers between pages so that
+    the AI can cite specific page numbers in its response.
+    """
     try:
         from mineru.cli.common import convert_pdf_bytes_to_bytes_by_pypdfium2, prepare_env
         from mineru.data.data_reader_writer import FileBasedDataWriter
@@ -280,24 +285,24 @@ def _parse_pdf_sync(pdf_bytes: bytes, max_pages: int = 10) -> str:
         from mineru.backend.vlm.vlm_middle_json_mkcontent import union_make
         from mineru.utils.enum_class import MakeMode
         from mineru.utils.engine_utils import get_vlm_engine
-        
+
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             pdf_path = temp_path / "input.pdf"
             pdf_path.write_bytes(pdf_bytes)
-            
+
             output_dir = temp_path / "output"
             local_image_dir, local_md_dir = prepare_env(output_dir, "input", "hybrid_auto")
-            
+
             backend = get_vlm_engine(inference_engine='auto', is_async=False)
-            
+
             start_page_id = 0
             end_page_id = max_pages - 1 if max_pages > 0 else None
-            
+
             pdf_bytes_limited = convert_pdf_bytes_to_bytes_by_pypdfium2(
                 pdf_bytes, start_page_id, end_page_id
             )
-            
+
             middle_json, _, _ = hybrid_doc_analyze(
                 pdf_bytes_limited,
                 image_writer=FileBasedDataWriter(local_image_dir),
@@ -307,15 +312,29 @@ def _parse_pdf_sync(pdf_bytes: bytes, max_pages: int = 10) -> str:
                 inline_formula_enable=True,
                 server_url=None,
             )
-            
+
             pdf_info = middle_json["pdf_info"]
             image_dir = str(os.path.basename(local_image_dir))
-            # Type assertion for MinerU's union_make
             pdf_info_list = pdf_info if isinstance(pdf_info, list) else []
-            md_content = str(union_make(pdf_info_list, MakeMode.MM_MD, image_dir) or "")
-            
+
+            # Build page-aware markdown: iterate per page and add page markers
+            if not pdf_info_list:
+                return ""
+
+            page_sections = []
+            for page_info in pdf_info_list:
+                # page_idx is 0-based from MinerU
+                page_idx = page_info.get('page_idx', len(page_sections))
+                page_num = page_idx + 1  # 1-based for human readability
+
+                # Use union_make on a single-page list to get that page's markdown
+                page_md = str(union_make([page_info], MakeMode.MM_MD, image_dir) or "").strip()
+                if page_md:
+                    page_sections.append(f"--- Page {page_num} ---\n\n{page_md}")
+
+            md_content = "\n\n".join(page_sections)
             return md_content
-            
+
     except ImportError as e:
         logger.error(f"MinerU not available: {e}")
         return "[Error: MinerU not installed or import failed]"
@@ -459,20 +478,28 @@ async def process_pdf_url(
     model: str,
     use_cache: bool = True
 ) -> dict[str, Any]:
-    result = {
+    """Process a PDF URL: download, parse with MinerU, summarize, and format reference card.
+
+    Returns a dict with keys:
+        url, title, source_type, success, summary, pdf_content (full markdown with page markers),
+        error, error_detail, from_cache, reference_card
+    """
+    result: dict[str, Any] = {
         "url": url,
         "title": title,
         "source_type": detect_source_type(url),
         "success": False,
         "summary": None,
+        "pdf_content": None,   # Full markdown with page markers for AI citation
         "error": None,
+        "error_detail": None,  # Human-readable error explanation
         "from_cache": False,
         "reference_card": None
     }
-    
+
     try:
         pdf_bytes = None
-        
+
         if use_cache:
             cached = _get_cached_pdf(url)
             if cached:
@@ -480,22 +507,27 @@ async def process_pdf_url(
                 result["from_cache"] = True
                 result["title"] = cache_meta.get('title', title)
                 logger.info(f"Using cached PDF for {url}")
-        
+
         if not pdf_bytes:
             pdf_bytes = await download_pdf(url)
             if pdf_bytes and use_cache:
                 _save_pdf_to_cache(url, pdf_bytes, title)
-        
+
         if not pdf_bytes:
             result["error"] = "download_failed"
+            result["error_detail"] = f"Failed to download PDF from {url}. The server may be unavailable or the URL may require authentication."
             return result
-        
+
         pdf_content = await parse_pdf(pdf_bytes, max_pages=10)
-        
+
         if pdf_content.startswith("[Error"):
             result["error"] = "parse_failed"
+            result["error_detail"] = f"PDF parsing failed for '{title}'. The file may be corrupted, scanned-only, or in an unsupported format."
             return result
-        
+
+        # Store full content with page markers so AI can cite specific pages
+        result["pdf_content"] = pdf_content
+
         summary = await summarize_pdf_content(
             pdf_content,
             str(result["title"]) if result["title"] is not None else title,
@@ -503,7 +535,7 @@ async def process_pdf_url(
             api_key,
             model
         )
-        
+
         result["success"] = True
         result["summary"] = summary
         result["reference_card"] = format_reference_card(
@@ -512,10 +544,11 @@ async def process_pdf_url(
             str(result["source_type"]) if result["source_type"] is not None else "web",
             summary
         )
-        
+
     except Exception as e:
         logger.error(f"Error processing PDF {url}: {e}")
         result["error"] = str(e)
-    
+        result["error_detail"] = f"An unexpected error occurred while processing '{title}': {str(e)[:100]}"
+
     return result
 

@@ -2,11 +2,12 @@
 Chat and conversation management routes
 Handles AI chat, conversation persistence, and task parsing
 """
+import asyncio
 import json
 import os
 import uuid
 import httpx
-from typing import List, Dict, AsyncIterator, Optional
+from typing import List, Dict, AsyncIterator, Optional, Any
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -299,6 +300,8 @@ After saving, return here and start chatting!"""
     # Web search loop: up to 3 iterations
     max_search_iterations = 3
     current_messages = messages.copy()
+    pending_pdf_tasks: list[asyncio.Task[dict[str, Any]]] = []  # background PDF tasks
+    pdf_urls_info: list[dict[str, str]] = []  # PDF URL info for status tracking
 
     for iteration in range(max_search_iterations):
         # Call AI and buffer response
@@ -350,56 +353,41 @@ After saving, return here and start chatting!"""
                 for idx, result in enumerate(search_results["results"], 1):
                     results_text += f"{idx}. {result['title']}\n   URL: {result['url']}\n   {result['snippet']}\n\n"
                 
-                # Check for PDF URLs and parse them
-                pdf_results = []
+                # Identify PDF URLs and start parallel processing (don't block)
+                # NOTE: append to outer-scope lists to accumulate across search iterations
+                new_pdf_urls: list[dict[str, str]] = []
                 for result in search_results["results"]:
-                    url = result.get("url", "")
-                    if is_pdf_url(url):
-                        pdf_status = {"url": url, "title": result.get("title", ""), "status": "parsing"}
+                    r_url = result.get("url", "")
+                    if is_pdf_url(r_url):
+                        info = {"url": r_url, "title": result.get("title", "Unknown")}
+                        new_pdf_urls.append(info)
+                        pdf_urls_info.append(info)
+                        # Emit "parsing" status immediately
+                        pdf_status = {"url": r_url, "title": result.get("title", ""), "status": "parsing"}
                         yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
-                        
-                        try:
-                            pdf_result = await process_pdf_url(
-                                url=url,
-                                title=result.get("title", "Unknown"),
-                                base_url=effective_base_url,
-                                api_key=effective_api_key,
-                                model=effective_model,
-                                use_cache=True
-                            )
-                            if pdf_result["success"]:
-                                pdf_results.append({
-                                    "title": pdf_result["title"],
-                                    "url": url,
-                                    "summary": pdf_result["summary"],
-                                    "reference_card": pdf_result["reference_card"],
-                                    "from_cache": pdf_result["from_cache"]
-                                })
-                                pdf_status["status"] = "completed"
-                                pdf_status["from_cache"] = pdf_result["from_cache"]
-                            else:
-                                pdf_status["status"] = pdf_result.get("error", "unknown_error")
-                        except Exception as e:
-                            logger.error(f"Error processing PDF {url}: {e}")
-                            pdf_status["status"] = f"error: {str(e)[:50]}"
-                        
-                        yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
-                
-                # Add PDF summaries to results text
-                if pdf_results:
-                    results_text += "\n\n## PDF Paper Summaries:\n\n"
-                    for pdf in pdf_results:
-                        results_text += f"### {pdf['title']}\n"
-                        results_text += f"URL: {pdf['url']}\n\n"
-                        results_text += f"{pdf['summary']}\n\n---\n\n"
 
-                # Add search results to messages and continue
+                # Launch new PDF tasks in parallel (background), append to outer list
+                for pinfo in new_pdf_urls:
+                    task = asyncio.create_task(
+                        process_pdf_url(
+                            url=pinfo["url"],
+                            title=pinfo["title"],
+                            base_url=effective_base_url,
+                            api_key=effective_api_key,
+                            model=effective_model,
+                            use_cache=True
+                        )
+                    )
+                    pending_pdf_tasks.append(task)
+
+                # Add search results to messages WITHOUT waiting for PDFs
+                # AI will respond based on search snippets first
                 current_messages = current_messages + [
                     {"role": "assistant", "content": full_response},
-                    {"role": "user", "content": f"Here are the search results for '{query}':\n{results_text}\n\nPlease synthesize this information and provide a helpful response. Remember to verify information across multiple sources and cite your sources."}
+                    {"role": "user", "content": f"Here are the search results for '{query}':\n{results_text}\n\nPlease synthesize this information and provide a helpful response. Remember to verify information across multiple sources and cite your sources using [REFERENCE] blocks."}
                 ]
 
-                # Continue to next iteration
+                # Continue to next iteration (PDF parsing runs in background)
                 continue
 
             except Exception as e:
@@ -410,7 +398,11 @@ After saving, return here and start chatting!"""
             # No search requested or no Exa API key, return response
             break
 
-    # Stream the final response
+    # ── Stream initial AI response ──
+    # If we have pending PDF tasks, suppress [DONE] and do supplement after
+    has_pending_pdfs = len(pending_pdf_tasks) > 0
+    initial_streamed_text = ""
+
     try:
         async for chunk in _stream_from_openai_compatible(
             messages=current_messages,
@@ -419,11 +411,147 @@ After saving, return here and start chatting!"""
             model=effective_model,
             source_name="Local vLLM" if use_local else "OpenRouter"
         ):
+            if has_pending_pdfs and chunk == "data: [DONE]\n\n":
+                # Suppress [DONE] — we'll send it after PDF supplement
+                continue
             yield chunk
+            # Track streamed text for supplement context
+            if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":
+                try:
+                    data = json.loads(chunk[6:])
+                    if "content" in data:
+                        initial_streamed_text += data["content"]
+                except (json.JSONDecodeError, KeyError):
+                    pass
     except Exception as e:
         logger.error(f"Error in AI streaming: {e}")
         error_msg = f"Error: {str(e)}\n\nPlease check your API key and network connection."
         yield f"data: {json.dumps({'content': error_msg})}\n\n"
+        # Cancel pending PDF tasks on error
+        for t in pending_pdf_tasks:
+            t.cancel()
+        yield "data: [DONE]\n\n"
+        return
+
+    # ── Wait for PDF tasks + supplement ──
+    if has_pending_pdfs:
+        PDF_TIMEOUT_SECONDS = 120  # 2 min total timeout for all PDFs
+
+        # Wait with timeout
+        pdf_results: list[dict[str, Any]] = []
+        try:
+            done, not_done = await asyncio.wait(
+                pending_pdf_tasks,
+                timeout=PDF_TIMEOUT_SECONDS,
+                return_when=asyncio.ALL_COMPLETED
+            )
+            # Collect completed results
+            for task in done:
+                try:
+                    pdf_results.append(task.result())
+                except Exception as e:
+                    logger.error(f"PDF task exception: {e}")
+
+            # Handle timed-out tasks
+            for task in not_done:
+                task.cancel()
+                # Find the URL for this timed-out task
+                task_idx = pending_pdf_tasks.index(task)
+                if task_idx < len(pdf_urls_info):
+                    timed_out_info = pdf_urls_info[task_idx]
+                    pdf_results.append({
+                        "url": timed_out_info["url"],
+                        "title": timed_out_info["title"],
+                        "success": False,
+                        "error": "timeout",
+                        "error_detail": f"PDF parsing for '{timed_out_info['title']}' timed out after {PDF_TIMEOUT_SECONDS}s. The file may be too large or the server too slow.",
+                        "pdf_content": None,
+                        "summary": None,
+                        "reference_card": None,
+                        "from_cache": False,
+                    })
+        except Exception as e:
+            logger.error(f"Error waiting for PDF tasks: {e}")
+            for t in pending_pdf_tasks:
+                t.cancel()
+
+        # Emit final PDF_PARSE_STATUS updates for each result
+        for pr in pdf_results:
+            if pr.get("success"):
+                pdf_status = {
+                    "url": pr["url"], "title": pr.get("title", ""),
+                    "status": "completed", "from_cache": pr.get("from_cache", False)
+                }
+            else:
+                pdf_status = {
+                    "url": pr["url"], "title": pr.get("title", ""),
+                    "status": pr.get("error", "unknown_error")
+                }
+            yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
+
+        # Build supplement: successful PDFs (full content with pages) + failed PDFs (error info)
+        successful_pdfs = [r for r in pdf_results if r.get("success")]
+        failed_pdfs = [r for r in pdf_results if not r.get("success")]
+
+        if successful_pdfs or failed_pdfs:
+            supplement_parts: list[str] = []
+
+            if successful_pdfs:
+                supplement_parts.append("## PDF Paper Content (with page numbers):\n")
+                for sp in successful_pdfs:
+                    supplement_parts.append(f"### {sp.get('title', 'Unknown')}")
+                    supplement_parts.append(f"URL: {sp['url']}\n")
+                    # Include full content with page markers (truncated to 20k chars per PDF)
+                    content = sp.get("pdf_content") or sp.get("summary") or ""
+                    if len(content) > 20000:
+                        content = content[:20000] + "\n...[content truncated]"
+                    supplement_parts.append(content)
+                    # Include reference card
+                    if sp.get("reference_card"):
+                        supplement_parts.append(sp["reference_card"])
+                    supplement_parts.append("---\n")
+
+            if failed_pdfs:
+                supplement_parts.append("## PDF Parsing Issues:\n")
+                for fp in failed_pdfs:
+                    detail = fp.get("error_detail") or fp.get("error") or "unknown error"
+                    supplement_parts.append(
+                        f"- **{fp.get('title', 'Unknown')}** ({fp['url']}): {detail}"
+                    )
+                supplement_parts.append("")
+
+            supplement_text = "\n".join(supplement_parts)
+
+            # Build supplement messages: include conversation context + initial response + PDF content
+            supplement_messages = current_messages + [
+                {"role": "assistant", "content": initial_streamed_text},
+                {"role": "user", "content": (
+                    f"Here is the full content from the PDF papers that were being parsed in the background. "
+                    f"Please supplement your previous response with specific details, page references (e.g. 'On Page 3, ...'), "
+                    f"and citations from these papers. Use [REFERENCE] blocks to cite sources. "
+                    f"If any PDFs failed, briefly explain the issue to the user.\n\n{supplement_text}"
+                )}
+            ]
+
+            # Stream supplementary AI response (separator + content)
+            yield f"data: {json.dumps({'content': chr(10) + chr(10) + '---' + chr(10) + chr(10) + '📄 **PDF Analysis Complete — Supplementary Details:**' + chr(10) + chr(10)})}\n\n"
+
+            try:
+                async for chunk in _stream_from_openai_compatible(
+                    messages=supplement_messages,
+                    base_url=effective_base_url,
+                    api_key=effective_api_key,
+                    model=effective_model,
+                    source_name="Local vLLM" if use_local else "OpenRouter"
+                ):
+                    yield chunk
+                # [DONE] is yielded by _stream_from_openai_compatible
+                return
+            except Exception as e:
+                logger.error(f"Error in PDF supplement streaming: {e}")
+                # Fall through to yield [DONE]
+
+        # No supplement needed (no PDFs parsed or all info already in initial response)
         yield "data: [DONE]\n\n"
 
 
