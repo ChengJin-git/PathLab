@@ -8,6 +8,8 @@ import mimetypes
 import os
 import re
 import uuid
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 from typing import List, Dict, AsyncIterator, Optional, Any
 from fastapi import APIRouter, HTTPException, Depends, Request
@@ -994,6 +996,7 @@ async def chat_with_ai(
     - X-OpenRouter-Base-URL: OpenRouter base URL
     - X-OpenRouter-Model: Model name
     - X-Language: Frontend i18n language code (e.g. en-US, zh-CN, zh-HK)
+    - X-Timezone: IANA timezone string from the browser (e.g. Asia/Shanghai)
     """
     # Get AI configuration from request headers
     api_key = request.headers.get("X-OpenRouter-API-Key")
@@ -1009,6 +1012,14 @@ async def chat_with_ai(
     }
     ui_lang_header = request.headers.get("X-Language", "")
     ui_lang = _LANG_HEADER_MAP.get(ui_lang_header) if ui_lang_header else None
+
+    # Resolve current datetime in the user's browser timezone (falls back to UTC).
+    tz_header = request.headers.get("X-Timezone", "").strip()
+    try:
+        user_tz = ZoneInfo(tz_header) if tz_header else ZoneInfo("UTC")
+    except ZoneInfoNotFoundError:
+        user_tz = ZoneInfo("UTC")
+    current_datetime = datetime.now(user_tz).strftime("%Y-%m-%d %H:%M:%S %Z")
 
     # Fetch user's temporary dataset permissions (for non-admin users)
     # Need this first to pass elevated_dataset_ids to get_chat_context_stats
@@ -1299,6 +1310,7 @@ async def chat_with_ai(
         is_admin=user.is_admin(),
         can_use_gpu_base=can_use_gpu_base,
         temp_perms_list=temp_perms_list,
+        current_datetime=current_datetime,
     )
 
     # Log the user_data_context for debugging

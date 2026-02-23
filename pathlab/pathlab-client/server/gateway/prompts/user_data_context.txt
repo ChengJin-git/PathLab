@@ -1,4 +1,8 @@
 
+## CURRENT DATE & TIME
+
+- **Current datetime (user's local timezone)**: {current_datetime}
+
 ## USER'S CURRENT DATA
 
 The user has the following data available:

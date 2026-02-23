@@ -269,6 +269,7 @@ def format_user_data_context(
     is_admin: bool,
     can_use_gpu_base: bool,
     temp_perms_list: str,
+    current_datetime: str,
 ) -> str:
     """
     Format the user data context template with actual values.
@@ -293,6 +294,7 @@ def format_user_data_context(
         is_admin: Whether user is admin
         can_use_gpu_base: Whether user can use GPU by default
         temp_perms_list: Formatted list of temporary permissions
+        current_datetime: Current datetime string in the user's local timezone
 
     Returns:
         Formatted user data context string
@@ -322,5 +324,6 @@ def format_user_data_context(
         data_visibility=data_visibility,
         can_use_gpu=can_use_gpu,
         temp_perms_list=temp_perms_list,
+        current_datetime=current_datetime,
     )
 

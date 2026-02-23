@@ -50,6 +50,10 @@ export async function chatWithAI(
   // correct system-prompt language instead of relying solely on message-content heuristics.
   const uiLang = localStorage.getItem('i18nextLng') || 'en-US'
 
+  // Pass the browser's IANA timezone (e.g. "Asia/Shanghai") so the backend can
+  // include the correct local date/time in the AI context.
+  const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+
   let response: Response
   try {
     const headers: Record<string, string> = {
@@ -57,7 +61,8 @@ export async function chatWithAI(
       'X-OpenRouter-API-Key': apiKey,
       'X-OpenRouter-Base-URL': baseUrl,
       'X-OpenRouter-Model': model,
-      'X-Language': uiLang
+      'X-Language': uiLang,
+      'X-Timezone': userTimezone
     }
     const token = getAuthToken()
     if (token) {
