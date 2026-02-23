@@ -573,6 +573,211 @@ def get_science_pdf_url(url: str) -> str:
     return url
 
 
+def get_pmc_pdf_url(url: str) -> str:
+    """Convert PMC article page URL to direct PDF download URL.
+
+    Handles both pmc.ncbi.nlm.nih.gov and legacy ncbi.nlm.nih.gov/pmc URLs.
+    """
+    if url.rstrip('/').endswith('/pdf') or '/pdf/' in url:
+        return url
+    match = re.search(r'/(PMC[0-9]+)/?', url, re.IGNORECASE)
+    if match:
+        pmc_id = match.group(1).upper()
+        return f"https://pmc.ncbi.nlm.nih.gov/articles/{pmc_id}/pdf/"
+    return url
+
+
+def get_acl_pdf_url(url: str) -> str:
+    """Append .pdf to ACL Anthology article URL for direct PDF download.
+
+    Per ACL Anthology FAQ: append .pdf to the canonical article URL.
+    """
+    if url.lower().endswith('.pdf'):
+        return url
+    base = url.split('?')[0].split('#')[0].rstrip('/')
+    return base + '.pdf'
+
+
+def get_ieee_pdf_url(url: str) -> str:
+    """Convert IEEE Xplore document page URL to PDF viewer URL."""
+    if url.lower().endswith('.pdf') or 'stamp.jsp' in url:
+        return url
+    match = re.search(r'/document/([0-9]+)', url)
+    if match:
+        return f"https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber={match.group(1)}"
+    return url
+
+
+def get_acm_pdf_url(url: str) -> str:
+    """Convert ACM Digital Library article URL to PDF download URL.
+
+    Insert 'pdf/' segment after '/doi/' in the URL.
+    """
+    if '/doi/pdf/' in url or url.lower().endswith('.pdf'):
+        return url
+    if '/doi/' in url:
+        return url.replace('/doi/', '/doi/pdf/', 1)
+    return url
+
+
+def get_springer_pdf_url(url: str) -> str:
+    """Convert SpringerLink article URL to direct PDF download URL.
+
+    Article page: link.springer.com/article/10.xxxx/yyy
+    PDF:          link.springer.com/content/pdf/10.xxxx/yyy.pdf
+    """
+    if '/content/pdf/' in url or url.lower().endswith('.pdf'):
+        return url
+    match = re.search(r'springer\.com/(?:article|chapter)/(10\.[0-9]{4,}[^\s?#]+)', url)
+    if match:
+        doi = match.group(1).rstrip('/')
+        return f"https://link.springer.com/content/pdf/{doi}.pdf"
+    return url
+
+
+def get_plos_pdf_url(url: str) -> str:
+    """Convert PLOS article page URL to direct PDF download URL.
+
+    Article page: journals.plos.org/plosone/article?id=10.1371/journal.pone.xxxxxxx
+    PDF:          journals.plos.org/plosone/article/file?id=10.1371/journal.pone.xxxxxxx&type=printable
+    """
+    if 'type=printable' in url or 'article/file' in url:
+        return url
+    doi_match = re.search(r'[?&]id=(10\.[0-9]{4,}/[^\s?#&]+)', url)
+    if doi_match:
+        doi = doi_match.group(1)
+        journal_match = re.search(r'journals\.plos\.org/([^/?#]+)', url)
+        journal = journal_match.group(1) if journal_match else 'plosone'
+        return f"https://journals.plos.org/{journal}/article/file?id={doi}&type=printable"
+    return url
+
+
+def get_jama_pdf_url(url: str) -> str:
+    """Convert JAMA Network article page URL to PDF download URL.
+
+    Article page: jamanetwork.com/journals/jama/fullarticle/xxxxxxx
+    PDF:          jamanetwork.com/journals/jama/articlepdf/xxxxxxx
+    """
+    if 'articlepdf' in url or url.lower().endswith('.pdf'):
+        return url
+    return url.replace('/fullarticle/', '/articlepdf/')
+
+
+def get_nejm_pdf_url(url: str) -> str:
+    """Convert NEJM article page URL to PDF download URL.
+
+    Article page: nejm.org/doi/full/10.1056/NEJMxxx
+    PDF:          nejm.org/doi/pdf/10.1056/NEJMxxx
+    """
+    if '/doi/pdf/' in url or url.lower().endswith('.pdf'):
+        return url
+    for old in ('/doi/full/', '/doi/abs/'):
+        if old in url:
+            return url.replace(old, '/doi/pdf/')
+    if re.search(r'/doi/10\.[0-9]{4,}', url) and '/doi/pdf/' not in url:
+        return url.replace('/doi/', '/doi/pdf/', 1)
+    return url
+
+
+def get_lancet_pdf_url(url: str) -> str:
+    """Convert The Lancet article page URL to PDF download URL.
+
+    Article page: thelancet.com/journals/lancet/article/PIISxxxxxxx/fulltext
+    PDF:          thelancet.com/journals/lancet/article/PIISxxxxxxx/pdf
+    """
+    if '/pdf' in url or url.lower().endswith('.pdf'):
+        return url
+    base = url.rstrip('/')
+    if base.endswith('/fulltext'):
+        return base[:-len('/fulltext')] + '/pdf'
+    return url
+
+
+def get_cell_pdf_url(url: str) -> str:
+    """Convert Cell Press article page URL to PDF download URL.
+
+    Article page: cell.com/cell/fulltext/S0092-8674(22)01377-0
+    PDF:          cell.com/cell/pdf/s0092-8674(22)01377-0.pdf
+    """
+    if url.lower().endswith('.pdf') or '/pdf/' in url:
+        return url
+    match = re.search(r'(https?://(?:www\.)?cell\.com/[^/]+)/fulltext/([^\s?#]+)', url, re.IGNORECASE)
+    if match:
+        base, pii = match.group(1), match.group(2)
+        return f"{base}/pdf/{pii.lower()}.pdf"
+    return url
+
+
+def get_oup_pdf_url(url: str) -> str:
+    """Convert Oxford Academic (OUP) article URL to PDF via pdf-lookup redirect.
+
+    OUP provides a stable redirect endpoint: /pdf-lookup/doi/{doi}
+    """
+    if 'article-pdf' in url or 'pdf-lookup' in url or url.lower().endswith('.pdf'):
+        return url
+    doi_match = re.search(r'(10\.[0-9]{4,}/[^\s?#&]+)', url)
+    if doi_match:
+        doi = doi_match.group(1).rstrip('/')
+        return f"https://academic.oup.com/pdf-lookup/doi/{doi}"
+    return url
+
+
+def get_frontiers_pdf_url(url: str) -> str:
+    """Convert Frontiers article page URL to PDF download URL.
+
+    Article page: frontiersin.org/journals/.../articles/10.3389/.../full
+    PDF:          frontiersin.org/journals/.../articles/10.3389/.../pdf
+    """
+    if url.lower().endswith('.pdf') or url.rstrip('/').endswith('/pdf'):
+        return url
+    base = url.rstrip('/')
+    if base.endswith('/full'):
+        return base[:-5] + '/pdf'
+    return base + '/pdf'
+
+
+def get_mdpi_pdf_url(url: str) -> str:
+    """Append /pdf to MDPI article URL for direct PDF download.
+
+    Article page: mdpi.com/2075-4698/15/1/6
+    PDF:          mdpi.com/2075-4698/15/1/6/pdf
+    """
+    if url.lower().endswith('.pdf') or url.rstrip('/').endswith('/pdf'):
+        return url
+    return url.rstrip('/') + '/pdf'
+
+
+def get_rsp_pdf_url(url: str) -> str:
+    """Convert Royal Society Publishing article URL to PDF download URL.
+
+    Article page: royalsocietypublishing.org/doi/full/10.1098/xxx
+    PDF:          royalsocietypublishing.org/doi/pdf/10.1098/xxx
+    """
+    if '/doi/pdf/' in url or url.lower().endswith('.pdf'):
+        return url
+    for old in ('/doi/full/', '/doi/abs/'):
+        if old in url:
+            return url.replace(old, '/doi/pdf/')
+    if re.search(r'/doi/10\.[0-9]{4,}', url) and '/doi/pdf/' not in url:
+        return url.replace('/doi/', '/doi/pdf/', 1)
+    return url
+
+
+def get_pnas_pdf_url(url: str) -> str:
+    """Convert PNAS article URL to PDF download URL.
+
+    Article page: pnas.org/doi/10.1073/pnas.xxxxxxxx
+    PDF:          pnas.org/doi/pdf/10.1073/pnas.xxxxxxxx
+    """
+    if '/doi/pdf/' in url or url.lower().endswith('.pdf'):
+        return url
+    if '/doi/full/' in url:
+        return url.replace('/doi/full/', '/doi/pdf/')
+    if re.search(r'/doi/10\.[0-9]{4,}', url) and '/doi/pdf/' not in url:
+        return url.replace('/doi/', '/doi/pdf/', 1)
+    return url
+
+
 def _extract_doi(url: str) -> str | None:
     """Extract DOI from common academic URL patterns."""
     # Direct DOI URL: https://doi.org/10.xxxx/...
@@ -599,7 +804,12 @@ def _extract_doi(url: str) -> str | None:
     match = re.search(r'springer\.com/(?:article|chapter)/?(10\.[0-9]{4,}[^\s?#]+)', url)
     if match:
         return match.group(1).rstrip('/')
-    # Generic DOI pattern in URL
+    # Frontiers: frontiersin.org/journals/.../articles/10.3389/.../full
+    # Must come before generic pattern to avoid capturing trailing /full or /pdf
+    match = re.search(r'frontiersin\.org/(?:journals/[^/]+/)?articles/(10\.[0-9]{4,}/[^\s?#&/]+)', url)
+    if match:
+        return match.group(1).rstrip('/')
+    # Generic DOI pattern in URL (must be last — greedily matches trailing path segments)
     match = re.search(r'(10\.[0-9]{4,}/[^\s?#&]+)', url)
     if match:
         return match.group(1).rstrip('/')
@@ -718,6 +928,36 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
             url = get_wiley_pdf_url(url)
         elif 'biorxiv.org' in url or 'medrxiv.org' in url:
             url = get_biorxiv_pdf_url(url)
+        elif 'pmc.ncbi.nlm.nih.gov' in url or 'ncbi.nlm.nih.gov/pmc' in url:
+            url = get_pmc_pdf_url(url)
+        elif 'aclanthology.org' in url:
+            url = get_acl_pdf_url(url)
+        elif 'ieeexplore.ieee.org' in url:
+            url = get_ieee_pdf_url(url)
+        elif 'dl.acm.org' in url:
+            url = get_acm_pdf_url(url)
+        elif 'link.springer.com' in url or ('springer.com' in url and 'content/pdf' not in url):
+            url = get_springer_pdf_url(url)
+        elif 'plos.org' in url:
+            url = get_plos_pdf_url(url)
+        elif 'jamanetwork.com' in url:
+            url = get_jama_pdf_url(url)
+        elif 'nejm.org' in url:
+            url = get_nejm_pdf_url(url)
+        elif 'thelancet.com' in url:
+            url = get_lancet_pdf_url(url)
+        elif 'cell.com' in url:
+            url = get_cell_pdf_url(url)
+        elif 'academic.oup.com' in url:
+            url = get_oup_pdf_url(url)
+        elif 'frontiersin.org' in url:
+            url = get_frontiers_pdf_url(url)
+        elif 'mdpi.com' in url:
+            url = get_mdpi_pdf_url(url)
+        elif 'royalsocietypublishing.org' in url:
+            url = get_rsp_pdf_url(url)
+        elif 'pnas.org' in url:
+            url = get_pnas_pdf_url(url)
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
