@@ -1954,7 +1954,10 @@ export default function AIChatPage() {
                         onQuickAnalysisDataLoaded={handleQuickAnalysisDataLoaded}
                         onHelpfulnessFeedback={handleHelpfulnessFeedback}
                         savedHelpfulnessFeedback={helpfulnessFeedbacks.get(parseInt(message.id, 10)) || null}
-                        isStreaming={isLoading && index === messages.length - 1}
+                        // "Streaming" 表示当前这条助手消息还在生成中（不管是否已经收到首个 chunk），
+                        // 用 isGenerating 而不是 isLoading，这样在 Exa 搜索阶段（只收到 SEARCH_STATUS/WEB_SEARCH_RESULT）
+                        // 也会触发搜索状态卡片和 skeleton，避免出现中间一大块空白。
+                        isStreaming={isGenerating && index === messages.length - 1}
                         isLoading={isGenerating}
                         csvContent={csvContentMap.get(message.id)?.content}
                         csvFileName={csvContentMap.get(message.id)?.fileName}
