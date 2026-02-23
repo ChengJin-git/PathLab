@@ -769,7 +769,22 @@ def _parse_pdf_sync_inner(
                     md_content,
                 )
 
-            return md_content
+        # ── VLM singleton cleanup ─────────────────────────────────────────
+        # Clear the MinerU VLM model singleton so the underlying vLLM LLM
+        # object can be garbage-collected, allowing EngineCore worker
+        # processes to exit cleanly (avoids GPU VRAM leak between parses).
+        try:
+            from mineru.backend.vlm.vlm_analyze import ModelSingleton
+            from mineru.utils.model_utils import clean_memory
+            import gc
+            ModelSingleton._models.clear()
+            clean_memory('cuda')
+            gc.collect()
+            logger.info("[MinerU] VLM singleton cleared — EngineCore should exit")
+        except Exception as _cleanup_err:
+            logger.warning(f"[MinerU] VLM cleanup warning: {_cleanup_err}")
+
+        return md_content
 
     except ImportError as e:
         logger.error(f"MinerU not available: {e}")
