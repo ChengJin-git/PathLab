@@ -25,7 +25,10 @@ from backend.common.gpu_utils import get_gpu_summary_for_prompt
 from ..dependencies import logger
 from ..prompts import get_chat_system_prompt, format_user_data_context, detect_language
 from ..models import ChatRequest, CreateConversationRequest, UpdateMessageRequest, AddMessageRequest
-from .chat_pdf import is_pdf_url, process_pdf_url, get_pdf_image_path
+from .chat_pdf import (
+    is_pdf_url, process_pdf_url, get_pdf_image_path,
+    search_pdf_pages, get_cached_markdown, get_cached_pdf_meta, _split_md_into_pages,
+)
 
 router = APIRouter(tags=["Chat & Conversations"])
 
@@ -50,6 +53,9 @@ _PDF_SUPPLEMENT_PROMPTS = {
         "and SHOULD include those links verbatim in your response so the user can see the figures. "
         "If the user asks for a figure but the paper shows [PDF_IMAGES_STATUS: pending], tell the user "
         "that high-precision figure extraction is still running and to ask again later. "
+        "LONG PAPERS: For papers with many pages, only the beginning, end, and most relevant "
+        "middle sections are shown. If the user asks about a section not visible here, tell them "
+        "you can search for specific pages or topics if they ask a follow-up question. "
         "CRITICAL: The [REFERENCE] blocks in the context are already correctly formatted. "
         "Copy them verbatim into your response - DO NOT modify their format or content. "
         "If any PDFs failed, briefly explain the issue to the user."
@@ -62,6 +68,8 @@ _PDF_SUPPLEMENT_PROMPTS = {
         "绝对不要猜测、推断或捏造页码——如果所引用的内容没有对应的页码标记，请直接省略页码。"
         "图片：如果论文内容中包含 Markdown 图片链接（如 ![fig](http://...)），你**可以且应该**将这些链接原样放入回答中，让用户直接看到图片。"
         "如果用户询问图片但看到 [PDF_IMAGES_STATUS: pending]，请告知用户高精度图片提取仍在后台运行，稍后再问。"
+        "长论文提示：对于页数很多的论文，仅展示了开头、结尾和最相关的中间部分。"
+        "如果用户问到未展示的章节，请告知用户可以通过追问来搜索特定页面或主题。"
         "重要：上下文中的 [REFERENCE] 块格式已正确，请原样复制到回答中，不要修改格式或内容。"
         "如有 PDF 解析失败，请简要告知用户原因。"
     ),
@@ -73,10 +81,159 @@ _PDF_SUPPLEMENT_PROMPTS = {
         "絕對不要猜測、推斷或捏造頁碼——如果所引用的內容沒有對應的頁碼標記，請直接省略頁碼。"
         "圖片：如果論文內容中包含 Markdown 圖片連結（如 ![fig](http://...)），你**可以且應該**將這些連結原樣放入回答中，讓用戶直接看到圖片。"
         "如果用戶詢問圖片但看到 [PDF_IMAGES_STATUS: pending]，請告知用戶高精度圖片提取仍在後台運行，稍後再問。"
+        "長論文提示：對於頁數很多的論文，僅展示了開頭、結尾和最相關的中間部分。"
+        "如果用戶問到未展示的章節，請告知用戶可以透過追問來搜尋特定頁面或主題。"
         "重要：上下文中的 [REFERENCE] 區塊格式已正確，請原樣複製到回答中，不要修改格式或內容。"
         "如有 PDF 解析失敗，請簡要告知用戶原因。"
     ),
 }
+
+# Prompt fragment appended when PDF context is rebuilt via BM25 for follow-up questions.
+_PDF_FOLLOWUP_NOTE = {
+    "en": (
+        "NOTE: The PDF content below has been filtered to show the most relevant pages "
+        "for the user's latest question, along with the first and last pages for context. "
+        "If the information the user asks for is not in these pages, tell them which page "
+        "range or section they should ask about so the system can retrieve it."
+    ),
+    "zh_CN": (
+        "注意：以下 PDF 内容已根据用户最新提问进行了相关性筛选，仅展示最相关的页面以及首尾页作为上下文。"
+        "如果用户询问的信息不在这些页面中，请告诉用户应该查询哪些页码范围或章节，以便系统检索。"
+    ),
+    "zh_HK": (
+        "注意：以下 PDF 內容已根據用戶最新提問進行了相關性篩選，僅展示最相關的頁面以及首尾頁作為上下文。"
+        "如果用戶詢問的資訊不在這些頁面中，請告訴用戶應該查詢哪些頁碼範圍或章節，以便系統檢索。"
+    ),
+}
+
+
+def _enhance_pdf_context_for_query(pdf_context: str, user_query: str, detected_lang: str = "en") -> str:
+    """Replace static head-tail PDF excerpts with query-relevant BM25-selected pages.
+
+    For each paper found in *pdf_context*:
+      1. Read the **full** cached markdown from disk.
+      2. If the full text fits the budget (≤ 40 000 chars), keep it as-is.
+      3. Otherwise, use BM25 to find the most relevant pages for *user_query*,
+         always including the first and last pages for context.
+
+    Returns the rebuilt context string ready to be inserted into a message.
+    """
+    _PDF_MAX_CHARS = 40_000
+
+    # Extract paper URLs from the persisted context
+    url_matches = re.findall(r'- \*\*URL\*\*: (https?://[^\s\n]+)', pdf_context)
+    if not url_matches:
+        return pdf_context  # nothing to enhance
+
+    total = len(url_matches)
+    enhanced_parts: list[str] = []
+
+    # ── Paper index ──────────────────────────────────────────────────────────
+    index_lines = [f"## Available Papers ({total} parsed):\n"]
+    paper_metas: list[dict] = []
+    for url in url_matches:
+        meta = get_cached_pdf_meta(url) or {}
+        title = meta.get('title', 'Unknown')
+        idx = len(paper_metas) + 1
+        index_lines.append(f"- **[Paper {idx}]** {title}  ({url})")
+        paper_metas.append({'url': url, 'meta': meta, 'title': title})
+    index_lines.append("")
+    enhanced_parts.extend(index_lines)
+
+    followup_note = _PDF_FOLLOWUP_NOTE.get(detected_lang, _PDF_FOLLOWUP_NOTE["en"])
+    enhanced_parts.append(followup_note + "\n")
+    enhanced_parts.append("## PDF Paper Content (query-relevant pages):\n")
+
+    # ── Per-paper rebuild ────────────────────────────────────────────────────
+    for paper_idx, pd in enumerate(paper_metas, 1):
+        url = pd['url']
+        meta = pd['meta']
+        title = pd['title']
+        page_count = meta.get('page_count')
+        parse_method = meta.get('parse_method', 'pymupdf')
+        quality_label = (
+            "High-precision (MinerU — includes tables, formulas, images)"
+            if parse_method == "mineru"
+            else "Fast (PyMuPDF — text only, images not yet extracted)"
+        )
+        page_info = f"{page_count} pages" if page_count else "page count unknown"
+
+        enhanced_parts.append(
+            f"### [Paper {paper_idx} of {total}] {title}\n"
+            f"- **URL**: {url}\n"
+            f"- **Total pages**: {page_info}\n"
+            f"- **Parse quality**: {quality_label}\n"
+        )
+
+        # Read full cached markdown
+        full_md = get_cached_markdown(url)
+        if not full_md:
+            enhanced_parts.append("[Content not available — cache may have expired]\n---\n")
+            continue
+
+        # Short papers: include everything
+        if len(full_md) <= _PDF_MAX_CHARS:
+            enhanced_parts.append(full_md)
+            enhanced_parts.append("---\n")
+            continue
+
+        # ── BM25-based page selection for long papers ────────────────────────
+        all_pages = _split_md_into_pages(full_md)
+        if not all_pages:
+            enhanced_parts.append(full_md[:_PDF_MAX_CHARS] + "\n[...truncated]\n---\n")
+            continue
+
+        first_pn, first_content = all_pages[0]
+        last_pn, last_content = all_pages[-1]
+
+        bm25_results = search_pdf_pages(full_md, user_query, top_k=10)
+        # Deduplicate against first/last page
+        bm25_extras = [
+            (pn, content, score)
+            for pn, content, score in bm25_results
+            if pn != first_pn and pn != last_pn
+        ]
+
+        # Build ordered page list: first + BM25 (sorted by page num) + last
+        selected: list[tuple[int, str]] = [(first_pn, first_content)]
+        for pn, content, _ in sorted(bm25_extras, key=lambda x: x[0]):
+            selected.append((pn, content))
+        if last_pn != first_pn:
+            selected.append((last_pn, last_content))
+
+        # Assemble within budget
+        content_parts: list[str] = []
+        char_count = 0
+        prev_pn = None
+        for pn, page_content in selected:
+            page_text = f"--- Page {pn} ---\n{page_content}\n"
+            if char_count + len(page_text) > _PDF_MAX_CHARS:
+                remaining = _PDF_MAX_CHARS - char_count
+                if remaining > 200:
+                    content_parts.append(page_text[:remaining] + "\n[...page truncated for length]")
+                break
+            # Indicate gap when pages are not consecutive
+            if prev_pn is not None and pn > prev_pn + 1:
+                content_parts.append(f"\n[...pages {prev_pn + 1}–{pn - 1} omitted — ask about them if needed...]\n")
+            content_parts.append(page_text)
+            char_count += len(page_text)
+            prev_pn = pn
+
+        shown = len([p for p in content_parts if p.startswith("--- Page")])
+        total_p = page_count or len(all_pages)
+        if shown < total_p:
+            note = (
+                f"[Showing {shown} of {total_p} pages: page 1 + "
+                f"{max(shown - 2, 0)} query-relevant pages + last page. "
+                f"Ask about specific pages or topics for more.]\n"
+            )
+            content_parts.insert(0, note)
+
+        enhanced_parts.append("\n".join(content_parts))
+        enhanced_parts.append("---\n")
+
+    return "\n".join(enhanced_parts)
+
 
 # Include feedback sub-router
 from .chat_feedback import router as chat_feedback_router
@@ -1183,6 +1340,38 @@ async def chat_with_ai(
             }
             await ChatRepository.add_message(db, message_data)
             await db.commit()
+
+    # ── BM25-enhanced PDF context for follow-up questions ────────────────────
+    # When conversation history contains [PDF_CONTEXT] blocks (saved from a
+    # previous PDF parse), replace the static head-tail excerpt with
+    # query-relevant pages selected via BM25 against the user's latest question.
+    _pdf_ctx_re = re.compile(r'\[PDF_CONTEXT\]\n?([\s\S]*?)\n?\[/PDF_CONTEXT\]')
+    user_query_for_bm25 = ""
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            txt = extract_text_from_content(msg.get("content", ""))
+            # Skip the [PDF_CONTEXT] hidden message itself
+            if not txt.strip().startswith("[PDF_CONTEXT]"):
+                user_query_for_bm25 = txt
+                break
+
+    if user_query_for_bm25:
+        for i, msg in enumerate(messages):
+            if msg.get("role") != "user":
+                continue
+            raw = extract_text_from_content(msg.get("content", ""))
+            m = _pdf_ctx_re.search(raw)
+            if m:
+                original_ctx = m.group(1)
+                enhanced_ctx = _enhance_pdf_context_for_query(
+                    original_ctx, user_query_for_bm25, detected_lang
+                )
+                new_content = f"[PDF_CONTEXT]\n{enhanced_ctx}\n[/PDF_CONTEXT]"
+                messages[i] = {**msg, "content": new_content}
+                logger.info(
+                    f"[BM25] Enhanced PDF context for follow-up query: "
+                    f"'{user_query_for_bm25[:80]}...'"
+                )
 
     # Stream AI response
     def _strip_internal_status_blocks(content: str) -> str:

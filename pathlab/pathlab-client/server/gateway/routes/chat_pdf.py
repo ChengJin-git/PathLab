@@ -291,6 +291,122 @@ def _save_mineru_to_cache(url: str, markdown: str) -> None:
         logger.error(f"Error saving MinerU markdown to cache: {e}")
 
 
+# ── BM25 Page-Level Search ──────────────────────────────────────────────────
+
+def _tokenize_for_search(text: str) -> list[str]:
+    """Simple tokenizer for BM25 search. Handles English, numbers, and CJK.
+
+    - Lowercases all text
+    - Keeps alphanumeric runs (e.g. ``bm25``, ``page3``) as single tokens
+    - Splits each CJK character as an individual token
+    """
+    return re.findall(r'[a-z0-9]+|[\u4e00-\u9fff\u3400-\u4dbf]', text.lower())
+
+
+def _split_md_into_pages(markdown: str) -> list[tuple[int, str]]:
+    """Split markdown by ``--- Page X ---`` markers into ``(page_num, content)`` pairs.
+
+    Content before the first marker (if any) is assigned page number 0.
+    """
+    parts = re.split(r'--- Page (\d+) ---', markdown)
+    pages: list[tuple[int, str]] = []
+    if parts[0].strip():
+        pages.append((0, parts[0].strip()))
+    for i in range(1, len(parts), 2):
+        page_num = int(parts[i])
+        content = parts[i + 1] if i + 1 < len(parts) else ""
+        if content.strip():
+            pages.append((page_num, content.strip()))
+    return pages
+
+
+def search_pdf_pages(
+    markdown: str, query: str, top_k: int = 10,
+) -> list[tuple[int, str, float]]:
+    """BM25 page-level search over parsed PDF markdown.
+
+    Returns up to *top_k* pages as ``(page_num, content, score)`` tuples
+    sorted by descending BM25 score.  Pages with score == 0 are excluded.
+
+    Self-contained implementation — no external dependencies required.
+    """
+    import math
+    from collections import Counter
+
+    pages = _split_md_into_pages(markdown)
+    if not pages:
+        return []
+
+    query_tokens = _tokenize_for_search(query)
+    if not query_tokens:
+        return []
+
+    # Tokenize every page once
+    page_token_lists = [_tokenize_for_search(content) for _, content in pages]
+
+    # BM25 hyper-parameters
+    k1, b = 1.5, 0.75
+    N = len(pages)
+    avgdl = sum(len(tl) for tl in page_token_lists) / N if N > 0 else 1
+
+    # Document frequency for each unique query term
+    unique_qts = set(query_tokens)
+    df: dict[str, int] = {qt: 0 for qt in unique_qts}
+    for tl in page_token_lists:
+        present = unique_qts & set(tl)
+        for qt in present:
+            df[qt] += 1
+
+    # Score each page
+    scored: list[tuple[int, str, float]] = []
+    for idx, (page_num, content) in enumerate(pages):
+        tf = Counter(page_token_lists[idx])
+        dl = len(page_token_lists[idx])
+        score = 0.0
+        for qt in query_tokens:
+            if qt not in tf:
+                continue
+            n_qt = df[qt]
+            idf = math.log((N - n_qt + 0.5) / (n_qt + 0.5) + 1)
+            score += idf * (tf[qt] * (k1 + 1)) / (tf[qt] + k1 * (1 - b + b * dl / avgdl))
+        if score > 0:
+            scored.append((page_num, content, score))
+
+    scored.sort(key=lambda x: x[2], reverse=True)
+    return scored[:top_k]
+
+
+def get_cached_markdown(url: str) -> str | None:
+    """Return the best available cached markdown for *url*, or ``None``.
+
+    Prefers MinerU high-precision (``.mineru.md``) over PyMuPDF (``.md``).
+    """
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        for suffix in ('.mineru.md', '.md'):
+            md_file = cache_dir / f"{url_hash}{suffix}"
+            if md_file.exists():
+                return md_file.read_text(encoding='utf-8')
+        return None
+    except Exception:
+        return None
+
+
+def get_cached_pdf_meta(url: str) -> dict[str, Any] | None:
+    """Return the cached JSON metadata dict for *url*, or ``None``."""
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        meta_file = cache_dir / f"{url_hash}.json"
+        if not meta_file.exists():
+            return None
+        with open(meta_file, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
 async def _background_mineru_upgrade(url: str, pdf_bytes: bytes, max_pages: int = 0) -> None:
     """Background task: run MinerU on a PDF that was already served via pymupdf.
 
@@ -404,11 +520,49 @@ def get_arxiv_pdf_url(url: str) -> str:
 
 
 def get_sciencedirect_pdf_url(url: str) -> str:
-    pii_match = re.search(r'/pii/([A-Z0-9]+)', url)
+    """Convert ScienceDirect article page URL to direct PDF download URL.
+
+    The pdfft URL works for open-access articles without authentication.
+    """
+    if 'pdfft' in url or url.lower().endswith('.pdf'):
+        return url
+    pii_match = re.search(r'/pii/([A-Z0-9]+)', url, re.IGNORECASE)
     if pii_match:
-        pii = pii_match.group(1)
-        return f"https://reader.elsevier.com/reader/sd/pii/{pii}"
+        pii = pii_match.group(1).upper()
+        return f"https://www.sciencedirect.com/science/article/pii/{pii}/pdfft?isDTMRedir=true&download=true"
     return url
+
+
+def get_nature_pdf_url(url: str) -> str:
+    """Append .pdf to Nature article page URLs for direct PDF download."""
+    if url.lower().endswith('.pdf'):
+        return url
+    base = url.split('?')[0].split('#')[0].rstrip('/')
+    if re.search(r'nature\.com/articles/[a-z0-9\-]+$', base, re.IGNORECASE):
+        return base + '.pdf'
+    return url
+
+
+def get_wiley_pdf_url(url: str) -> str:
+    """Convert Wiley article URL to PDF download URL."""
+    if '/doi/pdf/' in url or url.lower().endswith('.pdf'):
+        return url
+    for old in ('/doi/abs/', '/doi/full/'):
+        if old in url:
+            return url.replace(old, '/doi/pdf/')
+    # /doi/10.xxxx → /doi/pdf/10.xxxx
+    if re.search(r'/doi/10\.[0-9]{4,}', url) and '/doi/pdf/' not in url:
+        return url.replace('/doi/', '/doi/pdf/', 1)
+    return url
+
+
+def get_biorxiv_pdf_url(url: str) -> str:
+    """Convert bioRxiv/medRxiv abstract URL to full PDF URL."""
+    if url.lower().endswith('.pdf'):
+        return url
+    base = url.rstrip('/').split('?')[0]
+    base = re.sub(r'\.(full|abstract|article-info|metrics)$', '', base)
+    return base + '.full.pdf'
 
 
 def get_science_pdf_url(url: str) -> str:
@@ -449,6 +603,31 @@ def _extract_doi(url: str) -> str | None:
     match = re.search(r'(10\.[0-9]{4,}/[^\s?#&]+)', url)
     if match:
         return match.group(1).rstrip('/')
+    return None
+
+
+async def _try_crossref_doi_from_pii(pii: str) -> str | None:
+    """Look up DOI for a ScienceDirect article via CrossRef using PII as alternative-id.
+
+    ScienceDirect article URLs contain a PII (e.g. S2667325824005132) but not the DOI.
+    CrossRef's filter API resolves PII → DOI so we can pass it to Unpaywall/Semantic Scholar.
+    """
+    try:
+        api_url = f"https://api.crossref.org/works?filter=alternative-id:{pii}&rows=1"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                api_url,
+                headers={"User-Agent": "PathLab/1.0 (mailto:cjinag@connect.ust.hk)"},
+            )
+            if resp.status_code == 200:
+                items = resp.json().get("message", {}).get("items", [])
+                if items:
+                    doi = items[0].get("DOI")
+                    if doi:
+                        logger.info(f"CrossRef resolved PII {pii} → DOI {doi}")
+                        return doi
+    except Exception as e:
+        logger.warning(f"CrossRef PII lookup error for {pii}: {e}")
     return None
 
 
@@ -526,19 +705,27 @@ async def _try_semantic_scholar_download(url: str, doi: str | None = None) -> by
 
 async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
     try:
+        # Step 1: Convert article page URLs to direct PDF download URLs.
         if 'arxiv.org' in url:
             url = get_arxiv_pdf_url(url)
+        elif 'nature.com' in url:
+            url = get_nature_pdf_url(url)
+        elif 'sciencedirect.com' in url or 'elsevier.com' in url:
+            url = get_sciencedirect_pdf_url(url)
         elif 'science.org' in url:
             url = get_science_pdf_url(url)
+        elif 'onlinelibrary.wiley.com' in url:
+            url = get_wiley_pdf_url(url)
+        elif 'biorxiv.org' in url or 'medrxiv.org' in url:
+            url = get_biorxiv_pdf_url(url)
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "application/pdf,application/x-pdf,*/*",
         }
 
-        if 'sciencedirect.com' in url or 'elsevier.com' in url:
-            headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-
+        # Step 2: Attempt direct download.
+        try_oa_fallback = False
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             response = await client.get(url, headers=headers)
 
@@ -552,21 +739,35 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
                 cd = response.headers.get('content-disposition', '')
                 if '.pdf' in cd.lower():
                     return content
+                # Got 200 but HTML/non-PDF — publisher returned a login or paywall page.
+                # (ScienceDirect, Nature, and others do this for non-OA content.)
+                logger.info(f"Got 200 non-PDF from {url}, trying open access APIs...")
+                try_oa_fallback = True
             elif response.status_code in (403, 401, 451):
-                # Publisher blocked direct download — try open access APIs
                 logger.info(f"Got {response.status_code} from {url}, trying open access APIs...")
-                doi = _extract_doi(url)
-                # Try Unpaywall first (most comprehensive OA database)
-                oa_bytes = await _try_unpaywall_download(url, doi)
-                if oa_bytes:
-                    return oa_bytes
-                # Try Semantic Scholar
-                oa_bytes = await _try_semantic_scholar_download(url, doi)
-                if oa_bytes:
-                    return oa_bytes
-                logger.warning(f"All download attempts failed for {url} (original: {response.status_code})")
+                try_oa_fallback = True
             else:
                 logger.warning(f"Failed to download PDF from {url}: status {response.status_code}")
+
+        if not try_oa_fallback:
+            return None
+
+        # Step 3: Open-access API fallback (Unpaywall → Semantic Scholar).
+        doi = _extract_doi(url)
+        # ScienceDirect URLs contain only a PII, not a DOI — resolve via CrossRef.
+        if not doi and 'sciencedirect.com' in url:
+            pii_match = re.search(r'/pii/([A-Z0-9]+)', url, re.IGNORECASE)
+            if pii_match:
+                doi = await _try_crossref_doi_from_pii(pii_match.group(1).upper())
+
+        oa_bytes = await _try_unpaywall_download(url, doi)
+        if oa_bytes:
+            return oa_bytes
+        oa_bytes = await _try_semantic_scholar_download(url, doi)
+        if oa_bytes:
+            return oa_bytes
+
+        logger.warning(f"All download attempts failed for {url}")
         return None
     except Exception as e:
         logger.error(f"Error downloading PDF from {url}: {e}")
