@@ -560,11 +560,22 @@ async def chat_with_ai(
     - X-OpenRouter-API-Key: OpenRouter API key
     - X-OpenRouter-Base-URL: OpenRouter base URL
     - X-OpenRouter-Model: Model name
+    - X-Language: Frontend i18n language code (e.g. en-US, zh-CN, zh-HK)
     """
     # Get AI configuration from request headers
     api_key = request.headers.get("X-OpenRouter-API-Key")
     base_url = request.headers.get("X-OpenRouter-Base-URL")
     model = request.headers.get("X-OpenRouter-Model")
+
+    # Read the frontend i18n language preference. Maps frontend codes (en-US / zh-CN / zh-HK)
+    # to the backend prompt language codes (en / zh_CN / zh_HK).
+    _LANG_HEADER_MAP = {
+        "en-US": "en",
+        "zh-CN": "zh_CN",
+        "zh-HK": "zh_HK",
+    }
+    ui_lang_header = request.headers.get("X-Language", "")
+    ui_lang = _LANG_HEADER_MAP.get(ui_lang_header) if ui_lang_header else None
 
     # Fetch user's temporary dataset permissions (for non-admin users)
     # Need this first to pass elevated_dataset_ids to get_chat_context_stats
@@ -860,13 +871,18 @@ async def chat_with_ai(
     # Log the user_data_context for debugging
     # logger.info(f"[Chat] User data context for agent:\n{user_data_context}")
 
-    # Detect user language from the last user message
-    detected_lang = "en"
-    for msg in reversed(req.messages):
-        if msg.get("role") == "user":
-            user_text = extract_text_from_content(msg.get("content", ""))
-            detected_lang = detect_language(user_text)
-            break
+    # Determine language for system prompt.
+    # Priority: explicit X-Language header (user's i18n setting) > content-based heuristic.
+    if ui_lang:
+        detected_lang = ui_lang
+    else:
+        # Fallback: infer from the last user message content
+        detected_lang = "en"
+        for msg in reversed(req.messages):
+            if msg.get("role") == "user":
+                user_text = extract_text_from_content(msg.get("content", ""))
+                detected_lang = detect_language(user_text)
+                break
 
     # Add system prompt if not present
     messages = req.messages.copy()
