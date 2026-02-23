@@ -103,21 +103,47 @@ export function removeAllReferenceBlocks(content: string): string {
 }
 
 /**
+ * Extract domain from URL for favicon
+ */
+function extractDomain(url: string): string | null {
+  try {
+    const urlObj = new URL(url)
+    return urlObj.hostname
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Get favicon URL from domain using Google's favicon service
+ */
+function getFaviconUrl(url: string): string | null {
+  const domain = extractDomain(url)
+  if (!domain) return null
+  // Use Google's favicon service as a reliable fallback
+  return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`
+}
+
+/**
  * JournalLogo — renders a journal logo image with emoji fallback.
- * Attempts to load /images/journal-logos/{logo}.png; falls back to emoji icon on error.
+ * Attempts to load /images/journal-logos/{logo}.png for known journals,
+ * or extracts favicon from URL for unknown sources.
  */
 const JournalLogo = React.memo(function JournalLogo({
   logo,
-  icon
+  icon,
+  url
 }: {
   logo?: string
   icon: string
+  url: string
 }) {
   const [imgError, setImgError] = useState(false)
   const showLogo = logo && LOGO_SUPPORTED_KEYS.has(logo) && !imgError
 
   const baseUrl = (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
 
+  // If we have a known journal logo, use it
   if (showLogo) {
     return (
       <img
@@ -127,6 +153,21 @@ const JournalLogo = React.memo(function JournalLogo({
         onError={() => setImgError(true)}
       />
     )
+  }
+
+  // If no logo specified, try to extract favicon from URL
+  if (!logo && !imgError) {
+    const faviconUrl = getFaviconUrl(url)
+    if (faviconUrl) {
+      return (
+        <img
+          src={faviconUrl}
+          alt=""
+          className="w-7 h-7 object-contain rounded"
+          onError={() => setImgError(true)}
+        />
+      )
+    }
   }
 
   // Fallback: emoji icon
@@ -171,7 +212,7 @@ const ReferenceCard = React.memo(function ReferenceCard({
     >
       {/* Logo / Icon */}
       <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 overflow-hidden">
-        <JournalLogo logo={logo} icon={icon} />
+        <JournalLogo logo={logo} icon={icon} url={url} />
       </div>
 
       {/* Content */}

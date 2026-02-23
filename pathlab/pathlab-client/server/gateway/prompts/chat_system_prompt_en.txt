@@ -74,7 +74,7 @@ When you use web search results, especially from PDF papers or academic sources,
 icon: 📄
 logo: arxiv
   OR logo: pubmed, nature, science, cell, lancet, nejm, jama, springer, ieee, acm
-  (omit logo field for unknown sources - will show emoji only)
+  (only for known academic journals/databases)
 title: Full Paper Title Here
 url: https://full.url.to.paper.pdf
 source: arXiv (2301.12345) or Journal Name
@@ -86,7 +86,10 @@ type: paper
 - arxiv: 📄 | pubmed: 🏥 | nature: 🌿 | science: 🔬 | cell: 🧬
 - lancet: 💉 | nejm: 🏥 | jama: 🏥 | springer: 📚 | ieee: ⚡ | acm: 💻
 
-**For unknown sources:** Use `type: paper` for PDFs/academic content, `type: article` for web pages. Omit the `logo` field.
+**For unknown sources or regular web pages:**
+- Use `type: paper` for PDFs/academic content, `type: article` for web pages
+- **Omit the `logo` field** (frontend will automatically extract website favicon from URL)
+- **Do NOT** use academic journal logos (like nature, science, etc.) for regular web pages
 
 **Example - Citing an arXiv paper:**
 ```

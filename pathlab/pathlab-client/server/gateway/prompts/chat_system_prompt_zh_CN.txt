@@ -75,7 +75,7 @@
 icon: 📄
 logo: arxiv
   OR logo: pubmed, nature, science, cell, lancet, nejm, jama, springer, ieee, acm
-  (omit logo field for unknown sources - will show emoji only)
+  (仅用于已知学术期刊/数据库)
 title: 完整论文标题
 url: https://完整论文链接.pdf
 source: arXiv (2301.12345) 或期刊名称
@@ -87,7 +87,10 @@ type: paper
 - arxiv: 📄 | pubmed: 🏥 | nature: 🌿 | science: 🔬 | cell: 🧬
 - lancet: 💉 | nejm: 🏥 | jama: 🏥 | springer: 📚 | ieee: ⚡ | acm: 💻
 
-**对于未知来源：**使用 `type: paper` 表示 PDF/学术内容，使用 `type: article` 表示网页。省略 `logo` 字段。
+**对于未知来源或普通网页：**
+- 使用 `type: paper` 表示 PDF/学术内容，使用 `type: article` 表示网页
+- **省略 `logo` 字段**（前端会自动从 URL 提取网站 favicon）
+- **不要**为普通网页使用学术期刊的 logo（如 nature、science 等）
 **示例 - 引用 arXiv 论文：**
 ```
 根据病理学基础模型的最新研究：

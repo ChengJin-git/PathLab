@@ -75,7 +75,7 @@
 icon: 📄
 logo: arxiv
   OR logo: pubmed, nature, science, cell, lancet, nejm, jama, springer, ieee, acm
-  (omit logo field for unknown sources - will show emoji only)
+  (僅用於已知學術期刊/資料庫)
 title: 完整論文標題
 url: https://完整論文連結.pdf
 source: arXiv (2301.12345) 或期刊名稱
@@ -87,7 +87,10 @@ type: paper
 - arxiv: 📄 | pubmed: 🏥 | nature: 🌿 | science: 🔬 | cell: 🧬
 - lancet: 💉 | nejm: 🏥 | jama: 🏥 | springer: 📚 | ieee: ⚡ | acm: 💻
 
-**對於未知來源：**使用 `type: paper` 表示 PDF/學術內容，使用 `type: article` 表示網頁。省略 `logo` 字段。
+**對於未知來源或普通網頁：**
+- 使用 `type: paper` 表示 PDF/學術內容，使用 `type: article` 表示網頁
+- **省略 `logo` 字段**（前端會自動從 URL 提取網站 favicon）
+- **不要**為普通網頁使用學術期刊的 logo（如 nature、science 等）
 
 **示例 - 引用 arXiv 論文：**
 ```
