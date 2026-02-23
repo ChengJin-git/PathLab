@@ -115,12 +115,13 @@ const JournalLogo = React.memo(function JournalLogo({
 }) {
   const [imgError, setImgError] = useState(false)
   const showLogo = logo && LOGO_SUPPORTED_KEYS.has(logo) && !imgError
+  const baseUrl = (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
 
   if (showLogo) {
     return (
       <img
-        src={`/images/journal-logos/${logo}.png`}
-        alt={logo}
+        src={`${baseUrl}/images/journal-logos/${logo}.png`}
+        alt=""
         className="w-7 h-7 object-contain rounded"
         onError={() => setImgError(true)}
       />
@@ -168,7 +169,7 @@ const ReferenceCard = React.memo(function ReferenceCard({
       onClick={handleClick}
     >
       {/* Logo / Icon */}
-      <div className="flex-shrink-0 flex items-center justify-center w-8 h-8">
+      <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 overflow-hidden">
         <JournalLogo logo={logo} icon={icon} />
       </div>
 
