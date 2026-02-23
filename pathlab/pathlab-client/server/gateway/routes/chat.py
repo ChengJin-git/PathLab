@@ -1092,6 +1092,21 @@ async def chat_with_ai(
             await db.commit()
 
     # Stream AI response
+    def _strip_internal_status_blocks(content: str) -> str:
+        """Strip frontend-only status blocks before saving to DB.
+
+        These blocks ([SEARCH_STATUS], [WEB_SEARCH_RESULT], [PDF_PARSE_STATUS]) are
+        purely UI status indicators emitted during streaming. They must NOT be
+        persisted into the conversation history because if the AI sees them in
+        subsequent turns it assumes search results are already available and will
+        refuse to perform a new web search.
+        """
+        import re as _re
+        content = _re.sub(r'\[SEARCH_STATUS\][\s\S]*?\[/SEARCH_STATUS\]', '', content)
+        content = _re.sub(r'\[WEB_SEARCH_RESULT\][\s\S]*?\[/WEB_SEARCH_RESULT\]', '', content)
+        content = _re.sub(r'\[PDF_PARSE_STATUS\][\s\S]*?\[/PDF_PARSE_STATUS\]', '', content)
+        return content.strip()
+
     async def stream_with_persistence():
         """Stream AI response and save to database if conversation_id is provided"""
         full_response = ""
@@ -1102,10 +1117,13 @@ async def chat_with_ai(
                 if req.conversation_id and full_response:
                     async for db_session in get_db():
                         try:
+                            # Strip internal-only status blocks before persisting so that
+                            # on the next turn the AI won't mistake them for existing search results.
+                            save_content = _strip_internal_status_blocks(full_response)
                             message_data = {
                                 "conversation_id": req.conversation_id,
                                 "role": "assistant",
-                                "content": full_response,
+                                "content": save_content,
                             }
                             saved_message = await ChatRepository.add_message(db_session, message_data)
                             await db_session.commit()

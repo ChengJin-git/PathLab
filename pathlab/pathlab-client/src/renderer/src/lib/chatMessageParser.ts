@@ -8,8 +8,21 @@
  * Strip persistence-only fields from config blocks before sending message content to the AI API.
  * This prevents the AI from seeing and copying fields like submitted_task_id into new responses,
  * which would cause new config cards to initialize as already submitted.
+ *
+ * Also strips frontend-only status blocks ([SEARCH_STATUS], [WEB_SEARCH_RESULT],
+ * [PDF_PARSE_STATUS]) that are emitted by the backend purely as UI indicators during
+ * streaming. If these blocks are sent back to the AI as conversation history the AI
+ * will interpret them as already-available search results and refuse to perform a new
+ * web search on subsequent turns.
  */
 export function sanitizeConfigBlocksForAI(content: string): string {
+  // Strip frontend-only streaming status blocks first.
+  // These must never reach the AI model as conversation history.
+  let sanitized = content
+  sanitized = sanitized.replace(/\[SEARCH_STATUS\][\s\S]*?\[\/SEARCH_STATUS\]/g, '')
+  sanitized = sanitized.replace(/\[WEB_SEARCH_RESULT\][\s\S]*?\[\/WEB_SEARCH_RESULT\]/g, '')
+  sanitized = sanitized.replace(/\[PDF_PARSE_STATUS\][\s\S]*?\[\/PDF_PARSE_STATUS\]/g, '')
+
   // Fields to strip per config block type
   const PERSISTENCE_FIELDS: Record<string, string[]> = {
     TASK_CONFIG: ['submitted_task_id'],
@@ -18,7 +31,6 @@ export function sanitizeConfigBlocksForAI(content: string): string {
     DATASET_REGISTRATION: ['submitted_task_id', 'submitted_file_count', 'submitted_dataset_name', 'submitted_mode'],
   }
 
-  let sanitized = content
   for (const [blockType, fields] of Object.entries(PERSISTENCE_FIELDS)) {
     const regex = new RegExp(`\\[${blockType}\\]([\\s\\S]*?)\\[\\/${blockType}\\]`, 'g')
     sanitized = sanitized.replace(regex, (match, json) => {
@@ -38,6 +50,6 @@ export function sanitizeConfigBlocksForAI(content: string): string {
       }
     })
   }
-  return sanitized
+  return sanitized.trim()
 }
 
