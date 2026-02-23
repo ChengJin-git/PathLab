@@ -5,6 +5,7 @@
  * Supports journal logos from /images/journal-logos/{logo}.png with emoji fallback.
  */
 import React, { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { motion } from 'framer-motion'
 import { ExternalLink, FileText, BookOpen } from 'lucide-react'
 
@@ -183,6 +184,8 @@ const ReferenceCard = React.memo(function ReferenceCard({
   source,
   type
 }: ReferenceCardProps) {
+  const { t } = useTranslation()
+
   const handleClick = () => {
     window.open(url, '_blank', 'noopener,noreferrer')
   }
@@ -231,12 +234,12 @@ const ReferenceCard = React.memo(function ReferenceCard({
             {type === 'paper' ? (
               <span className="flex items-center gap-1">
                 <FileText className="w-3 h-3" />
-                Paper
+                {t('chatComponents.referenceCard.paper')}
               </span>
             ) : (
               <span className="flex items-center gap-1">
                 <BookOpen className="w-3 h-3" />
-                Article
+                {t('chatComponents.referenceCard.article')}
               </span>
             )}
           </span>
@@ -259,12 +262,14 @@ export const ReferenceCardList = React.memo(function ReferenceCardList({
 }: {
   cards: ReferenceCardProps[]
 }) {
+  const { t } = useTranslation()
+
   if (!cards || cards.length === 0) return null
 
   return (
     <div className="space-y-2 mt-3">
       <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
-        References
+        {t('chatComponents.referenceCard.references')}
       </div>
       {cards.map((card, index) => (
         <ReferenceCard key={`${card.url}-${index}`} {...card} />

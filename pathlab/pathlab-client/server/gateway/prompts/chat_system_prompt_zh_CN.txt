@@ -87,10 +87,34 @@ type: paper
 - arxiv: 📄 | pubmed: 🏥 | nature: 🌿 | science: 🔬 | cell: 🧬
 - lancet: 💉 | nejm: 🏥 | jama: 🏥 | springer: 📚 | ieee: ⚡ | acm: 💻
 
-**对于未知来源或普通网页：**
-- 使用 `type: paper` 表示 PDF/学术内容，使用 `type: article` 表示网页
-- **省略 `logo` 字段**（前端会自动从 URL 提取网站 favicon）
-- **不要**为普通网页使用学术期刊的 logo（如 nature、science 等）
+**LOGO 选择规则（严格遵守）：**
+- **仅根据 URL 判断**，不要根据文章内容或标题中提到的期刊名称
+- **只有当 URL 直接来自该期刊/数据库时**才使用对应的 logo：
+  - `logo: arxiv` → 仅用于 `arxiv.org` 域名
+  - `logo: pubmed` → 仅用于 `pubmed.ncbi.nlm.nih.gov` 域名
+  - `logo: nature` → 仅用于 `nature.com` 域名
+  - `logo: science` → 仅用于 `science.org` 或 `sciencemag.org` 域名
+  - 其他 logo 同理
+- **对于所有其他网站**（包括大学、医院、博客等），**必须省略 `logo` 字段**
+- 即使文章内容提到某个期刊，如果 URL 不是该期刊的官方网站，也不要使用该期刊的 logo
+
+**示例 - 错误做法：**
+```
+❌ 错误：文章提到发表在 Science，但 URL 是大学网站
+[REFERENCE]
+logo: science  ← 错误！URL 不是 science.org
+url: https://university.edu/news/article
+```
+
+**示例 - 正确做法：**
+```
+✅ 正确：省略 logo，让前端自动提取 favicon
+[REFERENCE]
+icon: 🌐
+url: https://university.edu/news/article
+source: University News
+type: article
+```
 **示例 - 引用 arXiv 论文：**
 ```
 根据病理学基础模型的最新研究：

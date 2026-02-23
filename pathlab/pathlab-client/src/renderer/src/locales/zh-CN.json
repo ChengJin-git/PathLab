@@ -2059,6 +2059,11 @@
       "csvUploadedSuccess": "CSV 上传成功！",
       "taskCancelledSuccess": "任务 {{taskId}} 已成功取消！",
       "taskRenamedSuccess": "任务已成功重命名为\"{{newName}}\"！"
+    },
+    "referenceCard": {
+      "references": "参考文献",
+      "paper": "论文",
+      "article": "文章"
     }
   },
   "listComponents": {

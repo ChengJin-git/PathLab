@@ -86,10 +86,34 @@ type: paper
 - arxiv: 📄 | pubmed: 🏥 | nature: 🌿 | science: 🔬 | cell: 🧬
 - lancet: 💉 | nejm: 🏥 | jama: 🏥 | springer: 📚 | ieee: ⚡ | acm: 💻
 
-**For unknown sources or regular web pages:**
-- Use `type: paper` for PDFs/academic content, `type: article` for web pages
-- **Omit the `logo` field** (frontend will automatically extract website favicon from URL)
-- **Do NOT** use academic journal logos (like nature, science, etc.) for regular web pages
+**LOGO SELECTION RULES (Strictly Follow):**
+- **Judge ONLY by URL**, NOT by article content or journal names mentioned in the title
+- **Use logo ONLY when URL is directly from that journal/database:**
+  - `logo: arxiv` → ONLY for `arxiv.org` domain
+  - `logo: pubmed` → ONLY for `pubmed.ncbi.nlm.nih.gov` domain
+  - `logo: nature` → ONLY for `nature.com` domain
+  - `logo: science` → ONLY for `science.org` or `sciencemag.org` domain
+  - Same rule applies to other logos
+- **For all other websites** (universities, hospitals, blogs, etc.), **MUST omit the `logo` field**
+- Even if the article mentions a journal, if the URL is not from that journal's official website, do NOT use that journal's logo
+
+**Example - WRONG approach:**
+```
+❌ WRONG: Article mentions Science, but URL is from university
+[REFERENCE]
+logo: science  ← WRONG! URL is not science.org
+url: https://university.edu/news/article
+```
+
+**Example - CORRECT approach:**
+```
+✅ CORRECT: Omit logo, let frontend extract favicon
+[REFERENCE]
+icon: 🌐
+url: https://university.edu/news/article
+source: University News
+type: article
+```
 
 **Example - Citing an arXiv paper:**
 ```

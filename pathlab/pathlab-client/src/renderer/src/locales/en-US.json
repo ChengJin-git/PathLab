@@ -2059,6 +2059,11 @@
       "csvUploadedSuccess": "CSV uploaded successfully!",
       "taskCancelledSuccess": "Task {{taskId}} cancelled successfully!",
       "taskRenamedSuccess": "Task renamed to \"{{newName}}\" successfully!"
+    },
+    "referenceCard": {
+      "references": "References",
+      "paper": "Paper",
+      "article": "Article"
     }
   },
   "analysisDetails": {
