@@ -1211,17 +1211,39 @@ def _parse_pdf_sync_inner(
                 )
 
         # ── VLM singleton cleanup ─────────────────────────────────────────
-        # Clear the MinerU VLM model singleton so the underlying vLLM LLM
-        # object can be garbage-collected, allowing EngineCore worker
-        # processes to exit cleanly (avoids GPU VRAM leak between parses).
+        # Explicitly shutdown vLLM EngineCore worker processes before
+        # clearing the singleton.  Without this, subprocess workers keep
+        # running and leak GPU VRAM across successive parses.
         try:
             from mineru.backend.vlm.vlm_analyze import ModelSingleton
             from mineru.utils.model_utils import clean_memory
             import gc
+
+            # 1) Explicitly shutdown each vLLM engine so EngineCore
+            #    subprocesses are terminated (terminate → join → kill).
+            for _key, _client in list(ModelSingleton._models.items()):
+                # Sync vLLM engine
+                _llm = getattr(_client, 'vllm_llm', None)
+                if _llm is not None:
+                    try:
+                        _llm.llm_engine.engine_core.shutdown()
+                        logger.info("[MinerU] vLLM sync engine shutdown OK")
+                    except Exception as _e:
+                        logger.warning(f"[MinerU] vLLM sync engine shutdown warning: {_e}")
+                # Async vLLM engine
+                _allm = getattr(_client, 'vllm_async_llm', None)
+                if _allm is not None:
+                    try:
+                        _allm.engine_core.shutdown()
+                        logger.info("[MinerU] vLLM async engine shutdown OK")
+                    except Exception as _e:
+                        logger.warning(f"[MinerU] vLLM async engine shutdown warning: {_e}")
+
+            # 2) Clear singleton dict & free CUDA memory.
             ModelSingleton._models.clear()
             clean_memory('cuda')
             gc.collect()
-            logger.info("[MinerU] VLM singleton cleared — EngineCore should exit")
+            logger.info("[MinerU] VLM singleton cleared — EngineCore processes terminated")
         except Exception as _cleanup_err:
             logger.warning(f"[MinerU] VLM cleanup warning: {_cleanup_err}")
 
