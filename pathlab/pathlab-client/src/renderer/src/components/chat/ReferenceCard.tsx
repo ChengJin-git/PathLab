@@ -140,6 +140,7 @@ const JournalLogo = React.memo(function JournalLogo({
   url: string
 }) {
   const [imgError, setImgError] = useState(false)
+  const [faviconError, setFaviconError] = useState(false)
   const showLogo = logo && LOGO_SUPPORTED_KEYS.has(logo) && !imgError
 
   const baseUrl = (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
@@ -156,8 +157,8 @@ const JournalLogo = React.memo(function JournalLogo({
     )
   }
 
-  // If no logo specified, try to extract favicon from URL
-  if (!logo && !imgError) {
+  // Try to extract favicon from URL (for both unknown logos and when no logo is specified)
+  if (!faviconError) {
     const faviconUrl = getFaviconUrl(url)
     if (faviconUrl) {
       return (
@@ -165,7 +166,7 @@ const JournalLogo = React.memo(function JournalLogo({
           src={faviconUrl}
           alt=""
           className="w-7 h-7 object-contain rounded"
-          onError={() => setImgError(true)}
+          onError={() => setFaviconError(true)}
         />
       )
     }

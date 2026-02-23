@@ -293,6 +293,7 @@ export const PdfParsingStatus = React.memo(function PdfParsingStatus({
 
 /**
  * PdfParsingCompletedCard — shows summary after PDF parsing is done.
+ * Only displays if at least one PDF was successfully parsed.
  */
 export const PdfParsingCompletedCard = React.memo(function PdfParsingCompletedCard({
   items
@@ -301,6 +302,9 @@ export const PdfParsingCompletedCard = React.memo(function PdfParsingCompletedCa
 }) {
   const { t } = useTranslation()
   const completedCount = items.filter(i => i.status === 'completed').length
+
+  // Don't show if no PDFs were successfully parsed
+  if (completedCount === 0) return null
 
   return (
     <motion.div
