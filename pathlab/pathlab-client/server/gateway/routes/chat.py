@@ -533,8 +533,8 @@ After saving, return here and start chatting!"""
                 )}
             ]
 
-            # Stream supplementary AI response (separator + content)
-            yield f"data: {json.dumps({'content': chr(10) + chr(10) + '---' + chr(10) + chr(10) + '📄 **PDF Analysis Complete — Supplementary Details:**' + chr(10) + chr(10)})}\n\n"
+            # Stream supplementary AI response (clean paragraph break before supplement)
+            yield f"data: {json.dumps({'content': chr(10) + chr(10)})}\n\n"
 
             try:
                 async for chunk in _stream_from_openai_compatible(

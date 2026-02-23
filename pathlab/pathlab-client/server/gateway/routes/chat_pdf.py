@@ -15,6 +15,7 @@ import re
 import tempfile
 import asyncio
 import hashlib
+import threading
 from pathlib import Path
 from typing import Any
 from datetime import datetime, timedelta
@@ -22,6 +23,13 @@ import httpx
 
 from ..dependencies import logger
 from backend.common.config import Config
+from backend.common.gpu_utils import select_optimal_gpu_for_task
+
+# Serialize MinerU GPU access: only one parse at a time to avoid GPU memory conflicts
+_mineru_gpu_lock = threading.Lock()
+
+# Minimum free VRAM (MB) required to run MinerU hybrid_auto with VLM backend
+MIN_VRAM_MB_FOR_MINERU = 8000
 
 
 _pdf_cache_dir: Path | None = None
@@ -277,7 +285,41 @@ def _parse_pdf_sync(pdf_bytes: bytes, max_pages: int = 10) -> str:
 
     Returns markdown with `--- Page X ---` markers between pages so that
     the AI can cite specific page numbers in its response.
+
+    GPU resource management:
+    - Checks GPU availability before starting (requires MIN_VRAM_MB_FOR_MINERU free VRAM)
+    - Uses threading lock to serialize MinerU access (one parse at a time)
+    - Selects GPU with most free VRAM via select_optimal_gpu_for_task()
+    - Returns error string if no GPU resources available
     """
+    # --- GPU resource check (before acquiring heavy lock) ---
+    gpu_idx, free_mb = select_optimal_gpu_for_task(min_vram_mb=MIN_VRAM_MB_FOR_MINERU)
+    if gpu_idx == -1:
+        logger.warning(
+            f"No GPU with >= {MIN_VRAM_MB_FOR_MINERU} MB free VRAM available for PDF parsing. "
+            f"Best available: {free_mb:.0f} MB."
+        )
+        return "[Error: GPU unavailable — no GPU with sufficient free memory for PDF parsing. Please try again later.]"
+
+    logger.info(f"PDF parsing: selected GPU cuda:{gpu_idx} with {free_mb:.0f} MB free VRAM")
+
+    # Acquire lock so only one MinerU parse runs at a time (GPU memory safety)
+    with _mineru_gpu_lock:
+        # Set CUDA_VISIBLE_DEVICES so MinerU/vLLM targets the selected GPU
+        original_cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
+        try:
+            return _parse_pdf_sync_inner(pdf_bytes, max_pages)
+        finally:
+            # Restore original CUDA_VISIBLE_DEVICES
+            if original_cuda_devices is not None:
+                os.environ["CUDA_VISIBLE_DEVICES"] = original_cuda_devices
+            else:
+                os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+
+
+def _parse_pdf_sync_inner(pdf_bytes: bytes, max_pages: int) -> str:
+    """Inner parsing logic, called with GPU lock held and CUDA_VISIBLE_DEVICES set."""
     try:
         from mineru.cli.common import convert_pdf_bytes_to_bytes_by_pypdfium2, prepare_env
         from mineru.data.data_reader_writer import FileBasedDataWriter
@@ -398,23 +440,25 @@ def format_reference_card(
     pdf_summary: str | None = None
 ) -> str:
     source_icons = {
-        "arxiv": "📄 arXiv",
-        "pubmed": "🏥 PubMed",
-        "nature": "🌿 Nature",
-        "science": "🔬 Science",
-        "cell": "🧬 Cell",
-        "lancet": "💉 Lancet",
-        "nejm": "🏥 NEJM",
-        "jama": "🏥 JAMA",
-        "springer": "📚 Springer",
-        "ieee": "⚡ IEEE",
-        "acm": "💻 ACM",
-        "pdf": "📄 PDF",
-        "web": "🌐 Web",
+        "arxiv": "📄",
+        "pubmed": "🏥",
+        "nature": "🌿",
+        "science": "🔬",
+        "cell": "🧬",
+        "lancet": "💉",
+        "nejm": "🏥",
+        "jama": "🏥",
+        "springer": "📚",
+        "ieee": "⚡",
+        "acm": "💻",
+        "pdf": "📄",
+        "web": "🌐",
     }
-    
+
     icon = source_icons.get(source_type, "📚")
-    
+    # logo key matches image filename in /images/journal-logos/{logo}.png
+    logo = source_type if source_type != "web" else ""
+
     if source_type == "arxiv":
         arxiv_id = ""
         match = re.search(r'(\d{4}\.\d{4,5}|[a-z-]+/\d+)', url)
@@ -422,6 +466,7 @@ def format_reference_card(
             arxiv_id = match.group(1)
         card = f"""[REFERENCE]
 icon: {icon}
+logo: {logo}
 title: {title}
 url: {url}
 source: arXiv ({arxiv_id})
@@ -430,6 +475,7 @@ type: paper
     else:
         card = f"""[REFERENCE]
 icon: {icon}
+logo: {logo}
 title: {title}
 url: {url}
 source: {source_type.upper()}
@@ -521,8 +567,17 @@ async def process_pdf_url(
         pdf_content = await parse_pdf(pdf_bytes, max_pages=10)
 
         if pdf_content.startswith("[Error"):
-            result["error"] = "parse_failed"
-            result["error_detail"] = f"PDF parsing failed for '{title}'. The file may be corrupted, scanned-only, or in an unsupported format."
+            # Distinguish GPU unavailable from other parse errors
+            if "GPU unavailable" in pdf_content:
+                result["error"] = "gpu_unavailable"
+                result["error_detail"] = (
+                    f"No GPU resources available to parse '{title}'. "
+                    "All GPUs are currently busy or lack sufficient free memory. "
+                    "Please try again later when GPU resources are freed."
+                )
+            else:
+                result["error"] = "parse_failed"
+                result["error_detail"] = f"PDF parsing failed for '{title}'. The file may be corrupted, scanned-only, or in an unsupported format."
             return result
 
         # Store full content with page markers so AI can cite specific pages

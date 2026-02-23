@@ -2,18 +2,34 @@
  * ReferenceCard — displays a reference card for PDF papers and academic sources.
  *
  * Parses [REFERENCE] blocks from AI responses and renders them as clickable cards.
+ * Supports journal logos from /images/journal-logos/{logo}.png with emoji fallback.
  */
-import React from 'react'
+import React, { useState } from 'react'
 import { motion } from 'framer-motion'
 import { ExternalLink, FileText, BookOpen } from 'lucide-react'
 
 export interface ReferenceCardProps {
   icon: string
+  logo?: string // logo key matching /images/journal-logos/{logo}.png
   title: string
   url: string
   source: string
   type: 'paper' | 'article'
 }
+
+/**
+ * Logo keys that have corresponding image files in /images/journal-logos/.
+ * The frontend will attempt to render <img src="/images/journal-logos/{key}.png">
+ * and fall back to the emoji icon if the image fails to load.
+ *
+ * Supported logos (place PNG files ~64x64 in /images/journal-logos/):
+ *   arxiv.png, pubmed.png, nature.png, science.png, cell.png,
+ *   lancet.png, nejm.png, jama.png, springer.png, ieee.png, acm.png, pdf.png
+ */
+const LOGO_SUPPORTED_KEYS = new Set([
+  'arxiv', 'pubmed', 'nature', 'science', 'cell',
+  'lancet', 'nejm', 'jama', 'springer', 'ieee', 'acm'
+])
 
 /**
  * Parse [REFERENCE] block from content
@@ -39,9 +55,10 @@ export function parseReferenceCard(content: string): ReferenceCardProps | null {
     
     // Validate required fields
     if (!config.title || !config.url) return null
-    
+
     return {
       icon: config.icon || '📄',
+      logo: config.logo || undefined,
       title: config.title,
       url: config.url,
       source: config.source || 'Unknown',
@@ -85,9 +102,39 @@ export function removeAllReferenceBlocks(content: string): string {
   return content.replace(/\[REFERENCE\][\s\S]*?\[\/REFERENCE\]/g, '').trim()
 }
 
+/**
+ * JournalLogo — renders a journal logo image with emoji fallback.
+ * Attempts to load /images/journal-logos/{logo}.png; falls back to emoji icon on error.
+ */
+const JournalLogo = React.memo(function JournalLogo({
+  logo,
+  icon
+}: {
+  logo?: string
+  icon: string
+}) {
+  const [imgError, setImgError] = useState(false)
+  const showLogo = logo && LOGO_SUPPORTED_KEYS.has(logo) && !imgError
+
+  if (showLogo) {
+    return (
+      <img
+        src={`/images/journal-logos/${logo}.png`}
+        alt={logo}
+        className="w-7 h-7 object-contain rounded"
+        onError={() => setImgError(true)}
+      />
+    )
+  }
+
+  // Fallback: emoji icon
+  return <span className="text-2xl leading-none">{icon}</span>
+})
+
 // Individual reference card component
 const ReferenceCard = React.memo(function ReferenceCard({
   icon,
+  logo,
   title,
   url,
   source,
@@ -120,18 +167,18 @@ const ReferenceCard = React.memo(function ReferenceCard({
       className="group flex items-start gap-3 px-4 py-3 bg-gradient-to-r from-slate-50 to-gray-50 border border-gray-200 rounded-xl my-2 cursor-pointer hover:border-primary-300 hover:shadow-sm transition-all"
       onClick={handleClick}
     >
-      {/* Icon */}
-      <div className="flex-shrink-0 text-2xl">
-        {icon}
+      {/* Logo / Icon */}
+      <div className="flex-shrink-0 flex items-center justify-center w-8 h-8">
+        <JournalLogo logo={logo} icon={icon} />
       </div>
-      
+
       {/* Content */}
       <div className="flex-1 min-w-0">
         {/* Title */}
         <h4 className="text-sm font-medium text-gray-900 line-clamp-2 group-hover:text-primary-600 transition-colors">
           {title}
         </h4>
-        
+
         {/* Source and type */}
         <div className="flex items-center gap-2 mt-1.5">
           <span className={`text-xs px-2 py-0.5 rounded-full border ${getBadgeColor()}`}>
@@ -152,7 +199,7 @@ const ReferenceCard = React.memo(function ReferenceCard({
           </span>
         </div>
       </div>
-      
+
       {/* External link indicator */}
       <div className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
         <ExternalLink className="w-4 h-4 text-primary-500" />
