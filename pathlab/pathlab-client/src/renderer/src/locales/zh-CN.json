@@ -608,7 +608,8 @@
       "searching": "搜索中...",
       "searchedPages": "已搜索 {{count}} 个网页",
       "webSearchCard": "网页搜索"
-    },
+    }
+  },
   "layout": {
     "uploadAvatar": "上传头像",
     "deleteAvatar": "删除头像",
@@ -2640,5 +2641,4 @@
     "survivalProbability": "生存概率",
     "survivalCurve": "生存曲线"
   }
-}
 }

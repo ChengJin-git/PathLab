@@ -99,6 +99,12 @@ async def lifespan(app: FastAPI):
     # Cleanup old finished tasks (completed/failed/cancelled older than 7 days)
     await cleanup_old_tasks()
 
+    # Cleanup expired PDF cache files
+    from .routes.chat_pdf import cleanup_expired_pdf_cache
+    # Run synchronous cleanup in thread pool
+    import asyncio
+    await asyncio.get_event_loop().run_in_executor(None, cleanup_expired_pdf_cache)
+
     yield  # Application runs here
 
     # === Shutdown ===

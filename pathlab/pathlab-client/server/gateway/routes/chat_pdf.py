@@ -3,60 +3,112 @@ PDF Parsing utilities for AI chat - uses MinerU for academic paper processing
 
 When Exa search returns PDF links (e.g., arXiv papers),
 this module downloads, parses, and summarizes the content for the AI agent.
+
+Features:
+- Supports 30+ academic journal URL patterns
+- File-based cache with 7-day TTL
+- Reference card generation for AI responses
 """
 import json
 import os
 import re
-import uuid
 import tempfile
 import asyncio
+import hashlib
 from pathlib import Path
-from typing import Dict, Optional, List
-from urllib.parse import urlparse
+from typing import Any
+from datetime import datetime, timedelta
 import httpx
 
 from ..dependencies import logger
+from backend.common.config import Config
 
-# Academic PDF URL patterns
+
+_pdf_cache_dir: Path | None = None
+PDF_CACHE_TTL_DAYS = 7
+
+
+def _get_pdf_cache_dir() -> Path:
+    global _pdf_cache_dir
+    if _pdf_cache_dir is None:
+        uploads_dir = Config.get_uploads_dir()
+        _pdf_cache_dir = uploads_dir / "pdf_cache"
+        _pdf_cache_dir.mkdir(parents=True, exist_ok=True)
+    return _pdf_cache_dir
+
+
 PDF_URL_PATTERNS = [
-    # Direct PDF links
     r'\.pdf$',
-    # arXiv
+    
     r'arxiv\.org/(pdf|abs)/',
     r'arxiv\.org/pdf/',
-    # PubMed / PMC
+    
     r'ncbi\.nlm\.nih\.gov/pmc/articles/',
     r'pubmed\.ncbi\.nlm\.nih\.gov/',
-    # Semantic Scholar
+    
     r'semanticscholar\.org/paper/',
     r's2-pdf\.s3\.amazonaws\.com/',
-    # ACL Anthology
+    
     r'aclanthology\.org/',
-    # IEEE
+    
     r'ieeexplore\.ieee\.org/document/',
-    # ACM DL
+    
     r'dl\.acm\.org/doi/',
-    # Springer
+    
     r'link\.springer\.com/',
     r'springer\.com/content/pdf/',
-    # Elsevier / ScienceDirect
+    
     r'sciencedirect\.com/science/article/',
     r'elsevier\.com/',
-    # Nature
+    r'doi\.org/10\.(1016|1056|1002)/',
+    
     r'nature\.com/articles/',
-    # Wiley
+    r'nature\.com/reviews/',
+    
     r'onlinelibrary\.wiley\.com/doi/',
-    # PLoS
+    
     r'plos\.org/',
     r'journals\.plos\.org/',
-    # bioRxiv / medRxiv
+    
     r'biorxiv\.org/content/',
     r'medrxiv\.org/content/',
+    
+    r'jamanetwork\.com/journals/',
+    r'jamanetwork\.com/articlepdf/',
+    
+    r'nejm\.org/doi/',
+    r'nejm\.org/doi/pdf/',
+    r'mediacenteratypon\.nejmgroup-production\.org/.*\.pdf',
+    
+    r'thelancet\.com/journals/',
+    r'thelancet\.com/article/',
+    r'sciencedirect\.com/journal/the-lancet/',
+    
+    r'cell\.com/cell/',
+    r'cell\.com/.*fulltext',
+    
+    r'science\.org/doi/',
+    r'science\.org/doi/pdf/',
+    
+    r'cancer\.gov/',
+    r'nejm\.org/',
+    
+    r'academic\.oup\.com/',
+    r'oup\.com/',
+    
+    r'frontiersin\.org/articles/',
+    
+    r'mdpi\.com/',
+    
+    r'royalsocietypublishing\.org/doi/',
+    
+    r'pnas\.org/doi/',
+    
+    r'sciencemag\.org/',
 ]
 
 
 def is_pdf_url(url: str) -> bool:
-    """Check if a URL is likely to be a PDF or academic paper."""
     if not url:
         return False
     url_lower = url.lower()
@@ -66,8 +118,100 @@ def is_pdf_url(url: str) -> bool:
     return False
 
 
+def _get_url_hash(url: str) -> str:
+    return hashlib.sha256(url.encode()).hexdigest()[:16]
+
+
+def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any]] | None:
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        meta_file = cache_dir / f"{url_hash}.json"
+        pdf_file = cache_dir / f"{url_hash}.pdf"
+        
+        if not meta_file.exists() or not pdf_file.exists():
+            return None
+        
+        with open(meta_file, 'r') as f:
+            meta = json.load(f)
+        
+        cached_time = datetime.fromisoformat(meta.get('cached_at', '2000-01-01'))
+        if datetime.now() - cached_time > timedelta(days=PDF_CACHE_TTL_DAYS):
+            logger.info(f"PDF cache expired for {url}")
+            try:
+                pdf_file.unlink()
+                meta_file.unlink()
+            except:
+                pass
+            return None
+        
+        pdf_bytes = pdf_file.read_bytes()
+        return pdf_bytes, meta
+    except Exception as e:
+        logger.error(f"Error reading PDF cache: {e}")
+        return None
+
+
+def _save_pdf_to_cache(url: str, pdf_bytes: bytes, title: str = "") -> None:
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        meta_file = cache_dir / f"{url_hash}.json"
+        pdf_file = cache_dir / f"{url_hash}.pdf"
+        
+        partial_file = cache_dir / f"{url_hash}.pdf.partial"
+        partial_file.write_bytes(pdf_bytes)
+        partial_file.rename(pdf_file)
+        
+        meta = {
+            'url': url,
+            'title': title,
+            'cached_at': datetime.now().isoformat(),
+            'size_bytes': len(pdf_bytes),
+        }
+        with open(meta_file, 'w') as f:
+            json.dump(meta, f, indent=2)
+        
+        logger.info(f"Cached PDF: {url} ({len(pdf_bytes)} bytes)")
+    except Exception as e:
+        logger.error(f"Error saving PDF to cache: {e}")
+
+
+def cleanup_expired_pdf_cache() -> int:
+    cleaned = 0
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        if not cache_dir.exists():
+            return 0
+        
+        now = datetime.now()
+        for meta_file in cache_dir.glob("*.json"):
+            try:
+                with open(meta_file, 'r') as f:
+                    meta = json.load(f)
+                
+                cached_time = datetime.fromisoformat(meta.get('cached_at', '2000-01-01'))
+                if now - cached_time > timedelta(days=PDF_CACHE_TTL_DAYS):
+                    url_hash = meta_file.stem
+                    pdf_file = cache_dir / f"{url_hash}.pdf"
+                    
+                    if pdf_file.exists():
+                        pdf_file.unlink()
+                    meta_file.unlink()
+                    cleaned += 1
+                    logger.info(f"Cleaned expired PDF cache: {meta.get('url', url_hash)}")
+            except Exception as e:
+                logger.error(f"Error cleaning cache file {meta_file}: {e}")
+        
+        if cleaned > 0:
+            logger.info(f"PDF cache cleanup complete: {cleaned} files removed")
+    except Exception as e:
+        logger.error(f"Error in PDF cache cleanup: {e}")
+    
+    return cleaned
+
+
 def get_arxiv_pdf_url(url: str) -> str:
-    """Convert arXiv abstract URL to PDF URL."""
     match = re.search(r'arxiv\.org/(abs|pdf)/([\w\.\-]+)', url)
     if match:
         paper_id = match.group(2)
@@ -76,17 +220,40 @@ def get_arxiv_pdf_url(url: str) -> str:
     return url
 
 
-async def download_pdf(url: str, timeout: float = 60.0) -> Optional[bytes]:
-    """Download PDF from URL."""
+def get_sciencedirect_pdf_url(url: str) -> str:
+    pii_match = re.search(r'/pii/([A-Z0-9]+)', url)
+    if pii_match:
+        pii = pii_match.group(1)
+        return f"https://reader.elsevier.com/reader/sd/pii/{pii}"
+    return url
+
+
+def get_science_pdf_url(url: str) -> str:
+    if '/doi/full/' in url:
+        return url.replace('/doi/full/', '/doi/pdf/')
+    elif '/doi/' in url and '/pdf' not in url:
+        return url.replace('/doi/', '/doi/pdf/')
+    return url
+
+
+async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
     try:
         if 'arxiv.org' in url:
             url = get_arxiv_pdf_url(url)
+        elif 'science.org' in url:
+            url = get_science_pdf_url(url)
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/pdf,application/x-pdf,*/*",
+        }
+        
+        if 'sciencedirect.com' in url or 'elsevier.com' in url:
+            headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
         
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            response = await client.get(
-                url,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; PathLabBot/1.0)"}
-            )
+            response = await client.get(url, headers=headers)
+            
             if response.status_code == 200:
                 content = response.content
                 if content[:4] == b'%PDF':
@@ -94,7 +261,11 @@ async def download_pdf(url: str, timeout: float = 60.0) -> Optional[bytes]:
                 content_type = response.headers.get('content-type', '')
                 if 'pdf' in content_type.lower():
                     return content
-        logger.warning(f"Failed to download PDF from {url}: status {response.status_code}")
+                cd = response.headers.get('content-disposition', '')
+                if '.pdf' in cd.lower():
+                    return content
+            else:
+                logger.warning(f"Failed to download PDF from {url}: status {response.status_code}")
         return None
     except Exception as e:
         logger.error(f"Error downloading PDF from {url}: {e}")
@@ -102,7 +273,6 @@ async def download_pdf(url: str, timeout: float = 60.0) -> Optional[bytes]:
 
 
 def _parse_pdf_sync(pdf_bytes: bytes, max_pages: int = 10) -> str:
-    """Parse PDF using MinerU (synchronous for asyncio.to_thread)."""
     try:
         from mineru.cli.common import convert_pdf_bytes_to_bytes_by_pypdfium2, prepare_env
         from mineru.data.data_reader_writer import FileBasedDataWriter
@@ -140,7 +310,9 @@ def _parse_pdf_sync(pdf_bytes: bytes, max_pages: int = 10) -> str:
             
             pdf_info = middle_json["pdf_info"]
             image_dir = str(os.path.basename(local_image_dir))
-            md_content = union_make(pdf_info, MakeMode.MM_MD, image_dir)
+            # Type assertion for MinerU's union_make
+            pdf_info_list = pdf_info if isinstance(pdf_info, list) else []
+            md_content = str(union_make(pdf_info_list, MakeMode.MM_MD, image_dir) or "")
             
             return md_content
             
@@ -153,7 +325,6 @@ def _parse_pdf_sync(pdf_bytes: bytes, max_pages: int = 10) -> str:
 
 
 async def parse_pdf(pdf_bytes: bytes, max_pages: int = 10) -> str:
-    """Parse PDF using MinerU asynchronously."""
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _parse_pdf_sync, pdf_bytes, max_pages)
 
@@ -166,7 +337,6 @@ async def summarize_pdf_content(
     model: str,
     max_length: int = 3000
 ) -> str:
-    """Summarize PDF content using LLM."""
     if len(pdf_content) > 15000:
         pdf_content = pdf_content[:15000] + "\n...[content truncated]"
     
@@ -201,4 +371,151 @@ Keep each section concise (2-3 sentences)."""
         logger.error(f"Error summarizing PDF: {e}")
         return pdf_content[:max_length]
 
+
+def format_reference_card(
+    title: str,
+    url: str,
+    source_type: str = "web",
+    pdf_summary: str | None = None
+) -> str:
+    source_icons = {
+        "arxiv": "📄 arXiv",
+        "pubmed": "🏥 PubMed",
+        "nature": "🌿 Nature",
+        "science": "🔬 Science",
+        "cell": "🧬 Cell",
+        "lancet": "💉 Lancet",
+        "nejm": "🏥 NEJM",
+        "jama": "🏥 JAMA",
+        "springer": "📚 Springer",
+        "ieee": "⚡ IEEE",
+        "acm": "💻 ACM",
+        "pdf": "📄 PDF",
+        "web": "🌐 Web",
+    }
+    
+    icon = source_icons.get(source_type, "📚")
+    
+    if source_type == "arxiv":
+        arxiv_id = ""
+        match = re.search(r'(\d{4}\.\d{4,5}|[a-z-]+/\d+)', url)
+        if match:
+            arxiv_id = match.group(1)
+        card = f"""[REFERENCE]
+icon: {icon}
+title: {title}
+url: {url}
+source: arXiv ({arxiv_id})
+type: paper
+[/REFERENCE]"""
+    else:
+        card = f"""[REFERENCE]
+icon: {icon}
+title: {title}
+url: {url}
+source: {source_type.upper()}
+type: {"paper" if source_type != "web" else "article"}
+[/REFERENCE]"""
+    
+    return card
+
+
+def detect_source_type(url: str) -> str:
+    url_lower = url.lower()
+    
+    if 'arxiv.org' in url_lower:
+        return "arxiv"
+    elif 'ncbi.nlm.nih.gov' in url_lower or 'pubmed' in url_lower:
+        return "pubmed"
+    elif 'nature.com' in url_lower:
+        return "nature"
+    elif 'science.org' in url_lower or 'sciencemag.org' in url_lower:
+        return "science"
+    elif 'cell.com' in url_lower:
+        return "cell"
+    elif 'thelancet.com' in url_lower:
+        return "lancet"
+    elif 'nejm.org' in url_lower:
+        return "nejm"
+    elif 'jamanetwork.com' in url_lower:
+        return "jama"
+    elif 'springer.com' in url_lower or 'link.springer.com' in url_lower:
+        return "springer"
+    elif 'ieee' in url_lower:
+        return "ieee"
+    elif 'acm.org' in url_lower:
+        return "acm"
+    elif '.pdf' in url_lower:
+        return "pdf"
+    else:
+        return "web"
+
+
+async def process_pdf_url(
+    url: str,
+    title: str,
+    base_url: str,
+    api_key: str,
+    model: str,
+    use_cache: bool = True
+) -> dict[str, Any]:
+    result = {
+        "url": url,
+        "title": title,
+        "source_type": detect_source_type(url),
+        "success": False,
+        "summary": None,
+        "error": None,
+        "from_cache": False,
+        "reference_card": None
+    }
+    
+    try:
+        pdf_bytes = None
+        
+        if use_cache:
+            cached = _get_cached_pdf(url)
+            if cached:
+                pdf_bytes, cache_meta = cached
+                result["from_cache"] = True
+                result["title"] = cache_meta.get('title', title)
+                logger.info(f"Using cached PDF for {url}")
+        
+        if not pdf_bytes:
+            pdf_bytes = await download_pdf(url)
+            if pdf_bytes and use_cache:
+                _save_pdf_to_cache(url, pdf_bytes, title)
+        
+        if not pdf_bytes:
+            result["error"] = "download_failed"
+            return result
+        
+        pdf_content = await parse_pdf(pdf_bytes, max_pages=10)
+        
+        if pdf_content.startswith("[Error"):
+            result["error"] = "parse_failed"
+            return result
+        
+        summary = await summarize_pdf_content(
+            pdf_content,
+            str(result["title"]) if result["title"] is not None else title,
+            base_url,
+            api_key,
+            model
+        )
+        
+        result["success"] = True
+        result["summary"] = summary
+        result["reference_card"] = format_reference_card(
+            str(result["title"]) if result["title"] is not None else title,
+            url,
+            str(result["source_type"]) if result["source_type"] is not None else "web",
+            summary
+        )
+        
+    except Exception as e:
+        logger.error(f"Error processing PDF {url}: {e}")
+        result["error"] = str(e)
+    
+    return result
 

@@ -22,7 +22,7 @@ from backend.common.gpu_utils import get_gpu_summary_for_prompt
 from ..dependencies import logger
 from ..prompts import get_chat_system_prompt, format_user_data_context, detect_language
 from ..models import ChatRequest, CreateConversationRequest, UpdateMessageRequest, AddMessageRequest
-from .chat_pdf import is_pdf_url, download_pdf, parse_pdf, summarize_pdf_content
+from .chat_pdf import is_pdf_url, process_pdf_url
 
 router = APIRouter(tags=["Chat & Conversations"])
 
@@ -359,27 +359,26 @@ After saving, return here and start chatting!"""
                         yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
                         
                         try:
-                            pdf_bytes = await download_pdf(url)
-                            if pdf_bytes:
-                                pdf_content = await parse_pdf(pdf_bytes, max_pages=10)
-                                if not pdf_content.startswith("[Error"):
-                                    summary = await summarize_pdf_content(
-                                        pdf_content,
-                                        result.get("title", "Unknown"),
-                                        effective_base_url,
-                                        effective_api_key,
-                                        effective_model
-                                    )
-                                    pdf_results.append({
-                                        "title": result.get("title", ""),
-                                        "url": url,
-                                        "summary": summary
-                                    })
-                                    pdf_status["status"] = "completed"
-                                else:
-                                    pdf_status["status"] = "parse_failed"
+                            pdf_result = await process_pdf_url(
+                                url=url,
+                                title=result.get("title", "Unknown"),
+                                base_url=effective_base_url,
+                                api_key=effective_api_key,
+                                model=effective_model,
+                                use_cache=True
+                            )
+                            if pdf_result["success"]:
+                                pdf_results.append({
+                                    "title": pdf_result["title"],
+                                    "url": url,
+                                    "summary": pdf_result["summary"],
+                                    "reference_card": pdf_result["reference_card"],
+                                    "from_cache": pdf_result["from_cache"]
+                                })
+                                pdf_status["status"] = "completed"
+                                pdf_status["from_cache"] = pdf_result["from_cache"]
                             else:
-                                pdf_status["status"] = "download_failed"
+                                pdf_status["status"] = pdf_result.get("error", "unknown_error")
                         except Exception as e:
                             logger.error(f"Error processing PDF {url}: {e}")
                             pdf_status["status"] = f"error: {str(e)[:50]}"

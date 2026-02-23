@@ -14,6 +14,7 @@ import { TaskConfigCard, parseTaskConfig, removeTaskConfigBlock } from './TaskCo
 import { ImageRecommendationCard, parseImageRecommendation, removeImageRecommendationBlock } from './ImageRecommendationCard'
 import { CSVActionCard, parseCSVAction, removeCSVActionBlock } from './CSVActionCard'
 import { NavigationCard, parseNavigateBlock, removeNavigateBlock } from './NavigationCard'
+import { ReferenceCardList, parseAllReferenceCards, removeAllReferenceBlocks } from './ReferenceCard'
 
 import { InferenceConfigCard, parseInferenceConfig, removeInferenceConfigBlock } from './InferenceConfigCard'
 import { AnalysisConfigCard, parseAnalysisConfig, removeAnalysisConfigBlock } from './AnalysisConfigCard'
@@ -101,7 +102,8 @@ const SPECIAL_BLOCK_TAGS = [
   'CANCEL_TASK_NOW',  // Voice command to trigger cancel on existing CancelTaskCard
   'DATASET_UPLOAD',
   'METADATA_UPLOAD',
-  'MODEL_LIST'
+  'MODEL_LIST',
+  'REFERENCE'
 ]
 
 /**
@@ -211,6 +213,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const datasetRegistrationConfig = parseDatasetRegistrationConfig(content)
   const metadataUploadConfig = parseMetadataUploadConfig(content)
   const modelListConfig = parseModelListConfig(content)
+  const referenceCards = parseAllReferenceCards(content)
 
   // Remove special blocks from display content
   // Keep the text content but strip out the special markup blocks
@@ -243,6 +246,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
   displayContent = removeSubmitTaskBlock(displayContent)
   // Remove CANCEL_TASK_NOW block - it's for internal use only (voice command to trigger cancel)
   displayContent = removeCancelTaskNowBlock(displayContent)
+  // Remove REFERENCE blocks - rendered as cards
+  displayContent = removeAllReferenceBlocks(displayContent)
 
   // Remove any incomplete blocks that are still streaming
   const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent)
@@ -579,6 +584,10 @@ const AssistantMessage = React.memo(function AssistantMessage({
           )}
       </AnimatePresence>
 
+      {/* Reference Cards */}
+      {referenceCards && referenceCards.length > 0 && (
+        <ReferenceCardList cards={referenceCards} />
+      )}
     </div>
   )
 })

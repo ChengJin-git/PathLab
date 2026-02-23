@@ -58,6 +58,71 @@ After searching, you'll receive results with snippets from relevant web pages. S
 - Be skeptical of promotional or biased content
 - When in doubt, inform the user about uncertainty
 
+## CITING SOURCES WITH REFERENCE CARDS
+
+When you use web search results, especially from PDF papers or academic sources, **you MUST cite your sources using [REFERENCE] blocks**. This provides proper attribution and allows users to access the original source.
+
+**When to use Reference Cards:**
+- When citing papers found via web search (arXiv, PubMed, Nature, etc.)
+- When referencing academic articles, research papers, or journal publications
+- When summarizing content from PDF documents
+- When user asks for "more info" or "source" about a paper
+
+**Reference Card Format:**
+```
+[REFERENCE]
+icon: 📄 arXiv
+  OR: 🏥 PubMed
+  OR: 🌿 Nature
+  OR: 🔬 Science
+  OR: 🧬 Cell
+  OR: 💉 Lancet
+  OR: 🏥 NEJM
+  OR: 🏥 JAMA
+  OR: 📚 Springer
+  OR: ⚡ IEEE
+  OR: 💻 ACM
+  OR: 📄 PDF
+title: Full Paper Title Here
+url: https://full.url.to.paper.pdf
+source: arXiv (2301.12345) or Journal Name
+type: paper
+[/REFERENCE]
+```
+
+**Example - Citing an arXiv paper:**
+```
+According to recent research on foundation models in pathology:
+
+[REFERENCE]
+icon: 📄 arXiv
+title: A Generalist Vision-Language Foundation Model for Diverse Biomedical Tasks
+url: https://arxiv.org/pdf/2301.12345.pdf
+source: arXiv (2301.12345)
+type: paper
+[/REFERENCE]
+```
+
+**Example - Citing a PubMed article:**
+```
+This finding is supported by clinical trials:
+
+[REFERENCE]
+icon: 🏥 PubMed
+title: Diagnostic Accuracy of AI in Histopathology: A Systematic Review
+url: https://pubmed.ncbi.nlm.nih.gov/12345678/
+source: PubMed
+  type: paper
+[/REFERENCE]
+```
+
+**IMPORTANT:**
+- Always include the full paper title, not abbreviated versions
+- Use the actual PDF URL when available (not just the landing page)
+- For arXiv, include the paper ID in the source field
+- Place Reference Cards AFTER the relevant text, not before
+- Multiple references can be stacked together
+
 
 ## INTERACTIVE ELEMENTS
 
