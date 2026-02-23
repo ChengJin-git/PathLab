@@ -2,7 +2,7 @@
  * ReferenceCard — displays a reference card for PDF papers and academic sources.
  *
  * Parses [REFERENCE] blocks from AI responses and renders them as clickable cards.
- * Supports journal logos from /images/journal-logos/{logo}.png with emoji fallback.
+ * Uses favicon extracted from the reference URL with emoji fallback.
  */
 import React, { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -11,26 +11,11 @@ import { ExternalLink, FileText, BookOpen } from 'lucide-react'
 
 export interface ReferenceCardProps {
   icon: string
-  logo?: string // logo key matching /images/journal-logos/{logo}.png
   title: string
   url: string
   source: string
   type: 'paper' | 'article'
 }
-
-/**
- * Logo keys that have corresponding image files in /images/journal-logos/.
- * The frontend will attempt to render <img src="/images/journal-logos/{key}.png">
- * and fall back to the emoji icon if the image fails to load.
- *
- * Supported logos (place PNG files ~64x64 in /images/journal-logos/):
- *   arxiv.png, pubmed.png, nature.png, science.png, cell.png,
- *   lancet.png, nejm.png, jama.png, springer.png, ieee.png, acm.png, pdf.png
- */
-const LOGO_SUPPORTED_KEYS = new Set([
-  'arxiv', 'pubmed', 'nature', 'science', 'cell',
-  'lancet', 'nejm', 'jama', 'springer', 'ieee', 'acm'
-])
 
 /**
  * Parse [REFERENCE] block from content
@@ -59,7 +44,6 @@ export function parseReferenceCard(content: string): ReferenceCardProps | null {
 
     return {
       icon: config.icon || '📄',
-      logo: config.logo || undefined,
       title: config.title,
       url: config.url,
       source: config.source || 'Unknown',
@@ -126,38 +110,18 @@ function getFaviconUrl(url: string): string | null {
 }
 
 /**
- * JournalLogo — renders a journal logo image with emoji fallback.
- * Attempts to load /images/journal-logos/{logo}.png for known journals,
- * or extracts favicon from URL for unknown sources.
+ * JournalLogo — renders a favicon from the reference URL with emoji fallback.
  */
 const JournalLogo = React.memo(function JournalLogo({
-  logo,
   icon,
   url
 }: {
-  logo?: string
   icon: string
   url: string
 }) {
-  const [imgError, setImgError] = useState(false)
   const [faviconError, setFaviconError] = useState(false)
-  const showLogo = logo && LOGO_SUPPORTED_KEYS.has(logo) && !imgError
 
-  const baseUrl = (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
-
-  // If we have a known journal logo, use it
-  if (showLogo) {
-    return (
-      <img
-        src={`${baseUrl}/images/journal-logos/${logo}.png`}
-        alt=""
-        className="w-7 h-7 object-contain rounded"
-        onError={() => setImgError(true)}
-      />
-    )
-  }
-
-  // Try to extract favicon from URL (for both unknown logos and when no logo is specified)
+  // Try to extract favicon from URL
   if (!faviconError) {
     const faviconUrl = getFaviconUrl(url)
     if (faviconUrl) {
@@ -179,7 +143,6 @@ const JournalLogo = React.memo(function JournalLogo({
 // Individual reference card component
 const ReferenceCard = React.memo(function ReferenceCard({
   icon,
-  logo,
   title,
   url,
   source,
@@ -216,7 +179,7 @@ const ReferenceCard = React.memo(function ReferenceCard({
     >
       {/* Logo / Icon */}
       <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 overflow-hidden">
-        <JournalLogo logo={logo} icon={icon} url={url} />
+        <JournalLogo icon={icon} url={url} />
       </div>
 
       {/* Content */}

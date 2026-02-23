@@ -1318,8 +1318,6 @@ def format_reference_card(
     }
 
     icon = source_icons.get(source_type, "📚")
-    # logo key matches image filename in /images/journal-logos/{logo}.png
-    logo = source_type if source_type != "web" else ""
 
     if source_type == "arxiv":
         arxiv_id = ""
@@ -1328,7 +1326,6 @@ def format_reference_card(
             arxiv_id = match.group(1)
         card = f"""[REFERENCE]
 icon: {icon}
-logo: {logo}
 title: {title}
 url: {url}
 source: arXiv ({arxiv_id})
@@ -1337,7 +1334,6 @@ type: paper
     else:
         card = f"""[REFERENCE]
 icon: {icon}
-logo: {logo}
 title: {title}
 url: {url}
 source: {source_type.upper()}

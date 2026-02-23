@@ -652,6 +652,10 @@ After saving, return here and start chatting!"""
 
     # ── Wait for PDF tasks + supplement ──
     if has_pending_pdfs:
+        # Signal frontend: initial LLM response is complete, entering PDF wait phase.
+        # Frontend can re-enable input so the user can continue chatting.
+        yield f"data: {json.dumps({'pdf_wait_start': True})}\n\n"
+
         PDF_TIMEOUT_SECONDS = 120  # 2 min total timeout for all PDFs
 
         # Wait with timeout

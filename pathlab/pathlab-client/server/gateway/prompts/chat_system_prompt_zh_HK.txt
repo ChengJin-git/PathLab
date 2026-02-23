@@ -73,9 +73,6 @@
 ```
 [REFERENCE]
 icon: 📄
-logo: arxiv
-  OR logo: pubmed, nature, science, cell, lancet, nejm, jama, springer, ieee, acm
-  (僅用於已知學術期刊/資料庫)
 title: 完整論文標題
 url: https://完整論文連結.pdf
 source: arXiv (2301.12345) 或期刊名稱
@@ -83,38 +80,12 @@ type: paper
 [/REFERENCE]
 ```
 
-**支持的 logo 鍵（含圖標）：**
+**支持的圖標 emoji：**
 - arxiv: 📄 | pubmed: 🏥 | nature: 🌿 | science: 🔬 | cell: 🧬
 - lancet: 💉 | nejm: 🏥 | jama: 🏥 | springer: 📚 | ieee: ⚡ | acm: 💻
+- web/其他: 🌐
 
-**LOGO 選擇規則（嚴格遵守）：**
-- **僅根據 URL 判斷**，不要根據文章內容或標題中提到的期刊名稱
-- **只有當 URL 直接來自該期刊/資料庫時**才使用對應的 logo：
-  - `logo: arxiv` → 僅用於 `arxiv.org` 域名
-  - `logo: pubmed` → 僅用於 `pubmed.ncbi.nlm.nih.gov` 域名
-  - `logo: nature` → 僅用於 `nature.com` 域名
-  - `logo: science` → 僅用於 `science.org` 或 `sciencemag.org` 域名
-  - 其他 logo 同理
-- **對於所有其他網站**（包括大學、醫院、博客等），**必須省略 `logo` 字段**
-- 即使文章內容提到某個期刊，如果 URL 不是該期刊的官方網站，也不要使用該期刊的 logo
-
-**示例 - 錯誤做法：**
-```
-❌ 錯誤：文章提到發表在 Science，但 URL 是大學網站
-[REFERENCE]
-logo: science  ← 錯誤！URL 不是 science.org
-url: https://university.edu/news/article
-```
-
-**示例 - 正確做法：**
-```
-✅ 正確：省略 logo，讓前端自動提取 favicon
-[REFERENCE]
-icon: 🌐
-url: https://university.edu/news/article
-source: University News
-type: article
-```
+前端會自動從 URL 中提取 favicon 作為圖標圖片顯示，emoji 圖標作為備用。
 
 **示例 - 引用 arXiv 論文：**
 ```
@@ -122,7 +93,6 @@ type: article
 
 [REFERENCE]
 icon: 📄
-logo: arxiv
 title: A Generalist Vision-Language Foundation Model for Diverse Biomedical Tasks
 url: https://arxiv.org/pdf/2301.12345.pdf
 source: arXiv (2301.12345)
@@ -136,7 +106,6 @@ type: paper
 
 [REFERENCE]
 icon: 🏥
-logo: pubmed
 title: Diagnostic Accuracy of AI in Histopathology: A Systematic Review
 url: https://pubmed.ncbi.nlm.nih.gov/12345678/
 source: PubMed

@@ -38,7 +38,8 @@ export async function chatWithAI(
   onChunk: (chunk: string) => void,
   conversationId?: string,
   onMessageId?: (messageId: number) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onPdfWaitStart?: () => void
 ): Promise<void> {
   // Get AI configuration from localStorage
   const apiKey = localStorage.getItem('openrouter_api_key') || ''
@@ -122,6 +123,10 @@ export async function chatWithAI(
             // Handle message_id event for persistence
             if (parsed.message_id && onMessageId) {
               onMessageId(parsed.message_id)
+            }
+            // Handle pdf_wait_start event — initial LLM response done, entering PDF wait phase
+            if (parsed.pdf_wait_start && onPdfWaitStart) {
+              onPdfWaitStart()
             }
           } catch (e) {
             // Skip invalid JSON

@@ -88,8 +88,11 @@ export default function AIChatPage() {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
+  const [isPdfWaiting, setIsPdfWaiting] = useState(false) // PDF wait phase: input unlocked, stream still active
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([])
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([])
+  // Monotonic counter to distinguish active generation from stale ones
+  const generationIdRef = useRef(0)
 
   // Conversation management
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -652,10 +655,17 @@ export default function AIChatPage() {
     setMessages(prev => [...prev, aiMessage])
     setIsLoading(true)
     setIsGenerating(true)
+    setIsPdfWaiting(false)
+
+    // Abort any previous background stream (e.g., PDF wait phase from earlier request)
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
 
     // Create AbortController for this request
     const abortController = new AbortController()
     abortControllerRef.current = abortController
+    const currentGenerationId = ++generationIdRef.current
 
     try {
       // Build chat messages for API (with multimodal support)
@@ -702,7 +712,14 @@ export default function AIChatPage() {
               : m
           )
         )
-      }, abortController.signal)
+      }, abortController.signal, () => {
+        // PDF wait phase: initial LLM response done, now waiting for PDF parsing.
+        // Re-enable input so user can continue chatting.
+        if (generationIdRef.current === currentGenerationId) {
+          setIsGenerating(false)
+          setIsPdfWaiting(true)
+        }
+      })
     } catch (error) {
       // If user aborted, keep partial content as-is (don't overwrite with error)
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -720,37 +737,42 @@ export default function AIChatPage() {
       // On error, stop voice session
       stopVoiceSession()
     } finally {
-      setIsLoading(false)
-      setIsGenerating(false)
-      abortControllerRef.current = null
+      // Only clean up state if this is still the active generation.
+      // A newer request may have already taken over (user sent new message during PDF wait).
+      if (generationIdRef.current === currentGenerationId) {
+        setIsLoading(false)
+        setIsGenerating(false)
+        setIsPdfWaiting(false)
+        abortControllerRef.current = null
 
-      // Check for SUBMIT_TASK and CANCEL_TASK_NOW blocks in ALL cases (voice or text input)
-      // Use a timeout to ensure messages state is updated
-      setTimeout(() => {
-        const latestMessages = messagesRef.current
-        const lastMessage = latestMessages[latestMessages.length - 1]
+        // Check for SUBMIT_TASK and CANCEL_TASK_NOW blocks in ALL cases (voice or text input)
+        // Use a timeout to ensure messages state is updated
+        setTimeout(() => {
+          const latestMessages = messagesRef.current
+          const lastMessage = latestMessages[latestMessages.length - 1]
 
-        if (lastMessage?.role === 'assistant') {
-          // Check for SUBMIT_TASK block - trigger submit on existing TaskConfigCard
-          if (parseSubmitTask(lastMessage.content)) {
-            setSubmitTaskTrigger(prev => prev + 1)
+          if (lastMessage?.role === 'assistant') {
+            // Check for SUBMIT_TASK block - trigger submit on existing TaskConfigCard
+            if (parseSubmitTask(lastMessage.content)) {
+              setSubmitTaskTrigger(prev => prev + 1)
+            }
+
+            // Check for CANCEL_TASK_NOW block - trigger cancel on existing CancelTaskCard
+            if (parseCancelTaskNow(lastMessage.content)) {
+              setCancelTaskTrigger(prev => prev + 1)
+            }
           }
+        }, 100)
 
-          // Check for CANCEL_TASK_NOW block - trigger cancel on existing CancelTaskCard
-          if (parseCancelTaskNow(lastMessage.content)) {
-            setCancelTaskTrigger(prev => prev + 1)
-          }
-        }
-      }, 100)
-
-      // Notify voice session that LLM response is complete.
-      // The hook will parse VOICE_CONTROL and decide whether to restart recording.
-      setTimeout(() => {
-        const latestMessages = messagesRef.current
-        const lastMessage = latestMessages[latestMessages.length - 1]
-        const aiContent = lastMessage?.role === 'assistant' ? lastMessage.content : ''
-        notifyVoiceResponseComplete(aiContent)
-      }, 150)
+        // Notify voice session that LLM response is complete.
+        // The hook will parse VOICE_CONTROL and decide whether to restart recording.
+        setTimeout(() => {
+          const latestMessages = messagesRef.current
+          const lastMessage = latestMessages[latestMessages.length - 1]
+          const aiContent = lastMessage?.role === 'assistant' ? lastMessage.content : ''
+          notifyVoiceResponseComplete(aiContent)
+        }, 150)
+      }
     }
   }
 
@@ -1032,10 +1054,17 @@ export default function AIChatPage() {
     setMessages(prev => [...prev, aiMessage])
     setIsLoading(true)
     setIsGenerating(true)
+    setIsPdfWaiting(false)
+
+    // Abort any previous background stream (e.g., PDF wait phase from earlier request)
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
 
     // Create AbortController for this request
     const abortController = new AbortController()
     abortControllerRef.current = abortController
+    const currentGenerationId = ++generationIdRef.current
 
     try {
       // Build chat messages for API (with multimodal support)
@@ -1077,7 +1106,13 @@ export default function AIChatPage() {
               : m
           )
         )
-      }, abortController.signal)
+      }, abortController.signal, () => {
+        // PDF wait phase: initial LLM response done, now waiting for PDF parsing.
+        if (generationIdRef.current === currentGenerationId) {
+          setIsGenerating(false)
+          setIsPdfWaiting(true)
+        }
+      })
     } catch (error) {
       // If user aborted, keep partial content as-is
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -1093,9 +1128,12 @@ export default function AIChatPage() {
         )
       }
     } finally {
-      setIsLoading(false)
-      setIsGenerating(false)
-      abortControllerRef.current = null
+      if (generationIdRef.current === currentGenerationId) {
+        setIsLoading(false)
+        setIsGenerating(false)
+        setIsPdfWaiting(false)
+        abortControllerRef.current = null
+      }
     }
   }
 
@@ -1964,7 +2002,8 @@ export default function AIChatPage() {
                         // "Streaming" 表示当前这条助手消息还在生成中（不管是否已经收到首个 chunk），
                         // 用 isGenerating 而不是 isLoading，这样在 Exa 搜索阶段（只收到 SEARCH_STATUS/WEB_SEARCH_RESULT）
                         // 也会触发搜索状态卡片和 skeleton，避免出现中间一大块空白。
-                        isStreaming={isGenerating && index === messages.length - 1}
+                        // isPdfWaiting: PDF 等待阶段，流仍在活跃中，需要保持 isStreaming 以显示 PDF 解析状态卡片。
+                        isStreaming={(isGenerating || isPdfWaiting) && index === messages.length - 1}
                         isLoading={isGenerating}
                         csvContent={csvContentMap.get(message.id)?.content}
                         csvFileName={csvContentMap.get(message.id)?.fileName}
