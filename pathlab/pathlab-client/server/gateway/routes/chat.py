@@ -4,13 +4,14 @@ Handles AI chat, conversation persistence, and task parsing
 """
 import asyncio
 import json
+import mimetypes
 import os
 import re
 import uuid
 import httpx
 from typing import List, Dict, AsyncIterator, Optional, Any
 from fastapi import APIRouter, HTTPException, Depends, Request
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -24,7 +25,7 @@ from backend.common.gpu_utils import get_gpu_summary_for_prompt
 from ..dependencies import logger
 from ..prompts import get_chat_system_prompt, format_user_data_context, detect_language
 from ..models import ChatRequest, CreateConversationRequest, UpdateMessageRequest, AddMessageRequest
-from .chat_pdf import is_pdf_url, process_pdf_url
+from .chat_pdf import is_pdf_url, process_pdf_url, get_pdf_image_path
 
 router = APIRouter(tags=["Chat & Conversations"])
 
@@ -391,7 +392,7 @@ After saving, return here and start chatting!"""
                 results_text += "Search results:\n"
                 for idx, result in enumerate(search_results["results"], 1):
                     results_text += f"{idx}. {result['title']}\n   URL: {result['url']}\n   {result['snippet']}\n\n"
-                
+
                 # Identify PDF URLs and start parallel processing (don't block)
                 # NOTE: append to outer-scope lists to accumulate across search iterations
                 #
@@ -1253,3 +1254,35 @@ async def chat_with_ai(
             "X-Accel-Buffering": "no"
         }
     )
+
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PDF image serving
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get("/pdf-images/{url_hash}/{filename}")
+async def serve_pdf_image(url_hash: str, filename: str):
+    """Serve MinerU-extracted PDF images from persistent cache.
+
+    Images are stored at: uploads/pdf_cache/images/{url_hash}/{filename}
+    They are created by the background MinerU upgrade task (or the synchronous
+    MinerU fallback) and referenced by absolute URLs inside the .mineru.md cache.
+    """
+    # Prevent path traversal: url_hash must be hex chars only; filename must be
+    # a plain filename with no directory separators or parent-dir references.
+    if not re.match(r'^[0-9a-f]+$', url_hash, re.IGNORECASE):
+        raise HTTPException(status_code=400, detail="Invalid url_hash")
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    image_path = get_pdf_image_path(url_hash, filename)
+
+    if not image_path.exists() or not image_path.is_file():
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    content_type, _ = mimetypes.guess_type(str(image_path))
+    if content_type is None:
+        content_type = "application/octet-stream"
+
+    return FileResponse(image_path, media_type=content_type)

@@ -12,6 +12,7 @@ Features:
 import json
 import os
 import re
+import shutil
 import tempfile
 import asyncio
 import hashlib
@@ -43,6 +44,15 @@ def _get_pdf_cache_dir() -> Path:
         _pdf_cache_dir = uploads_dir / "pdf_cache"
         _pdf_cache_dir.mkdir(parents=True, exist_ok=True)
     return _pdf_cache_dir
+
+
+def get_pdf_image_path(url_hash: str, filename: str) -> Path:
+    """Return the persistent storage path for a MinerU-extracted PDF image.
+
+    Used by the /pdf-images/{url_hash}/{filename} HTTP endpoint to locate files.
+    Images are stored at: pdf_cache/images/{url_hash}/{filename}
+    """
+    return _get_pdf_cache_dir() / "images" / url_hash / filename
 
 
 PDF_URL_PATTERNS = [
@@ -274,12 +284,20 @@ async def _background_mineru_upgrade(url: str, pdf_bytes: bytes, max_pages: int 
         logger.info(f"[BG MinerU] Skipping upgrade for {url}: MinerU GPU lock busy")
         return
 
+    # Prepare persistent image directory so MinerU images survive temp-dir cleanup.
+    url_hash = _get_url_hash(url)
+    images_output_dir = _get_pdf_cache_dir() / "images" / url_hash
+    images_url_prefix = f"{Config.GATEWAY_SERVICE_URL}/pdf-images/{url_hash}"
+
     original_cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
     try:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
         logger.info(f"[BG MinerU] Starting upgrade for {url} on cuda:{gpu_idx}")
         loop = asyncio.get_event_loop()
-        markdown = await loop.run_in_executor(None, _parse_pdf_sync_inner, pdf_bytes, max_pages)
+        markdown = await loop.run_in_executor(
+            None, _parse_pdf_sync_inner, pdf_bytes, max_pages,
+            images_output_dir, images_url_prefix,
+        )
         if markdown and not markdown.startswith("[Error"):
             _save_mineru_to_cache(url, markdown)
             logger.info(f"[BG MinerU] Upgrade complete for {url} ({len(markdown)} chars)")
@@ -320,6 +338,10 @@ def cleanup_expired_pdf_cache() -> int:
                         cached_file = cache_dir / f"{url_hash}{suffix}"
                         if cached_file.exists():
                             cached_file.unlink()
+                    # Remove MinerU-extracted images directory
+                    images_dir = cache_dir / "images" / url_hash
+                    if images_dir.exists() and images_dir.is_dir():
+                        shutil.rmtree(images_dir)
                     meta_file.unlink()
                     cleaned += 1
                     logger.info(f"Cleaned expired PDF cache: {meta.get('url', url_hash)}")
@@ -565,13 +587,20 @@ def _parse_pdf_with_pymupdf(pdf_bytes: bytes, max_pages: int = 10) -> str | None
         return None
 
 
-def _parse_pdf_sync(pdf_bytes: bytes, max_pages: int = 10) -> str:
+def _parse_pdf_sync(
+    pdf_bytes: bytes,
+    max_pages: int = 10,
+    images_output_dir: Path | None = None,
+    images_url_prefix: str | None = None,
+) -> str:
     """Two-tier PDF parsing: fast PyMuPDF first, MinerU GPU fallback.
 
     Tier 1 (PyMuPDF): CPU-only, <1 second. Works for most academic PDFs with text layers.
     Tier 2 (MinerU):  GPU-based, 10-30 seconds. Handles scanned/image-only PDFs.
 
     Returns markdown with `--- Page X ---` markers between pages.
+    images_output_dir / images_url_prefix are forwarded to MinerU tier only
+    (PyMuPDF does not extract images).
     """
     # --- Tier 1: Fast PyMuPDF extraction (no GPU, <1s) ---
     pymupdf_result = _parse_pdf_with_pymupdf(pdf_bytes, max_pages)
@@ -598,7 +627,7 @@ def _parse_pdf_sync(pdf_bytes: bytes, max_pages: int = 10) -> str:
         original_cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
         try:
-            return _parse_pdf_sync_inner(pdf_bytes, max_pages)
+            return _parse_pdf_sync_inner(pdf_bytes, max_pages, images_output_dir, images_url_prefix)
         finally:
             # Restore original CUDA_VISIBLE_DEVICES
             if original_cuda_devices is not None:
@@ -607,8 +636,23 @@ def _parse_pdf_sync(pdf_bytes: bytes, max_pages: int = 10) -> str:
                 os.environ.pop("CUDA_VISIBLE_DEVICES", None)
 
 
-def _parse_pdf_sync_inner(pdf_bytes: bytes, max_pages: int) -> str:
-    """Inner parsing logic, called with GPU lock held and CUDA_VISIBLE_DEVICES set."""
+def _parse_pdf_sync_inner(
+    pdf_bytes: bytes,
+    max_pages: int,
+    images_output_dir: Path | None = None,
+    images_url_prefix: str | None = None,
+) -> str:
+    """Inner parsing logic, called with GPU lock held and CUDA_VISIBLE_DEVICES set.
+
+    Args:
+        pdf_bytes: Raw PDF bytes to parse.
+        max_pages: Maximum pages to parse (0 = unlimited).
+        images_output_dir: If provided, MinerU-extracted images are copied here
+            (persistent storage) before the temporary directory is cleaned up.
+        images_url_prefix: If provided, relative image references in the markdown
+            (e.g. ``images/fig1.jpg``) are rewritten to absolute HTTP URLs using
+            this prefix (e.g. ``http://127.0.0.1:6100/pdf-images/{hash}``).
+    """
     try:
         from mineru.cli.common import convert_pdf_bytes_to_bytes_by_pypdfium2, prepare_env
         from mineru.data.data_reader_writer import FileBasedDataWriter
@@ -664,6 +708,29 @@ def _parse_pdf_sync_inner(pdf_bytes: bytes, max_pages: int) -> str:
                     page_sections.append(f"--- Page {page_num} ---\n\n{page_md}")
 
             md_content = "\n\n".join(page_sections)
+
+            # ── Image persistence ────────────────────────────────────────────────
+            # Copy extracted images to permanent storage BEFORE the TemporaryDirectory
+            # context manager exits and deletes them.  Then rewrite relative image
+            # paths in the markdown to absolute HTTP URLs so the frontend can load them.
+            local_image_path = Path(local_image_dir)
+            if images_output_dir is not None and local_image_path.is_dir():
+                images_output_dir.mkdir(parents=True, exist_ok=True)
+                copied = 0
+                for img_file in local_image_path.iterdir():
+                    if img_file.is_file():
+                        shutil.copy2(img_file, images_output_dir / img_file.name)
+                        copied += 1
+                logger.info(f"[MinerU] Copied {copied} images to {images_output_dir}")
+
+            if images_url_prefix is not None and image_dir:
+                # Replace `(images/xxx.jpg)` → `(http://host/pdf-images/hash/xxx.jpg)`
+                md_content = re.sub(
+                    r'\(' + re.escape(image_dir) + r'/([^)\s]+)\)',
+                    f'({images_url_prefix}/\\1)',
+                    md_content,
+                )
+
             return md_content
 
     except ImportError as e:
@@ -674,9 +741,16 @@ def _parse_pdf_sync_inner(pdf_bytes: bytes, max_pages: int) -> str:
         return f"[Error parsing PDF: {str(e)}]"
 
 
-async def parse_pdf(pdf_bytes: bytes, max_pages: int = 10) -> str:
+async def parse_pdf(
+    pdf_bytes: bytes,
+    max_pages: int = 10,
+    images_output_dir: Path | None = None,
+    images_url_prefix: str | None = None,
+) -> str:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _parse_pdf_sync, pdf_bytes, max_pages)
+    return await loop.run_in_executor(
+        None, _parse_pdf_sync, pdf_bytes, max_pages, images_output_dir, images_url_prefix,
+    )
 
 
 async def summarize_pdf_content(
@@ -874,6 +948,11 @@ async def process_pdf_url(
             # processes 50 pages just as fast as 10 pages (no OCR / GPU needed).
             pymupdf_result = _parse_pdf_with_pymupdf(pdf_bytes, max_pages=0)
 
+            # Pre-compute image storage paths for the sync MinerU fallback path.
+            url_hash = _get_url_hash(url)
+            sync_images_output_dir = _get_pdf_cache_dir() / "images" / url_hash
+            sync_images_url_prefix = f"{Config.GATEWAY_SERVICE_URL}/pdf-images/{url_hash}"
+
             if pymupdf_result is not None:
                 pdf_content = pymupdf_result
                 if use_cache:
@@ -886,8 +965,14 @@ async def process_pdf_url(
                     )
                     logger.info(f"[BG MinerU] Background upgrade scheduled for {url}")
             else:
-                # pymupdf insufficient — fall back to MinerU synchronously now
-                pdf_content = await parse_pdf(pdf_bytes, max_pages=10)
+                # pymupdf insufficient — fall back to MinerU synchronously now.
+                # Pass image params so extracted figures are persisted immediately.
+                pdf_content = await parse_pdf(
+                    pdf_bytes,
+                    max_pages=10,
+                    images_output_dir=sync_images_output_dir,
+                    images_url_prefix=sync_images_url_prefix,
+                )
                 # Successful MinerU result goes to the high-precision cache slot
                 if not pdf_content.startswith("[Error") and use_cache:
                     _save_mineru_to_cache(url, pdf_content)
@@ -906,8 +991,27 @@ async def process_pdf_url(
                 result["error_detail"] = f"PDF parsing failed for '{title}'. The file may be corrupted, scanned-only, or in an unsupported format."
             return result
 
+        # Determine whether MinerU images are already available.
+        # Images are only present when content comes from a MinerU parse (.mineru.md cache
+        # or the synchronous MinerU fallback above).  PyMuPDF is text-only.
+        images_ready = _has_mineru_cache(url)
+
+        # Build the content blob for the AI.  Append a [PDF_IMAGES_STATUS] marker when
+        # images are still being extracted (background MinerU upgrade not yet complete).
+        # The supplement prompt tells the AI how to handle this marker.
+        if images_ready:
+            ai_pdf_content = pdf_content
+        else:
+            ai_pdf_content = (
+                pdf_content
+                + "\n\n[PDF_IMAGES_STATUS: pending — High-precision figure/image extraction "
+                "is running in the background (MinerU upgrade). If the user asks about specific "
+                "figures, tables, or images in this paper, inform them that image extraction is "
+                "not yet complete and they can ask again after refreshing the page.]"
+            )
+
         # Store full content with page markers so AI can cite specific pages
-        result["pdf_content"] = pdf_content
+        result["pdf_content"] = ai_pdf_content
 
         summary = await summarize_pdf_content(
             pdf_content,
