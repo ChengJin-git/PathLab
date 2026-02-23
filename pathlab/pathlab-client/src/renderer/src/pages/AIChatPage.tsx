@@ -29,7 +29,7 @@ import { AudioVisualizer } from '../components/common/AudioVisualizer'
 
 // Extracted modules
 import AssistantMessage, { parseSubmitTask, parseCancelTaskNow, isInternalOnlyMessage } from '../components/chat/AssistantMessage'
-import { sanitizeConfigBlocksForAI } from '../lib/chatMessageParser'
+import { sanitizeConfigBlocksForAI, isPdfContextMessage } from '../lib/chatMessageParser'
 import { SCENARIO_CARDS } from '../constants/scenarios'
 
 // Chat component imports still needed by AIChatPage main body
@@ -1873,6 +1873,10 @@ export default function AIChatPage() {
               return messages.map((message, index) => {
               // Skip rendering assistant messages that contain only internal blocks (e.g., VOICE_CONTROL only)
               if (message.role === 'assistant' && isInternalOnlyMessage(message.content)) {
+                return null
+              }
+              // Skip rendering hidden PDF context user messages (stored for AI follow-up context only)
+              if (message.role === 'user' && isPdfContextMessage(message.content)) {
                 return null
               }
               return (

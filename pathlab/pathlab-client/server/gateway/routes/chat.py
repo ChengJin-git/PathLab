@@ -5,6 +5,7 @@ Handles AI chat, conversation persistence, and task parsing
 import asyncio
 import json
 import os
+import re
 import uuid
 import httpx
 from typing import List, Dict, AsyncIterator, Optional, Any
@@ -26,6 +27,33 @@ from ..models import ChatRequest, CreateConversationRequest, UpdateMessageReques
 from .chat_pdf import is_pdf_url, process_pdf_url
 
 router = APIRouter(tags=["Chat & Conversations"])
+
+# Maximum PDF papers to parse per search iteration to avoid resource exhaustion
+_MAX_PDFS_PER_SEARCH = 2
+
+# Language-specific PDF supplement prompts (for i18n)
+_PDF_SUPPLEMENT_PROMPTS = {
+    "en": (
+        "Here is the full content from the PDF papers that were being parsed in the background. "
+        "Please supplement your previous response with specific details, page references (e.g. 'On Page 3, ...'), "
+        "and citations from these papers. "
+        "CRITICAL: The [REFERENCE] blocks in the context are already correctly formatted. "
+        "Copy them verbatim into your response - DO NOT modify their format or content. "
+        "If any PDFs failed, briefly explain the issue to the user."
+    ),
+    "zh_CN": (
+        "以下是后台解析的 PDF 论文完整内容。"
+        "请用具体细节、页码引用（例如\"在第 3 页，...\"）和论文引用来补充你之前的回答。"
+        "重要：上下文中的 [REFERENCE] 块格式已正确，请原样复制到回答中，不要修改格式或内容。"
+        "如有 PDF 解析失败，请简要告知用户原因。"
+    ),
+    "zh_HK": (
+        "以下是後台解析的 PDF 論文完整內容。"
+        "請用具體細節、頁碼引用（例如「在第 3 頁，...」）和論文引用來補充你之前的回答。"
+        "重要：上下文中的 [REFERENCE] 區塊格式已正確，請原樣複製到回答中，不要修改格式或內容。"
+        "如有 PDF 解析失敗，請簡要告知用戶原因。"
+    ),
+}
 
 # Include feedback sub-router
 from .chat_feedback import router as chat_feedback_router
@@ -221,7 +249,8 @@ async def stream_ai_response(
     messages: List[Dict],
     api_key: str = None,
     base_url: str = None,
-    model: str = None
+    model: str = None,
+    detected_lang: str = "en"
 ) -> AsyncIterator[str]:
     """
     Stream AI response using OpenAI-compatible API with Exa search support.
@@ -355,8 +384,11 @@ After saving, return here and start chatting!"""
                 
                 # Identify PDF URLs and start parallel processing (don't block)
                 # NOTE: append to outer-scope lists to accumulate across search iterations
+                # Limit to _MAX_PDFS_PER_SEARCH per iteration to avoid resource exhaustion
                 new_pdf_urls: list[dict[str, str]] = []
                 for result in search_results["results"]:
+                    if len(new_pdf_urls) >= _MAX_PDFS_PER_SEARCH:
+                        break  # Stop collecting after reaching per-search PDF limit
                     r_url = result.get("url", "")
                     if is_pdf_url(r_url):
                         info = {"url": r_url, "title": result.get("title", "Unknown")}
@@ -528,17 +560,15 @@ After saving, return here and start chatting!"""
             supplement_text = "\n".join(supplement_parts)
 
             # Build supplement messages: include conversation context + initial response + PDF content
+            supplement_prompt = _PDF_SUPPLEMENT_PROMPTS.get(detected_lang, _PDF_SUPPLEMENT_PROMPTS["en"])
             supplement_messages = current_messages + [
                 {"role": "assistant", "content": initial_streamed_text},
-                {"role": "user", "content": (
-                    f"Here is the full content from the PDF papers that were being parsed in the background. "
-                    f"Please supplement your previous response with specific details, page references (e.g. 'On Page 3, ...'), "
-                    f"and citations from these papers. "
-                    f"CRITICAL: The [REFERENCE] blocks in the context are already correctly formatted. "
-                    f"Copy them verbatim into your response - DO NOT modify their format or content. "
-                    f"If any PDFs failed, briefly explain the issue to the user.\n\n{supplement_text}"
-                )}
+                {"role": "user", "content": f"{supplement_prompt}\n\n{supplement_text}"}
             ]
+
+            # Emit PDF context for persistence - stream_with_persistence will save this as a
+            # hidden user message so follow-up questions can reference the PDF content
+            yield f"data: {json.dumps({'pdf_context': supplement_text})}\n\n"
 
             # Stream supplementary AI response (clean paragraph break before supplement)
             yield f"data: {json.dumps({'content': chr(10) + chr(10)})}\n\n"
@@ -1131,7 +1161,29 @@ async def chat_with_ai(
     async def stream_with_persistence():
         """Stream AI response and save to database if conversation_id is provided"""
         full_response = ""
-        async for chunk in stream_ai_response(messages, api_key, base_url, model):
+        async for chunk in stream_ai_response(messages, api_key, base_url, model, detected_lang):
+            # Intercept pdf_context event - save to DB as hidden user message but don't
+            # yield to frontend. This lets follow-up questions reference the PDF content.
+            if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":
+                try:
+                    data = json.loads(chunk[6:])
+                    if "pdf_context" in data:
+                        if req.conversation_id:
+                            async for db_session in get_db():
+                                try:
+                                    message_data = {
+                                        "conversation_id": req.conversation_id,
+                                        "role": "user",
+                                        "content": f"[PDF_CONTEXT]\n{data['pdf_context']}\n[/PDF_CONTEXT]",
+                                    }
+                                    await ChatRepository.add_message(db_session, message_data)
+                                    await db_session.commit()
+                                finally:
+                                    await db_session.close()
+                        continue  # Don't yield this to frontend
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
             # Don't yield [DONE] yet - we need to send message_id first
             if chunk == "data: [DONE]\n\n":
                 # Save assistant response to database and return message_id BEFORE [DONE]

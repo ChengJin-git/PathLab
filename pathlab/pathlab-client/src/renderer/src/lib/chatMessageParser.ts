@@ -53,3 +53,14 @@ export function sanitizeConfigBlocksForAI(content: string): string {
   return sanitized.trim()
 }
 
+
+/**
+ * Check if a user message is a hidden PDF context message (not for UI display).
+ * These are saved to DB by the backend to provide PDF content for follow-up questions.
+ * The AI can see them in conversation history; only the UI rendering is skipped.
+ */
+export function isPdfContextMessage(content: string): boolean {
+  const trimmed = content.trim()
+  return trimmed.startsWith('[PDF_CONTEXT]') && trimmed.endsWith('[/PDF_CONTEXT]')
+}
+
