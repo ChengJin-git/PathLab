@@ -39,28 +39,40 @@ _MAX_PDFS_SUPPLEMENT = 3
 _PDF_SUPPLEMENT_PROMPTS = {
     "en": (
         "Here is the full content from the PDF papers that were being parsed in the background. "
+        "Each paper is labelled [Paper N] so you can refer to them by number when the user asks "
+        "which paper they mean (e.g. 'the HKUST paper' → look at the title/URL to match). "
         "Please supplement your previous response with specific details and citations from these papers. "
         "IMPORTANT for page references: ONLY cite a page number (e.g. 'On Page 3, ...') when you can "
         "see the explicit `--- Page X ---` marker for that page in the content below. "
         "NEVER guess, infer, or invent page numbers — if the content you are referencing does not have "
         "a visible page marker, omit the page number entirely. "
+        "IMAGES: When a paper's content contains Markdown image links like ![fig](http://...), you CAN "
+        "and SHOULD include those links verbatim in your response so the user can see the figures. "
+        "If the user asks for a figure but the paper shows [PDF_IMAGES_STATUS: pending], tell the user "
+        "that high-precision figure extraction is still running and to ask again later. "
         "CRITICAL: The [REFERENCE] blocks in the context are already correctly formatted. "
         "Copy them verbatim into your response - DO NOT modify their format or content. "
         "If any PDFs failed, briefly explain the issue to the user."
     ),
     "zh_CN": (
         "以下是后台解析的 PDF 论文完整内容。"
+        "每篇论文都标有 [论文N] 编号，当用户问\"哪一篇\"时，请通过标题/URL 对应编号来回答。"
         "请用具体细节和论文引用来补充你之前的回答。"
         "关于页码引用：只有当下方内容中明确出现 `--- Page X ---` 标记时，才可以引用该页码（例如\"在第 3 页，...\"）。"
         "绝对不要猜测、推断或捏造页码——如果所引用的内容没有对应的页码标记，请直接省略页码。"
+        "图片：如果论文内容中包含 Markdown 图片链接（如 ![fig](http://...)），你**可以且应该**将这些链接原样放入回答中，让用户直接看到图片。"
+        "如果用户询问图片但看到 [PDF_IMAGES_STATUS: pending]，请告知用户高精度图片提取仍在后台运行，稍后再问。"
         "重要：上下文中的 [REFERENCE] 块格式已正确，请原样复制到回答中，不要修改格式或内容。"
         "如有 PDF 解析失败，请简要告知用户原因。"
     ),
     "zh_HK": (
         "以下是後台解析的 PDF 論文完整內容。"
+        "每篇論文都標有 [論文N] 編號，當用戶問「哪一篇」時，請透過標題/URL 對應編號來回答。"
         "請用具體細節和論文引用來補充你之前的回答。"
         "關於頁碼引用：只有當下方內容中明確出現 `--- Page X ---` 標記時，才可以引用該頁碼（例如「在第 3 頁，...」）。"
         "絕對不要猜測、推斷或捏造頁碼——如果所引用的內容沒有對應的頁碼標記，請直接省略頁碼。"
+        "圖片：如果論文內容中包含 Markdown 圖片連結（如 ![fig](http://...)），你**可以且應該**將這些連結原樣放入回答中，讓用戶直接看到圖片。"
+        "如果用戶詢問圖片但看到 [PDF_IMAGES_STATUS: pending]，請告知用戶高精度圖片提取仍在後台運行，稍後再問。"
         "重要：上下文中的 [REFERENCE] 區塊格式已正確，請原樣複製到回答中，不要修改格式或內容。"
         "如有 PDF 解析失敗，請簡要告知用戶原因。"
     ),
@@ -550,8 +562,18 @@ After saving, return here and start chatting!"""
             supplement_parts: list[str] = []
 
             if successful_pdfs:
+                # ── Paper index ───────────────────────────────────────────────────
+                # Emit a numbered list up front so the AI can always map a user's
+                # vague reference ("the HKUST paper", "论文2") to the right paper.
+                total = len(successful_pdfs)
+                index_lines = [f"## Available Papers ({total} parsed):\n"]
+                for idx, sp in enumerate(successful_pdfs, 1):
+                    index_lines.append(f"- **[Paper {idx}]** {sp.get('title', 'Unknown')}  ({sp['url']})")
+                index_lines.append("")
+                supplement_parts.extend(index_lines)
+
                 supplement_parts.append("## PDF Paper Content (with page numbers):\n")
-                for sp in successful_pdfs:
+                for paper_idx, sp in enumerate(successful_pdfs, 1):
                     # ── Compact metadata block ────────────────────────────────────
                     # This block is emitted BEFORE the content so it is always
                     # visible to the AI even after head-tail truncation.
@@ -564,7 +586,7 @@ After saving, return here and start chatting!"""
                     )
                     page_info = f"{page_count} pages" if page_count else "page count unknown"
                     supplement_parts.append(
-                        f"### {sp.get('title', 'Unknown')}\n"
+                        f"### [Paper {paper_idx} of {total}] {sp.get('title', 'Unknown')}\n"
                         f"- **URL**: {sp['url']}\n"
                         f"- **Total pages**: {page_info}\n"
                         f"- **Parse quality**: {quality_label}\n"
