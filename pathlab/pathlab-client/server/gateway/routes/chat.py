@@ -28,28 +28,38 @@ from .chat_pdf import is_pdf_url, process_pdf_url
 
 router = APIRouter(tags=["Chat & Conversations"])
 
-# Maximum PDF papers to parse per search iteration to avoid resource exhaustion
-_MAX_PDFS_PER_SEARCH = 2
+# Maximum PDF papers to include in the AI supplement response (awaited tasks).
+# ALL PDFs found in search results are started as background tasks (so they get
+# cached for follow-up questions), but only the first _MAX_PDFS_SUPPLEMENT are
+# awaited and included in the immediate supplement response.
+_MAX_PDFS_SUPPLEMENT = 3
 
 # Language-specific PDF supplement prompts (for i18n)
 _PDF_SUPPLEMENT_PROMPTS = {
     "en": (
         "Here is the full content from the PDF papers that were being parsed in the background. "
-        "Please supplement your previous response with specific details, page references (e.g. 'On Page 3, ...'), "
-        "and citations from these papers. "
+        "Please supplement your previous response with specific details and citations from these papers. "
+        "IMPORTANT for page references: ONLY cite a page number (e.g. 'On Page 3, ...') when you can "
+        "see the explicit `--- Page X ---` marker for that page in the content below. "
+        "NEVER guess, infer, or invent page numbers — if the content you are referencing does not have "
+        "a visible page marker, omit the page number entirely. "
         "CRITICAL: The [REFERENCE] blocks in the context are already correctly formatted. "
         "Copy them verbatim into your response - DO NOT modify their format or content. "
         "If any PDFs failed, briefly explain the issue to the user."
     ),
     "zh_CN": (
         "以下是后台解析的 PDF 论文完整内容。"
-        "请用具体细节、页码引用（例如\"在第 3 页，...\"）和论文引用来补充你之前的回答。"
+        "请用具体细节和论文引用来补充你之前的回答。"
+        "关于页码引用：只有当下方内容中明确出现 `--- Page X ---` 标记时，才可以引用该页码（例如\"在第 3 页，...\"）。"
+        "绝对不要猜测、推断或捏造页码——如果所引用的内容没有对应的页码标记，请直接省略页码。"
         "重要：上下文中的 [REFERENCE] 块格式已正确，请原样复制到回答中，不要修改格式或内容。"
         "如有 PDF 解析失败，请简要告知用户原因。"
     ),
     "zh_HK": (
         "以下是後台解析的 PDF 論文完整內容。"
-        "請用具體細節、頁碼引用（例如「在第 3 頁，...」）和論文引用來補充你之前的回答。"
+        "請用具體細節和論文引用來補充你之前的回答。"
+        "關於頁碼引用：只有當下方內容中明確出現 `--- Page X ---` 標記時，才可以引用該頁碼（例如「在第 3 頁，...」）。"
+        "絕對不要猜測、推斷或捏造頁碼——如果所引用的內容沒有對應的頁碼標記，請直接省略頁碼。"
         "重要：上下文中的 [REFERENCE] 區塊格式已正確，請原樣複製到回答中，不要修改格式或內容。"
         "如有 PDF 解析失敗，請簡要告知用戶原因。"
     ),
@@ -384,21 +394,20 @@ After saving, return here and start chatting!"""
                 
                 # Identify PDF URLs and start parallel processing (don't block)
                 # NOTE: append to outer-scope lists to accumulate across search iterations
-                # Limit to _MAX_PDFS_PER_SEARCH per iteration to avoid resource exhaustion
+                #
+                # Strategy: start background tasks for ALL PDFs so they get cached
+                # (PyMuPDF is <1s / CPU-only, so creating many tasks is cheap).
+                # Only the first _MAX_PDFS_SUPPLEMENT tasks are added to
+                # pending_pdf_tasks (awaited + included in the supplement response).
+                # The rest are fire-and-forget: they populate the cache silently so
+                # that follow-up questions can reference their full content.
                 new_pdf_urls: list[dict[str, str]] = []
                 for result in search_results["results"]:
-                    if len(new_pdf_urls) >= _MAX_PDFS_PER_SEARCH:
-                        break  # Stop collecting after reaching per-search PDF limit
                     r_url = result.get("url", "")
                     if is_pdf_url(r_url):
                         info = {"url": r_url, "title": result.get("title", "Unknown")}
                         new_pdf_urls.append(info)
-                        pdf_urls_info.append(info)
-                        # Emit "parsing" status immediately
-                        pdf_status = {"url": r_url, "title": result.get("title", ""), "status": "parsing"}
-                        yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
 
-                # Launch new PDF tasks in parallel (background), append to outer list
                 for pinfo in new_pdf_urls:
                     task = asyncio.create_task(
                         process_pdf_url(
@@ -410,7 +419,13 @@ After saving, return here and start chatting!"""
                             use_cache=True
                         )
                     )
-                    pending_pdf_tasks.append(task)
+                    if len(pending_pdf_tasks) < _MAX_PDFS_SUPPLEMENT:
+                        # Awaited: included in supplement response + status card shown
+                        pending_pdf_tasks.append(task)
+                        pdf_urls_info.append(pinfo)
+                        pdf_status = {"url": pinfo["url"], "title": pinfo.get("title", ""), "status": "parsing"}
+                        yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
+                    # else: fire-and-forget — task runs in background to populate cache
 
                 # Add search results to messages WITHOUT waiting for PDFs
                 # AI will respond based on search snippets first
