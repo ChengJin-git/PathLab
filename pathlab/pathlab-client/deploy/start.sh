@@ -57,6 +57,21 @@ pkill -9 -f "uvicorn.*gateway" 2>/dev/null || true
 pkill -9 -f "uvicorn.*preprocessing" 2>/dev/null || true
 pkill -9 -f "uvicorn.*ai" 2>/dev/null || true
 
+# Kill vllm / MinerU related processes (spawned by PDF parsing)
+pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
+pkill -9 -f "vllm.engine" 2>/dev/null || true
+pkill -9 -f "ray::vLLM" 2>/dev/null || true
+
+# Kill entire process tree from previous PID file (catches orphaned children)
+if [ -f "$LOG_DIR/backend.pid" ]; then
+    OLD_PID=$(cat "$LOG_DIR/backend.pid" 2>/dev/null)
+    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+        echo "  清理旧进程树 (PID: $OLD_PID)"
+        pkill -9 -P "$OLD_PID" 2>/dev/null || true
+        kill -9 "$OLD_PID" 2>/dev/null || true
+    fi
+fi
+
 # Wait for ports to be released with retry logic
 MAX_RETRIES=5
 RETRY_COUNT=0

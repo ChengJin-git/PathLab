@@ -6,6 +6,7 @@ Most route logic has been moved to separate files in routes/ directory.
 """
 import asyncio
 import httpx
+from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -136,6 +137,17 @@ app.add_middleware(
 # Serve user avatars as static files
 # These are stored in uploads/avatars/
 app.mount("/avatars", StaticFiles(directory=str(Config.get_uploads_dir() / "avatars")), name="avatars")
+
+# Serve frontend static assets (images, js, css) for direct Gateway access without Nginx
+# In production Nginx serves these; this ensures they work on dev / direct 127.0.0.1:6100 access
+_renderer_dist = Path(__file__).resolve().parent.parent.parent / "src" / "renderer" / "dist"
+if _renderer_dist.is_dir():
+    _images_dir = _renderer_dist / "images"
+    if _images_dir.is_dir():
+        app.mount("/images", StaticFiles(directory=str(_images_dir)), name="frontend-images")
+    _assets_dir = _renderer_dist / "assets"
+    if _assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="frontend-assets")
 
 
 async def wait_for_services_ready(timeout: float = 60.0, check_interval: float = 2.0) -> bool:

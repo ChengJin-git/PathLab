@@ -130,47 +130,61 @@ def _get_url_hash(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()[:16]
 
 
-def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any]] | None:
+def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any], str | None] | None:
+    """Returns (pdf_bytes, meta, cached_markdown_or_None) or None if not cached/expired."""
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
         meta_file = cache_dir / f"{url_hash}.json"
         pdf_file = cache_dir / f"{url_hash}.pdf"
-        
+
         if not meta_file.exists() or not pdf_file.exists():
             return None
-        
+
         with open(meta_file, 'r') as f:
             meta = json.load(f)
-        
+
         cached_time = datetime.fromisoformat(meta.get('cached_at', '2000-01-01'))
         if datetime.now() - cached_time > timedelta(days=PDF_CACHE_TTL_DAYS):
             logger.info(f"PDF cache expired for {url}")
             try:
                 pdf_file.unlink()
                 meta_file.unlink()
+                md_file = cache_dir / f"{url_hash}.md"
+                if md_file.exists():
+                    md_file.unlink()
             except:
                 pass
             return None
-        
+
         pdf_bytes = pdf_file.read_bytes()
-        return pdf_bytes, meta
+
+        # Also check for cached parsed markdown
+        md_file = cache_dir / f"{url_hash}.md"
+        cached_md = None
+        if md_file.exists():
+            try:
+                cached_md = md_file.read_text(encoding='utf-8')
+            except Exception:
+                pass
+
+        return pdf_bytes, meta, cached_md
     except Exception as e:
         logger.error(f"Error reading PDF cache: {e}")
         return None
 
 
-def _save_pdf_to_cache(url: str, pdf_bytes: bytes, title: str = "") -> None:
+def _save_pdf_to_cache(url: str, pdf_bytes: bytes, title: str = "", markdown: str = "") -> None:
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
         meta_file = cache_dir / f"{url_hash}.json"
         pdf_file = cache_dir / f"{url_hash}.pdf"
-        
+
         partial_file = cache_dir / f"{url_hash}.pdf.partial"
         partial_file.write_bytes(pdf_bytes)
         partial_file.rename(pdf_file)
-        
+
         meta = {
             'url': url,
             'title': title,
@@ -179,10 +193,27 @@ def _save_pdf_to_cache(url: str, pdf_bytes: bytes, title: str = "") -> None:
         }
         with open(meta_file, 'w') as f:
             json.dump(meta, f, indent=2)
-        
-        logger.info(f"Cached PDF: {url} ({len(pdf_bytes)} bytes)")
+
+        # Also cache parsed markdown if provided
+        if markdown:
+            md_file = cache_dir / f"{url_hash}.md"
+            md_file.write_text(markdown, encoding='utf-8')
+
+        logger.info(f"Cached PDF: {url} ({len(pdf_bytes)} bytes)" + (" + markdown" if markdown else ""))
     except Exception as e:
         logger.error(f"Error saving PDF to cache: {e}")
+
+
+def _save_markdown_to_cache(url: str, markdown: str) -> None:
+    """Save parsed markdown to cache separately (after parsing a non-cached PDF)."""
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        md_file = cache_dir / f"{url_hash}.md"
+        md_file.write_text(markdown, encoding='utf-8')
+        logger.info(f"Cached parsed markdown for {url}")
+    except Exception as e:
+        logger.error(f"Error saving markdown to cache: {e}")
 
 
 def cleanup_expired_pdf_cache() -> int:
@@ -205,6 +236,10 @@ def cleanup_expired_pdf_cache() -> int:
                     
                     if pdf_file.exists():
                         pdf_file.unlink()
+                    # Also remove cached markdown
+                    md_file = cache_dir / f"{url_hash}.md"
+                    if md_file.exists():
+                        md_file.unlink()
                     meta_file.unlink()
                     cleaned += 1
                     logger.info(f"Cleaned expired PDF cache: {meta.get('url', url_hash)}")
@@ -244,24 +279,129 @@ def get_science_pdf_url(url: str) -> str:
     return url
 
 
+def _extract_doi(url: str) -> str | None:
+    """Extract DOI from common academic URL patterns."""
+    # Direct DOI URL: https://doi.org/10.xxxx/...
+    match = re.search(r'doi\.org/(10\.[0-9]{4,}[^\s?#]+)', url)
+    if match:
+        return match.group(1).rstrip('/')
+    # Nature: nature.com/articles/s41586-024-07386-0
+    match = re.search(r'nature\.com/articles/(s[0-9]+-[0-9]+-[0-9]+-[a-z0-9]+)', url, re.IGNORECASE)
+    if match:
+        return f"10.1038/{match.group(1)}"
+    # Science: science.org/doi/10.1126/science.xxx
+    match = re.search(r'science\.org/doi/(?:full/|abs/|pdf/)?(10\.[0-9]{4,}[^\s?#]+)', url)
+    if match:
+        return match.group(1).rstrip('/')
+    # NEJM: nejm.org/doi/full/10.1056/NEJMxxx
+    match = re.search(r'nejm\.org/doi/(?:full/|pdf/)?(10\.[0-9]{4,}[^\s?#]+)', url)
+    if match:
+        return match.group(1).rstrip('/')
+    # Wiley: onlinelibrary.wiley.com/doi/10.xxxx/xxx
+    match = re.search(r'wiley\.com/doi/(?:full/|abs/|pdf/)?(10\.[0-9]{4,}[^\s?#]+)', url)
+    if match:
+        return match.group(1).rstrip('/')
+    # Springer: link.springer.com/article/10.xxxx/xxx
+    match = re.search(r'springer\.com/(?:article|chapter)/?(10\.[0-9]{4,}[^\s?#]+)', url)
+    if match:
+        return match.group(1).rstrip('/')
+    # Generic DOI pattern in URL
+    match = re.search(r'(10\.[0-9]{4,}/[^\s?#&]+)', url)
+    if match:
+        return match.group(1).rstrip('/')
+    return None
+
+
+async def _try_unpaywall_download(url: str, doi: str | None = None) -> bytes | None:
+    """Try to get open access PDF via Unpaywall API."""
+    if doi is None:
+        doi = _extract_doi(url)
+    if not doi:
+        return None
+    try:
+        api_url = f"https://api.unpaywall.org/v2/{doi}?email=cjinag@connect.ust.hk"
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(api_url)
+            if resp.status_code != 200:
+                logger.info(f"Unpaywall API returned {resp.status_code} for DOI {doi}")
+                return None
+            data = resp.json()
+            best_oa = data.get("best_oa_location")
+            if not best_oa:
+                logger.info(f"No OA location found via Unpaywall for DOI {doi}")
+                return None
+            pdf_url = best_oa.get("url_for_pdf") or best_oa.get("url")
+            if not pdf_url:
+                return None
+            logger.info(f"Unpaywall found OA PDF for DOI {doi}: {pdf_url}")
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/pdf,*/*",
+            }
+            pdf_resp = await client.get(pdf_url, headers=headers)
+            if pdf_resp.status_code == 200:
+                content = pdf_resp.content
+                if content[:4] == b'%PDF' or 'pdf' in pdf_resp.headers.get('content-type', '').lower():
+                    logger.info(f"Unpaywall download successful: {len(content)} bytes")
+                    return content
+            return None
+    except Exception as e:
+        logger.warning(f"Unpaywall API error: {e}")
+        return None
+
+
+async def _try_semantic_scholar_download(url: str, doi: str | None = None) -> bytes | None:
+    """Try to get PDF via Semantic Scholar API."""
+    if doi is None:
+        doi = _extract_doi(url)
+    if not doi:
+        return None
+    try:
+        api_url = f"https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}?fields=openAccessPdf"
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(api_url)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            oa_pdf = data.get("openAccessPdf")
+            if not oa_pdf or not oa_pdf.get("url"):
+                return None
+            pdf_url = oa_pdf["url"]
+            logger.info(f"Semantic Scholar found PDF for DOI {doi}: {pdf_url}")
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/pdf,*/*",
+            }
+            pdf_resp = await client.get(pdf_url, headers=headers)
+            if pdf_resp.status_code == 200:
+                content = pdf_resp.content
+                if content[:4] == b'%PDF' or 'pdf' in pdf_resp.headers.get('content-type', '').lower():
+                    logger.info(f"Semantic Scholar download successful: {len(content)} bytes")
+                    return content
+            return None
+    except Exception as e:
+        logger.warning(f"Semantic Scholar API error: {e}")
+        return None
+
+
 async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
     try:
         if 'arxiv.org' in url:
             url = get_arxiv_pdf_url(url)
         elif 'science.org' in url:
             url = get_science_pdf_url(url)
-        
+
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "application/pdf,application/x-pdf,*/*",
         }
-        
+
         if 'sciencedirect.com' in url or 'elsevier.com' in url:
             headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-        
+
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             response = await client.get(url, headers=headers)
-            
+
             if response.status_code == 200:
                 content = response.content
                 if content[:4] == b'%PDF':
@@ -272,6 +412,19 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
                 cd = response.headers.get('content-disposition', '')
                 if '.pdf' in cd.lower():
                     return content
+            elif response.status_code in (403, 401, 451):
+                # Publisher blocked direct download — try open access APIs
+                logger.info(f"Got {response.status_code} from {url}, trying open access APIs...")
+                doi = _extract_doi(url)
+                # Try Unpaywall first (most comprehensive OA database)
+                oa_bytes = await _try_unpaywall_download(url, doi)
+                if oa_bytes:
+                    return oa_bytes
+                # Try Semantic Scholar
+                oa_bytes = await _try_semantic_scholar_download(url, doi)
+                if oa_bytes:
+                    return oa_bytes
+                logger.warning(f"All download attempts failed for {url} (original: {response.status_code})")
             else:
                 logger.warning(f"Failed to download PDF from {url}: status {response.status_code}")
         return None
@@ -280,18 +433,74 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
         return None
 
 
-def _parse_pdf_sync(pdf_bytes: bytes, max_pages: int = 10) -> str:
-    """Parse PDF using MinerU hybrid_doc_analyze, preserving page boundaries.
+def _parse_pdf_with_pymupdf(pdf_bytes: bytes, max_pages: int = 10) -> str | None:
+    """Fast PDF text extraction using PyMuPDF (fitz). No GPU required, <1 second.
 
-    Returns markdown with `--- Page X ---` markers between pages so that
-    the AI can cite specific page numbers in its response.
-
-    GPU resource management:
-    - Checks GPU availability before starting (requires MIN_VRAM_MB_FOR_MINERU free VRAM)
-    - Uses threading lock to serialize MinerU access (one parse at a time)
-    - Selects GPU with most free VRAM via select_optimal_gpu_for_task()
-    - Returns error string if no GPU resources available
+    Returns markdown-formatted text with page markers, or None if:
+    - PyMuPDF is not installed
+    - Extraction quality is poor (too few characters, too much garbage)
     """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        logger.info("PyMuPDF (fitz) not installed, skipping fast extraction")
+        return None
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        pages_to_process = min(len(doc), max_pages) if max_pages > 0 else len(doc)
+
+        page_sections = []
+        total_chars = 0
+        garbage_chars = 0
+
+        for page_idx in range(pages_to_process):
+            page = doc[page_idx]
+            text = page.get_text("text").strip()
+            if text:
+                total_chars += len(text)
+                # Count non-printable / garbage characters (excluding normal whitespace)
+                garbage = sum(1 for c in text if ord(c) > 0xFFFF or (ord(c) < 32 and c not in '\n\r\t'))
+                garbage_chars += garbage
+                page_sections.append(f"--- Page {page_idx + 1} ---\n\n{text}")
+
+        doc.close()
+
+        # Quality checks
+        if total_chars < 200:
+            logger.info(f"PyMuPDF: too short ({total_chars} chars), need MinerU fallback")
+            return None
+
+        garbage_ratio = garbage_chars / total_chars if total_chars > 0 else 0
+        if garbage_ratio > 0.1:
+            logger.info(f"PyMuPDF: too much garbage ({garbage_ratio:.1%}), need MinerU fallback")
+            return None
+
+        md_content = "\n\n".join(page_sections)
+        logger.info(f"PyMuPDF fast extraction OK: {total_chars} chars from {len(page_sections)} pages")
+        return md_content
+
+    except Exception as e:
+        logger.warning(f"PyMuPDF extraction failed: {e}")
+        return None
+
+
+def _parse_pdf_sync(pdf_bytes: bytes, max_pages: int = 10) -> str:
+    """Two-tier PDF parsing: fast PyMuPDF first, MinerU GPU fallback.
+
+    Tier 1 (PyMuPDF): CPU-only, <1 second. Works for most academic PDFs with text layers.
+    Tier 2 (MinerU):  GPU-based, 10-30 seconds. Handles scanned/image-only PDFs.
+
+    Returns markdown with `--- Page X ---` markers between pages.
+    """
+    # --- Tier 1: Fast PyMuPDF extraction (no GPU, <1s) ---
+    pymupdf_result = _parse_pdf_with_pymupdf(pdf_bytes, max_pages)
+    if pymupdf_result is not None:
+        return pymupdf_result
+
+    # --- Tier 2: MinerU GPU-based parsing (slow but handles scanned PDFs) ---
+    logger.info("PyMuPDF extraction insufficient, falling back to MinerU GPU parsing")
+
     # --- GPU resource check (before acquiring heavy lock) ---
     gpu_idx, free_mb = select_optimal_gpu_for_task(min_vram_mb=MIN_VRAM_MB_FOR_MINERU)
     if gpu_idx == -1:
@@ -545,14 +754,15 @@ async def process_pdf_url(
 
     try:
         pdf_bytes = None
+        cached_markdown = None
 
         if use_cache:
             cached = _get_cached_pdf(url)
             if cached:
-                pdf_bytes, cache_meta = cached
+                pdf_bytes, cache_meta, cached_markdown = cached
                 result["from_cache"] = True
                 result["title"] = cache_meta.get('title', title)
-                logger.info(f"Using cached PDF for {url}")
+                logger.info(f"Using cached PDF for {url}" + (" (with cached markdown)" if cached_markdown else ""))
 
         if not pdf_bytes:
             pdf_bytes = await download_pdf(url)
@@ -561,10 +771,22 @@ async def process_pdf_url(
 
         if not pdf_bytes:
             result["error"] = "download_failed"
-            result["error_detail"] = f"Failed to download PDF from {url}. The server may be unavailable or the URL may require authentication."
+            result["error_detail"] = (
+                f"Failed to download PDF from {url}. "
+                "The publisher may block automated access (HTTP 403), "
+                "the server may be unavailable, or the URL may require authentication."
+            )
             return result
 
-        pdf_content = await parse_pdf(pdf_bytes, max_pages=10)
+        # Use cached markdown if available, otherwise parse
+        if cached_markdown:
+            pdf_content = cached_markdown
+            logger.info(f"Using cached parsed markdown for {url}")
+        else:
+            pdf_content = await parse_pdf(pdf_bytes, max_pages=10)
+            # Cache the parsed markdown for future use
+            if not pdf_content.startswith("[Error") and use_cache:
+                _save_markdown_to_cache(url, pdf_content)
 
         if pdf_content.startswith("[Error"):
             # Distinguish GPU unavailable from other parse errors
