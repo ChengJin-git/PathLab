@@ -266,25 +266,33 @@ const AssistantMessage = React.memo(function AssistantMessage({
         />
       )}
 
-      {/* Markdown content */}
-      {displayContent.trim() && (
-        <div className="prose prose-slate max-w-none prose-sm
-          prose-p:my-2 prose-p:leading-relaxed
-          prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-headings:text-gray-900
-          prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5
-          prose-ol:my-2 prose-ol:list-decimal prose-ol:pl-5
-          prose-li:my-1
-          prose-code:bg-gray-100 prose-code:text-gray-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
-          prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:p-4 prose-pre:my-3
-          prose-strong:text-gray-900 prose-strong:font-semibold
-          prose-a:text-primary-600 prose-a:no-underline hover:prose-a:underline
-          prose-hr:border-gray-200 prose-hr:my-4
-          prose-table:text-sm prose-th:bg-gray-50 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:border-gray-200">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-            {displayContent}
-          </ReactMarkdown>
-        </div>
-      )}
+	      {/* Markdown content or skeleton while loading */}
+	      {displayContent.trim() ? (
+	        <div className="prose prose-slate max-w-none prose-sm
+	          prose-p:my-2 prose-p:leading-relaxed
+	          prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-headings:text-gray-900
+	          prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5
+	          prose-ol:my-2 prose-ol:list-decimal prose-ol:pl-5
+	          prose-li:my-1
+	          prose-code:bg-gray-100 prose-code:text-gray-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
+	          prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:p-4 prose-pre:my-3
+	          prose-strong:text-gray-900 prose-strong:font-semibold
+	          prose-a:text-primary-600 prose-a:no-underline hover:prose-a:underline
+	          prose-hr:border-gray-200 prose-hr:my-4
+	          prose-table:text-sm prose-th:bg-gray-50 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:border-gray-200">
+	          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+	            {displayContent}
+	          </ReactMarkdown>
+	        </div>
+	      ) : (
+	        // While streaming but no visible markdown content yet (e.g. only search status/results blocks),
+	        // show a generic skeleton so the user doesn't see an empty gap.
+	        isStreaming && (
+	          <motion.div className="mt-2" {...cardTransition}>
+	            <GenericCardSkeleton />
+	          </motion.div>
+	        )
+	      )}
 
       {/* Animated Components Section */}
       <AnimatePresence mode="wait">
