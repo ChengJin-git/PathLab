@@ -45,13 +45,18 @@ export async function chatWithAI(
   const baseUrl = localStorage.getItem('openrouter_base_url') || 'https://openrouter.ai/api/v1'
   const model = localStorage.getItem('openrouter_model') || 'qwen/qwen3.5-plus-02-15'
 
+  // Pass the user's explicit i18n language preference so the backend selects the
+  // correct system-prompt language instead of relying solely on message-content heuristics.
+  const uiLang = localStorage.getItem('i18nextLng') || 'en-US'
+
   let response: Response
   try {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'X-OpenRouter-API-Key': apiKey,
       'X-OpenRouter-Base-URL': baseUrl,
-      'X-OpenRouter-Model': model
+      'X-OpenRouter-Model': model,
+      'X-Language': uiLang
     }
     const token = getAuthToken()
     if (token) {
