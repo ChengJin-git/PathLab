@@ -311,7 +311,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
 	          prose-strong:text-gray-900 prose-strong:font-semibold
 	          prose-a:text-primary-600 prose-a:no-underline hover:prose-a:underline
 	          prose-hr:border-gray-200 prose-hr:my-4
-	          prose-table:text-sm prose-th:bg-gray-50 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:border-gray-200">
+	          prose-table:text-sm prose-th:bg-gray-50 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:border-gray-200
+          prose-img:rounded-lg prose-img:shadow-md prose-img:my-3 prose-img:max-w-full prose-img:h-auto prose-img:border prose-img:border-gray-200">
 	          <ReactMarkdown remarkPlugins={[remarkGfm]}>
 	            {displayContent}
 	          </ReactMarkdown>
