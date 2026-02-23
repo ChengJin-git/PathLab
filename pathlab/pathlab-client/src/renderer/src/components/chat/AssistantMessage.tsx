@@ -248,12 +248,14 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent)
   displayContent = cleanedContent
 
+	  // Show searching indicator only while streaming and before results arrive
+	  const showSearchingStatus = !!searchStatus && !webSearchResult && isStreaming
 
-  return (
+	  return (
     <div className="w-full min-w-0">
       {/* Searching Status indicator */}
-      {searchStatus && (
-        <SearchingStatus query={searchStatus.query} reason={searchStatus.reason} />
+	      {showSearchingStatus && (
+	        <SearchingStatus query={searchStatus?.query} reason={searchStatus?.reason} />
       )}
 
       {/* Search Completed Card */}

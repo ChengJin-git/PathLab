@@ -339,6 +339,10 @@ After saving, return here and start chatting!"""
             try:
                 search_results = await _execute_exa_search(query, exa_api_key, num_results=5)
 
+                # Emit web search results to frontend so UI can display completion status
+                web_search_result_block = json.dumps(search_results)
+                yield f"data: {json.dumps({'content': f'[WEB_SEARCH_RESULT]{web_search_result_block}[/WEB_SEARCH_RESULT]'})}\n\n"
+
                 # Format search results for AI
                 results_text = f"\n\n[WEB_SEARCH_RESULT]\n{json.dumps(search_results)}\n[/WEB_SEARCH_RESULT]\n\n"
                 results_text += "Search results:\n"
