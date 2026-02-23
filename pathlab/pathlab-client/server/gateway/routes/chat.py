@@ -22,6 +22,7 @@ from backend.common.gpu_utils import get_gpu_summary_for_prompt
 from ..dependencies import logger
 from ..prompts import get_chat_system_prompt, format_user_data_context, detect_language
 from ..models import ChatRequest, CreateConversationRequest, UpdateMessageRequest, AddMessageRequest
+from .chat_pdf import is_pdf_url, download_pdf, parse_pdf, summarize_pdf_content
 
 router = APIRouter(tags=["Chat & Conversations"])
 
@@ -348,6 +349,50 @@ After saving, return here and start chatting!"""
                 results_text += "Search results:\n"
                 for idx, result in enumerate(search_results["results"], 1):
                     results_text += f"{idx}. {result['title']}\n   URL: {result['url']}\n   {result['snippet']}\n\n"
+                
+                # Check for PDF URLs and parse them
+                pdf_results = []
+                for result in search_results["results"]:
+                    url = result.get("url", "")
+                    if is_pdf_url(url):
+                        pdf_status = {"url": url, "title": result.get("title", ""), "status": "parsing"}
+                        yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
+                        
+                        try:
+                            pdf_bytes = await download_pdf(url)
+                            if pdf_bytes:
+                                pdf_content = await parse_pdf(pdf_bytes, max_pages=10)
+                                if not pdf_content.startswith("[Error"):
+                                    summary = await summarize_pdf_content(
+                                        pdf_content,
+                                        result.get("title", "Unknown"),
+                                        effective_base_url,
+                                        effective_api_key,
+                                        effective_model
+                                    )
+                                    pdf_results.append({
+                                        "title": result.get("title", ""),
+                                        "url": url,
+                                        "summary": summary
+                                    })
+                                    pdf_status["status"] = "completed"
+                                else:
+                                    pdf_status["status"] = "parse_failed"
+                            else:
+                                pdf_status["status"] = "download_failed"
+                        except Exception as e:
+                            logger.error(f"Error processing PDF {url}: {e}")
+                            pdf_status["status"] = f"error: {str(e)[:50]}"
+                        
+                        yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
+                
+                # Add PDF summaries to results text
+                if pdf_results:
+                    results_text += "\n\n## PDF Paper Summaries:\n\n"
+                    for pdf in pdf_results:
+                        results_text += f"### {pdf['title']}\n"
+                        results_text += f"URL: {pdf['url']}\n\n"
+                        results_text += f"{pdf['summary']}\n\n---\n\n"
 
                 # Add search results to messages and continue
                 current_messages = current_messages + [
@@ -560,11 +605,22 @@ async def chat_with_ai(
     - X-OpenRouter-API-Key: OpenRouter API key
     - X-OpenRouter-Base-URL: OpenRouter base URL
     - X-OpenRouter-Model: Model name
+    - X-Language: Frontend i18n language code (e.g. en-US, zh-CN, zh-HK)
     """
     # Get AI configuration from request headers
     api_key = request.headers.get("X-OpenRouter-API-Key")
     base_url = request.headers.get("X-OpenRouter-Base-URL")
     model = request.headers.get("X-OpenRouter-Model")
+
+    # Read the frontend i18n language preference. Maps frontend codes (en-US / zh-CN / zh-HK)
+    # to the backend prompt language codes (en / zh_CN / zh_HK).
+    _LANG_HEADER_MAP = {
+        "en-US": "en",
+        "zh-CN": "zh_CN",
+        "zh-HK": "zh_HK",
+    }
+    ui_lang_header = request.headers.get("X-Language", "")
+    ui_lang = _LANG_HEADER_MAP.get(ui_lang_header) if ui_lang_header else None
 
     # Fetch user's temporary dataset permissions (for non-admin users)
     # Need this first to pass elevated_dataset_ids to get_chat_context_stats
@@ -860,13 +916,18 @@ async def chat_with_ai(
     # Log the user_data_context for debugging
     # logger.info(f"[Chat] User data context for agent:\n{user_data_context}")
 
-    # Detect user language from the last user message
-    detected_lang = "en"
-    for msg in reversed(req.messages):
-        if msg.get("role") == "user":
-            user_text = extract_text_from_content(msg.get("content", ""))
-            detected_lang = detect_language(user_text)
-            break
+    # Determine language for system prompt.
+    # Priority: explicit X-Language header (user's i18n setting) > content-based heuristic.
+    if ui_lang:
+        detected_lang = ui_lang
+    else:
+        # Fallback: infer from the last user message content
+        detected_lang = "en"
+        for msg in reversed(req.messages):
+            if msg.get("role") == "user":
+                user_text = extract_text_from_content(msg.get("content", ""))
+                detected_lang = detect_language(user_text)
+                break
 
     # Add system prompt if not present
     messages = req.messages.copy()
