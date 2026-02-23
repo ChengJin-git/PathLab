@@ -33,7 +33,11 @@ import SearchingStatus, {
   removeSearchStatusBlock,
   SearchCompletedCard,
   parseWebSearchResult,
-  removeWebSearchResultBlock
+  removeWebSearchResultBlock,
+  parseAllPdfParseStatus,
+  removePdfParseStatusBlock,
+  PdfParsingStatus,
+  PdfParsingCompletedCard
 } from './SearchingStatus'
 import {
   TaskConfigSkeleton,
@@ -103,7 +107,11 @@ const SPECIAL_BLOCK_TAGS = [
   'DATASET_UPLOAD',
   'METADATA_UPLOAD',
   'MODEL_LIST',
-  'REFERENCE'
+  'REFERENCE',
+  'PDF_PARSE_STATUS',
+  'SEARCH_STATUS',
+  'WEB_SEARCH_RESULT',
+  'WEB_SEARCH'
 ]
 
 /**
@@ -214,6 +222,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const metadataUploadConfig = parseMetadataUploadConfig(content)
   const modelListConfig = parseModelListConfig(content)
   const referenceCards = parseAllReferenceCards(content)
+  const pdfParseStatusItems = parseAllPdfParseStatus(content)
 
   // Remove special blocks from display content
   // Keep the text content but strip out the special markup blocks
@@ -238,6 +247,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (searchStatus) displayContent = removeSearchStatusBlock(displayContent)
   // Remove WEB_SEARCH_RESULT block - it handled separately
   if (webSearchResult) displayContent = removeWebSearchResultBlock(displayContent)
+  // Remove PDF_PARSE_STATUS blocks - handled separately
+  if (pdfParseStatusItems) displayContent = removePdfParseStatusBlock(displayContent)
   // Remove WEB_SEARCH request block - AI's internal search request
   displayContent = displayContent.replace(/\[WEB_SEARCH\][\s\S]*?\[\/WEB_SEARCH\]/g, '').trim()
   // Remove VOICE_CONTROL block - it's for internal use only
@@ -256,6 +267,12 @@ const AssistantMessage = React.memo(function AssistantMessage({
 	  // Show searching indicator only while streaming and before results arrive
 	  const showSearchingStatus = !!searchStatus && !webSearchResult && isStreaming
 
+    // PDF parsing status: show animated indicator while any PDF is still "parsing"
+    const hasPdfParsingInProgress = pdfParseStatusItems?.some(i => i.status === 'parsing') ?? false
+    const showPdfParsingStatus = !!pdfParseStatusItems && hasPdfParsingInProgress && isStreaming
+    // Show completed card when all PDFs are done (not streaming OR all statuses are final)
+    const showPdfParsingCompleted = !!pdfParseStatusItems && !hasPdfParsingInProgress
+
 	  return (
     <div className="w-full min-w-0">
       {/* Searching Status indicator */}
@@ -269,6 +286,16 @@ const AssistantMessage = React.memo(function AssistantMessage({
           query={webSearchResult.query}
           resultCount={webSearchResult.results?.length || 0}
         />
+      )}
+
+      {/* PDF Parsing Status indicator */}
+      {showPdfParsingStatus && pdfParseStatusItems && (
+        <PdfParsingStatus items={pdfParseStatusItems} />
+      )}
+
+      {/* PDF Parsing Completed Card */}
+      {showPdfParsingCompleted && pdfParseStatusItems && (
+        <PdfParsingCompletedCard items={pdfParseStatusItems} />
       )}
 
 	      {/* Markdown content or skeleton while loading */}

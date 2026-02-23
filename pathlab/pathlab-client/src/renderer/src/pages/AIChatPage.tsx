@@ -48,6 +48,7 @@ import { CachedTaskData } from '../components/chat/TaskHistoryCard'
 import { parseCancelTaskConfig } from '../components/chat/CancelTaskCard'
 import { removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
 import { removeModelListBlock } from '../components/chat/ModelListCard'
+import { removePdfParseStatusBlock } from '../components/chat/SearchingStatus'
 import { parseRenameTaskConfig, removeRenameTaskBlock } from '../components/chat/RenameTaskCard'
 
 
@@ -785,6 +786,8 @@ export default function AIChatPage() {
     // Remove VOICE_CONTROL block - it's for internal use only
     cleaned = removeVoiceControlBlock(cleaned)
     cleaned = removeModelListBlock(cleaned)
+    // Remove PDF_PARSE_STATUS blocks - internal status tags
+    cleaned = removePdfParseStatusBlock(cleaned)
     return cleaned.trim()
   }
 

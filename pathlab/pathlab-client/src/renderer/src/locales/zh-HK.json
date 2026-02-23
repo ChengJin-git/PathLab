@@ -607,7 +607,11 @@
       "forWebSearch": "用於 AI 網頁搜尋功能。",
       "searching": "搜尋中...",
       "searchedPages": "已搜尋 {{count}} 個網頁",
-      "webSearchCard": "網頁搜尋"
+      "webSearchCard": "網頁搜尋",
+      "parsingPdf": "正在解析 PDF 論文...",
+      "pdfParsedCount": "已解析 {{count}} 篇 PDF 論文",
+      "pdfFromCache": "{{count}} 篇來自快取",
+      "pdfParseFailed": "{{count}} 篇解析失敗"
     }
   },
   "layout": {

@@ -607,7 +607,11 @@
       "forWebSearch": "For AI web search capabilities.",
       "searching": "Searching...",
       "searchedPages": "Searched {{count}} pages",
-      "webSearchCard": "Web Search"
+      "webSearchCard": "Web Search",
+      "parsingPdf": "Parsing PDF paper...",
+      "pdfParsedCount": "Parsed {{count}} PDF papers",
+      "pdfFromCache": "{{count}} from cache",
+      "pdfParseFailed": "{{count}} failed to parse"
     }
   },
   "layout": {
