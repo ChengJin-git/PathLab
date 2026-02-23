@@ -1,14 +1,23 @@
+"""Prompt templates and helpers for PathLab Agent.
+
+This module also integrates the feature extractor metadata from
+``feature_extractors_meta.json`` so that the chat Agent has an
+authoritative, non-hallucinating reference for supported feature
+extractors (GPFM, UNI, Virchow, etc.).
 """
-Prompt templates for PathLab Agent.
-"""
+
+import json
 import re
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 PROMPTS_DIR = Path(__file__).parent
 
 # Cache loaded templates to avoid repeated file I/O
 _template_cache: Dict[str, str] = {}
+
+# Cache for parsed feature extractor metadata (loaded from JSON once)
+_feature_extractor_meta_cache: Optional[Dict[str, Any]] = None
 
 # Supported language codes and their prompt file suffixes
 SUPPORTED_LANGS = ("en", "zh_CN", "zh_HK")
@@ -89,20 +98,145 @@ def detect_language(text: str) -> str:
     return "zh_HK" if trad_ratio >= 0.3 else "zh_CN"
 
 
-def get_chat_system_prompt(lang: Optional[str] = None) -> str:
-    """
-    Get the PathLab Agent system prompt for the given language.
+def _load_feature_extractor_meta() -> Dict[str, Any]:
+    """Load feature extractor metadata from JSON (with caching).
 
-    Args:
-        lang: Language code (``"en"``, ``"zh_CN"``, or ``"zh_HK"``).
-              Falls back to ``"en"`` when *None* or unsupported.
-
-    Returns:
-        The full system prompt content
+    The metadata file is optional. If it is missing or cannot be
+    parsed, this function returns an empty structure so that the chat
+    agent continues to work without raising errors.
     """
+
+    global _feature_extractor_meta_cache
+
+    if _feature_extractor_meta_cache is not None:
+        return _feature_extractor_meta_cache
+
+    meta_path = PROMPTS_DIR / "feature_extractors_meta.json"
+    if not meta_path.exists():
+        _feature_extractor_meta_cache = {"metadata_version": 1, "extractors": {}}
+        return _feature_extractor_meta_cache
+
+    try:
+        content = meta_path.read_text(encoding="utf-8")
+        data = json.loads(content)
+        # Basic shape check – be tolerant and never raise here
+        if not isinstance(data, dict):
+            data = {"metadata_version": 1, "extractors": {}}
+    except Exception:
+        data = {"metadata_version": 1, "extractors": {}}
+
+    _feature_extractor_meta_cache = data
+    return data
+
+
+def _build_feature_extractor_reference(lang: str) -> str:
+    """Build a language-specific reference section for feature extractors.
+
+    This section is appended to the base system prompt so that the AI
+    Agent has authoritative, non-hallucinated descriptions for all
+    *supported* feature extractors.
+
+    Behavioural rules encoded here:
+    - Only describe feature extractors that exist in this metadata
+      file; never invent new ones.
+    - For names like "GPFM", always use the provided expansion and
+      description (Generalizable Pathology Foundation Model), and NEVER
+      reinterpret it as "General Purpose Foundation Model".
+    - Only ask for web search (via [WEB_SEARCH]) when the *user
+      explicitly* asks for papers, external benchmarks, or latest
+      research beyond PathLab's own integration.
+    """
+
     if lang not in SUPPORTED_LANGS:
         lang = _DEFAULT_LANG
-    return load_prompt(f"chat_system_prompt_{lang}")
+
+    meta = _load_feature_extractor_meta()
+    extractors = meta.get("extractors", {}) or {}
+    if not extractors:
+        return ""
+
+    # Language-specific text fragments
+    if lang == "zh_CN":
+        header = (
+            "\n\n## 特征提取器参考（严格遵守）\n\n"
+            "下面是 PathLab 当前内置的特征提取器列表。回答相关问题时：\n"
+            "- **只使用这里列出的名称和简介**，不要编造新的特征提取器；\n"
+            "- **不要改变或推测含义**，尤其是 GPFM，只能理解为 Generalizable Pathology Foundation Model；\n"
+            "- **只有当用户明确要求“帮我查论文 / 更多背景 / 最新进展”时，才使用 [WEB_SEARCH] 查找外部资料。**\n\n"
+            "可用特征提取器（按 id 排序）：\n"
+        )
+        desc_key = "desc_zh_CN"
+        line_template = "- {display_name}（id: {id}，backbone: {backbone}，dim: {dim}）：{desc}\n"
+    elif lang == "zh_HK":
+        header = (
+            "\n\n## 特徵提取器參考（必須遵守）\n\n"
+            "以下是 PathLab 目前內置的特徵提取器。回應相關問題時：\n"
+            "- **只使用這裡列出的名稱和簡介**，不要編造新的特徵提取器；\n"
+            "- **不要改變或猜測含義**，特別是 GPFM，只能理解為 Generalizable Pathology Foundation Model；\n"
+            "- **只有當使用者明確要求「幫我查論文 / 更多背景 / 最新進展」時，才使用 [WEB_SEARCH] 查找外部資料。**\n\n"
+            "可用特徵提取器（按 id 排序）：\n"
+        )
+        desc_key = "desc_zh_HK"
+        line_template = "- {display_name}（id: {id}，backbone: {backbone}，dim: {dim}）：{desc}\n"
+    else:  # "en"
+        header = (
+            "\n\n## Feature Extractor Reference (authoritative)\n\n"
+            "The following feature extractors are **officially supported** in PathLab. When answering questions about them:\n"
+            "- **Only use the names and descriptions listed here**; never invent new extractors;\n"
+            "- **Do not change or guess meanings** – in particular, GPFM **must** be understood as Generalizable Pathology Foundation Model,\n"
+            "  not \"General Purpose Foundation Model\";\n"
+            "- **Only request web search ([WEB_SEARCH]) when the user explicitly asks** for papers, external benchmarks, or latest research beyond PathLab.\n\n"
+            "Supported feature extractors (sorted by id):\n"
+        )
+        desc_key = "desc_en"
+        line_template = "- {display_name} (id: {id}, backbone: {backbone}, dim: {dim}): {desc}\n"
+
+    lines: List[str] = [header]
+    for extractor_id in sorted(extractors.keys()):
+        info = extractors.get(extractor_id) or {}
+        display_name = info.get("display_name", extractor_id)
+        backbone = info.get("backbone", "unknown")
+        dim = info.get("embedding_dim", "?")
+        desc = info.get(desc_key) or info.get("desc_en") or ""
+        if not desc:
+            # Skip entries without any usable description to avoid noise
+            continue
+        lines.append(
+            line_template.format(
+                display_name=display_name,
+                id=extractor_id,
+                backbone=backbone,
+                dim=dim,
+                desc=desc,
+            )
+        )
+
+    return "".join(lines)
+
+
+def get_chat_system_prompt(lang: Optional[str] = None) -> str:
+    """Get the full PathLab Agent system prompt for the given language.
+
+    This concatenates the language-specific base prompt with an
+    auto-generated **Feature Extractor Reference** section built from
+    ``feature_extractors_meta.json``.
+
+    If anything goes wrong when building the reference (missing file,
+    JSON parse error, etc.), the function gracefully falls back to the
+    base prompt only.
+    """
+
+    if lang not in SUPPORTED_LANGS:
+        lang = _DEFAULT_LANG
+
+    base_prompt = load_prompt(f"chat_system_prompt_{lang}")
+
+    try:
+        fe_ref = _build_feature_extractor_reference(lang)
+    except Exception:
+        fe_ref = ""
+
+    return base_prompt + fe_ref
 
 
 def get_user_data_context_template() -> str:
