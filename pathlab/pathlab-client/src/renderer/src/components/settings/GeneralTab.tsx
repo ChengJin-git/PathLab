@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Cloud, Server, Key, Info, CheckCircle, Mic, Search } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
+import { Cloud, Server, Key, Info, CheckCircle, Mic, Search, Power, Globe } from 'lucide-react'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
@@ -8,6 +8,41 @@ import { getGlobalSettings, updateGlobalSettings, getAuthToken } from '../../api
 import { API_BASE } from '../../config'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { useTranslation } from 'react-i18next'
+
+// Status Badge Component
+function StatusBadge({ status }: { status: 'online' | 'offline' | 'checking' }) {
+  const statusConfig = {
+    online: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', dot: 'bg-emerald-500' },
+    checking: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', dot: 'bg-amber-500' },
+    offline: { bg: 'bg-slate-100', text: 'text-slate-600', border: 'border-slate-200', dot: 'bg-slate-400' }
+  }
+  const config = statusConfig[status]
+  const statusText = status === 'online' ? '在线' : status === 'checking' ? '检测中...' : '离线'
+  return (
+    <div className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${config.bg} ${config.text} ${config.border}`}>
+      <div className={`w-2 h-2 rounded-full ${config.dot} animate-pulse`} />
+      <span>{statusText}</span>
+    </div>
+  )
+}
+
+// Toggle Switch Component
+function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: () => void }) {
+  return (
+    <button
+      onClick={onChange}
+      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${
+        enabled ? 'bg-emerald-600 ring-emerald-500' : 'bg-slate-300 ring-slate-400'
+      }`}
+      role="switch"
+      aria-checked={enabled}
+    >
+      <span
+        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-lg transition-transform ${enabled ? 'translate-x-6' : 'translate-x-1'}`}
+      />
+    </button>
+  )
+}
 
 export interface GeneralTabProps {
   showConfirmDialog: ShowConfirmDialog
@@ -140,258 +175,352 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
     } finally { setAiSaving(false) }
   }
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-6">
       <form onSubmit={handleAISave} className="space-y-6">
+        {/* Remote Services Section */}
+        <section className="space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-100 rounded-lg">
+              <Cloud className="w-5 h-5 text-blue-600" />
+            </div>
+            <h2 className="text-lg font-bold text-slate-900">{t('settings.remoteServices')}</h2>
+          </div>
 
-        {/* Stacked Layout: Remote Services then Local Services */}
-        <div className="space-y-8">
-          {/* Remote Services Section */}
-          <div className="space-y-4">
-            <h2 className="text-lg font-semibold text-gray-700 flex items-center">
-              <Cloud className="w-5 h-5 mr-2 text-blue-600" />
-              {t('settings.remoteServices')}
-            </h2>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* OpenRouter LLM Card */}
+            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+              <CardHeader className="pb-2 p-3">
+                <CardTitle className="flex items-center gap-2 text-base text-slate-900">
+                  <div className="p-1 bg-blue-100 rounded">
+                    <Server className="w-3.5 h-3.5 text-blue-600" />
+                  </div>
+                  {t('settings.general.llmOpenRouter')}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2.5 p-3 pt-0">
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.apiKey')}</Label>
+                  <Input
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="sk-..."
+                    className="h-8 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                  />
+                  <p className="text-xs text-slate-500">
+                    <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-700 font-medium">
+                      {t('common.getKey')}
+                    </a>
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.baseUrl')}</Label>
+                  <Input
+                    value={baseUrl}
+                    onChange={(e) => setBaseUrl(e.target.value)}
+                    placeholder="https://openrouter.ai/api/v1"
+                    className="h-8 font-mono text-xs border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.model')}</Label>
+                  <select
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    className="h-8 w-full px-2.5 py-1 border border-slate-300 rounded-lg bg-white text-xs text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                  >
+                    <optgroup label={t('settings.general.multimodalModels')}>
+                      <option value="qwen/qwen3.5-plus-02-15">Qwen3.5-Plus-02-15</option>
+                      <option value="z-ai/glm-5">GLM-5</option>
+                      <option value="moonshotai/kimi-k2.5">Kimi-K2.5</option>
+                    </optgroup>
+                    <optgroup label={t('settings.general.textModels')}>
+                      <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
+                      <option value="stepfun/step-3.5-flash:free">Step-3.5-Flash</option>
+                      <option value="z-ai/glm-4.7-flash">GLM-4.7-Flash</option>
+                      <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
+                    </optgroup>
+                  </select>
+                </div>
+              </CardContent>
+            </Card>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-              {/* Left Column: Remote LLM Settings (OpenRouter) */}
-              <Card className="h-full">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center text-base">
-                    <Server className="w-4 h-4 mr-2 text-primary-600" />
-                    {t('settings.general.llmOpenRouter')}
+            {/* DashScope ASR Card */}
+            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+              <CardHeader className="pb-2 p-3">
+                <CardTitle className="flex items-center gap-2 text-base text-slate-900">
+                  <div className="p-1 bg-orange-100 rounded">
+                    <Mic className="w-3.5 h-3.5 text-orange-600" />
+                  </div>
+                  {t('settings.general.asrDashScope')}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2.5 p-3 pt-0">
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.dashscopeApiKey')}</Label>
+                  <Input
+                    type="password"
+                    value={dashscopeApiKey}
+                    onChange={(e) => setDashscopeApiKey(e.target.value)}
+                    placeholder="sk-..."
+                    className="h-8 text-sm border-slate-300 focus:border-orange-500 focus:ring-orange-500"
+                  />
+                  <p className="text-xs text-slate-500">
+                    {t('settings.general.forQwen3Asr')}{' '}
+                    <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-orange-600 hover:text-orange-700 font-medium">
+                      {t('common.getKey')}
+                    </a>
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Shared Credentials Card */}
+            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+              <CardHeader className="pb-2 p-3">
+                <CardTitle className="flex items-center gap-2 text-base text-slate-900">
+                  <div className="p-1 bg-amber-100 rounded">
+                    <Key className="w-3.5 h-3.5 text-amber-600" />
+                  </div>
+                  {t('settings.general.sharedCredentials')}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2.5 p-3 pt-0">
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">HF TOKEN</Label>
+                  <Input
+                    type="password"
+                    value={huggingfaceToken}
+                    onChange={(e) => setHuggingfaceToken(e.target.value)}
+                    placeholder="hf_..."
+                    className="h-8 text-sm border-slate-300 focus:border-amber-500 focus:ring-amber-500"
+                  />
+                  <p className="text-xs text-slate-500">
+                    <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-amber-600 hover:text-amber-700 font-medium">
+                      {t('common.getToken')}
+                    </a>
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+
+        {/* Web Search Section */}
+	        <section className="space-y-3">
+	          <div className="flex items-center gap-3">
+	            <div className="p-2 bg-slate-100 rounded-lg">
+	              <Globe className="w-5 h-5 text-slate-700" />
+	            </div>
+	            <h2 className="text-lg font-bold text-slate-900">{t('settings.general.webSearchCard')}</h2>
+	          </div>
+	          <div className="grid gap-3">
+	            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+	              <CardHeader className="pb-2 p-3">
+	                <CardTitle className="flex items-center gap-2 text-base text-slate-900">
+	                  <div className="p-1 bg-slate-100 rounded">
+	                    <Globe className="w-3.5 h-3.5 text-slate-700" />
+	                  </div>
+	                  {t('settings.general.exaApiKey')}
+	                </CardTitle>
+	                <CardDescription className="text-xs text-slate-500">
+	                  {t('settings.general.forWebSearch')}
+	                </CardDescription>
+	              </CardHeader>
+	              <CardContent className="space-y-2.5 p-3 pt-0">
+	                <div className="space-y-1">
+	                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">
+	                    {t('settings.general.exaApiKey')}
+	                  </Label>
+	                  <Input
+	                    type="password"
+	                    value={exaApiKey}
+	                    onChange={(e) => setExaApiKey(e.target.value)}
+	                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+	                    className="h-8 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+	                  />
+	                  <p className="text-xs text-slate-500">
+	                    <a href="https://exa.ai" target="_blank" className="text-blue-600 hover:text-blue-700 font-medium">
+	                      {t('common.getKey')}
+	                    </a>
+	                  </p>
+	                </div>
+	              </CardContent>
+	            </Card>
+	          </div>
+	        </section>
+
+        {/* Local Services Section */}
+        <section className="space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-emerald-100 rounded-lg">
+              <Server className="w-5 h-5 text-emerald-600" />
+            </div>
+            <h2 className="text-lg font-bold text-slate-900">{t('settings.localServices')}</h2>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Local vLLM Card */}
+            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+              <CardHeader className="pb-2 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="flex items-center gap-2 text-base text-slate-900">
+                    <div className="p-1 bg-emerald-100 rounded">
+                      <Server className="w-3.5 h-3.5 text-emerald-600" />
+                    </div>
+                    {t('settings.general.llmVllm')}
                   </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>{t('settings.general.apiKey')}</Label>
-                    <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." />
-                    <p className="text-xs text-gray-500">
-                      <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline">{t('common.getKey')}</a>
-                    </p>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <StatusBadge status={localVllmStatus} />
+                    <ToggleSwitch enabled={localVllmEnabled} onChange={() => setLocalVllmEnabled(!localVllmEnabled)} />
                   </div>
-                  <div className="space-y-2">
-                    <Label>{t('settings.general.baseUrl')}</Label>
-                    <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://openrouter.ai/api/v1" className="font-mono text-sm" />
+                </div>
+              </CardHeader>
+              {localVllmEnabled && (
+                <CardContent className="space-y-2.5 border-t border-slate-100 p-3 pt-2.5">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.baseUrl')}</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={localVllmBaseUrl}
+                        onChange={(e) => setLocalVllmBaseUrl(e.target.value)}
+                        placeholder="http://127.0.0.1:8000/v1"
+                        className="h-8 font-mono text-xs border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={checkLocalVllmStatus}
+                        className="h-8 px-2.5 whitespace-nowrap text-xs border-slate-300 text-slate-700 hover:bg-slate-50"
+                      >
+                        {t('common.test')}
+                      </Button>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label>{t('settings.general.model')}</Label>
-                    <select
-                      value={model}
-                      onChange={(e) => setModel(e.target.value)}
-                      className="flex h-9 w-full rounded-lg border border-gray-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950"
-                    >
-                      <optgroup label={t('settings.general.multimodalModels')}>
-                        <option value="qwen/qwen3.5-plus-02-15">Qwen3.5-Plus-02-15</option>
-                        <option value="z-ai/glm-5">GLM-5</option>
-                        <option value="moonshotai/kimi-k2.5">Kimi-K2.5</option>
-                      </optgroup>
-                      <optgroup label={t('settings.general.textModels')}>
-                        <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
-                        <option value="stepfun/step-3.5-flash:free">Step-3.5-Flash</option>
-                        <option value="z-ai/glm-4.7-flash">GLM-4.7-Flash</option>
-                        <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
-                      </optgroup>
-                    </select>
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center">
+                      <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.model')}</Label>
+                      {localVllmDetectedModel && (
+                        <span className="text-xs font-mono bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-200">
+                          {localVllmDetectedModel}
+                        </span>
+                      )}
+                    </div>
+                    <Input
+                      value={localVllmModel}
+                      onChange={(e) => setLocalVllmModel(e.target.value)}
+                      placeholder={localVllmDetectedModel || 'Qwen/Qwen3.5-Plus-02-15'}
+                      className="h-8 text-sm border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">
+                      {t('settings.general.apiKey')} <span className="text-slate-400 font-normal">({t('common.optional')})</span>
+                    </Label>
+                    <Input
+                      type="password"
+                      value={localVllmApiKey}
+                      onChange={(e) => setLocalVllmApiKey(e.target.value)}
+                      placeholder="token-..."
+                      className="h-8 text-sm border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                    />
                   </div>
                 </CardContent>
-              </Card>
+              )}
+            </Card>
 
-              {/* Right Column: Remote ASR + Shared Credentials */}
-              <div className="space-y-6">
-                {/* Remote ASR Settings (DashScope) */}
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="flex items-center text-base">
-                      <Mic className="w-4 h-4 mr-2 text-orange-600" />
-                      {t('settings.general.asrDashScope')}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                      <Label>{t('settings.general.dashscopeApiKey')}</Label>
-                      <Input type="password" value={dashscopeApiKey} onChange={(e) => setDashscopeApiKey(e.target.value)} placeholder="sk-..." />
-                      <p className="text-xs text-gray-500">
-                        {t('settings.general.forQwen3Asr')} <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-primary-600 hover:underline">{t('common.getKey')}</a>
-                      </p>
+            {/* Local ASR Card */}
+            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+              <CardHeader className="pb-2 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="flex items-center gap-2 text-base text-slate-900">
+                    <div className="p-1 bg-purple-100 rounded">
+                      <Mic className="w-3.5 h-3.5 text-purple-600" />
                     </div>
-                  </CardContent>
-                </Card>
-
-                {/* Shared Service Credentials */}
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="flex items-center text-base">
-                      <Key className="w-4 h-4 mr-2 text-amber-600" />
-                      {t('settings.general.sharedCredentials')}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      <Label>{t('settings.general.huggingfaceToken')}</Label>
-                      <Input type="password" value={huggingfaceToken} onChange={(e) => setHuggingfaceToken(e.target.value)} placeholder="hf_..." />
-                      <p className="text-xs text-gray-500">
-                        {t('settings.general.forDownloadingGated')} <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-primary-600 hover:underline">{t('common.getToken')}</a>
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t('settings.general.exaApiKey')}</Label>
-                      <Input type="password" value={exaApiKey} onChange={(e) => setExaApiKey(e.target.value)} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
-                      <p className="text-xs text-gray-500">
-                        {t('settings.general.forWebSearch')} <a href="https://exa.ai" target="_blank" className="text-primary-600 hover:underline">{t('common.getKey')}</a>
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            </div>
-          </div>
-
-          {/* Local Services Section */}
-          <div className="space-y-4">
-            <h2 className="text-lg font-semibold text-gray-700 flex items-center">
-              <Server className="w-5 h-5 mr-2 text-green-600" />
-              {t('settings.localServices')}
-            </h2>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Local LLM Settings */}
-              <Card className="h-full">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center text-base">
-                      <Server className="w-4 h-4 mr-2 text-green-600" />
-                      {t('settings.general.llmVllm')}
-                    </CardTitle>
-                    <div className="flex items-center space-x-3">
-                      <div className={`flex items-center space-x-1.5 px-2 py-0.5 rounded-full text-xs font-medium border ${localVllmStatus === 'online' ? 'bg-green-50 text-green-700 border-green-200' :
-                        localVllmStatus === 'checking' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
-                          'bg-gray-100 text-gray-600 border-gray-200'
-                        }`}>
-                        <div className={`w-1.5 h-1.5 rounded-full ${localVllmStatus === 'online' ? 'bg-green-500' : localVllmStatus === 'checking' ? 'bg-yellow-500' : 'bg-gray-400'}`} />
-                        <span>{localVllmStatus === 'online' ? t('common.online') : localVllmStatus === 'checking' ? '...' : t('common.offline')}</span>
-                      </div>
-                      <div
-                        className={`w-10 h-5 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-300 ${localVllmEnabled ? 'bg-green-600' : 'bg-gray-200'}`}
-                        onClick={() => setLocalVllmEnabled(!localVllmEnabled)}
-                      >
-                        <div className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-300 ${localVllmEnabled ? 'translate-x-5' : ''}`} />
-                      </div>
-                    </div>
+                    {t('settings.general.asrWebSocket')}
+                  </CardTitle>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <StatusBadge status={localAsrStatus} />
+                    <ToggleSwitch enabled={localAsrEnabled} onChange={() => setLocalAsrEnabled(!localAsrEnabled)} />
                   </div>
-                </CardHeader>
-                {localVllmEnabled && (
-                  <CardContent className="pt-2 space-y-4">
-                    <div className="space-y-2">
-                      <Label>{t('settings.general.baseUrl')}</Label>
-                      <div className="flex gap-2">
-                        <Input value={localVllmBaseUrl} onChange={(e) => setLocalVllmBaseUrl(e.target.value)} placeholder="http://127.0.0.1:8000/v1" className="font-mono text-sm" />
-                        <Button type="button" variant="outline" size="sm" onClick={checkLocalVllmStatus} className="bg-white whitespace-nowrap">
-                          {t('common.test')}
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center">
-                        <Label>{t('settings.general.model')}</Label>
-                        {localVllmDetectedModel && (
-                          <span className="text-xs font-mono bg-green-100 text-green-800 px-1.5 py-0.5 rounded">
-                            {localVllmDetectedModel}
-                          </span>
-                        )}
-                      </div>
-                      <Input value={localVllmModel} onChange={(e) => setLocalVllmModel(e.target.value)} placeholder={localVllmDetectedModel || "Qwen/Qwen3.5-Plus-02-15"} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t('settings.general.apiKeyOptional')}</Label>
-                      <Input type="password" value={localVllmApiKey} onChange={(e) => setLocalVllmApiKey(e.target.value)} placeholder="token-..." />
-                    </div>
-                  </CardContent>
-                )}
-              </Card>
-
-              {/* Local ASR Settings */}
-              <Card className="h-full">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center text-base">
-                      <Mic className="w-4 h-4 mr-2 text-purple-600" />
-                      {t('settings.general.asrWebSocket')}
-                    </CardTitle>
-                    <div className="flex items-center space-x-3">
-                      <div className={`flex items-center space-x-1.5 px-2 py-0.5 rounded-full text-xs font-medium border ${localAsrStatus === 'online' ? 'bg-green-50 text-green-700 border-green-200' :
-                        localAsrStatus === 'checking' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
-                          'bg-gray-100 text-gray-600 border-gray-200'
-                        }`}>
-                        <div className={`w-1.5 h-1.5 rounded-full ${localAsrStatus === 'online' ? 'bg-green-500' : localAsrStatus === 'checking' ? 'bg-yellow-500' : 'bg-gray-400'}`} />
-                        <span>{localAsrStatus === 'online' ? t('common.online') : localAsrStatus === 'checking' ? '...' : t('common.offline')}</span>
-                      </div>
-                      <div
-                        className={`w-10 h-5 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-300 ${localAsrEnabled ? 'bg-purple-600' : 'bg-gray-200'}`}
-                        onClick={() => setLocalAsrEnabled(!localAsrEnabled)}
+                </div>
+              </CardHeader>
+              {localAsrEnabled && (
+                <CardContent className="space-y-2.5 border-t border-slate-100 p-3 pt-2.5">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">WEBSOCKET URL</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={localAsrBaseUrl}
+                        onChange={(e) => setLocalAsrBaseUrl(e.target.value)}
+                        placeholder="ws://127.0.0.1:8001/api-ws/v1/realtime"
+                        className="h-8 font-mono text-xs border-slate-300 focus:border-purple-500 focus:ring-purple-500"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={checkLocalAsrStatus}
+                        className="h-8 px-2.5 whitespace-nowrap text-xs border-slate-300 text-slate-700 hover:bg-slate-50"
                       >
-                        <div className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform duration-300 ${localAsrEnabled ? 'translate-x-5' : ''}`} />
-                      </div>
+                        {t('common.test')}
+                      </Button>
                     </div>
+                    <p className="text-xs text-slate-500">{t('settings.general.webSocketHint')}</p>
                   </div>
-                </CardHeader>
-                {localAsrEnabled && (
-                  <CardContent className="pt-2 space-y-4">
-                    <div className="space-y-2">
-                      <Label>{t('settings.general.webSocketUrl')}</Label>
-                      <div className="flex gap-2">
-                        <Input value={localAsrBaseUrl} onChange={(e) => setLocalAsrBaseUrl(e.target.value)} placeholder="ws://127.0.0.1:8001/api-ws/v1/realtime" className="font-mono text-sm" />
-                        <Button type="button" variant="outline" size="sm" onClick={checkLocalAsrStatus} className="bg-white whitespace-nowrap">
-                          {t('common.test')}
-                        </Button>
-                      </div>
-                      <p className="text-xs text-gray-500">
-                        {t('settings.general.webSocketEndpointInfo')}
-                      </p>
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center">
+                      <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.model')}</Label>
+                      {localAsrDetectedModel && (
+                        <span className="text-xs font-mono bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded border border-purple-200">
+                          {localAsrDetectedModel}
+                        </span>
+                      )}
                     </div>
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center">
-                        <Label>{t('settings.general.model')}</Label>
-                        {localAsrDetectedModel && (
-                          <span className="text-xs font-mono bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded">
-                            {localAsrDetectedModel}
-                          </span>
-                        )}
-                      </div>
-                      <Input value={localAsrModel} onChange={(e) => setLocalAsrModel(e.target.value)} placeholder={localAsrDetectedModel || "Qwen/Qwen3-ASR-1.7B"} />
-                      <p className="text-xs text-gray-500">
-                        {t('settings.general.modelNameWillBeAppended')}
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t('settings.general.apiKeyOptional')}</Label>
-                      <Input type="password" value={localAsrApiKey} onChange={(e) => setLocalAsrApiKey(e.target.value)} placeholder="token-..." />
-                    </div>
-                  </CardContent>
-                )}
-              </Card>
-            </div>
+                    <Input
+                      value={localAsrModel}
+                      onChange={(e) => setLocalAsrModel(e.target.value)}
+                      placeholder={localAsrDetectedModel || 'Qwen/Qwen3-ASR-1.7B'}
+                      className="h-8 text-sm border-slate-300 focus:border-purple-500 focus:ring-purple-500"
+                    />
+                    <p className="text-xs text-slate-500">{t('settings.general.modelNameHint')}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">
+                      {t('settings.general.apiKey')} <span className="text-slate-400 font-normal">({t('common.optional')})</span>
+                    </Label>
+                    <Input
+                      type="password"
+                      value={localAsrApiKey}
+                      onChange={(e) => setLocalAsrApiKey(e.target.value)}
+                      placeholder="token-..."
+                      className="h-8 text-sm border-slate-300 focus:border-purple-500 focus:ring-purple-500"
+                    />
+                  </div>
+                </CardContent>
+              )}
+            </Card>
           </div>
-        </div>
-
-
+        </section>
 
         {/* Save Action Bar */}
-        <div className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg shadow-sm">
-          <div className="flex items-center gap-2 text-sm text-gray-500">
-            <Info className="w-4 h-4" />
+        <div className="flex items-center justify-between p-4 bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded-lg sticky bottom-0 shadow-lg">
+          <div className="flex items-center gap-2 text-xs text-slate-600 font-medium">
+            <Info className="w-4 h-4 flex-shrink-0" />
             <span>{t('common.localServicePriority')}</span>
           </div>
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center gap-3">
             {aiSaved && (
-              <span className="text-sm text-green-600 flex items-center">
-                <CheckCircle className="w-5 h-5 mr-1" />
+              <span className="text-xs text-emerald-600 font-semibold flex items-center gap-1.5 animate-pulse">
+                <CheckCircle className="w-4 h-4" />
                 {t('common.savedSuccess')}
               </span>
             )}
             <button
               type="submit"
               disabled={aiSaving}
-              className="px-4 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white text-sm font-medium rounded-lg hover:from-primary-700 hover:to-primary-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-all shadow-sm disabled:opacity-50"
+              className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-xs font-semibold rounded-lg hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {aiSaving ? t('common.savingText') : t('common.saveSettings')}
             </button>

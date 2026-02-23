@@ -603,11 +603,11 @@
       "modelNameHint": "Model name will be appended as ?model=... to the URL",
       "dashscopeApiKey": "DashScope API Key",
       "forQwen3Asr": "For Qwen3-ASR realtime.",
-      "huggingfaceToken": "HuggingFace Token",
-      "forDownloadingGated": "For downloading gated models.",
-      "webSocketEndpointInfo": "WebSocket endpoint for realtime ASR (e.g., ws://host:port/api-ws/v1/realtime)",
-      "modelNameWillBeAppended": "Model name will be appended as ?model=... to the URL",
-      "apiKeyOptional": "API Key <span className=\"text-gray-400 font-normal\">(Optional)</span>"
+      "exaApiKey": "Exa Search API Key",
+      "forWebSearch": "For AI web search capabilities.",
+      "searching": "Searching...",
+      "searchedPages": "Searched {{count}} pages",
+      "webSearchCard": "Web Search"
     }
   },
   "layout": {

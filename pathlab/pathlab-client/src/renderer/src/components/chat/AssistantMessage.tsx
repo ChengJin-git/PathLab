@@ -27,6 +27,13 @@ import { MetadataUploadCard, parseMetadataUploadConfig, removeMetadataUploadBloc
 import { ModelListCard, parseModelListConfig, removeModelListBlock } from './ModelListCard'
 import { RenameTaskCard, parseRenameTaskConfig, removeRenameTaskBlock } from './RenameTaskCard'
 import { removeVoiceControlBlock } from './VoiceControlBlock'
+import SearchingStatus, {
+  parseSearchStatus,
+  removeSearchStatusBlock,
+  SearchCompletedCard,
+  parseWebSearchResult,
+  removeWebSearchResultBlock
+} from './SearchingStatus'
 import {
   TaskConfigSkeleton,
   OptionButtonsSkeleton,
@@ -186,6 +193,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
 }: AssistantMessageProps) {
   const { t } = useTranslation()
   // Parse special blocks
+  const searchStatus = parseSearchStatus(content)
+  const webSearchResult = parseWebSearchResult(content)
   const options = parseOptions(content)
   const taskConfig = parseTaskConfig(content)
   const imageRecommendation = parseImageRecommendation(content)
@@ -222,6 +231,12 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (datasetRegistrationConfig) displayContent = removeDatasetRegistrationBlock(displayContent)
   if (metadataUploadConfig) displayContent = removeMetadataUploadBlock(displayContent)
   if (modelListConfig) displayContent = removeModelListBlock(displayContent)
+  // Remove SEARCH_STATUS block - it handled separately
+  if (searchStatus) displayContent = removeSearchStatusBlock(displayContent)
+  // Remove WEB_SEARCH_RESULT block - it handled separately
+  if (webSearchResult) displayContent = removeWebSearchResultBlock(displayContent)
+  // Remove WEB_SEARCH request block - AI's internal search request
+  displayContent = displayContent.replace(/\[WEB_SEARCH\][\s\S]*?\[\/WEB_SEARCH\]/g, '').trim()
   // Remove VOICE_CONTROL block - it's for internal use only
   displayContent = removeVoiceControlBlock(displayContent)
   // Remove SUBMIT_TASK block - it's for internal use only (voice command to trigger submit)
@@ -236,6 +251,19 @@ const AssistantMessage = React.memo(function AssistantMessage({
 
   return (
     <div className="w-full min-w-0">
+      {/* Searching Status indicator */}
+      {searchStatus && (
+        <SearchingStatus query={searchStatus.query} reason={searchStatus.reason} />
+      )}
+
+      {/* Search Completed Card */}
+      {webSearchResult && (
+        <SearchCompletedCard
+          query={webSearchResult.query}
+          resultCount={webSearchResult.results?.length || 0}
+        />
+      )}
+
       {/* Markdown content */}
       {displayContent.trim() && (
         <div className="prose prose-slate max-w-none prose-sm

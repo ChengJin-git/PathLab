@@ -603,13 +603,12 @@
       "modelNameHint": "模型名称将以 ?model=... 附加到 URL",
       "dashscopeApiKey": "DashScope API 密钥",
       "forQwen3Asr": "用于 Qwen3-ASR 实时语音识别。",
-      "huggingfaceToken": "HuggingFace Token",
-      "forDownloadingGated": "用于下载受限模型。",
-      "webSocketEndpointInfo": "实时 ASR 的 WebSocket 端点(例如 ws://host:port/api-ws/v1/realtime)",
-      "modelNameWillBeAppended": "模型名称将作为 ?model=... 附加到 URL",
-      "apiKeyOptional": "API 密钥 <span className=\"text-gray-400 font-normal\">(可选)</span>"
-    }
-  },
+      "exaApiKey": "Exa 搜索 API 密钥",
+      "forWebSearch": "用于 AI 网页搜索功能。",
+      "searching": "搜索中...",
+      "searchedPages": "已搜索 {{count}} 个网页",
+      "webSearchCard": "网页搜索"
+    },
   "layout": {
     "uploadAvatar": "上传头像",
     "deleteAvatar": "删除头像",
@@ -2641,4 +2640,5 @@
     "survivalProbability": "生存概率",
     "survivalCurve": "生存曲线"
   }
+}
 }

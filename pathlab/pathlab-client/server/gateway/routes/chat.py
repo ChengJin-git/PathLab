@@ -125,6 +125,96 @@ async def _check_local_vllm_available(base_url: str, api_key: str = None) -> tup
         return False, None
 
 
+async def _call_ai_complete(
+    messages: List[Dict],
+    base_url: str,
+    api_key: str,
+    model: str
+) -> str:
+    """
+    Call AI completion API (non-streaming) and return the full response content.
+
+    Args:
+        messages: Chat messages
+        base_url: API base URL
+        api_key: API key
+        model: Model name
+
+    Returns:
+        Full response content as string
+    """
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(
+            f"{base_url}/chat/completions",
+            headers=headers,
+            json={
+                "model": model,
+                "messages": messages,
+                "stream": False,
+                "temperature": 0.7,
+                "max_tokens": 2048,
+            }
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        if "choices" in data and len(data["choices"]) > 0:
+            return data["choices"][0]["message"]["content"]
+        return ""
+
+
+async def _execute_exa_search(query: str, exa_api_key: str, num_results: int = 5) -> Dict:
+    """
+    Execute Exa search and return results.
+
+    Args:
+        query: Search query
+        exa_api_key: Exa API key
+        num_results: Number of results to return
+
+    Returns:
+        Dict with query and results array
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": exa_api_key
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            "https://api.exa.ai/search",
+            headers=headers,
+            json={
+                "query": query,
+                "num_results": num_results,
+                "type": "auto",
+                "contents": {
+                    "text": True
+                }
+            }
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        # Extract results
+        results = []
+        for item in data.get("results", []):
+            results.append({
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "snippet": item.get("text", "")[:500]  # Limit snippet length
+            })
+
+        return {
+            "query": query,
+            "results": results
+        }
+
+
 async def stream_ai_response(
     messages: List[Dict],
     api_key: str = None,
@@ -132,10 +222,11 @@ async def stream_ai_response(
     model: str = None
 ) -> AsyncIterator[str]:
     """
-    Stream AI response using OpenAI-compatible API.
+    Stream AI response using OpenAI-compatible API with Exa search support.
     Priority: Local vLLM (if enabled and online) > OpenRouter (fallback)
 
     Supports both text-only and multimodal messages.
+    Supports web search via Exa API when AI outputs [WEB_SEARCH] blocks.
 
     Args:
         messages: Chat messages (text or multimodal format)
@@ -156,7 +247,10 @@ async def stream_ai_response(
     openrouter_base_url = base_url or global_settings.get("openrouter_base_url") or os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     openrouter_model = model or global_settings.get("openrouter_model") or os.environ.get("OPENROUTER_MODEL", "qwen/qwen3.5-plus-02-15")
 
-    # Try local vLLM first if enabled
+    # Exa search settings
+    exa_api_key = global_settings.get("exa_api_key", "")
+
+    # Determine which API to use
     use_local = False
     detected_model = None
     if local_vllm_enabled and local_vllm_base_url:
@@ -168,37 +262,19 @@ async def stream_ai_response(
         else:
             logger.warning("Local vLLM server is offline, falling back to OpenRouter")
 
-    local_failed = False
+    # Determine effective API settings
     if use_local:
-        # Use local vLLM
-        # Auto-detect model if not specified
         effective_model = local_vllm_model or detected_model
+        effective_base_url = local_vllm_base_url
+        effective_api_key = local_vllm_api_key
         if not effective_model:
             logger.error("No model specified and auto-detect failed, falling back to OpenRouter")
-            local_failed = True
-        else:
-            try:
-                async for chunk in _stream_from_openai_compatible(
-                    messages=messages,
-                    base_url=local_vllm_base_url,
-                    api_key=local_vllm_api_key,
-                    model=effective_model,
-                    source_name="Local vLLM"
-                ):
-                    yield chunk
-                return
-            except Exception as e:
-                logger.warning(f"Local vLLM error: {e}, falling back to OpenRouter")
-                local_failed = True
-                # Fall through to OpenRouter
+            use_local = False
 
-    # Fallback to OpenRouter
-    if local_failed:
-        logger.info("Attempting fallback to OpenRouter...")
-
-    if not openrouter_api_key:
-        # Return error message if no API key is configured
-        error_msg = """**AI Configuration Required**
+    if not use_local:
+        if not openrouter_api_key:
+            # Return error message if no API key is configured
+            error_msg = """**AI Configuration Required**
 
 To use the AI assistant, please configure your OpenRouter API key or enable local vLLM server:
 
@@ -211,23 +287,94 @@ To use the AI assistant, please configure your OpenRouter API key or enable loca
 
 After saving, return here and start chatting!"""
 
-        yield f"data: {json.dumps({'content': error_msg})}\n\n"
-        yield "data: [DONE]\n\n"
-        return
+            yield f"data: {json.dumps({'content': error_msg})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
 
-    # Use OpenRouter API
+        effective_model = openrouter_model
+        effective_base_url = openrouter_base_url
+        effective_api_key = openrouter_api_key
+
+    # Web search loop: up to 3 iterations
+    max_search_iterations = 3
+    current_messages = messages.copy()
+
+    for iteration in range(max_search_iterations):
+        # Call AI and buffer response
+        try:
+            full_response = await _call_ai_complete(
+                messages=current_messages,
+                base_url=effective_base_url,
+                api_key=effective_api_key,
+                model=effective_model
+            )
+        except Exception as e:
+            logger.error(f"Error in AI completion: {e}")
+            error_msg = f"❌ Error: {str(e)}\n\nPlease check your API key and network connection."
+            yield f"data: {json.dumps({'content': error_msg})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        # Check if AI requested web search
+        search_match = json.loads('null')
+        try:
+            import re
+            pattern = r'\[WEB_SEARCH\](.*?)\[/WEB_SEARCH\]'
+            match = re.search(pattern, full_response, re.DOTALL)
+            if match:
+                search_match = json.loads(match.group(1).strip())
+        except:
+            search_match = None
+
+        if search_match and exa_api_key:
+            # AI requested search
+            query = search_match.get("query", "")
+            reason = search_match.get("reason", "")
+
+            # Emit search status to frontend
+            search_status = json.dumps({"query": query, "reason": reason})
+            yield f"data: {json.dumps({'content': f'[SEARCH_STATUS]{search_status}[/SEARCH_STATUS]'})}\n\n"
+
+            # Execute Exa search
+            try:
+                search_results = await _execute_exa_search(query, exa_api_key, num_results=5)
+
+                # Format search results for AI
+                results_text = f"\n\n[WEB_SEARCH_RESULT]\n{json.dumps(search_results)}\n[/WEB_SEARCH_RESULT]\n\n"
+                results_text += "Search results:\n"
+                for idx, result in enumerate(search_results["results"], 1):
+                    results_text += f"{idx}. {result['title']}\n   URL: {result['url']}\n   {result['snippet']}\n\n"
+
+                # Add search results to messages and continue
+                current_messages = current_messages + [
+                    {"role": "assistant", "content": full_response},
+                    {"role": "user", "content": f"Here are the search results for '{query}':\n{results_text}\n\nPlease synthesize this information and provide a helpful response. Remember to verify information across multiple sources and cite your sources."}
+                ]
+
+                # Continue to next iteration
+                continue
+
+            except Exception as e:
+                logger.error(f"Exa search error: {e}")
+                # If search fails, just return the response without search
+                break
+        else:
+            # No search requested or no Exa API key, return response
+            break
+
+    # Stream the final response
     try:
         async for chunk in _stream_from_openai_compatible(
-            messages=messages,
-            base_url=openrouter_base_url,
-            api_key=openrouter_api_key,
-            model=openrouter_model,
-            source_name="OpenRouter"
+            messages=current_messages,
+            base_url=effective_base_url,
+            api_key=effective_api_key,
+            model=effective_model,
+            source_name="Local vLLM" if use_local else "OpenRouter"
         ):
             yield chunk
     except Exception as e:
         logger.error(f"Error in AI streaming: {e}")
-        error_msg = f"❌ Error: {str(e)}\n\nPlease check your API key and network connection."
+        error_msg = f"Error: {str(e)}\n\nPlease check your API key and network connection."
         yield f"data: {json.dumps({'content': error_msg})}\n\n"
         yield "data: [DONE]\n\n"
 

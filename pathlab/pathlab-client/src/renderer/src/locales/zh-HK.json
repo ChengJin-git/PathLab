@@ -603,11 +603,11 @@
       "modelNameHint": "模型名稱將以 ?model=... 附加到 URL",
       "dashscopeApiKey": "DashScope API 密鑰",
       "forQwen3Asr": "用於 Qwen3-ASR 實時語音識別。",
-      "huggingfaceToken": "HuggingFace Token",
-      "forDownloadingGated": "用於下載受限模型。",
-      "webSocketEndpointInfo": "實時 ASR 的 WebSocket 端點(例如 ws://host:port/api-ws/v1/realtime)",
-      "modelNameWillBeAppended": "模型名稱將作為 ?model=... 附加到 URL",
-      "apiKeyOptional": "API 密鑰 <span className=\"text-gray-400 font-normal\">(可選)</span>"
+      "exaApiKey": "Exa 搜尋 API 密鑰",
+      "forWebSearch": "用於 AI 網頁搜尋功能。",
+      "searching": "搜尋中...",
+      "searchedPages": "已搜尋 {{count}} 個網頁",
+      "webSearchCard": "網頁搜尋"
     }
   },
   "layout": {
