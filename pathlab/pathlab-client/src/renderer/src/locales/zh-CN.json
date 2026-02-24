@@ -2111,6 +2111,11 @@
       "references": "参考文献",
       "paper": "论文",
       "webpage": "网页"
+    },
+    "inlineCitation": {
+      "viewSource": "查看原文",
+      "searchResult": "搜索结果",
+      "page": "页"
     }
   },
   "listComponents": {

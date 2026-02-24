@@ -2111,6 +2111,11 @@
       "references": "References",
       "paper": "Paper",
       "webpage": "Webpage"
+    },
+    "inlineCitation": {
+      "viewSource": "View source",
+      "searchResult": "Search result",
+      "page": "Page"
     }
   },
   "analysisDetails": {

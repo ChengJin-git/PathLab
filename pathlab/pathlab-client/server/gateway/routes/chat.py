@@ -2,7 +2,6 @@
 Chat and conversation management routes
 Handles AI chat, conversation persistence, and task parsing
 """
-import asyncio
 import json
 import mimetypes
 import os
@@ -11,7 +10,7 @@ import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
-from typing import List, Dict, AsyncIterator, Optional, Any
+from typing import List, Dict, AsyncIterator, Optional
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,8 +52,8 @@ _PDF_SUPPLEMENT_PROMPTS = {
         "## STRICT GROUNDING RULES (MANDATORY)\n"
         "1. Your answer MUST be based ENTIRELY on the paper content below. "
         "Do NOT use your training knowledge to supplement information not present in the papers.\n"
-        "2. Every factual claim MUST include a citation: [Paper X, Page Y] (only when `--- Page Y ---` marker is visible) "
-        "or [Paper X] (when no page marker is available). NEVER guess or invent page numbers.\n"
+        "2. Every factual claim MUST include a citation: [Paper N, p.Y] (only when `--- Page Y ---` marker is visible) "
+        "or [Paper N] (when no page marker is available). NEVER guess or invent page numbers.\n"
         "3. If the user asks about information NOT found in the provided paper content, you MUST say: "
         "'I could not find this information in the retrieved paper content. "
         "You can ask me to search specific pages or sections.'\n"
@@ -79,8 +78,8 @@ _PDF_SUPPLEMENT_PROMPTS = {
         "请用具体细节和论文引用来补充你之前的回答。\n\n"
         "## 严格 Grounding 规则（必须遵守）\n"
         "1. 你的回答**必须完全基于**下方论文内容。**禁止**使用训练知识补充论文中不存在的信息。\n"
-        "2. 每个事实性陈述**必须**标注来源：[Paper X, Page Y]（仅当能看到 `--- Page Y ---` 标记时）"
-        "或 [Paper X]（无页码标记时）。**绝对不要**猜测或捏造页码。\n"
+        "2. 每个事实性陈述**必须**标注来源：[Paper N, p.Y]（仅当能看到 `--- Page Y ---` 标记时）"
+        "或 [Paper N]（无页码标记时）。**绝对不要**猜测或捏造页码。\n"
         "3. 如果用户问的信息**不在**已提供的论文内容中，你**必须**说："
         "\"我在已检索的论文内容中没有找到这个信息，您可以让我搜索特定页面或章节。\"\n"
         "4. 如果某篇 PDF 下载或解析失败，**必须**明确告知用户，**不得**用训练知识替代回答。\n\n"
@@ -99,8 +98,8 @@ _PDF_SUPPLEMENT_PROMPTS = {
         "請用具體細節和論文引用來補充你之前的回答。\n\n"
         "## 嚴格 Grounding 規則（必須遵守）\n"
         "1. 你的回答**必須完全基於**下方論文內容。**禁止**使用訓練知識補充論文中不存在的資訊。\n"
-        "2. 每個事實性陳述**必須**標註來源：[Paper X, Page Y]（僅當能看到 `--- Page Y ---` 標記時）"
-        "或 [Paper X]（無頁碼標記時）。**絕對不要**猜測或捏造頁碼。\n"
+        "2. 每個事實性陳述**必須**標註來源：[Paper N, p.Y]（僅當能看到 `--- Page Y ---` 標記時）"
+        "或 [Paper N]（無頁碼標記時）。**絕對不要**猜測或捏造頁碼。\n"
         "3. 如果用戶問的資訊**不在**已提供的論文內容中，你**必須**說："
         "「我在已檢索的論文內容中沒有找到這個資訊，您可以讓我搜尋特定頁面或章節。」\n"
         "4. 如果某篇 PDF 下載或解析失敗，**必須**明確告知用戶，**不得**用訓練知識替代回答。\n\n"
@@ -115,13 +114,68 @@ _PDF_SUPPLEMENT_PROMPTS = {
     ),
 }
 
+# Language-specific prompts for [READ_ARTICLE] tool — injected when the AI
+# explicitly requests to read a full article for the user.
+_READ_ARTICLE_PROMPTS = {
+    "en": (
+        "Here is the full content of the article the user asked to read. "
+        "The content includes `--- Page X ---` markers for each page.\n\n"
+        "## STRICT GROUNDING RULES (MANDATORY)\n"
+        "1. Your answer MUST be based ENTIRELY on the article content below. "
+        "Do NOT use your training knowledge to supplement information not present in the article.\n"
+        "2. Every factual claim MUST include a citation: [N, p.Y] where N is the search result number "
+        "and Y is the page number (only when `--- Page Y ---` marker is visible). "
+        "NEVER guess or invent page numbers.\n"
+        "3. If asked about information NOT found in the article, say: "
+        "'I could not find this information in the retrieved article content.'\n"
+        "4. If the article failed to download or parse, tell the user explicitly.\n\n"
+        "## IMAGE RULES\n"
+        "When the content contains Markdown image links like ![fig](http://...), include them verbatim.\n\n"
+        "## OTHER RULES\n"
+        "For long articles, only head/tail sections are shown. If the user asks about a missing section, "
+        "tell them to ask a more specific follow-up question.\n"
+        "CRITICAL: The [REFERENCE] blocks are already correctly formatted. "
+        "Copy them verbatim into your response."
+    ),
+    "zh_CN": (
+        "以下是用户要求阅读的文章完整内容。内容包含 `--- Page X ---` 页码标记。\n\n"
+        "## 严格 Grounding 规则（必须遵守）\n"
+        "1. 你的回答**必须完全基于**下方文章内容。**禁止**使用训练知识补充。\n"
+        "2. 每个事实性陈述**必须**标注来源：[N, p.Y]，其中 N 是搜索结果编号，"
+        "Y 是页码（仅当能看到 `--- Page Y ---` 标记时）。**绝对不要**猜测页码。\n"
+        "3. 如果用户问的信息**不在**文章内容中，请说："
+        "\"我在已检索的文章内容中没有找到这个信息。\"\n"
+        "4. 如果文章下载或解析失败，**必须**明确告知用户。\n\n"
+        "## 图片规则\n"
+        "如果内容中包含 Markdown 图片链接（如 ![fig](http://...)），请原样放入回答中。\n\n"
+        "## 其他规则\n"
+        "长文章仅展示了开头和结尾部分。如果用户问到未展示的章节，请告知用户提出更具体的问题。\n"
+        "重要：[REFERENCE] 块格式已正确，请原样复制到回答中。"
+    ),
+    "zh_HK": (
+        "以下是用戶要求閱讀的文章完整內容。內容包含 `--- Page X ---` 頁碼標記。\n\n"
+        "## 嚴格 Grounding 規則（必須遵守）\n"
+        "1. 你的回答**必須完全基於**下方文章內容。**禁止**使用訓練知識補充。\n"
+        "2. 每個事實性陳述**必須**標註來源：[N, p.Y]，其中 N 是搜尋結果編號，"
+        "Y 是頁碼（僅當能看到 `--- Page Y ---` 標記時）。**絕對不要**猜測頁碼。\n"
+        "3. 如果用戶問的資訊**不在**文章內容中，請說："
+        "「我在已檢索的文章內容中沒有找到這個資訊。」\n"
+        "4. 如果文章下載或解析失敗，**必須**明確告知用戶。\n\n"
+        "## 圖片規則\n"
+        "如果內容中包含 Markdown 圖片連結（如 ![fig](http://...)），請原樣放入回答中。\n\n"
+        "## 其他規則\n"
+        "長文章僅展示了開頭和結尾部分。如果用戶問到未展示的章節，請告知用戶提出更具體的問題。\n"
+        "重要：[REFERENCE] 區塊格式已正確，請原樣複製到回答中。"
+    ),
+}
+
 # Prompt fragment appended when PDF context is rebuilt for follow-up questions.
 _PDF_FOLLOWUP_NOTE = {
     "en": (
         "NOTE: The PDF content below has been semantically searched to show the most relevant "
         "chunks for the user's latest question, along with the first and last pages for context. "
         "Chunks are labelled with page number and chunk index (e.g. `Page 3, Chunk 5`). "
-        "When citing, use [Paper X, Page Y] format. If the user asks about content not shown here, "
+        "When citing, use [Paper N, p.Y] format. If the user asks about content not shown here, "
         "tell them to ask a more specific follow-up question so the system can retrieve it.\n"
         "STRICT GROUNDING: Your answer MUST be based ENTIRELY on the paper content below. "
         "Do NOT use training knowledge to fill gaps. "
@@ -131,7 +185,7 @@ _PDF_FOLLOWUP_NOTE = {
     ),
     "zh_CN": (
         "注意：以下 PDF 内容已通过语义搜索筛选，展示与用户最新提问最相关的文本片段以及首尾页作为上下文。"
-        "片段标记了页码和块编号（如 `Page 3, Chunk 5`）。引用格式：[Paper X, Page Y]。"
+        "片段标记了页码和块编号（如 `Page 3, Chunk 5`）。引用格式：[Paper N, p.Y]。"
         "如果用户询问的信息不在这些片段中，请告诉用户提出更具体的追问以便系统检索。\n"
         "严格 Grounding：你的回答**必须完全基于**下方论文内容，**禁止**用训练知识填补空白。"
         "引用论文原文时，请使用引用块（> ...）来清楚区分论文原文和你自己的分析。\n"
@@ -139,7 +193,7 @@ _PDF_FOLLOWUP_NOTE = {
     ),
     "zh_HK": (
         "注意：以下 PDF 內容已透過語義搜尋篩選，展示與用戶最新提問最相關的文本片段以及首尾頁作為上下文。"
-        "片段標記了頁碼和塊編號（如 `Page 3, Chunk 5`）。引用格式：[Paper X, Page Y]。"
+        "片段標記了頁碼和塊編號（如 `Page 3, Chunk 5`）。引用格式：[Paper N, p.Y]。"
         "如果用戶詢問的資訊不在這些片段中，請告訴用戶提出更具體的追問以便系統檢索。\n"
         "嚴格 Grounding：你的回答**必須完全基於**下方論文內容，**禁止**用訓練知識填補空白。"
         "引用論文原文時，請使用引用區塊（> ...）來清楚區分論文原文和你自己的分析。\n"
@@ -572,7 +626,7 @@ async def _execute_exa_search(query: str, exa_api_key: str, num_results: int = 5
             results.append({
                 "title": item.get("title", ""),
                 "url": item.get("url", ""),
-                "snippet": item.get("text", "")[:500]  # Limit snippet length
+                "snippet": item.get("text", "")[:2000]  # Extended snippet for better AI context
             })
 
         return {
@@ -662,13 +716,11 @@ After saving, return here and start chatting!"""
         effective_base_url = openrouter_base_url
         effective_api_key = openrouter_api_key
 
-    # Web search loop: up to 3 iterations
-    max_search_iterations = 3
+    # Tool loop: up to 3 iterations (web search + read article)
+    max_tool_iterations = 3
     current_messages = messages.copy()
-    pending_pdf_tasks: list[asyncio.Task[dict[str, Any]]] = []  # background PDF tasks
-    pdf_urls_info: list[dict[str, str]] = []  # PDF URL info for status tracking
 
-    for iteration in range(max_search_iterations):
+    for iteration in range(max_tool_iterations):
         # Call AI and buffer response
         try:
             full_response = await _call_ai_complete(
@@ -696,10 +748,9 @@ After saving, return here and start chatting!"""
             search_match = None
 
         if search_match and exa_api_key:
-            # AI requested search
+            # ── Handle [WEB_SEARCH] ──
             query = search_match.get("query", "")
             reason = search_match.get("reason", "")
-            # AI can request how many results (default 5, capped at 10)
             ai_num_results = min(int(search_match.get("num_results", 5)), 10)
             if ai_num_results < 1:
                 ai_num_results = 5
@@ -717,8 +768,6 @@ After saving, return here and start chatting!"""
                 yield f"data: {json.dumps({'content': f'[WEB_SEARCH_RESULT]{web_search_result_block}[/WEB_SEARCH_RESULT]'})}\n\n"
 
                 # Format search results for AI — include source type hints
-                # so the AI can generate correct [REFERENCE] blocks with
-                # type: paper vs type: webpage.
                 from .chat_pdf import _ACADEMIC_SOURCE_TYPES
                 results_text = f"\n\n[WEB_SEARCH_RESULT]\n{json.dumps(search_results)}\n[/WEB_SEARCH_RESULT]\n\n"
                 results_text += "Search results:\n"
@@ -734,70 +783,140 @@ After saving, return here and start chatting!"""
                         f"   {result['snippet']}\n\n"
                     )
 
-                # Identify PDF URLs and start parallel processing (don't block)
-                # NOTE: append to outer-scope lists to accumulate across search iterations
-                #
-                # Strategy: start background tasks for ALL PDFs so they get cached
-                # (PyMuPDF is <1s / CPU-only, so creating many tasks is cheap).
-                # Only the first _MAX_PDFS_SUPPLEMENT tasks are added to
-                # pending_pdf_tasks (awaited + included in the supplement response).
-                # The rest are fire-and-forget: they populate the cache silently so
-                # that follow-up questions can reference their full content.
-                new_pdf_urls: list[dict[str, str]] = []
-                for result in search_results["results"]:
-                    r_url = result.get("url", "")
-                    if is_pdf_url(r_url):
-                        info = {"url": r_url, "title": result.get("title", "Unknown")}
-                        new_pdf_urls.append(info)
-
-                for pinfo in new_pdf_urls:
-                    task = asyncio.create_task(
-                        process_pdf_url(
-                            url=pinfo["url"],
-                            title=pinfo["title"],
-                            base_url=effective_base_url,
-                            api_key=effective_api_key,
-                            model=effective_model,
-                            use_cache=True
-                        )
-                    )
-                    if len(pending_pdf_tasks) < _MAX_PDFS_SUPPLEMENT:
-                        # Awaited: included in supplement response + status card shown
-                        pending_pdf_tasks.append(task)
-                        pdf_urls_info.append(pinfo)
-                        pdf_status = {"url": pinfo["url"], "title": pinfo.get("title", ""), "status": "parsing"}
-                        yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
-                    # else: fire-and-forget — task runs in background to populate cache
-
-                # Add search results to messages WITHOUT waiting for PDFs
-                # AI will respond based on search snippets first
+                # Add search results to messages for next AI iteration
                 current_messages = current_messages + [
                     {"role": "assistant", "content": full_response},
                     {"role": "user", "content": (
                         f"Here are the search results for '{query}':\n{results_text}\n\n"
-                        "Please synthesize this information and provide a helpful response. "
-                        "Remember to verify information across multiple sources and cite your sources using [REFERENCE] blocks. "
+                        "NOTE: These results contain SNIPPETS (partial text), NOT full articles. "
+                        "Synthesize the information, cite sources using inline [N] references matching the result numbers above, "
+                        "and generate [REFERENCE] blocks. "
+                        "If the user wants to read a full article, use the [READ_ARTICLE] tool.\n"
                         "IMPORTANT: Each result above includes a 'reference type' hint (paper or webpage). "
                         "Use `type: paper` ONLY for academic papers/journals; use `type: webpage` for GitHub repos, blogs, documentation, HuggingFace, and all other non-academic sources."
                     )}
                 ]
-
-                # Continue to next iteration (PDF parsing runs in background)
                 continue
 
             except Exception as e:
                 logger.error(f"Exa search error: {e}")
-                # If search fails, just return the response without search
                 break
-        else:
-            # No search requested or no Exa API key, return response
-            break
 
-    # ── Stream initial AI response ──
-    # If we have pending PDF tasks, suppress [DONE] and do supplement after
-    has_pending_pdfs = len(pending_pdf_tasks) > 0
-    initial_streamed_text = ""
+        # ── Check for [READ_ARTICLE] ──
+        read_article_match = None
+        try:
+            ra_pattern = r'\[READ_ARTICLE\](.*?)\[/READ_ARTICLE\]'
+            ra_match = re.search(ra_pattern, full_response, re.DOTALL)
+            if ra_match:
+                read_article_match = json.loads(ra_match.group(1).strip())
+        except Exception:
+            read_article_match = None
 
+        if read_article_match:
+            article_url = read_article_match.get("url", "")
+            article_title = read_article_match.get("title", "Unknown")
+            article_index = read_article_match.get("index")  # search result number
+
+            if not article_url:
+                break
+
+            # Emit PDF_PARSE_STATUS: parsing
+            pdf_status = {"url": article_url, "title": article_title, "status": "parsing"}
+            yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
+
+            try:
+                pdf_result = await process_pdf_url(
+                    url=article_url,
+                    title=article_title,
+                    base_url=effective_base_url,
+                    api_key=effective_api_key,
+                    model=effective_model,
+                    use_cache=True
+                )
+
+                # Emit PDF_PARSE_STATUS: completed or error
+                if pdf_result.get("success"):
+                    pdf_status = {
+                        "url": article_url, "title": article_title,
+                        "status": "completed", "from_cache": pdf_result.get("from_cache", False)
+                    }
+                else:
+                    pdf_status = {
+                        "url": article_url, "title": article_title,
+                        "status": pdf_result.get("error", "unknown_error")
+                    }
+                yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
+
+                if pdf_result.get("success"):
+                    # Build article content for AI
+                    content = pdf_result.get("pdf_content") or pdf_result.get("summary") or ""
+                    # Head + tail truncation for long articles
+                    _PDF_MAX_CHARS = 40000
+                    _PDF_HEAD_CHARS = 28000
+                    _PDF_TAIL_CHARS = 12000
+                    if len(content) > _PDF_MAX_CHARS:
+                        head = content[:_PDF_HEAD_CHARS]
+                        tail = content[-_PDF_TAIL_CHARS:]
+                        content = head + "\n\n...[middle pages omitted for length]...\n\n" + tail
+
+                    # Build metadata
+                    page_count = pdf_result.get("page_count")
+                    parse_method = pdf_result.get("parse_method", "pymupdf")
+                    quality_label = (
+                        "High-precision (MinerU — includes tables, formulas, images)"
+                        if parse_method == "mineru"
+                        else "Fast (PyMuPDF — text only, images not yet extracted)"
+                    )
+                    page_info = f"{page_count} pages" if page_count else "page count unknown"
+                    is_academic = pdf_result.get("is_academic", False)
+                    label = "Paper" if is_academic else "Doc"
+                    ref_label = f"[{label}]" if not article_index else f"[{article_index}]"
+
+                    article_parts = [
+                        f"### {ref_label} {article_title}\n"
+                        f"- **URL**: {article_url}\n"
+                        f"- **Total pages**: {page_info}\n"
+                        f"- **Parse quality**: {quality_label}\n",
+                        content,
+                    ]
+                    if pdf_result.get("reference_card"):
+                        article_parts.append(pdf_result["reference_card"])
+
+                    article_text = "\n".join(article_parts)
+
+                    # Emit PDF context for persistence
+                    yield f"data: {json.dumps({'pdf_context': article_text})}\n\n"
+
+                    # Inject article content into conversation
+                    read_prompt = _READ_ARTICLE_PROMPTS.get(detected_lang, _READ_ARTICLE_PROMPTS["en"])
+                    current_messages = current_messages + [
+                        {"role": "assistant", "content": full_response},
+                        {"role": "user", "content": f"{read_prompt}\n\n{article_text}"}
+                    ]
+                    continue
+                else:
+                    # PDF failed — let AI know and break to stream response
+                    error_detail = pdf_result.get("error_detail") or pdf_result.get("error") or "unknown error"
+                    current_messages = current_messages + [
+                        {"role": "assistant", "content": full_response},
+                        {"role": "user", "content": (
+                            f"The article '{article_title}' ({article_url}) could not be retrieved. "
+                            f"Error: {error_detail}\n\n"
+                            "Please inform the user about this issue and suggest alternatives."
+                        )}
+                    ]
+                    continue
+
+            except Exception as e:
+                logger.error(f"READ_ARTICLE error for {article_url}: {e}")
+                pdf_status = {"url": article_url, "title": article_title, "status": "download_failed"}
+                yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
+                break
+
+        # No tool requested — break out of loop
+        break
+
+    # ── Stream final AI response ──
     try:
         async for chunk in _stream_from_openai_compatible(
             messages=current_messages,
@@ -806,209 +925,11 @@ After saving, return here and start chatting!"""
             model=effective_model,
             source_name="Local vLLM" if use_local else "OpenRouter"
         ):
-            if has_pending_pdfs and chunk == "data: [DONE]\n\n":
-                # Suppress [DONE] — we'll send it after PDF supplement
-                continue
             yield chunk
-            # Track streamed text for supplement context
-            if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":
-                try:
-                    data = json.loads(chunk[6:])
-                    if "content" in data:
-                        initial_streamed_text += data["content"]
-                except (json.JSONDecodeError, KeyError):
-                    pass
     except Exception as e:
         logger.error(f"Error in AI streaming: {e}")
         error_msg = f"Error: {str(e)}\n\nPlease check your API key and network connection."
         yield f"data: {json.dumps({'content': error_msg})}\n\n"
-        # Cancel pending PDF tasks on error
-        for t in pending_pdf_tasks:
-            t.cancel()
-        yield "data: [DONE]\n\n"
-        return
-
-    # ── Wait for PDF tasks + supplement ──
-    if has_pending_pdfs:
-        # Signal frontend: initial LLM response is complete, entering PDF wait phase.
-        # Frontend can re-enable input so the user can continue chatting.
-        yield f"data: {json.dumps({'pdf_wait_start': True})}\n\n"
-
-        PDF_TIMEOUT_SECONDS = 120  # 2 min total timeout for all PDFs
-
-        # Wait with timeout
-        pdf_results: list[dict[str, Any]] = []
-        try:
-            done, not_done = await asyncio.wait(
-                pending_pdf_tasks,
-                timeout=PDF_TIMEOUT_SECONDS,
-                return_when=asyncio.ALL_COMPLETED
-            )
-            # Collect completed results
-            for task in done:
-                try:
-                    pdf_results.append(task.result())
-                except Exception as e:
-                    logger.error(f"PDF task exception: {e}")
-
-            # Handle timed-out tasks
-            for task in not_done:
-                task.cancel()
-                # Find the URL for this timed-out task
-                task_idx = pending_pdf_tasks.index(task)
-                if task_idx < len(pdf_urls_info):
-                    timed_out_info = pdf_urls_info[task_idx]
-                    pdf_results.append({
-                        "url": timed_out_info["url"],
-                        "title": timed_out_info["title"],
-                        "success": False,
-                        "error": "timeout",
-                        "error_detail": f"PDF parsing for '{timed_out_info['title']}' timed out after {PDF_TIMEOUT_SECONDS}s. The file may be too large or the server too slow.",
-                        "pdf_content": None,
-                        "summary": None,
-                        "reference_card": None,
-                        "from_cache": False,
-                    })
-        except Exception as e:
-            logger.error(f"Error waiting for PDF tasks: {e}")
-            for t in pending_pdf_tasks:
-                t.cancel()
-
-        # Emit final PDF_PARSE_STATUS updates for each result
-        for pr in pdf_results:
-            if pr.get("success"):
-                pdf_status = {
-                    "url": pr["url"], "title": pr.get("title", ""),
-                    "status": "completed", "from_cache": pr.get("from_cache", False)
-                }
-            else:
-                pdf_status = {
-                    "url": pr["url"], "title": pr.get("title", ""),
-                    "status": pr.get("error", "unknown_error")
-                }
-            yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
-
-        # Build supplement: successful PDFs (full content with pages) + failed PDFs (error info)
-        successful_pdfs = [r for r in pdf_results if r.get("success")]
-        failed_pdfs = [r for r in pdf_results if not r.get("success")]
-
-        # Log PDF processing summary
-        cached_count = sum(1 for r in successful_pdfs if r.get("from_cache"))
-        failed_count = len(failed_pdfs)
-        logger.info(f"PDF processing summary: {len(successful_pdfs)} successful ({cached_count} from cache), {failed_count} failed")
-
-        if successful_pdfs or failed_pdfs:
-            supplement_parts: list[str] = []
-
-            if successful_pdfs:
-                # ── Determine starting index (续接全局编号) ───────────────────────
-                # Scan conversation history for existing [PDF_CONTEXT] blocks and
-                # find the highest Paper/Doc N so that new items continue numbering.
-                _existing_ids = re.findall(
-                    r'\[(?:Paper|Doc)\s+(\d+)\]',
-                    " ".join(
-                        extract_text_from_content(m.get("content", ""))
-                        for m in current_messages
-                        if m.get("role") == "user"
-                    ),
-                )
-                _start_idx = max((int(x) for x in _existing_ids), default=0) + 1
-
-                # ── Index listing ─────────────────────────────────────────────────
-                total = len(successful_pdfs)
-                index_lines = [f"## Available Documents ({total} parsed, starting index {_start_idx}):\n"]
-                for idx, sp in enumerate(successful_pdfs):
-                    item_num = _start_idx + idx
-                    label = "Paper" if sp.get("is_academic", False) else "Doc"
-                    index_lines.append(f"- **[{label} {item_num}]** {sp.get('title', 'Unknown')}  ({sp['url']})")
-                index_lines.append("")
-                supplement_parts.extend(index_lines)
-
-                supplement_parts.append("## PDF Content (with page numbers):\n")
-                for paper_idx, sp in enumerate(successful_pdfs):
-                    # ── Compact metadata block ────────────────────────────────────
-                    # This block is emitted BEFORE the content so it is always
-                    # visible to the AI even after head-tail truncation.
-                    page_count = sp.get("page_count")
-                    parse_method = sp.get("parse_method", "pymupdf")
-                    quality_label = (
-                        "High-precision (MinerU — includes tables, formulas, images)"
-                        if parse_method == "mineru"
-                        else "Fast (PyMuPDF — text only, images not yet extracted)"
-                    )
-                    page_info = f"{page_count} pages" if page_count else "page count unknown"
-                    item_num = _start_idx + paper_idx
-                    is_academic = sp.get("is_academic", False)
-                    label = "Paper" if is_academic else "Doc"
-                    content_type = "Academic Paper" if is_academic else "General Document"
-                    supplement_parts.append(
-                        f"### [{label} {item_num}] {sp.get('title', 'Unknown')}\n"
-                        f"- **URL**: {sp['url']}\n"
-                        f"- **Content type**: {content_type}\n"
-                        f"- **Total pages**: {page_info}\n"
-                        f"- **Parse quality**: {quality_label}\n"
-                    )
-                    # Include full content with page markers.
-                    # Head + tail strategy: 40 000 char budget (28k head + 12k tail).
-                    # This ensures both the beginning (abstract/intro/methods) and the
-                    # end (conclusions/author contributions/references) are always visible
-                    # to the AI, even for long papers (50+ pages).
-                    # Papers ≤ 40 000 chars (~20 pages) are included in full.
-                    _PDF_MAX_CHARS = 40000
-                    _PDF_HEAD_CHARS = 28000
-                    _PDF_TAIL_CHARS = 12000
-                    content = sp.get("pdf_content") or sp.get("summary") or ""
-                    if len(content) > _PDF_MAX_CHARS:
-                        head = content[:_PDF_HEAD_CHARS]
-                        tail = content[-_PDF_TAIL_CHARS:]
-                        content = head + "\n\n...[middle pages omitted for length]...\n\n" + tail
-                    supplement_parts.append(content)
-                    # Include reference card
-                    if sp.get("reference_card"):
-                        supplement_parts.append(sp["reference_card"])
-                    supplement_parts.append("---\n")
-
-            if failed_pdfs:
-                supplement_parts.append("## PDF Parsing Issues:\n")
-                for fp in failed_pdfs:
-                    detail = fp.get("error_detail") or fp.get("error") or "unknown error"
-                    supplement_parts.append(
-                        f"- **{fp.get('title', 'Unknown')}** ({fp['url']}): {detail}"
-                    )
-                supplement_parts.append("")
-
-            supplement_text = "\n".join(supplement_parts)
-
-            # Build supplement messages: include conversation context + initial response + PDF content
-            supplement_prompt = _PDF_SUPPLEMENT_PROMPTS.get(detected_lang, _PDF_SUPPLEMENT_PROMPTS["en"])
-            supplement_messages = current_messages + [
-                {"role": "assistant", "content": initial_streamed_text},
-                {"role": "user", "content": f"{supplement_prompt}\n\n{supplement_text}"}
-            ]
-
-            # Emit PDF context for persistence - stream_with_persistence will save this as a
-            # hidden user message so follow-up questions can reference the PDF content
-            yield f"data: {json.dumps({'pdf_context': supplement_text})}\n\n"
-
-            # Stream supplementary AI response (clean paragraph break before supplement)
-            yield f"data: {json.dumps({'content': chr(10) + chr(10)})}\n\n"
-
-            try:
-                async for chunk in _stream_from_openai_compatible(
-                    messages=supplement_messages,
-                    base_url=effective_base_url,
-                    api_key=effective_api_key,
-                    model=effective_model,
-                    source_name="Local vLLM" if use_local else "OpenRouter"
-                ):
-                    yield chunk
-                # [DONE] is yielded by _stream_from_openai_compatible
-                return
-            except Exception as e:
-                logger.error(f"Error in PDF supplement streaming: {e}")
-                # Fall through to yield [DONE]
-
-        # No supplement needed (no PDFs parsed or all info already in initial response)
         yield "data: [DONE]\n\n"
 
 

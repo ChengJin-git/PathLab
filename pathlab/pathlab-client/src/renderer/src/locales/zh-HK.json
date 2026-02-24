@@ -2111,6 +2111,11 @@
       "references": "參考文獻",
       "paper": "論文",
       "webpage": "網頁"
+    },
+    "inlineCitation": {
+      "viewSource": "查看原文",
+      "searchResult": "搜尋結果",
+      "page": "頁"
     }
   },
   "listComponents": {

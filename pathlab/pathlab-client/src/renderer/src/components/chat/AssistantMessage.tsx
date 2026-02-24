@@ -16,6 +16,7 @@ import { ImageRecommendationCard, parseImageRecommendation, removeImageRecommend
 import { CSVActionCard, parseCSVAction, removeCSVActionBlock } from './CSVActionCard'
 import { NavigationCard, parseNavigateBlock, removeNavigateBlock } from './NavigationCard'
 import { ReferenceCardList, parseAllReferenceCards, removeAllReferenceBlocks } from './ReferenceCard'
+import InlineCitation from './InlineCitation'
 
 import { InferenceConfigCard, parseInferenceConfig, removeInferenceConfigBlock } from './InferenceConfigCard'
 import { AnalysisConfigCard, parseAnalysisConfig, removeAnalysisConfigBlock } from './AnalysisConfigCard'
@@ -231,31 +232,6 @@ const AssistantMessage = React.memo(function AssistantMessage({
 }: AssistantMessageProps) {
   const { t } = useTranslation()
 
-  // Custom ReactMarkdown components:
-  // - img: inject auth token for /pdf-images/ URLs so <img> tags can load authenticated images
-  // - hr: render a visually refined separator instead of the default ugly <hr>
-  const markdownComponents = useMemo<Components>(() => ({
-    img: ({ src, alt, ...rest }) => {
-      let finalSrc = src || ''
-      // Append auth token to pdf-images URLs so the browser can authenticate the GET request
-      if (finalSrc.includes('/pdf-images/')) {
-        const token = getAuthToken()
-        if (token) {
-          const sep = finalSrc.includes('?') ? '&' : '?'
-          finalSrc = `${finalSrc}${sep}token=${encodeURIComponent(token)}`
-        }
-      }
-      return <img src={finalSrc} alt={alt || ''} loading="lazy" {...rest} />
-    },
-    hr: () => (
-      <div className="my-6 flex items-center gap-3">
-        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent" />
-        <div className="w-1 h-1 rounded-full bg-gray-300" />
-        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent" />
-      </div>
-    ),
-  }), [])
-
   // Parse special blocks
   const searchStatus = parseSearchStatus(content)
   const webSearchResult = parseWebSearchResult(content)
@@ -277,6 +253,64 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const modelListConfig = parseModelListConfig(content)
   const referenceCards = parseAllReferenceCards(content)
   const pdfParseStatusItems = parseAllPdfParseStatus(content)
+
+  // Build citation lookup map from web search results
+  // Maps search result index (1-based) to { title, url, snippet, source }
+  const citationMap = useMemo(() => {
+    const map = new Map<number, { title: string; url: string; snippet: string; source: string }>()
+    if (webSearchResult?.results) {
+      webSearchResult.results.forEach((r, i) => {
+        let source = 'Unknown'
+        try { source = new URL(r.url).hostname.replace(/^www\./, '') } catch { /* ignore */ }
+        map.set(i + 1, { title: r.title, url: r.url, snippet: r.snippet, source })
+      })
+    }
+    return map
+  }, [webSearchResult])
+
+  // Custom ReactMarkdown components:
+  // - img: inject auth token for /pdf-images/ URLs so <img> tags can load authenticated images
+  // - hr: render a visually refined separator instead of the default ugly <hr>
+  // - a: render InlineCitation for cite:// protocol links
+  const markdownComponents = useMemo<Components>(() => ({
+    img: ({ src, alt, ...rest }) => {
+      let finalSrc = src || ''
+      if (finalSrc.includes('/pdf-images/')) {
+        const token = getAuthToken()
+        if (token) {
+          const sep = finalSrc.includes('?') ? '&' : '?'
+          finalSrc = `${finalSrc}${sep}token=${encodeURIComponent(token)}`
+        }
+      }
+      return <img src={finalSrc} alt={alt || ''} loading="lazy" {...rest} />
+    },
+    hr: () => (
+      <div className="my-6 flex items-center gap-3">
+        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent" />
+        <div className="w-1 h-1 rounded-full bg-gray-300" />
+        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent" />
+      </div>
+    ),
+    a: ({ href, children, ...rest }) => {
+      const citationMatch = href?.match(/^cite:\/\/(\d+)(?:\?page=(\d+))?$/)
+      if (citationMatch) {
+        const index = parseInt(citationMatch[1])
+        const page = citationMatch[2]
+        const data = citationMap.get(index)
+        return (
+          <InlineCitation
+            index={index}
+            title={data?.title}
+            source={data?.source}
+            snippet={data?.snippet}
+            pageInfo={page ? `p.${page}` : undefined}
+            url={data?.url}
+          />
+        )
+      }
+      return <a href={href} target="_blank" rel="noopener noreferrer" {...rest}>{children}</a>
+    },
+  }), [citationMap])
 
   // Remove special blocks from display content
   // Keep the text content but strip out the special markup blocks
@@ -305,6 +339,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (pdfParseStatusItems) displayContent = removePdfParseStatusBlock(displayContent)
   // Remove WEB_SEARCH request block - AI's internal search request
   displayContent = displayContent.replace(/\[WEB_SEARCH\][\s\S]*?\[\/WEB_SEARCH\]/g, '').trim()
+  // Remove READ_ARTICLE request block - AI's internal article reading request
+  displayContent = displayContent.replace(/\[READ_ARTICLE\][\s\S]*?\[\/READ_ARTICLE\]/g, '').trim()
   // Remove VOICE_CONTROL block - it's for internal use only
   displayContent = removeVoiceControlBlock(displayContent)
   // Remove SUBMIT_TASK block - it's for internal use only (voice command to trigger submit)
@@ -313,6 +349,17 @@ const AssistantMessage = React.memo(function AssistantMessage({
   displayContent = removeCancelTaskNowBlock(displayContent)
   // Remove REFERENCE blocks - rendered as cards
   displayContent = removeAllReferenceBlocks(displayContent)
+
+  // Convert inline citation patterns [N] and [N, p.Y] to markdown links with cite:// protocol
+  // Handle [N, p.Y] first (more specific) to avoid partial match by [N]
+  displayContent = displayContent.replace(
+    /\[(\d{1,2}),\s*p\.(\d+)\](?!\()/g,
+    '[$1, p.$2](cite://$1?page=$2)'
+  )
+  displayContent = displayContent.replace(
+    /\[(\d{1,2})\](?!\()/g,
+    '[$1](cite://$1)'
+  )
 
   // Remove any incomplete blocks that are still streaming
   const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent, isStreaming)
