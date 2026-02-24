@@ -324,13 +324,14 @@ const AssistantMessage = React.memo(function AssistantMessage({
       for (const [key, ctx] of Object.entries(citationContexts)) {
         const seqIdx = articleCitationRenumber.get(key)
         if (!seqIdx) continue
-        const page = ctx.page
+        // Extract page info from key (e.g. "1-p2" → "2", "1-p2-3" → "2-3")
+        const pageFromKey = key.replace(/^\d+-p/, '')
         map.set(seqIdx, {
           title: refCard?.title || '',
           url: refCard?.url || '',
           snippet: ctx.context,
           source: refSource,
-          pageInfo: `p.${page}`,
+          pageInfo: `p.${pageFromKey}`,
         })
       }
     }
