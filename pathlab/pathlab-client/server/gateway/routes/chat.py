@@ -32,6 +32,7 @@ from .chat_pdf import (
     search_pdf_pages, get_cached_markdown, get_cached_pdf_meta, _split_md_into_pages,
     _get_url_hash, _get_pdf_cache_dir,
 )
+from .chat_pdf_vectorstore import search_pdf_chunks
 
 router = APIRouter(tags=["Chat & Conversations"])
 
@@ -113,29 +114,34 @@ _PDF_SUPPLEMENT_PROMPTS = {
     ),
 }
 
-# Prompt fragment appended when PDF context is rebuilt via BM25 for follow-up questions.
+# Prompt fragment appended when PDF context is rebuilt for follow-up questions.
 _PDF_FOLLOWUP_NOTE = {
     "en": (
-        "NOTE: The PDF content below has been filtered to show the most relevant pages "
-        "for the user's latest question, along with the first and last pages for context. "
-        "If the information the user asks for is not in these pages, tell them which page "
-        "range or section they should ask about so the system can retrieve it.\n"
+        "NOTE: The PDF content below has been semantically searched to show the most relevant "
+        "chunks for the user's latest question, along with the first and last pages for context. "
+        "Chunks are labelled with page number and chunk index (e.g. `Page 3, Chunk 5`). "
+        "When citing, use [Paper X, Page Y] format. If the user asks about content not shown here, "
+        "tell them to ask a more specific follow-up question so the system can retrieve it.\n"
         "STRICT GROUNDING: Your answer MUST be based ENTIRELY on the paper content below. "
-        "Do NOT use training knowledge to fill gaps. Cite sources as [Paper X, Page Y] or [Paper X]. "
+        "Do NOT use training knowledge to fill gaps. "
+        "When quoting original text from the paper, use blockquotes (> ...) to clearly distinguish "
+        "the paper's original words from your own analysis.\n"
         "If a paper's images are available (shown in Paper Registry), include image links verbatim."
     ),
     "zh_CN": (
-        "注意：以下 PDF 内容已根据用户最新提问进行了相关性筛选，仅展示最相关的页面以及首尾页作为上下文。"
-        "如果用户询问的信息不在这些页面中，请告诉用户应该查询哪些页码范围或章节，以便系统检索。\n"
+        "注意：以下 PDF 内容已通过语义搜索筛选，展示与用户最新提问最相关的文本片段以及首尾页作为上下文。"
+        "片段标记了页码和块编号（如 `Page 3, Chunk 5`）。引用格式：[Paper X, Page Y]。"
+        "如果用户询问的信息不在这些片段中，请告诉用户提出更具体的追问以便系统检索。\n"
         "严格 Grounding：你的回答**必须完全基于**下方论文内容，**禁止**用训练知识填补空白。"
-        "引用格式：[Paper X, Page Y] 或 [Paper X]。"
+        "引用论文原文时，请使用引用块（> ...）来清楚区分论文原文和你自己的分析。\n"
         "如果论文图片可用（见 Paper Registry），请将图片链接原样包含在回答中。"
     ),
     "zh_HK": (
-        "注意：以下 PDF 內容已根據用戶最新提問進行了相關性篩選，僅展示最相關的頁面以及首尾頁作為上下文。"
-        "如果用戶詢問的資訊不在這些頁面中，請告訴用戶應該查詢哪些頁碼範圍或章節，以便系統檢索。\n"
+        "注意：以下 PDF 內容已透過語義搜尋篩選，展示與用戶最新提問最相關的文本片段以及首尾頁作為上下文。"
+        "片段標記了頁碼和塊編號（如 `Page 3, Chunk 5`）。引用格式：[Paper X, Page Y]。"
+        "如果用戶詢問的資訊不在這些片段中，請告訴用戶提出更具體的追問以便系統檢索。\n"
         "嚴格 Grounding：你的回答**必須完全基於**下方論文內容，**禁止**用訓練知識填補空白。"
-        "引用格式：[Paper X, Page Y] 或 [Paper X]。"
+        "引用論文原文時，請使用引用區塊（> ...）來清楚區分論文原文和你自己的分析。\n"
         "如果論文圖片可用（見 Paper Registry），請將圖片連結原樣包含在回答中。"
     ),
 }
@@ -257,55 +263,113 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
             enhanced_parts.append("---\n")
             continue
 
-        # ── BM25-based page selection for long papers ────────────────────────
-        all_pages = _split_md_into_pages(full_md)
-        if not all_pages:
-            enhanced_parts.append(full_md[:_PDF_MAX_CHARS_PER_PAPER] + "\n[...truncated]\n---\n")
-            continue
+        # ── Vector search for relevant chunks (with BM25 fallback) ──────────
+        url_hash = _get_url_hash(url)
+        vector_results = search_pdf_chunks(user_query, url_hashes=[url_hash], top_k=15)
 
-        first_pn, first_content = all_pages[0]
-        last_pn, last_content = all_pages[-1]
+        if vector_results:
+            # Use vector search results — group by page, sorted by page_num
+            logger.info(
+                f"[VectorSearch] Paper {paper_idx}: {len(vector_results)} chunks "
+                f"retrieved (best distance={vector_results[0]['_distance']:.3f})"
+            )
+            # Always include first and last page for context
+            all_pages = _split_md_into_pages(full_md)
+            first_pn, first_content = all_pages[0] if all_pages else (0, "")
+            last_pn, last_content = all_pages[-1] if all_pages else (0, "")
 
-        bm25_results = search_pdf_pages(full_md, user_query, top_k=10)
-        bm25_extras = [
-            (pn, content, score)
-            for pn, content, score in bm25_results
-            if pn != first_pn and pn != last_pn
-        ]
+            content_parts: list[str] = []
+            char_count = 0
 
-        selected: list[tuple[int, str]] = [(first_pn, first_content)]
-        for pn, content, _ in sorted(bm25_extras, key=lambda x: x[0]):
-            selected.append((pn, content))
-        if last_pn != first_pn:
-            selected.append((last_pn, last_content))
+            # Add first page
+            if first_content:
+                first_text = f"--- Page {first_pn} ---\n{first_content}\n"
+                content_parts.append(first_text)
+                char_count += len(first_text)
 
-        content_parts: list[str] = []
-        char_count = 0
-        prev_pn = None
-        for pn, page_content in selected:
-            page_text = f"--- Page {pn} ---\n{page_content}\n"
-            if char_count + len(page_text) > _PDF_MAX_CHARS_PER_PAPER:
-                remaining = _PDF_MAX_CHARS_PER_PAPER - char_count
-                if remaining > 200:
-                    content_parts.append(page_text[:remaining] + "\n[...page truncated for length]")
-                break
-            if prev_pn is not None and pn > prev_pn + 1:
-                content_parts.append(f"\n[...pages {prev_pn + 1}–{pn - 1} omitted — ask about them if needed...]\n")
-            content_parts.append(page_text)
-            char_count += len(page_text)
-            prev_pn = pn
+            # Add vector-retrieved chunks, sorted by page then chunk_index
+            sorted_chunks = sorted(vector_results, key=lambda c: (c["page_num"], c["chunk_index"]))
+            seen_chunks = set()
+            for chunk in sorted_chunks:
+                chunk_key = (chunk["page_num"], chunk["chunk_index"])
+                if chunk_key in seen_chunks:
+                    continue
+                seen_chunks.add(chunk_key)
+                # Skip if this chunk is from first or last page (already included)
+                if chunk["page_num"] == first_pn or chunk["page_num"] == last_pn:
+                    continue
+                chunk_text = (
+                    f"--- Page {chunk['page_num']}, Chunk {chunk['chunk_index']} ---\n"
+                    f"{chunk['chunk_text']}\n"
+                )
+                if char_count + len(chunk_text) > _PDF_MAX_CHARS_PER_PAPER:
+                    break
+                content_parts.append(chunk_text)
+                char_count += len(chunk_text)
 
-        shown = len([p for p in content_parts if p.startswith("--- Page")])
-        total_p = page_count or len(all_pages)
-        if shown < total_p:
+            # Add last page
+            if last_pn != first_pn and last_content:
+                last_text = f"--- Page {last_pn} ---\n{last_content}\n"
+                if char_count + len(last_text) <= _PDF_MAX_CHARS_PER_PAPER:
+                    content_parts.append(last_text)
+
+            total_p = page_count or (len(all_pages) if all_pages else 0)
             note = (
-                f"[Showing {shown} of {total_p} pages: page 1 + "
-                f"{max(shown - 2, 0)} query-relevant pages + last page. "
-                f"Ask about specific pages or topics for more.]\n"
+                f"[Semantic search: showing {len(seen_chunks)} most relevant chunks "
+                f"from {total_p} total pages. Ask about specific topics for more.]\n"
             )
             content_parts.insert(0, note)
+            enhanced_parts.append("\n".join(content_parts))
+        else:
+            # ── BM25 fallback for papers not yet vector-indexed ──────────────
+            logger.info(f"[BM25 Fallback] Paper {paper_idx}: no vector results, using BM25")
+            all_pages = _split_md_into_pages(full_md)
+            if not all_pages:
+                enhanced_parts.append(full_md[:_PDF_MAX_CHARS_PER_PAPER] + "\n[...truncated]\n")
+            else:
+                first_pn, first_content = all_pages[0]
+                last_pn, last_content = all_pages[-1]
 
-        enhanced_parts.append("\n".join(content_parts))
+                bm25_results = search_pdf_pages(full_md, user_query, top_k=10)
+                bm25_extras = [
+                    (pn, content, score)
+                    for pn, content, score in bm25_results
+                    if pn != first_pn and pn != last_pn
+                ]
+
+                selected: list[tuple[int, str]] = [(first_pn, first_content)]
+                for pn, content, _ in sorted(bm25_extras, key=lambda x: x[0]):
+                    selected.append((pn, content))
+                if last_pn != first_pn:
+                    selected.append((last_pn, last_content))
+
+                content_parts = []
+                char_count = 0
+                prev_pn = None
+                for pn, page_content in selected:
+                    page_text = f"--- Page {pn} ---\n{page_content}\n"
+                    if char_count + len(page_text) > _PDF_MAX_CHARS_PER_PAPER:
+                        remaining = _PDF_MAX_CHARS_PER_PAPER - char_count
+                        if remaining > 200:
+                            content_parts.append(page_text[:remaining] + "\n[...page truncated for length]")
+                        break
+                    if prev_pn is not None and pn > prev_pn + 1:
+                        content_parts.append(f"\n[...pages {prev_pn + 1}–{pn - 1} omitted — ask about them if needed...]\n")
+                    content_parts.append(page_text)
+                    char_count += len(page_text)
+                    prev_pn = pn
+
+                shown = len([p for p in content_parts if p.startswith("--- Page")])
+                total_p = page_count or len(all_pages)
+                if shown < total_p:
+                    note = (
+                        f"[Showing {shown} of {total_p} pages: page 1 + "
+                        f"{max(shown - 2, 0)} query-relevant pages + last page. "
+                        f"Ask about specific pages or topics for more.]\n"
+                    )
+                    content_parts.insert(0, note)
+                enhanced_parts.append("\n".join(content_parts))
+
         enhanced_parts.append("---\n")
 
     return "\n".join(enhanced_parts)

@@ -251,7 +251,7 @@ def _update_meta_with_parse_info(url: str, page_count: int, parse_method: str) -
         logger.error(f"Error updating meta for {url}: {e}")
 
 
-def _save_markdown_to_cache(url: str, markdown: str) -> None:
+def _save_markdown_to_cache(url: str, markdown: str, paper_title: str = "") -> None:
     """Save pymupdf-parsed markdown to cache (fast tier)."""
     try:
         cache_dir = _get_pdf_cache_dir()
@@ -262,6 +262,8 @@ def _save_markdown_to_cache(url: str, markdown: str) -> None:
         page_count = _extract_page_count(markdown)
         _update_meta_with_parse_info(url, page_count, 'pymupdf')
         logger.info(f"Cached pymupdf markdown for {url} ({page_count} pages)")
+        # Build vector index for semantic search
+        _trigger_vector_index(url_hash, markdown, paper_title)
     except Exception as e:
         logger.error(f"Error saving markdown to cache: {e}")
 
@@ -276,7 +278,7 @@ def _has_mineru_cache(url: str) -> bool:
         return False
 
 
-def _save_mineru_to_cache(url: str, markdown: str) -> None:
+def _save_mineru_to_cache(url: str, markdown: str, paper_title: str = "") -> None:
     """Save MinerU high-precision parse result to cache (slow/high-quality tier)."""
     try:
         cache_dir = _get_pdf_cache_dir()
@@ -287,8 +289,21 @@ def _save_mineru_to_cache(url: str, markdown: str) -> None:
         page_count = _extract_page_count(markdown)
         _update_meta_with_parse_info(url, page_count, 'mineru')
         logger.info(f"Cached MinerU high-precision markdown for {url} ({page_count} pages)")
+        # Rebuild vector index with higher-quality MinerU content
+        _trigger_vector_index(url_hash, markdown, paper_title)
     except Exception as e:
         logger.error(f"Error saving MinerU markdown to cache: {e}")
+
+
+# ── Vector Index Helper ─────────────────────────────────────────────────────
+
+def _trigger_vector_index(url_hash: str, markdown: str, paper_title: str) -> None:
+    """Index PDF content into the vector store (best-effort, non-blocking)."""
+    try:
+        from .chat_pdf_vectorstore import index_pdf_to_vectorstore
+        index_pdf_to_vectorstore(url_hash, markdown, paper_title or "Unknown")
+    except Exception as e:
+        logger.error(f"[VectorIndex] Failed to index {url_hash}: {e}")
 
 
 # ── BM25 Page-Level Search ──────────────────────────────────────────────────
@@ -453,7 +468,10 @@ async def _background_mineru_upgrade(url: str, pdf_bytes: bytes, max_pages: int 
             images_output_dir, images_url_prefix,
         )
         if markdown and not markdown.startswith("[Error"):
-            _save_mineru_to_cache(url, markdown)
+            # Recover paper title from cached meta for vector re-indexing
+            meta = get_cached_pdf_meta(url)
+            title = (meta or {}).get("title", "")
+            _save_mineru_to_cache(url, markdown, paper_title=title)
             logger.info(f"[BG MinerU] Upgrade complete for {url} ({len(markdown)} chars)")
         else:
             logger.warning(f"[BG MinerU] Upgrade failed for {url}: {markdown[:80]}")
@@ -496,6 +514,12 @@ def cleanup_expired_pdf_cache() -> int:
                     images_dir = cache_dir / "images" / url_hash
                     if images_dir.exists() and images_dir.is_dir():
                         shutil.rmtree(images_dir)
+                    # Remove vector store entries
+                    try:
+                        from .chat_pdf_vectorstore import delete_pdf_from_vectorstore
+                        delete_pdf_from_vectorstore(url_hash)
+                    except Exception as ve:
+                        logger.error(f"Error cleaning vector store for {url_hash}: {ve}")
                     meta_file.unlink()
                     cleaned += 1
                     logger.info(f"Cleaned expired PDF cache: {meta.get('url', url_hash)}")
@@ -1475,7 +1499,7 @@ async def process_pdf_url(
             if pymupdf_result is not None:
                 pdf_content = pymupdf_result
                 if use_cache:
-                    _save_markdown_to_cache(url, pdf_content)
+                    _save_markdown_to_cache(url, pdf_content, paper_title=title)
                 # Tier 2 (background): Schedule MinerU upgrade for the *next*
                 # request if no high-precision cache exists yet and GPU is free.
                 if use_cache and not _has_mineru_cache(url):
@@ -1494,7 +1518,7 @@ async def process_pdf_url(
                 )
                 # Successful MinerU result goes to the high-precision cache slot
                 if not pdf_content.startswith("[Error") and use_cache:
-                    _save_mineru_to_cache(url, pdf_content)
+                    _save_mineru_to_cache(url, pdf_content, paper_title=title)
 
         if pdf_content.startswith("[Error"):
             # Distinguish GPU unavailable from other parse errors
