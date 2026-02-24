@@ -712,11 +712,23 @@ After saving, return here and start chatting!"""
                 web_search_result_block = json.dumps(search_results)
                 yield f"data: {json.dumps({'content': f'[WEB_SEARCH_RESULT]{web_search_result_block}[/WEB_SEARCH_RESULT]'})}\n\n"
 
-                # Format search results for AI
+                # Format search results for AI — include source type hints
+                # so the AI can generate correct [REFERENCE] blocks with
+                # type: paper vs type: webpage.
+                from .chat_pdf import _ACADEMIC_SOURCE_TYPES
                 results_text = f"\n\n[WEB_SEARCH_RESULT]\n{json.dumps(search_results)}\n[/WEB_SEARCH_RESULT]\n\n"
                 results_text += "Search results:\n"
                 for idx, result in enumerate(search_results["results"], 1):
-                    results_text += f"{idx}. {result['title']}\n   URL: {result['url']}\n   {result['snippet']}\n\n"
+                    r_url = result.get("url", "")
+                    src_type = detect_source_type(r_url)
+                    is_academic_src = src_type in _ACADEMIC_SOURCE_TYPES
+                    ref_type = "paper" if is_academic_src else "webpage"
+                    results_text += (
+                        f"{idx}. {result['title']}\n"
+                        f"   URL: {r_url}\n"
+                        f"   Source: {src_type} (reference type: {ref_type})\n"
+                        f"   {result['snippet']}\n\n"
+                    )
 
                 # Identify PDF URLs and start parallel processing (don't block)
                 # NOTE: append to outer-scope lists to accumulate across search iterations
@@ -757,7 +769,13 @@ After saving, return here and start chatting!"""
                 # AI will respond based on search snippets first
                 current_messages = current_messages + [
                     {"role": "assistant", "content": full_response},
-                    {"role": "user", "content": f"Here are the search results for '{query}':\n{results_text}\n\nPlease synthesize this information and provide a helpful response. Remember to verify information across multiple sources and cite your sources using [REFERENCE] blocks."}
+                    {"role": "user", "content": (
+                        f"Here are the search results for '{query}':\n{results_text}\n\n"
+                        "Please synthesize this information and provide a helpful response. "
+                        "Remember to verify information across multiple sources and cite your sources using [REFERENCE] blocks. "
+                        "IMPORTANT: Each result above includes a 'reference type' hint (paper or webpage). "
+                        "Use `type: paper` ONLY for academic papers/journals; use `type: webpage` for GitHub repos, blogs, documentation, HuggingFace, and all other non-academic sources."
+                    )}
                 ]
 
                 # Continue to next iteration (PDF parsing runs in background)

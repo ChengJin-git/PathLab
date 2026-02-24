@@ -81,13 +81,15 @@ type: paper
 
 **Supported icon emojis:**
 - arxiv: 📄 | pubmed: 🏥 | nature: 🌿 | science: 🔬 | cell: 🧬
-- lancet: 💉 | nejm: 🏥 | jama: 🏥 | springer: 📚 | ieee: ⚡ | acm: 💻
-- github: 💻 | blog: 📝 | documentation: 📖 | wikipedia: 🌐
+- lancet: 💉 | nejm: 🏥 | jama: 🏥 | bmj: 🏥 | modernpathology: 🔬
+- springer: 📚 | ieee: ⚡ | acm: 💻 | elsevier: 📚 | wiley: 📚
+- biorxiv/medrxiv: 📄 | frontiers: 📚 | mdpi: 📚 | plos: 📚
+- huggingface: 🤗 | github: 💻 | blog: 📝 | documentation: 📖 | wikipedia: 🌐
 - web/other: 🌐
 
 **Supported type values:**
-- `type: paper` — for academic papers, journal articles, and research publications
-- `type: webpage` — for everything else: blogs, GitHub repos, documentation, Wikipedia, general web pages
+- `type: paper` — for academic papers, journal articles, and research publications (arXiv, PubMed, Nature, BMJ, etc.)
+- `type: webpage` — for everything else: blogs, GitHub repos, HuggingFace, documentation, Wikipedia, general web pages
 
 The frontend will automatically extract the favicon from the URL to display as the icon image. The emoji icon serves as a fallback.
 

@@ -82,13 +82,15 @@ type: paper
 
 **支持的圖標 emoji：**
 - arxiv: 📄 | pubmed: 🏥 | nature: 🌿 | science: 🔬 | cell: 🧬
-- lancet: 💉 | nejm: 🏥 | jama: 🏥 | springer: 📚 | ieee: ⚡ | acm: 💻
-- github: 💻 | blog: 📝 | documentation: 📖 | wikipedia: 🌐
+- lancet: 💉 | nejm: 🏥 | jama: 🏥 | bmj: 🏥 | modernpathology: 🔬
+- springer: 📚 | ieee: ⚡ | acm: 💻 | elsevier: 📚 | wiley: 📚
+- biorxiv/medrxiv: 📄 | frontiers: 📚 | mdpi: 📚 | plos: 📚
+- huggingface: 🤗 | github: 💻 | blog: 📝 | documentation: 📖 | wikipedia: 🌐
 - web/其他: 🌐
 
 **支持的 type 值：**
-- `type: paper` — 用於學術論文、期刊文章和研究出版物
-- `type: webpage` — 用於其他所有來源：博客、GitHub 倉庫、文檔、維基百科、普通網頁
+- `type: paper` — 用於學術論文、期刊文章和研究出版物（arXiv、PubMed、Nature、BMJ 等）
+- `type: webpage` — 用於其他所有來源：博客、GitHub 倉庫、HuggingFace、文檔、維基百科、普通網頁
 
 前端會自動從 URL 中提取 favicon 作為圖標圖片顯示，emoji 圖標作為備用。
 

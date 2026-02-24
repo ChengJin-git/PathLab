@@ -1397,9 +1397,20 @@ def format_reference_card(
         "lancet": "💉",
         "nejm": "🏥",
         "jama": "🏥",
+        "bmj": "🏥",
+        "modernpathology": "🔬",
         "springer": "📚",
         "ieee": "⚡",
         "acm": "💻",
+        "biorxiv": "📄",
+        "elsevier": "📚",
+        "wiley": "📚",
+        "frontiers": "📚",
+        "mdpi": "📚",
+        "oup": "📚",
+        "plos": "📚",
+        "taylor_francis": "📚",
+        "huggingface": "🤗",
         "github": "💻",
         "blog": "📝",
         "documentation": "📖",
@@ -1465,13 +1476,35 @@ def detect_source_type(url: str) -> str:
         return "nejm"
     elif 'jamanetwork.com' in url_lower:
         return "jama"
+    elif 'bmj.com' in url_lower:
+        return "bmj"
+    elif 'modernpathology.org' in url_lower:
+        return "modernpathology"
     elif 'springer.com' in url_lower or 'link.springer.com' in url_lower:
         return "springer"
     elif 'ieee' in url_lower:
         return "ieee"
     elif 'acm.org' in url_lower:
         return "acm"
+    elif 'biorxiv.org' in url_lower or 'medrxiv.org' in url_lower:
+        return "biorxiv"
+    elif 'sciencedirect.com' in url_lower or 'elsevier.com' in url_lower:
+        return "elsevier"
+    elif 'wiley.com' in url_lower or 'onlinelibrary.wiley.com' in url_lower:
+        return "wiley"
+    elif 'frontiersin.org' in url_lower:
+        return "frontiers"
+    elif 'mdpi.com' in url_lower:
+        return "mdpi"
+    elif 'academic.oup.com' in url_lower:
+        return "oup"
+    elif 'journals.plos.org' in url_lower or 'plos.org' in url_lower:
+        return "plos"
+    elif 'tandfonline.com' in url_lower:
+        return "taylor_francis"
     # ── Non-academic known sources ────────────────────────────────────────────
+    elif 'huggingface.co' in url_lower or 'hf.co' in url_lower:
+        return "huggingface"
     elif 'github.com' in url_lower or 'github.io' in url_lower:
         return "github"
     elif any(d in url_lower for d in (
@@ -1499,7 +1532,9 @@ def detect_source_type(url: str) -> str:
 # Known academic source types — used to determine if a source is inherently academic.
 _ACADEMIC_SOURCE_TYPES = frozenset({
     "arxiv", "pubmed", "nature", "science", "cell", "lancet",
-    "nejm", "jama", "springer", "ieee", "acm",
+    "nejm", "jama", "bmj", "modernpathology", "springer", "ieee", "acm",
+    "biorxiv", "elsevier", "wiley", "frontiers", "mdpi", "oup", "plos",
+    "taylor_francis",
 })
 
 
