@@ -290,14 +290,15 @@ const AssistantMessage = React.memo(function AssistantMessage({
   // We renumber each unique "N-pY" by order of first appearance → 1, 2, 3, ...
   // This map is used by both citationMap and the regex replacement below.
   const articleCitationRenumber = useMemo(() => {
-    // Scan the raw content for [N, p.Y] or [N, p.Y-Z] patterns in order of appearance.
-    // This works independently of citationContexts so renumbering is correct during streaming.
-    const renumber = new Map<string, number>() // "N-pY" or "N-pY-Z" → sequential index
-    const pattern = /\[(\d{1,2}),\s*p\.(\d+(?:-\d+)?)\]/g
+    // General pattern: [N, p.ANY_PAGE_DESCRIPTION] — matches p.2, p.2-3, p.2, p.4, etc.
+    // Works independently of citationContexts so renumbering is correct during streaming.
+    const renumber = new Map<string, number>() // "N-p.X" → sequential index
+    const pattern = /\[(\d{1,2}),\s*(p\.[^\]]+)\]/g
     let m: RegExpExecArray | null
     let seq = 1
     while ((m = pattern.exec(content)) !== null) {
-      const key = `${m[1]}-p${m[2]}`
+      // Normalize key: remove whitespace for consistent lookup
+      const key = `${m[1]}-${m[2].replace(/\s/g, '')}`
       if (!renumber.has(key)) {
         renumber.set(key, seq++)
       }
@@ -317,21 +318,21 @@ const AssistantMessage = React.memo(function AssistantMessage({
         map.set(i + 1, { title: r.title, url: r.url, snippet: r.snippet, source })
       })
     }
-    // 2) Article citation contexts — keyed "N-pY", renumbered sequentially
+    // 2) Article citation contexts — keyed "N-p.X" (normalized), renumbered sequentially
     if (citationContexts && articleCitationRenumber) {
       const refCard = referenceCards?.[0]
       const refSource = refCard?.url ? (() => { try { return new URL(refCard.url).hostname.replace(/^www\./, '') } catch { return '' } })() : ''
       for (const [key, ctx] of Object.entries(citationContexts)) {
         const seqIdx = articleCitationRenumber.get(key)
         if (!seqIdx) continue
-        // Extract page info from key (e.g. "1-p2" → "2", "1-p2-3" → "2-3")
-        const pageFromKey = key.replace(/^\d+-p/, '')
+        // Extract page info from key (e.g. "1-p.2" → "p.2", "1-p.2-3" → "p.2-3", "1-p.2,p.4" → "p.2,p.4")
+        const pageFromKey = key.replace(/^\d+-/, '')
         map.set(seqIdx, {
           title: refCard?.title || '',
           url: refCard?.url || '',
           snippet: ctx.context,
           source: refSource,
-          pageInfo: `p.${pageFromKey}`,
+          pageInfo: pageFromKey,
         })
       }
     }
@@ -362,14 +363,12 @@ const AssistantMessage = React.memo(function AssistantMessage({
       </div>
     ),
     a: ({ href, children, ...rest }) => {
-      // Detect #cite-N or #cite-N-pY or #cite-N-pY-Z hash links and render InlineCitation component
-      const citationMatch = href?.match(/^#cite-(\d+)(?:-p(\d+(?:-\d+)?))?$/)
+      // Detect #cite-N hash links and render InlineCitation component
+      const citationMatch = href?.match(/^#cite-(\d+)$/)
       if (citationMatch) {
         const index = parseInt(citationMatch[1])
-        const page = citationMatch[2]
         const data = citationMap.get(index)
-        // pageInfo: prefer citationMap entry (from CITATION_CONTEXTS), fall back to hash link
-        const pageInfo = data?.pageInfo || (page ? `p.${page}` : undefined)
+        const pageInfo = data?.pageInfo
         return (
           <InlineCitation
             index={index}
@@ -430,20 +429,20 @@ const AssistantMessage = React.memo(function AssistantMessage({
   // Hash links are not sanitized by ReactMarkdown (unlike custom protocols like cite://)
   // Badge text shows only the sequential index number; page info is in the tooltip via citationMap.
   // Handle more specific patterns first to avoid partial matches
-  // 1. [Paper N, p.Y] or [Paper N, p.Y-Z] or [Paper N, Page Y] (legacy backend format, fallback)
+  // 1. [Paper N, p.Y / Page Y / any page desc] (legacy backend format)
   if (articleCitationRenumber) {
-    // Article mode: renumber by appearance order
     displayContent = displayContent.replace(
-      /\[Paper\s+(\d{1,2}),\s*(?:p\.|Page\s*)(\d+(?:-\d+)?)\](?!\()/g,
-      (_match, n, p) => {
-        const seq = articleCitationRenumber.get(`${n}-p${p}`) || n
+      /\[Paper\s+(\d{1,2}),\s*(p\.[^\]]+|Page\s*[^\]]+)\](?!\()/g,
+      (_match, n, pagesPart) => {
+        const key = `${n}-${pagesPart.replace(/\s/g, '').replace(/^Page/, 'p.')}`
+        const seq = articleCitationRenumber.get(key) || n
         return `[${seq}](#cite-${seq})`
       }
     )
   } else {
     displayContent = displayContent.replace(
-      /\[Paper\s+(\d{1,2}),\s*(?:p\.|Page\s*)(\d+(?:-\d+)?)\](?!\()/g,
-      '[$1](#cite-$1-p$2)'
+      /\[Paper\s+(\d{1,2}),\s*(?:p\.[^\]]+|Page\s*[^\]]+)\](?!\()/g,
+      '[$1](#cite-$1)'
     )
   }
   // 2. [Paper N] (legacy backend format, fallback)
@@ -451,19 +450,20 @@ const AssistantMessage = React.memo(function AssistantMessage({
     /\[Paper\s+(\d{1,2})\](?!\()/g,
     '[$1](#cite-$1)'
   )
-  // 3. [N, p.Y] or [N, p.Y-Z] (current format) — badge shows only sequential index, page info in tooltip
+  // 3. [N, p.ANY_PAGE_DESC] (current general format) — matches p.2, p.2-3, p.2, p.4, etc.
   if (articleCitationRenumber) {
     displayContent = displayContent.replace(
-      /\[(\d{1,2}),\s*p\.(\d+(?:-\d+)?)\](?!\()/g,
-      (_match, n, p) => {
-        const seq = articleCitationRenumber.get(`${n}-p${p}`) || n
+      /\[(\d{1,2}),\s*(p\.[^\]]+)\](?!\()/g,
+      (_match, n, pagesPart) => {
+        const key = `${n}-${pagesPart.replace(/\s/g, '')}`
+        const seq = articleCitationRenumber.get(key) || n
         return `[${seq}](#cite-${seq})`
       }
     )
   } else {
     displayContent = displayContent.replace(
-      /\[(\d{1,2}),\s*p\.(\d+(?:-\d+)?)\](?!\()/g,
-      '[$1](#cite-$1-p$2)'
+      /\[(\d{1,2}),\s*(p\.[^\]]+)\](?!\()/g,
+      '[$1](#cite-$1)'
     )
   }
   // 4. [N] (simple citation) — only match when citationMap has data to avoid

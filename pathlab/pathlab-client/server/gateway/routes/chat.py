@@ -479,7 +479,8 @@ def _extract_citation_contexts(
     import math
     from collections import Counter
 
-    citation_pattern = re.compile(r'\[(\d{1,2}),\s*p\.(\d+(?:-\d+)?)\]')
+    # General pattern: [N, p.ANY_PAGE_DESCRIPTION] — matches p.2, p.2-3, p.2, p.4, etc.
+    citation_pattern = re.compile(r'\[(\d{1,2}),\s*(p\.[^\]]+)\]')
     citations = citation_pattern.findall(ai_response)
     if not citations:
         return None
@@ -530,25 +531,38 @@ def _extract_citation_contexts(
         return snippet
 
     contexts: dict[str, dict] = {}
-    for idx_str, page_str in citations:
-        key = f"{idx_str}-p{page_str}"
+    for idx_str, page_part in citations:
+        # Normalize key: remove whitespace from page part for consistent lookup
+        key = f"{idx_str}-{page_part.replace(' ', '')}"
         if key in contexts:
             continue
-        # Handle page ranges like "2-3" — use the first page number
-        page_num = int(page_str.split("-")[0])
-        # For page ranges, concatenate content from all pages in the range
-        if "-" in page_str:
-            end_page = int(page_str.split("-")[1])
-            page_content = "\n\n".join(
-                page_map.get(p, "") for p in range(page_num, end_page + 1)
-            ).strip()
-        else:
-            page_content = page_map.get(page_num, "")
+        # Extract ALL page numbers mentioned in page_part (handles p.2, p.2-3, p.2, p.4, etc.)
+        page_numbers = [int(x) for x in re.findall(r'\d+', page_part)]
+        if not page_numbers:
+            continue
+        # For ranges like p.2-3, expand to [2, 3]
+        expanded_pages: list[int] = []
+        for rng in re.findall(r'(\d+)(?:-(\d+))?', page_part):
+            start_p = int(rng[0])
+            end_p = int(rng[1]) if rng[1] else start_p
+            expanded_pages.extend(range(start_p, end_p + 1))
+        # Deduplicate while preserving order
+        seen: set[int] = set()
+        unique_pages: list[int] = []
+        for p in expanded_pages:
+            if p not in seen:
+                seen.add(p)
+                unique_pages.append(p)
+        # Concatenate content from all referenced pages
+        page_content = "\n\n".join(
+            page_map.get(p, "") for p in unique_pages if page_map.get(p)
+        ).strip()
         if not page_content:
             continue
 
         # Extract ~100 chars around the citation in the AI response for BM25 query
-        pos = ai_response.find(f"[{idx_str}, p.{page_str}]")
+        citation_text = f"[{idx_str}, {page_part}]"
+        pos = ai_response.find(citation_text)
         if pos >= 0:
             start = max(0, pos - 80)
             end = min(len(ai_response), pos + 80)
@@ -557,7 +571,7 @@ def _extract_citation_contexts(
             query = ai_response[:160]
 
         contexts[key] = {
-            "page": page_num,
+            "page": unique_pages[0],
             "context": _best_paragraph(page_content, query),
         }
 
