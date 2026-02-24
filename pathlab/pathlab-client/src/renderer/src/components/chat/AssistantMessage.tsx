@@ -290,10 +290,10 @@ const AssistantMessage = React.memo(function AssistantMessage({
   // We renumber each unique "N-pY" by order of first appearance → 1, 2, 3, ...
   // This map is used by both citationMap and the regex replacement below.
   const articleCitationRenumber = useMemo(() => {
-    if (!citationContexts) return null
-    // Scan the raw content for [N, p.Y] patterns in order of appearance
-    const renumber = new Map<string, number>() // "N-pY" → sequential index
-    const pattern = /\[(\d{1,2}),\s*p\.(\d+)\]/g
+    // Scan the raw content for [N, p.Y] or [N, p.Y-Z] patterns in order of appearance.
+    // This works independently of citationContexts so renumbering is correct during streaming.
+    const renumber = new Map<string, number>() // "N-pY" or "N-pY-Z" → sequential index
+    const pattern = /\[(\d{1,2}),\s*p\.(\d+(?:-\d+)?)\]/g
     let m: RegExpExecArray | null
     let seq = 1
     while ((m = pattern.exec(content)) !== null) {
@@ -303,7 +303,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
       }
     }
     return renumber.size > 0 ? renumber : null
-  }, [content, citationContexts])
+  }, [content])
 
   // Build citation lookup map from web search results + article citation contexts.
   // Maps citation display index (1-based) to { title, url, snippet, source, pageInfo? }
@@ -361,8 +361,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
       </div>
     ),
     a: ({ href, children, ...rest }) => {
-      // Detect #cite-N or #cite-N-pY hash links and render InlineCitation component
-      const citationMatch = href?.match(/^#cite-(\d+)(?:-p(\d+))?$/)
+      // Detect #cite-N or #cite-N-pY or #cite-N-pY-Z hash links and render InlineCitation component
+      const citationMatch = href?.match(/^#cite-(\d+)(?:-p(\d+(?:-\d+)?))?$/)
       if (citationMatch) {
         const index = parseInt(citationMatch[1])
         const page = citationMatch[2]
@@ -429,11 +429,11 @@ const AssistantMessage = React.memo(function AssistantMessage({
   // Hash links are not sanitized by ReactMarkdown (unlike custom protocols like cite://)
   // Badge text shows only the sequential index number; page info is in the tooltip via citationMap.
   // Handle more specific patterns first to avoid partial matches
-  // 1. [Paper N, p.Y] or [Paper N, Page Y] (legacy backend format, fallback)
+  // 1. [Paper N, p.Y] or [Paper N, p.Y-Z] or [Paper N, Page Y] (legacy backend format, fallback)
   if (articleCitationRenumber) {
     // Article mode: renumber by appearance order
     displayContent = displayContent.replace(
-      /\[Paper\s+(\d{1,2}),\s*(?:p\.|Page\s*)(\d+)\](?!\()/g,
+      /\[Paper\s+(\d{1,2}),\s*(?:p\.|Page\s*)(\d+(?:-\d+)?)\](?!\()/g,
       (_match, n, p) => {
         const seq = articleCitationRenumber.get(`${n}-p${p}`) || n
         return `[${seq}](#cite-${seq})`
@@ -441,7 +441,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
     )
   } else {
     displayContent = displayContent.replace(
-      /\[Paper\s+(\d{1,2}),\s*(?:p\.|Page\s*)(\d+)\](?!\()/g,
+      /\[Paper\s+(\d{1,2}),\s*(?:p\.|Page\s*)(\d+(?:-\d+)?)\](?!\()/g,
       '[$1](#cite-$1-p$2)'
     )
   }
@@ -450,10 +450,10 @@ const AssistantMessage = React.memo(function AssistantMessage({
     /\[Paper\s+(\d{1,2})\](?!\()/g,
     '[$1](#cite-$1)'
   )
-  // 3. [N, p.Y] (current format) — badge shows only sequential index, page info in tooltip
+  // 3. [N, p.Y] or [N, p.Y-Z] (current format) — badge shows only sequential index, page info in tooltip
   if (articleCitationRenumber) {
     displayContent = displayContent.replace(
-      /\[(\d{1,2}),\s*p\.(\d+)\](?!\()/g,
+      /\[(\d{1,2}),\s*p\.(\d+(?:-\d+)?)\](?!\()/g,
       (_match, n, p) => {
         const seq = articleCitationRenumber.get(`${n}-p${p}`) || n
         return `[${seq}](#cite-${seq})`
@@ -461,7 +461,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
     )
   } else {
     displayContent = displayContent.replace(
-      /\[(\d{1,2}),\s*p\.(\d+)\](?!\()/g,
+      /\[(\d{1,2}),\s*p\.(\d+(?:-\d+)?)\](?!\()/g,
       '[$1](#cite-$1-p$2)'
     )
   }

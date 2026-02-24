@@ -479,7 +479,7 @@ def _extract_citation_contexts(
     import math
     from collections import Counter
 
-    citation_pattern = re.compile(r'\[(\d{1,2}),\s*p\.(\d+)\]')
+    citation_pattern = re.compile(r'\[(\d{1,2}),\s*p\.(\d+(?:-\d+)?)\]')
     citations = citation_pattern.findall(ai_response)
     if not citations:
         return None
@@ -534,8 +534,16 @@ def _extract_citation_contexts(
         key = f"{idx_str}-p{page_str}"
         if key in contexts:
             continue
-        page_num = int(page_str)
-        page_content = page_map.get(page_num, "")
+        # Handle page ranges like "2-3" — use the first page number
+        page_num = int(page_str.split("-")[0])
+        # For page ranges, concatenate content from all pages in the range
+        if "-" in page_str:
+            end_page = int(page_str.split("-")[1])
+            page_content = "\n\n".join(
+                page_map.get(p, "") for p in range(page_num, end_page + 1)
+            ).strip()
+        else:
+            page_content = page_map.get(page_num, "")
         if not page_content:
             continue
 
@@ -1006,47 +1014,43 @@ After saving, return here and start chatting!"""
                 logger.error(f"READ_ARTICLE error for {article_url}: {e}")
                 pdf_status = {"url": article_url, "title": article_title, "status": "download_failed"}
                 yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
-                break
+                # Add error context so the next AI call can inform the user
+                current_messages = current_messages + [
+                    {"role": "assistant", "content": full_response},
+                    {"role": "user", "content": (
+                        f"The article '{article_title}' ({article_url}) could not be downloaded. "
+                        f"Error: {e}\n\n"
+                        "Please inform the user that the article download failed and suggest alternatives "
+                        "(e.g. trying another article, or accessing the URL directly)."
+                    )}
+                ]
+                continue
 
         # No tool requested — break out of loop
         break
 
-    # ── Stream final AI response ──
-    final_response_text = ""
-    try:
-        async for chunk in _stream_from_openai_compatible(
-            messages=current_messages,
-            base_url=effective_base_url,
-            api_key=effective_api_key,
-            model=effective_model,
-            source_name="Local vLLM" if use_local else "OpenRouter"
-        ):
-            # Intercept [DONE] to inject CITATION_CONTEXTS before it
-            if chunk == "data: [DONE]\n\n":
-                if article_pdf_content and final_response_text:
-                    try:
-                        ctx = _extract_citation_contexts(final_response_text, article_pdf_content)
-                        if ctx:
-                            ctx_block = f"[CITATION_CONTEXTS]{json.dumps(ctx, ensure_ascii=False)}[/CITATION_CONTEXTS]"
-                            yield f"data: {json.dumps({'content': ctx_block})}\n\n"
-                    except Exception as e:
-                        logger.warning(f"Failed to extract citation contexts: {e}")
-                yield chunk
-            else:
-                yield chunk
-                # Collect response text for citation extraction
-                if article_pdf_content and chunk.startswith("data: "):
-                    try:
-                        data = json.loads(chunk[6:])
-                        if "content" in data:
-                            final_response_text += data["content"]
-                    except (json.JSONDecodeError, KeyError):
-                        pass
-    except Exception as e:
-        logger.error(f"Error in AI streaming: {e}")
-        error_msg = f"Error: {str(e)}\n\nPlease check your API key and network connection."
-        yield f"data: {json.dumps({'content': error_msg})}\n\n"
-        yield "data: [DONE]\n\n"
+    # ── Emit final AI response ──
+    # Reuse the buffered `full_response` from the last tool-loop iteration
+    # instead of making a redundant streaming LLM call.
+    final_response_text = full_response or ""
+
+    if final_response_text:
+        # Yield the already-generated response in small chunks to keep SSE flowing
+        _CHUNK_SIZE = 80
+        for i in range(0, len(final_response_text), _CHUNK_SIZE):
+            yield f"data: {json.dumps({'content': final_response_text[i:i+_CHUNK_SIZE]})}\n\n"
+
+        # Inject CITATION_CONTEXTS before [DONE] if article was read
+        if article_pdf_content:
+            try:
+                ctx = _extract_citation_contexts(final_response_text, article_pdf_content)
+                if ctx:
+                    ctx_block = f"[CITATION_CONTEXTS]{json.dumps(ctx, ensure_ascii=False)}[/CITATION_CONTEXTS]"
+                    yield f"data: {json.dumps({'content': ctx_block})}\n\n"
+            except Exception as e:
+                logger.warning(f"Failed to extract citation contexts: {e}")
+
+    yield "data: [DONE]\n\n"
 
 
 @router.post("/conversations")
