@@ -3507,13 +3507,28 @@ async def _run_external_validation(
     except Exception as e:
         import traceback
         logger.error(f"External validation {task_id} failed: {e}\n{traceback.format_exc()}")
+
+        # For HTTPStatusError, extract the actual error detail from the response body
+        # instead of the generic "Server error '500 Internal Server Error' for url ..." message
+        err_msg = str(e)
+        if isinstance(e, httpx.HTTPStatusError) and e.response is not None:
+            try:
+                body = json.loads(e.response.text)
+                if isinstance(body, dict) and "detail" in body:
+                    err_msg = body["detail"]
+            except Exception:
+                try:
+                    err_msg = e.response.text[:2000] or err_msg
+                except Exception:
+                    pass
+
         try:
             await clear_progress(task_id)
             async with logger_manager.session() as (tl, _db):
-                await tl.error(f"External validation failed: {e}")
+                await tl.error(f"External validation failed: {err_msg}")
         except Exception:
             pass  # Don't let logging failure mask the original error
-        await update_task_progress(TaskStatus.FAILED, 0, error_msg=str(e))
+        await update_task_progress(TaskStatus.FAILED, 0, error_msg=err_msg)
     finally:
         # Clean up GPU memory regardless of success/failure.
         # This mirrors cleanup_training_scoped() in backend/ai/routes/training.py.

@@ -458,6 +458,22 @@ async def run_training_pipeline(
         err_type = type(e).__name__
         err_msg = str(e) or repr(e)
         err_tb = traceback.format_exc()
+
+        # For HTTPStatusError, extract the actual error detail from the response body
+        # instead of the generic "Server error '500 Internal Server Error' for url ..." message
+        if isinstance(e, httpx.HTTPStatusError) and e.response is not None:
+            try:
+                import json
+                body = json.loads(e.response.text)
+                if isinstance(body, dict) and "detail" in body:
+                    err_msg = body["detail"]
+            except Exception:
+                # Fallback: use raw response text if JSON parsing fails
+                try:
+                    err_msg = e.response.text[:2000] or err_msg
+                except Exception:
+                    pass
+
         async with logger_manager.session() as (logger, db):
             await logger.error(
                 f"Training pipeline failed: [{err_type}] {err_msg}",
