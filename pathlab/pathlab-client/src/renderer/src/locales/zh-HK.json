@@ -210,7 +210,7 @@
       "passwordHint": "至少 6 個字元。留空以保持目前密碼。",
       "role": "角色",
       "roleAdmin": "管理員",
-      "rolePathologist": "病理學家",
+      "rolePathologist": "醫護人員",
       "roleGuest": "訪客",
       "cancel": "取消",
       "saveChanges": "儲存變更"
@@ -475,7 +475,7 @@
       "pageOf": "第 {{current}} 頁 / 共 {{total}} 頁",
       "totalCount": "共 {{count}} 條",
       "role_admin": "管理員",
-      "role_pathologist": "病理學家",
+      "role_pathologist": "醫護人員",
       "role_guest": "訪客"
     },
     "storage": {
@@ -609,8 +609,7 @@
       "searchedPages": "已搜尋 {{count}} 個網頁",
       "webSearchCard": "網頁搜尋",
       "parsingPdf": "正在解析 PDF 論文...",
-      "pdfParsedCount": "已解析 {{count}} 篇 PDF 論文",
-      "pdfAccessFailed": "PDF 論文不可訪問（已嘗試 {{count}} 篇）"
+      "pdfParsedCount": "已解析 {{count}} 篇 PDF 論文"
     }
   },
   "layout": {

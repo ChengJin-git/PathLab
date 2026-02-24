@@ -210,7 +210,7 @@
       "passwordHint": "至少 6 个字符。留空以保持当前密码。",
       "role": "角色",
       "roleAdmin": "管理员",
-      "rolePathologist": "病理学家",
+      "rolePathologist": "医护人员",
       "roleGuest": "访客",
       "cancel": "取消",
       "saveChanges": "保存更改"
@@ -475,7 +475,7 @@
       "pageOf": "第 {{current}} 页 / 共 {{total}} 页",
       "totalCount": "共 {{count}} 条",
       "role_admin": "管理员",
-      "role_pathologist": "病理学家",
+      "role_pathologist": "医护人员",
       "role_guest": "访客"
     },
     "storage": {
@@ -609,8 +609,7 @@
       "searchedPages": "已搜索 {{count}} 个网页",
       "webSearchCard": "网页搜索",
       "parsingPdf": "正在解析 PDF 论文...",
-      "pdfParsedCount": "已解析 {{count}} 篇 PDF 论文",
-      "pdfAccessFailed": "PDF 论文不可访问（已尝试 {{count}} 篇）"
+      "pdfParsedCount": "已解析 {{count}} 篇 PDF 论文"
     }
   },
   "layout": {
