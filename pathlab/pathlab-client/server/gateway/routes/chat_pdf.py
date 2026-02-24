@@ -1510,9 +1510,11 @@ async def process_pdf_url(
             else:
                 # pymupdf insufficient — fall back to MinerU synchronously now.
                 # Pass image params so extracted figures are persisted immediately.
+                # Use max_pages=0 (unlimited) since MinerU is the high-precision tier
+                # and can extract tables, formulas, and images from all pages.
                 pdf_content = await parse_pdf(
                     pdf_bytes,
-                    max_pages=10,
+                    max_pages=0,
                     images_output_dir=sync_images_output_dir,
                     images_url_prefix=sync_images_url_prefix,
                 )
