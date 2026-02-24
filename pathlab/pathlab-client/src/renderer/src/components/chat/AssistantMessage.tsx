@@ -285,8 +285,28 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const pdfParseStatusItems = parseAllPdfParseStatus(content)
   const citationContexts = parseCitationContexts(content)
 
+  // For article citations, build a sequential renumbering map.
+  // AI uses [N, p.Y] where N is always the same paper number (e.g. 1).
+  // We renumber each unique "N-pY" by order of first appearance → 1, 2, 3, ...
+  // This map is used by both citationMap and the regex replacement below.
+  const articleCitationRenumber = useMemo(() => {
+    if (!citationContexts) return null
+    // Scan the raw content for [N, p.Y] patterns in order of appearance
+    const renumber = new Map<string, number>() // "N-pY" → sequential index
+    const pattern = /\[(\d{1,2}),\s*p\.(\d+)\]/g
+    let m: RegExpExecArray | null
+    let seq = 1
+    while ((m = pattern.exec(content)) !== null) {
+      const key = `${m[1]}-p${m[2]}`
+      if (!renumber.has(key)) {
+        renumber.set(key, seq++)
+      }
+    }
+    return renumber.size > 0 ? renumber : null
+  }, [content, citationContexts])
+
   // Build citation lookup map from web search results + article citation contexts.
-  // Maps citation index (1-based) to { title, url, snippet, source, pageInfo? }
+  // Maps citation display index (1-based) to { title, url, snippet, source, pageInfo? }
   const citationMap = useMemo(() => {
     const map = new Map<number, { title: string; url: string; snippet: string; source: string; pageInfo?: string }>()
     // 1) Web search results — index is 1-based ordinal
@@ -297,27 +317,25 @@ const AssistantMessage = React.memo(function AssistantMessage({
         map.set(i + 1, { title: r.title, url: r.url, snippet: r.snippet, source })
       })
     }
-    // 2) Article citation contexts — keyed "N-pY", merged into the map
-    //    For article-reading messages, citationContexts provides per-page original text
-    if (citationContexts) {
+    // 2) Article citation contexts — keyed "N-pY", renumbered sequentially
+    if (citationContexts && articleCitationRenumber) {
+      const refCard = referenceCards?.[0]
+      const refSource = refCard?.url ? (() => { try { return new URL(refCard.url).hostname.replace(/^www\./, '') } catch { return '' } })() : ''
       for (const [key, ctx] of Object.entries(citationContexts)) {
-        const m = key.match(/^(\d+)-p(\d+)$/)
-        if (!m) continue
-        const idx = parseInt(m[1])
-        const page = parseInt(m[2])
-        // Build entry: use article reference card data for title/url if available
-        const refCard = referenceCards?.[0] // article reading usually has 1 ref card
-        map.set(idx, {
+        const seqIdx = articleCitationRenumber.get(key)
+        if (!seqIdx) continue
+        const page = ctx.page
+        map.set(seqIdx, {
           title: refCard?.title || '',
           url: refCard?.url || '',
           snippet: ctx.context,
-          source: refCard?.url ? (() => { try { return new URL(refCard.url).hostname.replace(/^www\./, '') } catch { return '' } })() : '',
+          source: refSource,
           pageInfo: `p.${page}`,
         })
       }
     }
     return map
-  }, [webSearchResult, citationContexts, referenceCards])
+  }, [webSearchResult, citationContexts, articleCitationRenumber, referenceCards])
 
   // Custom ReactMarkdown components:
   // - img: inject auth token for /pdf-images/ URLs so <img> tags can load authenticated images
@@ -404,27 +422,49 @@ const AssistantMessage = React.memo(function AssistantMessage({
   // Remove REFERENCE blocks - rendered as cards
   displayContent = removeAllReferenceBlocks(displayContent)
   // Remove CITATION_CONTEXTS block - data consumed by citationMap, not for display
-  if (citationContexts) displayContent = removeCitationContextsBlock(displayContent)
+  // Always strip (even if parsing failed) to prevent raw JSON from showing
+  displayContent = removeCitationContextsBlock(displayContent)
 
   // Convert inline citation patterns to markdown links with #cite- hash
   // Hash links are not sanitized by ReactMarkdown (unlike custom protocols like cite://)
-  // Badge text shows only the index number; page info is in the tooltip via citationMap.
+  // Badge text shows only the sequential index number; page info is in the tooltip via citationMap.
   // Handle more specific patterns first to avoid partial matches
   // 1. [Paper N, p.Y] or [Paper N, Page Y] (legacy backend format, fallback)
-  displayContent = displayContent.replace(
-    /\[Paper\s+(\d{1,2}),\s*(?:p\.|Page\s*)(\d+)\](?!\()/g,
-    '[$1](#cite-$1-p$2)'
-  )
+  if (articleCitationRenumber) {
+    // Article mode: renumber by appearance order
+    displayContent = displayContent.replace(
+      /\[Paper\s+(\d{1,2}),\s*(?:p\.|Page\s*)(\d+)\](?!\()/g,
+      (_match, n, p) => {
+        const seq = articleCitationRenumber.get(`${n}-p${p}`) || n
+        return `[${seq}](#cite-${seq})`
+      }
+    )
+  } else {
+    displayContent = displayContent.replace(
+      /\[Paper\s+(\d{1,2}),\s*(?:p\.|Page\s*)(\d+)\](?!\()/g,
+      '[$1](#cite-$1-p$2)'
+    )
+  }
   // 2. [Paper N] (legacy backend format, fallback)
   displayContent = displayContent.replace(
     /\[Paper\s+(\d{1,2})\](?!\()/g,
     '[$1](#cite-$1)'
   )
-  // 3. [N, p.Y] (current format) — badge shows only [N], page info in tooltip
-  displayContent = displayContent.replace(
-    /\[(\d{1,2}),\s*p\.(\d+)\](?!\()/g,
-    '[$1](#cite-$1-p$2)'
-  )
+  // 3. [N, p.Y] (current format) — badge shows only sequential index, page info in tooltip
+  if (articleCitationRenumber) {
+    displayContent = displayContent.replace(
+      /\[(\d{1,2}),\s*p\.(\d+)\](?!\()/g,
+      (_match, n, p) => {
+        const seq = articleCitationRenumber.get(`${n}-p${p}`) || n
+        return `[${seq}](#cite-${seq})`
+      }
+    )
+  } else {
+    displayContent = displayContent.replace(
+      /\[(\d{1,2}),\s*p\.(\d+)\](?!\()/g,
+      '[$1](#cite-$1-p$2)'
+    )
+  }
   // 4. [N] (simple citation) — only match when citationMap has data to avoid
   //    false positives with markdown footnotes/list references
   if (citationMap.size > 0) {
@@ -473,8 +513,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
         <PdfParsingCompletedCard items={pdfParseStatusItems} />
       )}
 
-	      {/* Markdown content or skeleton while loading */}
-	      {displayContent.trim() ? (
+	      {/* Markdown content — no skeleton; stream starts directly */}
+	      {displayContent.trim() && (
 	        <div className="prose prose-slate max-w-none prose-sm
 	          prose-p:my-2 prose-p:leading-relaxed
 	          prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-headings:text-gray-900
@@ -492,14 +532,6 @@ const AssistantMessage = React.memo(function AssistantMessage({
 	            {displayContent}
 	          </ReactMarkdown>
 	        </div>
-	      ) : (
-	        // While streaming but no visible markdown content yet (e.g. only search status/results blocks),
-	        // show a generic skeleton so the user doesn't see an empty gap.
-	        isStreaming && (
-	          <motion.div className="mt-2" {...cardTransition}>
-	            <GenericCardSkeleton />
-	          </motion.div>
-	        )
 	      )}
 
       {/* Animated Components Section */}
@@ -777,9 +809,20 @@ const AssistantMessage = React.memo(function AssistantMessage({
           'CSV_PREVIEW',
           'TASK_HISTORY_CONFIG',
           'CANCEL_TASK',
+          'RENAME_TASK',
           'DATASET_REGISTRATION',
           'METADATA_UPLOAD',
-          'MODEL_LIST'
+          'MODEL_LIST',
+          'CITATION_CONTEXTS',
+          'REFERENCE',
+          'WEB_SEARCH_RESULT',
+          'SEARCH_STATUS',
+          'PDF_PARSE_STATUS',
+          'WEB_SEARCH',
+          'READ_ARTICLE',
+          'VOICE_CONTROL',
+          'SUBMIT_TASK',
+          'CANCEL_TASK_NOW'
         ].includes(incompleteTag) && (
             <motion.div key="generic-skeleton" {...cardTransition}>
               <GenericCardSkeleton />
