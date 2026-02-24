@@ -310,7 +310,7 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
 
       // Wait for connection
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Connection timeout')), 10000)
+        const timeout = setTimeout(() => reject(new Error('Connection timeout')), 15000)
         ws.onopen = () => { clearTimeout(timeout); console.log('[ASR] WebSocket connected'); resolve() }
         const origErr = ws.onerror
         ws.onerror = (err) => { clearTimeout(timeout); origErr?.call(ws, err); reject(new Error('WebSocket connection failed')) }
@@ -318,11 +318,12 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
 
       // Wait for session.updated from server (indicates server is ready for audio)
       // This is critical: the server needs to complete session setup before we send audio
+      // Backend may retry upstream connections (up to 3×30s), so allow generous timeout
       console.log('[ASR] Waiting for session.updated...')
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(new Error('Session setup timeout - server did not respond'))
-        }, 10000)
+        }, 35000)
         sessionUpdatedResolveRef.current = () => {
           clearTimeout(timeout)
           resolve()

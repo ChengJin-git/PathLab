@@ -1674,7 +1674,11 @@ async def chat_with_ai(
 # ──────────────────────────────────────────────────────────────────────────────
 
 @router.get("/pdf-images/{url_hash}/{filename}")
-async def serve_pdf_image(url_hash: str, filename: str):
+async def serve_pdf_image(
+    url_hash: str,
+    filename: str,
+    user: User = Depends(current_active_user)
+):
     """Serve MinerU-extracted PDF images from persistent cache.
 
     Images are stored at: uploads/pdf_cache/images/{url_hash}/{filename}

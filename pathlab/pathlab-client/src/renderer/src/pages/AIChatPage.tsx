@@ -86,9 +86,16 @@ export default function AIChatPage() {
   // Chat state
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const [isGenerating, setIsGenerating] = useState(false)
-  const [isPdfWaiting, setIsPdfWaiting] = useState(false) // PDF wait phase: input unlocked, stream still active
+
+  // Generation lifecycle: single enum replaces 3 independent booleans
+  // idle → thinking (waiting for first chunk) → streaming (receiving chunks) → pdf_waiting (post-stream PDF parse) → idle
+  type GenerationPhase = 'idle' | 'thinking' | 'streaming' | 'pdf_waiting'
+  const [generationPhase, setGenerationPhase] = useState<GenerationPhase>('idle')
+  // Derived booleans for backward compatibility with existing read sites
+  const isLoading = generationPhase === 'thinking'
+  const isGenerating = generationPhase !== 'idle'
+  const isPdfWaiting = generationPhase === 'pdf_waiting'
+
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([])
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([])
   // Monotonic counter to distinguish active generation from stale ones
@@ -151,9 +158,21 @@ export default function AIChatPage() {
   const inputRef = useRef('')
   inputRef.current = input
 
+  const formRef = useRef<HTMLFormElement>(null)
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
+
+  // Programmatically submit the chat form after setting input.
+  // Uses ref-based approach instead of DOM query to avoid fragile setTimeout + querySelector patterns.
+  const submitFormProgrammatically = useCallback((text: string) => {
+    setInput(text)
+    inputRef.current = text
+    setTimeout(() => {
+      formRef.current?.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }))
+    }, 50)
+  }, [])
 
   // Toast helper function (defined early for use in hook callbacks)
   const showToastRef = useRef<(type: 'error' | 'success' | 'info', message: string) => void>(() => { })
@@ -174,17 +193,8 @@ export default function AIChatPage() {
         ? `${currentInput} ${transcript}`
         : transcript
 
-      // Set input state AND ref simultaneously to avoid race condition
-      setInput(newInput)
-      inputRef.current = newInput
-
-      // Auto-submit: dispatch form submit after React has the new input
-      setTimeout(() => {
-        const form = document.getElementById('chat-form') as HTMLFormElement
-        if (form) {
-          form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }))
-        }
-      }, 50)
+      // Auto-submit via unified helper (sets input + ref + dispatches form submit)
+      submitFormProgrammatically(newInput)
     },
     onError: (error) => {
       showToastRef.current('error', t('aiChat.voiceInputError', { error }))
@@ -284,14 +294,7 @@ export default function AIChatPage() {
 
     if (state?.initialMessage && !initialMessageSent.current) {
       initialMessageSent.current = true
-      setInput(state.initialMessage)
-      // Auto-submit after a short delay
-      setTimeout(() => {
-        const form = document.querySelector('form')
-        if (form) {
-          form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }))
-        }
-      }, 100)
+      submitFormProgrammatically(state.initialMessage)
     }
 
     if (state?.autoStartRecording) {
@@ -561,6 +564,103 @@ export default function AIChatPage() {
     setTimeout(() => textareaRef.current?.focus(), 100)
   }
 
+  // --- Shared chat generation helpers (DRY handleSubmit / handleRegenerate) ---
+
+  /** Build sanitized ChatMessage array from Message[] for the AI API. */
+  const buildChatMessages = useCallback((sourceMessages: Message[]): ChatMessage[] => {
+    return sourceMessages.map(m => {
+      const sanitizedContent = sanitizeConfigBlocksForAI(m.content)
+      if (m.images && m.images.length > 0) {
+        const content: ChatMessageContent = [
+          { type: 'text' as const, text: sanitizedContent },
+          ...m.images.map(imgBase64 => ({
+            type: 'image_url' as const,
+            image_url: { url: imgBase64 }
+          }))
+        ]
+        return { role: m.role, content }
+      }
+      return { role: m.role, content: sanitizedContent }
+    })
+  }, [])
+
+  /** Execute a chat generation cycle: create AI placeholder → stream → error handling → cleanup. */
+  const executeChatGeneration = useCallback(async (
+    chatMessages: ChatMessage[],
+    conversationId: string | undefined,
+    options?: {
+      onError?: () => void
+      onFinally?: () => void
+    }
+  ) => {
+    const aiMessageId = (Date.now() + 1).toString()
+    const aiMessage: Message = {
+      id: aiMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date()
+    }
+    setMessages(prev => [...prev, aiMessage])
+    setGenerationPhase('thinking')
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
+    const currentGenerationId = ++generationIdRef.current
+
+    try {
+      let hasReceivedContent = false
+      await chatWithAI(chatMessages, (chunk) => {
+        if (!hasReceivedContent) {
+          hasReceivedContent = true
+          setGenerationPhase('streaming')
+        }
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === aiMessageId
+              ? { ...m, content: m.content + chunk }
+              : m
+          )
+        )
+      }, conversationId, (messageId) => {
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === aiMessageId
+              ? { ...m, id: String(messageId) }
+              : m
+          )
+        )
+      }, abortController.signal, () => {
+        if (generationIdRef.current === currentGenerationId) {
+          setGenerationPhase('pdf_waiting')
+        }
+      })
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        console.log('AI generation stopped by user')
+      } else {
+        console.error('Failed to get AI response:', error)
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === aiMessageId
+              ? { ...m, content: m.content || t('aiChat.aiErrorFallback') }
+              : m
+          )
+        )
+      }
+      options?.onError?.()
+    } finally {
+      if (generationIdRef.current === currentGenerationId) {
+        setGenerationPhase('idle')
+        abortControllerRef.current = null
+        options?.onFinally?.()
+      }
+    }
+  }, [t])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     // Use inputRef.current to get the latest value, avoiding stale closure issues
@@ -644,128 +744,26 @@ export default function AIChatPage() {
       }
     }
 
-    // Create a placeholder message for streaming
-    const aiMessageId = (Date.now() + 1).toString()
-    const aiMessage: Message = {
-      id: aiMessageId,
-      role: 'assistant',
-      content: '',
-      timestamp: new Date()
-    }
-    setMessages(prev => [...prev, aiMessage])
-    setIsLoading(true)
-    setIsGenerating(true)
-    setIsPdfWaiting(false)
-
-    // Abort any previous background stream (e.g., PDF wait phase from earlier request)
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-    }
-
-    // Create AbortController for this request
-    const abortController = new AbortController()
-    abortControllerRef.current = abortController
-    const currentGenerationId = ++generationIdRef.current
-
-    try {
-      // Build chat messages for API (with multimodal support)
-      // Sanitize config blocks to strip persistence-only fields (e.g., submitted_task_id)
-      // so the AI doesn't copy them into new responses
-      const chatMessages: ChatMessage[] = messages
-        .concat([userMessage])
-        .map(m => {
-          const sanitizedContent = sanitizeConfigBlocksForAI(m.content)
-          // If message has images, use multimodal format
-          if (m.images && m.images.length > 0) {
-            const content: ChatMessageContent = [
-              { type: 'text' as const, text: sanitizedContent },
-              ...m.images.map(imgBase64 => ({
-                type: 'image_url' as const,
-                image_url: { url: imgBase64 }
-              }))
-            ]
-            return { role: m.role, content }
-          }
-          // Text-only message
-          return { role: m.role, content: sanitizedContent }
-        })
-
-      let hasReceivedContent = false
-      await chatWithAI(chatMessages, (chunk) => {
-        if (!hasReceivedContent) {
-          hasReceivedContent = true
-          setIsLoading(false) // Stop loading animation once we start receiving content
-        }
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === aiMessageId
-              ? { ...m, content: m.content + chunk }
-              : m
-          )
-        )
-      }, conversationId || undefined, (messageId) => {
-        // Update the AI message ID to the backend ID for proper persistence
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === aiMessageId
-              ? { ...m, id: String(messageId) }
-              : m
-          )
-        )
-      }, abortController.signal, () => {
-        // PDF wait phase: initial LLM response done, now waiting for PDF parsing.
-        // Re-enable input so user can continue chatting.
-        if (generationIdRef.current === currentGenerationId) {
-          setIsGenerating(false)
-          setIsPdfWaiting(true)
-        }
-      })
-    } catch (error) {
-      // If user aborted, keep partial content as-is (don't overwrite with error)
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        console.log('AI generation stopped by user')
-      } else {
-        console.error('Failed to get AI response:', error)
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === aiMessageId
-              ? { ...m, content: m.content || t('aiChat.aiErrorFallback') }
-              : m
-          )
-        )
-      }
-      // On error, stop voice session
-      stopVoiceSession()
-    } finally {
-      // Only clean up state if this is still the active generation.
-      // A newer request may have already taken over (user sent new message during PDF wait).
-      if (generationIdRef.current === currentGenerationId) {
-        setIsLoading(false)
-        setIsGenerating(false)
-        setIsPdfWaiting(false)
-        abortControllerRef.current = null
-
+    // Build chat messages and execute generation with shared helper
+    const chatMessages = buildChatMessages(messages.concat([userMessage]))
+    await executeChatGeneration(chatMessages, conversationId || undefined, {
+      onError: () => stopVoiceSession(),
+      onFinally: () => {
         // Check for SUBMIT_TASK and CANCEL_TASK_NOW blocks in ALL cases (voice or text input)
-        // Use a timeout to ensure messages state is updated
         setTimeout(() => {
           const latestMessages = messagesRef.current
           const lastMessage = latestMessages[latestMessages.length - 1]
-
           if (lastMessage?.role === 'assistant') {
-            // Check for SUBMIT_TASK block - trigger submit on existing TaskConfigCard
             if (parseSubmitTask(lastMessage.content)) {
               setSubmitTaskTrigger(prev => prev + 1)
             }
-
-            // Check for CANCEL_TASK_NOW block - trigger cancel on existing CancelTaskCard
             if (parseCancelTaskNow(lastMessage.content)) {
               setCancelTaskTrigger(prev => prev + 1)
             }
           }
         }, 100)
 
-        // Notify voice session that LLM response is complete.
-        // The hook will parse VOICE_CONTROL and decide whether to restart recording.
+        // Notify voice session that LLM response is complete
         setTimeout(() => {
           const latestMessages = messagesRef.current
           const lastMessage = latestMessages[latestMessages.length - 1]
@@ -773,7 +771,7 @@ export default function AIChatPage() {
           notifyVoiceResponseComplete(aiContent)
         }, 150)
       }
-    }
+    })
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -789,11 +787,59 @@ export default function AIChatPage() {
     setTimeout(() => setToastMessage(null), 5000)
   }, [])
 
+  // Adapter for AssistantMessage onToast prop (object signature → auto-dismiss)
+  const handleToast = useCallback((toast: { type: 'error' | 'success' | 'info'; message: string }) => {
+    showToast(toast.type, toast.message)
+  }, [showToast])
+
   // Update ref for use in hook callbacks
   showToastRef.current = showToast
 
+  // --- Persistence helpers (DRY the repeated persist-to-backend patterns) ---
+
+  /** Persist an existing message's content update to backend (update pattern). */
+  const persistMessageUpdate = useCallback(async (
+    messageId: string,
+    updatedContent: string,
+    errorToastKey?: string
+  ) => {
+    if (!currentConversationId) return
+    const numericId = parseInt(messageId, 10)
+    const isBackendId = !isNaN(numericId) && numericId < 1000000000
+    if (!isBackendId) {
+      console.warn(`Skipping persistence for temporary message ID: ${messageId}`)
+      return
+    }
+    try {
+      await updateMessage(currentConversationId, numericId, updatedContent)
+    } catch (error) {
+      console.warn('Failed to persist message update to backend:', error)
+      if (errorToastKey) {
+        showToast('error', t(errorToastKey))
+      }
+    }
+  }, [currentConversationId, showToast, t])
+
+  /** Add a new assistant message to backend and remap its local ID (add+remap pattern). */
+  const persistNewAssistantMessage = useCallback(async (
+    localMessageId: string,
+    content: string
+  ) => {
+    if (!currentConversationId) return
+    try {
+      const savedMessage = await addMessage(currentConversationId, 'assistant', content)
+      setMessages(prev => prev.map(m =>
+        m.id === localMessageId
+          ? { ...m, id: String(savedMessage.id) }
+          : m
+      ))
+    } catch (error) {
+      console.warn('Failed to persist new assistant message to backend:', error)
+    }
+  }, [currentConversationId])
+
   // Clean message content by removing special markup blocks
-  const cleanMessageContent = (content: string): string => {
+  const cleanMessageContent = useCallback((content: string): string => {
     let cleaned = content
     cleaned = removeOptionsBlock(cleaned)
     cleaned = removeTaskConfigBlock(cleaned)
@@ -811,10 +857,10 @@ export default function AIChatPage() {
     // Remove PDF_PARSE_STATUS blocks - internal status tags
     cleaned = removePdfParseStatusBlock(cleaned)
     return cleaned.trim()
-  }
+  }, [])
 
   // Copy message content to clipboard (cleaned of special markup)
-  const handleCopy = async (content: string) => {
+  const handleCopy = useCallback(async (content: string) => {
     try {
       const cleanedContent = cleanMessageContent(content)
       if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -835,10 +881,10 @@ export default function AIChatPage() {
       console.error('Failed to copy:', error)
       showToast('error', t('aiChat.failedToCopy'))
     }
-  }
+  }, [cleanMessageContent, showToast, t])
 
   // Handle thumbs up/down feedback for a message
-  const handleFeedback = async (messageId: string, feedbackType: 'thumbs_up' | 'thumbs_down') => {
+  const handleFeedback = useCallback(async (messageId: string, feedbackType: 'thumbs_up' | 'thumbs_down') => {
     const numericId = parseInt(messageId, 10)
     if (isNaN(numericId)) {
       showToast('error', t('aiChat.invalidMessageId'))
@@ -847,18 +893,19 @@ export default function AIChatPage() {
 
     const currentFeedback = feedbacks.get(numericId)
 
-    // Get message content and context for preservation
-    const messageIndex = messages.findIndex(m => m.id === messageId)
+    // Get message content and context for preservation (use ref to avoid stale closure)
+    const currentMessages = messagesRef.current
+    const messageIndex = currentMessages.findIndex(m => m.id === messageId)
     let messageContent: string | null = null
     let contextMessages: { role: 'user' | 'assistant'; content: string }[] | null = null
 
     if (messageIndex >= 0) {
-      const currentMessage = messages[messageIndex]
+      const currentMessage = currentMessages[messageIndex]
       messageContent = currentMessage.content
 
       // Get previous message for context (if exists)
       if (messageIndex > 0) {
-        const prevMessage = messages[messageIndex - 1]
+        const prevMessage = currentMessages[messageIndex - 1]
         contextMessages = [{
           role: prevMessage.role,
           content: prevMessage.content
@@ -922,7 +969,7 @@ export default function AIChatPage() {
       }
       showToast('error', t('aiChat.failedToSubmitFeedback'))
     }
-  }
+  }, [feedbacks, showToast, t])
 
   // Format timestamp for display
   const formatTimestamp = (date: Date): string => {
@@ -946,7 +993,7 @@ export default function AIChatPage() {
   }
 
   // Handle helpfulness feedback for task submission
-  const handleHelpfulnessFeedback = async (
+  const handleHelpfulnessFeedback = useCallback(async (
     messageId: string,
     helpfulness: 'helpful' | 'not_helpful',
     relatedTaskId: string,
@@ -961,9 +1008,10 @@ export default function AIChatPage() {
 
     // Calculate time from FIRST message in conversation to current time (feedback submission)
     let timeToActionSeconds: number | null = null
+    const currentMessages = messagesRef.current
 
-    if (messages.length > 0) {
-      const firstMessageTime = messages[0].timestamp.getTime()
+    if (currentMessages.length > 0) {
+      const firstMessageTime = currentMessages[0].timestamp.getTime()
       const now = Date.now()
       timeToActionSeconds = (now - firstMessageTime) / 1000
     }
@@ -997,13 +1045,14 @@ export default function AIChatPage() {
       })
       showToast('error', t('aiChat.failedToSubmitFeedback'))
     }
-  }
+  }, [showToast, t])
 
   // Delete a message and all subsequent messages (for branching)
-  const handleDeleteMessage = async (messageIndex: number) => {
+  const handleDeleteMessage = useCallback(async (messageIndex: number) => {
     if (isGenerating) return
 
-    const targetMessage = messages[messageIndex]
+    const currentMessages = messagesRef.current
+    const targetMessage = currentMessages[messageIndex]
     if (!targetMessage) return
 
     // If we have a conversation and a valid message ID, delete from backend
@@ -1023,119 +1072,31 @@ export default function AIChatPage() {
     }
 
     // Update local state
-    const newMessages = messages.slice(0, messageIndex)
+    const newMessages = currentMessages.slice(0, messageIndex)
     setMessages(newMessages)
     showToast('info', t('aiChat.messageDeleted'))
-  }
+  }, [isGenerating, currentConversationId, showToast, t])
 
   // Regenerate AI response for a specific message
-  const handleRegenerate = async (messageIndex: number) => {
+  const handleRegenerate = useCallback(async (messageIndex: number) => {
     if (isGenerating) return
 
     // Find the user message that prompted this response
+    const currentMessages = messagesRef.current
     const userMessageIndex = messageIndex - 1
-    if (userMessageIndex < 0 || messages[userMessageIndex].role !== 'user') {
+    if (userMessageIndex < 0 || currentMessages[userMessageIndex].role !== 'user') {
       showToast('error', t('aiChat.cannotRegenerate'))
       return
     }
 
     // Remove the current assistant message and keep messages up to (not including) it
-    const newMessages = messages.slice(0, messageIndex)
+    const newMessages = currentMessages.slice(0, messageIndex)
     setMessages(newMessages)
 
-    // Create a new placeholder for streaming
-    const aiMessageId = (Date.now() + 1).toString()
-    const aiMessage: Message = {
-      id: aiMessageId,
-      role: 'assistant',
-      content: '',
-      timestamp: new Date()
-    }
-    setMessages(prev => [...prev, aiMessage])
-    setIsLoading(true)
-    setIsGenerating(true)
-    setIsPdfWaiting(false)
-
-    // Abort any previous background stream (e.g., PDF wait phase from earlier request)
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-    }
-
-    // Create AbortController for this request
-    const abortController = new AbortController()
-    abortControllerRef.current = abortController
-    const currentGenerationId = ++generationIdRef.current
-
-    try {
-      // Build chat messages for API (with multimodal support)
-      // Sanitize config blocks to strip persistence-only fields (same as handleSubmit)
-      const chatMessages: ChatMessage[] = newMessages.map(m => {
-        const sanitizedContent = sanitizeConfigBlocksForAI(m.content)
-        if (m.images && m.images.length > 0) {
-          const content: ChatMessageContent = [
-            { type: 'text' as const, text: sanitizedContent },
-            ...m.images.map(imgBase64 => ({
-              type: 'image_url' as const,
-              image_url: { url: imgBase64 }
-            }))
-          ]
-          return { role: m.role, content }
-        }
-        return { role: m.role, content: sanitizedContent }
-      })
-
-      let hasReceivedContent = false
-      await chatWithAI(chatMessages, (chunk) => {
-        if (!hasReceivedContent) {
-          hasReceivedContent = true
-          setIsLoading(false)
-        }
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === aiMessageId
-              ? { ...m, content: m.content + chunk }
-              : m
-          )
-        )
-      }, currentConversationId || undefined, (messageId) => {
-        // Update the AI message ID to the backend ID for proper persistence
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === aiMessageId
-              ? { ...m, id: String(messageId) }
-              : m
-          )
-        )
-      }, abortController.signal, () => {
-        // PDF wait phase: initial LLM response done, now waiting for PDF parsing.
-        if (generationIdRef.current === currentGenerationId) {
-          setIsGenerating(false)
-          setIsPdfWaiting(true)
-        }
-      })
-    } catch (error) {
-      // If user aborted, keep partial content as-is
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        console.log('AI regeneration stopped by user')
-      } else {
-        console.error('Failed to regenerate response:', error)
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === aiMessageId
-              ? { ...m, content: m.content || t('aiChat.aiErrorFallback') }
-              : m
-          )
-        )
-      }
-    } finally {
-      if (generationIdRef.current === currentGenerationId) {
-        setIsLoading(false)
-        setIsGenerating(false)
-        setIsPdfWaiting(false)
-        abortControllerRef.current = null
-      }
-    }
-  }
+    // Build chat messages and execute generation with shared helper
+    const chatMessages = buildChatMessages(newMessages)
+    await executeChatGeneration(chatMessages, currentConversationId || undefined)
+  }, [isGenerating, currentConversationId, showToast, t, buildChatMessages, executeChatGeneration])
 
   // Stop AI generation and voice recording
   const handleStopGeneration = useCallback(() => {
@@ -1144,62 +1105,25 @@ export default function AIChatPage() {
   }, [stopVoiceSession])
 
   // Handle option button selection - auto-send message
-  const handleOptionSelect = (text: string) => {
-    setInput(text)
-    // Auto-submit
-    setTimeout(() => {
-      const form = document.querySelector('form')
-      if (form) {
-        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-      }
-    }, 100)
-  }
+  const handleOptionSelect = useCallback((text: string) => {
+    submitFormProgrammatically(text)
+  }, [submitFormProgrammatically])
 
   // Handle task submission success
-  const handleTaskSubmitSuccess = async (taskId: string, messageId: string) => {
+  const handleTaskSubmitSuccess = useCallback(async (taskId: string, messageId: string) => {
     // Update the original message's TASK_CONFIG block to include submitted_task_id
     // This persists the submission status so it's preserved when reloading the conversation
 
-    // Find the message in current state
-    const messageIndex = messages.findIndex(m => m.id === messageId)
-    // If message not found (shouldn't happen), return
-    if (messageIndex === -1 && messages.length > 0) {
+    // Find the message in current state (use ref to avoid stale closure)
+    const currentMessages = messagesRef.current
+    const messageIndex = currentMessages.findIndex(m => m.id === messageId)
+    if (messageIndex === -1 && currentMessages.length > 0) {
       console.warn(`Message ${messageId} not found for task update`)
     }
 
-    // Use a function to update state to ensure we're working with latest, but we need the content for API call
-    // We'll compute it based on the message passed or find it in current messages
+    // Compute updated content from ref, then update state and persist
     let updatedContent: string | null = null
-
-    setMessages(prev => {
-      return prev.map(m => {
-        if (m.id === messageId) {
-          const newContent = m.content.replace(
-            /\[TASK_CONFIG\]([\s\S]*?)\[\/TASK_CONFIG\]/,
-            (_match, json) => {
-              try {
-                const config = JSON.parse(json.trim())
-                config.submitted_task_id = taskId
-                return `[TASK_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/TASK_CONFIG]`
-              } catch {
-                return _match // If parsing fails, keep original
-              }
-            }
-          )
-          updatedContent = newContent // Capture for API call
-          return { ...m, content: newContent }
-        }
-        return m
-      })
-    })
-
-    // We need to wait for the state update or just trust our calculation. 
-    // Since we need to send the API request immediately, we'll re-calculate it safely
-    // (or simpler: assume strict mode double-invocation won't hurt the regex replace)
-
-    // Better approach: Calculate first, then update
-    // But we need the ORIGINAL content. 
-    const currentMessage = messages.find(m => m.id === messageId)
+    const currentMessage = currentMessages.find(m => m.id === messageId)
     if (currentMessage) {
       updatedContent = currentMessage.content.replace(
         /\[TASK_CONFIG\]([\s\S]*?)\[\/TASK_CONFIG\]/,
@@ -1215,27 +1139,12 @@ export default function AIChatPage() {
       )
     }
 
-    // Try to persist the update to backend if we have a conversation ID
-    // Message IDs from backend are small integers (auto-increment), while
-    // frontend-generated IDs are timestamps (large numbers like 1706191234567)
-    if (currentConversationId && updatedContent) {
-      const numericId = parseInt(messageId, 10)
-      // Backend message IDs are typically small integers (< 1000000000)
-      // Timestamps are 13-digit numbers (> 1000000000000)
-      // Check if it's a likely backend ID (safe integer and not a timestamp)
-      const isBackendId = !isNaN(numericId) && numericId < 1000000000
-
-      if (isBackendId) {
-        try {
-          await updateMessage(currentConversationId, numericId, updatedContent)
-        } catch (error) {
-          // Silently fail - local state is already updated
-          console.warn('Failed to persist message update to backend:', error)
-          showToast('error', t('aiChat.failedToSaveTaskStatus'))
-        }
-      } else {
-        console.warn(`Skipping persistence for temporary message ID: ${messageId}`)
-      }
+    if (updatedContent) {
+      const finalContent = updatedContent
+      setMessages(prev => prev.map(m =>
+        m.id === messageId ? { ...m, content: finalContent } : m
+      ))
+      await persistMessageUpdate(messageId, updatedContent, 'aiChat.failedToSaveTaskStatus')
     }
 
     // Add a success message with navigation card to the chat and persist to backend
@@ -1255,24 +1164,11 @@ export default function AIChatPage() {
     }
     setMessages(prev => [...prev, successMessage])
 
-    // Persist success message to backend
-    if (currentConversationId) {
-      try {
-        const savedMessage = await addMessage(currentConversationId, 'assistant', successContent)
-        // Update the message ID to the backend ID
-        setMessages(prev => prev.map(m =>
-          m.id === successMessage.id
-            ? { ...m, id: String(savedMessage.id) }
-            : m
-        ))
-      } catch (error) {
-        console.warn('Failed to persist success message to backend:', error)
-      }
-    }
-  }
+    await persistNewAssistantMessage(successMessage.id, successContent)
+  }, [persistMessageUpdate, persistNewAssistantMessage, t])
 
   // Handle registration success (persist to message history)
-  const handleRegistrationSuccess = async (
+  const handleRegistrationSuccess = useCallback(async (
     taskId: string,
     fileCount: number,
     datasetName: string,
@@ -1281,42 +1177,16 @@ export default function AIChatPage() {
   ) => {
     if (!messageId) return
 
-    // Find the message in current state
-    const messageIndex = messages.findIndex(m => m.id === messageId)
-    if (messageIndex === -1 && messages.length > 0) {
+    // Find the message from ref to avoid stale closure
+    const currentMessages = messagesRef.current
+    const messageIndex = currentMessages.findIndex(m => m.id === messageId)
+    if (messageIndex === -1 && currentMessages.length > 0) {
       console.warn(`Message ${messageId} not found for registration update`)
     }
 
-    // Capture updatedContent from the state update
+    // Compute updated content from ref, then update state and persist
     let updatedContent: string | null = null
-
-    setMessages(prev => {
-      return prev.map(m => {
-        if (m.id === messageId) {
-          const newContent = m.content.replace(
-            /\[DATASET_REGISTRATION\]([\s\S]*?)\[\/DATASET_REGISTRATION\]/,
-            (_match, json) => {
-              try {
-                const config = JSON.parse(json.trim())
-                config.submitted_task_id = taskId
-                config.submitted_file_count = fileCount
-                config.submitted_dataset_name = datasetName
-                config.submitted_mode = mode
-                return `[DATASET_REGISTRATION]\n${JSON.stringify(config, null, 2)}\n[/DATASET_REGISTRATION]`
-              } catch {
-                return _match
-              }
-            }
-          )
-          updatedContent = newContent
-          return { ...m, content: newContent }
-        }
-        return m
-      })
-    })
-
-    // Re-calculate for API call (same pattern as handleTaskSubmitSuccess)
-    const currentMessage = messages.find(m => m.id === messageId)
+    const currentMessage = currentMessages.find(m => m.id === messageId)
     if (currentMessage) {
       updatedContent = currentMessage.content.replace(
         /\[DATASET_REGISTRATION\]([\s\S]*?)\[\/DATASET_REGISTRATION\]/,
@@ -1335,73 +1205,32 @@ export default function AIChatPage() {
       )
     }
 
-    // Persist to backend
-    if (currentConversationId && updatedContent) {
-      const numericId = parseInt(messageId, 10)
-      const isBackendId = !isNaN(numericId) && numericId < 1000000000
-      if (isBackendId) {
-        try {
-          await updateMessage(currentConversationId, numericId, updatedContent)
-        } catch (error) {
-          console.warn('Failed to persist registration update:', error)
-          showToast('error', t('aiChat.failedToSaveRegistrationStatus'))
-        }
-      } else {
-        console.warn(`Skipping persistence for temporary message ID: ${messageId}`)
-      }
+    if (updatedContent) {
+      const finalContent = updatedContent
+      setMessages(prev => prev.map(m =>
+        m.id === messageId ? { ...m, content: finalContent } : m
+      ))
+      await persistMessageUpdate(messageId, updatedContent, 'aiChat.failedToSaveRegistrationStatus')
     }
 
     showToast('info', t('aiChat.registrationStarted'))
 
     // Auto-send message to trigger AI's STEP 6 response (METADATA_UPLOAD card)
     const autoMessage = `Registration submitted. ${fileCount} Files are uploading in the background.`
-    setInput(autoMessage)
-    setTimeout(() => {
-      const form = document.querySelector('form')
-      if (form) {
-        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-      }
-    }, 100)
-  }
+    submitFormProgrammatically(autoMessage)
+  }, [persistMessageUpdate, showToast, submitFormProgrammatically, t])
 
   // Handle metadata upload success (persist upload_result to message history)
-  const handleMetadataUploadSuccess = async (
+  const handleMetadataUploadSuccess = useCallback(async (
     result: import('../api').UploadSplitsResponse,
     datasetId: string,
     messageId?: string
   ) => {
     if (!messageId) return
 
+    // Compute updated content from ref, then update state and persist
     let updatedContent: string | null = null
-
-    setMessages(prev => {
-      return prev.map(m => {
-        if (m.id === messageId) {
-          const newContent = m.content.replace(
-            /\[METADATA_UPLOAD\]([\s\S]*?)\[\/METADATA_UPLOAD\]/,
-            (_match, json) => {
-              try {
-                const config = JSON.parse(json.trim())
-                config.upload_result = {
-                  updated_count: result.updated_count,
-                  not_found_count: result.not_found_count,
-                  auto_val_count: result.auto_val_count
-                }
-                return `[METADATA_UPLOAD]\n${JSON.stringify(config, null, 2)}\n[/METADATA_UPLOAD]`
-              } catch {
-                return _match
-              }
-            }
-          )
-          updatedContent = newContent
-          return { ...m, content: newContent }
-        }
-        return m
-      })
-    })
-
-    // Re-calculate for API call
-    const currentMessage = messages.find(m => m.id === messageId)
+    const currentMessage = messagesRef.current.find(m => m.id === messageId)
     if (currentMessage) {
       updatedContent = currentMessage.content.replace(
         /\[METADATA_UPLOAD\]([\s\S]*?)\[\/METADATA_UPLOAD\]/,
@@ -1421,39 +1250,32 @@ export default function AIChatPage() {
       )
     }
 
-    // Persist to backend
-    if (currentConversationId && updatedContent) {
-      const numericId = parseInt(messageId, 10)
-      const isBackendId = !isNaN(numericId) && numericId < 1000000000
-      if (isBackendId) {
-        try {
-          await updateMessage(currentConversationId, numericId, updatedContent)
-        } catch (error) {
-          console.warn('Failed to persist metadata upload update:', error)
-          showToast('error', t('aiChat.failedToSaveMetadataStatus'))
-        }
-      }
+    if (updatedContent) {
+      const finalContent = updatedContent
+      setMessages(prev => prev.map(m =>
+        m.id === messageId ? { ...m, content: finalContent } : m
+      ))
+      await persistMessageUpdate(messageId, updatedContent, 'aiChat.failedToSaveMetadataStatus')
     }
 
     showToast('success', t('aiChat.metadataUploaded', { count: result.updated_count }))
-  }
+  }, [persistMessageUpdate, showToast, t])
 
   // Handle task submission error
-  const handleTaskSubmitError = (error: string) => {
+  const handleTaskSubmitError = useCallback((error: string) => {
     // Send error to agent for analysis
     const errorMessage = `The task submission failed with error: "${error}". Can you help me understand what went wrong and how to fix it?`
     setInput(errorMessage)
-  }
+  }, [])
 
   // Handle inference submission success
-  const handleInferenceSubmitSuccess = async (taskId: string, messageId: string) => {
+  const handleInferenceSubmitSuccess = useCallback(async (taskId: string, messageId: string) => {
     // Update the original message's INFERENCE_CONFIG block to include submitted_task_id
     // This persists the submission status so it's preserved when reloading the conversation
 
-    // First, compute the updated content
+    // Compute updated content from ref
     let updatedContent: string | null = null
-
-    const currentMessage = messages.find(m => m.id === messageId)
+    const currentMessage = messagesRef.current.find(m => m.id === messageId)
     if (currentMessage) {
       updatedContent = currentMessage.content.replace(
         /\[INFERENCE_CONFIG\]([\s\S]*?)\[\/INFERENCE_CONFIG\]/,
@@ -1469,26 +1291,12 @@ export default function AIChatPage() {
       )
     }
 
-    setMessages(prev => prev.map(m => {
-      if (m.id === messageId && updatedContent) {
-        return { ...m, content: updatedContent }
-      }
-      return m
-    }))
-
-    // Try to persist the update to backend if we have a conversation ID
-    if (currentConversationId && updatedContent) {
-      const numericId = parseInt(messageId, 10)
-      const isBackendId = !isNaN(numericId) && numericId < 1000000000
-
-      if (isBackendId) {
-        try {
-          await updateMessage(currentConversationId, numericId, updatedContent)
-        } catch (error) {
-          console.warn('Failed to persist message update to backend:', error)
-          showToast('error', t('aiChat.failedToSaveTaskStatus'))
-        }
-      }
+    if (updatedContent) {
+      const finalContent = updatedContent
+      setMessages(prev => prev.map(m =>
+        m.id === messageId ? { ...m, content: finalContent } : m
+      ))
+      await persistMessageUpdate(messageId, updatedContent, 'aiChat.failedToSaveTaskStatus')
     }
 
     // Add a success message with navigation card to Results Viewer and persist to backend
@@ -1506,31 +1314,17 @@ export default function AIChatPage() {
     }
     setMessages(prev => [...prev, successMessage])
 
-    // Persist success message to backend
-    if (currentConversationId) {
-      try {
-        const savedMessage = await addMessage(currentConversationId, 'assistant', successContent)
-        // Update the message ID to the backend ID
-        setMessages(prev => prev.map(m =>
-          m.id === successMessage.id
-            ? { ...m, id: String(savedMessage.id) }
-            : m
-        ))
-      } catch (error) {
-        console.warn('Failed to persist success message to backend:', error)
-      }
-    }
-  }
+    await persistNewAssistantMessage(successMessage.id, successContent)
+  }, [persistMessageUpdate, persistNewAssistantMessage, t])
 
   // Handle analysis submission success (internal or external)
-  const handleInternalAnalysisSubmitSuccess = async (taskId: string, analysisId: string, messageId: string) => {
+  const handleInternalAnalysisSubmitSuccess = useCallback(async (taskId: string, analysisId: string, messageId: string) => {
     // Determine if this is external validation (analysisId is empty for external)
     const isExternalValidation = !analysisId
 
-    // Update the original message's ANALYSIS_CONFIG block to include submitted_analysis_id or external_validation_task_id
+    // Update the original message's ANALYSIS_CONFIG block (use ref to avoid stale closure)
     let updatedContent: string | null = null
-
-    const currentMessage = messages.find(m => m.id === messageId)
+    const currentMessage = messagesRef.current.find(m => m.id === messageId)
     if (currentMessage) {
       updatedContent = currentMessage.content.replace(
         /\[ANALYSIS_CONFIG\]([\s\S]*?)\[\/ANALYSIS_CONFIG\]/,
@@ -1551,26 +1345,12 @@ export default function AIChatPage() {
       )
     }
 
-    setMessages(prev => prev.map(m => {
-      if (m.id === messageId && updatedContent) {
-        return { ...m, content: updatedContent }
-      }
-      return m
-    }))
-
-    // Persist the update to backend
-    if (currentConversationId && updatedContent) {
-      const numericId = parseInt(messageId, 10)
-      const isBackendId = !isNaN(numericId) && numericId < 1000000000
-
-      if (isBackendId) {
-        try {
-          await updateMessage(currentConversationId, numericId, updatedContent)
-        } catch (error) {
-          console.warn('Failed to persist message update to backend:', error)
-          showToast('error', t('aiChat.failedToSaveAnalysisStatus'))
-        }
-      }
+    if (updatedContent) {
+      const finalContent = updatedContent
+      setMessages(prev => prev.map(m =>
+        m.id === messageId ? { ...m, content: finalContent } : m
+      ))
+      await persistMessageUpdate(messageId, updatedContent, 'aiChat.failedToSaveAnalysisStatus')
     }
 
     // For external validation, build QUICK_ANALYSIS_CONFIG block for inline results display
@@ -1619,25 +1399,13 @@ export default function AIChatPage() {
     }
     setMessages(prev => [...prev, successMessage])
 
-    // Persist success message to backend
-    if (currentConversationId) {
-      try {
-        const savedMessage = await addMessage(currentConversationId, 'assistant', successContent)
-        setMessages(prev => prev.map(m =>
-          m.id === successMessage.id
-            ? { ...m, id: String(savedMessage.id) }
-            : m
-        ))
-      } catch (error) {
-        console.warn('Failed to persist success message to backend:', error)
-      }
-    }
-  }
+    await persistNewAssistantMessage(successMessage.id, successContent)
+  }, [persistMessageUpdate, persistNewAssistantMessage, t])
 
   // Handle task history data loaded - persist cached tasks to message content
-  const handleTaskHistoryDataLoaded = async (data: CachedTaskData[], messageId: string) => {
-    // Find the message and update TASK_HISTORY_CONFIG block with cached_tasks
-    const currentMessage = messages.find(m => m.id === messageId)
+  const handleTaskHistoryDataLoaded = useCallback(async (data: CachedTaskData[], messageId: string) => {
+    // Find the message from ref to avoid stale closure
+    const currentMessage = messagesRef.current.find(m => m.id === messageId)
     if (!currentMessage) return
 
     const updatedContent = currentMessage.content.replace(
@@ -1659,25 +1427,14 @@ export default function AIChatPage() {
       m.id === messageId ? { ...m, content: updatedContent } : m
     ))
 
-    // Persist to backend if we have a valid backend message ID
-    if (currentConversationId) {
-      const numericId = parseInt(messageId, 10)
-      const isBackendId = !isNaN(numericId) && numericId < 1000000000
-
-      if (isBackendId) {
-        try {
-          await updateMessage(currentConversationId, numericId, updatedContent)
-        } catch (error) {
-          console.warn('Failed to persist task history cache to backend:', error)
-        }
-      }
-    }
-  }
+    // Persist to backend
+    await persistMessageUpdate(messageId, updatedContent)
+  }, [persistMessageUpdate])
 
   // Handle quick analysis data loaded - persist cached data to message content
-  const handleQuickAnalysisDataLoaded = async (data: CachedAnalysisData, messageId: string) => {
-    // Find the message and update QUICK_ANALYSIS_CONFIG block with cached_data
-    const currentMessage = messages.find(m => m.id === messageId)
+  const handleQuickAnalysisDataLoaded = useCallback(async (data: CachedAnalysisData, messageId: string) => {
+    // Find the message from ref to avoid stale closure
+    const currentMessage = messagesRef.current.find(m => m.id === messageId)
     if (!currentMessage) return
 
     const updatedContent = currentMessage.content.replace(
@@ -1698,20 +1455,9 @@ export default function AIChatPage() {
       m.id === messageId ? { ...m, content: updatedContent } : m
     ))
 
-    // Persist to backend if we have a valid backend message ID
-    if (currentConversationId) {
-      const numericId = parseInt(messageId, 10)
-      const isBackendId = !isNaN(numericId) && numericId < 1000000000
-
-      if (isBackendId) {
-        try {
-          await updateMessage(currentConversationId, numericId, updatedContent)
-        } catch (error) {
-          console.warn('Failed to persist quick analysis cache to backend:', error)
-        }
-      }
-    }
-  }
+    // Persist to backend
+    await persistMessageUpdate(messageId, updatedContent)
+  }, [persistMessageUpdate])
 
   return (
     <div className="flex h-full bg-gray-50 relative overflow-hidden">
@@ -2007,7 +1753,7 @@ export default function AIChatPage() {
                         isLoading={isGenerating}
                         csvContent={csvContentMap.get(message.id)?.content}
                         csvFileName={csvContentMap.get(message.id)?.fileName}
-                        onToast={setToastMessage}
+                        onToast={handleToast}
                         onRegistrationSuccess={handleRegistrationSuccess}
                         onMetadataUploadSuccess={handleMetadataUploadSuccess}
                         submitTaskTrigger={index === lastTaskConfigIndex ? submitTaskTrigger : undefined}
@@ -2181,7 +1927,7 @@ export default function AIChatPage() {
               </div>
             )}
 
-            <form id="chat-form" onSubmit={handleSubmit} className="relative group">
+            <form ref={formRef} id="chat-form" onSubmit={handleSubmit} className="relative group">
               <div className={`
                 relative flex items-center 
                 bg-white/80 backdrop-blur-xl 
