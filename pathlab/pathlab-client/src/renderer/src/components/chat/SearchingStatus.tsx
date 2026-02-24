@@ -230,9 +230,11 @@ export const SearchCompletedCard = React.memo(function SearchCompletedCard({
                     </span>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium text-gray-800 truncate group-hover:text-green-700">
-                        {result.title}
+                        {result.title || source || result.url}
                       </p>
-                      <p className="text-[10px] text-gray-400 truncate">{source}</p>
+                      {result.title && (
+                        <p className="text-[10px] text-gray-400 truncate">{source}</p>
+                      )}
                     </div>
                     <ExternalLink className="w-3 h-3 text-gray-300 group-hover:text-green-500 flex-shrink-0 mt-0.5" />
                   </a>
