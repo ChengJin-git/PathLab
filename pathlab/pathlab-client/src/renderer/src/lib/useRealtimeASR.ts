@@ -41,6 +41,11 @@ export interface ASREvent {
   stash?: string
   transcript?: string
   error?: { type?: string; code?: string; message: string; param?: string }
+  // Progress events from backend
+  step?: string
+  provider?: string
+  attempt?: number
+  max_attempts?: number
 }
 
 export interface UseRealtimeASROptions {
@@ -95,6 +100,8 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
   const cleanupPromiseRef = useRef<Promise<void>>(Promise.resolve())
   // Resolve function for session.updated promise - called when server is ready for audio
   const sessionUpdatedResolveRef = useRef<(() => void) | null>(null)
+  // Reset function for adaptive session setup timeout - called on progress events
+  const sessionSetupResetRef = useRef<(() => void) | null>(null)
 
   // Store all callbacks in refs so they are always fresh
   const optionsRef = useRef(options)
@@ -119,6 +126,7 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
   const cleanup = useCallback(() => {
     startingRef.current = false
     sessionUpdatedResolveRef.current = null
+    sessionSetupResetRef.current = null
 
     if (maxTimeoutRef.current) {
       clearTimeout(maxTimeoutRef.current)
@@ -279,6 +287,13 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
               setPartialText('')
               break
             }
+            case 'session.progress':
+              console.log(`[ASR] Progress: ${data.step}${data.provider ? ` (${data.provider})` : ''}${data.attempt ? ` attempt ${data.attempt}/${data.max_attempts}` : ''}`)
+              // Reset session setup timeout on progress - see adaptive timeout below
+              if (sessionSetupResetRef.current) {
+                sessionSetupResetRef.current()
+              }
+              break
             case 'error':
               console.error('[ASR] Server error:', data.error?.message)
               opts.onError?.(data.error?.message || 'Unknown ASR error')
@@ -317,21 +332,35 @@ export function useRealtimeASR(options: UseRealtimeASROptions): UseRealtimeASRRe
       })
 
       // Wait for session.updated from server (indicates server is ready for audio)
-      // This is critical: the server needs to complete session setup before we send audio
-      // Backend may retry upstream connections (up to 3×30s), so allow generous timeout
+      // Uses adaptive timeout: resets the 15s timer each time a progress event is received,
+      // so we only timeout if the backend goes silent for 15s straight.
       console.log('[ASR] Waiting for session.updated...')
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
+        const SESSION_SETUP_TIMEOUT_MS = 15000
+        let timeout = setTimeout(() => {
+          sessionSetupResetRef.current = null
           reject(new Error('Session setup timeout - server did not respond'))
-        }, 35000)
+        }, SESSION_SETUP_TIMEOUT_MS)
+
+        // Allow progress events to reset the timer (adaptive timeout)
+        sessionSetupResetRef.current = () => {
+          clearTimeout(timeout)
+          timeout = setTimeout(() => {
+            sessionSetupResetRef.current = null
+            reject(new Error('Session setup timeout - server did not respond'))
+          }, SESSION_SETUP_TIMEOUT_MS)
+        }
+
         sessionUpdatedResolveRef.current = () => {
           clearTimeout(timeout)
+          sessionSetupResetRef.current = null
           resolve()
         }
         // Also reject if WebSocket closes during wait
         const origOnClose = ws.onclose
         ws.onclose = (event) => {
           clearTimeout(timeout)
+          sessionSetupResetRef.current = null
           if (sessionUpdatedResolveRef.current) {
             sessionUpdatedResolveRef.current = null
             reject(new Error('WebSocket closed during session setup'))

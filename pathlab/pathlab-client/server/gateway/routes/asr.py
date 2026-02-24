@@ -48,7 +48,7 @@ async def _check_local_asr_available(base_url: str, api_key: str = None) -> Tupl
         headers = {}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
-        async with httpx.AsyncClient(timeout=3.0) as client:
+        async with httpx.AsyncClient(timeout=1.5) as client:
             response = await client.get(f"{base_url}/models", headers=headers)
             if response.status_code == 200:
                 data = response.json()
@@ -137,6 +137,9 @@ async def asr_realtime_websocket(
 
     logger.info(f"WebSocket authenticated for user: {user.email}")
 
+    # Send progress: authenticated
+    await websocket.send_json({"type": "session.progress", "step": "authenticated"})
+
     # Get settings
     global_settings = Config.get_global_settings()
 
@@ -165,6 +168,7 @@ async def asr_realtime_websocket(
         else:
             # HTTP URL - check availability via HTTP API
             logger.info(f"Checking local ASR server at {local_asr_base_url}...")
+            await websocket.send_json({"type": "session.progress", "step": "checking_local_asr"})
             is_available, detected_model = await _check_local_asr_available(local_asr_base_url, local_asr_api_key)
             if is_available:
                 use_local = True
@@ -194,19 +198,26 @@ async def asr_realtime_websocket(
             "OpenAI-Beta": "realtime=v1"
         }
 
-        max_retries = 3
+        max_retries = 2
         last_error = None
         for attempt in range(1, max_retries + 1):
             try:
                 logger.info(f"Connecting to DashScope ASR (attempt {attempt}/{max_retries}): {url}")
-                ws = await websockets.connect(url, additional_headers=headers, open_timeout=30)
+                await websocket.send_json({
+                    "type": "session.progress",
+                    "step": "connecting_upstream",
+                    "provider": "DashScope",
+                    "attempt": attempt,
+                    "max_attempts": max_retries
+                })
+                ws = await websockets.connect(url, additional_headers=headers, open_timeout=10)
                 logger.info("Connected to DashScope realtime ASR")
                 return ws
             except Exception as e:
                 last_error = e
                 logger.warning(f"DashScope connection attempt {attempt}/{max_retries} failed: {e}")
                 if attempt < max_retries:
-                    wait_time = attempt * 1.0  # 1s, 2s
+                    wait_time = attempt * 1.0
                     logger.info(f"Retrying in {wait_time}s...")
                     await asyncio.sleep(wait_time)
 
@@ -243,7 +254,12 @@ async def asr_realtime_websocket(
                     headers["Authorization"] = f"Bearer {local_asr_api_key}"
 
                 logger.info(f"Connecting to local ASR: {url}")
-                upstream_ws = await websockets.connect(url, additional_headers=headers, open_timeout=30)
+                await websocket.send_json({
+                    "type": "session.progress",
+                    "step": "connecting_upstream",
+                    "provider": "Local ASR"
+                })
+                upstream_ws = await websockets.connect(url, additional_headers=headers, open_timeout=10)
                 source_name = "Local ASR"
                 logger.info(f"Connected to local ASR with model: {effective_model}")
             except Exception as local_err:

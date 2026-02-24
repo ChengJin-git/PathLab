@@ -160,9 +160,16 @@ export default function AIChatPage() {
 
   const formRef = useRef<HTMLFormElement>(null)
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
+  // Debounced scroll-to-bottom: during streaming, chunks trigger setMessages at ~16fps (rAF batching),
+  // but we only need to scroll every ~100ms to keep perceived smoothness.
+  const scrollRafRef = useRef<number | null>(null)
+  const scrollToBottom = useCallback(() => {
+    if (scrollRafRef.current !== null) return // already scheduled
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    })
+  }, [])
 
   // Programmatically submit the chat form after setting input.
   // Uses ref-based approach instead of DOM query to avoid fragile setTimeout + querySelector patterns.
@@ -209,7 +216,10 @@ export default function AIChatPage() {
   const realtimeIsConnecting = voiceState === 'connecting'
 
   // Pre-compute CSV content mapping: assistant message ID -> most recent CSV from any previous user message
-  // Uses O(n) single pass: track the most recent CSV as we iterate forward
+  // Uses O(n) single pass: track the most recent CSV as we iterate forward.
+  // Only recalculates when message count changes — CSV attachments are on user messages
+  // and never change during streaming (which only appends content to the last assistant message).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const csvContentMap = useMemo(() => {
     const map = new Map<string, { content: string; fileName: string }>()
     let lastCSV: { content: string; fileName: string } | null = null
@@ -225,7 +235,7 @@ export default function AIChatPage() {
       }
     }
     return map
-  }, [messages])
+  }, [messages.length])
 
   useEffect(() => {
     // Don't scroll to bottom if we're restoring scroll position
@@ -258,7 +268,9 @@ export default function AIChatPage() {
     }
   }, [urlConversationId])
 
-  // Restore scroll position after messages are loaded (when returning from another page)
+  // Restore scroll position after messages are loaded (when returning from another page).
+  // Depends on messages.length instead of messages to avoid re-running on every streaming chunk.
+  // Scroll restore only matters when message count changes (initial load / conversation switch).
   useEffect(() => {
     const savedScrollPosition = sessionStorage.getItem('ai-chat-scroll-position')
     if (savedScrollPosition && messagesContainerRef.current && messages.length > 0) {
@@ -271,7 +283,8 @@ export default function AIChatPage() {
       })
       sessionStorage.removeItem('ai-chat-scroll-position')
     }
-  }, [messages])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.length])
 
   // Use useLayoutEffect for textarea resize to prevent visual jitter
   // This runs synchronously after DOM updates but before browser paint
@@ -611,6 +624,25 @@ export default function AIChatPage() {
     abortControllerRef.current = abortController
     const currentGenerationId = ++generationIdRef.current
 
+    // --- Chunk batching: accumulate chunks in a buffer, flush via rAF ---
+    // This reduces setMessages calls from ~30/s (per-chunk) to ~16/s (per-frame).
+    let chunkBuffer = ''
+    let rafId: number | null = null
+
+    const flushChunks = () => {
+      rafId = null
+      if (!chunkBuffer) return
+      const buffered = chunkBuffer
+      chunkBuffer = ''
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === aiMessageId
+            ? { ...m, content: m.content + buffered }
+            : m
+        )
+      )
+    }
+
     try {
       let hasReceivedContent = false
       await chatWithAI(chatMessages, (chunk) => {
@@ -618,13 +650,11 @@ export default function AIChatPage() {
           hasReceivedContent = true
           setGenerationPhase('streaming')
         }
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === aiMessageId
-              ? { ...m, content: m.content + chunk }
-              : m
-          )
-        )
+        chunkBuffer += chunk
+        // Schedule a flush on the next animation frame (batches multiple chunks)
+        if (rafId === null) {
+          rafId = requestAnimationFrame(flushChunks)
+        }
       }, conversationId, (messageId) => {
         setMessages(prev =>
           prev.map(m =>
@@ -653,6 +683,22 @@ export default function AIChatPage() {
       }
       options?.onError?.()
     } finally {
+      // Flush any remaining buffered chunks before finishing
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId)
+        rafId = null
+      }
+      if (chunkBuffer) {
+        const remaining = chunkBuffer
+        chunkBuffer = ''
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === aiMessageId
+              ? { ...m, content: m.content + remaining }
+              : m
+          )
+        )
+      }
       if (generationIdRef.current === currentGenerationId) {
         setGenerationPhase('idle')
         abortControllerRef.current = null
