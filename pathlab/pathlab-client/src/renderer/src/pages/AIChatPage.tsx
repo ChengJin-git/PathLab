@@ -162,16 +162,48 @@ export default function AIChatPage() {
 
   const formRef = useRef<HTMLFormElement>(null)
 
-  // Debounced scroll-to-bottom: during streaming, chunks trigger setMessages at ~16fps (rAF batching),
-  // but we only need to scroll every ~100ms to keep perceived smoothness.
+  // ── Smart auto-scroll ──────────────────────────────────────────────────
+  // Track whether the user has intentionally scrolled away from the bottom.
+  // When true we suppress auto-scroll so the user can read earlier content
+  // while new chunks keep streaming in.
+  const userScrolledAwayRef = useRef(false)
   const scrollRafRef = useRef<number | null>(null)
+
+  // Helper: is the scroll container "near bottom"? (within 150px)
+  const isNearBottom = useCallback(() => {
+    const el = messagesContainerRef.current
+    if (!el) return true
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 150
+  }, [])
+
   const scrollToBottom = useCallback(() => {
+    // Skip if user has scrolled away — let them read in peace
+    if (userScrolledAwayRef.current) return
     if (scrollRafRef.current !== null) return // already scheduled
     scrollRafRef.current = requestAnimationFrame(() => {
       scrollRafRef.current = null
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     })
   }, [])
+
+  // Detect user scroll intent via wheel / touchmove on the messages container.
+  // When user scrolls UP → mark as "scrolled away".
+  // When user scrolls back to near-bottom → reset so auto-scroll resumes.
+  useEffect(() => {
+    const el = messagesContainerRef.current
+    if (!el) return
+
+    const handleUserScroll = () => {
+      if (isNearBottom()) {
+        userScrolledAwayRef.current = false
+      } else {
+        userScrolledAwayRef.current = true
+      }
+    }
+
+    el.addEventListener('scroll', handleUserScroll, { passive: true })
+    return () => el.removeEventListener('scroll', handleUserScroll)
+  }, [isNearBottom])
 
   // Programmatically submit the chat form after setting input.
   // Uses ref-based approach instead of DOM query to avoid fragile setTimeout + querySelector patterns.
@@ -911,6 +943,8 @@ export default function AIChatPage() {
     }
 
     setShowWelcomeHero(false)
+    // Reset scroll lock so auto-scroll follows the new response
+    userScrolledAwayRef.current = false
     setMessages(prev => [...prev, userMessage])
     setInput('')
     setImageAttachments([]) // Clear attachments after sending

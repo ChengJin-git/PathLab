@@ -122,7 +122,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const [config, setConfig] = useState<AgentTaskConfig>(initialConfig)
   const [isSubmitting, setIsSubmitting] = useState(false)
   // Initialize submitStatus based on whether task was already submitted (persisted in config)
-  const [submitStatus, setSubmitStatus] = useState<'idle' | 'success' | 'error'>(
+  // 'pending' = optimistic update, form disabled with positive visual, background work in progress
+  const [submitStatus, setSubmitStatus] = useState<'idle' | 'pending' | 'success' | 'error'>(
     initialConfig.submitted_task_id ? 'success' : 'idle'
   )
   const [errorMessage, setErrorMessage] = useState<string>('')
@@ -306,8 +307,10 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       return
     }
 
+    // Optimistic update: immediately show positive "pending" state
+    // This disables the form and gives user instant feedback instead of a scary spinner
     setIsSubmitting(true)
-    setSubmitStatus('idle')
+    setSubmitStatus('pending')
     setErrorMessage('')
 
     try {
@@ -361,7 +364,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
 
       if (errors.length > 0) {
         setValidationErrors(errors)
-        setSubmitStatus('error')
+        setSubmitStatus('error')  // Revert from pending to error
         setErrorMessage(errors[0].message)
         setIsSubmitting(false)
         return
@@ -422,7 +425,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       onSubmitSuccess?.(result.task_id)
     } catch (error) {
       const msg = error instanceof Error ? error.message : t('chatComponents.taskConfig.errors.failedToCreate')
-      setSubmitStatus('error')
+      setSubmitStatus('error')  // Revert from pending to error
       setErrorMessage(msg)
       onSubmitError?.(msg)
     } finally {
@@ -432,8 +435,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
 
   const getFieldError = (field: string) => validationErrors.find(e => e.field === field)?.message
 
-  // Form is disabled after successful submission
-  const isFormDisabled = submitStatus === 'success' || isSubmitting
+  // Form is disabled after successful submission or during pending optimistic update
+  const isFormDisabled = submitStatus === 'success' || submitStatus === 'pending' || isSubmitting
 
   // Check if this is an AI-recommended config - core fields should be locked
   const isAgentConfig = isAgentRecommendedConfig(initialConfig)
@@ -455,7 +458,11 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           {t('chatComponents.taskConfig.title')}
         </h3>
         <p className="text-sm text-gray-500 mt-1">
-          {submitStatus === 'success' ? t('chatComponents.taskConfig.subtitleSuccess') : t('chatComponents.taskConfig.subtitleDefault')}
+          {submitStatus === 'success'
+            ? t('chatComponents.taskConfig.subtitleSuccess')
+            : submitStatus === 'pending'
+              ? t('chatComponents.taskConfig.subtitlePending')
+              : t('chatComponents.taskConfig.subtitleDefault')}
         </p>
       </div>
 
@@ -907,15 +914,19 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       <div className="px-5 py-4 bg-gray-50 border-t border-gray-100">
         <button
           onClick={handleSubmit}
-          disabled={isSubmitting || submitStatus === 'success' || !isSplitValid}
-          className="w-full py-2.5 bg-primary-600 text-white rounded-lg font-medium text-sm
-                     hover:bg-primary-700 active:bg-primary-800
-                     disabled:bg-gray-300 disabled:cursor-not-allowed
-                     flex items-center justify-center gap-2 transition-colors"
+          disabled={isSubmitting || submitStatus === 'success' || submitStatus === 'pending' || !isSplitValid}
+          className={`w-full py-2.5 rounded-lg font-medium text-sm
+                     flex items-center justify-center gap-2 transition-colors
+                     ${submitStatus === 'pending'
+                       ? 'bg-green-500 text-white cursor-not-allowed'
+                       : submitStatus === 'success'
+                         ? 'bg-green-500 text-white cursor-not-allowed'
+                         : 'bg-primary-600 text-white hover:bg-primary-700 active:bg-primary-800 disabled:bg-gray-300 disabled:cursor-not-allowed'
+                     }`}
         >
-          {isSubmitting ? (
+          {submitStatus === 'pending' ? (
             <>
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <CheckCircle className="w-4 h-4" />
               {t('chatComponents.taskConfig.creatingTask')}
             </>
           ) : submitStatus === 'success' ? (

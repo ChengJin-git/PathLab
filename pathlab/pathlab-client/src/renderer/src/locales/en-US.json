@@ -1729,6 +1729,7 @@
     "taskConfig": {
       "title": "Task Configuration",
       "subtitleSuccess": "Task created successfully!",
+      "subtitlePending": "Creating your training task...",
       "subtitleDefault": "Configure your training task",
       "taskName": "Task Name",
       "taskNamePlaceholder": "e.g. Lung Cancer Classification",

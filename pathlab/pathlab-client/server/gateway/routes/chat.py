@@ -21,7 +21,7 @@ from backend.database import get_db
 from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository, DatasetPermissionRepository, DatasetRepository, TrainingTaskRepository, AITaskRepository
 from backend.database.models import TrainingTask, DataGroup
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import check_data_ownership, get_user_id_filter
+from backend.auth.dependencies import check_data_ownership, get_user_id_filter, get_user_from_header_or_param
 from backend.common.config import Config
 from backend.common.gpu_utils import get_gpu_summary_for_prompt
 from ..dependencies import logger
@@ -699,6 +699,10 @@ After saving, return here and start chatting!"""
             # AI requested search
             query = search_match.get("query", "")
             reason = search_match.get("reason", "")
+            # AI can request how many results (default 5, capped at 10)
+            ai_num_results = min(int(search_match.get("num_results", 5)), 10)
+            if ai_num_results < 1:
+                ai_num_results = 5
 
             # Emit search status to frontend
             search_status = json.dumps({"query": query, "reason": reason})
@@ -706,7 +710,7 @@ After saving, return here and start chatting!"""
 
             # Execute Exa search
             try:
-                search_results = await _execute_exa_search(query, exa_api_key, num_results=5)
+                search_results = await _execute_exa_search(query, exa_api_key, num_results=ai_num_results)
 
                 # Emit web search results to frontend so UI can display completion status
                 web_search_result_block = json.dumps(search_results)
@@ -1716,7 +1720,7 @@ async def chat_with_ai(
 async def serve_pdf_image(
     url_hash: str,
     filename: str,
-    user: User = Depends(current_active_user)
+    user: User = Depends(get_user_from_header_or_param)
 ):
     """Serve MinerU-extracted PDF images from persistent cache.
 

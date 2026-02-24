@@ -1729,6 +1729,7 @@
     "taskConfig": {
       "title": "任务配置",
       "subtitleSuccess": "任务创建成功！",
+      "subtitlePending": "正在创建训练任务...",
       "subtitleDefault": "配置您的训练任务",
       "taskName": "任务名称",
       "taskNamePlaceholder": "例如：肺癌分类",

@@ -44,10 +44,13 @@ When you need to search, output:
 [WEB_SEARCH]
 {
   "query": "your search query here",
-  "reason": "why you need this search"
+  "reason": "why you need this search",
+  "num_results": 5
 }
 [/WEB_SEARCH]
 ```
+- `num_results` (optional, default 5, max 10): how many results to retrieve. Choose a suitable number based on the query — use fewer (3-5) for simple factual lookups, more (7-10) for comprehensive literature surveys.
+- You can search up to 3 rounds. If the first round doesn't find enough relevant results, you may search again with a refined query.
 
 After searching, you'll receive results with snippets from relevant web pages. Synthesize the information, verify accuracy, and provide a helpful response.
 

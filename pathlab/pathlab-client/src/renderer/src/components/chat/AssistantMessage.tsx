@@ -3,11 +3,12 @@
  *
  * Extracted from AIChatPage.tsx to reduce file size.
  */
-import React from 'react'
+import React, { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { getAuthToken } from '../../api/client'
 
 import { OptionButtons, parseOptions, removeOptionsBlock } from './OptionButtons'
 import { TaskConfigCard, parseTaskConfig, removeTaskConfigBlock } from './TaskConfigCard'
@@ -117,8 +118,12 @@ const SPECIAL_BLOCK_TAGS = [
 /**
  * Identify any incomplete/streaming special blocks in content.
  * Returns the cleaned content (without the incomplete block) and the tag of the incomplete block.
+ *
+ * When isStreaming is true, also detects partial tag prefixes at the end of the content.
+ * For example, if the AI is streaming "[OPTIO" (not yet complete "[OPTIONS]"),
+ * this function will detect it as an incomplete OPTIONS block and show the skeleton.
  */
-function getIncompleteBlock(content: string): { content: string; incompleteTag: string | null } {
+function getIncompleteBlock(content: string, isStreaming: boolean = false): { content: string; incompleteTag: string | null } {
   let result = content
   let incompleteTag: string | null = null
 
@@ -137,6 +142,29 @@ function getIncompleteBlock(content: string): { content: string; incompleteTag: 
       break // Assume only one incomplete block at a time
     }
   }
+
+  // During streaming, detect partial tag prefixes at the end of content.
+  // e.g. content ending with "[OPTIO" should be recognised as an incomplete OPTIONS block.
+  if (isStreaming && !incompleteTag) {
+    const lastBracket = result.lastIndexOf('[')
+    if (lastBracket !== -1) {
+      const trailing = result.substring(lastBracket)
+      // Only consider if the bracket is unclosed (no ']' after it)
+      if (!trailing.includes(']')) {
+        const partialTag = trailing.substring(1) // text after '['
+        if (partialTag.length > 0) {
+          for (const tag of SPECIAL_BLOCK_TAGS) {
+            if (tag.startsWith(partialTag)) {
+              result = result.substring(0, lastBracket).trim()
+              incompleteTag = tag
+              break
+            }
+          }
+        }
+      }
+    }
+  }
+
   return { content: result, incompleteTag }
 }
 
@@ -202,6 +230,32 @@ const AssistantMessage = React.memo(function AssistantMessage({
   cancelTaskTrigger
 }: AssistantMessageProps) {
   const { t } = useTranslation()
+
+  // Custom ReactMarkdown components:
+  // - img: inject auth token for /pdf-images/ URLs so <img> tags can load authenticated images
+  // - hr: render a visually refined separator instead of the default ugly <hr>
+  const markdownComponents = useMemo<Components>(() => ({
+    img: ({ src, alt, ...rest }) => {
+      let finalSrc = src || ''
+      // Append auth token to pdf-images URLs so the browser can authenticate the GET request
+      if (finalSrc.includes('/pdf-images/')) {
+        const token = getAuthToken()
+        if (token) {
+          const sep = finalSrc.includes('?') ? '&' : '?'
+          finalSrc = `${finalSrc}${sep}token=${encodeURIComponent(token)}`
+        }
+      }
+      return <img src={finalSrc} alt={alt || ''} loading="lazy" {...rest} />
+    },
+    hr: () => (
+      <div className="my-6 flex items-center gap-3">
+        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent" />
+        <div className="w-1 h-1 rounded-full bg-gray-300" />
+        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent" />
+      </div>
+    ),
+  }), [])
+
   // Parse special blocks
   const searchStatus = parseSearchStatus(content)
   const webSearchResult = parseWebSearchResult(content)
@@ -261,7 +315,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   displayContent = removeAllReferenceBlocks(displayContent)
 
   // Remove any incomplete blocks that are still streaming
-  const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent)
+  const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent, isStreaming)
   displayContent = cleanedContent
 
 	  // Show searching indicator only while streaming and before results arrive
@@ -313,7 +367,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
 	          prose-hr:border-gray-200 prose-hr:my-4
 	          prose-table:text-sm prose-th:bg-gray-50 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:border-gray-200
           prose-img:rounded-lg prose-img:shadow-md prose-img:my-3 prose-img:max-w-full prose-img:h-auto prose-img:border prose-img:border-gray-200">
-	          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+	          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
 	            {displayContent}
 	          </ReactMarkdown>
 	        </div>
