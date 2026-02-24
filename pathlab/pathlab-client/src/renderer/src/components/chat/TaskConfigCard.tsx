@@ -178,6 +178,15 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     loadDatasets()
   }, [])
 
+  // Pre-fetch WSI list in background when dataset is selected, to warm the cache before submit.
+  // fetchWSIList has a client-side cache (wsiListCache), so when handleSubmit calls it,
+  // it will hit the cache immediately instead of waiting for a large network request.
+  useEffect(() => {
+    if (selectedDatasetId) {
+      fetchWSIList(selectedDatasetId).catch(() => { /* silently ignore - will retry on submit */ })
+    }
+  }, [selectedDatasetId])
+
   // Check if current split strategy is valid (for disabling submit button)
   // Simplified: only use file_count for rough validation since we submit by dataset_id
   const isSplitValid = useMemo(() => {

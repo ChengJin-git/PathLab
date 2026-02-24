@@ -1371,10 +1371,11 @@ export default function AIChatPage() {
       setMessages(prev => prev.map(m =>
         m.id === messageId ? { ...m, content: finalContent } : m
       ))
-      await persistMessageUpdate(messageId, updatedContent, 'aiChat.failedToSaveTaskStatus')
+      // Persist in background - don't block navigation
+      persistMessageUpdate(messageId, updatedContent, 'aiChat.failedToSaveTaskStatus').catch(console.error)
     }
 
-    // Add a success message with navigation card to the chat and persist to backend
+    // Add a success message with navigation card to the chat
     const navigateBlock = JSON.stringify({
       target: `/task/${taskId}`,
       buttonTextKey: 'aiChat.taskSuccess.viewTrainingProgress',
@@ -1391,8 +1392,12 @@ export default function AIChatPage() {
     }
     setMessages(prev => [...prev, successMessage])
 
-    await persistNewAssistantMessage(successMessage.id, successContent)
-  }, [persistMessageUpdate, persistNewAssistantMessage, t])
+    // Navigate immediately to task detail page (optimistic update)
+    navigate(`/task/${taskId}`)
+
+    // Persist success message in background - don't block navigation
+    persistNewAssistantMessage(successMessage.id, successContent).catch(console.error)
+  }, [persistMessageUpdate, persistNewAssistantMessage, t, navigate])
 
   // Handle registration success (persist to message history)
   const handleRegistrationSuccess = useCallback(async (
@@ -1490,10 +1495,12 @@ export default function AIChatPage() {
 
   // Handle task submission error
   const handleTaskSubmitError = useCallback((error: string) => {
-    // Send error to agent for analysis
+    // Show prominent error toast so user is immediately aware of the failure
+    showToast('error', error)
+    // Also pre-fill input to let user send the error to AI for analysis
     const errorMessage = t('aiChat.taskSubmitErrorMessage', { error })
     setInput(errorMessage)
-  }, [])
+  }, [showToast, t])
 
   // Handle inference submission success
   const handleInferenceSubmitSuccess = useCallback(async (taskId: string, messageId: string) => {
