@@ -48,17 +48,23 @@ async def create_training_task(
     training tasks are running.
     """
     try:
-        # Validate WSI IDs exist
-        if not req.wsi_ids or len(req.wsi_ids) == 0:
+        # Resolve WSI IDs: prefer dataset_id (server-side resolution) over client-provided wsi_ids
+        wsi_ids = req.wsi_ids or []
+        if not wsi_ids and req.dataset_id:
+            async with safe_session() as db:
+                wsi_ids = await DatasetRepository.get_wsi_ids(db, req.dataset_id)
+            if not wsi_ids:
+                raise HTTPException(status_code=400, detail="No WSI files found in the specified dataset")
+        if not wsi_ids:
             raise HTTPException(status_code=400, detail="At least one WSI must be selected")
 
         # --- Session 1: Read-only validations (fetch WSIs, check permissions, check storage tasks) ---
         async with safe_session() as db:
             # Batch fetch all WSIs in a single query to avoid N+1 problem
-            wsi_map = await WSIRepository.get_by_ids_with_dataset(db, req.wsi_ids)
+            wsi_map = await WSIRepository.get_by_ids_with_dataset(db, wsi_ids)
 
             # Check for missing WSIs
-            missing_wsi_ids = [wsi_id for wsi_id in req.wsi_ids if wsi_id not in wsi_map]
+            missing_wsi_ids = [wsi_id for wsi_id in wsi_ids if wsi_id not in wsi_map]
             if missing_wsi_ids:
                 raise HTTPException(status_code=404, detail=f"WSI not found: {missing_wsi_ids[0]}")
 
@@ -68,7 +74,7 @@ async def create_training_task(
 
             if user.is_admin():
                 # Admin can access everything - skip per-WSI permission check
-                for wsi_id in req.wsi_ids:
+                for wsi_id in wsi_ids:
                     wsi = wsi_map[wsi_id]
                     dataset_ids_involved.add(wsi.dataset_id)
                     if wsi.wsi_path:
@@ -79,7 +85,7 @@ async def create_training_task(
                 user_permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
                 elevated_dataset_ids = {p.dataset_id for p in user_permissions if p.is_valid()}
 
-                for wsi_id in req.wsi_ids:
+                for wsi_id in wsi_ids:
                     wsi = wsi_map[wsi_id]
                     # In-memory permission check (no DB query per WSI)
                     has_access = (
@@ -172,7 +178,7 @@ async def create_training_task(
         async with safe_session() as db:
             # Determine aggregation_level from the first WSI's dataset's DataGroup
             aggregation_level = "file"
-            first_wsi = wsi_map.get(req.wsi_ids[0])
+            first_wsi = wsi_map.get(wsi_ids[0])
             if first_wsi and first_wsi.dataset_id:
                 first_dataset = await DatasetRepository.get_by_id(db, first_wsi.dataset_id)
                 if first_dataset and first_dataset.data_group:
@@ -203,7 +209,7 @@ async def create_training_task(
             prefetched_wsis = list(wsi_map.values())
             try:
                 task = await TrainingTaskRepository.create(
-                    db, task_data, req.wsi_ids,
+                    db, task_data, wsi_ids,
                     split_config=split_config_dict,
                     prefetched_wsis=prefetched_wsis
                 )
@@ -216,7 +222,7 @@ async def create_training_task(
         logger.info(f"  - Task name: {req.task_name}")
         logger.info(f"  - Task type: {req.task_type} (from DataGroup: {data_group.task_type})")
         logger.info(f"  - Data type: {req.data_type}, Aggregation level: {aggregation_level}")
-        logger.info(f"  - WSI count: {len(req.wsi_ids)}")
+        logger.info(f"  - WSI count: {len(wsi_ids)}")
         logger.info(f"  - Classes: {task.classes}")
 
         # Submit task to queue for execution
@@ -230,7 +236,7 @@ async def create_training_task(
         pipeline_kwargs = {
             # Note: task_id is automatically added by task_queue.submit()
             "data_type": req.data_type,
-            "wsi_ids": req.wsi_ids,
+            "wsi_ids": wsi_ids,
             "preprocessing_config": req.preprocessing,
             "model_config": req.model,
             "huggingface_token": huggingface_token,
@@ -245,7 +251,7 @@ async def create_training_task(
 
         # Return task info
         result = task.to_dict()
-        result["wsi_count"] = len(req.wsi_ids)
+        result["wsi_count"] = len(wsi_ids)
 
         return result
 

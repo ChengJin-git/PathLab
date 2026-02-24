@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers, ThumbsUp, ThumbsDown } from 'lucide-react'
-import { createTrainingTask, fetchWSIList, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type SplitConfig } from '../../api'
+import { createTrainingTask, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type SplitConfig } from '../../api'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
 import {
   TASK_TYPES,
@@ -178,14 +178,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     loadDatasets()
   }, [])
 
-  // Pre-fetch WSI list in background when dataset is selected, to warm the cache before submit.
-  // fetchWSIList has a client-side cache (wsiListCache), so when handleSubmit calls it,
-  // it will hit the cache immediately instead of waiting for a large network request.
-  useEffect(() => {
-    if (selectedDatasetId) {
-      fetchWSIList(selectedDatasetId).catch(() => { /* silently ignore - will retry on submit */ })
-    }
-  }, [selectedDatasetId])
+
 
   // Check if current split strategy is valid (for disabling submit button)
   // Simplified: only use file_count for rough validation since we submit by dataset_id
@@ -232,7 +225,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   }, [submitTrigger, lastSubmitTrigger, submitStatus, isSubmitting])
 
   // Execute pending voice submit when data is ready
-  // Only need dataset selected - handleSubmit will load WSIs on-demand if needed
+  // Only need dataset selected - backend resolves WSI IDs from dataset_id
   useEffect(() => {
     if (
       pendingVoiceSubmit &&
@@ -323,75 +316,11 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     setErrorMessage('')
 
     try {
-      // Load WSI list from dataset for submit
-      const wsiListResult = await fetchWSIList(selectedDatasetId)
-      const wsiIdsToUse = wsiListResult.items.map(wsi => wsi.wsi_id)
-      const wsiDataForManualSplit = wsiListResult.items
-
-      // Validate single-class tasks after loading WSI data
-      const errors: ValidationError[] = []
-
-      if (config.task_type === 'classification') {
-        // For classification: check if there are at least 2 different labels
-        const labels = new Set<string>()
-        wsiDataForManualSplit.forEach(wsi => {
-          if (wsi.label && wsi.label.trim()) {
-            labels.add(wsi.label.trim())
-          }
-        })
-
-        if (labels.size < 2) {
-          const labelList = Array.from(labels).join(', ')
-          errors.push({
-            field: 'dataset_id',
-            message: t('chatComponents.taskConfig.validation.classificationMinClasses', { count: labels.size, labels: labelList || t('chatComponents.taskConfig.none') })
-          })
-        }
-      } else if (config.task_type === 'survival') {
-        // For survival prediction: check if there are both event and censored samples
-        let eventCount = 0
-        let censoredCount = 0
-
-        wsiDataForManualSplit.forEach(wsi => {
-          if (wsi.event_status !== null && wsi.event_status !== undefined && wsi.event_time !== null && wsi.event_time !== undefined) {
-            if (wsi.event_status === 1) {
-              eventCount++
-            } else if (wsi.event_status === 0) {
-              censoredCount++
-            }
-          }
-        })
-
-        if (eventCount === 0 || censoredCount === 0) {
-          const missingType = eventCount === 0 ? t('chatComponents.taskConfig.eventStatus1') : t('chatComponents.taskConfig.censoredStatus0')
-          errors.push({
-            field: 'dataset_id',
-            message: t('chatComponents.taskConfig.validation.survivalBothRequired', { missingType, eventCount, censoredCount })
-          })
-        }
-      }
-
-      if (errors.length > 0) {
-        setValidationErrors(errors)
-        setSubmitStatus('error')  // Revert from pending to error
-        setErrorMessage(errors[0].message)
-        setIsSubmitting(false)
-        return
-      }
-
       // Build split config based on strategy
+      // Note: for 'manual' strategy, backend reads splits directly from WSI records in database
       let splitConfig: SplitConfig
       if (splitStrategy === 'manual') {
-        // Construct manual splits from WSI data
-        const manualSplits: Record<string, string> = {}
-        wsiDataForManualSplit
-          .filter(wsi => wsi.split)
-          .forEach(wsi => {
-            let s = wsi.split!.toLowerCase()
-            if (s === 'validation') s = 'val'
-            manualSplits[wsi.wsi_id] = s
-          })
-        splitConfig = { strategy: 'manual', manual_splits: manualSplits, seed: randomSeed }
+        splitConfig = { strategy: 'manual', seed: randomSeed }
       } else if (splitStrategy === 'k_fold') {
         splitConfig = { strategy: 'k_fold', n_splits: kFoldSplits, seed: randomSeed }
       } else {
@@ -399,12 +328,14 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       }
 
       // Build full TrainingTaskConfig using constants for defaults
+      // Send dataset_id instead of wsi_ids — backend resolves WSI IDs from dataset
+      // This eliminates the need to fetch and send potentially 50k+ wsi_ids over HTTP
       const fullConfig: TrainingTaskConfig = {
         task_name: config.task_name,
         task_type: config.task_type as 'classification' | 'survival' | 'segmentation',
         data_type: config.data_type,
         task_description: config.task_description || `Created by PathLab Agent`,
-        wsi_ids: wsiIdsToUse,
+        dataset_id: selectedDatasetId,
         preprocessing: {
           // Note: tile_size removed - auto-determined by PrePATH-style tiling
           level: config.pyramid_level ?? DEFAULT_PYRAMID_LEVEL,

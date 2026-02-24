@@ -244,7 +244,8 @@ export interface TrainingTaskConfig {
   task_type: 'classification' | 'survival' | 'segmentation' | 'external_validation'
   data_type: 'wsi' | 'patch'
   task_description: string
-  wsi_ids: string[]
+  dataset_id?: string  // If provided, wsi_ids are resolved from this dataset on server
+  wsi_ids?: string[]   // Optional when dataset_id is provided
   preprocessing: {
     // Note: tile_size removed - auto-determined by PrePATH-style tiling based on WSI magnification
     level?: number

@@ -52,7 +52,8 @@ class TrainingTaskRequest(BaseModel):
     task_type: str  # "classification" or "survival"
     data_type: str  # "wsi" or "patch"
     task_description: Optional[str] = None
-    wsi_ids: List[str]
+    dataset_id: Optional[str] = None  # If provided, wsi_ids are resolved from this dataset on server
+    wsi_ids: List[str] = []  # Optional when dataset_id is provided
     preprocessing: Dict  # {tile_size, stride, feature_extractor, feature_batch_size, use_gpu}
     model: Dict  # {aggregator, learning_rate, epochs, optimizer, batch_size}
     huggingface_token: Optional[str] = None  # HuggingFace token for gated models
