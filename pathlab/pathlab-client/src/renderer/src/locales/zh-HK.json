@@ -833,6 +833,32 @@
       "modelTraining": "模型訓練",
       "runningInference": "推論中",
       "dataLoading": "資料載入"
+    },
+    "configuration": {
+      "title": "配置",
+      "sourceModel": "來源模型",
+      "modelId": "模型 ID",
+      "trainingTask": "訓練任務",
+      "featureExtractor": "特徵提取器",
+      "aggregator": "聚合器",
+      "targetDataset": "目標資料集",
+      "datasetId": "資料集 ID",
+      "totalWsis": "WSI 總數",
+      "dataLevel": "資料級別",
+      "classes": "類別",
+      "preprocessing": "預處理",
+      "saturationThreshold": "飽和度閾值",
+      "maskThreshold": "遮罩閾值",
+      "useOtsu": "使用 Otsu 自動閾值分割",
+      "extractor": "提取器",
+      "featureBatchSize": "特徵批次大小",
+      "modelAndTraining": "模型與訓練",
+      "learningRate": "學習率",
+      "epochs": "訓練輪次",
+      "optimizer": "優化器",
+      "trainingBatchSize": "訓練批次大小",
+      "yes": "是",
+      "no": "否"
     }
   },
   "storagePage": {

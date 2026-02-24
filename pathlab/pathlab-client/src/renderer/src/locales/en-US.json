@@ -833,6 +833,32 @@
       "modelTraining": "Model Training",
       "runningInference": "Running Inference",
       "dataLoading": "Data Loading"
+    },
+    "configuration": {
+      "title": "Configuration",
+      "sourceModel": "Source Model",
+      "modelId": "Model ID",
+      "trainingTask": "Training Task",
+      "featureExtractor": "Feature Extractor",
+      "aggregator": "Aggregator",
+      "targetDataset": "Target Dataset",
+      "datasetId": "Dataset ID",
+      "totalWsis": "Total WSIs",
+      "dataLevel": "Data Level",
+      "classes": "Classes",
+      "preprocessing": "Preprocessing",
+      "saturationThreshold": "Saturation Threshold",
+      "maskThreshold": "Mask Threshold",
+      "useOtsu": "Use Otsu",
+      "extractor": "Extractor",
+      "featureBatchSize": "Feature Batch Size",
+      "modelAndTraining": "Model & Training",
+      "learningRate": "Learning Rate",
+      "epochs": "Epochs",
+      "optimizer": "Optimizer",
+      "trainingBatchSize": "Training Batch Size",
+      "yes": "Yes",
+      "no": "No"
     }
   },
   "storagePage": {

@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { Layers, Brain, Activity } from 'lucide-react'
 import { Card } from '../ui/card'
 import { TaskDetail } from './types'
@@ -8,13 +9,14 @@ interface ConfigurationPanelProps {
 }
 
 export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) => {
+  const { t } = useTranslation()
   const isExternalValidation = task.task_type === 'external_validation'
 
   return (
     <Card className="p-4 sm:p-6 border-gray-100 shadow-sm overflow-hidden">
       <h3 className="text-sm sm:text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
         <Layers className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
-        Configuration
+        {t('taskDetail.configuration.title')}
       </h3>
 
       {isExternalValidation ? (
@@ -23,30 +25,30 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
           <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
             <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
               <Brain className="w-3.5 h-3.5 text-purple-600" />
-              Source Model
+              {t('taskDetail.configuration.sourceModel')}
             </h4>
             <div className="space-y-3">
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Model ID</span>
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.modelId')}</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm font-mono text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.model_id}>
                   {task.model_config.model_id || 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Training Task</span>
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.trainingTask')}</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm font-mono text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.model_task_id}>
                   {task.model_config.model_task_id || 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Feature Extractor</span>
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.featureExtractor')}</span>
                 <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
                   {task.preprocessing_config.feature_extractor || 'N/A'}
                 </span>
               </div>
               {task.data_type === 'wsi' && (
                 <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Aggregator</span>
+                  <span className="text-gray-500 font-medium">{t('taskDetail.configuration.aggregator')}</span>
                   <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
                     {task.model_config.aggregator?.toUpperCase() || 'N/A'}
                   </span>
@@ -58,30 +60,30 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
           <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
             <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
               <Activity className="w-3.5 h-3.5 text-blue-600" />
-              Target Dataset
+              {t('taskDetail.configuration.targetDataset')}
             </h4>
             <div className="space-y-3">
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Dataset ID</span>
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.datasetId')}</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm font-mono text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.dataset_id}>
                   {task.model_config.dataset_id || 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Total WSIs</span>
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.totalWsis')}</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.model_config.total_wsi ?? task.wsi_count ?? 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Data Level</span>
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.dataLevel')}</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm uppercase">
                   {task.data_type || 'N/A'}
                 </span>
               </div>
               {task.classes && task.classes.length > 0 && (
                 <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Classes</span>
+                  <span className="text-gray-500 font-medium">{t('taskDetail.configuration.classes')}</span>
                   <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                     {task.classes.length}
                   </span>
@@ -96,37 +98,37 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
           <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
             <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
               <Activity className="w-3.5 h-3.5 text-blue-600" />
-              Preprocessing
+              {t('taskDetail.configuration.preprocessing')}
             </h4>
             <div className="space-y-3">
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Saturation Threshold</span>
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.saturationThreshold')}</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.preprocessing_config.sthresh ?? 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Mask Threshold</span>
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.maskThreshold')}</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.preprocessing_config.mthresh ?? 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Use Otsu</span>
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.useOtsu')}</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.preprocessing_config.use_otsu !== undefined
-                    ? (task.preprocessing_config.use_otsu ? 'Yes' : 'No')
+                    ? (task.preprocessing_config.use_otsu ? t('taskDetail.configuration.yes') : t('taskDetail.configuration.no'))
                     : 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Extractor</span>
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.extractor')}</span>
                 <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
                   {task.preprocessing_config.feature_extractor || 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Feature Batch Size</span>
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.featureBatchSize')}</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.preprocessing_config.feature_batch_size ?? 'N/A'}
                 </span>
@@ -137,37 +139,37 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
           <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
             <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
               <Brain className="w-3.5 h-3.5 text-purple-600" />
-              Model & Training
+              {t('taskDetail.configuration.modelAndTraining')}
             </h4>
             <div className="space-y-3">
               {task.data_type === 'wsi' && (
                 <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Aggregator</span>
+                  <span className="text-gray-500 font-medium">{t('taskDetail.configuration.aggregator')}</span>
                   <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
                     {task.model_config.aggregator?.toUpperCase() || 'N/A'}
                   </span>
                 </div>
               )}
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Learning Rate</span>
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.learningRate')}</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.model_config.learning_rate ?? 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Epochs</span>
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.epochs')}</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.model_config.epochs ?? 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Optimizer</span>
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.optimizer')}</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm uppercase">
                   {task.model_config.optimizer || 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">Training Batch Size</span>
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.trainingBatchSize')}</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.model_config.batch_size ?? 'N/A'}
                 </span>
