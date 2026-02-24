@@ -1035,6 +1035,7 @@
     "metadataUploaded": "Metadata uploaded: {{count}} files updated",
     "failedToSaveAnalysisStatus": "Failed to save analysis status to server",
     "aiErrorFallback": "Sorry, I encountered an error. Please try again.",
+    "generationCancelled": "Response cancelled by user.",
     "imageAnalysis": "Image Analysis",
     "excelMultipleSheets": "Excel file has {{count}} sheets:",
     "excelMoreSheets": "  ... and {{count}} more",

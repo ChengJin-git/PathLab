@@ -301,6 +301,14 @@ export default function AIChatPage() {
     loadConversations()
   }, [])
 
+  // Abort any in-progress generation when the component unmounts (e.g., navigating away).
+  // This triggers the AbortError catch in executeChatGeneration, which fills the cancel text.
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort()
+    }
+  }, [])
+
   // Handle initial message from navigation state
   useEffect(() => {
     const state = location.state as { initialMessage?: string; autoStartRecording?: boolean; fromDashboard?: boolean } | null
@@ -671,6 +679,17 @@ export default function AIChatPage() {
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         console.log('AI generation stopped by user')
+        // Fill cancelled message with i18n text (append if partial content exists)
+        const cancelText = t('aiChat.generationCancelled')
+        setMessages(prev =>
+          prev.map(m => {
+            if (m.id !== aiMessageId) return m
+            const content = m.content
+              ? `${m.content}\n\n---\n\n*${cancelText}*`
+              : `*${cancelText}*`
+            return { ...m, content }
+          })
+        )
       } else {
         console.error('Failed to get AI response:', error)
         setMessages(prev =>
@@ -702,6 +721,31 @@ export default function AIChatPage() {
       if (generationIdRef.current === currentGenerationId) {
         setGenerationPhase('idle')
         abortControllerRef.current = null
+
+        // Persist the final message content (including cancel/error text) to backend.
+        // Use setTimeout(0) to let the setMessages updates above flush first,
+        // then read the latest content from messagesRef.
+        if (conversationId) {
+          setTimeout(async () => {
+            const finalMsg = messagesRef.current.find(m => m.id === aiMessageId)
+            if (!finalMsg || !finalMsg.content) return
+            const numericId = parseInt(aiMessageId, 10)
+            const isBackendId = !isNaN(numericId) && numericId < 1000000000
+            try {
+              if (isBackendId) {
+                await updateMessage(conversationId, numericId, finalMsg.content)
+              } else {
+                const saved = await addMessage(conversationId, 'assistant', finalMsg.content)
+                setMessages(prev => prev.map(m =>
+                  m.id === aiMessageId ? { ...m, id: String(saved.id) } : m
+                ))
+              }
+            } catch (err) {
+              console.warn('Failed to persist cancelled/error message:', err)
+            }
+          }, 0)
+        }
+
         options?.onFinally?.()
       }
     }
@@ -1773,10 +1817,14 @@ export default function AIChatPage() {
                         )
                       })()
                     ) : message.content === '' ? (
-                      // ChatGPT-like Thinking Indicator
-                      <div className="flex items-center gap-2 py-2">
-                        <div className="w-2.5 h-2.5 bg-gray-400 rounded-full animate-pulse"></div>
-                        <span className="text-sm font-medium text-gray-500 animate-pulse">{t('aiChat.thinking')}</span>
+                      // ChatGPT-like Thinking Indicator with staggered bouncing dots
+                      <div className="flex items-center gap-2.5 py-2">
+                        <div className="flex items-center gap-1">
+                          <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '0ms', animationDuration: '1.2s' }} />
+                          <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '200ms', animationDuration: '1.2s' }} />
+                          <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '400ms', animationDuration: '1.2s' }} />
+                        </div>
+                        <span className="text-sm font-medium text-gray-400">{t('aiChat.thinking')}</span>
                       </div>
                     ) : (
                       <AssistantMessage
