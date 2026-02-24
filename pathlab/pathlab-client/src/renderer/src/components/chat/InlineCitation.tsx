@@ -32,10 +32,12 @@ const InlineCitation = React.memo(function InlineCitation({
   // Build label text — badge shows only the number; page info is in the tooltip
   const label = `${index}`
 
-  // Truncate snippet to ~100 chars
+  // Truncate snippet — article citations (with pageInfo) get more space (~200 chars)
+  // than web search snippets (~100 chars)
+  const maxSnippetLen = pageInfo ? 200 : 100
   const truncatedSnippet = snippet
-    ? snippet.length > 100
-      ? snippet.slice(0, 100) + '…'
+    ? snippet.length > maxSnippetLen
+      ? snippet.slice(0, maxSnippetLen) + '…'
       : snippet
     : undefined
 

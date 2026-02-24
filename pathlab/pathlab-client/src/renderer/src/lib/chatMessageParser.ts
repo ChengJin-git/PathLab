@@ -22,6 +22,7 @@ export function sanitizeConfigBlocksForAI(content: string): string {
   sanitized = sanitized.replace(/\[SEARCH_STATUS\][\s\S]*?\[\/SEARCH_STATUS\]/g, '')
   sanitized = sanitized.replace(/\[WEB_SEARCH_RESULT\][\s\S]*?\[\/WEB_SEARCH_RESULT\]/g, '')
   sanitized = sanitized.replace(/\[PDF_PARSE_STATUS\][\s\S]*?\[\/PDF_PARSE_STATUS\]/g, '')
+  sanitized = sanitized.replace(/\[CITATION_CONTEXTS\][\s\S]*?\[\/CITATION_CONTEXTS\]/g, '')
 
   // Fields to strip per config block type
   const PERSISTENCE_FIELDS: Record<string, string[]> = {

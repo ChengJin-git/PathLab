@@ -113,7 +113,8 @@ const SPECIAL_BLOCK_TAGS = [
   'PDF_PARSE_STATUS',
   'SEARCH_STATUS',
   'WEB_SEARCH_RESULT',
-  'WEB_SEARCH'
+  'WEB_SEARCH',
+  'CITATION_CONTEXTS'
 ]
 
 /**
@@ -191,6 +192,35 @@ export function removeCancelTaskNowBlock(content: string): string {
   return content.replace(/\[CANCEL_TASK_NOW\][\s\S]*?\[\/CANCEL_TASK_NOW\]/g, '').trim()
 }
 
+// ── Citation Contexts (article reading) ─────────────────────────────────────
+
+/** Parsed citation context for a single [N, p.Y] reference. */
+export interface CitationContext {
+  page: number
+  context: string
+}
+
+/**
+ * Parse [CITATION_CONTEXTS] block from content.
+ * Returns a map keyed by "N-pY" → { page, context }, or null if absent.
+ */
+export function parseCitationContexts(
+  content: string
+): Record<string, CitationContext> | null {
+  const match = content.match(/\[CITATION_CONTEXTS\]([\s\S]*?)\[\/CITATION_CONTEXTS\]/)
+  if (!match) return null
+  try {
+    return JSON.parse(match[1].trim())
+  } catch {
+    return null
+  }
+}
+
+/** Remove [CITATION_CONTEXTS] block from display content. */
+export function removeCitationContextsBlock(content: string): string {
+  return content.replace(/\[CITATION_CONTEXTS\][\s\S]*?\[\/CITATION_CONTEXTS\]/g, '').trim()
+}
+
 /**
  * Check if an assistant message contains only internal-use blocks (no user-facing content).
  * Such messages should not be rendered as visible bubbles.
@@ -253,11 +283,13 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const modelListConfig = parseModelListConfig(content)
   const referenceCards = parseAllReferenceCards(content)
   const pdfParseStatusItems = parseAllPdfParseStatus(content)
+  const citationContexts = parseCitationContexts(content)
 
-  // Build citation lookup map from web search results
-  // Maps search result index (1-based) to { title, url, snippet, source }
+  // Build citation lookup map from web search results + article citation contexts.
+  // Maps citation index (1-based) to { title, url, snippet, source, pageInfo? }
   const citationMap = useMemo(() => {
-    const map = new Map<number, { title: string; url: string; snippet: string; source: string }>()
+    const map = new Map<number, { title: string; url: string; snippet: string; source: string; pageInfo?: string }>()
+    // 1) Web search results — index is 1-based ordinal
     if (webSearchResult?.results) {
       webSearchResult.results.forEach((r, i) => {
         let source = 'Unknown'
@@ -265,8 +297,27 @@ const AssistantMessage = React.memo(function AssistantMessage({
         map.set(i + 1, { title: r.title, url: r.url, snippet: r.snippet, source })
       })
     }
+    // 2) Article citation contexts — keyed "N-pY", merged into the map
+    //    For article-reading messages, citationContexts provides per-page original text
+    if (citationContexts) {
+      for (const [key, ctx] of Object.entries(citationContexts)) {
+        const m = key.match(/^(\d+)-p(\d+)$/)
+        if (!m) continue
+        const idx = parseInt(m[1])
+        const page = parseInt(m[2])
+        // Build entry: use article reference card data for title/url if available
+        const refCard = referenceCards?.[0] // article reading usually has 1 ref card
+        map.set(idx, {
+          title: refCard?.title || '',
+          url: refCard?.url || '',
+          snippet: ctx.context,
+          source: refCard?.url ? (() => { try { return new URL(refCard.url).hostname.replace(/^www\./, '') } catch { return '' } })() : '',
+          pageInfo: `p.${page}`,
+        })
+      }
+    }
     return map
-  }, [webSearchResult])
+  }, [webSearchResult, citationContexts, referenceCards])
 
   // Custom ReactMarkdown components:
   // - img: inject auth token for /pdf-images/ URLs so <img> tags can load authenticated images
@@ -298,13 +349,15 @@ const AssistantMessage = React.memo(function AssistantMessage({
         const index = parseInt(citationMatch[1])
         const page = citationMatch[2]
         const data = citationMap.get(index)
+        // pageInfo: prefer citationMap entry (from CITATION_CONTEXTS), fall back to hash link
+        const pageInfo = data?.pageInfo || (page ? `p.${page}` : undefined)
         return (
           <InlineCitation
             index={index}
             title={data?.title}
             source={data?.source}
             snippet={data?.snippet}
-            pageInfo={page ? `p.${page}` : undefined}
+            pageInfo={pageInfo}
             url={data?.url}
           />
         )
@@ -350,24 +403,27 @@ const AssistantMessage = React.memo(function AssistantMessage({
   displayContent = removeCancelTaskNowBlock(displayContent)
   // Remove REFERENCE blocks - rendered as cards
   displayContent = removeAllReferenceBlocks(displayContent)
+  // Remove CITATION_CONTEXTS block - data consumed by citationMap, not for display
+  if (citationContexts) displayContent = removeCitationContextsBlock(displayContent)
 
   // Convert inline citation patterns to markdown links with #cite- hash
   // Hash links are not sanitized by ReactMarkdown (unlike custom protocols like cite://)
+  // Badge text shows only the index number; page info is in the tooltip via citationMap.
   // Handle more specific patterns first to avoid partial matches
   // 1. [Paper N, p.Y] or [Paper N, Page Y] (legacy backend format, fallback)
   displayContent = displayContent.replace(
     /\[Paper\s+(\d{1,2}),\s*(?:p\.|Page\s*)(\d+)\](?!\()/g,
-    '[$1, p.$2](#cite-$1-p$2)'
+    '[$1](#cite-$1-p$2)'
   )
   // 2. [Paper N] (legacy backend format, fallback)
   displayContent = displayContent.replace(
     /\[Paper\s+(\d{1,2})\](?!\()/g,
     '[$1](#cite-$1)'
   )
-  // 3. [N, p.Y] (current format)
+  // 3. [N, p.Y] (current format) — badge shows only [N], page info in tooltip
   displayContent = displayContent.replace(
     /\[(\d{1,2}),\s*p\.(\d+)\](?!\()/g,
-    '[$1, p.$2](#cite-$1-p$2)'
+    '[$1](#cite-$1-p$2)'
   )
   // 4. [N] (simple citation) — only match when citationMap has data to avoid
   //    false positives with markdown footnotes/list references

@@ -29,7 +29,7 @@ from ..models import ChatRequest, CreateConversationRequest, UpdateMessageReques
 from .chat_pdf import (
     is_pdf_url, process_pdf_url, get_pdf_image_path,
     search_pdf_pages, get_cached_markdown, get_cached_pdf_meta, _split_md_into_pages,
-    _get_url_hash, _get_pdf_cache_dir,
+    _get_url_hash, _get_pdf_cache_dir, _tokenize_for_search,
     detect_source_type, is_academic_content,
 )
 from .chat_pdf_vectorstore import search_pdf_chunks
@@ -464,6 +464,98 @@ def extract_text_from_content(content) -> str:
     return ""
 
 
+def _extract_citation_contexts(
+    ai_response: str, article_pdf_content: str,
+) -> dict | None:
+    """Extract citation contexts from AI response using BM25 paragraph search.
+
+    For each ``[N, p.Y]`` citation found in *ai_response*, locate the
+    most relevant ~200-char snippet from the corresponding page in the
+    article PDF content (which contains ``--- Page X ---`` markers).
+
+    Returns a dict keyed by ``"N-pY"`` with ``{page, context}`` values,
+    or ``None`` if no citations are found.
+    """
+    import math
+    from collections import Counter
+
+    citation_pattern = re.compile(r'\[(\d{1,2}),\s*p\.(\d+)\]')
+    citations = citation_pattern.findall(ai_response)
+    if not citations:
+        return None
+
+    pages = _split_md_into_pages(article_pdf_content)
+    page_map: dict[int, str] = {pn: ct for pn, ct in pages}
+
+    def _best_paragraph(page_text: str, query: str, max_len: int = 200) -> str:
+        """BM25-rank paragraphs of *page_text* against *query*,
+        return the best-matching snippet truncated to *max_len* chars."""
+        paragraphs = [p.strip() for p in re.split(r'\n{2,}', page_text) if p.strip()]
+        if not paragraphs:
+            return page_text[:max_len].strip()
+
+        q_tokens = _tokenize_for_search(query)
+        if not q_tokens:
+            return paragraphs[0][:max_len]
+
+        para_tokens = [_tokenize_for_search(p) for p in paragraphs]
+        N = len(paragraphs)
+        avgdl = sum(len(t) for t in para_tokens) / N if N else 1
+        k1, b = 1.5, 0.75
+
+        unique_qt = set(q_tokens)
+        df: dict[str, int] = {qt: 0 for qt in unique_qt}
+        for tl in para_tokens:
+            for qt in unique_qt & set(tl):
+                df[qt] += 1
+
+        best_score, best_idx = -1.0, 0
+        for idx, tl in enumerate(para_tokens):
+            tf = Counter(tl)
+            dl = len(tl)
+            score = 0.0
+            for qt in q_tokens:
+                if qt not in tf:
+                    continue
+                n_qt = df[qt]
+                idf = math.log((N - n_qt + 0.5) / (n_qt + 0.5) + 1)
+                score += idf * (tf[qt] * (k1 + 1)) / (tf[qt] + k1 * (1 - b + b * dl / avgdl))
+            if score > best_score:
+                best_score = score
+                best_idx = idx
+
+        snippet = paragraphs[best_idx][:max_len].strip()
+        if len(paragraphs[best_idx]) > max_len:
+            snippet += "…"
+        return snippet
+
+    contexts: dict[str, dict] = {}
+    for idx_str, page_str in citations:
+        key = f"{idx_str}-p{page_str}"
+        if key in contexts:
+            continue
+        page_num = int(page_str)
+        page_content = page_map.get(page_num, "")
+        if not page_content:
+            continue
+
+        # Extract ~100 chars around the citation in the AI response for BM25 query
+        pos = ai_response.find(f"[{idx_str}, p.{page_str}]")
+        if pos >= 0:
+            start = max(0, pos - 80)
+            end = min(len(ai_response), pos + 80)
+            query = ai_response[start:end]
+        else:
+            query = ai_response[:160]
+
+        contexts[key] = {
+            "page": page_num,
+            "context": _best_paragraph(page_content, query),
+        }
+
+    return contexts if contexts else None
+
+
 async def _stream_from_openai_compatible(
     messages: List[Dict],
     base_url: str,
@@ -719,6 +811,7 @@ After saving, return here and start chatting!"""
     # Tool loop: up to 3 iterations (web search + read article)
     max_tool_iterations = 3
     current_messages = messages.copy()
+    article_pdf_content: str | None = None  # raw PDF markdown (with page markers) for citation context extraction
 
     for iteration in range(max_tool_iterations):
         # Call AI and buffer response
@@ -850,6 +943,8 @@ After saving, return here and start chatting!"""
                 if pdf_result.get("success"):
                     # Build article content for AI
                     content = pdf_result.get("pdf_content") or pdf_result.get("summary") or ""
+                    # Save raw PDF content (with page markers) for citation context extraction
+                    article_pdf_content = content
                     # Head + tail truncation for long articles
                     _PDF_MAX_CHARS = 40000
                     _PDF_HEAD_CHARS = 28000
@@ -917,6 +1012,7 @@ After saving, return here and start chatting!"""
         break
 
     # ── Stream final AI response ──
+    final_response_text = ""
     try:
         async for chunk in _stream_from_openai_compatible(
             messages=current_messages,
@@ -925,7 +1021,27 @@ After saving, return here and start chatting!"""
             model=effective_model,
             source_name="Local vLLM" if use_local else "OpenRouter"
         ):
-            yield chunk
+            # Intercept [DONE] to inject CITATION_CONTEXTS before it
+            if chunk == "data: [DONE]\n\n":
+                if article_pdf_content and final_response_text:
+                    try:
+                        ctx = _extract_citation_contexts(final_response_text, article_pdf_content)
+                        if ctx:
+                            ctx_block = f"[CITATION_CONTEXTS]{json.dumps(ctx, ensure_ascii=False)}[/CITATION_CONTEXTS]"
+                            yield f"data: {json.dumps({'content': ctx_block})}\n\n"
+                    except Exception as e:
+                        logger.warning(f"Failed to extract citation contexts: {e}")
+                yield chunk
+            else:
+                yield chunk
+                # Collect response text for citation extraction
+                if article_pdf_content and chunk.startswith("data: "):
+                    try:
+                        data = json.loads(chunk[6:])
+                        if "content" in data:
+                            final_response_text += data["content"]
+                    except (json.JSONDecodeError, KeyError):
+                        pass
     except Exception as e:
         logger.error(f"Error in AI streaming: {e}")
         error_msg = f"Error: {str(e)}\n\nPlease check your API key and network connection."
