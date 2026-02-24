@@ -292,7 +292,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
       </div>
     ),
     a: ({ href, children, ...rest }) => {
-      const citationMatch = href?.match(/^cite:\/\/(\d+)(?:\?page=(\d+))?$/)
+      // Detect #cite-N or #cite-N-pY hash links and render InlineCitation component
+      const citationMatch = href?.match(/^#cite-(\d+)(?:-p(\d+))?$/)
       if (citationMatch) {
         const index = parseInt(citationMatch[1])
         const page = citationMatch[2]
@@ -350,15 +351,16 @@ const AssistantMessage = React.memo(function AssistantMessage({
   // Remove REFERENCE blocks - rendered as cards
   displayContent = removeAllReferenceBlocks(displayContent)
 
-  // Convert inline citation patterns [N] and [N, p.Y] to markdown links with cite:// protocol
+  // Convert inline citation patterns [N] and [N, p.Y] to markdown links with #cite- hash
+  // Hash links are not sanitized by ReactMarkdown (unlike custom protocols like cite://)
   // Handle [N, p.Y] first (more specific) to avoid partial match by [N]
   displayContent = displayContent.replace(
     /\[(\d{1,2}),\s*p\.(\d+)\](?!\()/g,
-    '[$1, p.$2](cite://$1?page=$2)'
+    '[$1, p.$2](#cite-$1-p$2)'
   )
   displayContent = displayContent.replace(
     /\[(\d{1,2})\](?!\()/g,
-    '[$1](cite://$1)'
+    '[$1](#cite-$1)'
   )
 
   // Remove any incomplete blocks that are still streaming
