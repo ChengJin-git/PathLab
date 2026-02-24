@@ -48,6 +48,7 @@ class SplitConfig(BaseModel):
 
 class TrainingTaskRequest(BaseModel):
     """Request model for creating a training task"""
+    task_id: Optional[str] = None  # Client-generated task_id for fire-and-forget submission
     task_name: str
     task_type: str  # "classification" or "survival"
     data_type: str  # "wsi" or "patch"

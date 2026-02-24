@@ -171,8 +171,8 @@ async def create_training_task(
                 detail=f"The following files are not accessible: {files_str}"
             )
 
-        # Generate task ID
-        task_id = f"train_{uuid.uuid4().hex[:16]}"
+        # Use client-provided task_id (for fire-and-forget submission) or generate one
+        task_id = req.task_id or f"train_{uuid.uuid4().hex[:16]}"
 
         # --- Session 2: Write - create task and WSI associations ---
         async with safe_session() as db:

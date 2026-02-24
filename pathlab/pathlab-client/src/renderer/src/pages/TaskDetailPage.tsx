@@ -5,7 +5,7 @@ import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCirc
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
-import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask } from '../api'
+import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask, ApiError } from '../api'
 import { TASK_DETAIL_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES, ANALYSIS_CANCELLABLE_STATUSES, CancellableStatus } from '../constants/status'
 import { useAuth } from '../contexts/AuthContext'
 import { TaskDetail, LogEntry } from '../components/taskDetail/types'
@@ -23,6 +23,7 @@ export default function TaskDetailPage() {
   const [task, setTask] = useState<TaskDetail | null>(null)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [waitingForCreation, setWaitingForCreation] = useState(false)
   const [rerunning, setRerunning] = useState(false)
   const [rerunError, setRerunError] = useState<string | null>(null)
   const [copySuccess, setCopySuccess] = useState(false)
@@ -133,12 +134,45 @@ export default function TaskDetailPage() {
     try {
       const data = await getTrainingTask(task_id)
       setTask(data as TaskDetail)
+      setWaitingForCreation(false)
     } catch (error) {
-      console.error('Failed to load task detail:', error)
+      // If task not found (404), it may still be creating on the backend
+      // (fire-and-forget submission). Start polling instead of showing error immediately.
+      if (error instanceof ApiError && error.isNotFound()) {
+        setWaitingForCreation(true)
+      } else {
+        console.error('Failed to load task detail:', error)
+      }
     } finally {
       setLoading(false)
     }
   }
+
+  // Poll for task creation when task is not found yet (fire-and-forget submission)
+  useEffect(() => {
+    if (!waitingForCreation || !task_id || task) return
+
+    let attempts = 0
+    const maxAttempts = 30  // 30 * 2s = 60 seconds max wait
+    const intervalId = setInterval(async () => {
+      attempts++
+      try {
+        const data = await getTrainingTask(task_id)
+        setTask(data as TaskDetail)
+        setWaitingForCreation(false)
+        clearInterval(intervalId)
+      } catch (error) {
+        if (attempts >= maxAttempts) {
+          // Give up after 60 seconds — task creation likely failed
+          console.error('Task creation timed out:', task_id)
+          setWaitingForCreation(false)
+          clearInterval(intervalId)
+        }
+      }
+    }, 2000)
+
+    return () => clearInterval(intervalId)
+  }, [waitingForCreation, task_id, task])
 
   const getStatusBadge = (status: TaskDetail['status'], taskType?: string) => {
     const badge = TASK_DETAIL_STATUS_BADGES[status] || { bg: 'bg-gray-100', text: 'text-gray-800', label: status }
@@ -278,6 +312,17 @@ export default function TaskDetailPage() {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+      </div>
+    )
+  }
+
+  // Task is being created on backend (fire-and-forget submission) — show waiting state
+  if (waitingForCreation && !task) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 space-y-4">
+        <Loader2 className="w-12 h-12 text-primary-600 animate-spin" />
+        <div className="text-xl font-semibold text-gray-900">{t('taskDetail.creatingTask', 'Creating Task...')}</div>
+        <p className="text-gray-500">{t('taskDetail.creatingTaskDescription', 'Your task is being set up. This may take a moment for large datasets.')}</p>
       </div>
     )
   }

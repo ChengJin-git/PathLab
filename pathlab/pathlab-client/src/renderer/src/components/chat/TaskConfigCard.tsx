@@ -327,10 +327,14 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         splitConfig = { strategy: 'random', ratios: { train: 0.7, val: 0.1, test: 0.2 }, seed: randomSeed }
       }
 
+      // Generate task_id on the client so we can navigate immediately
+      // without waiting for backend to finish processing 50k+ WSI records
+      const taskId = `train_${crypto.randomUUID().replace(/-/g, '').substring(0, 16)}`
+
       // Build full TrainingTaskConfig using constants for defaults
       // Send dataset_id instead of wsi_ids — backend resolves WSI IDs from dataset
-      // This eliminates the need to fetch and send potentially 50k+ wsi_ids over HTTP
       const fullConfig: TrainingTaskConfig = {
+        task_id: taskId,
         task_name: config.task_name,
         task_type: config.task_type as 'classification' | 'survival' | 'segmentation',
         data_type: config.data_type,
@@ -360,15 +364,24 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         },
         split_config: splitConfig
       }
-      const result = await createTrainingTask(fullConfig)
+
+      // Fire-and-forget: send request to backend without waiting for response
+      // Backend will process asynchronously; TaskDetailPage will poll until task appears
+      createTrainingTask(fullConfig).catch((error) => {
+        const msg = error instanceof Error ? error.message : t('chatComponents.taskConfig.errors.failedToCreate')
+        console.error('Background task creation failed:', msg)
+        onSubmitError?.(msg)
+      })
+
+      // Immediately report success and navigate — don't wait for backend
       setSubmitStatus('success')
-      onSubmitSuccess?.(result.task_id)
+      setIsSubmitting(false)
+      onSubmitSuccess?.(taskId)
     } catch (error) {
       const msg = error instanceof Error ? error.message : t('chatComponents.taskConfig.errors.failedToCreate')
-      setSubmitStatus('error')  // Revert from pending to error
+      setSubmitStatus('error')
       setErrorMessage(msg)
       onSubmitError?.(msg)
-    } finally {
       setIsSubmitting(false)
     }
   }

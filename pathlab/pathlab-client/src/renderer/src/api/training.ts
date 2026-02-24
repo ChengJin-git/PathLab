@@ -240,6 +240,7 @@ export interface SplitConfig {
 }
 
 export interface TrainingTaskConfig {
+  task_id?: string     // Client-generated task_id for fire-and-forget submission
   task_name: string
   task_type: 'classification' | 'survival' | 'segmentation' | 'external_validation'
   data_type: 'wsi' | 'patch'
