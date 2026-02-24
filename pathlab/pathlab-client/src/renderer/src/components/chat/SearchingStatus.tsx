@@ -4,10 +4,10 @@
  * Similar to the "Thinking..." indicator but for web search operations.
  * Also handles PDF parsing status display.
  */
-import React from 'react'
+import React, { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { motion } from 'framer-motion'
-import { Search, Globe, FileText } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Search, Globe, FileText, ChevronDown, ExternalLink } from 'lucide-react'
 
 export interface SearchingStatusProps {
   query?: string
@@ -137,53 +137,111 @@ const SearchingStatus = React.memo(function SearchingStatus({ query, reason }: S
 /**
  * SearchCompletedCard Component
  *
- * Displays a completion card showing how many pages were searched
+ * Displays a completion card showing how many pages were searched,
+ * with a collapsible list of all search results.
  */
 export const SearchCompletedCard = React.memo(function SearchCompletedCard({
   query,
-  resultCount
+  resultCount,
+  results
 }: {
   query: string
   resultCount: number
+  results?: Array<{ title: string; url: string; snippet: string }>
 }) {
   const { t } = useTranslation()
+  const [expanded, setExpanded] = useState(false)
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -10 }}
-      className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-100 rounded-xl my-2"
+      className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-100 rounded-xl my-2 overflow-hidden"
     >
-      {/* Check icon */}
-      <div className="flex-shrink-0">
-        <div className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
-          <svg
-            className="w-3 h-3 text-white"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={3}
-              d="M5 13l4 4L19 7"
-            />
-          </svg>
+      {/* Header row — clickable to toggle results list */}
+      <button
+        type="button"
+        onClick={() => results && results.length > 0 && setExpanded(!expanded)}
+        className="flex items-center gap-3 px-4 py-3 w-full text-left hover:bg-green-50/50 transition-colors"
+      >
+        {/* Check icon */}
+        <div className="flex-shrink-0">
+          <div className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
+            <svg
+              className="w-3 h-3 text-white"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={3}
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+          </div>
         </div>
-      </div>
 
-      {/* Search completion info */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-green-700">
-            {t('settings.general.searchedPages', { count: resultCount })}
-          </span>
+        {/* Search completion info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-green-700">
+              {t('settings.general.searchedPages', { count: resultCount })}
+            </span>
+          </div>
+          <p className="text-xs text-green-600/70 mt-0.5 truncate">&quot;{query}&quot;</p>
         </div>
-        <p className="text-xs text-green-600/70 mt-0.5 truncate">"{query}"</p>
-      </div>
+
+        {/* Expand/collapse chevron */}
+        {results && results.length > 0 && (
+          <ChevronDown
+            className={`w-4 h-4 text-green-500 flex-shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+          />
+        )}
+      </button>
+
+      {/* Collapsible results list */}
+      <AnimatePresence>
+        {expanded && results && results.length > 0 && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="px-4 pb-3 space-y-1.5 border-t border-green-100/60 pt-2">
+              {results.map((result, idx) => {
+                let source = ''
+                try { source = new URL(result.url).hostname.replace(/^www\./, '') } catch { /* ignore */ }
+                return (
+                  <a
+                    key={idx}
+                    href={result.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-start gap-2 px-2.5 py-1.5 rounded-lg hover:bg-green-100/50 transition-colors group"
+                  >
+                    <span className="text-xs font-medium text-green-600 mt-0.5 flex-shrink-0 w-4 text-right">
+                      {idx + 1}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-800 truncate group-hover:text-green-700">
+                        {result.title}
+                      </p>
+                      <p className="text-[10px] text-gray-400 truncate">{source}</p>
+                    </div>
+                    <ExternalLink className="w-3 h-3 text-gray-300 group-hover:text-green-500 flex-shrink-0 mt-0.5" />
+                  </a>
+                )
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   )
 })

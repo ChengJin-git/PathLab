@@ -351,17 +351,32 @@ const AssistantMessage = React.memo(function AssistantMessage({
   // Remove REFERENCE blocks - rendered as cards
   displayContent = removeAllReferenceBlocks(displayContent)
 
-  // Convert inline citation patterns [N] and [N, p.Y] to markdown links with #cite- hash
+  // Convert inline citation patterns to markdown links with #cite- hash
   // Hash links are not sanitized by ReactMarkdown (unlike custom protocols like cite://)
-  // Handle [N, p.Y] first (more specific) to avoid partial match by [N]
+  // Handle more specific patterns first to avoid partial matches
+  // 1. [Paper N, p.Y] or [Paper N, Page Y] (legacy backend format, fallback)
+  displayContent = displayContent.replace(
+    /\[Paper\s+(\d{1,2}),\s*(?:p\.|Page\s*)(\d+)\](?!\()/g,
+    '[$1, p.$2](#cite-$1-p$2)'
+  )
+  // 2. [Paper N] (legacy backend format, fallback)
+  displayContent = displayContent.replace(
+    /\[Paper\s+(\d{1,2})\](?!\()/g,
+    '[$1](#cite-$1)'
+  )
+  // 3. [N, p.Y] (current format)
   displayContent = displayContent.replace(
     /\[(\d{1,2}),\s*p\.(\d+)\](?!\()/g,
     '[$1, p.$2](#cite-$1-p$2)'
   )
-  displayContent = displayContent.replace(
-    /\[(\d{1,2})\](?!\()/g,
-    '[$1](#cite-$1)'
-  )
+  // 4. [N] (simple citation) — only match when citationMap has data to avoid
+  //    false positives with markdown footnotes/list references
+  if (citationMap.size > 0) {
+    displayContent = displayContent.replace(
+      /\[(\d{1,2})\](?!\()/g,
+      '[$1](#cite-$1)'
+    )
+  }
 
   // Remove any incomplete blocks that are still streaming
   const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent, isStreaming)
@@ -388,6 +403,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
         <SearchCompletedCard
           query={webSearchResult.query}
           resultCount={webSearchResult.results?.length || 0}
+          results={webSearchResult.results}
         />
       )}
 

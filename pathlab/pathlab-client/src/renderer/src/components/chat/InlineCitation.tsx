@@ -29,8 +29,8 @@ const InlineCitation = React.memo(function InlineCitation({
   const badgeRef = useRef<HTMLSpanElement>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)
 
-  // Build label text
-  const label = pageInfo ? `${index}, ${pageInfo}` : `${index}`
+  // Build label text — badge shows only the number; page info is in the tooltip
+  const label = `${index}`
 
   // Truncate snippet to ~100 chars
   const truncatedSnippet = snippet
