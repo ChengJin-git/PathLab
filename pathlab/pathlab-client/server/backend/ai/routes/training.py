@@ -308,6 +308,16 @@ async def handle_training_error_scoped(
         # Re-raise HTTP exceptions as-is
         raise e
 
+    elif isinstance(e, torch.cuda.OutOfMemoryError):
+        # Handle CUDA OOM with full traceback in the error message
+        error_detail = f"CUDA out of memory. {str(e)}"
+        full_error = f"{error_detail}\n\nTraceback:\n{tb}"
+        logger.error(f"{operation_name} failed - CUDA OOM: {e}\n{tb}")
+        async with scoped_session.session() as (training_logger, db):
+            await training_logger.error(f"{operation_name} failed - CUDA out of memory", {"error": error_detail, "traceback": tb})
+            await _safe_update_status(db, task_id, TaskStatus.FAILED, progress=0, error_message=full_error)
+        raise HTTPException(status_code=500, detail=full_error)
+
     else:
         logger.error(f"{operation_name} failed: {e}\n{tb}")
         async with scoped_session.session() as (training_logger, db):
