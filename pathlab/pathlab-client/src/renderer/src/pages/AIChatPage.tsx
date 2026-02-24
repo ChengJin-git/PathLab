@@ -18,6 +18,7 @@ import {
   type ChatMessageContent
 } from '../api'
 import { useVoiceSession } from '../lib/useVoiceSession'
+import { formatFileSize } from '../lib/utils'
 import * as XLSX from 'xlsx'
 import {
   Send, Loader2, Bot, User, MessageSquare, Trash2, Plus, Clock,
@@ -98,6 +99,7 @@ export default function AIChatPage() {
 
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([])
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([])
+  const [isDraggingFile, setIsDraggingFile] = useState(false)
   // Monotonic counter to distinguish active generation from stale ones
   const generationIdRef = useRef(0)
 
@@ -339,6 +341,7 @@ export default function AIChatPage() {
       setConversations(convs)
     } catch (error) {
       console.error('Failed to load conversations:', error)
+      showToastRef.current('error', t('aiChat.historyLoadFailed'))
     } finally {
       setIsLoadingConversations(false)
     }
@@ -403,6 +406,7 @@ export default function AIChatPage() {
       }
     } catch (error) {
       console.error('Failed to load conversation:', error)
+      showToastRef.current('error', t('aiChat.conversationLoadFailed'))
       // If loading fails, navigate back to clean URL
       if (urlConversationId) {
         navigate('/ai-chat', { replace: true })
@@ -453,10 +457,35 @@ export default function AIChatPage() {
     setDeleteConfirmId(null)
   }
 
+  // File upload validation constants
+  const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB
+  const MAX_FILES = 10
+
   // File upload handlers (images, CSV, XLSX)
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement> | FileList) => {
+    const files = 'target' in e ? e.target.files : e
     if (!files) return
+
+    // Validate file count
+    const totalFiles = imageAttachments.length + fileAttachments.length + files.length
+    if (totalFiles > MAX_FILES) {
+      showToastRef.current('error', t('aiChat.tooManyFiles', { max: MAX_FILES }))
+      if ('target' in e && fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+
+    // Validate file sizes
+    for (let i = 0; i < files.length; i++) {
+      if (files[i].size > MAX_FILE_SIZE) {
+        showToastRef.current('error', t('aiChat.fileTooLarge', {
+          name: files[i].name,
+          size: formatFileSize(files[i].size),
+          max: formatFileSize(MAX_FILE_SIZE)
+        }))
+        if ('target' in e && fileInputRef.current) fileInputRef.current.value = ''
+        return
+      }
+    }
 
     const newImageAttachments: ImageAttachment[] = []
     const newFileAttachments: FileAttachment[] = []
@@ -467,39 +496,49 @@ export default function AIChatPage() {
 
       // Handle image files
       if (file.type.startsWith('image/')) {
-        const base64 = await new Promise<string>((resolve) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(reader.result as string)
-          reader.readAsDataURL(file)
-        })
+        try {
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(reader.result as string)
+            reader.onerror = () => reject(reader.error)
+            reader.readAsDataURL(file)
+          })
 
-        newImageAttachments.push({
-          id: `${Date.now()}-${i}`,
-          file,
-          preview: base64,
-          base64
-        })
+          newImageAttachments.push({
+            id: `${Date.now()}-${i}`,
+            file,
+            preview: base64,
+            base64
+          })
+        } catch {
+          showToastRef.current('error', t('aiChat.fileReadError', { name: file.name }))
+        }
       }
       // Handle CSV files
       else if (fileName.endsWith('.csv') || file.type === 'text/csv') {
-        const content = await new Promise<string>((resolve) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(reader.result as string)
-          reader.readAsText(file)
-        })
+        try {
+          const content = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(reader.result as string)
+            reader.onerror = () => reject(reader.error)
+            reader.readAsText(file)
+          })
 
-        // Parse CSV to get preview (first 5 rows)
-        const lines = content.split('\n').filter(line => line.trim())
-        const preview = lines.slice(0, 6) // Header + 5 data rows
+          // Parse CSV to get preview (first 5 rows)
+          const lines = content.split('\n').filter(line => line.trim())
+          const preview = lines.slice(0, 6) // Header + 5 data rows
 
-        newFileAttachments.push({
-          id: `${Date.now()}-${i}`,
-          file,
-          name: file.name,
-          type: 'csv',
-          content,
-          preview
-        })
+          newFileAttachments.push({
+            id: `${Date.now()}-${i}`,
+            file,
+            name: file.name,
+            type: 'csv',
+            content,
+            preview
+          })
+        } catch {
+          showToastRef.current('error', t('aiChat.fileReadError', { name: file.name }))
+        }
       }
       // Handle XLSX files - parse and convert to CSV
       else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls') ||
@@ -577,6 +616,70 @@ export default function AIChatPage() {
   const handleFileRemove = (id: string) => {
     setFileAttachments(prev => prev.filter(f => f.id !== id))
   }
+
+  // Drag-and-drop handlers for chat area
+  const dragCounterRef = useRef(0)
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current++
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDraggingFile(true)
+    }
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current--
+    if (dragCounterRef.current === 0) {
+      setIsDraggingFile(false)
+    }
+  }, [])
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current = 0
+    setIsDraggingFile(false)
+    const files = e.dataTransfer.files
+    if (files.length > 0) {
+      handleFileSelect(files)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageAttachments.length, fileAttachments.length, t])
+
+  // Paste image handler
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items
+      if (!items) return
+
+      const imageFiles: File[] = []
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith('image/')) {
+          const file = items[i].getAsFile()
+          if (file) imageFiles.push(file)
+        }
+      }
+
+      if (imageFiles.length > 0) {
+        e.preventDefault()
+        const dt = new DataTransfer()
+        imageFiles.forEach(f => dt.items.add(f))
+        handleFileSelect(dt.files)
+      }
+    }
+
+    document.addEventListener('paste', handlePaste)
+    return () => document.removeEventListener('paste', handlePaste)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageAttachments.length, fileAttachments.length, t])
 
   const handleScenarioCardClick = (card: typeof SCENARIO_CARDS[number]) => {
     setInput(t(card.promptKey))
@@ -767,10 +870,10 @@ export default function AIChatPage() {
         // Check for special error/warning markers in XLSX content
         if (f.type === 'xlsx' && f.content.startsWith('__MULTIPLE_SHEETS__:')) {
           const sheets = f.content.replace('__MULTIPLE_SHEETS__:', '')
-          return `\n\n📎 **Uploaded Excel: ${f.name}**\n **Warning: This file has multiple sheets (${sheets})**\nPlease save only the data sheet as a separate CSV file and re-upload.`
+          return t('aiChat.uploadedExcelWarning', { name: f.name, sheets })
         } else if (f.type === 'xlsx' && f.content.startsWith('__PARSE_ERROR__:')) {
           const error = f.content.replace('__PARSE_ERROR__:', '')
-          return `\n\n📎 **Uploaded Excel: ${f.name}**\n **Error: Failed to parse file** - ${error}`
+          return t('aiChat.uploadedExcelError', { name: f.name, error })
         } else {
           // Both CSV and successfully parsed XLSX (converted to CSV)
           // Use [CSV_PREVIEW] block for beautiful rendering
@@ -1306,7 +1409,7 @@ export default function AIChatPage() {
     showToast('info', t('aiChat.registrationStarted'))
 
     // Auto-send message to trigger AI's STEP 6 response (METADATA_UPLOAD card)
-    const autoMessage = `Registration submitted. ${fileCount} Files are uploading in the background.`
+    const autoMessage = t('aiChat.registrationAutoMessage', { count: fileCount })
     submitFormProgrammatically(autoMessage)
   }, [persistMessageUpdate, showToast, submitFormProgrammatically, t])
 
@@ -1354,7 +1457,7 @@ export default function AIChatPage() {
   // Handle task submission error
   const handleTaskSubmitError = useCallback((error: string) => {
     // Send error to agent for analysis
-    const errorMessage = `The task submission failed with error: "${error}". Can you help me understand what went wrong and how to fix it?`
+    const errorMessage = t('aiChat.taskSubmitErrorMessage', { error })
     setInput(errorMessage)
   }, [])
 
@@ -1550,7 +1653,23 @@ export default function AIChatPage() {
   }, [persistMessageUpdate])
 
   return (
-    <div className="flex h-full bg-gray-50 relative overflow-hidden">
+    <div
+      className="flex h-full bg-gray-50 relative overflow-hidden"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      {/* Drag-and-drop overlay */}
+      {isDraggingFile && (
+        <div className="absolute inset-0 z-50 bg-primary-500/10 backdrop-blur-[2px] flex items-center justify-center border-4 border-primary-500 border-dashed rounded-xl pointer-events-none">
+          <div className="bg-white px-8 py-4 rounded-full shadow-xl font-bold text-primary-600 flex items-center gap-3">
+            <Paperclip className="w-6 h-6" />
+            {t('aiChat.dropFilesHere')}
+          </div>
+        </div>
+      )}
+
       {/* Chat History Sidebar */}
       {showHistory && (
         <>
@@ -1558,7 +1677,7 @@ export default function AIChatPage() {
             className="fixed top-16 inset-x-0 bottom-0 bg-black/20 z-30 lg:hidden backdrop-blur-sm transition-opacity"
             onClick={() => setShowHistory(false)}
           />
-          <div className="fixed top-16 bottom-0 left-0 w-80 bg-white border-r border-gray-200 z-40 flex flex-col shadow-2xl animate-in slide-in-from-left duration-300">
+          <div className="fixed top-16 bottom-0 left-0 w-80 bg-white border-r border-gray-200 z-40 flex flex-col shadow-2xl animate-in slide-in-from-left duration-300" role="navigation" aria-label={t('aiChat.history')}>
             <div className="p-4 border-b border-gray-200">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
@@ -1682,7 +1801,7 @@ export default function AIChatPage() {
           </div>
         </div>
 
-        <div ref={messagesContainerRef} data-chat-messages-container data-current-conversation-id={currentConversationId || ''} className="flex-1 overflow-y-auto custom-scrollbar">
+        <div ref={messagesContainerRef} data-chat-messages-container data-current-conversation-id={currentConversationId || ''} className="flex-1 overflow-y-auto custom-scrollbar" role="log" aria-label={t('aiChat.chatMessages')} aria-live="polite">
           <div className="px-4 pb-40">
           <div className="max-w-4xl mx-auto space-y-6">
             {/* Gemini-style Welcome Hero with Scenario Cards */}
@@ -1818,8 +1937,8 @@ export default function AIChatPage() {
                       })()
                     ) : message.content === '' ? (
                       // ChatGPT-like Thinking Indicator with staggered bouncing dots
-                      <div className="flex items-center gap-2.5 py-2">
-                        <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-2.5 py-2" aria-busy="true">
+                        <div className="flex items-center gap-1" aria-hidden="true">
                           <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '0ms', animationDuration: '1.2s' }} />
                           <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '200ms', animationDuration: '1.2s' }} />
                           <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '400ms', animationDuration: '1.2s' }} />
@@ -1918,7 +2037,7 @@ export default function AIChatPage() {
 
                   {/* Timestamp & Actions for User Messages */}
                   {message.role === 'user' && (
-                    <div className="flex items-center gap-2 mt-1.5 mr-1 text-gray-400 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-2 mt-1.5 mr-1 text-gray-400 justify-end opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                       {/* Timestamp */}
                       <span className="text-xs text-gray-400" title={message.timestamp.toLocaleString()}>
                         {formatTimestamp(message.timestamp)}
@@ -1994,7 +2113,8 @@ export default function AIChatPage() {
                     <button
                       type="button"
                       onClick={() => handleImageRemove(attachment.id)}
-                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-900/80 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-900/80 text-white rounded-full flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity backdrop-blur-sm"
+                      aria-label={t('aiChat.removeAttachment')}
                     >
                       <X className="w-3 h-3" />
                     </button>
@@ -2012,7 +2132,8 @@ export default function AIChatPage() {
                     <button
                       type="button"
                       onClick={() => handleFileRemove(attachment.id)}
-                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-900/80 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-900/80 text-white rounded-full flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity backdrop-blur-sm"
+                      aria-label={t('aiChat.removeAttachment')}
                     >
                       <X className="w-3 h-3" />
                     </button>
@@ -2049,6 +2170,7 @@ export default function AIChatPage() {
                   style={{ maxHeight: '150px' }}
                   disabled={isGenerating}
                   autoFocus
+                  aria-label={t('aiChat.messageInput')}
                 />
 
                 {/* Hidden file input */}
@@ -2101,6 +2223,7 @@ export default function AIChatPage() {
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isGenerating || realtimeIsRecording || voiceSessionActive}
                     className="p-2 sm:p-2.5 rounded-full transition-all text-gray-400 hover:text-gray-600 hover:bg-gray-100 active:scale-95 disabled:opacity-50"
+                    aria-label={t('aiChat.attachFile')}
                   >
                     <Paperclip className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
@@ -2110,6 +2233,7 @@ export default function AIChatPage() {
                     type="button"
                     onClick={toggleVoiceSession}
                     disabled={isGenerating && !voiceSessionActive}
+                    aria-label={voiceSessionActive || realtimeIsRecording ? t('aiChat.stopVoiceInput') : t('aiChat.voiceInput')}
                     className={`
                       p-2 sm:p-2.5 rounded-full transition-all duration-300 active:scale-95
                       ${realtimeIsRecording || realtimeIsConnecting
@@ -2136,6 +2260,7 @@ export default function AIChatPage() {
                       onClick={handleStopGeneration}
                       className="p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm bg-gray-800 text-white hover:bg-gray-900 shadow-md active:scale-95"
                       title={t('aiChat.stopGenerating')}
+                      aria-label={t('aiChat.stopGenerating')}
                     >
                       <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="currentColor" />
                     </button>
@@ -2143,6 +2268,7 @@ export default function AIChatPage() {
                     <button
                       type="submit"
                       disabled={!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0}
+                      aria-label={t('aiChat.sendMessage')}
                       className={`
                           p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm
                           ${!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0
@@ -2158,7 +2284,7 @@ export default function AIChatPage() {
               </div>
             </form>
 
-            <div className="mt-2 text-center text-[8px] sm:text-xs text-gray-400/80 font-medium truncate px-4">
+            <div className="mt-2 text-center text-xs text-gray-400/80 font-medium truncate px-4">
               {t('aiChat.disclaimer')}
             </div>
           </div>
@@ -2169,14 +2295,20 @@ export default function AIChatPage() {
 
       {/* Delete Confirmation Modal */}
       {deleteConfirmId && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-dialog-title"
+          onKeyDown={(e) => e.key === 'Escape' && cancelDelete()}
+        >
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all scale-100">
             <div className="flex items-start gap-4">
               <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
                 <Trash2 className="w-6 h-6 text-red-600" />
               </div>
               <div className="flex-1">
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                <h3 id="delete-dialog-title" className="text-lg font-semibold text-gray-900 mb-2">
                   {deleteConfirmId === 'all-conversations' ? t('aiChat.deleteAllHistoryTitle') : t('aiChat.deleteConversationTitle')}
                 </h3>
                 <p className="text-sm text-gray-600 mb-6">
@@ -2206,13 +2338,18 @@ export default function AIChatPage() {
 
       {/* Toast notification */}
       {toastMessage && (
-        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-in slide-in-from-top-2 duration-300 ${toastMessage.type === 'error' ? 'bg-red-500 text-white' :
-          toastMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'
-          }`}>
+        <div
+          className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-in slide-in-from-top-2 duration-300 ${toastMessage.type === 'error' ? 'bg-red-500 text-white' :
+            toastMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'
+            }`}
+          role={toastMessage.type === 'error' ? 'alert' : 'status'}
+          aria-live={toastMessage.type === 'error' ? 'assertive' : 'polite'}
+        >
           <span>{toastMessage.message}</span>
           <button
             onClick={() => setToastMessage(null)}
             className="ml-2 hover:opacity-80"
+            aria-label={t('aiChat.closeNotification')}
           >
             ×
           </button>
