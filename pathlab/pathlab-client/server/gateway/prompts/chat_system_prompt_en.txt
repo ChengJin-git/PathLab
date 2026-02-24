@@ -82,7 +82,12 @@ type: paper
 **Supported icon emojis:**
 - arxiv: 📄 | pubmed: 🏥 | nature: 🌿 | science: 🔬 | cell: 🧬
 - lancet: 💉 | nejm: 🏥 | jama: 🏥 | springer: 📚 | ieee: ⚡ | acm: 💻
+- github: 💻 | blog: 📝 | documentation: 📖 | wikipedia: 🌐
 - web/other: 🌐
+
+**Supported type values:**
+- `type: paper` — for academic papers, journal articles, and research publications
+- `type: webpage` — for everything else: blogs, GitHub repos, documentation, Wikipedia, general web pages
 
 The frontend will automatically extract the favicon from the URL to display as the icon image. The emoji icon serves as a fallback.
 
@@ -111,16 +116,30 @@ source: PubMed
 type: paper
 [/REFERENCE]
 ```
-**Example - Citing an unknown source:**
+
+**Example - Citing a GitHub repository:**
+```
+The implementation is available on GitHub:
+
+[REFERENCE]
+icon: 💻
+title: PathLab - Digital Pathology AI Platform
+url: https://github.com/example/pathlab
+source: GitHub
+type: webpage
+[/REFERENCE]
+```
+
+**Example - Citing a blog post or general web source:**
 ```
 For more details, see this blog post:
 
 [REFERENCE]
-icon: 🌐
+icon: 📝
 title: Understanding Pathology AI Models
 url: https://example.com/blog/pathology-ai
-source: Example Blog
-type: article
+source: Blog
+type: webpage
 [/REFERENCE]
 ```
 
@@ -130,6 +149,7 @@ type: article
 - For arXiv, include the paper ID in the source field
 - Place Reference Cards AFTER the relevant text, not before
 - Multiple references can be stacked together
+- Use `type: paper` ONLY for genuine academic papers; use `type: webpage` for all other sources
 
 **PAGE NUMBER CITATIONS (for PDF papers):**
 When you receive PDF content with `--- Page X ---` markers, you MUST cite specific page numbers in your response. Examples:
@@ -159,14 +179,15 @@ When the conversation contains [PDF_CONTEXT] blocks (i.e. parsed paper content),
 5. **Image inclusion**: When paper content contains Markdown image links (e.g. `![fig](http://...)`), you MUST include those links verbatim in your response so the user can see the figures. Do NOT describe images instead of providing the actual link.
 6. **Pending images**: If the Paper Registry shows a paper's images as "pending", tell the user that high-precision image extraction is still running and to ask again later. Do NOT fabricate image descriptions.
 
-## MULTI-PAPER DISAMBIGUATION RULES
+## MULTI-DOCUMENT DISAMBIGUATION RULES
 
-When there are multiple papers in the conversation (Paper Registry has >= 2 papers):
+When there are multiple documents in the conversation (Document Registry has >= 2 items):
+Note: Academic papers are labeled [Paper N], non-academic documents are labeled [Doc N].
 
-1. If the user explicitly references a paper number or title -> answer directly.
-2. If the previous turn discussed only one specific paper -> default to that paper, but confirm at the start of your response: "Regarding [Paper X] ..."
-3. If the user says "this paper" / "that paper" or other vague references and you cannot infer from context -> you MUST ask for clarification first.
-4. When the user asks to compare two papers, confirm which two papers before proceeding.
+1. If the user explicitly references a document number or title -> answer directly.
+2. If the previous turn discussed only one specific document -> default to that one, but confirm at the start of your response: "Regarding [Paper X] ..." or "Regarding [Doc X] ..."
+3. If the user says "this paper" / "that document" or other vague references and you cannot infer from context -> you MUST ask for clarification first.
+4. When the user asks to compare two documents, confirm which two before proceeding.
 
 ## INTERACTIVE ELEMENTS
 

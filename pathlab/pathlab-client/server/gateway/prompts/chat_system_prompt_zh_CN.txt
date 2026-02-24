@@ -83,7 +83,12 @@ type: paper
 **支持的图标 emoji：**
 - arxiv: 📄 | pubmed: 🏥 | nature: 🌿 | science: 🔬 | cell: 🧬
 - lancet: 💉 | nejm: 🏥 | jama: 🏥 | springer: 📚 | ieee: ⚡ | acm: 💻
+- github: 💻 | blog: 📝 | documentation: 📖 | wikipedia: 🌐
 - web/其他: 🌐
+
+**支持的 type 值：**
+- `type: paper` — 用于学术论文、期刊文章和研究出版物
+- `type: webpage` — 用于其他所有来源：博客、GitHub 仓库、文档、维基百科、普通网页
 
 前端会自动从 URL 中提取 favicon 作为图标图片显示，emoji 图标作为备用。
 
@@ -113,16 +118,29 @@ type: paper
 [/REFERENCE]
 ```
 
-**示例 - 引用未知来源：**
+**示例 - 引用 GitHub 仓库：**
+```
+实现代码已在 GitHub 上开源：
+
+[REFERENCE]
+icon: 💻
+title: PathLab - 数字病理 AI 平台
+url: https://github.com/example/pathlab
+source: GitHub
+type: webpage
+[/REFERENCE]
+```
+
+**示例 - 引用博客或普通网页：**
 ```
 更多详情请查看这篇博客文章：
 
 [REFERENCE]
-icon: 🌐
+icon: 📝
 title: Understanding Pathology AI Models
 url: https://example.com/blog/pathology-ai
-source: Example Blog
-type: article
+source: Blog
+type: webpage
 [/REFERENCE]
 ```
 
@@ -132,6 +150,7 @@ type: article
 - 对于 arXiv，在 source 字段中包含论文 ID
 - 将参考文献卡片放在相关文本之后，而不是之前
 - 多个参考文献可以堆叠在一起
+- `type: paper` 仅用于真正的学术论文；其他来源一律使用 `type: webpage`
 
 **页码引用（针对 PDF 论文）：**
 当你收到包含 `--- Page X ---` 标记的 PDF 内容时，你**必须**在回复中引用具体页码。示例：
@@ -161,14 +180,15 @@ type: article
 5. **包含图片**：当论文内容包含 Markdown 图片链接（如 `![fig](http://...)`）时，你必须在回复中原样包含这些链接，以便用户看到图表。不要用文字描述代替实际链接。
 6. **待处理的图片**：如果 Paper Registry 显示某论文的图片为"pending"状态，告知用户高精度图片提取仍在进行中，请稍后再问。不要编造图片描述。
 
-## 多论文消歧规则
+## 多文档消歧规则
 
-当对话中有多篇论文（Paper Registry 含 >= 2 篇论文）时：
+当对话中有多个文档（Document Registry 含 >= 2 个文档）时：
+注意：学术论文标记为 [Paper N]，非学术文档标记为 [Doc N]。
 
-1. 如果用户明确提到了论文编号或标题 → 直接回答。
-2. 如果上一轮只讨论了一篇特定论文 → 默认使用该论文，但在回复开头确认："关于 [Paper X] ..."
-3. 如果用户说"这篇论文"/"那篇论文"或其他模糊指代，且你无法从上下文推断 → 你必须先请求澄清。
-4. 当用户要求比较两篇论文时，先确认是哪两篇论文再继续。
+1. 如果用户明确提到了文档编号或标题 → 直接回答。
+2. 如果上一轮只讨论了一个特定文档 → 默认使用该文档，但在回复开头确认："关于 [Paper X] ..." 或 "关于 [Doc X] ..."
+3. 如果用户说"这篇论文"/"那个文档"或其他模糊指代，且你无法从上下文推断 → 你必须先请求澄清。
+4. 当用户要求比较两个文档时，先确认是哪两个文档再继续。
 
 ## 交互元素
 

@@ -31,6 +31,7 @@ from .chat_pdf import (
     is_pdf_url, process_pdf_url, get_pdf_image_path,
     search_pdf_pages, get_cached_markdown, get_cached_pdf_meta, _split_md_into_pages,
     _get_url_hash, _get_pdf_cache_dir,
+    detect_source_type, is_academic_content,
 )
 from .chat_pdf_vectorstore import search_pdf_chunks
 
@@ -185,15 +186,26 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
     total = len(all_urls)
     enhanced_parts: list[str] = []
 
-    # ── Global Paper Registry ────────────────────────────────────────────────
-    registry_lines = [f"## Paper Registry ({total} papers):\n"]
+    # ── Global Document Registry ─────────────────────────────────────────────
+    registry_lines = [f"## Document Registry ({total} documents):\n"]
     paper_metas: list[dict] = []
     for idx, url in enumerate(all_urls, 1):
         meta = get_cached_pdf_meta(url) or {}
         title = meta.get('title', 'Unknown')
         parse_method = meta.get('parse_method', 'unknown')
 
-        # 改动 7: Image status detection
+        # Determine academic status from cache meta (persisted by process_pdf_url).
+        # If not in cache (legacy), re-detect from cached markdown + source type.
+        if 'is_academic' in meta:
+            is_academic = meta['is_academic']
+        else:
+            cached_md = get_cached_markdown(url)
+            src_type = detect_source_type(url)
+            is_academic = is_academic_content(cached_md or "", src_type) if cached_md else False
+
+        label = "Paper" if is_academic else "Doc"
+
+        # Image status detection
         url_hash = _get_url_hash(url)
         images_dir = _get_pdf_cache_dir() / "images" / url_hash
         image_count = 0
@@ -207,17 +219,17 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
             image_status = "none"
 
         registry_lines.append(
-            f"- [Paper {idx}] {title} ({url}) | Parse: {parse_method} | Images: {image_status}"
+            f"- [{label} {idx}] {title} ({url}) | Parse: {parse_method} | Images: {image_status}"
         )
         paper_metas.append({
             'url': url, 'meta': meta, 'title': title,
             'parse_method': parse_method, 'image_count': image_count,
+            'is_academic': is_academic,
         })
 
-        # 改动 5+10: Log parse method and image availability
         logger.info(
-            f"[BM25] Paper {idx} '{title}': parse_method={parse_method}, "
-            f"images_available={image_count > 0} ({image_count} images)"
+            f"[BM25] {label} {idx} '{title}': parse_method={parse_method}, "
+            f"is_academic={is_academic}, images_available={image_count > 0} ({image_count} images)"
         )
 
     registry_lines.append("")
@@ -225,15 +237,18 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
 
     followup_note = _PDF_FOLLOWUP_NOTE.get(detected_lang, _PDF_FOLLOWUP_NOTE["en"])
     enhanced_parts.append(followup_note + "\n")
-    enhanced_parts.append("## PDF Paper Content (query-relevant pages):\n")
+    enhanced_parts.append("## PDF Content (query-relevant pages):\n")
 
-    # ── Per-paper rebuild ────────────────────────────────────────────────────
+    # ── Per-document rebuild ─────────────────────────────────────────────────
     for paper_idx, pd in enumerate(paper_metas, 1):
         url = pd['url']
         meta = pd['meta']
         title = pd['title']
         page_count = meta.get('page_count')
         parse_method = pd['parse_method']
+        is_academic = pd.get('is_academic', False)
+        label = "Paper" if is_academic else "Doc"
+        content_type = "Academic Paper" if is_academic else "General Document"
         quality_label = (
             "High-precision (MinerU — includes tables, formulas, images)"
             if parse_method == "mineru"
@@ -242,8 +257,9 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
         page_info = f"{page_count} pages" if page_count else "page count unknown"
 
         enhanced_parts.append(
-            f"### [Paper {paper_idx} of {total}] {title}\n"
+            f"### [{label} {paper_idx} of {total}] {title}\n"
             f"- **URL**: {url}\n"
+            f"- **Content type**: {content_type}\n"
             f"- **Total pages**: {page_info}\n"
             f"- **Parse quality**: {quality_label}\n"
         )
@@ -270,7 +286,7 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
         if vector_results:
             # Use vector search results — group by page, sorted by page_num
             logger.info(
-                f"[VectorSearch] Paper {paper_idx}: {len(vector_results)} chunks "
+                f"[VectorSearch] {label} {paper_idx}: {len(vector_results)} chunks "
                 f"retrieved (best distance={vector_results[0]['_distance']:.3f})"
             )
             # Always include first and last page for context
@@ -321,8 +337,8 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
             content_parts.insert(0, note)
             enhanced_parts.append("\n".join(content_parts))
         else:
-            # ── BM25 fallback for papers not yet vector-indexed ──────────────
-            logger.info(f"[BM25 Fallback] Paper {paper_idx}: no vector results, using BM25")
+            # ── BM25 fallback for documents not yet vector-indexed ────────────
+            logger.info(f"[BM25 Fallback] {label} {paper_idx}: no vector results, using BM25")
             all_pages = _split_md_into_pages(full_md)
             if not all_pages:
                 enhanced_parts.append(full_md[:_PDF_MAX_CHARS_PER_PAPER] + "\n[...truncated]\n")
@@ -863,29 +879,30 @@ After saving, return here and start chatting!"""
             supplement_parts: list[str] = []
 
             if successful_pdfs:
-                # ── Determine starting paper index (续接全局编号) ─────────────────
+                # ── Determine starting index (续接全局编号) ───────────────────────
                 # Scan conversation history for existing [PDF_CONTEXT] blocks and
-                # find the highest Paper N so that new papers continue numbering.
-                _existing_paper_ids = re.findall(
-                    r'\[Paper\s+(\d+)\]',
+                # find the highest Paper/Doc N so that new items continue numbering.
+                _existing_ids = re.findall(
+                    r'\[(?:Paper|Doc)\s+(\d+)\]',
                     " ".join(
                         extract_text_from_content(m.get("content", ""))
                         for m in current_messages
                         if m.get("role") == "user"
                     ),
                 )
-                _start_idx = max((int(x) for x in _existing_paper_ids), default=0) + 1
+                _start_idx = max((int(x) for x in _existing_ids), default=0) + 1
 
-                # ── Paper index ───────────────────────────────────────────────────
+                # ── Index listing ─────────────────────────────────────────────────
                 total = len(successful_pdfs)
-                index_lines = [f"## Available Papers ({total} parsed, starting Paper {_start_idx}):\n"]
+                index_lines = [f"## Available Documents ({total} parsed, starting index {_start_idx}):\n"]
                 for idx, sp in enumerate(successful_pdfs):
-                    paper_num = _start_idx + idx
-                    index_lines.append(f"- **[Paper {paper_num}]** {sp.get('title', 'Unknown')}  ({sp['url']})")
+                    item_num = _start_idx + idx
+                    label = "Paper" if sp.get("is_academic", False) else "Doc"
+                    index_lines.append(f"- **[{label} {item_num}]** {sp.get('title', 'Unknown')}  ({sp['url']})")
                 index_lines.append("")
                 supplement_parts.extend(index_lines)
 
-                supplement_parts.append("## PDF Paper Content (with page numbers):\n")
+                supplement_parts.append("## PDF Content (with page numbers):\n")
                 for paper_idx, sp in enumerate(successful_pdfs):
                     # ── Compact metadata block ────────────────────────────────────
                     # This block is emitted BEFORE the content so it is always
@@ -898,10 +915,14 @@ After saving, return here and start chatting!"""
                         else "Fast (PyMuPDF — text only, images not yet extracted)"
                     )
                     page_info = f"{page_count} pages" if page_count else "page count unknown"
-                    paper_num = _start_idx + paper_idx
+                    item_num = _start_idx + paper_idx
+                    is_academic = sp.get("is_academic", False)
+                    label = "Paper" if is_academic else "Doc"
+                    content_type = "Academic Paper" if is_academic else "General Document"
                     supplement_parts.append(
-                        f"### [Paper {paper_num}] {sp.get('title', 'Unknown')}\n"
+                        f"### [{label} {item_num}] {sp.get('title', 'Unknown')}\n"
                         f"- **URL**: {sp['url']}\n"
+                        f"- **Content type**: {content_type}\n"
                         f"- **Total pages**: {page_info}\n"
                         f"- **Parse quality**: {quality_label}\n"
                     )
@@ -1551,7 +1572,7 @@ async def chat_with_ai(
                 messages.pop(idx)
 
         logger.info(
-            f"[BM25] Merged {len(all_pdf_urls)} papers into unified PDF context "
+            f"[BM25] Merged {len(all_pdf_urls)} documents into unified PDF context "
             f"for follow-up query: '{user_query_for_bm25[:80]}...'"
         )
 

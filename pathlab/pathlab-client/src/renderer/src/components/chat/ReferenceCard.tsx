@@ -7,14 +7,14 @@
 import React, { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { motion } from 'framer-motion'
-import { ExternalLink, FileText, BookOpen } from 'lucide-react'
+import { ExternalLink, FileText, Globe } from 'lucide-react'
 
 export interface ReferenceCardProps {
   icon: string
   title: string
   url: string
   source: string
-  type: 'paper' | 'article'
+  type: 'paper' | 'webpage'
 }
 
 /**
@@ -47,7 +47,7 @@ export function parseReferenceCard(content: string): ReferenceCardProps | null {
       title: config.title,
       url: config.url,
       source: config.source || 'Unknown',
-      type: (config.type === 'article' ? 'article' : 'paper') as 'paper' | 'article'
+      type: (config.type === 'webpage' ? 'webpage' : 'paper') as 'paper' | 'webpage'
     }
   } catch {
     return null
@@ -202,8 +202,8 @@ const ReferenceCard = React.memo(function ReferenceCard({
               </span>
             ) : (
               <span className="flex items-center gap-1">
-                <BookOpen className="w-3 h-3" />
-                {t('chatComponents.referenceCard.article')}
+                <Globe className="w-3 h-3" />
+                {t('chatComponents.referenceCard.webpage')}
               </span>
             )}
           </span>

@@ -251,6 +251,28 @@ def _update_meta_with_parse_info(url: str, page_count: int, parse_method: str) -
         logger.error(f"Error updating meta for {url}: {e}")
 
 
+def _update_meta_academic_flag(url: str, is_academic: bool) -> None:
+    """Persist the is_academic flag to the cached JSON metadata.
+
+    Called after `is_academic_content()` so that follow-up questions (which
+    rebuild context via `_build_merged_pdf_context`) can read it from cache
+    without re-running heuristic detection.
+    """
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        meta_file = cache_dir / f"{url_hash}.json"
+        if not meta_file.exists():
+            return
+        with open(meta_file, 'r') as f:
+            meta = json.load(f)
+        meta['is_academic'] = is_academic
+        with open(meta_file, 'w') as f:
+            json.dump(meta, f, indent=2)
+    except Exception as e:
+        logger.error(f"Error updating academic flag for {url}: {e}")
+
+
 def _save_markdown_to_cache(url: str, markdown: str, paper_title: str = "") -> None:
     """Save pymupdf-parsed markdown to cache (fast tier)."""
     try:
@@ -1299,7 +1321,8 @@ async def summarize_pdf_content(
     base_url: str,
     api_key: str,
     model: str,
-    max_length: int = 3000
+    max_length: int = 3000,
+    is_academic: bool = True,
 ) -> str:
     # Head + tail strategy: preserve both the beginning (abstract / intro) and the
     # end of the document (conclusions / author contributions / references).
@@ -1308,8 +1331,9 @@ async def summarize_pdf_content(
         head = pdf_content[:10000]
         tail = pdf_content[-5000:]
         pdf_content = head + "\n\n...[middle content omitted for length]...\n\n" + tail
-    
-    prompt = f"""Analyze this academic paper and provide a comprehensive summary.
+
+    if is_academic:
+        prompt = f"""Analyze this academic paper and provide a comprehensive summary.
 
 Title: {title}
 
@@ -1324,9 +1348,26 @@ Provide:
 5. **Limitations**: Any mentioned limitations or future work
 
 Keep each section concise (2-3 sentences)."""
+    else:
+        prompt = f"""Analyze this document and provide a concise summary.
+Note: This is NOT necessarily an academic paper — it may be a general document,
+product brochure, technical documentation, blog post, or other non-academic content.
+Summarize it accurately based on what it actually is.
+
+Title: {title}
+
+Content:
+{pdf_content}
+
+Provide:
+1. **Document Type**: What kind of document is this? (e.g., technical report, product brochure, guide, etc.)
+2. **Main Content**: What is the document about?
+3. **Key Points**: What are the most important points or takeaways?
+
+Keep each section concise (2-3 sentences). Do NOT assume this is a research paper."""
 
     messages = [{"role": "user", "content": prompt}]
-    
+
     try:
         from .chat import _call_ai_complete
         summary = await _call_ai_complete(
@@ -1345,7 +1386,7 @@ def format_reference_card(
     title: str,
     url: str,
     source_type: str = "web",
-    pdf_summary: str | None = None
+    is_academic: bool = False,
 ) -> str:
     source_icons = {
         "arxiv": "📄",
@@ -1359,9 +1400,16 @@ def format_reference_card(
         "springer": "📚",
         "ieee": "⚡",
         "acm": "💻",
+        "github": "💻",
+        "blog": "📝",
+        "documentation": "📖",
+        "wikipedia": "🌐",
         "pdf": "📄",
         "web": "🌐",
     }
+
+    # Determine display type: "paper" for academic content, "webpage" for everything else
+    display_type = "paper" if is_academic else "webpage"
 
     icon = source_icons.get(source_type, "📚")
 
@@ -1378,20 +1426,29 @@ source: arXiv ({arxiv_id})
 type: paper
 [/REFERENCE]"""
     else:
+        # Friendly source label for display
+        source_labels = {
+            "github": "GitHub",
+            "blog": "Blog",
+            "documentation": "Docs",
+            "wikipedia": "Wikipedia",
+        }
+        source_label = source_labels.get(source_type, source_type.upper())
         card = f"""[REFERENCE]
 icon: {icon}
 title: {title}
 url: {url}
-source: {source_type.upper()}
-type: {"paper" if source_type != "web" else "article"}
+source: {source_label}
+type: {display_type}
 [/REFERENCE]"""
-    
+
     return card
 
 
 def detect_source_type(url: str) -> str:
     url_lower = url.lower()
-    
+
+    # ── Academic sources ──────────────────────────────────────────────────────
     if 'arxiv.org' in url_lower:
         return "arxiv"
     elif 'ncbi.nlm.nih.gov' in url_lower or 'pubmed' in url_lower:
@@ -1414,10 +1471,93 @@ def detect_source_type(url: str) -> str:
         return "ieee"
     elif 'acm.org' in url_lower:
         return "acm"
+    # ── Non-academic known sources ────────────────────────────────────────────
+    elif 'github.com' in url_lower or 'github.io' in url_lower:
+        return "github"
+    elif any(d in url_lower for d in (
+        'medium.com', 'substack.com', 'dev.to', 'hashnode.dev',
+        'wordpress.com', 'blogger.com', 'blogspot.com',
+        'csdn.net', 'zhihu.com', 'jianshu.com', 'cnblogs.com',
+        '/blog/', '/blogs/', '/posts/',
+    )):
+        return "blog"
+    elif any(d in url_lower for d in (
+        'readthedocs.io', 'readthedocs.org',
+        'docs.', '/docs/', '/documentation/',
+        'gitbook.io',
+    )):
+        return "documentation"
+    elif 'wikipedia.org' in url_lower:
+        return "wikipedia"
+    # ── Generic PDF (may or may not be academic — caller should verify) ────
     elif '.pdf' in url_lower:
         return "pdf"
     else:
         return "web"
+
+
+# Known academic source types — used to determine if a source is inherently academic.
+_ACADEMIC_SOURCE_TYPES = frozenset({
+    "arxiv", "pubmed", "nature", "science", "cell", "lancet",
+    "nejm", "jama", "springer", "ieee", "acm",
+})
+
+
+def is_academic_content(content: str, source_type: str) -> bool:
+    """Determine whether parsed PDF/document content is academic in nature.
+
+    Uses a two-tier approach:
+      1. If the URL source is a known academic publisher → always True.
+      2. For generic PDFs ("pdf") or "web" sources → heuristic keyword analysis.
+
+    The heuristic checks for the presence of typical academic paper structural
+    markers (abstract, methodology, references section, etc.).  A document must
+    match at least 3 out of ~10 markers to be considered academic.
+
+    Returns True for academic papers, False for brochures / ads / general docs.
+    """
+    # Tier 1: known academic domains are always academic
+    if source_type in _ACADEMIC_SOURCE_TYPES:
+        return True
+
+    # Non-PDF, non-web sources (github, blog, docs, wikipedia) are never academic
+    if source_type not in ("pdf", "web"):
+        return False
+
+    # Tier 2: heuristic analysis for generic PDFs / unknown web sources
+    content_lower = content[:30000].lower()  # Only scan first ~30k chars for speed
+
+    academic_markers = [
+        # Structural sections typical of academic papers
+        r'\babstract\b',
+        r'\bintroduction\b',
+        r'\bmethodology\b|\bmethods\b|\bmaterials and methods\b',
+        r'\bresults\b',
+        r'\bdiscussion\b',
+        r'\bconclusion[s]?\b',
+        r'\breferences\b',
+        r'\backnowledgment[s]?\b|\backnowledgement[s]?\b',
+        # Academic identifiers
+        r'\bdoi:\s*10\.',
+        r'\b10\.\d{4,}/\S+',  # DOI pattern
+        r'\bISSN\b|\bISBN\b',
+        # Academic vocabulary
+        r'\bet al\.\b',
+        r'\bpeer[- ]review',
+        r'\bsupplementary\s+(material|data|figure|table)',
+        r'\bfigure\s+\d+|fig\.\s*\d+',
+        r'\btable\s+\d+',
+    ]
+
+    match_count = sum(1 for pat in academic_markers if re.search(pat, content_lower))
+
+    # Require at least 3 markers for classification as academic
+    is_academic = match_count >= 3
+    logger.debug(
+        f"Academic content detection: {match_count}/{len(academic_markers)} markers matched → "
+        f"{'academic' if is_academic else 'non-academic'}"
+    )
+    return is_academic
 
 
 async def process_pdf_url(
@@ -1438,6 +1578,7 @@ async def process_pdf_url(
         "url": url,
         "title": title,
         "source_type": detect_source_type(url),
+        "is_academic": False,  # Whether content is academic (paper) or general (webpage)
         "success": False,
         "summary": None,
         "pdf_content": None,   # Full markdown with page markers for AI citation
@@ -1543,6 +1684,19 @@ async def process_pdf_url(
         if not result["parse_method"]:
             result["parse_method"] = "mineru" if _has_mineru_cache(url) else "pymupdf"
 
+        # ── Academic content detection ────────────────────────────────────────
+        # Determines whether this PDF is an academic paper or a general document
+        # (e.g., brochure, product guide, ad). This affects:
+        #   - The summarization prompt (academic vs general)
+        #   - The reference card type (paper vs webpage)
+        #   - The label used in the supplement context (Paper vs Document)
+        source_type = str(result["source_type"]) if result["source_type"] is not None else "web"
+        academic = is_academic_content(pdf_content, source_type)
+        result["is_academic"] = academic
+        # Persist to cache so follow-up questions can read it without re-detection
+        if use_cache:
+            _update_meta_academic_flag(url, academic)
+
         # Determine whether MinerU images are already available.
         # Images are only present when content comes from a MinerU parse (.mineru.md cache
         # or the synchronous MinerU fallback above).  PyMuPDF is text-only.
@@ -1570,7 +1724,8 @@ async def process_pdf_url(
             str(result["title"]) if result["title"] is not None else title,
             base_url,
             api_key,
-            model
+            model,
+            is_academic=academic,
         )
 
         result["success"] = True
@@ -1578,8 +1733,8 @@ async def process_pdf_url(
         result["reference_card"] = format_reference_card(
             str(result["title"]) if result["title"] is not None else title,
             url,
-            str(result["source_type"]) if result["source_type"] is not None else "web",
-            summary
+            source_type,
+            is_academic=academic,
         )
 
     except Exception as e:
