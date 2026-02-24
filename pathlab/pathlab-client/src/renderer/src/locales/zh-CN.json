@@ -609,7 +609,8 @@
       "searchedPages": "已搜索 {{count}} 个网页",
       "webSearchCard": "网页搜索",
       "parsingPdf": "正在解析 PDF 论文...",
-      "pdfParsedCount": "已解析 {{count}} 篇 PDF 论文"
+      "pdfParsedCount": "已解析 {{count}} 篇 PDF 论文",
+      "pdfAccessFailed": "PDF 论文不可访问（已尝试 {{count}} 篇）"
     }
   },
   "layout": {

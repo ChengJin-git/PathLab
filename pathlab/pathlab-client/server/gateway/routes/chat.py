@@ -1559,9 +1559,14 @@ async def chat_with_ai(
     def _strip_internal_status_blocks(content: str) -> str:
         """Strip frontend-only status blocks before saving to DB.
 
-        [SEARCH_STATUS] and [WEB_SEARCH_RESULT] are stripped because the AI must
-        not see past search results as conversation history (it would refuse to
-        search again).
+        [SEARCH_STATUS] is stripped — it is a transient "searching…" indicator
+        that has no meaning once the stream ends.
+
+        [WEB_SEARCH_RESULT] is kept in DB so that the SearchCompletedCard can be
+        re-displayed when the user reopens the conversation.  The frontend's
+        sanitizeConfigBlocksForAI() already strips ALL WEB_SEARCH_RESULT blocks
+        before sending history to the AI, so the AI will never misinterpret them
+        as pre-existing search results.
 
         [PDF_PARSE_STATUS] blocks with status "parsing" (in-progress) are stripped
         since they have no meaning after the stream ends.  Completed/failed blocks
@@ -1573,7 +1578,6 @@ async def chat_with_ai(
         import re as _re
         import json as _json
         content = _re.sub(r'\[SEARCH_STATUS\][\s\S]*?\[/SEARCH_STATUS\]', '', content)
-        content = _re.sub(r'\[WEB_SEARCH_RESULT\][\s\S]*?\[/WEB_SEARCH_RESULT\]', '', content)
 
         # Only strip in-progress ("parsing") PDF status blocks; keep completed/failed ones.
         def _strip_parsing_only(m: re.Match) -> str:

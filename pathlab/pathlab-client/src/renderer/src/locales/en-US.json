@@ -609,7 +609,8 @@
       "searchedPages": "Searched {{count}} pages",
       "webSearchCard": "Web Search",
       "parsingPdf": "Parsing PDF paper...",
-      "pdfParsedCount": "Parsed {{count}} PDF papers"
+      "pdfParsedCount": "Parsed {{count}} PDF papers",
+      "pdfAccessFailed": "PDF papers unavailable ({{count}} attempted)"
     }
   },
   "layout": {

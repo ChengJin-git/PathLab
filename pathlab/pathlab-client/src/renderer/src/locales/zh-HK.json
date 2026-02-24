@@ -609,7 +609,8 @@
       "searchedPages": "已搜尋 {{count}} 個網頁",
       "webSearchCard": "網頁搜尋",
       "parsingPdf": "正在解析 PDF 論文...",
-      "pdfParsedCount": "已解析 {{count}} 篇 PDF 論文"
+      "pdfParsedCount": "已解析 {{count}} 篇 PDF 論文",
+      "pdfAccessFailed": "PDF 論文不可訪問（已嘗試 {{count}} 篇）"
     }
   },
   "layout": {

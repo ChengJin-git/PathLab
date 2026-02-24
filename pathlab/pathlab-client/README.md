@@ -188,7 +188,7 @@ cd server && python main.py
 | mSTAR | mSTAR | 1024 | Smartlab |
 | GPFM | GPFM | 1024 | Smartlab |
 
-### Gateway 路由模块 (26 个)
+### Gateway 路由模块 (28 个)
 
 | 模块 | 路由前缀 | 功能 |
 |------|---------|------|
@@ -201,6 +201,8 @@ cd server && python main.py
 | results | `/results` | 结果查询、外部验证 |
 | models | `/models` | 训练模型管理 |
 | chat | `/chat`, `/conversations` | AI 对话、会话管理 |
+| chat_pdf | `/chat/pdf` | PDF 文档对话 (RAG) |
+| chat_pdf_vectorstore | `/chat/pdf/vectorstore` | PDF 向量存储管理 |
 | chat_feedback | `/feedback` | 消息反馈管理 |
 | queue | `/queue` | GPU 队列状态、配置 |
 | storage | `/storage` | 存储统计、迁移、清理 |

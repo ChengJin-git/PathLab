@@ -293,7 +293,9 @@ export const PdfParsingStatus = React.memo(function PdfParsingStatus({
 
 /**
  * PdfParsingCompletedCard — shows summary after PDF parsing is done.
- * Only displays if at least one PDF was successfully parsed.
+ * Shows a green card if at least one PDF was successfully parsed,
+ * or an amber card if all PDFs failed (e.g. HTTP 403), so the UI
+ * persists when the user navigates away and comes back.
  */
 export const PdfParsingCompletedCard = React.memo(function PdfParsingCompletedCard({
   items
@@ -303,19 +305,59 @@ export const PdfParsingCompletedCard = React.memo(function PdfParsingCompletedCa
   const { t } = useTranslation()
   const completedCount = items.filter(i => i.status === 'completed').length
 
-  // Don't show if no PDFs were successfully parsed
-  if (completedCount === 0) return null
+  // Nothing to show if there are no items at all
+  if (items.length === 0) return null
 
+  // Some PDFs successfully parsed — green success card
+  if (completedCount > 0) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -10 }}
+        className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-100 rounded-xl my-2"
+      >
+        {/* Check icon */}
+        <div className="flex-shrink-0">
+          <div className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
+            <svg
+              className="w-3 h-3 text-white"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={3}
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+          </div>
+        </div>
+
+        {/* Completion info */}
+        <div className="flex-1 min-w-0">
+          <span className="text-sm font-medium text-green-700">
+            {t('settings.general.pdfParsedCount', { count: completedCount })}
+          </span>
+        </div>
+      </motion.div>
+    )
+  }
+
+  // All PDFs failed (e.g. HTTP 403, download_failed) — amber informational card
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -10 }}
-      className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-100 rounded-xl my-2"
+      className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-100 rounded-xl my-2"
     >
-      {/* Check icon */}
+      {/* Warning icon */}
       <div className="flex-shrink-0">
-        <div className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
+        <div className="w-5 h-5 bg-amber-400 rounded-full flex items-center justify-center">
           <svg
             className="w-3 h-3 text-white"
             xmlns="http://www.w3.org/2000/svg"
@@ -327,16 +369,16 @@ export const PdfParsingCompletedCard = React.memo(function PdfParsingCompletedCa
               strokeLinecap="round"
               strokeLinejoin="round"
               strokeWidth={3}
-              d="M5 13l4 4L19 7"
+              d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
             />
           </svg>
         </div>
       </div>
 
-      {/* Completion info */}
+      {/* Access-failed info */}
       <div className="flex-1 min-w-0">
-        <span className="text-sm font-medium text-green-700">
-          {t('settings.general.pdfParsedCount', { count: completedCount })}
+        <span className="text-sm font-medium text-amber-700">
+          {t('settings.general.pdfAccessFailed', { count: items.length })}
         </span>
       </div>
     </motion.div>
