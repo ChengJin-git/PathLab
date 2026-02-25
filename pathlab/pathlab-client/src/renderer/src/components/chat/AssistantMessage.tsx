@@ -323,12 +323,18 @@ const AssistantMessage = React.memo(function AssistantMessage({
       })
     }
     // 2) Article citation contexts — keyed "N-p.X" (normalized), renumbered sequentially
+    //    Use the paper index from the key (e.g. "2-p.5" → paper 2) to look up the
+    //    correct reference card, so multi-paper conversations don't mix up tooltips.
     if (citationContexts && articleCitationRenumber) {
-      const refCard = referenceCards?.[0]
-      const refSource = refCard?.url ? (() => { try { return new URL(refCard.url).hostname.replace(/^www\./, '') } catch { return '' } })() : ''
       for (const [key, ctx] of Object.entries(citationContexts)) {
         const seqIdx = articleCitationRenumber.get(key)
         if (!seqIdx) continue
+        // Extract paper index from key: "N-p.X" → N (1-based)
+        const paperIdxMatch = key.match(/^(\d+)-/)
+        const paperIdx = paperIdxMatch ? parseInt(paperIdxMatch[1]) : 1
+        // Use the reference card for this paper (fall back to first card)
+        const refCard = referenceCards?.[paperIdx - 1] ?? referenceCards?.[0]
+        const refSource = refCard?.url ? (() => { try { return new URL(refCard.url).hostname.replace(/^www\./, '') } catch { return '' } })() : ''
         // Extract page info from key (e.g. "1-p.2" → "p.2", "1-p.2-3" → "p.2-3", "1-p.2,p.4" → "p.2,p.4")
         const pageFromKey = key.replace(/^\d+-/, '')
         map.set(seqIdx, {

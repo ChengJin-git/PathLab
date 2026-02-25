@@ -31,7 +31,7 @@ from .chat_pdf import (
     is_pdf_url, process_pdf_url, get_pdf_image_path,
     search_pdf_pages, get_cached_markdown, get_cached_pdf_meta, _split_md_into_pages,
     _get_url_hash, _get_pdf_cache_dir, _tokenize_for_search,
-    detect_source_type, is_academic_content,
+    detect_source_type, is_academic_content, format_reference_card,
 )
 from .chat_pdf_vectorstore import search_pdf_chunks
 
@@ -467,12 +467,17 @@ def extract_text_from_content(content) -> str:
 
 def _extract_citation_contexts(
     ai_response: str, article_pdf_content: str,
+    per_paper_content: dict[int, str] | None = None,
 ) -> dict | None:
     """Extract citation contexts from AI response using BM25 paragraph search.
 
     For each ``[N, p.Y]`` citation found in *ai_response*, locate the
     most relevant ~200-char snippet from the corresponding page in the
     article PDF content (which contains ``--- Page X ---`` markers).
+
+    When *per_paper_content* is provided (multi-paper follow-up), each
+    paper's pages are stored separately so page numbers from different
+    papers don't collide.
 
     Returns a dict keyed by ``"N-pY"`` with ``{page, context}`` values,
     or ``None`` if no citations are found.
@@ -486,8 +491,17 @@ def _extract_citation_contexts(
     if not citations:
         return None
 
-    pages = _split_md_into_pages(article_pdf_content)
-    page_map: dict[int, str] = {pn: ct for pn, ct in pages}
+    # Build per-paper page maps to avoid page-number collisions
+    if per_paper_content:
+        paper_page_maps: dict[int, dict[int, str]] = {}
+        for paper_idx, content in per_paper_content.items():
+            pgs = _split_md_into_pages(content)
+            paper_page_maps[paper_idx] = {pn: ct for pn, ct in pgs}
+    else:
+        # Single-paper mode: all citations share the same page map
+        pages = _split_md_into_pages(article_pdf_content)
+        _single_page_map: dict[int, str] = {pn: ct for pn, ct in pages}
+        paper_page_maps = {}  # unused in single mode
 
     def _best_paragraph(page_text: str, query: str, max_len: int = 200) -> str:
         """BM25-rank paragraphs of *page_text* against *query*,
@@ -542,6 +556,14 @@ def _extract_citation_contexts(
         key = f"{idx_str}-{page_part.replace(' ', '')}"
         if key in contexts:
             continue
+
+        # Select the correct page map for this paper
+        paper_idx = int(idx_str)
+        if per_paper_content:
+            page_map = paper_page_maps.get(paper_idx, {})
+        else:
+            page_map = _single_page_map
+
         # Extract ALL page numbers mentioned in page_part (handles p.2, p.2-3, p.2, p.4, etc.)
         page_numbers = [int(x) for x in re.findall(r'\d+', page_part)]
         if not page_numbers:
@@ -934,6 +956,37 @@ After saving, return here and start chatting!"""
     max_tool_iterations = 3
     current_messages = messages.copy()
     article_pdf_content: str | None = None  # raw PDF markdown (with page markers) for citation context extraction
+    _per_paper_pdf_content: dict[int, str] | None = None  # per-paper content for multi-paper follow-ups
+
+    # ── Pre-populate PDF context for follow-up citation support ──────────
+    # When conversation history contains [PDF_CONTEXT] blocks (from prior
+    # article reads), pre-read the full cached markdown so
+    # _extract_citation_contexts can work for follow-up questions.
+    # Also prepare reference cards for the frontend's citationMap.
+    _followup_reference_cards: list[str] = []
+    _followup_pdf_urls = _collect_pdf_urls_from_contexts(messages)
+    if _followup_pdf_urls:
+        _per_paper_pdf_content = {}
+        for idx, url in enumerate(_followup_pdf_urls, 1):
+            cached_md = get_cached_markdown(url)
+            if cached_md:
+                _per_paper_pdf_content[idx] = cached_md
+            meta = get_cached_pdf_meta(url) or {}
+            title = meta.get('title', 'Unknown')
+            src_type = detect_source_type(url)
+            is_acad = meta.get('is_academic', False)
+            if not is_acad and cached_md:
+                is_acad = is_academic_content(cached_md, src_type)
+            _followup_reference_cards.append(
+                format_reference_card(title, url, src_type, is_acad)
+            )
+        if _per_paper_pdf_content:
+            # Concatenated content for backward compat (single-paper case)
+            article_pdf_content = "\n\n".join(_per_paper_pdf_content.values())
+            logger.info(
+                f"[FollowUp] Pre-populated article_pdf_content from "
+                f"{len(_followup_pdf_urls)} cached PDF(s) for citation support"
+            )
 
     # Track the URL currently being processed so we can clean up on cancel.
     _active_pdf_url: str | None = None
@@ -984,7 +1037,7 @@ After saving, return here and start chatting!"""
             # Inject CITATION_CONTEXTS before [DONE] if article was read
             if article_pdf_content:
                 try:
-                    ctx = _extract_citation_contexts(full_response, article_pdf_content)
+                    ctx = _extract_citation_contexts(full_response, article_pdf_content, _per_paper_pdf_content)
                     if ctx:
                         ctx_block = f"[CITATION_CONTEXTS]{json.dumps(ctx, ensure_ascii=False)}[/CITATION_CONTEXTS]"
                         yield f"data: {json.dumps({'content': ctx_block})}\n\n"
@@ -1253,12 +1306,18 @@ After saving, return here and start chatting!"""
         # Inject CITATION_CONTEXTS before [DONE] if article was read
         if article_pdf_content:
             try:
-                ctx = _extract_citation_contexts(final_response_text, article_pdf_content)
+                ctx = _extract_citation_contexts(final_response_text, article_pdf_content, _per_paper_pdf_content)
                 if ctx:
                     ctx_block = f"[CITATION_CONTEXTS]{json.dumps(ctx, ensure_ascii=False)}[/CITATION_CONTEXTS]"
                     yield f"data: {json.dumps({'content': ctx_block})}\n\n"
             except Exception as e:
                 logger.warning(f"Failed to extract citation contexts: {e}")
+
+        # Emit reference cards for follow-up messages so frontend can build
+        # citationMap with paper title/URL for InlineCitation tooltips.
+        if _followup_reference_cards:
+            ref_block = "\n".join(_followup_reference_cards)
+            yield f"data: {json.dumps({'content': ref_block})}\n\n"
 
     yield "data: [DONE]\n\n"
 
