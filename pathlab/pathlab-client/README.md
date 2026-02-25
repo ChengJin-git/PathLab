@@ -43,17 +43,7 @@ pathlab-client/
 │           │   ├── Layout.tsx        # 主布局 + 侧边栏
 │           │   ├── WSIViewer.tsx     # OpenSeadragon 封装
 │           │   └── HeatmapOverlay.tsx # 注意力热图叠加层
-│           ├── pages/            # 页面组件
-│           │   ├── LoginPage.tsx     # 登录页
-│           │   ├── DashboardPage.tsx # 仪表盘 (统计概览)
-│           │   ├── AIChatPage.tsx    # AI 对话助手
-│           │   ├── NewTaskPage.tsx   # 训练任务向导 (5 步)
-│           │   ├── TaskListPage.tsx  # 任务列表
-│           │   ├── TaskDetailPage.tsx # 任务详情 + 实时日志
-│           │   ├── ListPage.tsx      # 切片浏览器
-│           │   ├── WSIViewerPage.tsx # WSI 阅片器 + 热图
-│           │   ├── SettingsPage.tsx  # 系统设置
-│           │   └── StorageManagementPage.tsx  # 存储管理
+│           ├── pages/            # 页面组件 (13 页)
 │           └── contexts/         # React Context
 │               ├── AuthContext.tsx       # 认证状态
 │               └── BackgroundTaskContext.tsx  # 后台任务追踪

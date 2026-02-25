@@ -13,11 +13,10 @@ src/
 │   ├── WSIViewer.tsx        # OpenSeadragon wrapper
 │   ├── PageHeader.tsx       # Page header component
 │   └── ...
-├── pages/               # Page components (15 pages)
+├── pages/               # Page components (13 pages)
 │   ├── IntroductionPage.tsx      # Product introduction (/)
 │   ├── LoginPage.tsx             # Login welcome page (/login)
-│   ├── DashboardPage.tsx         # Dashboard overview
-│   ├── AIChatPage.tsx            # AI assistant (SSE streaming)
+│   ├── AIChatPage.tsx            # AI assistant (/dashboard)
 │   ├── ToolsPage.tsx             # Utility tools
 │   ├── ListPage.tsx              # Slide browser (/wsi-list)
 │   ├── WSIViewerPage.tsx         # WSI viewer (/wsi/:wsi_id, fullscreen)
@@ -27,7 +26,6 @@ src/
 │   ├── TaskDetailPage.tsx        # Task details (/task/:task_id)
 │   ├── ResultsViewerPage.tsx     # Results viewer (/results)
 │   ├── ReportGeneratorPage.tsx   # Report generator (/reports)
-│   ├── StorageManagementPage.tsx # Storage management (/storage)
 │   └── SettingsPage.tsx          # System settings (/settings)
 ├── contexts/            # React Context
 │   ├── AuthContext.tsx           # Authentication state management
@@ -48,23 +46,21 @@ src/
 - **WSI Viewer**: OpenSeadragon
 - **State Management**: React Hooks + Context
 
-## Page Routes (15 pages)
+## Page Routes (13 pages)
 
 | Route | Page | Description |
 |-------|------|-------------|
 | `/` | IntroductionPage | Product introduction page (public) |
 | `/login` | LoginPage | Login welcome page (public) |
-| `/dashboard` | DashboardPage | Dashboard overview |
-| `/ai-chat` | AIChatPage | AI assistant (SSE streaming) |
+| `/dashboard` | AIChatPage | AI assistant (SSE streaming) |
 | `/tools` | ToolsPage | Utility tools |
-| `/storage` | StorageManagementPage | Storage management |
 | `/settings` | SettingsPage | System settings |
 | `/task-setup` | NewTaskPage | Task configuration |
 | `/task-list` | TaskListPage | Task list |
 | `/task/:task_id` | TaskDetailPage | Task details |
 | `/wsi-list` | ListPage | Slide browser |
 | `/wsi/:wsi_id` | WSIViewerPage | WSI viewer (fullscreen) |
-| `/register` | RegisterPage | Register/upload slide |
+| `/register` | UploadPage | Register/upload slide |
 | `/results` | ResultsViewerPage | Results viewer |
 | `/reports` | ReportGeneratorPage | Report generator |
 

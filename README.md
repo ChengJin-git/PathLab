@@ -3,7 +3,7 @@
 > **项目名称:** PathLab  
 > **版本:** v1.0  
 > **日期:** 2026-02  
-> **状态:** 已完成原型  
+> **状态:** 开发中  
 > **核心愿景:** 构建病理 AI 研究平台，实现"数据不动，模型动"的隐私计算理念。  
 
 ---
@@ -118,24 +118,22 @@ pathlab/
 
 ---
 
-## 页面路由 (15 页)
+## 页面路由 (13 页)
 
 | 路由 | 页面 | 说明 |
 |------|------|------|
 | `/` | IntroductionPage | 产品介绍页 |
 | `/login` | LoginPage | 登录欢迎页 |
-| `/dashboard` | DashboardPage | 仪表盘概览 |
-| `/ai-chat` | AIChatPage | PathLab Agent 智能助手 |
+| `/dashboard` | AIChatPage | PathLab Agent 智能助手 |
 | `/task-setup` | NewTaskPage | 任务配置 |
 | `/task-list` | TaskListPage | 任务列表 |
 | `/task/:task_id` | TaskDetailPage | 任务详情 |
 | `/wsi-list` | ListPage | 切片浏览器 |
 | `/wsi/:wsi_id` | WSIViewerPage | WSI 阅片器 |
-| `/register` | RegisterPage | 注册切片 |
+| `/register` | UploadPage | 切片上传 |
 | `/results` | ResultsViewerPage | 结果查看器 |
 | `/reports` | ReportGeneratorPage | 报告生成器 |
 | `/tools` | ToolsPage | 实用工具集 |
-| `/storage` | StorageManagementPage | 存储管理 |
 | `/settings` | SettingsPage | 系统设置 |
 
 ---

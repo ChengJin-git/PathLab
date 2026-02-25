@@ -60,22 +60,7 @@ pathlab/pathlab-client/src/renderer/
 │   │   ├── WSIViewer.tsx    # OpenSeadragon wrapper component
 │   │   ├── PageHeader.tsx   # Page header component
 │   │   └── ...
-│   ├── pages/               # Route-level page components (15 pages)
-│   │   ├── IntroductionPage.tsx      # Product introduction (/)
-│   │   ├── LoginPage.tsx             # Login/welcome page (/login)
-│   │   ├── DashboardPage.tsx         # System overview
-│   │   ├── AIChatPage.tsx            # AI assistant interface
-│   │   ├── ToolsPage.tsx             # Utility tools
-│   │   ├── ListPage.tsx              # WSI browser (/wsi-list)
-│   │   ├── WSIViewerPage.tsx         # WSI viewer (/wsi/:wsi_id)
-│   │   ├── UploadPage.tsx            # WSI registration (/register)
-│   │   ├── NewTaskPage.tsx           # Manual task setup (/task-setup)
-│   │   ├── TaskListPage.tsx          # Task browser (/task-list)
-│   │   ├── TaskDetailPage.tsx        # Task details (/task/:task_id)
-│   │   ├── ResultsViewerPage.tsx     # Results viewer (/results)
-│   │   ├── ReportGeneratorPage.tsx   # Report generator (/reports)
-│   │   ├── StorageManagementPage.tsx # Storage management (/storage)
-│   │   └── SettingsPage.tsx          # Configuration (/settings)
+│   ├── pages/               # Route-level page components (13 pages)
 │   ├── contexts/            # React Context
 │   │   ├── AuthContext.tsx           # Authentication state
 │   │   └── BackgroundTaskContext.tsx # Background task management
