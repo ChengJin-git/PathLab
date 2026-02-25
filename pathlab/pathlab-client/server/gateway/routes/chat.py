@@ -525,8 +525,13 @@ def _extract_citation_contexts(
                 best_score = score
                 best_idx = idx
 
-        snippet = paragraphs[best_idx][:max_len].strip()
-        if len(paragraphs[best_idx]) > max_len:
+        best_text = paragraphs[best_idx]
+        # Strip URLs — they add no value in a tooltip snippet and clutter the display
+        best_text = re.sub(r'https?://[^\s)\]]+', '', best_text).strip()
+        # Collapse multiple spaces left after URL removal
+        best_text = re.sub(r'  +', ' ', best_text)
+        snippet = best_text[:max_len].strip()
+        if len(best_text) > max_len:
             snippet += "…"
         return snippet
 
