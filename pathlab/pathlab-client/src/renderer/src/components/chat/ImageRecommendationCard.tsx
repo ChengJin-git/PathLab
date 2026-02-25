@@ -109,6 +109,39 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
     loadImages()
   }, [filterKey])
 
+  /**
+   * Fetch WSI list by dataset and apply label/event_status/data_type filters.
+   * Extracted to avoid duplication between the normal path and the fallback path.
+   */
+  const fetchAndFilterWSIList = async (rec: ImageRecommendation): Promise<WSISummary[]> => {
+    const result = await fetchWSIList(rec.filters?.dataset_id)
+    let filtered = result.items
+
+    // Apply label filter - use exact match to avoid substring issues
+    if (rec.filters?.label) {
+      filtered = filtered.filter(s =>
+        s.label?.toLowerCase() === rec.filters!.label!.toLowerCase()
+      )
+    }
+
+    // Apply event_status filter (for survival datasets: 0=censored, 1=event)
+    if (rec.filters?.event_status !== undefined && rec.filters?.event_status !== null) {
+      filtered = filtered.filter(s => s.event_status === rec.filters!.event_status)
+    }
+
+    // Apply data_type filter
+    if (rec.filters?.data_type && rec.filters.data_type !== 'all') {
+      filtered = filtered.filter(s => {
+        const fileType = getFileType(s.file_extension, s.file_size)
+        return rec.filters!.data_type === 'wsi'
+          ? fileType === 'WSI'
+          : fileType === 'Patch'
+      })
+    }
+
+    return filtered
+  }
+
   const loadImages = async () => {
     setIsLoading(true)
     setError(null)
@@ -163,33 +196,15 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         displayImages = filtered
       } else {
         // Normal fetch without predictions filter
-        const result = await fetchWSIList(recommendation.filters?.dataset_id)
-        let filtered = result.items
+        displayImages = await fetchAndFilterWSIList(recommendation)
+      }
 
-        // Apply label filter - use exact match to avoid substring issues
-        // e.g., "MSIH" should NOT match "nonMSIH"
-        if (recommendation.filters?.label) {
-          filtered = filtered.filter(s =>
-            s.label?.toLowerCase() === recommendation.filters!.label!.toLowerCase()
-          )
-        }
-
-        // Apply event_status filter (for survival datasets: 0=censored, 1=event)
-        if (recommendation.filters?.event_status !== undefined && recommendation.filters?.event_status !== null) {
-          filtered = filtered.filter(s => s.event_status === recommendation.filters!.event_status)
-        }
-
-        // Apply data_type filter
-        if (recommendation.filters?.data_type && recommendation.filters.data_type !== 'all') {
-          filtered = filtered.filter(s => {
-            const fileType = getFileType(s.file_extension, s.file_size)
-            return recommendation.filters!.data_type === 'wsi'
-              ? fileType === 'WSI'
-              : fileType === 'Patch'
-          })
-        }
-
-        displayImages = filtered
+      // Fallback: if show_heatmap is true but no images found with has_predictions filter,
+      // retry without the predictions constraint. This handles the case where heatmaps exist
+      // on disk (from training) but no AIResult records exist in the database.
+      if (recommendation.show_heatmap && displayImages.length === 0 && recommendation.filters?.has_predictions) {
+        console.warn('[ImageRecommendation] No images found with has_predictions filter, falling back to dataset images for heatmap display')
+        displayImages = await fetchAndFilterWSIList(recommendation)
       }
 
       // Shuffle the images randomly before limiting
