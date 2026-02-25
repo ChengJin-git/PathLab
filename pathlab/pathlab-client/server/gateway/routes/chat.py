@@ -754,6 +754,50 @@ async def _execute_exa_search(query: str, exa_api_key: str, num_results: int = 5
         }
 
 
+def _deduplicate_search_results(results: List[Dict]) -> List[Dict]:
+    """Remove duplicate search results based on title similarity.
+
+    Two results are considered duplicates when their normalised titles share
+    a Jaccard word-overlap > 0.6.  The first occurrence is kept.
+
+    This prevents the same paper from appearing N times via different
+    mirrors (PubMed, nature.com, arxiv.org, lab pages, …) and ensures
+    inline citation indices [N] remain consistent for the AI and the frontend.
+    """
+    if not results:
+        return results
+
+    _bracket_re = re.compile(r'\[.*?\]')
+    _word_re = re.compile(r'[a-zA-Z0-9]{3,}')
+
+    def _title_words(title: str) -> set:
+        title = _bracket_re.sub('', title)
+        return set(w.lower() for w in _word_re.findall(title))
+
+    seen: list[set] = []
+    deduplicated: list[Dict] = []
+
+    for result in results:
+        words = _title_words(result.get("title", ""))
+        if not words:
+            deduplicated.append(result)
+            continue
+
+        is_dup = False
+        for seen_words in seen:
+            intersection = words & seen_words
+            union = words | seen_words
+            if union and len(intersection) / len(union) > 0.6:
+                is_dup = True
+                break
+
+        if not is_dup:
+            seen.append(words)
+            deduplicated.append(result)
+
+    return deduplicated
+
+
 async def stream_ai_response(
     messages: List[Dict],
     api_key: str = None,
@@ -882,6 +926,10 @@ After saving, return here and start chatting!"""
             # Execute Exa search
             try:
                 search_results = await _execute_exa_search(query, exa_api_key, num_results=ai_num_results)
+
+                # Deduplicate results — the same paper often appears via
+                # multiple mirrors (PubMed, nature.com, arxiv, lab pages…).
+                search_results["results"] = _deduplicate_search_results(search_results["results"])
 
                 # Emit web search results to frontend so UI can display completion status
                 web_search_result_block = json.dumps(search_results)
