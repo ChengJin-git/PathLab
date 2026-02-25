@@ -693,6 +693,20 @@ export default function AIChatPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageAttachments.length, fileAttachments.length, t])
 
+  // Native capture-phase drop listener: resets drag overlay even when a child
+  // component calls e.stopPropagation() (e.g. DatasetRegistrationCard.handleDrop),
+  // which prevents the React synthetic drop event from bubbling to this page.
+  // Capture-phase listeners fire before React's synthetic event system, so they
+  // always run regardless of stopPropagation in child handlers.
+  useEffect(() => {
+    const resetDragState = () => {
+      dragCounterRef.current = 0
+      setIsDraggingFile(false)
+    }
+    document.addEventListener('drop', resetDragState, true)
+    return () => document.removeEventListener('drop', resetDragState, true)
+  }, [])
+
   // Paste image handler
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
