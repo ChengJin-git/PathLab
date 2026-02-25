@@ -171,6 +171,14 @@ function getIncompleteBlock(content: string, isStreaming: boolean = false): { co
     }
   }
 
+  // When streaming has ended, don't report incomplete tags – this prevents
+  // skeleton loading UI from rendering forever when the AI finishes without
+  // completing a block (e.g. [OPTIONS] without [/OPTIONS]).
+  // The content cleanup above still applies so broken markup is stripped.
+  if (!isStreaming) {
+    incompleteTag = null
+  }
+
   return { content: result, incompleteTag }
 }
 
