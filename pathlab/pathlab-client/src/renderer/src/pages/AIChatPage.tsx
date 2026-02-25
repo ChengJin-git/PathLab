@@ -2404,7 +2404,7 @@ export default function AIChatPage() {
               </div>
             </form>
 
-            <div className="mt-2 text-center text-xs text-gray-400/80 font-medium truncate px-4">
+            <div className="mt-2 text-center text-xs text-gray-400/80 font-medium px-4 leading-relaxed">
               {t('aiChat.disclaimer')}
             </div>
           </div>
