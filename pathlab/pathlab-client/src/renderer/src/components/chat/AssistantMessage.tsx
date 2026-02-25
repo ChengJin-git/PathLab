@@ -418,7 +418,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
       return (
         <a href={href} target="_blank" rel="noopener noreferrer" {...rest}>
           {children}
-          {isExternal && <span className="inline-block ml-0.5 opacity-50 text-[0.7em] no-underline">↗</span>}
+          {isExternal && <span className="inline-block ml-0.5 opacity-70 text-[0.7em] no-underline">↗</span>}
         </a>
       )
     },
@@ -595,7 +595,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
 	          prose-code:bg-gray-100 prose-code:text-gray-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
 	          prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:p-4 prose-pre:my-3
 	          prose-strong:text-gray-900 prose-strong:font-semibold
-	          prose-a:text-primary-600 prose-a:underline prose-a:decoration-primary-300/50 prose-a:underline-offset-2 hover:prose-a:decoration-primary-500
+	          prose-a:text-blue-600 prose-a:underline prose-a:decoration-blue-300 prose-a:underline-offset-2 hover:prose-a:text-blue-700 hover:prose-a:decoration-blue-500
 	          prose-hr:border-gray-200 prose-hr:my-4
 	          prose-table:text-sm
           prose-img:rounded-lg prose-img:shadow-md prose-img:my-3 prose-img:max-w-full prose-img:h-auto prose-img:border prose-img:border-gray-200">
