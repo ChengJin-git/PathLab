@@ -71,7 +71,8 @@
     "loggingIn": "Signing in...",
     "welcomeBack": "Welcome back",
     "signedInAs": "Signed in as",
-    "systemMaintenance": "System is under maintenance. Please try again later."
+    "systemMaintenance": "System is under maintenance. Please try again later.",
+    "sessionExpired": "Your account has been logged in on another device. Current session has ended."
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -2742,6 +2743,7 @@
     "draftRecovered": "Draft recovered",
     "unsavedChanges": "You have unsaved annotation changes. Are you sure you want to leave?",
     "croppedFrom": "Cropped from",
-    "viewSource": "View source slide"
+    "viewSource": "View source slide",
+    "regionTooLarge": "Region too large. Please make the region smaller or zoom in and re-annotate the region."
   }
 }

@@ -71,7 +71,8 @@
     "loggingIn": "登入中...",
     "welcomeBack": "歡迎回來",
     "signedInAs": "登入為",
-    "systemMaintenance": "系統正在維護中，請稍後再試。"
+    "systemMaintenance": "系統正在維護中，請稍後再試。",
+    "sessionExpired": "您的帳號已在其他裝置登入，當前會話已結束。"
   },
   "nav": {
     "dashboard": "工作枱",
@@ -2742,6 +2743,7 @@
     "draftRecovered": "草稿已恢復",
     "unsavedChanges": "您有未儲存的標註更改，確定要離開嗎？",
     "croppedFrom": "裁剪自",
-    "viewSource": "查看源切片"
+    "viewSource": "查看源切片",
+    "regionTooLarge": "區域過大，請縮小標注區域或滑動滑鼠滾輪放大區域後重新標注。"
   }
 }

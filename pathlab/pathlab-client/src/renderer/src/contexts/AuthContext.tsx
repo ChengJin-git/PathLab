@@ -20,6 +20,7 @@ import {
   SESSION_EXPIRED_EVENT
 } from '../api'
 import { useToast } from './ToastContext'
+import { useTranslation } from 'react-i18next'
 
 interface AuthContextType {
   // State
@@ -57,6 +58,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
   const [error, setError] = useState<string | null>(null)
   const [elevatedDatasetIds, setElevatedDatasetIds] = useState<string[]>([])
   const toast = useToast()
+  const { t } = useTranslation()
 
   // Track whether user was logged in, to show toast only on forced logout (not initial load)
   const userRef = useRef<AuthUser | null>(null)
@@ -72,7 +74,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       if (userRef.current && !sessionExpiredHandled.current) {
         sessionExpiredHandled.current = true
         toast.warning(
-          'Your account has been logged in on another device. Current session has ended.',
+          t('auth.sessionExpired'),
           5000
         )
         setUser(null)
@@ -84,7 +86,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
 
     window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
     return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
-  }, [toast])
+  }, [toast, t])
 
   // Refresh dataset permissions (for temporary elevated access)
   const refreshDatasetPermissions = useCallback(async () => {

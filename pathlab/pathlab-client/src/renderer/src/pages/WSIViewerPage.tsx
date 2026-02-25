@@ -27,9 +27,11 @@ import { AnnotationOverlay } from '../components/wsiViewer/AnnotationOverlay'
 import { AnnotationListPanel } from '../components/wsiViewer/AnnotationListPanel'
 import { CreateDatasetDialog } from '../components/wsiViewer/CreateDatasetDialog'
 import { AnnotationRegion, AnnotationsMap, saveDraft, listDrafts } from '../api/annotation'
+import { useToast } from '../contexts/ToastContext'
 
 export default function WSIViewerPage() {
   const { t } = useTranslation()
+  const toast = useToast()
   const { wsi_id = '' } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
@@ -373,6 +375,10 @@ export default function WSIViewerPage() {
     }
   }, [wsi_id, labelColors])
 
+  const handleRegionTooLarge = useCallback(() => {
+    toast.warning(t('annotation.regionTooLarge'))
+  }, [t, toast])
+
   const handleUpdateRegion = useCallback((regionId: string, updates: Partial<AnnotationRegion>) => {
     setAllAnnotations(prev => ({
       ...prev,
@@ -665,6 +671,7 @@ export default function WSIViewerPage() {
                 slideWidth={slideWidth}
                 slideHeight={slideHeight}
                 onRegionCreated={handleRegionCreated}
+                onRegionTooLarge={handleRegionTooLarge}
               />
             </>
           )}

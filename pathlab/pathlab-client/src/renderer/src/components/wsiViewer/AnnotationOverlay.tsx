@@ -12,6 +12,7 @@ interface AnnotationOverlayProps {
   slideWidth: number
   slideHeight: number
   onRegionCreated: (region: Omit<AnnotationRegion, 'id'>) => void
+  onRegionTooLarge?: () => void  // called when drawn region exceeds MAX_ROI_SIZE
 }
 
 /** Max ROI dimension in level-0 pixels */
@@ -38,6 +39,7 @@ export function AnnotationOverlay({
   slideWidth,
   slideHeight,
   onRegionCreated,
+  onRegionTooLarge,
 }: AnnotationOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDrawing, setIsDrawing] = useState(false)
@@ -275,15 +277,19 @@ export function AnnotationOverlay({
         const y = Math.min(rectStart.y, pt.y)
         const width = Math.abs(pt.x - rectStart.x)
         const height = Math.abs(pt.y - rectStart.y)
-        if (width > 10 && height > 10 && width <= MAX_ROI_SIZE && height <= MAX_ROI_SIZE) {
-          onRegionCreated({ type: 'rect', x, y, width, height, label: currentLabel, color: currentColor })
+        if (width > 10 && height > 10) {
+          if (width <= MAX_ROI_SIZE && height <= MAX_ROI_SIZE) {
+            onRegionCreated({ type: 'rect', x, y, width, height, label: currentLabel, color: currentColor })
+          } else {
+            onRegionTooLarge?.()
+          }
         }
       }
       setIsDrawing(false)
       setRectStart(null)
       setRectEnd(null)
     }
-  }, [annotationMode, spaceHeld, drawingTool, isDrawing, rectStart, currentLabel, currentColor, screenToL0, onRegionCreated])
+  }, [annotationMode, spaceHeld, drawingTool, isDrawing, rectStart, currentLabel, currentColor, screenToL0, onRegionCreated, onRegionTooLarge])
 
   const handleClick = useCallback((e: React.MouseEvent) => {
     if (!annotationMode || spaceHeld || drawingTool !== 'polygon') return
@@ -304,11 +310,13 @@ export function AnnotationOverlay({
       const height = Math.max(...ys) - y
       if (width <= MAX_ROI_SIZE && height <= MAX_ROI_SIZE) {
         onRegionCreated({ type: 'polygon', x, y, width, height, label: currentLabel, color: currentColor, points: polygonPoints })
+      } else {
+        onRegionTooLarge?.()
       }
     }
     setPolygonPoints([])
     setMousePos(null)
-  }, [annotationMode, spaceHeld, drawingTool, polygonPoints, currentLabel, currentColor, onRegionCreated])
+  }, [annotationMode, spaceHeld, drawingTool, polygonPoints, currentLabel, currentColor, onRegionCreated, onRegionTooLarge])
 
   // Wheel pass-through for zooming
   const handleWheel = useCallback((e: React.WheelEvent) => {
