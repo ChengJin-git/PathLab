@@ -2,6 +2,7 @@
 Chat and conversation management routes
 Handles AI chat, conversation persistence, and task parsing
 """
+import asyncio
 import json
 import mimetypes
 import os
@@ -754,6 +755,50 @@ async def _execute_exa_search(query: str, exa_api_key: str, num_results: int = 5
         }
 
 
+# ── Client disconnect detection for immediate cancellation ──────────────────
+
+class ClientDisconnectedError(Exception):
+    """Raised when the SSE client disconnects during a long-running operation."""
+    pass
+
+
+async def _wait_for_disconnect(request: Request) -> None:
+    """Poll ``request.is_disconnected()`` until the client drops the connection."""
+    while not await request.is_disconnected():
+        await asyncio.sleep(0.25)
+
+
+async def _run_or_cancel_on_disconnect(coro, request: Request):
+    """Race *coro* against client disconnect.
+
+    If *request* is ``None`` (no disconnect detection available), simply
+    ``await coro``.  Otherwise, the coroutine is cancelled as soon as the
+    SSE client disconnects, and :class:`ClientDisconnectedError` is raised.
+    """
+    if request is None:
+        return await coro
+
+    task = asyncio.ensure_future(coro)
+    disconnect_task = asyncio.ensure_future(_wait_for_disconnect(request))
+
+    done, pending = await asyncio.wait(
+        {task, disconnect_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+
+    for p in pending:
+        p.cancel()
+        try:
+            await p
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    if disconnect_task in done:
+        raise ClientDisconnectedError()
+
+    return task.result()
+
+
 def _deduplicate_search_results(results: List[Dict]) -> List[Dict]:
     """Remove duplicate search results based on title similarity.
 
@@ -803,7 +848,8 @@ async def stream_ai_response(
     api_key: str = None,
     base_url: str = None,
     model: str = None,
-    detected_lang: str = "en"
+    detected_lang: str = "en",
+    request: Request = None
 ) -> AsyncIterator[str]:
     """
     Stream AI response using OpenAI-compatible API with Exa search support.
@@ -812,11 +858,16 @@ async def stream_ai_response(
     Supports both text-only and multimodal messages.
     Supports web search via Exa API when AI outputs [WEB_SEARCH] blocks.
 
+    When *request* is provided, long-running operations (AI completion,
+    Exa search, PDF download/parse) are raced against client disconnect
+    so the stop button cancels them immediately.
+
     Args:
         messages: Chat messages (text or multimodal format)
         api_key: OpenRouter API key (from global settings or env)
         base_url: OpenRouter base URL (from global settings or env)
         model: Model name (from global settings or env)
+        request: FastAPI Request for disconnect detection (optional)
     """
     global_settings = Config.get_global_settings()
 
@@ -884,15 +935,24 @@ After saving, return here and start chatting!"""
     current_messages = messages.copy()
     article_pdf_content: str | None = None  # raw PDF markdown (with page markers) for citation context extraction
 
+    # Track the URL currently being processed so we can clean up on cancel.
+    _active_pdf_url: str | None = None
+
     for iteration in range(max_tool_iterations):
         # Call AI and buffer response
         try:
-            full_response = await _call_ai_complete(
-                messages=current_messages,
-                base_url=effective_base_url,
-                api_key=effective_api_key,
-                model=effective_model
+            full_response = await _run_or_cancel_on_disconnect(
+                _call_ai_complete(
+                    messages=current_messages,
+                    base_url=effective_base_url,
+                    api_key=effective_api_key,
+                    model=effective_model
+                ),
+                request,
             )
+        except ClientDisconnectedError:
+            logger.info("Client disconnected during AI completion — stopping")
+            return
         except Exception as e:
             logger.error(f"Error in AI completion: {e}")
             error_msg = f"❌ Error: {str(e)}\n\nPlease check your API key and network connection."
@@ -925,7 +985,10 @@ After saving, return here and start chatting!"""
 
             # Execute Exa search
             try:
-                search_results = await _execute_exa_search(query, exa_api_key, num_results=ai_num_results)
+                search_results = await _run_or_cancel_on_disconnect(
+                    _execute_exa_search(query, exa_api_key, num_results=ai_num_results),
+                    request,
+                )
 
                 # Deduplicate results — the same paper often appears via
                 # multiple mirrors (PubMed, nature.com, arxiv, lab pages…).
@@ -966,6 +1029,9 @@ After saving, return here and start chatting!"""
                 ]
                 continue
 
+            except ClientDisconnectedError:
+                logger.info("Client disconnected during Exa search — stopping")
+                return
             except Exception as e:
                 logger.error(f"Exa search error: {e}")
                 break
@@ -995,14 +1061,19 @@ After saving, return here and start chatting!"""
             yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
 
             try:
-                pdf_result = await process_pdf_url(
-                    url=article_url,
-                    title=article_title,
-                    base_url=effective_base_url,
-                    api_key=effective_api_key,
-                    model=effective_model,
-                    use_cache=True
+                _active_pdf_url = article_url
+                pdf_result = await _run_or_cancel_on_disconnect(
+                    process_pdf_url(
+                        url=article_url,
+                        title=article_title,
+                        base_url=effective_base_url,
+                        api_key=effective_api_key,
+                        model=effective_model,
+                        use_cache=True
+                    ),
+                    request,
                 )
+                _active_pdf_url = None
 
                 # For uncached PDFs: transition downloading → parsing → completed
                 if not has_cache and pdf_result.get("success"):
@@ -1084,6 +1155,12 @@ After saving, return here and start chatting!"""
                     ]
                     continue
 
+            except ClientDisconnectedError:
+                logger.info(f"Client disconnected during PDF processing ({article_url}) — cleaning up")
+                if _active_pdf_url:
+                    from .chat_pdf import invalidate_pdf_cache
+                    invalidate_pdf_cache(_active_pdf_url)
+                return
             except Exception as e:
                 logger.error(f"READ_ARTICLE error for {article_url}: {e}")
                 pdf_status = {"url": article_url, "title": article_title, "status": "download_failed"}
@@ -1757,7 +1834,7 @@ async def chat_with_ai(
     async def stream_with_persistence():
         """Stream AI response and save to database if conversation_id is provided"""
         full_response = ""
-        async for chunk in stream_ai_response(messages, api_key, base_url, model, detected_lang):
+        async for chunk in stream_ai_response(messages, api_key, base_url, model, detected_lang, request):
             # Intercept pdf_context event - save to DB as hidden user message but don't
             # yield to frontend. This lets follow-up questions reference the PDF content.
             if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":

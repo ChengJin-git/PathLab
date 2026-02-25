@@ -74,7 +74,7 @@
     "systemMaintenance": "系統正在維護中，請稍後再試。"
   },
   "nav": {
-    "dashboard": "儀表板",
+    "dashboard": "工作枱",
     "aiChat": "AI 助手",
     "taskList": "任務",
     "taskSetup": "新建任務",
@@ -154,7 +154,7 @@
   "settings": {
     "title": "設定",
     "description": "設定您的 PathLab 平台",
-    "backToDashboard": "返回儀表板",
+    "backToDashboard": "返回工作枱",
     "tabs": {
       "general": "一般",
       "generalDesc": "AI 和 API 設定",
@@ -709,7 +709,7 @@
   "toolsPage": {
     "title": "洞察與報告",
     "description": "視覺化發現並產生報告。",
-    "backToDashboard": "返回儀表板",
+    "backToDashboard": "返回工作枱",
     "comingSoon": "即將推出",
     "tools": {
       "customAnalysis": "自訂分析",
@@ -746,7 +746,7 @@
   "reportPage": {
     "title": "報告產生器",
     "description": "產生並匯出分析報告",
-    "backToDashboard": "返回儀表板",
+    "backToDashboard": "返回工作枱",
     "reportConfiguration": "報告設定",
     "reportTitle": "報告標題",
     "exportFormat": "匯出格式",
@@ -923,7 +923,7 @@
   "newTask": {
     "title": "新建分析任務",
     "description": "建立並訓練新的分析模型",
-    "backToDashboard": "返回儀表板",
+    "backToDashboard": "返回工作枱",
     "errors": {
       "storageUnreachable": "儲存似乎無法存取。請聯絡管理員。",
       "filesNotAccessible": "部分檔案無法存取。請聯絡管理員。",
@@ -961,7 +961,7 @@
   "taskList": {
     "title": "分析實驗室",
     "description": "協調、運行和監控 AI 分析任務",
-    "backToDashboard": "返回儀表板",
+    "backToDashboard": "返回工作枱",
     "newTask": "新建任務",
     "searchPlaceholder": "搜尋任務...",
     "clearSearch": "清除搜尋",
@@ -1179,7 +1179,7 @@
     "title": "註冊切片",
     "description": "上傳並註冊全切片影像到您的資料集",
     "backToChat": "返回聊天",
-    "backToDashboard": "返回儀表板",
+    "backToDashboard": "返回工作枱",
     "back": "返回",
     "appendingData": "正在追加資料至",
     "patchCollection": "切片塊集合",
@@ -1245,7 +1245,7 @@
     "title": "結果分析",
     "description": "透過互動式指標和圖表分析訓練任務結果",
     "backToChat": "返回聊天",
-    "backToDashboard": "返回儀表板",
+    "backToDashboard": "返回工作枱",
     "internalAnalysis": "內部分析",
     "externalValidation": "外部驗證",
     "noCompletedTasks": "沒有已完成的任務",
@@ -1354,7 +1354,7 @@
     "description": "瀏覽和管理您的資料集與 WSI 切片",
     "backToChat": "返回聊天",
     "backToRepository": "返回資料庫",
-    "backToDashboard": "返回儀表板",
+    "backToDashboard": "返回工作枱",
     "registerFiles": "註冊檔案",
     "registeringFiles": "正在註冊檔案 ({{success}}/{{total}})",
     "registering": "正在註冊...",
@@ -2240,7 +2240,7 @@
       "registerFiles": "註冊檔案",
       "prepareAndRegister": "準備並註冊您的檔案",
       "backToChat": "返回聊天",
-      "backToDashboard": "返回儀表板",
+      "backToDashboard": "返回工作枱",
       "createDataset": "建立數據集",
       "defineDatasetDescription": "上傳檔案前定義數據集配置",
       "datasetName": "數據集名稱",
@@ -2265,7 +2265,7 @@
       "importSuccessful": "匯入成功",
       "datasetUpdatedSuccessfully": "數據集已成功更新",
       "goToChat": "前往聊天",
-      "goToDashboard": "前往儀表板",
+      "goToDashboard": "前往工作枱",
       "uploadMore": "繼續上傳",
       "datasetSummary": "數據集摘要",
       "targetDataset": "目標數據集",

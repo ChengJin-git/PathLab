@@ -430,6 +430,30 @@ def get_cached_markdown(url: str) -> str | None:
         return None
 
 
+def invalidate_pdf_cache(url: str) -> None:
+    """Remove all cache artefacts for *url*.
+
+    Called when a PDF download or parse is interrupted mid-way (e.g. user
+    clicked the stop button) to prevent corrupted / partial files from being
+    served on the next request.
+    """
+    try:
+        import shutil
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        for suffix in ('.pdf', '.pdf.partial', '.json', '.md', '.mineru.md'):
+            f = cache_dir / f"{url_hash}{suffix}"
+            if f.exists():
+                f.unlink()
+                logger.info(f"Invalidated PDF cache file: {f.name}")
+        img_dir = cache_dir / "images" / url_hash
+        if img_dir.exists():
+            shutil.rmtree(img_dir, ignore_errors=True)
+            logger.info(f"Invalidated PDF image dir: images/{url_hash}")
+    except Exception as e:
+        logger.error(f"Error invalidating PDF cache for {url}: {e}")
+
+
 def get_cached_pdf_meta(url: str) -> dict[str, Any] | None:
     """Return the cached JSON metadata dict for *url*, or ``None``."""
     try:
