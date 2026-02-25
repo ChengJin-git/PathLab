@@ -76,3 +76,56 @@ body {
   scrollbar-width: none; /* Firefox */
 }
 
+/* ── Prose table responsive design ── */
+.prose table {
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  font-size: 0.8125rem;
+}
+
+.prose thead th {
+  background-color: #f8fafc;
+  font-weight: 600;
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #475569;
+  padding: 0.625rem 0.875rem;
+  white-space: nowrap;
+  border-bottom: 2px solid #e2e8f0;
+  text-align: left;
+}
+
+.prose tbody td {
+  padding: 0.5rem 0.875rem;
+  color: #334155;
+  border-top: 1px solid #f1f5f9;
+  white-space: nowrap;
+}
+
+.prose tbody tr:nth-child(even) {
+  background-color: #f8fafc;
+}
+
+.prose tbody tr:hover {
+  background-color: #f1f5f9;
+}
+
+/* Bold/highlight rows (e.g. final result rows) */
+.prose tbody tr td strong {
+  color: #1e293b;
+}
+
+/* ── KaTeX overrides for inline math ── */
+.prose .katex {
+  font-size: 0.95em;
+}
+
+.prose .katex-display {
+  margin: 0.75rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.5rem 0;
+}
+

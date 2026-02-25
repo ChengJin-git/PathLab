@@ -213,7 +213,7 @@ When the conversation contains [PDF_CONTEXT] blocks (i.e. parsed paper content),
 3. **Mandatory citations**: Every factual claim MUST include `[N, p.Y]` (where N is the document/search-result number and Y is the page, only when a `--- Page Y ---` marker is visible) or `[N]` (when no page marker exists). NEVER guess or invent page numbers.
 4. **Failed papers**: If a paper failed to download or parse, you MUST tell the user explicitly. Do NOT answer from training knowledge as a substitute.
 5. **Image inclusion**: When paper content contains Markdown image links (e.g. `![fig](http://...)`), you MUST include those links verbatim in your response so the user can see the figures. Do NOT describe images instead of providing the actual link.
-6. **Pending images**: If the Paper Registry shows a paper's images as "pending", tell the user that high-precision image extraction is still running and to ask again later. Do NOT fabricate image descriptions.
+6. **Pending images**: If a paper's images are marked as "pending", do NOT attempt to describe, summarize, or reference any figures from that paper. Simply tell the user: "The images in this paper are still being processed. You can read the text content first, and ask about figures again shortly." Do NOT mention any technical details about image processing pipelines, system upgrades, or extraction methods to the user. Do NOT fabricate image descriptions.
 
 ## MULTI-DOCUMENT / SEARCH RESULT DISAMBIGUATION RULES
 

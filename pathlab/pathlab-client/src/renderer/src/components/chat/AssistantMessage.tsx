@@ -8,6 +8,9 @@ import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
+import 'katex/dist/katex.min.css'
 import { getAuthToken } from '../../api/client'
 
 import { OptionButtons, parseOptions, removeOptionsBlock } from './OptionButtons'
@@ -357,7 +360,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
   // Custom ReactMarkdown components:
   // - img: inject auth token for /pdf-images/ URLs so <img> tags can load authenticated images
   // - hr: render a visually refined separator instead of the default ugly <hr>
-  // - a: render InlineCitation for cite:// protocol links
+  // - a: render InlineCitation for cite:// protocol links, visual external link indicator for URLs
+  // - table: wrap in scrollable container for mobile responsive design
   const markdownComponents = useMemo<Components>(() => ({
     img: ({ src, alt, ...rest }) => {
       let finalSrc = src || ''
@@ -368,13 +372,27 @@ const AssistantMessage = React.memo(function AssistantMessage({
           finalSrc = `${finalSrc}${sep}token=${encodeURIComponent(token)}`
         }
       }
-      return <img src={finalSrc} alt={alt || ''} loading="lazy" {...rest} />
+      return (
+        <img
+          src={finalSrc}
+          alt={alt || ''}
+          loading="lazy"
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+          {...rest}
+        />
+      )
     },
     hr: () => (
       <div className="my-6 flex items-center gap-3">
         <div className="flex-1 h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent" />
         <div className="w-1 h-1 rounded-full bg-gray-300" />
         <div className="flex-1 h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent" />
+      </div>
+    ),
+    // Wrap tables in a horizontally scrollable container for mobile
+    table: ({ children }) => (
+      <div className="overflow-x-auto my-3 rounded-lg border border-gray-200 shadow-sm">
+        <table className="min-w-full">{children}</table>
       </div>
     ),
     a: ({ href, children, ...rest }) => {
@@ -395,7 +413,14 @@ const AssistantMessage = React.memo(function AssistantMessage({
           />
         )
       }
-      return <a href={href} target="_blank" rel="noopener noreferrer" {...rest}>{children}</a>
+      // External links: show underline + arrow indicator so users know it's clickable
+      const isExternal = href?.startsWith('http')
+      return (
+        <a href={href} target="_blank" rel="noopener noreferrer" {...rest}>
+          {children}
+          {isExternal && <span className="inline-block ml-0.5 opacity-50 text-[0.7em] no-underline">↗</span>}
+        </a>
+      )
     },
   }), [citationMap])
 
@@ -566,11 +591,11 @@ const AssistantMessage = React.memo(function AssistantMessage({
 	          prose-code:bg-gray-100 prose-code:text-gray-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
 	          prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:p-4 prose-pre:my-3
 	          prose-strong:text-gray-900 prose-strong:font-semibold
-	          prose-a:text-primary-600 prose-a:no-underline hover:prose-a:underline
+	          prose-a:text-primary-600 prose-a:underline prose-a:decoration-primary-300/50 prose-a:underline-offset-2 hover:prose-a:decoration-primary-500
 	          prose-hr:border-gray-200 prose-hr:my-4
-	          prose-table:text-sm prose-th:bg-gray-50 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:border-gray-200
+	          prose-table:text-sm
           prose-img:rounded-lg prose-img:shadow-md prose-img:my-3 prose-img:max-w-full prose-img:h-auto prose-img:border prose-img:border-gray-200">
-	          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+	          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={markdownComponents}>
 	            {displayContent}
 	          </ReactMarkdown>
 	        </div>

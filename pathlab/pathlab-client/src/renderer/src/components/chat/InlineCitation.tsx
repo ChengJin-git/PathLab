@@ -115,7 +115,7 @@ const InlineCitation = React.memo(function InlineCitation({
               {/* Page header with optional external link */}
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-xs font-semibold text-gray-700">
-                  📄 Page {pageInfo.replace(/^p\./, '')}
+                  📄 Page {pageInfo.replace(/p\./g, '').replace(/,\s*/g, ', ')}
                 </span>
                 {source && (
                   <span className="text-[10px] text-gray-400 flex items-center gap-0.5">
