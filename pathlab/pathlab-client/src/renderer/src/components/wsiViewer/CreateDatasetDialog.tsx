@@ -19,7 +19,7 @@ export function CreateDatasetDialog({
 }: CreateDatasetDialogProps) {
   const { t } = useTranslation()
   const [datasetName, setDatasetName] = useState('')
-  const [taskType, setTaskType] = useState<'classification' | 'survival'>('classification')
+  const [taskType, setTaskType] = useState<'classification' | 'segmentation'>('classification')
   const [phase, setPhase] = useState<Phase>('form')
   const [progress, setProgress] = useState(0)
   const [errorMsg, setErrorMsg] = useState('')
@@ -142,7 +142,7 @@ export function CreateDatasetDialog({
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('annotation.taskType')}</label>
                 <div className="flex gap-2">
-                  {(['classification', 'survival'] as const).map(tt => (
+                  {(['classification', 'segmentation'] as const).map(tt => (
                     <button
                       key={tt}
                       onClick={() => setTaskType(tt)}

@@ -139,10 +139,10 @@ async def extract_regions(
         regions[wsi_id] = [
             {
                 "type": roi.get("type", "rect"),
-                "x": roi["x"],
-                "y": roi["y"],
-                "width": roi["width"],
-                "height": roi["height"],
+                "x": int(round(roi["x"])),
+                "y": int(round(roi["y"])),
+                "width": int(round(roi["width"])),
+                "height": int(round(roi["height"])),
                 "label": roi.get("label", "unlabeled"),
                 "points": roi.get("points"),
             }

@@ -2728,7 +2728,7 @@
     "datasetNamePlaceholder": "Enter dataset name...",
     "taskType": "Task Type",
     "classification": "Classification",
-    "survival": "Survival Analysis",
+    "segmentation": "Segmentation",
     "annotationSummary": "Annotation Summary",
     "totalRegions": "Total Regions",
     "totalSlides": "Total Slides",

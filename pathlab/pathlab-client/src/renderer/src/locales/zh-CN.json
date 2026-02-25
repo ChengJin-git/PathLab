@@ -2728,7 +2728,7 @@
     "datasetNamePlaceholder": "请输入数据集名称...",
     "taskType": "任务类型",
     "classification": "分类",
-    "survival": "生存分析",
+    "segmentation": "分割",
     "annotationSummary": "标注汇总",
     "totalRegions": "总区域数",
     "totalSlides": "总切片数",

@@ -225,6 +225,9 @@ export function AnnotationOverlay({
   // Space key handler for temporary navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Skip if user is typing in an input/textarea element
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
       if (e.code === 'Space' && annotationMode) {
         e.preventDefault()
         setSpaceHeld(true)
@@ -318,12 +321,20 @@ export function AnnotationOverlay({
     setMousePos(null)
   }, [annotationMode, spaceHeld, drawingTool, polygonPoints, currentLabel, currentColor, onRegionCreated, onRegionTooLarge])
 
-  // Wheel pass-through for zooming
+  // Wheel pass-through for zooming (zoom towards mouse position)
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (!annotationMode || !viewer || !viewer.viewport) return
     e.stopPropagation()
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const canvasX = e.clientX - rect.left
+    const canvasY = e.clientY - rect.top
+    const refPoint = viewer.viewport.pointFromPixel(
+      new window.OpenSeadragon.Point(canvasX, canvasY)
+    )
     const factor = e.deltaY < 0 ? 1.2 : 0.8
-    viewer.viewport.zoomBy(factor)
+    viewer.viewport.zoomBy(factor, refPoint)
     viewer.viewport.applyConstraints()
   }, [annotationMode, viewer])
 

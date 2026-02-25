@@ -26,7 +26,7 @@ import { AnnotationToolbar, getColorForLabel } from '../components/wsiViewer/Ann
 import { AnnotationOverlay } from '../components/wsiViewer/AnnotationOverlay'
 import { AnnotationListPanel } from '../components/wsiViewer/AnnotationListPanel'
 import { CreateDatasetDialog } from '../components/wsiViewer/CreateDatasetDialog'
-import { AnnotationRegion, AnnotationsMap, saveDraft, listDrafts } from '../api/annotation'
+import { AnnotationRegion, AnnotationsMap, saveDraft, listDrafts, deleteDraft } from '../api/annotation'
 import { useToast } from '../contexts/ToastContext'
 
 export default function WSIViewerPage() {
@@ -405,9 +405,26 @@ export default function WSIViewerPage() {
   useEffect(() => {
     if (!annotationMode) return
     const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
-    if (totalRegions === 0) return
 
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+
+    // If all regions are deleted and a draft exists, delete it from server
+    if (totalRegions === 0) {
+      if (draftId) {
+        saveTimerRef.current = setTimeout(async () => {
+          try {
+            await deleteDraft(draftId)
+            setDraftId(null)
+          } catch (err) {
+            console.error('Failed to delete empty annotation draft:', err)
+          }
+        }, 2000)
+      }
+      return () => {
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      }
+    }
+
     saveTimerRef.current = setTimeout(async () => {
       try {
         const id = draftId || crypto.randomUUID()

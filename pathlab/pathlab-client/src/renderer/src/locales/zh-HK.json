@@ -2728,7 +2728,7 @@
     "datasetNamePlaceholder": "請輸入資料集名稱...",
     "taskType": "任務類型",
     "classification": "分類",
-    "survival": "生存分析",
+    "segmentation": "分割",
     "annotationSummary": "標註匯總",
     "totalRegions": "總區域數",
     "totalSlides": "總切片數",
