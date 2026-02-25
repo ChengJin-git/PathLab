@@ -535,9 +535,13 @@ const AssistantMessage = React.memo(function AssistantMessage({
 	  // Show searching indicator only while streaming and before results arrive
 	  const showSearchingStatus = !!searchStatus && !webSearchResult && isStreaming
 
-    // PDF parsing status: show animated indicator while any PDF is still "parsing" or "downloading"
+    // PDF parsing status: show animated indicator while any PDF is still "parsing" or "downloading".
+    // Hide entirely during web-search streaming — the AI may autonomously trigger
+    // [READ_ARTICLE] and cached PDFs finish before the summary text appears, which
+    // looks confusing alongside "Summarizing search results…".
     const hasPdfParsingInProgress = pdfParseStatusItems?.some(i => i.status === 'parsing' || i.status === 'downloading') ?? false
-    const showPdfParsingStatus = !!pdfParseStatusItems && hasPdfParsingInProgress && isStreaming
+    const isWebSearchStreaming = isStreaming && !!webSearchResult
+    const showPdfParsingStatus = !!pdfParseStatusItems && hasPdfParsingInProgress && isStreaming && !isWebSearchStreaming
 
     // Show "summarizing search results" indicator after search completes but before
     // the AI starts streaming actual summary text. This fills the visual gap between
@@ -545,9 +549,9 @@ const AssistantMessage = React.memo(function AssistantMessage({
     const showSummarizingSearch = !!webSearchResult && isStreaming && !displayContent.trim()
 
     // Show completed card when all PDFs are done (not streaming OR all statuses are final).
-    // Delay until search summary text starts streaming to avoid "Parsed N PDFs" card
-    // appearing before "Summarizing search results..." finishes (jarring when PDF is cached).
-    const showPdfParsingCompleted = !!pdfParseStatusItems && !hasPdfParsingInProgress && !showSummarizingSearch
+    // Hide during web-search streaming to avoid "Parsed N PDFs" card appearing before
+    // or alongside "Summarizing search results…" (jarring when PDF is cached).
+    const showPdfParsingCompleted = !!pdfParseStatusItems && !hasPdfParsingInProgress && !isWebSearchStreaming
 
 	  return (
     <div className="w-full min-w-0">
