@@ -656,7 +656,7 @@ async def _stream_from_openai_compatible(
                         parsed = json.loads(data)
                         if "choices" in parsed and len(parsed["choices"]) > 0:
                             delta = parsed["choices"][0].get("delta", {})
-                            if "content" in delta:
+                            if "content" in delta and delta["content"] is not None:
                                 yield f"data: {json.dumps({'content': delta['content']})}\n\n"
                     except json.JSONDecodeError:
                         continue
@@ -1019,7 +1019,7 @@ After saving, return here and start chatting!"""
                     if chunk.startswith("data: "):
                         try:
                             d = json.loads(chunk[6:])
-                            if "content" in d:
+                            if "content" in d and d["content"] is not None:
                                 streamed_response += d["content"]
                         except (json.JSONDecodeError, KeyError):
                             pass
@@ -1077,7 +1077,7 @@ After saving, return here and start chatting!"""
                 if chunk.startswith("data: "):
                     try:
                         d = json.loads(chunk[6:])
-                        if "content" in d:
+                        if "content" in d and d["content"] is not None:
                             content_so_far += d["content"]
                     except (json.JSONDecodeError, KeyError):
                         pass
@@ -2062,7 +2062,7 @@ async def chat_with_ai(
                 if chunk.startswith("data: "):
                     try:
                         data = json.loads(chunk[6:])
-                        if "content" in data:
+                        if "content" in data and data["content"] is not None:
                             full_response += data["content"]
                     except:
                         pass

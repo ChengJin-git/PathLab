@@ -408,21 +408,18 @@ export default function WSIViewerPage() {
 
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
 
-    // If all regions are deleted and a draft exists, delete it from server
+    // If all regions are deleted and a draft exists, delete it from server immediately
+    // (no debounce — the user's intent is clear, and delaying risks the timer being
+    // cancelled by an annotation-mode toggle, leaving a stale draft on the server)
     if (totalRegions === 0) {
       if (draftId) {
-        saveTimerRef.current = setTimeout(async () => {
-          try {
-            await deleteDraft(draftId)
-            setDraftId(null)
-          } catch (err) {
-            console.error('Failed to delete empty annotation draft:', err)
-          }
-        }, 2000)
+        const idToDelete = draftId
+        setDraftId(null)
+        deleteDraft(idToDelete).catch(err => {
+          console.error('Failed to delete empty annotation draft:', err)
+        })
       }
-      return () => {
-        if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-      }
+      return
     }
 
     saveTimerRef.current = setTimeout(async () => {
@@ -447,9 +444,10 @@ export default function WSIViewerPage() {
   // Annotation: draft recovery when entering annotation mode
   useEffect(() => {
     if (!annotationMode) return
-    // Only recover if no annotations exist yet
-    const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
-    if (totalRegions > 0) return
+    // Only recover if annotations state is pristine (empty object).
+    // If keys exist (even with empty arrays), the user explicitly cleared them —
+    // don't restore the old draft.
+    if (Object.keys(allAnnotations).length > 0) return
 
     listDrafts().then(drafts => {
       // Find a draft matching this dataset
