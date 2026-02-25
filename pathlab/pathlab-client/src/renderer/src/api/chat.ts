@@ -105,6 +105,12 @@ export async function chatWithAI(
   }
 
   const decoder = new TextDecoder()
+  // Buffer for incomplete lines that span across TCP chunks.
+  // reader.read() may split an SSE message at any byte boundary, e.g.:
+  //   chunk1: 'data: {"content":"hel'   chunk2: 'lo"}\n\n'
+  // Without buffering, chunk1's partial line fails JSON.parse and is silently
+  // dropped, causing "blank first load, content after refresh" bugs.
+  let lineBuffer = ''
 
   try {
     while (true) {
@@ -112,7 +118,12 @@ export async function chatWithAI(
       if (done) break
 
       const chunk = decoder.decode(value, { stream: true })
-      const lines = chunk.split('\n')
+      // Prepend any leftover from the previous read
+      const text = lineBuffer + chunk
+      const lines = text.split('\n')
+      // The last element may be an incomplete line — save it for the next iteration.
+      // If `text` ended with '\n', the last element is '' (complete), which is fine.
+      lineBuffer = lines.pop() || ''
 
       for (const line of lines) {
         if (line.startsWith('data: ')) {

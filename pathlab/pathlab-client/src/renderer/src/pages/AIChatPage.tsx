@@ -771,6 +771,11 @@ export default function AIChatPage() {
     // This reduces setMessages calls from ~30/s (per-chunk) to ~16/s (per-frame).
     let chunkBuffer = ''
     let rafId: number | null = null
+    // Track the current message ID — it starts as the placeholder ID and gets
+    // replaced by the backend-assigned ID when onMessageId fires.  All buffer
+    // flushes must use this mutable variable instead of the captured `aiMessageId`
+    // so that content isn't lost after an ID rename.
+    let trackingId = aiMessageId
 
     const flushChunks = () => {
       rafId = null
@@ -779,7 +784,7 @@ export default function AIChatPage() {
       chunkBuffer = ''
       setMessages(prev =>
         prev.map(m =>
-          m.id === aiMessageId
+          m.id === trackingId
             ? { ...m, content: m.content + buffered }
             : m
         )
@@ -799,13 +804,34 @@ export default function AIChatPage() {
           rafId = requestAnimationFrame(flushChunks)
         }
       }, conversationId, (messageId) => {
+        // Flush any buffered chunks BEFORE renaming the message ID.
+        // Without this, rapid-fire content chunks accumulate in chunkBuffer,
+        // then onMessageId changes the ID, and the pending flush (or finally
+        // block) can no longer find the message — causing blank output.
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId)
+          rafId = null
+        }
+        if (chunkBuffer) {
+          const buffered = chunkBuffer
+          chunkBuffer = ''
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === trackingId
+                ? { ...m, content: m.content + buffered }
+                : m
+            )
+          )
+        }
+        const newId = String(messageId)
         setMessages(prev =>
           prev.map(m =>
-            m.id === aiMessageId
-              ? { ...m, id: String(messageId) }
+            m.id === trackingId
+              ? { ...m, id: newId }
               : m
           )
         )
+        trackingId = newId
       }, abortController.signal, () => {
         if (generationIdRef.current === currentGenerationId) {
           setGenerationPhase('pdf_waiting')
@@ -818,7 +844,7 @@ export default function AIChatPage() {
         const cancelText = t('aiChat.generationCancelled')
         setMessages(prev =>
           prev.map(m => {
-            if (m.id !== aiMessageId) return m
+            if (m.id !== trackingId) return m
             const content = m.content
               ? `${m.content}\n\n---\n\n*${cancelText}*`
               : `*${cancelText}*`
@@ -829,7 +855,7 @@ export default function AIChatPage() {
         console.error('Failed to get AI response:', error)
         setMessages(prev =>
           prev.map(m =>
-            m.id === aiMessageId
+            m.id === trackingId
               ? { ...m, content: m.content || t('aiChat.aiErrorFallback') }
               : m
           )
@@ -847,7 +873,7 @@ export default function AIChatPage() {
         chunkBuffer = ''
         setMessages(prev =>
           prev.map(m =>
-            m.id === aiMessageId
+            m.id === trackingId
               ? { ...m, content: m.content + remaining }
               : m
           )
@@ -861,10 +887,12 @@ export default function AIChatPage() {
         // Use setTimeout(0) to let the setMessages updates above flush first,
         // then read the latest content from messagesRef.
         if (conversationId) {
+          // Capture trackingId for the async closure
+          const finalTrackingId = trackingId
           setTimeout(async () => {
-            const finalMsg = messagesRef.current.find(m => m.id === aiMessageId)
+            const finalMsg = messagesRef.current.find(m => m.id === finalTrackingId)
             if (!finalMsg || !finalMsg.content) return
-            const numericId = parseInt(aiMessageId, 10)
+            const numericId = parseInt(finalTrackingId, 10)
             const isBackendId = !isNaN(numericId) && numericId < 1000000000
             try {
               if (isBackendId) {
@@ -872,7 +900,7 @@ export default function AIChatPage() {
               } else {
                 const saved = await addMessage(conversationId, 'assistant', finalMsg.content)
                 setMessages(prev => prev.map(m =>
-                  m.id === aiMessageId ? { ...m, id: String(saved.id) } : m
+                  m.id === finalTrackingId ? { ...m, id: String(saved.id) } : m
                 ))
               }
             } catch (err) {
