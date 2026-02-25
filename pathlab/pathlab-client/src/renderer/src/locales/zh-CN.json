@@ -108,7 +108,7 @@
       "desktop4": "在外部数据集上验证我的模型...",
       "desktop5": "分析我训练模型的性能..."
     },
-    "workflow": "工作流程",
+    "workflow": "工作台",
     "dataRepository": "数据仓库",
     "dataRepositoryDesc": "管理已注册的数据集",
     "analysisLab": "分析实验室",
