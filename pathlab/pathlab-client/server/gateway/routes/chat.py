@@ -938,7 +938,63 @@ After saving, return here and start chatting!"""
     # Track the URL currently being processed so we can clean up on cancel.
     _active_pdf_url: str | None = None
 
+    # When True, the next iteration streams the AI response token-by-token
+    # instead of buffering it.  Set after article content is injected so the
+    # user sees the summary appear progressively.
+    _stream_next_iteration = False
+
     for iteration in range(max_tool_iterations):
+
+        # ── Streaming path: yield tokens directly to the client ──────────
+        if _stream_next_iteration:
+            try:
+                streamed_response = ""
+                async for chunk in _stream_from_openai_compatible(
+                    messages=current_messages,
+                    base_url=effective_base_url,
+                    api_key=effective_api_key,
+                    model=effective_model,
+                    source_name="API (streaming)",
+                ):
+                    # _stream_from_openai_compatible yields SSE lines; forward them
+                    if chunk == "data: [DONE]\n\n":
+                        break  # we emit our own [DONE] below
+                    yield chunk
+                    # Buffer for citation extraction
+                    if chunk.startswith("data: "):
+                        try:
+                            d = json.loads(chunk[6:])
+                            if "content" in d:
+                                streamed_response += d["content"]
+                        except (json.JSONDecodeError, KeyError):
+                            pass
+                full_response = streamed_response
+            except ClientDisconnectedError:
+                logger.info("Client disconnected during streaming AI completion — stopping")
+                return
+            except Exception as e:
+                logger.error(f"Error in streaming AI completion: {e}")
+                error_msg = f"❌ Error: {str(e)}\n\nPlease check your API key and network connection."
+                yield f"data: {json.dumps({'content': error_msg})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            # Streaming path always breaks after emitting — no tool detection needed
+            # because the AI was given article content and asked to summarize.
+            # Inject CITATION_CONTEXTS before [DONE] if article was read
+            if article_pdf_content:
+                try:
+                    ctx = _extract_citation_contexts(full_response, article_pdf_content)
+                    if ctx:
+                        ctx_block = f"[CITATION_CONTEXTS]{json.dumps(ctx, ensure_ascii=False)}[/CITATION_CONTEXTS]"
+                        yield f"data: {json.dumps({'content': ctx_block})}\n\n"
+                except Exception as e:
+                    logger.warning(f"Failed to extract citation contexts: {e}")
+
+            yield "data: [DONE]\n\n"
+            return
+
+        # ── Buffered path: call AI non-streaming for tool detection ──────
         # Call AI and buffer response
         try:
             full_response = await _run_or_cancel_on_disconnect(
@@ -1141,6 +1197,7 @@ After saving, return here and start chatting!"""
                         {"role": "assistant", "content": full_response},
                         {"role": "user", "content": f"{read_prompt}\n\n{article_text}"}
                     ]
+                    _stream_next_iteration = True
                     continue
                 else:
                     # PDF failed — let AI know and break to stream response
@@ -1153,6 +1210,7 @@ After saving, return here and start chatting!"""
                             "Please inform the user about this issue and suggest alternatives."
                         )}
                     ]
+                    _stream_next_iteration = True
                     continue
 
             except ClientDisconnectedError:
@@ -1175,6 +1233,7 @@ After saving, return here and start chatting!"""
                         "(e.g. trying another article, or accessing the URL directly)."
                     )}
                 ]
+                _stream_next_iteration = True
                 continue
 
         # No tool requested — break out of loop

@@ -1811,9 +1811,16 @@ async def process_pdf_url(
             _update_meta_academic_flag(url, academic)
 
         # Determine whether MinerU images are already available.
-        # Images are only present when content comes from a MinerU parse (.mineru.md cache
-        # or the synchronous MinerU fallback above).  PyMuPDF is text-only.
-        images_ready = _has_mineru_cache(url)
+        # Check both the .mineru.md cache AND the actual images directory on disk.
+        # Images may exist on disk even if .mineru.md wasn't saved (e.g. MinerU
+        # crashed after extracting images but before writing markdown).
+        url_hash_for_images = _get_url_hash(url)
+        images_dir_for_check = _get_pdf_cache_dir() / "images" / url_hash_for_images
+        has_images_on_disk = (
+            images_dir_for_check.is_dir()
+            and any(images_dir_for_check.iterdir())
+        ) if images_dir_for_check.exists() else False
+        images_ready = _has_mineru_cache(url) or has_images_on_disk
 
         # Build the content blob for the AI.  Append a [PDF_IMAGES_STATUS] marker when
         # images are still being extracted (background MinerU upgrade not yet complete).
