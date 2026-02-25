@@ -35,6 +35,8 @@ export interface WSISummary {
   height?: number | null
   magnification?: number | null
   updated_at?: string | null
+  // Parent WSI reference (cropped region source)
+  parent_wsi_id?: string | null
   // Permission flag - whether user can delete this WSI
   can_delete?: boolean
 }

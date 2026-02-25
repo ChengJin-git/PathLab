@@ -222,3 +222,20 @@ class StartBatchUpdateMetadataRequest(BaseModel):
     # Survival analysis fields
     event_time: Optional[float] = None
     event_status: Optional[int] = None
+
+
+# ── Annotation ──────────────────────────────────────────────────────────────
+
+class AnnotationDraftSaveRequest(BaseModel):
+    """Request model for creating/updating an annotation draft (auto-save)"""
+    draft_id: str
+    source_dataset_id: Optional[str] = None
+    # { wsi_id: [{ type, x, y, width, height, points, label, color }, ...] }
+    annotations: Dict
+
+class AnnotationExtractRequest(BaseModel):
+    """Request model for extracting annotated ROIs into a new dataset"""
+    draft_id: Optional[str] = None       # Load annotations from saved draft
+    annotations: Optional[Dict] = None   # Or provide directly (overrides draft)
+    dataset_name: str
+    task_type: str = "classification"     # classification or survival

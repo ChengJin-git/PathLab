@@ -13,6 +13,8 @@ interface WSIViewerProps {
   classIdx?: number  // Optional class index for multi-class attention (e.g., CLAM_MB)
   dataLevel?: 'wsi' | 'patch'  // Data level: 'wsi' uses heatmap, 'patch' uses patch_cam
   onHeatmapLoaded?: (data: HeatmapData | null) => void
+  onViewerReady?: (viewer: any) => void  // Expose OSD viewer instance to parent (for annotation overlay)
+  onSlideInfo?: (info: { width: number; height: number }) => void  // Expose slide dimensions to parent
 }
 
 interface DZIInfo {
@@ -129,7 +131,9 @@ export default function WSIViewer({
   foldKey,
   classIdx,
   dataLevel = 'wsi',
-  onHeatmapLoaded
+  onHeatmapLoaded,
+  onViewerReady,
+  onSlideInfo,
 }: WSIViewerProps) {
   const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -192,6 +196,9 @@ export default function WSIViewer({
 
         if (cancelled) return
 
+        // Expose slide dimensions to parent (for annotation coordinate conversion)
+        onSlideInfo?.({ width: dzi.width, height: dzi.height })
+
         // Build tile URL using frontend's PREPROCESSING_BASE (not from DZI)
         const tileUrlBase = `${PREPROCESSING_BASE}/wsi/${wsi_id}/tiles`
 
@@ -244,6 +251,7 @@ export default function WSIViewer({
         })
 
         setViewer(osdViewer)
+        onViewerReady?.(osdViewer)
       } catch (err: any) {
         if (!cancelled) {
           setLoading(false)
@@ -257,6 +265,7 @@ export default function WSIViewer({
     return () => {
       cancelled = true
       if (osdViewer) {
+        onViewerReady?.(null)
         osdViewer.destroy()
       }
     }

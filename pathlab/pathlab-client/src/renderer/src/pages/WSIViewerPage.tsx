@@ -22,6 +22,11 @@ import { TaskSelectorCard } from '../components/wsiViewer/TaskSelectorCard'
 import { AttentionClassSelector } from '../components/wsiViewer/AttentionClassSelector'
 import { AttentionPatchesPanel } from '../components/wsiViewer/AttentionPatchesPanel'
 import { DeleteResultsModal } from '../components/wsiViewer/DeleteResultsModal'
+import { AnnotationToolbar, getColorForLabel } from '../components/wsiViewer/AnnotationToolbar'
+import { AnnotationOverlay } from '../components/wsiViewer/AnnotationOverlay'
+import { AnnotationListPanel } from '../components/wsiViewer/AnnotationListPanel'
+import { CreateDatasetDialog } from '../components/wsiViewer/CreateDatasetDialog'
+import { AnnotationRegion, AnnotationsMap, saveDraft, listDrafts } from '../api/annotation'
 
 export default function WSIViewerPage() {
   const { t } = useTranslation()
@@ -202,6 +207,19 @@ export default function WSIViewerPage() {
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
 
+  // Annotation state
+  const [annotationMode, setAnnotationMode] = useState(false)
+  const [drawingTool, setDrawingTool] = useState<'rect' | 'polygon'>('rect')
+  const [currentLabel, setCurrentLabel] = useState('')
+  const [labelColors, setLabelColors] = useState<Record<string, string>>({})
+  const [allAnnotations, setAllAnnotations] = useState<AnnotationsMap>({})
+  const [draftId, setDraftId] = useState<string | null>(null)
+  const [osdViewer, setOsdViewer] = useState<any>(null)
+  const [slideWidth, setSlideWidth] = useState(0)
+  const [slideHeight, setSlideHeight] = useState(0)
+  const [showCreateDatasetDialog, setShowCreateDatasetDialog] = useState(false)
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // Load WSI list for navigation
   // If coming from a dataset, load only that dataset's WSIs; otherwise load all
   useEffect(() => {
@@ -311,6 +329,138 @@ export default function WSIViewerPage() {
   const prevWSI = currentIndex > 0 ? allWSIs[currentIndex - 1] : null
   const nextWSI = currentIndex >= 0 && currentIndex < allWSIs.length - 1 ? allWSIs[currentIndex + 1] : null
 
+  // Annotation: computed values
+  const currentRegions = useMemo(() => allAnnotations[wsi_id] || [], [allAnnotations, wsi_id])
+
+  const allLabels = useMemo(() => {
+    const labels = new Set<string>()
+    for (const regions of Object.values(allAnnotations)) {
+      for (const r of regions) {
+        if (r.label) labels.add(r.label)
+      }
+    }
+    return Array.from(labels)
+  }, [allAnnotations])
+
+  const currentColor = useMemo(() => {
+    if (!currentLabel) return '#3b82f6'
+    return getColorForLabel(currentLabel, labelColors)
+  }, [currentLabel, labelColors])
+
+  // Annotation: handlers
+  const handleViewerReady = useCallback((viewer: any) => {
+    setOsdViewer(viewer)
+  }, [])
+
+  const handleSlideInfo = useCallback((info: { width: number; height: number }) => {
+    setSlideWidth(info.width)
+    setSlideHeight(info.height)
+  }, [])
+
+  const handleRegionCreated = useCallback((region: Omit<AnnotationRegion, 'id'>) => {
+    const newRegion: AnnotationRegion = {
+      ...region,
+      id: crypto.randomUUID(),
+    }
+    setAllAnnotations(prev => ({
+      ...prev,
+      [wsi_id]: [...(prev[wsi_id] || []), newRegion],
+    }))
+    // Auto-assign color to label
+    if (region.label && !labelColors[region.label]) {
+      const color = getColorForLabel(region.label, labelColors)
+      setLabelColors(prev => ({ ...prev, [region.label]: color }))
+    }
+  }, [wsi_id, labelColors])
+
+  const handleUpdateRegion = useCallback((regionId: string, updates: Partial<AnnotationRegion>) => {
+    setAllAnnotations(prev => ({
+      ...prev,
+      [wsi_id]: (prev[wsi_id] || []).map(r => r.id === regionId ? { ...r, ...updates } : r),
+    }))
+  }, [wsi_id])
+
+  const handleDeleteRegion = useCallback((regionId: string) => {
+    setAllAnnotations(prev => ({
+      ...prev,
+      [wsi_id]: (prev[wsi_id] || []).filter(r => r.id !== regionId),
+    }))
+  }, [wsi_id])
+
+  const handleLabelChange = useCallback((label: string) => {
+    setCurrentLabel(label)
+    if (label && !labelColors[label]) {
+      const color = getColorForLabel(label, labelColors)
+      setLabelColors(prev => ({ ...prev, [label]: color }))
+    }
+  }, [labelColors])
+
+  // Annotation: auto-save draft (debounced 2s)
+  useEffect(() => {
+    if (!annotationMode) return
+    const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
+    if (totalRegions === 0) return
+
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        const id = draftId || crypto.randomUUID()
+        if (!draftId) setDraftId(id)
+        await saveDraft({
+          draft_id: id,
+          source_dataset_id: datasetId,
+          annotations: allAnnotations,
+        })
+      } catch (err) {
+        console.error('Failed to auto-save annotation draft:', err)
+      }
+    }, 2000)
+
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    }
+  }, [annotationMode, allAnnotations, draftId, datasetId])
+
+  // Annotation: draft recovery when entering annotation mode
+  useEffect(() => {
+    if (!annotationMode) return
+    // Only recover if no annotations exist yet
+    const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
+    if (totalRegions > 0) return
+
+    listDrafts().then(drafts => {
+      // Find a draft matching this dataset
+      const matching = drafts.find(d => d.source_dataset_id === datasetId)
+      if (matching && Object.keys(matching.annotations).length > 0) {
+        setAllAnnotations(matching.annotations)
+        setDraftId(matching.draft_id)
+        // Recover label colors
+        const colors: Record<string, string> = {}
+        for (const regions of Object.values(matching.annotations)) {
+          for (const r of regions) {
+            if (r.label && r.color) colors[r.label] = r.color
+          }
+        }
+        setLabelColors(prev => ({ ...prev, ...colors }))
+      }
+    }).catch(err => {
+      console.error('Failed to recover annotation draft:', err)
+    })
+  }, [annotationMode]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Annotation: beforeunload warning
+  useEffect(() => {
+    const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
+    if (totalRegions === 0) return
+
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [allAnnotations])
+
   if (!detail) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-gray-50">
@@ -391,6 +541,18 @@ export default function WSIViewerPage() {
                 <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
             </div>
+
+            <div className="w-px h-5 bg-gray-200" />
+            <AnnotationToolbar
+              annotationMode={annotationMode}
+              onToggleMode={() => setAnnotationMode(m => !m)}
+              drawingTool={drawingTool}
+              onToolChange={setDrawingTool}
+              currentLabel={currentLabel}
+              onLabelChange={handleLabelChange}
+              labelColors={labelColors}
+              allLabels={allLabels}
+            />
 
             <button
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -479,16 +641,32 @@ export default function WSIViewerPage() {
             </div>
           ) : (
             // WSI-level viewer
-            <WSIViewer
-              wsi_id={wsi_id}
-              showHeatmap={showHeatmap}
-              heatmapOpacity={heatmapOpacity}
-              taskId={selectedTaskId}
-              foldKey={selectedFoldKey}
-              classIdx={selectedClassIdx}
-              dataLevel={selectedTask?.data_type || 'wsi'}
-              onHeatmapLoaded={handleHeatmapLoaded}
-            />
+            <>
+              <WSIViewer
+                wsi_id={wsi_id}
+                showHeatmap={showHeatmap}
+                heatmapOpacity={heatmapOpacity}
+                taskId={selectedTaskId}
+                foldKey={selectedFoldKey}
+                classIdx={selectedClassIdx}
+                dataLevel={selectedTask?.data_type || 'wsi'}
+                onHeatmapLoaded={handleHeatmapLoaded}
+                onViewerReady={handleViewerReady}
+                onSlideInfo={handleSlideInfo}
+              />
+              <AnnotationOverlay
+                viewer={osdViewer}
+                annotationMode={annotationMode}
+                drawingTool={drawingTool}
+                currentLabel={currentLabel}
+                currentColor={currentColor}
+                regions={currentRegions}
+                labelColors={labelColors}
+                slideWidth={slideWidth}
+                slideHeight={slideHeight}
+                onRegionCreated={handleRegionCreated}
+              />
+            </>
           )}
 
           {/* Heatmap Controls Overlay */}
@@ -548,69 +726,84 @@ export default function WSIViewerPage() {
             <X className="w-5 h-5" />
           </button>
         </div>
-        {/* Loading state */}
-        {loadingHeatmaps && (
-          <div className="flex items-center justify-center py-12">
-            <div className="flex flex-col items-center gap-3">
-              <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
-              <p className="text-sm text-gray-500">{t('wsiViewer.loadingAnalysisData')}</p>
-            </div>
-          </div>
-        )}
-
-        {/* No heatmaps available */}
-        {!loadingHeatmaps && availableHeatmaps.length === 0 && (
-          <Card className="overflow-hidden">
-            <div className="p-8 text-center">
-              <Layers className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <h3 className="text-sm font-semibold text-gray-700 mb-2">{t('wsiViewer.noAttentionData')}</h3>
-              <p className="text-xs text-gray-500">
-                {t('wsiViewer.noAttentionDataDesc')}
-              </p>
-            </div>
-          </Card>
-        )}
-
-        {/* Heatmaps available */}
-        {!loadingHeatmaps && availableHeatmaps.length > 0 && (
+        {/* Conditionally show annotation panel or analysis panels */}
+        {annotationMode ? (
+          <AnnotationListPanel
+            currentWsiId={wsi_id}
+            regions={currentRegions}
+            allAnnotations={allAnnotations}
+            labelColors={labelColors}
+            onUpdateRegion={handleUpdateRegion}
+            onDeleteRegion={handleDeleteRegion}
+            onCreateDataset={() => setShowCreateDatasetDialog(true)}
+          />
+        ) : (
           <>
-            <TaskSelectorCard
-              availableHeatmaps={availableHeatmaps}
-              selectedTaskId={selectedTaskId}
-              setSelectedTaskId={setSelectedTaskId}
-              selectedFoldKey={selectedFoldKey}
-              setSelectedFoldKey={setSelectedFoldKey}
-              availableFolds={availableFolds}
-              uniqueTasks={uniqueTasks}
-              isTaskDropdownOpen={isTaskDropdownOpen}
-              setIsTaskDropdownOpen={setIsTaskDropdownOpen}
-              setShowDeleteConfirm={setShowDeleteConfirm}
-              heatmapData={heatmapData}
-              patchCAMData={patchCAMData}
-              isPatchLevel={isPatchLevel}
-            />
-
-            {/* Multi-class Attention Selector - only for CLAM_MB and similar aggregators */}
-            {heatmapData?.attention_type === 'multi_class' && heatmapData.classes && heatmapData.classes.length > 0 && (
-              <AttentionClassSelector
-                heatmapData={heatmapData}
-                selectedClassIdx={selectedClassIdx}
-                setSelectedClassIdx={setSelectedClassIdx}
-                isClassDropdownOpen={isClassDropdownOpen}
-                setIsClassDropdownOpen={setIsClassDropdownOpen}
-              />
+            {/* Loading state */}
+            {loadingHeatmaps && (
+              <div className="flex items-center justify-center py-12">
+                <div className="flex flex-col items-center gap-3">
+                  <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+                  <p className="text-sm text-gray-500">{t('wsiViewer.loadingAnalysisData')}</p>
+                </div>
+              </div>
             )}
 
-            <AttentionPatchesPanel
-              heatmapData={heatmapData}
-              wsi_id={wsi_id}
-              exportingTop={exportingTop}
-              exportingBottom={exportingBottom}
-              handleExportTop={handleExportTop}
-              handleExportBottom={handleExportBottom}
-              patchCAMData={patchCAMData}
-              isPatchLevel={isPatchLevel}
-            />
+            {/* No heatmaps available */}
+            {!loadingHeatmaps && availableHeatmaps.length === 0 && (
+              <Card className="overflow-hidden">
+                <div className="p-8 text-center">
+                  <Layers className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                  <h3 className="text-sm font-semibold text-gray-700 mb-2">{t('wsiViewer.noAttentionData')}</h3>
+                  <p className="text-xs text-gray-500">
+                    {t('wsiViewer.noAttentionDataDesc')}
+                  </p>
+                </div>
+              </Card>
+            )}
+
+            {/* Heatmaps available */}
+            {!loadingHeatmaps && availableHeatmaps.length > 0 && (
+              <>
+                <TaskSelectorCard
+                  availableHeatmaps={availableHeatmaps}
+                  selectedTaskId={selectedTaskId}
+                  setSelectedTaskId={setSelectedTaskId}
+                  selectedFoldKey={selectedFoldKey}
+                  setSelectedFoldKey={setSelectedFoldKey}
+                  availableFolds={availableFolds}
+                  uniqueTasks={uniqueTasks}
+                  isTaskDropdownOpen={isTaskDropdownOpen}
+                  setIsTaskDropdownOpen={setIsTaskDropdownOpen}
+                  setShowDeleteConfirm={setShowDeleteConfirm}
+                  heatmapData={heatmapData}
+                  patchCAMData={patchCAMData}
+                  isPatchLevel={isPatchLevel}
+                />
+
+                {/* Multi-class Attention Selector - only for CLAM_MB and similar aggregators */}
+                {heatmapData?.attention_type === 'multi_class' && heatmapData.classes && heatmapData.classes.length > 0 && (
+                  <AttentionClassSelector
+                    heatmapData={heatmapData}
+                    selectedClassIdx={selectedClassIdx}
+                    setSelectedClassIdx={setSelectedClassIdx}
+                    isClassDropdownOpen={isClassDropdownOpen}
+                    setIsClassDropdownOpen={setIsClassDropdownOpen}
+                  />
+                )}
+
+                <AttentionPatchesPanel
+                  heatmapData={heatmapData}
+                  wsi_id={wsi_id}
+                  exportingTop={exportingTop}
+                  exportingBottom={exportingBottom}
+                  handleExportTop={handleExportTop}
+                  handleExportBottom={handleExportBottom}
+                  patchCAMData={patchCAMData}
+                  isPatchLevel={isPatchLevel}
+                />
+              </>
+            )}
           </>
         )}
       </div>
@@ -625,6 +818,16 @@ export default function WSIViewerPage() {
         handleDeleteResults={handleDeleteResults}
         availableHeatmaps={availableHeatmaps}
         selectedTaskId={selectedTaskId}
+      />
+
+      {/* Create Dataset from Annotations Dialog */}
+      <CreateDatasetDialog
+        show={showCreateDatasetDialog}
+        onClose={() => setShowCreateDatasetDialog(false)}
+        allAnnotations={allAnnotations}
+        labelColors={labelColors}
+        sourceDatasetId={datasetId}
+        draftId={draftId || undefined}
       />
     </div>
   )

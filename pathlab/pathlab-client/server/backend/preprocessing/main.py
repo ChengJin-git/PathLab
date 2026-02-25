@@ -889,3 +889,247 @@ async def get_patch_image(
         logger.error(f"Failed to get patch image: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get patch image: {str(e)}")
 
+
+
+# --- Annotation Region Extraction ---
+from pydantic import BaseModel, Field
+from typing import Any
+
+
+class RegionSpec(BaseModel):
+    """Specification for a single annotation region."""
+    type: str = Field(..., description="Region type: 'rect' or 'polygon'")
+    x: int = Field(..., description="Bounding box x (level-0 pixel)")
+    y: int = Field(..., description="Bounding box y (level-0 pixel)")
+    width: int = Field(..., description="Bounding box width (level-0 pixel)")
+    height: int = Field(..., description="Bounding box height (level-0 pixel)")
+    label: str = Field(..., description="Region label")
+    # Polygon-only: original polygon points stored as metadata
+    points: Optional[List[List[int]]] = Field(None, description="Polygon vertices [[x,y], ...]")
+
+
+class ExtractRegionsRequest(BaseModel):
+    """Request body for region extraction."""
+    regions: Dict[str, List[RegionSpec]] = Field(
+        ..., description="Map of wsi_id -> list of region specs"
+    )
+    dataset_name: str = Field(..., description="Name for the new dataset")
+    task_type: str = Field(..., description="Task type (classification, survival, etc.)")
+    user_id: str = Field(..., description="User ID who initiated the extraction")
+    task_id: str = Field(..., description="Task ID for progress tracking")
+
+
+@app.post("/annotation/extract_regions")
+async def extract_regions(req: ExtractRegionsRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Extract annotation regions from WSI/patch images and create a new dataset.
+
+    This endpoint is called by the Gateway after auth/access checks are done.
+    Runs extraction in a background task and tracks progress via Redis.
+    Returns immediately with the task_id.
+    """
+    # Validate all WSIs exist before starting
+    for wsi_id in req.regions:
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if not wsi:
+            raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+
+    # Start background extraction
+    asyncio.create_task(
+        _extract_regions_background(
+            regions=req.regions,
+            dataset_name=req.dataset_name,
+            task_type=req.task_type,
+            user_id=req.user_id,
+            task_id=req.task_id,
+        )
+    )
+
+    return {"task_id": req.task_id, "status": "started"}
+
+
+async def _extract_regions_background(
+    regions: Dict[str, List[RegionSpec]],
+    dataset_name: str,
+    task_type: str,
+    user_id: str,
+    task_id: str,
+):
+    """
+    Background task: extract ROI regions from WSI/patch files and create a new dataset.
+
+    Steps:
+    1. Create DataGroup + Dataset for the new annotated patches
+    2. For each WSI and its regions:
+       a. Open the slide (WSI) or image (patch)
+       b. Read the bounding-box region
+       c. Save as JPEG to uploads/wsi_files/
+       d. Create WSISlide record with parent_wsi_id
+    3. Update progress via Redis
+    """
+    import uuid
+    from backend.database import async_session_maker
+    from backend.database.repositories import (
+        DataGroupRepository,
+        DatasetRepository,
+        WSIRepository,
+    )
+    from backend.common.progress_store import set_progress, clear_progress
+
+    total_regions = sum(len(r) for r in regions.values())
+    completed = 0
+
+    try:
+        await set_progress(task_id, 0)
+
+        async with async_session_maker() as db:
+            # 1. Create DataGroup + Dataset
+            data_group = await DataGroupRepository.get_or_create(
+                db,
+                data_type="patch",
+                aggregation_level="file",
+                task_type=task_type,
+            )
+
+            dataset = await DatasetRepository.get_or_create(
+                db,
+                name=dataset_name,
+                group_id=data_group.group_id,
+                user_id=user_id,
+            )
+            dataset_id = dataset.dataset_id
+            await db.commit()
+
+            # 2. Extract each region
+            for source_wsi_id, region_list in regions.items():
+                # Load source WSI info
+                source_wsi = await WSIRepository.get_by_id(db, source_wsi_id)
+                if not source_wsi:
+                    logger.warning(f"Source WSI not found during extraction: {source_wsi_id}")
+                    completed += len(region_list)
+                    continue
+
+                source_path = Path(source_wsi.wsi_path)
+                source_is_patch = is_patch_file(str(source_path), source_wsi.file_size or 0)
+
+                for region in region_list:
+                    try:
+                        await _extract_single_region(
+                            db=db,
+                            source_wsi_id=source_wsi_id,
+                            source_path=source_path,
+                            source_is_patch=source_is_patch,
+                            region=region,
+                            dataset_id=dataset_id,
+                            user_id=user_id,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to extract region from {source_wsi_id}: {e}",
+                            exc_info=True,
+                        )
+
+                    completed += 1
+                    progress = int(completed / total_regions * 100)
+                    await set_progress(task_id, progress)
+
+            await db.commit()
+
+        logger.info(f"Annotation extraction completed: task_id={task_id}, {completed}/{total_regions} regions")
+        await set_progress(task_id, 100)
+
+    except Exception as e:
+        logger.error(f"Annotation extraction failed: task_id={task_id}, error={e}", exc_info=True)
+        await set_progress(task_id, -1)  # -1 signals error
+
+    finally:
+        # Don't clear progress immediately — let SSE client read the final state
+        await asyncio.sleep(5)
+        await clear_progress(task_id)
+
+
+async def _extract_single_region(
+    db: AsyncSession,
+    source_wsi_id: str,
+    source_path: Path,
+    source_is_patch: bool,
+    region: RegionSpec,
+    dataset_id: str,
+    user_id: str,
+):
+    """
+    Extract a single annotation region from a WSI or patch image.
+
+    For WSI files: uses ASlide read_region at level 0.
+    For patch files: uses PIL Image.crop.
+
+    Saves the cropped image as JPEG and creates a WSI database record.
+    """
+    import uuid
+    from backend.database.repositories import WSIRepository
+
+    new_wsi_id = str(uuid.uuid4())
+
+    # Ensure output directory exists
+    output_dir = UPLOADS_DIR / "wsi_files"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{new_wsi_id}.jpg"
+
+    # Extract region image
+    if source_is_patch:
+        # Patch file: crop with PIL
+        cropped = await asyncio.to_thread(
+            _crop_patch_image, source_path, region.x, region.y, region.width, region.height
+        )
+    else:
+        # WSI file: read_region via ASlide
+        slide = await get_slide(source_wsi_id, db)
+        cropped = await asyncio.to_thread(
+            _read_wsi_region, slide, region.x, region.y, region.width, region.height
+        )
+
+    # Save as JPEG
+    await asyncio.to_thread(_save_image_jpeg, cropped, output_path)
+
+    file_size = output_path.stat().st_size
+
+    # Create WSI record for the extracted patch
+    wsi_data = {
+        "wsi_id": new_wsi_id,
+        "original_filename": f"{source_wsi_id}_roi_{region.label}.jpg",
+        "dataset_id": dataset_id,
+        "label": region.label,
+        "wsi_path": str(output_path),
+        "file_size": file_size,
+        "width": region.width,
+        "height": region.height,
+        "user_id": user_id,
+        "parent_wsi_id": source_wsi_id,
+    }
+    await WSIRepository.create(db, wsi_data)
+
+    logger.info(f"Extracted region: {new_wsi_id} from {source_wsi_id} ({region.label})")
+
+
+def _crop_patch_image(file_path: Path, x: int, y: int, w: int, h: int) -> Image.Image:
+    """Crop a region from a patch image file (runs in thread)."""
+    with Image.open(file_path) as img:
+        img = img.convert("RGB")
+        cropped = img.crop((x, y, x + w, y + h))
+        return cropped.copy()  # Copy to detach from source file
+
+
+def _read_wsi_region(slide, x: int, y: int, w: int, h: int) -> Image.Image:
+    """Read a region from a WSI slide at level 0 (runs in thread)."""
+    region = slide.read_region((x, y), 0, (w, h))
+    # Convert RGBA to RGB (ASlide returns RGBA)
+    if region.mode == "RGBA":
+        background = Image.new("RGB", region.size, (255, 255, 255))
+        background.paste(region, mask=region.split()[3])
+        return background
+    return region.convert("RGB")
+
+
+def _save_image_jpeg(img: Image.Image, output_path: Path):
+    """Save a PIL Image as JPEG (runs in thread)."""
+    img.save(output_path, format="JPEG", quality=90)

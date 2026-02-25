@@ -995,6 +995,8 @@ After saving, return here and start chatting!"""
     # instead of buffering it.  Set after article content is injected so the
     # user sees the summary appear progressively.
     _stream_next_iteration = False
+    _response_already_streamed = False
+    full_response = ""
 
     for iteration in range(max_tool_iterations):
 
@@ -1047,18 +1049,55 @@ After saving, return here and start chatting!"""
             yield "data: [DONE]\n\n"
             return
 
-        # ── Buffered path: call AI non-streaming for tool detection ──────
-        # Call AI and buffer response
+        # ── Smart streaming: stream tokens, sniff for tool blocks ──────
+        # Stream from the API while sniffing the first few tokens to detect
+        # tool-call blocks ([WEB_SEARCH], [READ_ARTICLE]).
+        # Normal responses are yielded to the client in real-time;
+        # tool-call responses are buffered for processing.
+        _TOOL_PREFIXES = ("[WEB_SEARCH]", "[READ_ARTICLE]")
+        _SNIFF_CHARS = 20  # content chars to accumulate before deciding
+
+        content_so_far = ""
+        pending_sse_chunks: list[str] = []
+        decided_streaming = False
+        is_streaming_to_client = False
+
         try:
-            full_response = await _run_or_cancel_on_disconnect(
-                _call_ai_complete(
-                    messages=current_messages,
-                    base_url=effective_base_url,
-                    api_key=effective_api_key,
-                    model=effective_model
-                ),
-                request,
-            )
+            async for chunk in _stream_from_openai_compatible(
+                messages=current_messages,
+                base_url=effective_base_url,
+                api_key=effective_api_key,
+                model=effective_model,
+                source_name="API",
+            ):
+                if chunk == "data: [DONE]\n\n":
+                    break
+
+                # Accumulate content for tool detection
+                if chunk.startswith("data: "):
+                    try:
+                        d = json.loads(chunk[6:])
+                        if "content" in d:
+                            content_so_far += d["content"]
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+
+                if not decided_streaming:
+                    pending_sse_chunks.append(chunk)
+                    if len(content_so_far) >= _SNIFF_CHARS:
+                        decided_streaming = True
+                        stripped = content_so_far.lstrip()
+                        if any(stripped.startswith(p) for p in _TOOL_PREFIXES):
+                            is_streaming_to_client = False
+                        else:
+                            is_streaming_to_client = True
+                            for pc in pending_sse_chunks:
+                                yield pc
+                            pending_sse_chunks = []
+                elif is_streaming_to_client:
+                    yield chunk
+                # else: buffering for tool processing
+
         except ClientDisconnectedError:
             logger.info("Client disconnected during AI completion — stopping")
             return
@@ -1068,6 +1107,26 @@ After saving, return here and start chatting!"""
             yield f"data: {json.dumps({'content': error_msg})}\n\n"
             yield "data: [DONE]\n\n"
             return
+
+        # Short responses that never crossed the sniff threshold
+        if not decided_streaming:
+            stripped = content_so_far.lstrip()
+            if any(stripped.startswith(p) for p in _TOOL_PREFIXES):
+                is_streaming_to_client = False
+            else:
+                is_streaming_to_client = True
+                for pc in pending_sse_chunks:
+                    yield pc
+                pending_sse_chunks = []
+
+        full_response = content_so_far
+
+        # Mark if response was already streamed to client.
+        # Do NOT break here — always continue to tool detection below.
+        # [WEB_SEARCH] / [READ_ARTICLE] blocks may appear after normal text;
+        # the frontend strips them from display (AssistantMessage.tsx L496-498).
+        if is_streaming_to_client:
+            _response_already_streamed = True
 
         # Check if AI requested web search
         search_match = json.loads('null')
@@ -1293,31 +1352,29 @@ After saving, return here and start chatting!"""
         break
 
     # ── Emit final AI response ──
-    # Reuse the buffered `full_response` from the last tool-loop iteration
-    # instead of making a redundant streaming LLM call.
     final_response_text = full_response or ""
 
-    if final_response_text:
-        # Yield the already-generated response in small chunks to keep SSE flowing
+    if not _response_already_streamed and final_response_text:
+        # Buffered response (tool-call iteration that fell through) — emit now
         _CHUNK_SIZE = 80
         for i in range(0, len(final_response_text), _CHUNK_SIZE):
             yield f"data: {json.dumps({'content': final_response_text[i:i+_CHUNK_SIZE]})}\n\n"
 
-        # Inject CITATION_CONTEXTS before [DONE] if article was read
-        if article_pdf_content:
-            try:
-                ctx = _extract_citation_contexts(final_response_text, article_pdf_content, _per_paper_pdf_content)
-                if ctx:
-                    ctx_block = f"[CITATION_CONTEXTS]{json.dumps(ctx, ensure_ascii=False)}[/CITATION_CONTEXTS]"
-                    yield f"data: {json.dumps({'content': ctx_block})}\n\n"
-            except Exception as e:
-                logger.warning(f"Failed to extract citation contexts: {e}")
+    # Inject CITATION_CONTEXTS before [DONE] if article was read
+    if article_pdf_content and final_response_text:
+        try:
+            ctx = _extract_citation_contexts(final_response_text, article_pdf_content, _per_paper_pdf_content)
+            if ctx:
+                ctx_block = f"[CITATION_CONTEXTS]{json.dumps(ctx, ensure_ascii=False)}[/CITATION_CONTEXTS]"
+                yield f"data: {json.dumps({'content': ctx_block})}\n\n"
+        except Exception as e:
+            logger.warning(f"Failed to extract citation contexts: {e}")
 
-        # Emit reference cards for follow-up messages so frontend can build
-        # citationMap with paper title/URL for InlineCitation tooltips.
-        if _followup_reference_cards:
-            ref_block = "\n".join(_followup_reference_cards)
-            yield f"data: {json.dumps({'content': ref_block})}\n\n"
+    # Emit reference cards for follow-up messages so frontend can build
+    # citationMap with paper title/URL for InlineCitation tooltips.
+    if _followup_reference_cards:
+        ref_block = "\n".join(_followup_reference_cards)
+        yield f"data: {json.dumps({'content': ref_block})}\n\n"
 
     yield "data: [DONE]\n\n"
 

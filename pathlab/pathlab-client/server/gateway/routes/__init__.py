@@ -16,6 +16,7 @@ Route modules:
 - asr: ASR (Automatic Speech Recognition) using DashScope Qwen3-ASR
 - heatmap: Heatmap and visualization proxy routes
 - gpu: GPU information and status
+- annotation: Annotation draft CRUD and ROI extraction
 """
 from .auth import router as auth_router
 
@@ -33,6 +34,7 @@ from .asr import router as asr_router
 from .heatmap import router as heatmap_router
 from .settings import router as settings_router
 from .gpu import router as gpu_router
+from .annotation import router as annotation_router
 
 __all__ = [
     "auth_router",
@@ -50,5 +52,6 @@ __all__ = [
     "heatmap_router",
     "settings_router",
     "gpu_router",
+    "annotation_router",
 ]
 

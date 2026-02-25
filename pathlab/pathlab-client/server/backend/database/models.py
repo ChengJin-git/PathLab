@@ -135,6 +135,9 @@ class WSISlide(Base):
     # Owner - links to users table (UUID stored as string)
     user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
 
+    # Parent WSI - self-referential FK for ROI-extracted images
+    parent_wsi_id = Column(String(255), ForeignKey("wsi_slides.wsi_id"), nullable=True, index=True)
+
     # Patient metadata
     age = Column(Integer)  # Patient age
     gender = Column(String(20))  # Patient gender (e.g., Male, Female, Other)
@@ -169,6 +172,8 @@ class WSISlide(Base):
     ai_tasks = relationship("AITask", back_populates="wsi_slide", cascade="all, delete-orphan")
     ai_results = relationship("AIResult", back_populates="wsi_slide", cascade="all, delete-orphan")
     training_task_associations = relationship("TrainingTaskWSI", back_populates="wsi_slide", cascade="all, delete-orphan")
+    # Self-referential relationship for ROI extraction origin
+    parent_wsi = relationship("WSISlide", remote_side=[wsi_id], foreign_keys=[parent_wsi_id])
 
     # Composite indexes for common query patterns (PostgreSQL)
     __table_args__ = (
@@ -215,6 +220,7 @@ class WSISlide(Base):
             "magnification": self.magnification,
             "file_size": self.file_size,
             "associated_files": self.associated_files,
+            "parent_wsi_id": self.parent_wsi_id,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
         }
@@ -241,6 +247,7 @@ class WSISlide(Base):
             "event_status": self.event_status,
             "split": self.split,
             "file_size": self.file_size,
+            "parent_wsi_id": self.parent_wsi_id,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
         }
 
@@ -852,4 +859,39 @@ class StorageTask(Base):
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "started_at": self.started_at.isoformat() + 'Z' if self.started_at else None,
             "completed_at": self.completed_at.isoformat() + 'Z' if self.completed_at else None,
+        }
+
+
+class AnnotationDraft(Base):
+    """
+    Annotation Draft table.
+    Stores in-progress annotation sessions (auto-saved).
+    Each draft contains annotations across multiple WSI slides.
+    """
+    __tablename__ = "annotation_drafts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    draft_id = Column(String(255), unique=True, nullable=False, index=True)
+    user_id = Column(String(255), nullable=False, index=True)
+    source_dataset_id = Column(String(255), ForeignKey("datasets.dataset_id"), nullable=True, index=True)
+
+    # JSON structure: { "wsi_001": [{ "type": "rect", "x": ..., "label": ... }, ...], ... }
+    annotations = Column(JSON, nullable=False, default=dict)
+
+    # Timestamps
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    # Relationships
+    source_dataset = relationship("Dataset")
+
+    def to_dict(self):
+        """Convert to dictionary for API responses."""
+        return {
+            "draft_id": self.draft_id,
+            "user_id": self.user_id,
+            "source_dataset_id": self.source_dataset_id,
+            "annotations": self.annotations,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
         }
