@@ -500,6 +500,9 @@ async def _background_mineru_upgrade(url: str, pdf_bytes: bytes, max_pages: int 
     except Exception as e:
         logger.error(f"[BG MinerU] Upgrade error for {url}: {e}")
     finally:
+        # Safety-net: ensure vLLM processes are cleaned up even if
+        # _parse_pdf_sync_inner's own cleanup somehow failed.
+        _shutdown_mineru_vlm_singleton()
         _mineru_gpu_lock.release()
         if original_cuda_devices is not None:
             os.environ["CUDA_VISIBLE_DEVICES"] = original_cuda_devices
@@ -1161,6 +1164,93 @@ def _parse_pdf_sync(
                 os.environ.pop("CUDA_VISIBLE_DEVICES", None)
 
 
+def _cleanup_vllm_processes() -> None:
+    """Force-kill any orphaned vLLM EngineCore subprocesses spawned by this process.
+
+    This is a safety-net fallback called after the normal ModelSingleton
+    shutdown path.  It uses the OS process tree to find and kill children
+    whose command-line contains ``vllm`` or ``EngineCore``.
+    """
+    import signal
+    import subprocess as _sp
+
+    my_pid = os.getpid()
+    try:
+        # Find all child processes of the current process
+        result = _sp.run(
+            ["pgrep", "-P", str(my_pid), "-a"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return  # no children or pgrep not available
+
+        for line in result.stdout.strip().splitlines():
+            parts = line.split(None, 1)
+            if len(parts) < 2:
+                continue
+            child_pid_str, cmdline = parts
+            # Match vLLM EngineCore worker processes
+            if "vllm" in cmdline.lower() or "enginecore" in cmdline.lower():
+                child_pid = int(child_pid_str)
+                try:
+                    os.kill(child_pid, signal.SIGKILL)
+                    logger.info(
+                        f"[MinerU] Force-killed orphaned vLLM process "
+                        f"PID={child_pid}: {cmdline[:80]}"
+                    )
+                except ProcessLookupError:
+                    pass  # already dead
+                except Exception as _e:
+                    logger.warning(
+                        f"[MinerU] Failed to kill PID={child_pid}: {_e}"
+                    )
+    except Exception as e:
+        logger.debug(f"[MinerU] _cleanup_vllm_processes fallback error: {e}")
+
+
+def _shutdown_mineru_vlm_singleton() -> None:
+    """Shutdown all vLLM engines tracked by MinerU's ModelSingleton and
+    release GPU memory.  Always safe to call (no-ops if nothing to clean)."""
+    try:
+        from mineru.backend.vlm.vlm_analyze import ModelSingleton
+        from mineru.utils.model_utils import clean_memory
+        import gc
+
+        if not ModelSingleton._models:
+            return
+
+        # 1) Explicitly shutdown each vLLM engine so EngineCore
+        #    subprocesses are terminated (terminate → join → kill).
+        for _key, _client in list(ModelSingleton._models.items()):
+            # Sync vLLM engine (backend == "vllm-engine")
+            _llm = getattr(_client, 'vllm_llm', None)
+            if _llm is not None:
+                try:
+                    _llm.llm_engine.engine_core.shutdown()
+                    logger.info(f"[MinerU] vLLM sync engine shutdown OK (key={_key})")
+                except Exception as _e:
+                    logger.warning(f"[MinerU] vLLM sync engine shutdown warning: {_e}")
+            # Async vLLM engine (backend == "vllm-async-engine")
+            _allm = getattr(_client, 'vllm_async_llm', None)
+            if _allm is not None:
+                try:
+                    _allm.engine_core.shutdown()
+                    logger.info(f"[MinerU] vLLM async engine shutdown OK (key={_key})")
+                except Exception as _e:
+                    logger.warning(f"[MinerU] vLLM async engine shutdown warning: {_e}")
+
+        # 2) Clear singleton dict & free CUDA memory.
+        ModelSingleton._models.clear()
+        clean_memory('cuda')
+        gc.collect()
+        logger.info("[MinerU] VLM singleton cleared — EngineCore processes terminated")
+    except Exception as _cleanup_err:
+        logger.warning(f"[MinerU] VLM singleton cleanup warning: {_cleanup_err}")
+
+    # 3) Fallback: kill any remaining vLLM child processes by PID.
+    _cleanup_vllm_processes()
+
+
 def _parse_pdf_sync_inner(
     pdf_bytes: bytes,
     max_pages: int,
@@ -1186,112 +1276,76 @@ def _parse_pdf_sync_inner(
         from mineru.utils.enum_class import MakeMode
         from mineru.utils.engine_utils import get_vlm_engine
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            pdf_path = temp_path / "input.pdf"
-            pdf_path.write_bytes(pdf_bytes)
+        md_content = ""
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+                pdf_path = temp_path / "input.pdf"
+                pdf_path.write_bytes(pdf_bytes)
 
-            output_dir = temp_path / "output"
-            local_image_dir, local_md_dir = prepare_env(output_dir, "input", "hybrid_auto")
+                output_dir = temp_path / "output"
+                local_image_dir, local_md_dir = prepare_env(output_dir, "input", "hybrid_auto")
 
-            backend = get_vlm_engine(inference_engine='auto', is_async=False)
+                backend = get_vlm_engine(inference_engine='auto', is_async=False)
 
-            start_page_id = 0
-            end_page_id = max_pages - 1 if max_pages > 0 else None
+                start_page_id = 0
+                end_page_id = max_pages - 1 if max_pages > 0 else None
 
-            pdf_bytes_limited = convert_pdf_bytes_to_bytes_by_pypdfium2(
-                pdf_bytes, start_page_id, end_page_id
-            )
-
-            middle_json, _, _ = hybrid_doc_analyze(
-                pdf_bytes_limited,
-                image_writer=FileBasedDataWriter(local_image_dir),
-                backend=backend,
-                parse_method="hybrid_auto",
-                language="en",
-                inline_formula_enable=True,
-                server_url=None,
-            )
-
-            pdf_info = middle_json["pdf_info"]
-            image_dir = str(os.path.basename(local_image_dir))
-            pdf_info_list = pdf_info if isinstance(pdf_info, list) else []
-
-            # Build page-aware markdown: iterate per page and add page markers
-            if not pdf_info_list:
-                return ""
-
-            page_sections = []
-            for page_info in pdf_info_list:
-                # page_idx is 0-based from MinerU
-                page_idx = page_info.get('page_idx', len(page_sections))
-                page_num = page_idx + 1  # 1-based for human readability
-
-                # Use union_make on a single-page list to get that page's markdown
-                page_md = str(union_make([page_info], MakeMode.MM_MD, image_dir) or "").strip()
-                if page_md:
-                    page_sections.append(f"--- Page {page_num} ---\n\n{page_md}")
-
-            md_content = "\n\n".join(page_sections)
-
-            # ── Image persistence ────────────────────────────────────────────────
-            # Copy extracted images to permanent storage BEFORE the TemporaryDirectory
-            # context manager exits and deletes them.  Then rewrite relative image
-            # paths in the markdown to absolute HTTP URLs so the frontend can load them.
-            local_image_path = Path(local_image_dir)
-            if images_output_dir is not None and local_image_path.is_dir():
-                images_output_dir.mkdir(parents=True, exist_ok=True)
-                copied = 0
-                for img_file in local_image_path.iterdir():
-                    if img_file.is_file():
-                        shutil.copy2(img_file, images_output_dir / img_file.name)
-                        copied += 1
-                logger.info(f"[MinerU] Copied {copied} images to {images_output_dir}")
-
-            if images_url_prefix is not None and image_dir:
-                # Replace `(images/xxx.jpg)` → `(http://host/pdf-images/hash/xxx.jpg)`
-                md_content = re.sub(
-                    r'\(' + re.escape(image_dir) + r'/([^)\s]+)\)',
-                    f'({images_url_prefix}/\\1)',
-                    md_content,
+                pdf_bytes_limited = convert_pdf_bytes_to_bytes_by_pypdfium2(
+                    pdf_bytes, start_page_id, end_page_id
                 )
 
-        # ── VLM singleton cleanup ─────────────────────────────────────────
-        # Explicitly shutdown vLLM EngineCore worker processes before
-        # clearing the singleton.  Without this, subprocess workers keep
-        # running and leak GPU VRAM across successive parses.
-        try:
-            from mineru.backend.vlm.vlm_analyze import ModelSingleton
-            from mineru.utils.model_utils import clean_memory
-            import gc
+                middle_json, _, _ = hybrid_doc_analyze(
+                    pdf_bytes_limited,
+                    image_writer=FileBasedDataWriter(local_image_dir),
+                    backend=backend,
+                    parse_method="hybrid_auto",
+                    language="en",
+                    inline_formula_enable=True,
+                    server_url=None,
+                )
 
-            # 1) Explicitly shutdown each vLLM engine so EngineCore
-            #    subprocesses are terminated (terminate → join → kill).
-            for _key, _client in list(ModelSingleton._models.items()):
-                # Sync vLLM engine
-                _llm = getattr(_client, 'vllm_llm', None)
-                if _llm is not None:
-                    try:
-                        _llm.llm_engine.engine_core.shutdown()
-                        logger.info("[MinerU] vLLM sync engine shutdown OK")
-                    except Exception as _e:
-                        logger.warning(f"[MinerU] vLLM sync engine shutdown warning: {_e}")
-                # Async vLLM engine
-                _allm = getattr(_client, 'vllm_async_llm', None)
-                if _allm is not None:
-                    try:
-                        _allm.engine_core.shutdown()
-                        logger.info("[MinerU] vLLM async engine shutdown OK")
-                    except Exception as _e:
-                        logger.warning(f"[MinerU] vLLM async engine shutdown warning: {_e}")
+                pdf_info = middle_json["pdf_info"]
+                image_dir = str(os.path.basename(local_image_dir))
+                pdf_info_list = pdf_info if isinstance(pdf_info, list) else []
 
-            # 2) Clear singleton dict & free CUDA memory.
-            ModelSingleton._models.clear()
-            clean_memory('cuda')
-            gc.collect()
-            logger.info("[MinerU] VLM singleton cleared — EngineCore processes terminated")
-        except Exception as _cleanup_err:
-            logger.warning(f"[MinerU] VLM cleanup warning: {_cleanup_err}")
+                # Build page-aware markdown: iterate per page and add page markers
+                if not pdf_info_list:
+                    return ""
+
+                page_sections = []
+                for page_info in pdf_info_list:
+                    page_idx = page_info.get('page_idx', len(page_sections))
+                    page_num = page_idx + 1
+
+                    page_md = str(union_make([page_info], MakeMode.MM_MD, image_dir) or "").strip()
+                    if page_md:
+                        page_sections.append(f"--- Page {page_num} ---\n\n{page_md}")
+
+                md_content = "\n\n".join(page_sections)
+
+                # ── Image persistence ────────────────────────────────────────
+                local_image_path = Path(local_image_dir)
+                if images_output_dir is not None and local_image_path.is_dir():
+                    images_output_dir.mkdir(parents=True, exist_ok=True)
+                    copied = 0
+                    for img_file in local_image_path.iterdir():
+                        if img_file.is_file():
+                            shutil.copy2(img_file, images_output_dir / img_file.name)
+                            copied += 1
+                    logger.info(f"[MinerU] Copied {copied} images to {images_output_dir}")
+
+                if images_url_prefix is not None and image_dir:
+                    md_content = re.sub(
+                        r'\(' + re.escape(image_dir) + r'/([^)\s]+)\)',
+                        f'({images_url_prefix}/\\1)',
+                        md_content,
+                    )
+        finally:
+            # ── VLM singleton cleanup (ALWAYS runs) ──────────────────────
+            # Must run even if parsing raised an exception, otherwise the
+            # vLLM EngineCore subprocess leaks GPU VRAM permanently.
+            _shutdown_mineru_vlm_singleton()
 
         return md_content
 

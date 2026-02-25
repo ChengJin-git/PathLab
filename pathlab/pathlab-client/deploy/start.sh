@@ -61,6 +61,8 @@ pkill -9 -f "uvicorn.*ai" 2>/dev/null || true
 pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
 pkill -9 -f "vllm.engine" 2>/dev/null || true
 pkill -9 -f "ray::vLLM" 2>/dev/null || true
+pkill -9 -f "EngineCore" 2>/dev/null || true
+pkill -9 -f "vllm.v1" 2>/dev/null || true
 
 # Kill entire process tree from previous PID file (catches orphaned children)
 if [ -f "$LOG_DIR/backend.pid" ]; then
