@@ -607,6 +607,7 @@
       "forWebSearch": "For AI web search capabilities.",
       "searching": "Searching...",
       "searchedPages": "Searched {{count}} pages",
+      "summarizingSearch": "Summarizing search results...",
       "webSearchCard": "Web Search",
       "parsingPdf": "Parsing PDF paper...",
       "pdfParsedCount": "Parsed {{count}} PDF papers"

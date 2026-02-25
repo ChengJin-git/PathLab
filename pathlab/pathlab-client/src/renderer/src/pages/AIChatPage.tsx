@@ -812,12 +812,19 @@ export default function AIChatPage() {
           cancelAnimationFrame(rafId)
           rafId = null
         }
+        // CRITICAL: Capture trackingId in a const BEFORE any setMessages calls.
+        // React 18 batches setMessages updaters — they execute LATER, after
+        // `trackingId = newId` below has already run.  If the updater closures
+        // reference `trackingId` directly (by-reference), they will see `newId`
+        // and fail to find the message (which still has the OLD id).
+        // Using a const snapshot ensures the updaters always match the OLD id.
+        const oldTrackingId = trackingId
         if (chunkBuffer) {
           const buffered = chunkBuffer
           chunkBuffer = ''
           setMessages(prev =>
             prev.map(m =>
-              m.id === trackingId
+              m.id === oldTrackingId
                 ? { ...m, content: m.content + buffered }
                 : m
             )
@@ -826,7 +833,7 @@ export default function AIChatPage() {
         const newId = String(messageId)
         setMessages(prev =>
           prev.map(m =>
-            m.id === trackingId
+            m.id === oldTrackingId
               ? { ...m, id: newId }
               : m
           )

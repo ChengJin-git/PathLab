@@ -607,6 +607,7 @@
       "forWebSearch": "用於 AI 網頁搜尋功能。",
       "searching": "搜尋中...",
       "searchedPages": "已搜尋 {{count}} 個網頁",
+      "summarizingSearch": "正在總結搜尋內容...",
       "webSearchCard": "網頁搜尋",
       "parsingPdf": "正在解析 PDF 論文...",
       "pdfParsedCount": "已解析 {{count}} 篇 PDF 論文"

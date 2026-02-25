@@ -249,6 +249,62 @@ export const SearchCompletedCard = React.memo(function SearchCompletedCard({
 })
 
 // ============================================================================
+// Summarizing Search Results Status
+// ============================================================================
+
+/**
+ * SummarizingSearchStatus — animated indicator while AI is summarizing web search results.
+ *
+ * Shown after search completes (SearchCompletedCard visible) but before
+ * the AI starts streaming the actual summary text.
+ */
+export const SummarizingSearchStatus = React.memo(function SummarizingSearchStatus() {
+  const { t } = useTranslation()
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-xl my-2"
+    >
+      {/* Animated globe icon */}
+      <div className="relative">
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+          className="absolute inset-0 w-5 h-5 border-2 border-blue-200 border-t-blue-500 rounded-full"
+        />
+        <Globe className="w-5 h-5 text-blue-500 relative z-10" />
+      </div>
+
+      {/* Status text */}
+      <div className="flex-1 min-w-0">
+        <span className="text-sm font-medium text-blue-700">
+          {t('settings.general.summarizingSearch')}
+        </span>
+      </div>
+
+      {/* Animated dots */}
+      <div className="flex gap-1">
+        {[0, 1, 2].map((i) => (
+          <motion.div
+            key={i}
+            className="w-1.5 h-1.5 bg-blue-400 rounded-full"
+            animate={{ y: [0, -4, 0] }}
+            transition={{
+              duration: 0.6,
+              repeat: Infinity,
+              delay: i * 0.15,
+            }}
+          />
+        ))}
+      </div>
+    </motion.div>
+  )
+})
+
+// ============================================================================
 // PDF Parse Status
 // ============================================================================
 
