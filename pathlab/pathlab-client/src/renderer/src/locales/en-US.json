@@ -1132,7 +1132,7 @@
       "startFresh": {
         "title": "Fresh Start",
         "description": "Begin a new pathology research project",
-        "prompt": "I want to start a new pathology research project. Can you help me understand what options I have?"
+        "prompt": "I want to start a new AI-powered pathology research project. Can you help me understand what options I have or suggest some recent research directions?"
       },
       "trainModel": {
         "title": "Train Model",
