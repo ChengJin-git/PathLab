@@ -603,9 +603,9 @@ const AssistantMessage = React.memo(function AssistantMessage({
 	        <div className="prose prose-slate max-w-none prose-sm
 	          prose-p:my-2 prose-p:leading-relaxed
 	          prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-headings:text-gray-900
-	          prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5
-	          prose-ol:my-2 prose-ol:list-decimal prose-ol:pl-5
-	          prose-li:my-1
+	          prose-ul:my-3 prose-ul:list-disc prose-ul:pl-6
+	          prose-ol:my-3 prose-ol:list-decimal prose-ol:pl-6
+	          prose-li:my-1.5 prose-li:leading-relaxed
 	          prose-code:bg-gray-100 prose-code:text-gray-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
 	          prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:p-4 prose-pre:my-3
 	          prose-strong:text-gray-900 prose-strong:font-semibold

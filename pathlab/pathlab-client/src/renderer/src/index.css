@@ -117,6 +117,28 @@ body {
   color: #1e293b;
 }
 
+/* ── Prose list styling ── */
+.prose :where(ol) > li::marker {
+  color: var(--color-primary-500);
+  font-weight: 600;
+}
+
+.prose :where(ul) > li::marker {
+  color: #94a3b8;
+}
+
+/* Paragraphs inside list items: tighter vertical spacing */
+.prose :where(li) > p {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+/* Nested lists: slightly tighter spacing */
+.prose :where(li) :where(ol, ul) {
+  margin-top: 0.375rem;
+  margin-bottom: 0.375rem;
+}
+
 /* ── KaTeX overrides for inline math ── */
 .prose .katex {
   font-size: 0.95em;
