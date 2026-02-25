@@ -1004,6 +1004,11 @@ After saving, return here and start chatting!"""
                     use_cache=True
                 )
 
+                # For uncached PDFs: transition downloading → parsing → completed
+                if not has_cache and pdf_result.get("success"):
+                    pdf_status = {"url": article_url, "title": article_title, "status": "parsing"}
+                    yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
+
                 # Emit PDF_PARSE_STATUS: completed or error
                 if pdf_result.get("success"):
                     pdf_status = {

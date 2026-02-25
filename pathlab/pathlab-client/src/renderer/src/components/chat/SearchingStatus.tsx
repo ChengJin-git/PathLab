@@ -7,7 +7,7 @@
 import React, { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Search, Globe, FileText, ChevronDown, ExternalLink } from 'lucide-react'
+import { Search, Globe, FileText, Download, ChevronDown, ExternalLink } from 'lucide-react'
 
 export interface SearchingStatusProps {
   query?: string
@@ -372,14 +372,17 @@ export const PdfParsingStatus = React.memo(function PdfParsingStatus({
       exit={{ opacity: 0, y: -10 }}
       className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-100 rounded-xl my-2"
     >
-      {/* Animated file icon */}
+      {/* Animated icon — Download for downloading, FileText for parsing */}
       <div className="relative">
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
           className="absolute inset-0 w-5 h-5 border-2 border-amber-200 border-t-amber-500 rounded-full"
         />
-        <FileText className="w-5 h-5 text-amber-500 relative z-10" />
+        {isDownloading
+          ? <Download className="w-5 h-5 text-amber-500 relative z-10" />
+          : <FileText className="w-5 h-5 text-amber-500 relative z-10" />
+        }
       </div>
 
       {/* Status text */}
