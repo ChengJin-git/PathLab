@@ -13,6 +13,7 @@ interface AnnotationOverlayProps {
   slideHeight: number
   onRegionCreated: (region: Omit<AnnotationRegion, 'id'>) => void
   onRegionTooLarge?: () => void  // called when drawn region exceeds MAX_ROI_SIZE
+  isLabelDropdownOpen?: boolean  // when true, disable canvas pointer-events so dropdown is interactive
 }
 
 /** Max ROI dimension in level-0 pixels */
@@ -40,6 +41,7 @@ export function AnnotationOverlay({
   slideHeight,
   onRegionCreated,
   onRegionTooLarge,
+  isLabelDropdownOpen = false,
 }: AnnotationOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDrawing, setIsDrawing] = useState(false)
@@ -338,8 +340,8 @@ export function AnnotationOverlay({
     viewer.viewport.applyConstraints()
   }, [annotationMode, viewer])
 
-  const pointerEvents = annotationMode && !spaceHeld ? 'auto' : 'none'
-  const cursor = annotationMode && !spaceHeld ? 'crosshair' : 'default'
+  const pointerEvents = annotationMode && !spaceHeld && !isLabelDropdownOpen ? 'auto' : 'none'
+  const cursor = annotationMode && !spaceHeld && !isLabelDropdownOpen ? 'crosshair' : 'default'
 
   return (
     <canvas

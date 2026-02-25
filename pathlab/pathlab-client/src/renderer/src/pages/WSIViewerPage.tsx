@@ -214,6 +214,7 @@ export default function WSIViewerPage() {
   const [drawingTool, setDrawingTool] = useState<'rect' | 'polygon'>('rect')
   const [currentLabel, setCurrentLabel] = useState('')
   const [labelColors, setLabelColors] = useState<Record<string, string>>({})
+  const [isLabelDropdownOpen, setIsLabelDropdownOpen] = useState(false)
   const [allAnnotations, setAllAnnotations] = useState<AnnotationsMap>({})
   const [draftId, setDraftId] = useState<string | null>(null)
   const [osdViewer, setOsdViewer] = useState<any>(null)
@@ -392,6 +393,25 @@ export default function WSIViewerPage() {
       [wsi_id]: (prev[wsi_id] || []).filter(r => r.id !== regionId),
     }))
   }, [wsi_id])
+
+  const handleDeleteRegions = useCallback((regionIds: string[]) => {
+    const idSet = new Set(regionIds)
+    setAllAnnotations(prev => ({
+      ...prev,
+      [wsi_id]: (prev[wsi_id] || []).filter(r => !idSet.has(r.id)),
+    }))
+  }, [wsi_id])
+
+  const handleDeleteCrossSlideByLabel = useCallback((labels: string[]) => {
+    const labelSet = new Set(labels)
+    setAllAnnotations(prev => {
+      const next: typeof prev = {}
+      for (const [key, regions] of Object.entries(prev)) {
+        next[key] = regions.filter(r => !labelSet.has(r.label))
+      }
+      return next
+    })
+  }, [])
 
   const handleLabelChange = useCallback((label: string) => {
     setCurrentLabel(label)
@@ -573,6 +593,7 @@ export default function WSIViewerPage() {
               onLabelChange={handleLabelChange}
               labelColors={labelColors}
               allLabels={allLabels}
+              onDropdownOpenChange={setIsLabelDropdownOpen}
             />
 
             <button
@@ -687,6 +708,7 @@ export default function WSIViewerPage() {
                 slideHeight={slideHeight}
                 onRegionCreated={handleRegionCreated}
                 onRegionTooLarge={handleRegionTooLarge}
+                isLabelDropdownOpen={isLabelDropdownOpen}
               />
             </>
           )}
@@ -757,6 +779,8 @@ export default function WSIViewerPage() {
             labelColors={labelColors}
             onUpdateRegion={handleUpdateRegion}
             onDeleteRegion={handleDeleteRegion}
+            onDeleteRegions={handleDeleteRegions}
+            onDeleteCrossSlideByLabel={handleDeleteCrossSlideByLabel}
             onCreateDataset={() => setShowCreateDatasetDialog(true)}
           />
         ) : (

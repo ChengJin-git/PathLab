@@ -2746,6 +2746,11 @@
     "unsavedChanges": "您有未儲存的標註更改，確定要離開嗎？",
     "croppedFrom": "裁剪自",
     "viewSource": "查看源切片",
-    "regionTooLarge": "區域過大，請縮小標注區域或滑動滑鼠滾輪放大區域後重新標注。"
+    "regionTooLarge": "區域過大，請縮小標注區域或滑動滑鼠滾輪放大區域後重新標注。",
+    "selectAll": "全選",
+    "deselectAll": "取消全選",
+    "deleteSelected": "刪除選中 ({{count}})",
+    "confirmDeleteSelected": "確定要刪除選中的 {{count}} 個區域嗎？",
+    "confirmDeleteByLabel": "確定要刪除選中標籤的所有區域嗎？（共 {{count}} 個 ROI，涉及 {{slides}} 張切片）"
   }
 }

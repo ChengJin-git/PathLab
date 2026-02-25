@@ -2746,6 +2746,11 @@
     "unsavedChanges": "You have unsaved annotation changes. Are you sure you want to leave?",
     "croppedFrom": "Cropped from",
     "viewSource": "View source slide",
-    "regionTooLarge": "Region too large. Please make the region smaller or zoom in and re-annotate the region."
+    "regionTooLarge": "Region too large. Please make the region smaller or zoom in and re-annotate the region.",
+    "selectAll": "Select all",
+    "deselectAll": "Deselect all",
+    "deleteSelected": "Delete selected ({{count}})",
+    "confirmDeleteSelected": "Are you sure you want to delete {{count}} selected regions?",
+    "confirmDeleteByLabel": "Are you sure you want to delete all regions with the selected labels ({{count}} ROIs across {{slides}} slides)?"
   }
 }

@@ -26,6 +26,7 @@ interface AnnotationToolbarProps {
   onLabelChange: (label: string) => void
   labelColors: Record<string, string>
   allLabels: string[]
+  onDropdownOpenChange?: (open: boolean) => void
 }
 
 export function AnnotationToolbar({
@@ -33,11 +34,17 @@ export function AnnotationToolbar({
   drawingTool, onToolChange,
   currentLabel, onLabelChange,
   labelColors, allLabels,
+  onDropdownOpenChange,
 }: AnnotationToolbarProps) {
   const { t } = useTranslation()
   const [isLabelDropdownOpen, setIsLabelDropdownOpen] = useState(false)
   const [customLabel, setCustomLabel] = useState('')
   const dropdownRef = useRef<HTMLDivElement>(null)
+
+  // Notify parent when dropdown open state changes (so canvas can disable pointer-events)
+  useEffect(() => {
+    onDropdownOpenChange?.(isLabelDropdownOpen)
+  }, [isLabelDropdownOpen, onDropdownOpenChange])
 
   // Close dropdown on outside click
   useEffect(() => {
