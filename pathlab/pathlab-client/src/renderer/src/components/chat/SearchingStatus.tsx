@@ -356,8 +356,14 @@ export const PdfParsingStatus = React.memo(function PdfParsingStatus({
   items: PdfParseStatusItem[]
 }) {
   const { t } = useTranslation()
-  const parsingItems = items.filter(i => i.status === 'parsing')
-  const currentTitle = parsingItems[0]?.title || ''
+  // Show "downloading" or "parsing" depending on the most recent in-progress item
+  const inProgressItems = items.filter(i => i.status === 'downloading' || i.status === 'parsing')
+  const currentItem = inProgressItems[0]
+  const currentTitle = currentItem?.title || ''
+  const isDownloading = currentItem?.status === 'downloading'
+  const statusText = isDownloading
+    ? t('settings.general.downloadingPdf')
+    : t('settings.general.parsingPdf')
 
   return (
     <motion.div
@@ -380,7 +386,7 @@ export const PdfParsingStatus = React.memo(function PdfParsingStatus({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-amber-700">
-            {t('settings.general.parsingPdf')}
+            {statusText}
           </span>
         </div>
         {currentTitle && (

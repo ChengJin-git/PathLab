@@ -99,7 +99,7 @@ const InlineCitation = React.memo(function InlineCitation({
       </span>
 
       {/* Tooltip rendered via portal-like fixed positioning */}
-      {showTooltip && (title || truncatedSnippet) && (
+      {showTooltip && (title || truncatedSnippet || pageInfo) && (
         <div
           ref={tooltipRef}
           style={tooltipStyle}
@@ -109,26 +109,53 @@ const InlineCitation = React.memo(function InlineCitation({
           onMouseEnter={() => setShowTooltip(true)}
           onMouseLeave={() => setShowTooltip(false)}
         >
-          {/* Title */}
-          {title && (
-            <p className="text-sm font-medium text-gray-900 line-clamp-2 mb-1">{title}</p>
-          )}
-          {/* Source */}
-          {source && (
-            <p className="text-xs text-gray-500 mb-1.5 flex items-center gap-1">
-              <ExternalLink className="w-3 h-3 flex-shrink-0" />
-              {source}
-            </p>
-          )}
-          {/* Snippet */}
-          {truncatedSnippet && (
-            <p className="text-xs text-gray-600 leading-relaxed line-clamp-3">
-              "{truncatedSnippet}"
-            </p>
-          )}
-          {/* Page info */}
-          {pageInfo && (
-            <p className="text-[10px] text-gray-400 mt-1.5">p.{pageInfo.replace(/^p\./, '')}</p>
+          {pageInfo ? (
+            /* ── Article citation layout: page + snippet prominent, title/URL compact ── */
+            <>
+              {/* Page header with optional external link */}
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-semibold text-gray-700">
+                  📄 Page {pageInfo.replace(/^p\./, '')}
+                </span>
+                {source && (
+                  <span className="text-[10px] text-gray-400 flex items-center gap-0.5">
+                    <ExternalLink className="w-2.5 h-2.5" />
+                    {source}
+                  </span>
+                )}
+              </div>
+              {/* Snippet — primary content */}
+              {truncatedSnippet && (
+                <p className="text-xs text-gray-600 leading-relaxed line-clamp-4 mb-1">
+                  "{truncatedSnippet}"
+                </p>
+              )}
+              {/* Title — de-emphasized */}
+              {title && (
+                <p className="text-[10px] text-gray-400 line-clamp-1 mt-1">{title}</p>
+              )}
+            </>
+          ) : (
+            /* ── Web search citation layout: title + source prominent ── */
+            <>
+              {/* Title */}
+              {title && (
+                <p className="text-sm font-medium text-gray-900 line-clamp-2 mb-1">{title}</p>
+              )}
+              {/* Source */}
+              {source && (
+                <p className="text-xs text-gray-500 mb-1.5 flex items-center gap-1">
+                  <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                  {source}
+                </p>
+              )}
+              {/* Snippet */}
+              {truncatedSnippet && (
+                <p className="text-xs text-gray-600 leading-relaxed line-clamp-3">
+                  "{truncatedSnippet}"
+                </p>
+              )}
+            </>
           )}
         </div>
       )}

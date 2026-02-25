@@ -988,8 +988,10 @@ After saving, return here and start chatting!"""
             if not article_url:
                 break
 
-            # Emit PDF_PARSE_STATUS: parsing
-            pdf_status = {"url": article_url, "title": article_title, "status": "parsing"}
+            # Emit PDF_PARSE_STATUS: "downloading" (uncached) or "parsing" (cached)
+            has_cache = get_cached_markdown(article_url) is not None
+            initial_status = "parsing" if has_cache else "downloading"
+            pdf_status = {"url": article_url, "title": article_title, "status": initial_status}
             yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
 
             try:
@@ -1730,11 +1732,11 @@ async def chat_with_ai(
         import json as _json
         content = _re.sub(r'\[SEARCH_STATUS\][\s\S]*?\[/SEARCH_STATUS\]', '', content)
 
-        # Only strip in-progress ("parsing") PDF status blocks; keep completed/failed ones.
+        # Only strip in-progress ("parsing"/"downloading") PDF status blocks; keep completed/failed ones.
         def _strip_parsing_only(m: re.Match) -> str:
             try:
                 data = _json.loads(m.group(1).strip())
-                if data.get('status') == 'parsing':
+                if data.get('status') in ('parsing', 'downloading'):
                     return ''
             except Exception:
                 pass

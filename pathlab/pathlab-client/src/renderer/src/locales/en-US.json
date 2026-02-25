@@ -609,6 +609,7 @@
       "searchedPages": "Searched {{count}} pages",
       "summarizingSearch": "Summarizing search results...",
       "webSearchCard": "Web Search",
+      "downloadingPdf": "Downloading PDF paper...",
       "parsingPdf": "Parsing PDF paper...",
       "pdfParsedCount": "Parsed {{count}} PDF papers"
     }

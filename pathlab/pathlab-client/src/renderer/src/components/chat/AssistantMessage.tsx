@@ -337,6 +337,20 @@ const AssistantMessage = React.memo(function AssistantMessage({
         })
       }
     }
+    // 3) Fallback for bare [N] article citations with no CITATION_CONTEXTS data:
+    //    When referenceCards exist but citationMap has no entries (e.g., AI uses bare [1]
+    //    for figure/general references), ensure index 1 has reference card data so the
+    //    badge tooltip shows the paper title instead of being empty.
+    if (referenceCards?.length && map.size === 0) {
+      const refCard = referenceCards[0]
+      const refSource = refCard?.url ? (() => { try { return new URL(refCard.url).hostname.replace(/^www\./, '') } catch { return '' } })() : ''
+      map.set(1, {
+        title: refCard.title,
+        url: refCard.url,
+        snippet: '',
+        source: refSource,
+      })
+    }
     return map
   }, [webSearchResult, citationContexts, articleCitationRenumber, referenceCards])
 
@@ -496,16 +510,19 @@ const AssistantMessage = React.memo(function AssistantMessage({
 	  // Show searching indicator only while streaming and before results arrive
 	  const showSearchingStatus = !!searchStatus && !webSearchResult && isStreaming
 
-    // PDF parsing status: show animated indicator while any PDF is still "parsing"
-    const hasPdfParsingInProgress = pdfParseStatusItems?.some(i => i.status === 'parsing') ?? false
+    // PDF parsing status: show animated indicator while any PDF is still "parsing" or "downloading"
+    const hasPdfParsingInProgress = pdfParseStatusItems?.some(i => i.status === 'parsing' || i.status === 'downloading') ?? false
     const showPdfParsingStatus = !!pdfParseStatusItems && hasPdfParsingInProgress && isStreaming
-    // Show completed card when all PDFs are done (not streaming OR all statuses are final)
-    const showPdfParsingCompleted = !!pdfParseStatusItems && !hasPdfParsingInProgress
 
     // Show "summarizing search results" indicator after search completes but before
     // the AI starts streaming actual summary text. This fills the visual gap between
     // the search-completed card and the streamed markdown content.
     const showSummarizingSearch = !!webSearchResult && isStreaming && !displayContent.trim()
+
+    // Show completed card when all PDFs are done (not streaming OR all statuses are final).
+    // Delay until search summary text starts streaming to avoid "Parsed N PDFs" card
+    // appearing before "Summarizing search results..." finishes (jarring when PDF is cached).
+    const showPdfParsingCompleted = !!pdfParseStatusItems && !hasPdfParsingInProgress && !showSummarizingSearch
 
 	  return (
     <div className="w-full min-w-0">

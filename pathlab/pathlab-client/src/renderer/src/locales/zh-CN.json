@@ -609,6 +609,7 @@
       "searchedPages": "已搜索 {{count}} 个网页",
       "summarizingSearch": "正在总结搜索内容...",
       "webSearchCard": "网页搜索",
+      "downloadingPdf": "正在下载 PDF 论文...",
       "parsingPdf": "正在解析 PDF 论文...",
       "pdfParsedCount": "已解析 {{count}} 篇 PDF 论文"
     }
