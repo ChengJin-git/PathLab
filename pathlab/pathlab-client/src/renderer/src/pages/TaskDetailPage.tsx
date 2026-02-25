@@ -333,7 +333,7 @@ export default function TaskDetailPage() {
         <AlertCircle className="w-12 h-12 text-red-500" />
         <div className="text-xl font-semibold text-gray-900">{t('taskDetail.taskNotFound')}</div>
         <p className="text-gray-500">{t('taskDetail.taskNotFoundDescription')}</p>
-        <Button onClick={() => navigate(fromAIChat ? '/ai-chat' : '/task-list')} variant="outline">
+        <Button onClick={() => navigate(fromAIChat ? '/dashboard' : '/task-list')} variant="outline">
           {fromAIChat ? t('taskDetail.backToChat') : t('taskDetail.backToTaskList')}
         </Button>
       </div>
@@ -358,7 +358,7 @@ export default function TaskDetailPage() {
       <div className="mb-4 sm:mb-6">
         <Button
           variant="ghost"
-          onClick={() => navigate(fromAIChat ? '/ai-chat' : '/task-list')}
+          onClick={() => navigate(fromAIChat ? '/dashboard' : '/task-list')}
           className="mb-1 sm:mb-2 pl-0 hover:bg-transparent hover:text-gray-900 text-gray-500 text-xs sm:text-base"
         >
           <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">

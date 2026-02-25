@@ -154,7 +154,7 @@
   "settings": {
     "title": "Settings",
     "description": "Configure your PathLab platform",
-    "backToDashboard": "Back to Dashboard",
+    "backToDashboard": "Back",
     "tabs": {
       "general": "General",
       "generalDesc": "AI & API Configuration",
@@ -709,7 +709,7 @@
   "toolsPage": {
     "title": "Insights & Reports",
     "description": "Visualize findings and generate reports.",
-    "backToDashboard": "Back to Dashboard",
+    "backToDashboard": "Back",
     "comingSoon": "Coming Soon",
     "tools": {
       "customAnalysis": "Custom Analysis",
@@ -746,7 +746,7 @@
   "reportPage": {
     "title": "Report Generator",
     "description": "Generate and export analysis reports",
-    "backToDashboard": "Back to Dashboard",
+    "backToDashboard": "Back",
     "reportConfiguration": "Report Configuration",
     "reportTitle": "Report Title",
     "exportFormat": "Export Format",
@@ -923,7 +923,7 @@
   "newTask": {
     "title": "New Analysis Task",
     "description": "Create and train a new analysis model",
-    "backToDashboard": "Back to Dashboard",
+    "backToDashboard": "Back",
     "errors": {
       "storageUnreachable": "The storage appears to be unreachable. Please contact the administrator.",
       "filesNotAccessible": "Some files could not be accessed. Please contact the administrator.",
@@ -961,7 +961,7 @@
   "taskList": {
     "title": "Analysis Lab",
     "description": "Coordinate, run, and monitor AI analysis tasks",
-    "backToDashboard": "Back to Dashboard",
+    "backToDashboard": "Back",
     "newTask": "New Task",
     "searchPlaceholder": "Search tasks...",
     "clearSearch": "Clear search",
@@ -1074,6 +1074,13 @@
     "daysAgo": "{{count}}d ago",
     "closeHistory": "Close history",
     "history": "History",
+    "sidebar": {
+      "tools": "Tools",
+      "dataRepository": "Data Repository",
+      "analysisLab": "Analysis Lab",
+      "insightsReports": "Insights & Reports",
+      "registerData": "Register Data"
+    },
     "deleteAllHistory": "Delete all history",
     "newResearchTask": "New Research Task",
     "loadingConversations": "Loading conversations...",
@@ -1085,7 +1092,7 @@
     "chat": "Chat",
     "back": "Back",
     "welcomeTitle": "Hello, I'm PathLab Agent",
-    "welcomeDescription": "Your AI assistant for pathology research. I can help you train models, run inference, and analyze whole slide images.",
+    "welcomeDescription": "What can I do for you today?",
     "attachmentAlt": "Attachment {{index}}",
     "thinking": "Thinking...",
     "goodResponse": "Good response",
@@ -1179,7 +1186,7 @@
     "title": "Register Slides",
     "description": "Upload and register whole-slide images to your dataset",
     "backToChat": "Back to Chat",
-    "backToDashboard": "Back to Dashboard",
+    "backToDashboard": "Back",
     "back": "Back",
     "appendingData": "Appending data to",
     "patchCollection": "Patch Collection",
@@ -1245,7 +1252,7 @@
     "title": "Results Analysis",
     "description": "Analyze training task results with interactive metrics and charts",
     "backToChat": "Back to Chat",
-    "backToDashboard": "Back to Dashboard",
+    "backToDashboard": "Back",
     "internalAnalysis": "Internal Analysis",
     "externalValidation": "External Validation",
     "noCompletedTasks": "No Completed Tasks",
@@ -1354,7 +1361,7 @@
     "description": "Browse and manage your datasets and WSI slides",
     "backToChat": "Back to Chat",
     "backToRepository": "Back to Repository",
-    "backToDashboard": "Back to Dashboard",
+    "backToDashboard": "Back",
     "registerFiles": "Register Files",
     "registeringFiles": "Registering files ({{success}}/{{total}})",
     "registering": "Registering...",
@@ -2290,7 +2297,7 @@
       "registerFiles": "Register Files",
       "prepareAndRegister": "Prepare and register your files",
       "backToChat": "Back to Chat",
-      "backToDashboard": "Back to Dashboard",
+      "backToDashboard": "Back",
       "createDataset": "Create Dataset",
       "defineDatasetDescription": "Define your dataset configuration before uploading files",
       "datasetName": "Dataset Name",

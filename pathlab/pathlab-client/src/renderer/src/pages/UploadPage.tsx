@@ -616,7 +616,7 @@ export default function RegisterPage() {
 
       // Clear the form
       resetUpload()
-      navigate(fromAIChat ? '/ai-chat' : '/dashboard')
+      navigate('/dashboard')
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : String(error))
     }
@@ -806,14 +806,14 @@ export default function RegisterPage() {
           showValidation={showValidation}
           fromAIChat={fromAIChat}
           onNext={() => setStep(2)}
-          onBack={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
+          onBack={() => navigate('/dashboard')}
         />
       ) : step === 3 ? (
         <SuccessStep
           datasetName={datasetName}
           splitUploadSuccess={splitUploadSuccess}
           fromAIChat={fromAIChat}
-          onNavigate={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
+          onNavigate={() => navigate('/dashboard')}
           onReset={resetUpload}
         />
       ) : (
@@ -825,11 +825,11 @@ export default function RegisterPage() {
             >
               <Button
                 variant="outline"
-                onClick={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
+                onClick={() => navigate('/dashboard')}
                 className="gap-2 h-9 sm:h-10 text-xs sm:text-sm"
               >
                 <ArrowLeft className="w-4 h-4" />
-                <span className="hidden sm:inline">{fromAIChat ? t('uploadPage.backToChat') : t('uploadPage.backToDashboard')}</span>
+                <span className="hidden sm:inline">{t('uploadPage.backToDashboard')}</span>
                 <span className="sm:hidden">{t('uploadPage.back')}</span>
               </Button>
             </PageHeader>

@@ -22,10 +22,10 @@ import { formatFileSize } from '../lib/utils'
 import * as XLSX from 'xlsx'
 import {
   Send, Loader2, Bot, User, MessageSquare, Trash2, Plus, Clock,
-  Mic, MicOff, Paperclip, X, ArrowLeft, Sparkles, FileSpreadsheet, PanelLeft, History,
-  ThumbsUp, ThumbsDown, Square
+  Mic, MicOff, Paperclip, X, Sparkles, FileSpreadsheet, History,
+  ThumbsUp, ThumbsDown, Square, Menu,
+  Database, Brain, LineChart, ChevronRight, Wrench
 } from 'lucide-react'
-import { Button } from '../components/ui/button'
 import { AudioVisualizer } from '../components/common/AudioVisualizer'
 
 // Extracted modules
@@ -124,6 +124,13 @@ export default function AIChatPage() {
   useEffect(() => {
     localStorage.setItem('ai-chat-sidebar-open', String(showHistory))
   }, [showHistory])
+
+  // Listen for mobile sidebar toggle from Layout header hamburger button
+  useEffect(() => {
+    const handleToggle = () => setShowHistory((prev) => !prev)
+    window.addEventListener('toggle-ai-sidebar', handleToggle)
+    return () => window.removeEventListener('toggle-ai-sidebar', handleToggle)
+  }, [])
 
   const [isLoadingConversations, setIsLoadingConversations] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
@@ -391,7 +398,7 @@ export default function AIChatPage() {
     setHelpfulnessFeedbacks(new Map())
     // Update URL to base path (remove conversationId from URL)
     if (urlConversationId) {
-      navigate('/ai-chat', { replace: true })
+      navigate('/dashboard', { replace: true })
     }
   }
 
@@ -413,7 +420,7 @@ export default function AIChatPage() {
 
       // Update URL to reflect the current conversation (for page refresh support)
       if (urlConversationId !== conversationId) {
-        navigate(`/ai-chat/${conversationId}`, { replace: true })
+        navigate(`/dashboard/${conversationId}`, { replace: true })
       }
 
       // Load feedbacks for this conversation
@@ -441,7 +448,7 @@ export default function AIChatPage() {
       showToastRef.current('error', t('aiChat.conversationLoadFailed'))
       // If loading fails, navigate back to clean URL
       if (urlConversationId) {
-        navigate('/ai-chat', { replace: true })
+        navigate('/dashboard', { replace: true })
       }
     }
   }
@@ -999,7 +1006,7 @@ export default function AIChatPage() {
         // Skip the next conversation load triggered by URL change (to avoid overwriting in-progress messages)
         skipConversationLoadRef.current = true
         // Update URL with new conversation ID for page refresh support
-        navigate(`/ai-chat/${conversationId}`, { replace: true })
+        navigate(`/dashboard/${conversationId}`, { replace: true })
         await loadConversations()
       } catch (error) {
         console.error('Failed to create conversation:', error)
@@ -1746,36 +1753,42 @@ export default function AIChatPage() {
         </div>
       )}
 
-      {/* Chat History Sidebar */}
+      {/* Mobile sidebar overlay backdrop */}
       {showHistory && (
-        <>
-          <div
-            className="fixed top-16 inset-x-0 bottom-0 bg-black/20 z-30 lg:hidden backdrop-blur-sm transition-opacity"
-            onClick={() => setShowHistory(false)}
-          />
-          <div className="fixed top-16 bottom-0 left-0 w-80 bg-white border-r border-gray-200 z-40 flex flex-col shadow-2xl animate-in slide-in-from-left duration-300" role="navigation" aria-label={t('aiChat.history')}>
-            <div className="p-4 border-b border-gray-200">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setShowHistory(false)}
-                    className="p-2 -ml-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors"
-                    title={t('aiChat.closeHistory')}
-                  >
-                    <PanelLeft className="w-5 h-5" />
-                  </button>
-                  <h2 className="text-lg font-semibold text-gray-900">{t('aiChat.history')}</h2>
-                </div>
-                {conversations.length > 0 && (
-                  <button
-                    onClick={handleDeleteAllHistory}
-                    className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                    title={t('aiChat.deleteAllHistory')}
-                  >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
-                )}
-              </div>
+        <div
+          className="fixed top-16 inset-x-0 bottom-0 bg-black/20 z-30 lg:hidden backdrop-blur-sm transition-opacity"
+          onClick={() => setShowHistory(false)}
+        />
+      )}
+
+      {/* Gemini-style Sidebar - always rendered, inline on desktop, overlay on mobile */}
+      {/* Mobile: always fixed + translate-x slide (never participates in flex layout) */}
+      {/* Desktop: inline flex child with width animation */}
+      <div
+        className={`bg-gray-50 border-r border-gray-200 flex flex-col overflow-hidden
+          fixed top-16 bottom-0 left-0 z-40 w-72 transition-transform duration-300 ease-in-out
+          ${showHistory ? 'translate-x-0' : '-translate-x-full'}
+          lg:relative lg:top-auto lg:bottom-auto lg:z-auto lg:flex-shrink-0 lg:translate-x-0 lg:transition-all
+          ${showHistory ? 'lg:w-72' : 'lg:w-14'}
+        `}
+        role="navigation"
+        aria-label={t('aiChat.history')}
+      >
+        {/* Sidebar Top Icons - hidden on mobile (header hamburger handles it) */}
+        <div className={`hidden lg:flex items-center gap-1 p-2 pt-3 ${showHistory ? 'px-3' : 'flex-col'}`}>
+          <button
+            onClick={() => setShowHistory(!showHistory)}
+            className="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors flex-shrink-0"
+            title={showHistory ? t('aiChat.closeChatHistory') : t('aiChat.openChatHistory')}
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Expanded sidebar content - always rendered, fade in/out with opacity */}
+        <div className={`w-[268px] min-w-[268px] flex flex-col flex-1 overflow-hidden transition-opacity duration-300 ease-in-out pt-6 lg:pt-0 ${showHistory ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+            {/* New Research Task Button */}
+            <div className="px-3 pb-3 pt-0">
               <button
                 onClick={handleNewChat}
                 className="w-full px-4 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 transition-all shadow-sm flex items-center justify-center gap-2"
@@ -1783,6 +1796,65 @@ export default function AIChatPage() {
                 <Plus className="w-4 h-4" />
                 {t('aiChat.newResearchTask')}
               </button>
+            </div>
+
+            {/* Tools Section */}
+            <div className="px-3 pb-2 border-b border-gray-100">
+              <div className="flex items-center gap-2 px-2 mb-2">
+                <Wrench className="w-4 h-4 text-gray-400" />
+                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest">{t('aiChat.sidebar.tools')}</h3>
+              </div>
+              <div className="space-y-0.5">
+                <button
+                  onClick={() => { navigate('/register'); setShowHistory(false) }}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-orange-50 hover:text-orange-700 transition-colors group"
+                >
+                  <Plus className="w-4 h-4 text-orange-500 group-hover:text-orange-600" />
+                  <span className="flex-1 text-left">{t('aiChat.sidebar.registerData')}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-orange-400 opacity-0 group-hover:opacity-100 transition-all" />
+                </button>
+                <button
+                  onClick={() => { navigate('/wsi-list'); setShowHistory(false) }}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors group"
+                >
+                  <Database className="w-4 h-4 text-blue-500 group-hover:text-blue-600" />
+                  <span className="flex-1 text-left">{t('aiChat.sidebar.dataRepository')}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-all" />
+                </button>
+                <button
+                  onClick={() => { navigate('/task-list'); setShowHistory(false) }}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700 transition-colors group"
+                >
+                  <Brain className="w-4 h-4 text-violet-500 group-hover:text-violet-600" />
+                  <span className="flex-1 text-left">{t('aiChat.sidebar.analysisLab')}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-violet-400 opacity-0 group-hover:opacity-100 transition-all" />
+                </button>
+                <button
+                  onClick={() => { navigate('/tools'); setShowHistory(false) }}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 transition-colors group"
+                >
+                  <LineChart className="w-4 h-4 text-emerald-500 group-hover:text-emerald-600" />
+                  <span className="flex-1 text-left">{t('aiChat.sidebar.insightsReports')}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-emerald-400 opacity-0 group-hover:opacity-100 transition-all" />
+                </button>
+              </div>
+            </div>
+
+            {/* History Section */}
+            <div className="flex items-center justify-between px-5 pt-3 pb-1">
+              <div className="flex items-center gap-2">
+                <History className="w-4 h-4 text-gray-400" />
+                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest">{t('aiChat.history')}</h3>
+              </div>
+              {conversations.length > 0 && (
+                <button
+                  onClick={handleDeleteAllHistory}
+                  className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  title={t('aiChat.deleteAllHistory')}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
             </div>
 
             <div className="flex-1 overflow-y-auto p-3">
@@ -1839,80 +1911,52 @@ export default function AIChatPage() {
                 </div>
               )}
             </div>
-          </div>
-        </>
-      )}
+        </div>
+      </div>
 
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col min-w-0 h-full relative z-10 overflow-hidden">
-        {/* Top Bar with History Toggle - Fixed at top of main area */}
-        <div className="flex-shrink-0 z-20 bg-gray-50 border-b border-gray-200/50 px-4 py-3">
-          <div className="max-w-4xl mx-auto flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setShowHistory(!showHistory)}
-                className={`p-2 -ml-2 rounded-full text-gray-500 hover:text-gray-900 hover:bg-white/50 transition-all ${showHistory ? 'bg-white/50 text-gray-900' : ''
-                  }`}
-                title={showHistory ? t('aiChat.closeChatHistory') : t('aiChat.openChatHistory')}
-              >
-                <History className="w-5 h-5" />
-              </button>
-              <h1 className="text-base font-semibold text-gray-900 leading-tight">
-                {currentConversationId
-                  ? conversations.find(c => c.conversation_id === currentConversationId)?.title || t('aiChat.chat')
-                  : t('aiChat.newResearchTask')
-                }
-              </h1>
-            </div>
-            <div className="flex items-center gap-3">
-              <Button
-                variant="outline"
-                onClick={() => navigate('/dashboard')}
-                className="gap-2 text-xs font-medium rounded-full border-gray-200 bg-white/50 hover:bg-white transition-all shadow-sm"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                {t('aiChat.back')}
-              </Button>
-            </div>
-          </div>
-        </div>
 
         <div ref={messagesContainerRef} data-chat-messages-container data-current-conversation-id={currentConversationId || ''} className="flex-1 overflow-y-auto custom-scrollbar" role="log" aria-label={t('aiChat.chatMessages')} aria-live="polite">
-          <div className="px-4 pb-40">
+          <div className="px-4 pt-6 pb-40">
           <div className="max-w-4xl mx-auto space-y-6">
             {/* Gemini-style Welcome Hero with Scenario Cards */}
             {messages.length === 0 && showWelcomeHero && (
-              <div className="flex flex-col items-center justify-center pt-2 pb-12 text-center space-y-4">
+              <div className="flex flex-col items-center justify-center min-h-[calc(100vh-16rem)] pt-6 pb-12 text-center space-y-3 sm:space-y-4">
                 {/* Hero Title */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-center gap-2 mb-2">
-                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg">
-                      <Sparkles className="w-7 h-7 text-white" />
+                <div className="space-y-1.5 sm:space-y-2">
+                  <div className="flex items-center justify-center gap-2 mb-1 sm:mb-2">
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg">
+                      <Sparkles className="w-5 h-5 sm:w-7 sm:h-7 text-white" />
                     </div>
                   </div>
-                  <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 via-gray-700 to-gray-900 bg-clip-text text-transparent">
+                  <h1 className="text-xl sm:text-3xl font-bold bg-gradient-to-r from-gray-900 via-gray-700 to-gray-900 bg-clip-text text-transparent">
                     {t('aiChat.welcomeTitle')}
                   </h1>
-                  <p className="text-gray-500 max-w-lg mx-auto text-base">
+                  <p className="text-gray-500 max-w-lg mx-auto text-sm sm:text-base">
                     {t('aiChat.welcomeDescription')}
                   </p>
                 </div>
 
                 {/* Scenario Cards */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-2xl mt-2">
+                <div className="grid grid-cols-2 gap-2 sm:gap-3 w-full max-w-2xl mt-2">
                   {SCENARIO_CARDS.map((card) => {
                     const Icon = card.icon
                     return (
                       <button
                         key={card.id}
                         onClick={() => handleScenarioCardClick(card)}
-                        className={`${card.bgColor} p-5 rounded-2xl text-left transition-all duration-200 hover:shadow-md hover:scale-[1.02] group border border-transparent hover:border-gray-200`}
+                        className={`${card.bgColor} p-3 sm:p-4 rounded-2xl text-left transition-all duration-200 hover:shadow-md hover:scale-[1.02] group border border-transparent hover:border-gray-200`}
                       >
-                        <div className={`w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center mb-3 group-hover:shadow-md transition-shadow`}>
-                          <Icon className={`w-5 h-5 ${card.iconColor}`} />
+                        <div className="flex items-start gap-2.5 sm:gap-3">
+                          <div className={`shrink-0 w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white shadow-sm flex items-center justify-center group-hover:shadow-md transition-shadow`}>
+                            <Icon className={`w-4 h-4 ${card.iconColor}`} />
+                          </div>
+                          <div className="min-w-0">
+                            <h3 className="text-xs sm:text-sm font-semibold text-gray-900 mb-0.5">{t(card.titleKey)}</h3>
+                            <p className="text-xs text-gray-600 leading-snug">{t(card.descriptionKey)}</p>
+                          </div>
                         </div>
-                        <h3 className="font-semibold text-gray-900 mb-1">{t(card.titleKey)}</h3>
-                        <p className="text-sm text-gray-600">{t(card.descriptionKey)}</p>
                       </button>
                     )
                   })}

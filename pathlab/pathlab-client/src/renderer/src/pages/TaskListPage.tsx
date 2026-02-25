@@ -337,7 +337,7 @@ export default function TaskListPage() {
           {t('taskList.backToDashboard')}
         </Button>
         <Button
-          onClick={() => navigate('/ai-chat')}
+          onClick={() => navigate('/dashboard')}
           className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white"
         >
           <Sparkles className="w-4 h-4" />
@@ -471,7 +471,7 @@ export default function TaskListPage() {
               : t('taskList.noFilteredTasks', { filter: t(`taskList.filters.${filter}`) })}
           </p>
           <button
-            onClick={() => navigate('/ai-chat')}
+            onClick={() => navigate('/dashboard')}
             className="px-6 py-2.5 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors"
           >
             {t('taskList.createNewTask')}

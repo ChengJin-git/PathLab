@@ -332,7 +332,7 @@ export default function WSIViewerPage() {
           <button
             onClick={() => {
               if (fromAIChat) {
-                navigate('/ai-chat')
+                navigate('/dashboard')
               } else if (fromDataset && datasetId) {
                 // Return to the same dataset in ListPage
                 navigate('/wsi-list', { state: { dataset_id: datasetId } })

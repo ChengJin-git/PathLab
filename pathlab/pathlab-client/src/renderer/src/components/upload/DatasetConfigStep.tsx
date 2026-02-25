@@ -29,7 +29,7 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
   const { t } = useTranslation()
   return (
     <>
-      <div className="flex-none mb-6">
+      <div className="flex-none mb-2">
         <PageHeader title={t('uploadComponents.datasetConfig.registerFiles')} description={t('uploadComponents.datasetConfig.prepareAndRegister')}>
           <Button variant="outline" onClick={onBack} className="gap-2">
             <ArrowLeft className="w-4 h-4" />
@@ -37,7 +37,7 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
           </Button>
         </PageHeader>
       </div>
-      <div className="flex-1 flex flex-col items-center p-4">
+      <div className="flex-1 flex flex-col items-center px-4 pt-2 pb-4">
         <div className="w-full max-w-4xl">
           <div className="text-center mb-6 sm:mb-8">
             <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-2 sm:mb-3">{t('uploadComponents.datasetConfig.createDataset')}</h1>

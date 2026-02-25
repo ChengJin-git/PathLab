@@ -406,15 +406,15 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
             title={maintenanceMode ? t('settings.usersTab.disableMaintenanceModeTitle') : t('settings.usersTab.enableMaintenanceModeTitle')}
           >
             <Construction className="w-4 h-4" />
-            {maintenanceMode ? t('settings.usersTab.endMaintenanceMode') : t('settings.usersTab.maintenanceMode')}
+            <span className="hidden sm:inline">{maintenanceMode ? t('settings.usersTab.endMaintenanceMode') : t('settings.usersTab.maintenanceMode')}</span>
           </Button>
           <Button onClick={() => setShowCreateUser(true)} className="gap-2">
             <UserPlus className="w-4 h-4" />
-            {t('settings.usersTab.createUser')}
+            <span className="hidden sm:inline">{t('settings.usersTab.createUser')}</span>
           </Button>
           <Button variant="outline" onClick={loadUsers} disabled={loadingUsers} className="gap-2">
             <RefreshCw className={`w-4 h-4 ${loadingUsers ? 'animate-spin' : ''}`} />
-            {t('settings.usersTab.refresh')}
+            <span className="hidden sm:inline">{t('settings.usersTab.refresh')}</span>
           </Button>
         </div>
       </div>
@@ -495,13 +495,13 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                     )}
                   </button>
                 </th>
-                <th className="text-left py-3 px-4 font-medium text-gray-600">{t('settings.usersTab.columnUsername')}</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-600">{t('settings.usersTab.columnNickname')}</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-600">{t('settings.usersTab.columnRole')}</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-600">{t('settings.usersTab.columnStatus')}</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-600">{t('settings.usersTab.columnAgreement')}</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-600">{t('settings.usersTab.columnConsentIP')}</th>
-                <th className="text-right py-3 px-4 font-medium text-gray-600">{t('settings.usersTab.columnActions')}</th>
+                <th className="text-left py-3 px-2 sm:px-4 font-medium text-gray-600">{t('settings.usersTab.columnUsername')}</th>
+                <th className="text-left py-3 px-2 sm:px-4 font-medium text-gray-600 hidden xs:table-cell sm:table-cell">{t('settings.usersTab.columnNickname')}</th>
+                <th className="text-left py-3 px-2 sm:px-4 font-medium text-gray-600">{t('settings.usersTab.columnRole')}</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-600 hidden sm:table-cell">{t('settings.usersTab.columnStatus')}</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-600 hidden md:table-cell">{t('settings.usersTab.columnAgreement')}</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-600 hidden lg:table-cell">{t('settings.usersTab.columnConsentIP')}</th>
+                <th className="text-right py-3 px-2 sm:px-4 font-medium text-gray-600">{t('settings.usersTab.columnActions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -528,22 +528,22 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                         </div>
                       )}
                     </td>
-                    <td className="py-3 px-4 text-gray-900">{user.email}</td>
-                    <td className="py-3 px-4 text-gray-600">{user.nickname || '-'}</td>
-                    <td className="py-3 px-4">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getRoleBadgeColor(user.role)}`}>
-                        {user.role === 'admin' && <Shield className="w-3 h-3 mr-1" />}
-                        {user.role === 'pathologist' && <UserCog className="w-3 h-3 mr-1" />}
-                        {user.role === 'guest' && <User className="w-3 h-3 mr-1" />}
+                    <td className="py-3 px-2 sm:px-4 text-gray-900 text-xs sm:text-sm">{user.email}</td>
+                    <td className="py-3 px-2 sm:px-4 text-gray-600 text-xs sm:text-sm hidden xs:table-cell sm:table-cell">{user.nickname || '-'}</td>
+                    <td className="py-3 px-2 sm:px-4">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap ${getRoleBadgeColor(user.role)}`}>
+                        {user.role === 'admin' && <Shield className="w-3 h-3 mr-1 flex-shrink-0" />}
+                        {user.role === 'pathologist' && <UserCog className="w-3 h-3 mr-1 flex-shrink-0" />}
+                        {user.role === 'guest' && <User className="w-3 h-3 mr-1 flex-shrink-0" />}
                         {t(`settings.usersTab.role_${user.role}`)}
                       </span>
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4 hidden sm:table-cell">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${user.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
                         {user.is_active ? t('settings.usersTab.active') : t('settings.usersTab.inactive')}
                       </span>
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4 hidden md:table-cell">
                       {user.role === 'admin' ? (
                         <span className="text-xs text-gray-500 italic">{t('settings.usersTab.autoAccepted')}</span>
                       ) : user.agreement_accepted_at ? (
@@ -554,7 +554,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                         <span className="text-xs text-gray-400">{t('settings.usersTab.notAccepted')}</span>
                       )}
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4 hidden lg:table-cell">
                       {user.role === 'admin' ? (
                         <span className="text-xs text-gray-500 italic">-</span>
                       ) : user.agreement_ip ? (
@@ -563,7 +563,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                         <span className="text-xs text-gray-400">-</span>
                       )}
                     </td>
-                    <td className="py-3 px-4 text-right">
+                    <td className="py-3 px-2 sm:px-4 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <Button variant="ghost" size="sm" onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '' }) }} className="h-8 w-8 p-0" title={t('settings.usersTab.editUser')}>
                           <Edit className="w-4 h-4" />

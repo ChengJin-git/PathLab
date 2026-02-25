@@ -5,7 +5,6 @@ import Layout from './components/Layout'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import IntroductionPage from './pages/IntroductionPage'
 import LoginPage from './pages/LoginPage'
-import DashboardPage from './pages/DashboardPage'
 import AIChatPage from './pages/AIChatPage'
 import SettingsPage from './pages/SettingsPage'
 import NewTaskPage from './pages/NewTaskPage'
@@ -38,9 +37,8 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
 
       {/* Protected Routes - Require Authentication */}
-      <Route path="/dashboard" element={<ProtectedRoute><Layout><DashboardPage /></Layout></ProtectedRoute>} />
-      <Route path="/ai-chat" element={<ProtectedRoute><Layout><AIChatPage /></Layout></ProtectedRoute>} />
-      <Route path="/ai-chat/:conversationId" element={<ProtectedRoute><Layout><AIChatPage /></Layout></ProtectedRoute>} />
+      <Route path="/dashboard" element={<ProtectedRoute><Layout><AIChatPage /></Layout></ProtectedRoute>} />
+      <Route path="/dashboard/:conversationId" element={<ProtectedRoute><Layout><AIChatPage /></Layout></ProtectedRoute>} />
       <Route path="/tools" element={<ProtectedRoute><Layout><ToolsPage /></Layout></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Layout><SettingsPage /></Layout></ProtectedRoute>} />
       <Route path="/task-setup" element={<ProtectedRoute><Layout><NewTaskPage /></Layout></ProtectedRoute>} />

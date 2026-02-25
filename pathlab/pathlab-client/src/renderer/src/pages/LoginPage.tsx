@@ -31,7 +31,7 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
   const [password, setPassword] = React.useState('')
   const [formError, setFormError] = React.useState<string | null>(null)
 
-  // If already logged in, redirect to dashboard
+  // If already logged in, redirect to AI chat
   React.useEffect(() => {
     if (isLoggedIn) {
       navigate('/dashboard')

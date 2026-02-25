@@ -686,11 +686,11 @@ export default function ResultsViewerPage() {
       >
         <Button
           variant="outline"
-          onClick={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
+          onClick={() => navigate('/dashboard')}
           className="gap-2"
         >
           <ArrowLeft className="w-4 h-4" />
-          {fromAIChat ? t('resultsPage.backToChat') : t('resultsPage.backToDashboard')}
+          {t('resultsPage.backToDashboard')}
         </Button>
       </PageHeader>
 

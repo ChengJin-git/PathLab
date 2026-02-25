@@ -184,7 +184,7 @@ export default function ListPage() {
   const handleBackToDatasets = () => {
     // If we came from AI Chat, go back to AI Chat
     if (fromAIChat) {
-      navigate('/ai-chat')
+      navigate('/dashboard')
       return
     }
     // Otherwise, go back to dataset list
