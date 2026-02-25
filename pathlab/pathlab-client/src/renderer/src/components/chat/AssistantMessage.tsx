@@ -315,6 +315,14 @@ const AssistantMessage = React.memo(function AssistantMessage({
         renumber.set(key, seq++)
       }
     }
+    // Also match standalone [p.X] (no paper number prefix) — treat as paper 1
+    const standalonePattern = /\[(p\.\d[^\]]*)\](?!\()/g
+    while ((m = standalonePattern.exec(content)) !== null) {
+      const key = `1-${m[1].replace(/\s/g, '')}`
+      if (!renumber.has(key)) {
+        renumber.set(key, seq++)
+      }
+    }
     return renumber.size > 0 ? renumber : null
   }, [content])
 
@@ -354,7 +362,28 @@ const AssistantMessage = React.memo(function AssistantMessage({
         })
       }
     }
-    // 3) Fallback for bare [N] article citations with no CITATION_CONTEXTS data:
+    // 3) Fill in any articleCitationRenumber entries that still lack citationMap data.
+    //    This covers standalone [p.X] patterns and [N, p.X] patterns where the backend
+    //    didn't send CITATION_CONTEXTS. Uses referenceCards for title/url and the page
+    //    info from the renumber key.
+    if (articleCitationRenumber && referenceCards?.length) {
+      for (const [key, seqIdx] of articleCitationRenumber.entries()) {
+        if (map.has(seqIdx)) continue
+        const paperIdxMatch = key.match(/^(\d+)-/)
+        const paperIdx = paperIdxMatch ? parseInt(paperIdxMatch[1]) : 1
+        const refCard = referenceCards[paperIdx - 1] ?? referenceCards[0]
+        const refSource = refCard?.url ? (() => { try { return new URL(refCard.url).hostname.replace(/^www\./, '') } catch { return '' } })() : ''
+        const pageFromKey = key.replace(/^\d+-/, '')
+        map.set(seqIdx, {
+          title: refCard?.title || '',
+          url: refCard?.url || '',
+          snippet: '',
+          source: refSource,
+          pageInfo: pageFromKey,
+        })
+      }
+    }
+    // 4) Fallback for bare [N] article citations with no CITATION_CONTEXTS data:
     //    When referenceCards exist but citationMap has no entries (e.g., AI uses bare [1]
     //    for figure/general references), ensure index 1 has reference card data so the
     //    badge tooltip shows the paper title instead of being empty.
@@ -518,6 +547,18 @@ const AssistantMessage = React.memo(function AssistantMessage({
     displayContent = displayContent.replace(
       /\[(\d{1,2}),\s*(p\.[^\]]+)\](?!\()/g,
       '[$1](#cite-$1)'
+    )
+  }
+  // 3.5. [p.X] (standalone page reference, no paper number) — treat as paper 1
+  if (articleCitationRenumber) {
+    displayContent = displayContent.replace(
+      /\[(p\.\d[^\]]*)\](?!\()/g,
+      (_match, pagesPart) => {
+        const key = `1-${pagesPart.replace(/\s/g, '')}`
+        const seq = articleCitationRenumber.get(key)
+        if (seq) return `[${seq}](#cite-${seq})`
+        return _match // no renumber entry, leave as-is
+      }
     )
   }
   // 4. [N, M, ...] (comma-separated multi-citation) — e.g. [1, 8] or [1,2,3]

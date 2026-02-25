@@ -2248,8 +2248,6 @@
       "prepareAndRegister": "准备并注册您的文件",
       "backToChat": "返回聊天",
       "backToDashboard": "返回",
-      "createDataset": "创建数据集",
-      "defineDatasetDescription": "上传文件前定义数据集配置",
       "datasetName": "数据集名称",
       "datasetNamePlaceholder": "例如：肺癌研究 2024",
       "existingDataset": "现有数据集",

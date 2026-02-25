@@ -174,7 +174,7 @@ const ReferenceCard = React.memo(function ReferenceCard({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -10 }}
-      className="group flex items-start gap-3 px-4 py-3 bg-gradient-to-r from-slate-50 to-gray-50 border border-gray-200 rounded-xl my-2 cursor-pointer hover:border-primary-300 hover:shadow-sm transition-all"
+      className="group flex items-start gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 bg-gradient-to-r from-slate-50 to-gray-50 border border-gray-200 rounded-xl my-2 cursor-pointer hover:border-primary-300 hover:shadow-sm transition-all"
       onClick={handleClick}
     >
       {/* Logo / Icon */}
@@ -190,8 +190,8 @@ const ReferenceCard = React.memo(function ReferenceCard({
         </h4>
 
         {/* Source and type */}
-        <div className="flex items-center gap-2 mt-1.5">
-          <span className={`text-xs px-2 py-0.5 rounded-full border ${getBadgeColor()}`}>
+        <div className="flex items-center gap-1.5 sm:gap-2 mt-1 sm:mt-1.5 flex-wrap">
+          <span className={`text-xs px-1.5 sm:px-2 py-0.5 rounded-full border ${getBadgeColor()} truncate max-w-[140px] sm:max-w-none`}>
             {source}
           </span>
           <span className="text-xs text-gray-400">

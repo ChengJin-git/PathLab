@@ -10,10 +10,11 @@ import logging
 from typing import Optional
 
 import redis.asyncio as aioredis
+from backend.common.config import Config
 
 logger = logging.getLogger(__name__)
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+REDIS_URL = os.getenv("REDIS_URL", Config.REDIS_URL_DEFAULT)
 _pool: Optional[aioredis.ConnectionPool] = None
 _client: Optional[aioredis.Redis] = None
 KEY_PREFIX = "pathlab:"

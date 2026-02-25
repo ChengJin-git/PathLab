@@ -15,6 +15,7 @@ import logging
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import AsyncAdaptedQueuePool
+from backend.common.config import Config
 from .models import Base
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ def get_database_url() -> str:
         return db_url
 
     # Default: local PostgreSQL for development
-    return "postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab"
+    return Config.DATABASE_URL_DEFAULT
 
 
 # Database URL

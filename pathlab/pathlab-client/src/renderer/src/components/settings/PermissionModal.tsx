@@ -159,9 +159,9 @@ export function PermissionModal({
               </div>
             </div>
 
-            {/* Actions */}
-            <div className="flex gap-4 items-end bg-white p-4 rounded-lg border border-gray-100">
-              <div className="w-40">
+            {/* Actions — stacks vertically on mobile, horizontal on wider screens */}
+            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-end bg-white p-4 rounded-lg border border-gray-100">
+              <div className="w-full sm:w-40">
                 <Label className="text-xs text-gray-500 mb-1.5 block">{t('settings.permissionModal.expirationHours')}</Label>
                 <Input
                   type="number"
@@ -172,8 +172,11 @@ export function PermissionModal({
                   min="1"
                   disabled={grantingPermission}
                 />
+                <p className="text-xs text-gray-400 mt-1 sm:hidden">
+                  {t('settings.permissionModal.leaveEmptyForPermanent')}
+                </p>
               </div>
-              <div className="flex-1">
+              <div className="flex-1 hidden sm:block">
                 <p className="text-xs text-gray-400 mb-1">
                   {t('settings.permissionModal.leaveEmptyForPermanent')}
                 </p>
@@ -181,7 +184,7 @@ export function PermissionModal({
               <Button
                 onClick={onGrantPermission}
                 disabled={selectedDatasetIds.length === 0 || grantingPermission}
-                className="bg-purple-600 hover:bg-purple-700 h-9"
+                className="bg-purple-600 hover:bg-purple-700 h-9 w-full sm:w-auto"
               >
                 {grantingPermission ? t('settings.permissionModal.granting') : t('settings.permissionModal.grantAccess', { count: selectedDatasetIds.length })}
               </Button>

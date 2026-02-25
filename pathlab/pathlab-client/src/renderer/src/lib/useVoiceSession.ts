@@ -8,7 +8,7 @@
  * AIChatPage, replacing them with a single deterministic state machine.
  */
 
-import { useRef, useCallback } from 'react'
+import { useRef, useCallback, useState } from 'react'
 import { useRealtimeASR } from './useRealtimeASR'
 import { shouldContinueVoice } from '../components/chat/VoiceControlBlock'
 
@@ -62,12 +62,23 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
   const optionsRef = useRef(options)
   optionsRef.current = options
 
-  // The state machine is driven by a single ref.
-  // We derive the "voiceState" for rendering from ASR's isRecording/isConnecting
-  // plus our own "processing" flag.
+  // The state machine is driven by both state (for triggering re-renders) and refs
+  // (for reliable access inside callbacks/timeouts without stale closures).
+  // This mirrors the pattern used in useRealtimeASR for isRecording/isRecordingRef.
+  const [processing, setProcessingState] = useState(false)
+  const [sessionActive, setSessionActiveState] = useState(false)
   const processingRef = useRef(false)
-  // Whether the session is logically active (user toggled on and hasn't toggled off)
   const sessionActiveRef = useRef(false)
+
+  const setProcessing = useCallback((v: boolean) => {
+    processingRef.current = v
+    setProcessingState(v)
+  }, [])
+
+  const setSessionActive = useCallback((v: boolean) => {
+    sessionActiveRef.current = v
+    setSessionActiveState(v)
+  }, [])
 
   // --- ASR callbacks (stable via optionsRef) ---
 
@@ -76,20 +87,20 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     // The ASR WebSocket will close naturally after transcript completes,
     // or we stop it explicitly. Either way, ASR goes to idle.
     // We mark processing=true so the UI shows "processing" state.
-    processingRef.current = true
+    setProcessing(true)
     // Stop the current ASR session (cleanup WebSocket, audio, etc.)
     // We call stopRecording below after the ASR hook is set up.
     // For now, just forward the transcript.
     stopRef.current()
     optionsRef.current.onTranscript(transcript)
-  }, [])
+  }, [setProcessing])
 
   const handleError = useCallback((error: string) => {
     // Any error → idle
-    processingRef.current = false
-    sessionActiveRef.current = false
+    setProcessing(false)
+    setSessionActive(false)
     optionsRef.current.onError?.(error)
-  }, [])
+  }, [setProcessing, setSessionActive])
 
   // --- ASR hook ---
   const {
@@ -119,17 +130,18 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
 
   // --- Derive voiceState ---
   // Priority: processing > connecting > recording > idle
+  // Uses state variables (not refs) so changes trigger re-renders.
   let voiceState: VoiceState = 'idle'
-  if (processingRef.current && sessionActiveRef.current) {
+  if (processing && sessionActive) {
     voiceState = 'processing'
   } else if (isConnecting) {
     voiceState = 'connecting'
   } else if (isRecording) {
     voiceState = 'recording'
-  } else if (sessionActiveRef.current) {
+  } else if (sessionActive) {
     // Session is active but ASR is not recording/connecting
     // This can happen briefly during transitions
-    voiceState = processingRef.current ? 'processing' : 'idle'
+    voiceState = processing ? 'processing' : 'idle'
   }
 
   // --- Actions ---
@@ -138,33 +150,33 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     if (sessionActiveRef.current) {
       // Stop
       console.log('[VoiceSession] Toggle → stop')
-      sessionActiveRef.current = false
-      processingRef.current = false
+      setSessionActive(false)
+      setProcessing(false)
       stopRef.current()
     } else {
       // Start
       console.log('[VoiceSession] Toggle → start')
-      sessionActiveRef.current = true
-      processingRef.current = false
+      setSessionActive(true)
+      setProcessing(false)
       startRef.current()
     }
-  }, [])
+  }, [setSessionActive, setProcessing])
 
   const stop = useCallback(() => {
     console.log('[VoiceSession] Force stop')
-    sessionActiveRef.current = false
-    processingRef.current = false
+    setSessionActive(false)
+    setProcessing(false)
     stopRef.current()
-  }, [])
+  }, [setSessionActive, setProcessing])
 
   const notifyResponseComplete = useCallback((aiContent: string) => {
     if (!sessionActiveRef.current) {
       // Session was stopped while LLM was responding
-      processingRef.current = false
+      setProcessing(false)
       return
     }
 
-    processingRef.current = false
+    setProcessing(false)
     const shouldContinue = shouldContinueVoice(aiContent)
 
     if (shouldContinue) {
@@ -179,9 +191,9 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
       }, 300)
     } else {
       console.log('[VoiceSession] AI says stop → ending session')
-      sessionActiveRef.current = false
+      setSessionActive(false)
     }
-  }, [])
+  }, [setProcessing, setSessionActive])
 
   return {
     voiceState,

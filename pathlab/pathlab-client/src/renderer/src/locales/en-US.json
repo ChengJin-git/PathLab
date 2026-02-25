@@ -2298,8 +2298,6 @@
       "prepareAndRegister": "Prepare and register your files",
       "backToChat": "Back to Chat",
       "backToDashboard": "Back",
-      "createDataset": "Create Dataset",
-      "defineDatasetDescription": "Define your dataset configuration before uploading files",
       "datasetName": "Dataset Name",
       "datasetNamePlaceholder": "e.g., Lung Cancer Study 2024",
       "existingDataset": "Existing dataset",

@@ -39,11 +39,6 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
       </div>
       <div className="flex-1 flex flex-col items-center px-4 pt-2 pb-4">
         <div className="w-full max-w-4xl">
-          <div className="text-center mb-6 sm:mb-8">
-            <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-2 sm:mb-3">{t('uploadComponents.datasetConfig.createDataset')}</h1>
-            <p className="text-base sm:text-lg text-slate-500 px-4">{t('uploadComponents.datasetConfig.defineDatasetDescription')}</p>
-          </div>
-
           <Card className="p-5 sm:p-8 shadow-xl border-slate-100 rounded-[1.5rem] sm:rounded-[2rem] overflow-hidden">
             <div className="flex flex-col gap-6 sm:gap-8">
               <div>

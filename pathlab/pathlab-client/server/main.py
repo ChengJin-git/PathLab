@@ -26,11 +26,8 @@ ROOT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT_DIR))
 
 from backend.common.port_utils import find_free_port, announce_port
+from backend.common.config import Config
 
-# Default fixed ports for debug mode
-DEFAULT_GATEWAY_PORT = 6100
-DEFAULT_PREPROCESSING_PORT = 6101
-DEFAULT_AI_PORT = 6102
 
 
 def run_service(app_module: str, port: int, name: str, workers: int = 1, limit_max_requests: int | None = None):
@@ -66,9 +63,9 @@ def main():
 
     if debug_mode:
         # Debug mode: use fixed ports
-        gateway_port = int(os.environ.get("GATEWAY_PORT", DEFAULT_GATEWAY_PORT))
-        preprocessing_port = int(os.environ.get("PREPROCESSING_PORT", DEFAULT_PREPROCESSING_PORT))
-        ai_port = int(os.environ.get("AI_PORT", DEFAULT_AI_PORT))
+        gateway_port = int(os.environ.get("GATEWAY_PORT", Config.DEFAULT_GATEWAY_PORT))
+        preprocessing_port = int(os.environ.get("PREPROCESSING_PORT", Config.DEFAULT_PREPROCESSING_PORT))
+        ai_port = int(os.environ.get("AI_PORT", Config.DEFAULT_AI_PORT))
         print("[Mode] DEBUG - Using fixed ports", flush=True)
     else:
         # Normal mode: auto-discover ports

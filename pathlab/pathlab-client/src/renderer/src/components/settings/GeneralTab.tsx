@@ -189,7 +189,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* OpenRouter LLM Card */}
             <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-              <CardHeader className="pb-2 p-3">
+              <CardHeader className="pb-1 p-3">
                 <CardTitle className="flex items-center gap-2 text-base text-slate-900">
                   <div className="p-1 bg-blue-100 rounded">
                     <Server className="w-3.5 h-3.5 text-blue-600" />
@@ -247,7 +247,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
 
             {/* DashScope ASR Card */}
             <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-              <CardHeader className="pb-2 p-3">
+              <CardHeader className="pb-1 p-3">
                 <CardTitle className="flex items-center gap-2 text-base text-slate-900">
                   <div className="p-1 bg-orange-100 rounded">
                     <Mic className="w-3.5 h-3.5 text-orange-600" />
@@ -277,7 +277,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
 
             {/* Shared Credentials Card */}
             <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-              <CardHeader className="pb-2 p-3">
+              <CardHeader className="pb-1 p-3">
                 <CardTitle className="flex items-center gap-2 text-base text-slate-900">
                   <div className="p-1 bg-amber-100 rounded">
                     <Key className="w-3.5 h-3.5 text-amber-600" />
@@ -316,7 +316,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
 	          </div>
 	          <div className="grid gap-3">
 	            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-	              <CardHeader className="pb-2 p-3">
+	              <CardHeader className="pb-1 p-3">
 	                <CardTitle className="flex items-center gap-2 text-base text-slate-900">
 	                  <div className="p-1 bg-slate-100 rounded">
 	                    <Globe className="w-3.5 h-3.5 text-slate-700" />
@@ -362,7 +362,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Local vLLM Card */}
             <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-              <CardHeader className="pb-2 p-3">
+              <CardHeader className="pb-1 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <CardTitle className="flex items-center gap-2 text-base text-slate-900">
                     <div className="p-1 bg-emerald-100 rounded">
@@ -432,7 +432,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
 
             {/* Local ASR Card */}
             <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-              <CardHeader className="pb-2 p-3">
+              <CardHeader className="pb-1 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <CardTitle className="flex items-center gap-2 text-base text-slate-900">
                     <div className="p-1 bg-purple-100 rounded">

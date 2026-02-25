@@ -10,6 +10,15 @@ from pathlib import Path
 class Config:
     """Configuration for PathLab services"""
 
+    # ========== Default Ports (for debug mode) ==========
+    DEFAULT_GATEWAY_PORT = 6100
+    DEFAULT_PREPROCESSING_PORT = 6101
+    DEFAULT_AI_PORT = 6102
+
+    # ========== Default URLs ==========
+    DATABASE_URL_DEFAULT = "postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab"
+    REDIS_URL_DEFAULT = "redis://localhost:6379/0"
+
     # Root directory
     ROOT_DIR = Path(__file__).resolve().parents[3]  # pathlab-client/
 
@@ -18,9 +27,9 @@ class Config:
 
     # Service URLs (internal communication)
     # These will be dynamically set when services start with auto-discovered ports
-    AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://127.0.0.1:6102")
-    PREPROCESSING_SERVICE_URL = os.getenv("PREPROCESSING_SERVICE_URL", "http://127.0.0.1:6101")
-    GATEWAY_SERVICE_URL = os.getenv("GATEWAY_SERVICE_URL", "http://127.0.0.1:6100")
+    AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", f"http://127.0.0.1:{DEFAULT_AI_PORT}")
+    PREPROCESSING_SERVICE_URL = os.getenv("PREPROCESSING_SERVICE_URL", f"http://127.0.0.1:{DEFAULT_PREPROCESSING_PORT}")
+    GATEWAY_SERVICE_URL = os.getenv("GATEWAY_SERVICE_URL", f"http://127.0.0.1:{DEFAULT_GATEWAY_PORT}")
 
     # Cache settings
     SLIDE_CACHE_SIZE = int(os.getenv("SLIDE_CACHE_SIZE", "8"))
