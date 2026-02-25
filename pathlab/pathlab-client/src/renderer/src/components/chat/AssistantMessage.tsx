@@ -467,7 +467,20 @@ const AssistantMessage = React.memo(function AssistantMessage({
       '[$1](#cite-$1)'
     )
   }
-  // 4. [N] (simple citation) — only match when citationMap has data to avoid
+  // 4. [N, M, ...] (comma-separated multi-citation) — e.g. [1, 8] or [1,2,3]
+  //    Split into individual citation links: [1](#cite-1)[8](#cite-8)
+  if (citationMap.size > 0) {
+    displayContent = displayContent.replace(
+      /\[(\d{1,2}(?:\s*,\s*\d{1,2})+)\](?!\()/g,
+      (_match, inner: string) => {
+        return inner.split(',').map(s => {
+          const n = s.trim()
+          return `[${n}](#cite-${n})`
+        }).join('')
+      }
+    )
+  }
+  // 5. [N] (simple citation) — only match when citationMap has data to avoid
   //    false positives with markdown footnotes/list references
   if (citationMap.size > 0) {
     displayContent = displayContent.replace(
