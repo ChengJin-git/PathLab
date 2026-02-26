@@ -5,11 +5,9 @@
  * This is a complex step with dataset grid, file table, and split configuration.
  */
 
-import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { Card } from '../ui/card'
-import { Button } from '../ui/button'
 import {
   ChevronLeft,
   ChevronRight,
@@ -18,20 +16,14 @@ import {
   Plus,
   FileText,
   ArrowRight,
-  CheckCircle2,
-  AlertCircle,
-  Layers,
-  UploadCloud,
   Check,
   Eye,
-  Database,
 } from 'lucide-react'
 import { TaskType, SplitStrategy } from '../../constants/training'
 import { KFoldValidation, RandomSplitValidation, WSIItem } from '../../types/training'
 import { DatasetSummary } from '../../api'
 import { WSIDataTable } from './WSIDataTable'
 import { DataSplitConfig } from './DataSplitConfig'
-import { RegistrationProgress } from './RegistrationProgress'
 
 export interface DataSelectionStepProps {
   // Task type
@@ -93,17 +85,14 @@ export interface DataSelectionStepProps {
   setSplitStrategy: (strategy: SplitStrategy) => void
   kFoldSplits: number
   setKFoldSplits: (k: number) => void
-  randomSeed: number
-  setRandomSeed: (seed: number) => void
   kFoldValidation: KFoldValidation
   randomSplitValidation: RandomSplitValidation
   hasPreDefinedSplits: boolean
   predefinedSplitCounts: { train: number; val: number; test: number }
-  classDistribution: Record<string, number>
 
   // Actions
   onEditClick: (item: WSIItem) => void
-  onDeleteClick: (wsiId: string, label: string, filename?: string) => void
+  onDeleteClick: (wsiId: string, label?: string, filename?: string) => void
   onBatchEditClick: () => void
   onBatchDeleteClick: () => void
 
@@ -163,13 +152,10 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
     setSplitStrategy,
     kFoldSplits,
     setKFoldSplits,
-    randomSeed,
-    setRandomSeed,
     kFoldValidation,
     randomSplitValidation,
     hasPreDefinedSplits,
     predefinedSplitCounts,
-    classDistribution,
     onEditClick,
     onDeleteClick,
     onBatchEditClick,
@@ -255,13 +241,10 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
           setSplitStrategy={setSplitStrategy}
           kFoldSplits={kFoldSplits}
           setKFoldSplits={setKFoldSplits}
-          randomSeed={randomSeed}
-          setRandomSeed={setRandomSeed}
           kFoldValidation={kFoldValidation}
           randomSplitValidation={randomSplitValidation}
           hasPreDefinedSplits={hasPreDefinedSplits}
           predefinedSplitCounts={predefinedSplitCounts}
-          classDistribution={classDistribution}
           selectedDatasetId={selectedDatasetId}
           selectedDatasetName={selectedDatasetName}
         />

@@ -10,20 +10,9 @@ import { Button } from '../ui/button'
 import { Loader2, ChevronLeft, ChevronRight, ChevronDown, Edit2, Trash2, Users } from 'lucide-react'
 import { TaskType } from '../../constants/training'
 
-export interface WSIItem {
-  wsi_id: string
-  file_extension: string
-  original_filename: string
-  label?: string
-  case_id?: string
-  event_time?: number
-  event_status?: number
-  age?: number
-  gender?: string
-  source?: string
-  file_size: number
-  split?: string
-}
+// Re-export WSIItem from shared types for consistency
+import { WSIItem } from '../../types/training'
+export type { WSIItem }
 
 export interface WSIDataTableProps {
   taskType: TaskType
@@ -369,7 +358,7 @@ function SlideRow({
   nested?: boolean
 }) {
   const { t } = useTranslation()
-  const fileType = getFileType(item.file_extension, item.file_size)
+  const fileType = getFileType(item.file_extension || '', item.file_size || 0)
 
   return (
     <tr
@@ -477,7 +466,7 @@ function SlideRow({
             title={t('training.wsiTable.deleteFile')}
             onClick={(e) => {
               e.preventDefault()
-              handleDeleteClick(item.wsi_id, item.label, item.original_filename)
+              handleDeleteClick(item.wsi_id, item.label ?? undefined, item.original_filename)
             }}
           >
             <Trash2 className={`w-${nested ? '3' : '3.5'} h-${nested ? '3' : '3.5'} sm:w-${nested ? '4' : '5'} sm:h-${nested ? '4' : '5'}`} />
@@ -578,7 +567,7 @@ function CaseRow({
   }
 
   // Get file types for the case
-  const types = new Set(slides.map((s) => getFileType(s.file_extension, s.file_size)))
+  const types = new Set(slides.map((s) => getFileType(s.file_extension || '', s.file_size || 0)))
   const typeLabel = types.has('WSI') && types.has('Patch') ? t('training.wsiTable.mixed') : types.values().next().value || 'WSI'
 
   return (
