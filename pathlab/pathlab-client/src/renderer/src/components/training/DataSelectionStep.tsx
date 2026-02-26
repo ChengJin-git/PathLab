@@ -22,6 +22,9 @@ import {
   AlertCircle,
   Layers,
   UploadCloud,
+  Check,
+  Eye,
+  Database,
 } from 'lucide-react'
 import { TaskType, SplitStrategy } from '../../constants/training'
 import { KFoldValidation, RandomSplitValidation, WSIItem } from '../../types/training'
@@ -44,6 +47,12 @@ export interface DataSelectionStepProps {
   selectedDatasetName: string
   onSelectDataset: (id: string | null, name: string) => void
   onBackToDatasets: () => void
+
+  // Dataset-level selection (lazy file loading)
+  filesExpanded: boolean
+  onCollapseFiles: () => void
+  isWholeDatasetSelected: boolean
+  selectedDatasetFileCount: number
 
   // File list
   items: WSIItem[]
@@ -120,6 +129,10 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
     selectedDatasetName,
     onSelectDataset,
     onBackToDatasets,
+    filesExpanded,
+    onCollapseFiles,
+    isWholeDatasetSelected,
+    selectedDatasetFileCount,
     items,
     loading,
     selectedIds,
@@ -172,14 +185,14 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 sm:mb-6">
           <div className="flex-1 min-w-0">
-            {selectedDatasetId ? (
+            {selectedDatasetId && filesExpanded ? (
               <DatasetSelectedHeader
                 selectedDatasetName={selectedDatasetName}
                 selectedCount={selectedIds.size}
-                onBack={onBackToDatasets}
+                onBack={onCollapseFiles}
               />
             ) : (
-              <DatasetSelectHeader selectedCount={selectedIds.size} />
+              <DatasetSelectHeader selectedCount={isWholeDatasetSelected ? selectedDatasetFileCount : selectedIds.size} />
             )}
           </div>
           <div className="flex shrink-0">
@@ -193,19 +206,20 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
           </div>
         </div>
 
-        {/* Dataset Selection View (when no dataset selected) */}
-        {!selectedDatasetId && (
+        {/* Dataset Selection Grid (always shown when files not expanded) */}
+        {!filesExpanded && (
           <DatasetGrid
             datasetsLoading={datasetsLoading}
             datasets={datasets}
             taskType={taskType}
+            selectedDatasetId={selectedDatasetId}
             onSelectDataset={onSelectDataset}
             formatBytes={formatBytes}
           />
         )}
 
-        {/* File Selection View (when dataset is selected) */}
-        {selectedDatasetId && (
+        {/* File Selection View (only when user explicitly expands files) */}
+        {selectedDatasetId && filesExpanded && (
           <WSIDataTable
             taskType={taskType}
             loading={loading}
@@ -234,8 +248,8 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
         )}
       </Card>
 
-      {/* Data Split Strategy */}
-      {selectedDatasetId && selectedIds.size > 0 && (
+      {/* Data Split Strategy - show when dataset selected (whole or with specific files) */}
+      {selectedDatasetId && (selectedIds.size > 0 || isWholeDatasetSelected) && (
         <DataSplitConfig
           splitStrategy={splitStrategy}
           setSplitStrategy={setSplitStrategy}
@@ -280,16 +294,19 @@ function DatasetGrid({
   datasetsLoading,
   datasets,
   taskType,
+  selectedDatasetId,
   onSelectDataset,
   formatBytes,
 }: {
   datasetsLoading: boolean
   datasets: DatasetSummary[]
   taskType: TaskType
+  selectedDatasetId: string | null
   onSelectDataset: (id: string | null, name: string) => void
   formatBytes: (bytes: number) => string
 }) {
   const { t } = useTranslation()
+  const navigate = useNavigate()
 
   if (datasetsLoading) {
     return (
@@ -324,33 +341,64 @@ function DatasetGrid({
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 px-0.5">
-      {datasets.map((dataset) => (
-        <div
-          key={dataset.dataset_id ?? dataset.dataset_name}
-          onClick={() => onSelectDataset(dataset.dataset_id, dataset.dataset_name)}
-          className="p-4 sm:p-5 bg-white border border-gray-200 rounded-xl hover:border-primary-400 hover:shadow-lg hover:shadow-primary-600/5 transition-all cursor-pointer group relative overflow-hidden"
-        >
-          <div className="absolute top-0 right-0 p-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-            <ArrowRight className="w-4 h-4 text-primary-500" />
-          </div>
-          <div className="flex items-start gap-3 sm:gap-4">
-            <div className="shrink-0 p-2 sm:p-2.5 bg-primary-50 rounded-xl group-hover:bg-primary-100 transition-colors">
-              <FolderOpen className="w-5 h-5 sm:w-6 sm:h-6 text-primary-600" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <h4 className="font-bold text-gray-900 truncate group-hover:text-primary-700 transition-colors text-sm sm:text-base">{dataset.dataset_name}</h4>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 sm:mt-2">
-                <span className="text-[10px] sm:text-xs font-semibold text-gray-500 flex items-center gap-1">
-                  <FileText className="w-3 h-3" />
-                  {t('training.dataSelection.slidesCount', { count: dataset.file_count })}
-                </span>
-                <span className="hidden sm:inline w-1 h-1 bg-gray-300 rounded-full"></span>
-                <span className="text-[10px] sm:text-xs font-semibold text-gray-500">{formatBytes(dataset.total_size)}</span>
+      {datasets.map((dataset) => {
+        const isSelected = selectedDatasetId === dataset.dataset_id
+        return (
+          <div
+            key={dataset.dataset_id ?? dataset.dataset_name}
+            onClick={() => onSelectDataset(isSelected ? null : dataset.dataset_id, isSelected ? '' : dataset.dataset_name)}
+            className={`p-4 sm:p-5 rounded-xl transition-all cursor-pointer group relative overflow-hidden ${
+              isSelected
+                ? 'bg-primary-50 border-2 border-primary-500 shadow-md shadow-primary-500/10'
+                : 'bg-white border border-gray-200 hover:border-primary-400 hover:shadow-lg hover:shadow-primary-600/5'
+            }`}
+          >
+            {/* Selected checkmark */}
+            {isSelected && (
+              <div className="absolute top-2 right-2">
+                <div className="w-5 h-5 bg-primary-600 rounded-full flex items-center justify-center">
+                  <Check className="w-3 h-3 text-white" strokeWidth={3} />
+                </div>
+              </div>
+            )}
+            {!isSelected && (
+              <div className="absolute top-0 right-0 p-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <ArrowRight className="w-4 h-4 text-primary-500" />
+              </div>
+            )}
+            <div className="flex items-start gap-3 sm:gap-4">
+              <div className={`shrink-0 p-2 sm:p-2.5 rounded-xl transition-colors ${
+                isSelected ? 'bg-primary-100' : 'bg-primary-50 group-hover:bg-primary-100'
+              }`}>
+                <FolderOpen className={`w-5 h-5 sm:w-6 sm:h-6 ${isSelected ? 'text-primary-700' : 'text-primary-600'}`} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h4 className={`font-bold truncate transition-colors text-sm sm:text-base ${
+                  isSelected ? 'text-primary-800' : 'text-gray-900 group-hover:text-primary-700'
+                }`}>{dataset.dataset_name}</h4>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 sm:mt-2">
+                  <span className={`text-[10px] sm:text-xs font-semibold flex items-center gap-1 ${isSelected ? 'text-primary-600' : 'text-gray-500'}`}>
+                    <FileText className="w-3 h-3" />
+                    {t('training.dataSelection.slidesCount', { count: dataset.file_count })}
+                  </span>
+                  <span className={`hidden sm:inline w-1 h-1 rounded-full ${isSelected ? 'bg-primary-300' : 'bg-gray-300'}`}></span>
+                  <span className={`text-[10px] sm:text-xs font-semibold ${isSelected ? 'text-primary-600' : 'text-gray-500'}`}>{formatBytes(dataset.total_size)}</span>
+                </div>
+                {/* View Files button for selected dataset */}
+                {isSelected && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); navigate('/wsi-list', { state: { dataset_id: dataset.dataset_id } }) }}
+                    className="mt-2.5 text-[10px] sm:text-xs font-semibold text-primary-600 hover:text-primary-800 flex items-center gap-1 transition-colors"
+                  >
+                    <Eye className="w-3 h-3" />
+                    {t('training.dataSelection.viewFiles')}
+                  </button>
+                )}
               </div>
             </div>
           </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

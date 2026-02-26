@@ -473,7 +473,10 @@ export default function NewTaskPage() {
         task_type: wizard.taskType,
         data_type: wizard.dataLevel,
         task_description: wizard.taskDescription,
-        wsi_ids: Array.from(dataSelection.selectedIds),
+        // Use dataset_id for whole-dataset selection, otherwise pass individual wsi_ids
+        ...(dataSelection.isWholeDatasetSelected
+          ? { dataset_id: dataSelection.selectedDatasetId! }
+          : { wsi_ids: Array.from(dataSelection.selectedIds) }),
         preprocessing: {
           // Note: tile_size removed - auto-determined by PrePATH-style tiling
           level: trainingConfig.pyramidLevel,
@@ -586,13 +589,18 @@ export default function NewTaskPage() {
   }, [wizard.taskName, wizard.taskDescription])
 
   const canProceedStep2 = useMemo(() => {
-    if (dataSelection.selectedIds.size === 0) return false
+    // Allow proceeding if whole dataset is selected (without loading individual files)
+    const hasSelection = dataSelection.isWholeDatasetSelected || dataSelection.selectedIds.size > 0
+    if (!hasSelection) return false
+    // Skip split validation for whole-dataset selection (backend handles splits)
+    if (dataSelection.isWholeDatasetSelected) return true
     if (trainingConfig.splitStrategy === 'random' && !splitValidation.randomSplitValidation.isValid) return false
     if (trainingConfig.splitStrategy === 'k_fold' && !splitValidation.kFoldValidation.isValid) return false
     if (trainingConfig.splitStrategy === 'k_fold' && trainingConfig.kFoldSplits > splitValidation.kFoldValidation.maxK) return false
     return true
   }, [
     dataSelection.selectedIds.size,
+    dataSelection.isWholeDatasetSelected,
     trainingConfig.splitStrategy,
     trainingConfig.kFoldSplits,
     splitValidation.randomSplitValidation.isValid,
@@ -660,6 +668,10 @@ export default function NewTaskPage() {
                 dataSelection.selectDataset(id, name)
               }}
               onBackToDatasets={() => dataSelection.selectDataset(null, '')}
+              filesExpanded={dataSelection.filesExpanded}
+              onCollapseFiles={dataSelection.collapseFiles}
+              isWholeDatasetSelected={dataSelection.isWholeDatasetSelected}
+              selectedDatasetFileCount={dataSelection.selectedDatasetFileCount}
               items={dataSelection.filteredItems}
               loading={dataSelection.loading}
               selectedIds={dataSelection.selectedIds}

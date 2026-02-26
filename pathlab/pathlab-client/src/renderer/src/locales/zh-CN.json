@@ -1552,7 +1552,8 @@
       "filesSelected": "已选择 {{count}} 个文件",
       "backToDatasets": "返回数据集列表",
       "datasetName": "{{name}}",
-      "selectSlides": "选择训练文件（已选 {{count}} 个）"
+      "selectSlides": "选择训练文件（已选 {{count}} 个）",
+      "viewFiles": "查看 / 管理文件"
     },
     "dataSplit": {
       "title": "数据拆分策略",

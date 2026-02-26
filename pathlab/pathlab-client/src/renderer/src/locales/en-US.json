@@ -1552,7 +1552,8 @@
       "filesSelected": "{{count}} files selected",
       "backToDatasets": "Back to Datasets",
       "datasetName": "{{name}}",
-      "selectSlides": "Select files for training ({{count}} selected)"
+      "selectSlides": "Select files for training ({{count}} selected)",
+      "viewFiles": "View / Manage Files"
     },
     "dataSplit": {
       "title": "Data Split Strategy",

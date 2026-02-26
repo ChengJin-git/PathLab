@@ -24,6 +24,13 @@ export interface UseDataSelectionReturn {
   selectDataset: (id: string | null, name: string) => void
   loadDatasets: () => Promise<void>
 
+  // Dataset-level selection (without loading files)
+  filesExpanded: boolean
+  expandFiles: () => void
+  collapseFiles: () => void
+  isWholeDatasetSelected: boolean
+  selectedDatasetFileCount: number
+
   // File selection
   items: WSIItem[]
   loading: boolean
@@ -93,6 +100,9 @@ export function useDataSelection({
   // Case grouping
   const [expandedCases, setExpandedCases] = useState<Set<string>>(new Set())
 
+  // Dataset-level selection (lazy file loading)
+  const [filesExpanded, setFilesExpanded] = useState(false)
+
   // Pre-defined splits
   const [hasPreDefinedSplits, setHasPreDefinedSplits] = useState(false)
   const [predefinedSplitCounts, setPredefinedSplitCounts] = useState({ train: 0, val: 0, test: 0 })
@@ -130,12 +140,14 @@ export function useDataSelection({
     }
   }, [selectedDatasetId, loadWSIList])
 
-  // Select dataset - also update split info from dataset summary immediately
+  // Select dataset - does NOT load files (lazy loading)
   const selectDataset = useCallback((id: string | null, name: string) => {
     setSelectedDatasetId(id)
     setSelectedDatasetName(name)
+    setFilesExpanded(false)
+    setItems([])
+    setSelectedIds(new Set())
     if (!id) {
-      setItems([])
       setHasPreDefinedSplits(false)
       setPredefinedSplitCounts({ train: 0, val: 0, test: 0 })
     } else {
@@ -150,19 +162,26 @@ export function useDataSelection({
     }
   }, [datasets])
 
-  // Load files when dataset changes
-  useEffect(() => {
-    if (selectedDatasetId) {
+  // Expand files: load and show file list for the selected dataset
+  const expandFiles = useCallback(() => {
+    if (selectedDatasetId && !filesExpanded) {
+      setFilesExpanded(true)
       loadWSIList(selectedDatasetId)
-    } else {
-      setItems([])
     }
-  }, [selectedDatasetId, loadWSIList])
+  }, [selectedDatasetId, filesExpanded, loadWSIList])
+
+  // Collapse files: hide file list, go back to dataset-level view
+  const collapseFiles = useCallback(() => {
+    setFilesExpanded(false)
+    setItems([])
+    setSelectedIds(new Set())
+  }, [])
 
   // Reset selection when dataLevel or taskType changes
   useEffect(() => {
     setSelectedDatasetId(null)
     setSelectedDatasetName('')
+    setFilesExpanded(false)
     setItems([])
     setSelectedIds(new Set())
   }, [dataLevel, taskType])
@@ -342,6 +361,16 @@ export function useDataSelection({
     setHasPreDefinedSplits(!hasMissing && counts.train > 0)
   }, [selectedIds, items])
 
+  // Whether user selected a dataset without expanding individual files
+  const isWholeDatasetSelected = !!selectedDatasetId && !filesExpanded
+
+  // Get file count from dataset summary for the selected dataset
+  const selectedDatasetFileCount = useMemo(() => {
+    if (!selectedDatasetId) return 0
+    const ds = datasets.find(d => d.dataset_id === selectedDatasetId)
+    return ds?.file_count ?? 0
+  }, [selectedDatasetId, datasets])
+
   return {
     datasets,
     datasetsLoading,
@@ -350,6 +379,11 @@ export function useDataSelection({
     selectedDatasetName,
     selectDataset,
     loadDatasets,
+    filesExpanded,
+    expandFiles,
+    collapseFiles,
+    isWholeDatasetSelected,
+    selectedDatasetFileCount,
     items,
     loading,
     selectedIds,
