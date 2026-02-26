@@ -26,7 +26,7 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
-import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate } from '../api'
+import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate, downloadCocoTemplate } from '../api'
 import { useToast } from '../contexts/ToastContext'
 import { ALL_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../constants/fileTypes'
 import { parseCsvMetadata } from '../lib/csvImporter'
@@ -552,7 +552,7 @@ export default function RegisterPage() {
     })
 
     // Validate based on upload mode (using resolved metadata)
-    if (uploadMode === 'classification' || uploadMode === 'segmentation') {
+    if (uploadMode === 'classification') {
       const missingLabels = itemsWithMeta.filter(({ finalMeta }) => !finalMeta.label?.toString().trim())
       if (missingLabels.length > 0) {
         // Validation failed - we rely on the UI to show red borders
@@ -565,7 +565,7 @@ export default function RegisterPage() {
         }
         return
       }
-    } else {
+    } else if (uploadMode === 'survival') {
       // Survival mode: require event_time and event_status
       const missingSurvival = itemsWithMeta.filter(({ finalMeta }) => {
         return !finalMeta.event_time?.toString().trim() || !finalMeta.event_status?.toString().trim()
@@ -711,12 +711,12 @@ export default function RegisterPage() {
           return
         }
 
-        if (uploadMode === 'classification' || uploadMode === 'segmentation') {
+        if (uploadMode === 'classification') {
           if (!headers.includes('label')) {
             setSplitFileError(t('uploadPage.missingLabelColumn'))
             return
           }
-        } else {
+        } else if (uploadMode === 'survival') {
           // survival mode
           if (!headers.includes('event_time')) {
             setSplitFileError(t('uploadPage.missingEventTimeColumn'))
@@ -740,6 +740,15 @@ export default function RegisterPage() {
       await downloadCSVTemplate(uploadMode)
     } catch (e) {
       console.error("Failed to download template", e)
+      toastError(e instanceof Error ? e.message : t('uploadPage.failedDownloadTemplate'))
+    }
+  }
+
+  const handleDownloadCocoTemplate = async () => {
+    try {
+      await downloadCocoTemplate()
+    } catch (e) {
+      console.error("Failed to download COCO template", e)
       toastError(e instanceof Error ? e.message : t('uploadPage.failedDownloadTemplate'))
     }
   }
@@ -995,14 +1004,14 @@ export default function RegisterPage() {
                           <div className="sr-only">Select</div>
                         </th>
                         <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[180px] sm:min-w-[200px]">{t('uploadPage.fileName')}</th>
-                        {(uploadMode === 'classification' || uploadMode === 'segmentation') ? (
+                        {uploadMode === 'classification' ? (
                           <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[120px] sm:min-w-[150px]">{t('uploadPage.label')} <span className="text-red-500">*</span></th>
-                        ) : (
+                        ) : uploadMode === 'survival' ? (
                           <>
                             <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">{t('uploadPage.eventTime')} <span className="text-red-500">*</span></th>
                             <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[80px] sm:min-w-[90px]">{t('uploadPage.status')} <span className="text-red-500">*</span></th>
                           </>
-                        )}
+                        ) : null}
                         <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[100px] sm:min-w-[120px]">{t('uploadPage.caseId')}</th>
                         <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[70px] sm:min-w-[80px]">{t('uploadPage.age')}</th>
                         <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">{t('uploadPage.gender')}</th>
@@ -1016,9 +1025,11 @@ export default function RegisterPage() {
                         const isSelected = selectedItems.has(item.key)
                         // Validation based on mode
                         const hasError = showValidation && (
-                          (uploadMode === 'classification' || uploadMode === 'segmentation')
+                          uploadMode === 'classification'
                             ? !meta.label.trim()
-                            : (!meta.event_time.trim() || !meta.event_status.trim())
+                            : uploadMode === 'survival'
+                              ? (!meta.event_time.trim() || !meta.event_status.trim())
+                              : false
                         )
 
                         return (
@@ -1048,8 +1059,8 @@ export default function RegisterPage() {
                                 </div>
                               </div>
                             </td>
-                            {/* Classification/Segmentation: Label input | Survival: Event Time & Status inputs */}
-                            {(uploadMode === 'classification' || uploadMode === 'segmentation') ? (
+                            {/* Classification: Label input | Survival: Event Time & Status inputs | Segmentation: no extra required fields */}
+                            {uploadMode === 'classification' ? (
                               <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                                 <input
                                   className={`w-full px-2 py-1.5 text-sm border rounded-lg hover:border-blue-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all ${hasError ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-slate-50/50 hover:bg-white focus:bg-white'}`}
@@ -1058,7 +1069,7 @@ export default function RegisterPage() {
                                   onChange={e => handleMetadataChange(item.key, 'label', e.target.value)}
                                 />
                               </td>
-                            ) : (
+                            ) : uploadMode === 'survival' ? (
                               <>
                                 <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                                   <input
@@ -1082,7 +1093,7 @@ export default function RegisterPage() {
                                   </select>
                                 </td>
                               </>
-                            )}
+                            ) : null}
                             <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                               <input
                                 className="w-full px-2 py-1.5 text-sm border border-slate-100 rounded-lg bg-slate-50/50 hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
@@ -1169,7 +1180,21 @@ export default function RegisterPage() {
                         className="text-[10px] sm:text-xs h-7 gap-1 px-2"
                       >
                         <Download className="w-3 h-3" />
-                        {t('uploadPage.template')}
+                        {t('uploadPage.csvTemplate')}
+                      </Button>
+                    )}
+                    {showSplitConfig && uploadMode === 'segmentation' && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownloadCocoTemplate();
+                        }}
+                        className="text-[10px] sm:text-xs h-7 gap-1 px-2 text-violet-700 border-violet-200 hover:bg-violet-50"
+                      >
+                        <Download className="w-3 h-3" />
+                        {t('uploadPage.cocoTemplate')}
                       </Button>
                     )}
                     {showSplitConfig ? (
@@ -1186,13 +1211,21 @@ export default function RegisterPage() {
                       {t('uploadPage.uploadMetadataDescription')}
                     </p>
 
-                {/* Help text - different for classification vs survival */}
+                {/* Help text - different for classification vs survival vs segmentation */}
                 <div className="mb-4 p-2 sm:p-3 bg-blue-50 rounded-lg text-[10px] sm:text-sm text-blue-800">
-                  <p className="font-bold mb-1">{t('uploadPage.fileFormatTitle', { mode: (uploadMode === 'classification' || uploadMode === 'segmentation') ? t('uploadPage.classification') : t('uploadPage.survival') })}</p>
+                  <p className="font-bold mb-1">{t('uploadPage.fileFormatTitle', { mode: uploadMode === 'classification' ? t('uploadPage.classification') : uploadMode === 'survival' ? t('uploadPage.survival') : t('uploadPage.segmentation') })}</p>
                   <ul className="list-disc list-inside space-y-0.5 text-blue-700">
-                    <li><code className="bg-blue-100 px-1 rounded">filename</code>{(uploadMode === 'classification' || uploadMode === 'segmentation') ? ', ' : ''}{(uploadMode === 'classification' || uploadMode === 'segmentation') && <code className="bg-blue-100 px-1 rounded">label</code>}</li>
+                    {uploadMode === 'classification' && (
+                      <li><code className="bg-blue-100 px-1 rounded">filename</code>, <code className="bg-blue-100 px-1 rounded">label</code></li>
+                    )}
+                    {uploadMode === 'survival' && (
+                      <li><code className="bg-blue-100 px-1 rounded">filename</code></li>
+                    )}
                     {uploadMode === 'survival' && (
                       <li><code className="bg-blue-100 px-1 rounded">event_time</code>, <code className="bg-blue-100 px-1 rounded">event_status</code></li>
+                    )}
+                    {uploadMode === 'segmentation' && (
+                      <li><code className="bg-blue-100 px-1 rounded">filename</code> — {t('uploadPage.segmentationCsvHint')}</li>
                     )}
                     <li className="hidden sm:list-item">{t('uploadPage.optionalFields')} <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
                   </ul>

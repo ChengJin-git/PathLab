@@ -637,7 +637,7 @@ async def get_csv_template(
     - filename: The original filename of the WSI slide
     - For classification: label (required)
     - For survival: event_time, event_status (required)
-    - For segmentation: label (required) — COCO annotations are provided separately
+    - For segmentation: no label required — masks are provided via COCO JSON separately
 
     Optional columns:
     - split (train, val, test), case_id, age, gender, source
@@ -658,14 +658,14 @@ async def get_csv_template(
         ]
         filename = "wsi_survival_metadata_template.csv"
     elif task_type == "segmentation":
-        # Segmentation template — same as classification (COCO JSON annotations are uploaded separately)
-        headers = ["filename", "split", "label", "case_id", "age", "gender", "source"]
+        # Segmentation template — no label column; masks are provided via COCO JSON separately
+        headers = ["filename", "split", "case_id", "age", "gender", "source"]
         examples = [
-            {"filename": "image_001.png", "split": "train", "label": "tissue",
+            {"filename": "image_001.png", "split": "train",
              "case_id": "CASE001", "age": "", "gender": "", "source": ""},
-            {"filename": "image_002.png", "split": "val", "label": "tissue",
+            {"filename": "image_002.png", "split": "val",
              "case_id": "CASE002", "age": "", "gender": "", "source": ""},
-            {"filename": "image_003.png", "split": "test", "label": "tissue",
+            {"filename": "image_003.png", "split": "test",
              "case_id": "CASE003", "age": "", "gender": "", "source": ""}
         ]
         filename = "segmentation_metadata_template.csv"
