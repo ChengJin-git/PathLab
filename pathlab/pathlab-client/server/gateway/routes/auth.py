@@ -9,7 +9,7 @@ Security Features:
 - Server stores bcrypt hash of the password
 
 Endpoints:
-- POST /auth/jwt/login - DISABLED (blocked to prevent reCAPTCHA bypass)
+- POST /auth/jwt/login - DISABLED (blocked to prevent Turnstile bypass)
 - POST /auth/jwt/logout - Logout (client-side token removal)
 - POST /auth/secure-login - Secure login with client-side hashed password
 - POST /auth/register - Register new user
@@ -54,13 +54,13 @@ from ..dependencies import logger
 APP_SALT = "PathLab2024SecureSalt"
 
 
-async def verify_recaptcha(token: str, secret_key: str) -> bool:
+async def verify_turnstile(token: str, secret_key: str) -> bool:
     """
-    Verify reCAPTCHA v3 token with Google API.
+    Verify Cloudflare Turnstile token with Cloudflare API.
 
     Args:
-        token: reCAPTCHA token from client
-        secret_key: reCAPTCHA secret key
+        token: Turnstile token from client
+        secret_key: Turnstile secret key
 
     Returns:
         True if verification successful, False otherwise
@@ -71,7 +71,7 @@ async def verify_recaptcha(token: str, secret_key: str) -> bool:
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                "https://www.google.com/recaptcha/api/siteverify",
+                "https://challenges.cloudflare.com/turnstile/v0/siteverify",
                 data={
                     "secret": secret_key,
                     "response": token,
@@ -80,7 +80,7 @@ async def verify_recaptcha(token: str, secret_key: str) -> bool:
             )
 
             if response.status_code != 200:
-                logger.warning(f"reCAPTCHA verification failed with status {response.status_code}")
+                logger.warning(f"Turnstile verification failed with status {response.status_code}")
                 return False
 
             result = response.json()
@@ -88,12 +88,12 @@ async def verify_recaptcha(token: str, secret_key: str) -> bool:
 
             if not success:
                 error_codes = result.get("error-codes", [])
-                logger.warning(f"reCAPTCHA verification failed: {error_codes}")
+                logger.warning(f"Turnstile verification failed: {error_codes}")
 
             return success
 
     except Exception as e:
-        logger.error(f"reCAPTCHA verification error: {e}")
+        logger.error(f"Turnstile verification error: {e}")
         return False
 
 
@@ -102,7 +102,7 @@ class SecureLoginRequest(BaseModel):
     username: str
     hashed_password: str  # SHA256(SHA256(password) + timestamp + APP_SALT)
     timestamp: int  # Unix timestamp in milliseconds
-    recaptcha_token: Optional[str] = None  # reCAPTCHA v3 token (optional)
+    turnstile_token: Optional[str] = None  # Cloudflare Turnstile token (optional)
 
 # Create main auth router
 router = APIRouter(tags=["Authentication"])
@@ -199,26 +199,26 @@ async def secure_login(
     - access_token: JWT token for authentication
     - token_type: "bearer"
     """
-    # Verify reCAPTCHA if enabled
+    # Verify Cloudflare Turnstile if enabled
     settings = Config.get_global_settings()
-    recaptcha_enabled = settings.get("recaptcha_enabled", False)
-    recaptcha_secret_key = settings.get("recaptcha_secret_key", "")
+    turnstile_enabled = settings.get("turnstile_enabled", False)
+    turnstile_secret_key = settings.get("turnstile_secret_key", "")
 
-    if recaptcha_enabled and recaptcha_secret_key:
-        if not request.recaptcha_token:
-            logger.warning(f"Login attempt without reCAPTCHA token for user {request.username}")
+    if turnstile_enabled and turnstile_secret_key:
+        if not request.turnstile_token:
+            logger.warning(f"Login attempt without Turnstile token for user {request.username}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="RECAPTCHA_TOKEN_REQUIRED"
+                detail="TURNSTILE_TOKEN_REQUIRED"
             )
 
-        # Verify reCAPTCHA token
-        recaptcha_valid = await verify_recaptcha(request.recaptcha_token, recaptcha_secret_key)
-        if not recaptcha_valid:
-            logger.warning(f"Login attempt with invalid reCAPTCHA token for user {request.username}")
+        # Verify Turnstile token
+        turnstile_valid = await verify_turnstile(request.turnstile_token, turnstile_secret_key)
+        if not turnstile_valid:
+            logger.warning(f"Login attempt with invalid Turnstile token for user {request.username}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="RECAPTCHA_VERIFICATION_FAILED"
+                detail="TURNSTILE_VERIFICATION_FAILED"
             )
 
     # Validate timestamp (prevent replay attacks)

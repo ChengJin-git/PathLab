@@ -24,23 +24,23 @@ export interface GlobalSettings {
   local_asr_base_url: string
   local_asr_model: string
   local_asr_api_key: string
-  // reCAPTCHA settings
-  recaptcha_enabled: boolean
-  recaptcha_site_key: string
-  recaptcha_secret_key: string
+  // Cloudflare Turnstile settings
+  turnstile_enabled: boolean
+  turnstile_site_key: string
+  turnstile_secret_key: string
 }
 
 /**
  * Public settings interface (no authentication required)
  */
 export interface PublicSettings {
-  recaptcha_enabled: boolean
-  recaptcha_site_key: string
+  turnstile_enabled: boolean
+  turnstile_site_key: string
 }
 
 /**
  * Get public settings (no authentication required)
- * @returns Public settings including reCAPTCHA configuration
+ * @returns Public settings including Turnstile configuration
  */
 export async function getPublicSettings(): Promise<PublicSettings> {
   return apiFetch<PublicSettings>(

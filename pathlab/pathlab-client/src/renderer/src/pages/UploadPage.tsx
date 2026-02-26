@@ -20,6 +20,9 @@ import {
   ArrowLeft,
   FileSpreadsheet,
   CheckCircle2,
+  FolderOpen,
+  Image,
+  FileJson,
 } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -897,7 +900,7 @@ export default function RegisterPage() {
                   <p className="text-xs sm:text-sm text-slate-500">
                     {currentDataType === 'patch' ? t('uploadPage.patchCollection') : currentDataType === 'wsi' ? t('uploadPage.wsiCollection') : t('uploadPage.dataset')}
                     {' · '}
-                    <span className="capitalize">{uploadMode}</span>
+                    <span className="capitalize">{uploadMode === 'classification' ? t('uploadPage.classification') : uploadMode === 'survival' ? t('uploadPage.survival') : t('uploadPage.segmentation')}</span>
                   </p>
                 </div>
               </div>
@@ -952,9 +955,40 @@ export default function RegisterPage() {
                 <p className="text-sm sm:text-lg text-slate-500 mb-2 sm:mb-4 max-w-xl leading-relaxed px-4">
                   {uploadMode === 'segmentation' ? t('uploadPage.supportedFormatsPatch') : t('uploadPage.supportedFormats')}
                 </p>
-                <p className="text-xs sm:text-sm text-slate-400 mb-6 sm:mb-10 max-w-xl leading-relaxed px-4">
+                <p className="text-xs sm:text-sm text-slate-400 mb-4 sm:mb-6 max-w-xl leading-relaxed px-4">
                   {uploadMode === 'classification' ? t('uploadPage.dropHintClassification') : uploadMode === 'survival' ? t('uploadPage.dropHintSurvival') : t('uploadPage.dropHintSegmentation')}
                 </p>
+                {uploadMode === 'segmentation' && (
+                  <div className="mb-6 sm:mb-10 rounded-xl px-5 py-4 text-left max-w-md">
+                    <div className="flex items-center gap-2 mb-2 text-sm font-semibold text-slate-700">
+                      <FolderOpen className="w-4 h-4 text-amber-500" />
+                      {t('uploadPage.folderStructureTitle')}
+                    </div>
+                    <div className="ml-2 space-y-1 text-xs text-slate-500 font-mono">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-300">├──</span>
+                        <Image className="w-3.5 h-3.5 text-blue-400" />
+                        <span>{t('uploadPage.folderExampleImg1')}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-300">├──</span>
+                        <FileJson className="w-3.5 h-3.5 text-violet-400" />
+                        <span>{t('uploadPage.folderExampleJson1')}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-300">├──</span>
+                        <Image className="w-3.5 h-3.5 text-blue-400" />
+                        <span>{t('uploadPage.folderExampleImg2')}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-300">└──</span>
+                        <FileJson className="w-3.5 h-3.5 text-violet-400" />
+                        <span>{t('uploadPage.folderExampleJson2')}</span>
+                      </div>
+                    </div>
+                    <p className="mt-2 text-[10px] text-slate-400 ml-2">{t('uploadPage.folderStructureNote')}</p>
+                  </div>
+                )}
                 {supportsNativePicker && (
                   <Button size="lg" className="px-6 sm:px-10 h-12 sm:h-14 text-base sm:text-lg rounded-full shadow-lg shadow-blue-500/20">
                     {t('uploadPage.browseFiles')}

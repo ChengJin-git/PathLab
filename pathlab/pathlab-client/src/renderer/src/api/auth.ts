@@ -90,14 +90,14 @@ export interface UserUpdateRequest {
  *
  * @param username - Username (stored in email field internally)
  * @param password - User password
- * @param recaptchaToken - Optional reCAPTCHA v3 token
+ * @param turnstileToken - Optional Cloudflare Turnstile token
  * @returns JWT access token
  * @throws {ApiError} If login fails
  */
 export async function loginWithCredentials(
   username: string,
   password: string,
-  recaptchaToken?: string
+  turnstileToken?: string
 ): Promise<LoginResponse> {
   // Step 1: Compute SHA256(password)
   const passwordHash = await sha256(password)
@@ -118,7 +118,7 @@ export async function loginWithCredentials(
         username,
         hashed_password: hashedCredential,
         timestamp,
-        recaptcha_token: recaptchaToken
+        turnstile_token: turnstileToken
       })
     },
     'Login failed'

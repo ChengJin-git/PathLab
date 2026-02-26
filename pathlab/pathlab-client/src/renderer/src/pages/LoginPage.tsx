@@ -7,7 +7,6 @@
 
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { GoogleReCaptchaProvider, useGoogleReCaptcha } from 'react-google-recaptcha-v3'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../contexts/AuthContext'
 import { Microscope, Brain, Shield, Zap, LogIn, Loader2, User, Lock, Heart, ExternalLink, AlertTriangle } from 'lucide-react'
@@ -17,13 +16,12 @@ import { LanguageSwitcher } from '../components/common/LanguageSwitcher'
 import { getPublicSettings, ApiError } from '../api'
 
 /**
- * Inner login page component that uses the reCAPTCHA hook.
- * Must be rendered inside GoogleReCaptchaProvider.
+ * Inner login page component.
+ * When turnstileSiteKey is provided, renders a Cloudflare Turnstile widget.
  */
-function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: boolean }) {
+function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { backendUnavailable?: boolean; turnstileSiteKey?: string }) {
   const navigate = useNavigate()
   const { login, isLoading, error, isLoggedIn } = useAuth()
-  const { executeRecaptcha } = useGoogleReCaptcha()
   const { t } = useTranslation()
 
   // Form state
@@ -31,22 +29,58 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
   const [password, setPassword] = React.useState('')
   const [formError, setFormError] = React.useState<string | null>(null)
 
-  // If already logged in, redirect to AI chat
+  // Turnstile state
+  const [turnstileToken, setTurnstileToken] = React.useState<string | undefined>(undefined)
+  const turnstileRef = React.useRef<HTMLDivElement>(null)
+  const turnstileWidgetId = React.useRef<string | null>(null)
+
+  // If already logged in, redirect to dashboard
   React.useEffect(() => {
     if (isLoggedIn) {
       navigate('/dashboard')
     }
   }, [isLoggedIn, navigate])
 
-  // Hide reCAPTCHA badge on unmount (when navigating away from login page)
+  // Load and render Cloudflare Turnstile widget
   React.useEffect(() => {
+    if (!turnstileSiteKey || !turnstileRef.current) return
+
+    const renderWidget = () => {
+      if (!turnstileRef.current || turnstileWidgetId.current !== null) return
+      const widgetId = (window as any).turnstile.render(turnstileRef.current, {
+        sitekey: turnstileSiteKey,
+        callback: (token: string) => setTurnstileToken(token),
+        'expired-callback': () => setTurnstileToken(undefined),
+        'error-callback': () => setTurnstileToken(undefined),
+        theme: 'light',
+        size: 'flexible',
+      })
+      turnstileWidgetId.current = widgetId
+    }
+
+    // If Turnstile script is already loaded
+    if ((window as any).turnstile) {
+      renderWidget()
+      return
+    }
+
+    // Load Turnstile script
+    const script = document.createElement('script')
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
+    script.async = true
+    script.onload = renderWidget
+    document.head.appendChild(script)
+
     return () => {
-      const badge = document.querySelector('.grecaptcha-badge') as HTMLElement | null
-      if (badge) {
-        badge.style.visibility = 'hidden'
+      // Cleanup widget on unmount
+      if (turnstileWidgetId.current !== null && (window as any).turnstile) {
+        try {
+          (window as any).turnstile.remove(turnstileWidgetId.current)
+        } catch { /* ignore */ }
+        turnstileWidgetId.current = null
       }
     }
-  }, [])
+  }, [turnstileSiteKey])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -57,19 +91,17 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
       return
     }
 
-    // Get reCAPTCHA token if available
-    let recaptchaToken: string | undefined
-    if (executeRecaptcha) {
-      try {
-        recaptchaToken = await executeRecaptcha('login')
-      } catch (err) {
-        console.error('reCAPTCHA error:', err)
-      }
-    }
-
-    const success = await login(username, password, recaptchaToken)
+    const success = await login(username, password, turnstileToken)
     if (success) {
       navigate('/dashboard')
+    } else {
+      // Reset Turnstile widget after failed login (token is single-use)
+      if (turnstileWidgetId.current !== null && (window as any).turnstile) {
+        try {
+          (window as any).turnstile.reset(turnstileWidgetId.current)
+          setTurnstileToken(undefined)
+        } catch { /* ignore */ }
+      }
     }
   }
 
@@ -178,9 +210,14 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
               </div>
             )}
 
+            {/* Cloudflare Turnstile Widget */}
+            {turnstileSiteKey && (
+              <div ref={turnstileRef} className="flex justify-center" />
+            )}
+
             <Button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || (!!turnstileSiteKey && !turnstileToken)}
               className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2"
             >
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
@@ -188,7 +225,7 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
             </Button>
 
             <p className="text-center text-xs text-slate-400 mt-6">
-              © 2026 <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer">SmartLab</a> · {t('common.protectedByRecaptcha')}
+              © 2026 <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer">SmartLab</a>{turnstileSiteKey ? ` · ${t('common.protectedByTurnstile')}` : ''}
             </p>
           </form>
         </div>
@@ -282,20 +319,20 @@ function LoginPageInner({ backendUnavailable = false }: { backendUnavailable?: b
 }
 
 /**
- * LoginPage wrapper that conditionally provides GoogleReCaptchaProvider.
- * reCAPTCHA is only loaded on the login page, not globally.
+ * LoginPage wrapper that fetches Turnstile settings and passes them down.
+ * Turnstile script is only loaded on the login page, not globally.
  */
 export default function LoginPage() {
-  const [recaptchaSiteKey, setRecaptchaSiteKey] = React.useState<string>('')
-  const [recaptchaEnabled, setRecaptchaEnabled] = React.useState<boolean>(false)
+  const [turnstileSiteKey, setTurnstileSiteKey] = React.useState<string>('')
   const [settingsLoaded, setSettingsLoaded] = React.useState(false)
   const [backendUnavailable, setBackendUnavailable] = React.useState(false)
 
   React.useEffect(() => {
     getPublicSettings()
       .then((settings) => {
-        setRecaptchaEnabled(settings.recaptcha_enabled)
-        setRecaptchaSiteKey(settings.recaptcha_site_key)
+        if (settings.turnstile_enabled && settings.turnstile_site_key) {
+          setTurnstileSiteKey(settings.turnstile_site_key)
+        }
         setBackendUnavailable(false)
       })
       .catch((err) => {
@@ -303,38 +340,16 @@ export default function LoginPage() {
         if (err instanceof ApiError && (err.isNetworkError() || err.isServerError())) {
           setBackendUnavailable(true)
         }
-        // Continue without reCAPTCHA either way
+        // Continue without Turnstile either way
       })
       .finally(() => {
         setSettingsLoaded(true)
       })
   }, [])
 
-  // Show reCAPTCHA badge when on login page, hide on unmount
-  React.useEffect(() => {
-    const badge = document.querySelector('.grecaptcha-badge') as HTMLElement | null
-    if (badge) {
-      badge.style.visibility = 'visible'
-    }
-    return () => {
-      const badge = document.querySelector('.grecaptcha-badge') as HTMLElement | null
-      if (badge) {
-        badge.style.visibility = 'hidden'
-      }
-    }
-  })
-
   if (!settingsLoaded) {
     return null
   }
 
-  if (recaptchaEnabled && recaptchaSiteKey) {
-    return (
-      <GoogleReCaptchaProvider reCaptchaKey={recaptchaSiteKey}>
-        <LoginPageInner backendUnavailable={backendUnavailable} />
-      </GoogleReCaptchaProvider>
-    )
-  }
-
-  return <LoginPageInner backendUnavailable={backendUnavailable} />
+  return <LoginPageInner backendUnavailable={backendUnavailable} turnstileSiteKey={turnstileSiteKey || undefined} />
 }
