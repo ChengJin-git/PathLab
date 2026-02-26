@@ -1,6 +1,7 @@
 """Base class for feature extractors."""
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from typing import Tuple, Callable
 
@@ -104,6 +105,94 @@ class BaseExtractor(ABC, nn.Module):
             Feature tensor of shape (B, D) where D = output_dim
         """
         pass
+
+    @property
+    def supports_spatial(self) -> bool:
+        """Whether this extractor supports spatial feature extraction for segmentation.
+
+        Returns True if the extractor can produce unpooled spatial token maps
+        via ``forward_spatial()``.  The default implementation checks for a
+        ``backbone`` attribute with either timm-style ``forward_features``,
+        DINOv2-dict ``forward_features``, or HuggingFace ViT ``embeddings``/
+        ``encoder`` attributes.
+        """
+        if not hasattr(self, "backbone"):
+            return False
+        bb = self.backbone
+        if hasattr(bb, "forward_features"):
+            return True
+        if hasattr(bb, "embeddings") and hasattr(bb, "encoder"):
+            return True
+        return False
+
+    def forward_spatial(self, x: torch.Tensor) -> torch.Tensor:
+        """Extract spatial feature map for dense prediction (segmentation).
+
+        Returns a feature map of shape ``(B, D, H', W')`` where
+        ``H' * W'`` equals the number of spatial patch tokens.
+
+        The default implementation auto-detects three backbone patterns:
+
+        1. **timm ViT** – calls ``backbone.forward_features(x)`` and strips
+           prefix tokens (CLS + optional register tokens) using
+           ``backbone.num_prefix_tokens``.
+        2. **DINOv2 (dict output)** – when ``forward_features`` returns a dict
+           with key ``"x_norm_patchtokens"``.
+        3. **HuggingFace ViTModel / AutoModel** – calls
+           ``backbone(pixel_values=x).last_hidden_state`` and strips the CLS
+           token at index 0.
+
+        Override this method in subclasses that do not match any of the above
+        patterns (e.g., CONCH v1.5 which wraps a custom ``trunk``).
+
+        Raises:
+            NotImplementedError: If the backbone type cannot be auto-detected.
+        """
+        if not hasattr(self, "backbone"):
+            raise NotImplementedError(
+                f"{self.__class__.__name__} does not have a 'backbone' attribute. "
+                "Override forward_spatial() to enable FM-powered segmentation."
+            )
+
+        bb = self.backbone
+
+        # --- Pattern 1 & 2: timm / DINOv2 with forward_features ----------
+        if hasattr(bb, "forward_features"):
+            out = bb.forward_features(x)
+
+            if isinstance(out, dict):
+                # DINOv2-style dict output
+                patch_tokens = out["x_norm_patchtokens"]  # (B, N, D)
+            else:
+                # timm-style tensor output (B, N_total, D)
+                num_prefix = getattr(bb, "num_prefix_tokens", 1)
+                patch_tokens = out[:, num_prefix:]  # (B, N, D)
+
+            B, N, D = patch_tokens.shape
+            H = W = int(math.isqrt(N))
+            assert H * W == N, (
+                f"Cannot reshape {N} patch tokens into a square grid. "
+                f"Got H={H}, W={W} (H*W={H * W})."
+            )
+            return patch_tokens.permute(0, 2, 1).reshape(B, D, H, W)
+
+        # --- Pattern 3: HuggingFace ViTModel / Dinov2Model ----------------
+        if hasattr(bb, "embeddings") and hasattr(bb, "encoder"):
+            outputs = bb(pixel_values=x)
+            tokens = outputs.last_hidden_state
+            patch_tokens = tokens[:, 1:]  # strip CLS token
+            B, N, D = patch_tokens.shape
+            H = W = int(math.isqrt(N))
+            assert H * W == N, (
+                f"Cannot reshape {N} patch tokens into a square grid. "
+                f"Got H={H}, W={W} (H*W={H * W})."
+            )
+            return patch_tokens.permute(0, 2, 1).reshape(B, D, H, W)
+
+        raise NotImplementedError(
+            f"{self.__class__.__name__} backbone type not auto-detected. "
+            "Override forward_spatial() to enable FM-powered segmentation."
+        )
 
     @classmethod
     @abstractmethod

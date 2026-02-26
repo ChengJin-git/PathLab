@@ -671,15 +671,15 @@ class CONCH15Extractor(BaseExtractor):
         ckpt_path = get_ckpt_path("CONCH15", hf_token)
         self.backbone = CONCHVisionTower()
         state_dict = torch.load(ckpt_path, map_location="cpu", weights_only=True)
-        # restore checkpoint 
+        # restore checkpoint
         state_dict['trunk.pos_embed'] = resize_pos_embed(self.backbone.trunk, state_dict['trunk.pos_embed'], verbose=False)
         self.backbone.load_state_dict(state_dict, strict=True)
         self.backbone.eval()
-        
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Extract features from input images.
-        
+
         Args:
             x: Input tensor of shape (B, 3, H, W)
         Returns:
@@ -687,6 +687,20 @@ class CONCH15Extractor(BaseExtractor):
         """
         feats = self.backbone(x)
         return feats
+
+    # -- spatial override (backbone is CONCHVisionTower, not a bare timm ViT) --
+    @property
+    def supports_spatial(self) -> bool:
+        return True
+
+    def forward_spatial(self, x: torch.Tensor) -> torch.Tensor:
+        import math
+        tokens = self.backbone.trunk.forward_features(x)  # (B, N+1, D)
+        patch_tokens = tokens[:, 1:]  # strip CLS
+        B, N, D = patch_tokens.shape
+        H = W = int(math.isqrt(N))
+        assert H * W == N
+        return patch_tokens.permute(0, 2, 1).reshape(B, D, H, W)
     
     def get_transforms(self, mode = "eval"):
         eval_transform = torchvision.transforms.Compose([

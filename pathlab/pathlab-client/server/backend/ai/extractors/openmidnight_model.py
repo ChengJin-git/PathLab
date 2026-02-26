@@ -31,6 +31,17 @@ class OpenMidnightExtractor(BaseExtractor):
             outputs = self.backbone(x)
         return outputs
 
+    def forward_spatial(self, x: torch.Tensor) -> torch.Tensor:
+        import math
+        with torch.autocast(device_type=x.device.type, dtype=torch.float16):
+            out = self.backbone.forward_features(x)
+        # DINOv2 hub model returns dict with x_norm_patchtokens
+        patch_tokens = out["x_norm_patchtokens"]  # (B, N, D)
+        B, N, D = patch_tokens.shape
+        H = W = int(math.isqrt(N))
+        assert H * W == N
+        return patch_tokens.permute(0, 2, 1).reshape(B, D, H, W)
+
     def get_transforms(self, mode="eval"):
         return transforms.Compose(
             [

@@ -11,11 +11,11 @@ class CONCHExtractor(BaseExtractor):
         super().__init__()
         ckpt_path = get_ckpt_path("CONCH", hf_token)
         self.backbone, self.preprocess = create_model_from_pretrained('conch_ViT-B-16', ckpt_path)
-        
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Extract features from input images.
-        
+
         Args:
             x: Input tensor of shape (B, 3, H, W)
         Returns:
@@ -23,17 +23,34 @@ class CONCHExtractor(BaseExtractor):
         """
         feats = self.backbone.encode_image(x, proj_contrast=False, normalize=False)
         return feats
-    
+
     def get_transforms(self, mode = "eval"):
         return self.preprocess
-    
+
     @property
     def output_dim(self) -> int:
         return 512
-    
+
     @property
     def default_image_size(self) -> int:
         return 448
+
+    # -- spatial override: CONCH wraps a CoCa model with VisualModel.trunk (timm ViT) --
+    @property
+    def supports_spatial(self) -> bool:
+        return True
+
+    def forward_spatial(self, x: torch.Tensor) -> torch.Tensor:
+        import math
+        # backbone.visual.trunk is a timm VisionTransformer
+        # trunk.forward was replaced with trunk.forward_features, so trunk(x) returns (B, N+1, D)
+        trunk = self.backbone.visual.trunk
+        tokens = trunk(x)  # (B, 1 + num_patches, D)
+        patch_tokens = tokens[:, 1:]  # strip CLS token
+        B, N, D = patch_tokens.shape
+        H = W = int(math.isqrt(N))
+        assert H * W == N
+        return patch_tokens.permute(0, 2, 1).reshape(B, D, H, W)
 
     @classmethod
     def build(cls, hf_token: str = "", **kwargs) -> BaseExtractor:

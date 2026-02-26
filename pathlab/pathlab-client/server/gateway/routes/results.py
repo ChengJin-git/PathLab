@@ -1163,7 +1163,14 @@ async def _run_inference_patch_classification(
     num_classes = checkpoint["num_classes"]
 
     # Build model: extractor + linear probe
-    extractor = get_extractor(extractor_name, pretrained=True)
+    try:
+        extractor = get_extractor(extractor_name, pretrained=True)
+    except (FileNotFoundError, OSError, Exception) as exc:
+        raise RuntimeError(
+            f"Failed to load feature extractor '{extractor_name}'. "
+            f"Please ensure the model weights are downloaded locally. "
+            f"Original error: {exc}"
+        ) from exc
     extractor = extractor.to(device)
     extractor.eval()
 
@@ -2302,7 +2309,13 @@ async def _run_external_validation_patch_segmentation(
                 classes=num_classes,
             )
             model = segmentor.build_model()
-            model.load_state_dict(checkpoint["model_state_dict"])
+            # FM-based checkpoints contain only decoder+head weights;
+            # the frozen backbone is already loaded by build_model().
+            if checkpoint.get("is_fm", False):
+                from backend.ai.segmentors.fm_segmentation_model import FMSegmentationModel
+                model.load_decoder_state_dict(checkpoint["model_state_dict"])
+            else:
+                model.load_state_dict(checkpoint["model_state_dict"])
             model = model.to(device)
             model.eval()
 
@@ -2654,7 +2667,14 @@ async def _run_external_validation_patch_classification(
                 _models.append(probe)
 
             # Build shared extractor (frozen, shared across all folds)
-            _extractor = get_extractor(_extractor_name, pretrained=True)
+            try:
+                _extractor = get_extractor(_extractor_name, pretrained=True)
+            except (FileNotFoundError, OSError, Exception) as exc:
+                raise RuntimeError(
+                    f"Failed to load feature extractor '{_extractor_name}'. "
+                    f"Please ensure the model weights are downloaded locally. "
+                    f"Original error: {exc}"
+                ) from exc
             _extractor = _extractor.to(device)
             _extractor.eval()
 

@@ -123,6 +123,7 @@ class SegmentationTrainer:
             classes=self.config["dataset"]["classes"]
             )
         
+        self.is_fm = segmentor.is_fm
         self.model = segmentor.build_model().to(self.device)
         self.loss_fn = segmentor.build_losses(
             loss_names=self.config["loss"]["names"],
@@ -598,13 +599,22 @@ class SegmentationTrainer:
         save_dir = Path(self.config.get("save_dir", "./checkpoints"))
         save_dir.mkdir(parents=True, exist_ok=True)
         
+        # For FM-based models, save only the lightweight decoder + head weights
+        # (the frozen backbone is reconstructed from the local FM checkpoint).
+        from backend.ai.segmentors.fm_segmentation_model import FMSegmentationModel
+        if isinstance(model, FMSegmentationModel):
+            model_weights = model.decoder_state_dict()
+        else:
+            model_weights = model.state_dict()
+
         checkpoint = {
             "epoch": epoch,
-            "model_state_dict": model.state_dict(),
+            "model_state_dict": model_weights,
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
             "metrics": metrics,
             "config": self.config,
+            "is_fm": self.is_fm,
         }
         
         checkpoint_path = save_dir / filename
@@ -718,7 +728,12 @@ class SegmentationTrainer:
             if is_best:
                 best_metric = current_metric
                 best_epoch = epoch
-                best_state_dict = copy.deepcopy(self.model.state_dict())
+                # For FM models, only keep decoder+head weights in memory
+                from backend.ai.segmentors.fm_segmentation_model import FMSegmentationModel
+                if isinstance(self.model, FMSegmentationModel):
+                    best_state_dict = copy.deepcopy(self.model.decoder_state_dict())
+                else:
+                    best_state_dict = copy.deepcopy(self.model.state_dict())
                 epochs_without_improvement = 0
                 
                 # Save best checkpoint
@@ -752,7 +767,11 @@ class SegmentationTrainer:
         
         # Restore best model
         if best_state_dict is not None:
-            self.model.load_state_dict(best_state_dict)
+            from backend.ai.segmentors.fm_segmentation_model import FMSegmentationModel
+            if isinstance(self.model, FMSegmentationModel):
+                self.model.load_decoder_state_dict(best_state_dict)
+            else:
+                self.model.load_state_dict(best_state_dict)
             logger.info(f"Restored best model from epoch {best_epoch}")
         
         # Final evaluation on test set if available

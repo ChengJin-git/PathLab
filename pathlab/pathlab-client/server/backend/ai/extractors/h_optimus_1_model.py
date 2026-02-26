@@ -19,6 +19,17 @@ class H_Optimus_1Extractor(BaseExtractor):
             feats = self.backbone(x)
         return feats
 
+    def forward_spatial(self, x: torch.Tensor) -> torch.Tensor:
+        import math
+        with torch.autocast(device_type=x.device.type, dtype=torch.float16):
+            out = self.backbone.forward_features(x)
+        num_prefix = getattr(self.backbone, "num_prefix_tokens", 1)
+        patch_tokens = out[:, num_prefix:]
+        B, N, D = patch_tokens.shape
+        H = W = int(math.isqrt(N))
+        assert H * W == N
+        return patch_tokens.permute(0, 2, 1).reshape(B, D, H, W)
+
     def get_transforms(self, mode="eval"):
         return torchvision.transforms.Compose(
             [
