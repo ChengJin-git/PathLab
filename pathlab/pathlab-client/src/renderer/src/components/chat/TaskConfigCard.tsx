@@ -8,6 +8,8 @@ import {
   DATA_LEVELS,
   ENCODER_OPTIONS,
   AGGREGATOR_OPTIONS,
+  PATCH_CLASSIFIERS,
+  DEFAULT_PATCH_CLASSIFIER,
   OPTIMIZERS,
   DEFAULT_PYRAMID_LEVEL,
   DEFAULT_FEATURE_BATCH_SIZE,
@@ -48,6 +50,7 @@ export interface AgentTaskConfig {
 
   // Model parameters
   aggregator?: string          // MIL aggregator (for WSI: abmil, meanmil, etc.)
+  classifier?: string          // Classifier head (for patch: linear, mlp, attention)
   learning_rate?: number
   epochs?: number
   batch_size?: number          // Training batch size
@@ -106,6 +109,7 @@ const FIELD_OPTIONS = {
   data_type: DATA_LEVELS,
   encoder: ENCODER_OPTIONS,
   aggregator: AGGREGATOR_OPTIONS,
+  classifier: PATCH_CLASSIFIERS,
   optimizer: OPTIMIZERS
 }
 
@@ -382,6 +386,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           early_stopping_patience: config.early_stopping_patience ?? SEG_TRAINING_DEFAULTS.earlyStoppingPatience,
         } : {
           aggregator: config.aggregator ?? DEFAULT_AGGREGATOR,
+          classifier: config.data_type === 'patch' ? (config.classifier ?? DEFAULT_PATCH_CLASSIFIER) : undefined,
           learning_rate: config.learning_rate ?? TRAINING_DEFAULTS.learningRate,
           epochs: config.epochs ?? TRAINING_DEFAULTS.epochs,
           optimizer: config.optimizer ?? TRAINING_DEFAULTS.optimizer,
@@ -790,11 +795,17 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
               </div>
             ) : (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.model')}</label>
-                <div className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-100 text-gray-500">
-                  {t('chatComponents.taskConfig.linearProbe')}
-                </div>
-                <p className="text-[10px] text-gray-400 mt-1">{t('chatComponents.taskConfig.linearProbeDesc')}</p>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.classifierHead', 'Classifier Head')}</label>
+                <select
+                  value={config.classifier || DEFAULT_PATCH_CLASSIFIER}
+                  onChange={(e) => updateConfig('classifier', e.target.value)}
+                  disabled={isFormDisabled}
+                  className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${disabledSelectClass}`}
+                >
+                  {FIELD_OPTIONS.classifier.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
               </div>
             )}
           </div>

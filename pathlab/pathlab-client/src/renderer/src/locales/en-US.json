@@ -1552,7 +1552,7 @@
       "filesSelected": "{{count}} files selected",
       "backToDatasets": "Back to Datasets",
       "datasetName": "{{name}}",
-      "selectSlides": "Select slides for training ({{count}} selected)"
+      "selectSlides": "Select files for training ({{count}} selected)"
     },
     "dataSplit": {
       "title": "Data Split Strategy",
@@ -1597,6 +1597,7 @@
       "optimizer": "Optimizer",
       "patience": "Patience",
       "randomSeed": "Random Seed",
+      "classifierHead": "Classifier Head",
       "autoBalance": "Auto-balance class weights",
       "searchBackbone": "Search backbones...",
       "allGroups": "All",
@@ -1788,8 +1789,7 @@
       "encoder": "Encoder",
       "aggregator": "Aggregator",
       "model": "Model",
-      "linearProbe": "Linear Probe",
-      "linearProbeDesc": "Direct classification without aggregation model",
+      "classifierHead": "Classifier Head",
       "segArchitecture": "Architecture",
       "segBackbone": "Backbone",
       "segLoss": "Loss Functions",

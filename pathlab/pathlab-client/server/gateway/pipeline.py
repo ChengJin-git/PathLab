@@ -183,10 +183,11 @@ async def run_training_pipeline(
 
             # Patch Classification: use Feature Extractor + Linear Probe training
             async with logger_manager.session() as (logger, db):
-                await logger.info("Patch-level task detected - using Feature Extractor + Linear Probe")
+                await logger.info("Patch-level task detected - using Feature Extractor + Classifier Head")
 
                 # Get training parameters
                 feature_extractor = preprocessing_config.get('feature_extractor', 'resnet50')
+                classifier = model_config.get('classifier', 'linear')
                 epochs = int(model_config.get('epochs', 50))
                 lr = float(model_config.get('learning_rate', 0.0002))
                 batch_size = int(model_config.get('batch_size', 64))
@@ -196,8 +197,8 @@ async def run_training_pipeline(
                 seed = preprocessing_config.get('split_config', {}).get('seed', 42)
 
                 await logger.info(
-                    f"Training Linear Probe with {feature_extractor} backbone",
-                    metadata={"feature_extractor": feature_extractor, "epochs": epochs, "lr": lr, "optimizer": optimizer, "auto_balance": auto_balance}
+                    f"Training {classifier} classifier with {feature_extractor} backbone",
+                    metadata={"feature_extractor": feature_extractor, "classifier": classifier, "epochs": epochs, "lr": lr, "optimizer": optimizer, "auto_balance": auto_balance}
                 )
 
                 # Update status to training
@@ -214,6 +215,7 @@ async def run_training_pipeline(
                             "epochs": epochs,
                             "lr": lr,
                             "feature_extractor": feature_extractor,
+                            "classifier": classifier,
                             "batch_size": batch_size,
                             "huggingface_token": huggingface_token or "",
                             "optimizer": optimizer,

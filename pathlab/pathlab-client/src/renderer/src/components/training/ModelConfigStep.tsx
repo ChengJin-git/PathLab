@@ -17,6 +17,7 @@ import {
   LossOption,
   AGGREGATORS,
   OPTIMIZERS,
+  PATCH_CLASSIFIERS,
   SEGMENTATION_ARCHITECTURES,
   SEGMENTATION_BACKBONES,
   SEGMENTATION_LOSSES,
@@ -37,6 +38,10 @@ export interface ModelConfigStepProps {
   extractorSearch: string
   setExtractorSearch: (search: string) => void
   filteredExtractors: ExtractorOption[]
+
+  // Classifier head (Patch-level classification)
+  classifier: string
+  setClassifier: (id: string) => void
 
   // Segmentation-specific (Patch-level segmentation)
   segArchitecture: string
@@ -80,6 +85,8 @@ export function ModelConfigStep({
   extractorSearch,
   setExtractorSearch,
   filteredExtractors,
+  classifier,
+  setClassifier,
   segArchitecture,
   setSegArchitecture,
   segBackbone,
@@ -358,6 +365,30 @@ export function ModelConfigStep({
                   </div>
                 ))}
               </div>
+            )}
+
+            {/* Classifier Head (Patch-level classification) */}
+            {!isSegmentation && dataLevel === 'patch' && (
+              <>
+                <h4 className="text-xs sm:text-sm font-bold text-gray-700 mt-4 mb-2">{t('training.modelConfig.classifierHead', 'Classifier Head')}</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3 pb-2">
+                  {PATCH_CLASSIFIERS.map((cls) => (
+                    <div
+                      key={cls.value}
+                      onClick={() => setClassifier(cls.value)}
+                      className={`p-3 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
+                        classifier === cls.value ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between mb-0.5">
+                        <div className="font-bold text-gray-900 text-xs sm:text-sm">{cls.label}</div>
+                        {classifier === cls.value && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600 flex-shrink-0" />}
+                      </div>
+                      <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed line-clamp-2">{cls.description}</div>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         </Card>

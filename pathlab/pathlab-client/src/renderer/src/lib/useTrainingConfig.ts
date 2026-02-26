@@ -17,6 +17,7 @@ import {
   SPLIT_DEFAULTS,
   DEFAULT_AGGREGATOR,
   DEFAULT_EXTRACTOR,
+  DEFAULT_PATCH_CLASSIFIER,
   DEFAULT_SEG_ARCHITECTURE,
   DEFAULT_SEG_BACKBONE,
   DEFAULT_SEG_LOSS_NAMES,
@@ -52,6 +53,10 @@ export interface UseTrainingConfigReturn {
   setFilterMaxHoles: (val: number) => void
 
   // Model config (Step 4)
+  // Classifier head (Patch-level classification)
+  classifier: string
+  setClassifier: (cls: string) => void
+
   aggregator: string
   setAggregator: (agg: string) => void
   learningRate: number
@@ -118,6 +123,7 @@ export function useTrainingConfig(): UseTrainingConfigReturn {
   )
 
   // Model config (Step 4)
+  const [classifier, setClassifier] = useState(DEFAULT_PATCH_CLASSIFIER)
   const [aggregator, setAggregator] = useState(DEFAULT_AGGREGATOR)
   const [learningRate, setLearningRate] = useState(TRAINING_DEFAULTS.learningRate)
   const [epochs, setEpochs] = useState(TRAINING_DEFAULTS.epochs)
@@ -165,6 +171,8 @@ export function useTrainingConfig(): UseTrainingConfigReturn {
     setFilterMaxHoles,
 
     // Model config
+    classifier,
+    setClassifier,
     aggregator,
     setAggregator,
     learningRate,

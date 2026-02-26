@@ -26,7 +26,7 @@ from sklearn.metrics import (
 
 from backend.ai.tasks.base import BaseTrainer
 from backend.ai.extractors import get_extractor
-from backend.ai.tasks.patch_classification.linear_layer import LinearProbe
+from backend.ai.classifiers import get_classifier
 from backend.ai.schemas import TaskType, TaskStatus, TrainResponse, FeatureExtractionResponse
 from backend.ai.utils.patch_dataset import PatchDatasetFromDB
 from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size
@@ -51,7 +51,7 @@ class PatchClassificationTrainer(BaseTrainer):
 
     Pipeline (aligned with WSI Classification):
     1. Use Feature Extractor (e.g., ResNet50, UNI, CONCH) to extract patch features (frozen)
-    2. Train Linear Probe for classification (instead of Aggregator for WSI)
+    2. Train classifier head (Linear/MLP/Attention) for classification (instead of Aggregator for WSI)
     3. Save checkpoint and metrics
     """
 
@@ -121,20 +121,23 @@ class PatchClassificationTrainer(BaseTrainer):
         auto_balance: bool = False,
         early_stopping_patience: int = 10,
         seed: Optional[int] = 42,
+        classifier_name: str = "linear",
     ) -> TrainResponse:
         """
-        Train Linear Probe on frozen Feature Extractor.
+        Train classifier head on frozen Feature Extractor.
 
         Aligned with WSI Classification's train_model() interface.
         For patch classification:
         - aggregator_name is reused as the feature extractor name
         - splits_map contains data split assignments
+        - classifier_name selects the classification head (linear, mlp, attention)
 
         Args:
             optimizer: Optimizer type ('adam', 'sgd', 'adamw')
             auto_balance: Whether to apply class weights for imbalanced datasets
             early_stopping_patience: Number of epochs to wait before early stopping
             seed: Random seed for reproducibility (default: 42)
+            classifier_name: Classifier head architecture ('linear', 'mlp', 'attention')
         """
         # Set global random seeds for reproducibility
         if seed is not None:
@@ -180,20 +183,20 @@ class PatchClassificationTrainer(BaseTrainer):
             return await self._train_kfold(
                 splits_map, image_paths, labels, classes, label_mapper,
                 extractor_name, num_classes, epochs, lr, logger, session_maker, all_ids,
-                optimizer, auto_balance, early_stopping_patience
+                optimizer, auto_balance, early_stopping_patience, classifier_name
             )
         else:
             return await self._train_regular(
                 splits_map, image_paths, labels, classes, label_mapper,
                 extractor_name, num_classes, epochs, lr, logger, session_maker, all_ids,
-                optimizer, auto_balance, early_stopping_patience
+                optimizer, auto_balance, early_stopping_patience, classifier_name
             )
 
     @staticmethod
     def _run_one_epoch(
         train_loader: DataLoader,
         extractor: nn.Module,
-        linear_probe: nn.Module,
+        classifier_head: nn.Module,
         criterion: nn.Module,
         optimizer,
         device: str,
@@ -209,7 +212,7 @@ class PatchClassificationTrainer(BaseTrainer):
             Tuple of (running_loss, num_batches, stop_reason).
             stop_reason is None if completed normally, 'cancelled' or 'permission_revoked' otherwise.
         """
-        linear_probe.train()
+        classifier_head.train()
         running_loss = 0.0
         num_batches = 0
         batch_count = 0
@@ -232,7 +235,7 @@ class PatchClassificationTrainer(BaseTrainer):
             with torch.no_grad():
                 features = extractor(batch_img)
 
-            logits = linear_probe(features)
+            logits = classifier_head(features)
             loss = criterion(logits, gt)
 
             loss.backward()
@@ -260,6 +263,7 @@ class PatchClassificationTrainer(BaseTrainer):
         optimizer_type: str = "adam",
         auto_balance: bool = False,
         early_stopping_patience: int = 10,
+        classifier_name: str = "linear",
     ) -> TrainResponse:
         """Train with regular train/val/test splits."""
         train_ids = list(splits_map.get("train", []))  # Make a copy to avoid modifying original
@@ -317,15 +321,16 @@ class PatchClassificationTrainer(BaseTrainer):
         for param in extractor.parameters():
             param.requires_grad = False
 
-        # Build linear probe
-        linear_probe = LinearProbe(
-            feature_dim=extractor.output_dim,
+        # Build classifier head (linear / mlp / attention)
+        classifier_head = get_classifier(
+            classifier_name,
             num_classes=num_classes,
+            in_dim=extractor.output_dim,
             dropout_p=self.dropout_p,
         ).to(self.device)
 
         # Combined model for inference
-        model = nn.Sequential(extractor, linear_probe).to(self.device)
+        model = nn.Sequential(extractor, classifier_head).to(self.device)
 
         # Calculate class weights for auto-balancing
         class_weights = None
@@ -348,11 +353,11 @@ class PatchClassificationTrainer(BaseTrainer):
         # Dynamic optimizer selection
         optimizer_type_lower = optimizer_type.lower()
         if optimizer_type_lower == "sgd":
-            optimizer = optim.SGD(linear_probe.parameters(), lr=lr, momentum=0.9, weight_decay=0.0)
+            optimizer = optim.SGD(classifier_head.parameters(), lr=lr, momentum=0.9, weight_decay=0.0)
         elif optimizer_type_lower == "adamw":
-            optimizer = optim.AdamW(linear_probe.parameters(), lr=lr, weight_decay=0.01)
+            optimizer = optim.AdamW(classifier_head.parameters(), lr=lr, weight_decay=0.01)
         else:  # Default to adam
-            optimizer = optim.Adam(linear_probe.parameters(), lr=lr, weight_decay=0.0)
+            optimizer = optim.Adam(classifier_head.parameters(), lr=lr, weight_decay=0.0)
 
         # Learning rate scheduler
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
@@ -371,13 +376,13 @@ class PatchClassificationTrainer(BaseTrainer):
             if is_task_cancelled(self.task_id):
                 await logger.info(f"Training cancelled by user/timeout at epoch {epoch}")
                 # Clean up CUDA tensors before raising exception to ensure GPU memory is freed
-                del model, extractor, linear_probe, optimizer, criterion
+                del model, extractor, classifier_head, optimizer, criterion
                 if class_weights is not None:
                     del class_weights
                 raise TrainingCancelledException(f"Training cancelled at epoch {epoch}")
             if is_permission_revoked(self.task_id):
                 await logger.info(f"Training stopped: permission revoked at epoch {epoch}")
-                del model, extractor, linear_probe, optimizer, criterion
+                del model, extractor, classifier_head, optimizer, criterion
                 if class_weights is not None:
                     del class_weights
                 raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
@@ -385,17 +390,17 @@ class PatchClassificationTrainer(BaseTrainer):
             # Run training epoch in thread pool to avoid blocking the event loop.
             # GPU operations (forward/backward pass) and DataLoader iteration are blocking.
             running_loss, num_batches, stop_reason = await asyncio.to_thread(
-                self._run_one_epoch, train_loader, extractor, linear_probe,
+                self._run_one_epoch, train_loader, extractor, classifier_head,
                 criterion, optimizer, self.device, self.task_id
             )
 
             if stop_reason == "cancelled":
-                del model, extractor, linear_probe, optimizer, criterion
+                del model, extractor, classifier_head, optimizer, criterion
                 if class_weights is not None:
                     del class_weights
                 raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
             if stop_reason == "permission_revoked":
-                del model, extractor, linear_probe, optimizer, criterion
+                del model, extractor, classifier_head, optimizer, criterion
                 if class_weights is not None:
                     del class_weights
                 raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
@@ -469,7 +474,8 @@ class PatchClassificationTrainer(BaseTrainer):
 
                 self._save_checkpoint(
                     extractor_name=extractor_name,
-                    linear_probe=linear_probe,
+                    classifier_head=classifier_head,
+                    classifier_name=classifier_name,
                     extractor_dim=extractor.output_dim,
                     num_classes=num_classes,
                     epochs=epochs,
@@ -509,7 +515,7 @@ class PatchClassificationTrainer(BaseTrainer):
         )
 
         model_id = f"patch_cls_{self.task_id}"
-        ckpt_path = self.uploads_root / "models" / model_id / "linear_probe.pth"
+        ckpt_path = self.uploads_root / "models" / model_id / "classifier_head.pth"
 
         return self._build_train_response(
             model_id=model_id,
@@ -537,6 +543,7 @@ class PatchClassificationTrainer(BaseTrainer):
         optimizer_type: str = "adam",
         auto_balance: bool = False,
         early_stopping_patience: int = 10,
+        classifier_name: str = "linear",
     ) -> TrainResponse:
         """Train with K-Fold cross-validation."""
         num_folds = self._get_num_folds(splits_map)
@@ -581,14 +588,15 @@ class PatchClassificationTrainer(BaseTrainer):
                 extractor_name=extractor_name,
             )
 
-            # New linear probe for each fold
-            linear_probe = LinearProbe(
-                feature_dim=extractor.output_dim,
+            # New classifier head for each fold
+            classifier_head = get_classifier(
+                classifier_name,
                 num_classes=num_classes,
+                in_dim=extractor.output_dim,
                 dropout_p=self.dropout_p,
             ).to(self.device)
 
-            model = nn.Sequential(extractor, linear_probe).to(self.device)
+            model = nn.Sequential(extractor, classifier_head).to(self.device)
 
             # Calculate class weights for auto-balancing (per fold)
             class_weights = None
@@ -606,11 +614,11 @@ class PatchClassificationTrainer(BaseTrainer):
             # Dynamic optimizer selection
             optimizer_type_lower = optimizer_type.lower()
             if optimizer_type_lower == "sgd":
-                optimizer = optim.SGD(linear_probe.parameters(), lr=lr, momentum=0.9, weight_decay=0.0)
+                optimizer = optim.SGD(classifier_head.parameters(), lr=lr, momentum=0.9, weight_decay=0.0)
             elif optimizer_type_lower == "adamw":
-                optimizer = optim.AdamW(linear_probe.parameters(), lr=lr, weight_decay=0.01)
+                optimizer = optim.AdamW(classifier_head.parameters(), lr=lr, weight_decay=0.01)
             else:  # Default to adam
-                optimizer = optim.Adam(linear_probe.parameters(), lr=lr, weight_decay=0.0)
+                optimizer = optim.Adam(classifier_head.parameters(), lr=lr, weight_decay=0.0)
 
             # Learning rate scheduler
             scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
@@ -626,13 +634,13 @@ class PatchClassificationTrainer(BaseTrainer):
                 if is_task_cancelled(self.task_id):
                     await logger.info(f"[Fold {fold_idx + 1}] Training cancelled by user/timeout at epoch {epoch}")
                     # Clean up CUDA tensors before raising exception to ensure GPU memory is freed
-                    del model, extractor, linear_probe, optimizer, criterion
+                    del model, extractor, classifier_head, optimizer, criterion
                     if class_weights is not None:
                         del class_weights
                     raise TrainingCancelledException(f"Training cancelled at fold {fold_idx + 1}, epoch {epoch}")
                 if is_permission_revoked(self.task_id):
                     await logger.info(f"[Fold {fold_idx + 1}] Training stopped: permission revoked at epoch {epoch}")
-                    del model, extractor, linear_probe, optimizer, criterion
+                    del model, extractor, classifier_head, optimizer, criterion
                     if class_weights is not None:
                         del class_weights
                     raise PermissionRevokedException(f"Training stopped at fold {fold_idx + 1}, epoch {epoch}: permission revoked by admin")
@@ -640,17 +648,17 @@ class PatchClassificationTrainer(BaseTrainer):
                 # Run training epoch in thread pool to avoid blocking the event loop.
                 # GPU operations (forward/backward pass) and DataLoader iteration are blocking.
                 running_loss, num_batches, stop_reason = await asyncio.to_thread(
-                    self._run_one_epoch, train_loader, extractor, linear_probe,
+                    self._run_one_epoch, train_loader, extractor, classifier_head,
                     criterion, optimizer, self.device, self.task_id
                 )
 
                 if stop_reason == "cancelled":
-                    del model, extractor, linear_probe, optimizer, criterion
+                    del model, extractor, classifier_head, optimizer, criterion
                     if class_weights is not None:
                         del class_weights
                     raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
                 if stop_reason == "permission_revoked":
-                    del model, extractor, linear_probe, optimizer, criterion
+                    del model, extractor, classifier_head, optimizer, criterion
                     if class_weights is not None:
                         del class_weights
                     raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
@@ -681,7 +689,7 @@ class PatchClassificationTrainer(BaseTrainer):
 
                 if is_improvement:
                     best_val_loss = val_loss # Update for logging
-                    best_state_dict = {k: v.cpu().clone() for k, v in linear_probe.state_dict().items()}
+                    best_state_dict = {k: v.cpu().clone() for k, v in classifier_head.state_dict().items()}
                     epochs_without_improvement = 0
                 else:
                     epochs_without_improvement += 1
@@ -718,7 +726,7 @@ class PatchClassificationTrainer(BaseTrainer):
 
             # Restore best and evaluate
             if best_state_dict:
-                linear_probe.load_state_dict(best_state_dict)
+                classifier_head.load_state_dict(best_state_dict)
             final_val_metrics = await asyncio.to_thread(self._evaluate, model, val_loader)
 
             fold_results[val_fold_key] = {
@@ -734,10 +742,11 @@ class PatchClassificationTrainer(BaseTrainer):
             fold_dir = self.uploads_root / "models" / model_id / val_fold_key
             fold_dir.mkdir(parents=True, exist_ok=True)
             torch.save({
-                "state_dict": linear_probe.state_dict(),
+                "state_dict": classifier_head.state_dict(),
+                "classifier_name": classifier_name,
                 "feature_dim": extractor.output_dim,
                 "num_classes": num_classes,
-            }, fold_dir / "linear_probe.pth")
+            }, fold_dir / "classifier_head.pth")
 
             # Calculate saving progress range for this fold
             fold_total_range = 34 / num_folds
@@ -839,7 +848,7 @@ class PatchClassificationTrainer(BaseTrainer):
         (model_dir / "metrics.json").write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
 
         # Use best fold's checkpoint as default
-        ckpt_path = model_dir / best_fold_key / "linear_probe.pth"
+        ckpt_path = model_dir / best_fold_key / "classifier_head.pth"
 
         # Build val_metrics with only float values
         val_metrics_dict: Dict[str, float] = {
@@ -987,7 +996,8 @@ class PatchClassificationTrainer(BaseTrainer):
     def _save_checkpoint(
         self,
         extractor_name: str,
-        linear_probe: nn.Module,
+        classifier_head: nn.Module,
+        classifier_name: str,
         extractor_dim: int,
         num_classes: int,
         epochs: int,
@@ -1002,10 +1012,11 @@ class PatchClassificationTrainer(BaseTrainer):
         model_dir = self.uploads_root / "models" / model_id
         model_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save linear probe weights
-        ckpt_path = model_dir / "linear_probe.pth"
+        # Save classifier head weights
+        ckpt_path = model_dir / "classifier_head.pth"
         torch.save({
-            "state_dict": linear_probe.state_dict(),
+            "state_dict": classifier_head.state_dict(),
+            "classifier_name": classifier_name,
             "extractor_name": extractor_name,
             "extractor_dim": extractor_dim,
             "num_classes": num_classes,
@@ -1015,6 +1026,7 @@ class PatchClassificationTrainer(BaseTrainer):
         config = {
             "task_id": self.task_id,
             "extractor": extractor_name,
+            "classifier": classifier_name,
             "extractor_dim": extractor_dim,
             "num_classes": num_classes,
             "epochs": epochs,

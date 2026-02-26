@@ -718,6 +718,7 @@ class PatchClassificationTrainRequest(BaseModel):
     feature_extractor: str = "resnet50"
     batch_size: int = 64
     huggingface_token: Optional[str] = None
+    classifier: str = "linear"  # Classifier head: linear, mlp, attention
     optimizer: str = "adam"  # adam, sgd, adamw
     auto_balance: bool = False  # Auto-balance class weights
     early_stopping_patience: int = 20  # Epochs to wait before early stopping
@@ -761,8 +762,8 @@ async def train_patch_classification(req: PatchClassificationTrainRequest) -> Tr
         split_strategy_desc = _get_split_strategy_description(splits_map, preprocessing_config)
         splits_count_desc = _format_splits_count(splits_map)
         await training_logger.info(
-            f"[Training] Starting Patch Classification ({req.feature_extractor.upper()})",
-            {"task_type": "patch_classification", "feature_extractor": req.feature_extractor, "epochs": req.epochs, "lr": req.lr, "num_classes": num_classes}
+            f"[Training] Starting Patch Classification ({req.feature_extractor.upper()}, classifier={req.classifier})",
+            {"task_type": "patch_classification", "feature_extractor": req.feature_extractor, "classifier": req.classifier, "epochs": req.epochs, "lr": req.lr, "num_classes": num_classes}
         )
         await training_logger.info(
             f"[Data Split] {split_strategy_desc} | {splits_count_desc}",
@@ -792,6 +793,7 @@ async def train_patch_classification(req: PatchClassificationTrainRequest) -> Tr
             auto_balance=req.auto_balance,
             early_stopping_patience=req.early_stopping_patience,
             seed=req.seed,
+            classifier_name=req.classifier,
         )
 
         # Phase 3: Save results - short-lived session

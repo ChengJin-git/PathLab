@@ -1552,7 +1552,7 @@
       "filesSelected": "已選擇 {{count}} 個檔案",
       "backToDatasets": "返回數據集列表",
       "datasetName": "{{name}}",
-      "selectSlides": "選擇訓練切片（已選 {{count}} 張）"
+      "selectSlides": "選擇訓練檔案（已選 {{count}} 個）"
     },
     "dataSplit": {
       "title": "數據拆分策略",
@@ -1597,6 +1597,7 @@
       "optimizer": "優化器",
       "patience": "耐心值",
       "randomSeed": "隨機種子",
+      "classifierHead": "分類頭",
       "autoBalance": "自動平衡類別權重",
       "searchBackbone": "搜索骨幹網絡...",
       "allGroups": "全部",
@@ -1788,8 +1789,7 @@
       "encoder": "編碼器",
       "aggregator": "聚合器",
       "model": "模型",
-      "linearProbe": "線性探測器",
-      "linearProbeDesc": "無需聚合模型，直接分類",
+      "classifierHead": "分類頭",
       "segArchitecture": "架構",
       "segBackbone": "骨幹網絡",
       "segLoss": "損失函數",

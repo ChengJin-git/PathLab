@@ -459,6 +459,7 @@ export default function NewTaskPage() {
         : {
             aggregator: wizard.dataLevel === 'wsi' ? trainingConfig.aggregator : 'none',
             backbone: wizard.dataLevel === 'patch' ? trainingConfig.featureExtractor : undefined,
+            classifier: wizard.dataLevel === 'patch' ? trainingConfig.classifier : undefined,
             learning_rate: trainingConfig.learningRate,
             epochs: trainingConfig.epochs,
             optimizer: trainingConfig.optimizer,
@@ -742,6 +743,8 @@ export default function NewTaskPage() {
               filteredExtractors={filteredExtractors}
               extractorSearch={extractorSearch}
               setExtractorSearch={setExtractorSearch}
+              classifier={trainingConfig.classifier}
+              setClassifier={trainingConfig.setClassifier}
               segArchitecture={trainingConfig.segArchitecture}
               setSegArchitecture={trainingConfig.setSegArchitecture}
               segBackbone={trainingConfig.segBackbone}
@@ -789,6 +792,7 @@ export default function NewTaskPage() {
               optimizer={trainingConfig.optimizer}
               earlyStoppingPatience={trainingConfig.earlyStoppingPatience}
               autoBalance={trainingConfig.autoBalance}
+              classifier={trainingConfig.classifier}
               validateConfiguration={validateConfiguration}
               trainingStatus={wizard.trainingStatus}
               submitError={wizard.submitError}

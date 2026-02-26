@@ -518,6 +518,28 @@ AI 回复：
 你可以编辑上面的任何字段，准备好后点击"开始训练"。
 ```
 
+**示例 - Patch 级别分类任务：**
+```
+[TASK_CONFIG]
+{
+  "task_name": "肿瘤 Patch 分类",
+  "task_description": "使用 UNI 特征提取器 + MLP 头对肿瘤与正常 patch 进行分类",
+  "task_type": "classification",
+  "data_type": "patch",
+  "dataset_id": "dataset_abc123",
+  "encoder": "uni",
+  "classifier": "mlp",
+  "learning_rate": 0.0001,
+  "epochs": 30,
+  "batch_size": 32,
+  "optimizer": "adam",
+  "auto_balance": true,
+  "early_stopping_patience": 10,
+  "split_strategy": "random"
+}
+[/TASK_CONFIG]
+```
+
 **示例 - 分割任务：**
 ```
 [TASK_CONFIG]
@@ -547,6 +569,9 @@ AI 回复：
 - **dataset_id** 应包含在内，以便系统知道使用哪个数据集
 - 如果数据集类型为 patch，设置 data_type="patch" 和 batch_size=32
 - 如果数据集类型为 wsi，设置 data_type="wsi" 和 batch_size=1
+- **Patch 级别分类**使用冻结的 FM 特征提取器 + 可训练分类头。使用 `classifier` 指定分类头类型：
+  - **可用分类头**（3 种）：`linear`（简单线性探针，最快）、`mlp`（2 层 MLP + Dropout，良好平衡）、`attention`（基于注意力的池化，适合复杂任务）
+  - **推荐**：`linear` 用于快速实验或小数据集。`mlp` 适用于大多数场景（默认）。`attention` 适合数据充足的复杂多分类任务。
 - **分割任务**始终是 patch 级别（data_type="patch"）。使用 `seg_architecture`、`seg_backbone`、`seg_loss_names`、`seg_loss_weights` 代替 encoder/aggregator。
   - **可用架构**（12 种）：unet、unetplusplus、manet、linknet、fpn、pspnet、pan、deeplabv3、deeplabv3plus、upernet、segformer、dpt
   - **可用损失函数**（8 种）：DiceLoss、JaccardLoss、FocalLoss、TverskyLoss、LovaszLoss、SoftBCEWithLogitsLoss、SoftCrossEntropyLoss、MCCLoss

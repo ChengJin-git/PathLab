@@ -116,6 +116,23 @@ export const OPTIMIZERS: readonly SelectOption[] = [
 export const DEFAULT_OPTIMIZER = 'adam'
 
 // ============================================================================
+// Patch Classifiers (for patch-level classification heads)
+// ============================================================================
+
+/**
+ * Available classifier heads for patch-level classification.
+ * These are trained on top of frozen FM features.
+ */
+export const PATCH_CLASSIFIERS: readonly SelectOption[] = [
+  { value: 'linear', label: 'Linear Probe', description: 'Single linear layer' },
+  { value: 'mlp', label: 'MLP', description: 'Multi-layer perceptron with hidden layers' },
+  { value: 'attention', label: 'Attention', description: 'Attention-pooling classifier' },
+] as const
+
+/** Default patch classifier */
+export const DEFAULT_PATCH_CLASSIFIER = 'linear'
+
+// ============================================================================
 // MIL Aggregators (for WSI-level classification)
 // ============================================================================
 

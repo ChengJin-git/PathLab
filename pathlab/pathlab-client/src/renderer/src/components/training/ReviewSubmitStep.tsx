@@ -10,7 +10,7 @@ import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { CheckSquare, Settings, AlignLeft, Layers, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react'
 import { ConfigurationValidation } from '../../types/training'
-import { DataLevel, TaskType, TrainingStatus, ExtractorOption, AGGREGATORS } from '../../constants/training'
+import { DataLevel, TaskType, TrainingStatus, ExtractorOption, AGGREGATORS, PATCH_CLASSIFIERS } from '../../constants/training'
 
 export interface ReviewSubmitStepProps {
   // Task info
@@ -32,6 +32,7 @@ export interface ReviewSubmitStepProps {
   optimizer: string
   earlyStoppingPatience: number
   autoBalance: boolean
+  classifier?: string
 
   // Validation
   validateConfiguration: ConfigurationValidation
@@ -68,6 +69,7 @@ export function ReviewSubmitStep({
   optimizer,
   earlyStoppingPatience,
   autoBalance,
+  classifier,
   validateConfiguration,
   trainingStatus,
   submitError,
@@ -142,7 +144,7 @@ export function ReviewSubmitStep({
                   )}
                   {dataLevel === 'patch' && (
                     <div className="mt-1 text-[10px] flex items-center gap-1 text-gray-400">
-                      <span>{t('training.review.linearProbe')}</span>
+                      <span>{PATCH_CLASSIFIERS.find((c) => c.value === classifier)?.label ?? t('training.review.linearProbe')}</span>
                     </div>
                   )}
                 </div>

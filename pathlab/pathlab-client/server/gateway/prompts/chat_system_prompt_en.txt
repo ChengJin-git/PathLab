@@ -517,6 +517,28 @@ Here's your training configuration:
 You can edit any field above, then click "Start Training" when ready.
 ```
 
+**Example - Patch-level Classification Task:**
+```
+[TASK_CONFIG]
+{
+  "task_name": "Tumor Patch Classification",
+  "task_description": "Classify tumor vs normal patches using UNI feature extractor with MLP head",
+  "task_type": "classification",
+  "data_type": "patch",
+  "dataset_id": "dataset_abc123",
+  "encoder": "uni",
+  "classifier": "mlp",
+  "learning_rate": 0.0001,
+  "epochs": 30,
+  "batch_size": 32,
+  "optimizer": "adam",
+  "auto_balance": true,
+  "early_stopping_patience": 10,
+  "split_strategy": "random"
+}
+[/TASK_CONFIG]
+```
+
 **Example - Segmentation Task:**
 ```
 [TASK_CONFIG]
@@ -546,6 +568,9 @@ IMPORTANT for [TASK_CONFIG]:
 - **dataset_id** should be included so the system knows which dataset to use
 - If dataset is type=patch, set data_type="patch" and batch_size=32
 - If dataset is type=wsi, set data_type="wsi" and batch_size=1
+- **Patch-level classification** uses a frozen FM feature extractor + trainable classifier head. Use `classifier` to specify the head type:
+  - **Available classifier heads** (3): `linear` (simple linear probe, fastest), `mlp` (2-layer MLP with dropout, good balance), `attention` (attention-based pooling, best for complex tasks)
+  - **Recommendation**: `linear` for quick experiments or small datasets. `mlp` for most cases (default). `attention` for complex multi-class tasks with enough data.
 - **Segmentation tasks** are ALWAYS patch-level (data_type="patch"). Use `seg_architecture`, `seg_backbone`, `seg_loss_names`, `seg_loss_weights` instead of encoder/aggregator.
   - **Available architectures** (12): unet, unetplusplus, manet, linknet, fpn, pspnet, pan, deeplabv3, deeplabv3plus, upernet, segformer, dpt
   - **Available losses** (8): DiceLoss, JaccardLoss, FocalLoss, TverskyLoss, LovaszLoss, SoftBCEWithLogitsLoss, SoftCrossEntropyLoss, MCCLoss
