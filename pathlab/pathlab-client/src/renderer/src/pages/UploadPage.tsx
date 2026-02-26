@@ -960,42 +960,42 @@ export default function RegisterPage() {
                   {uploadMode === 'classification' ? t('uploadPage.dropHintClassification') : uploadMode === 'survival' ? t('uploadPage.dropHintSurvival') : t('uploadPage.dropHintSegmentation')}
                 </p>
                 {uploadMode === 'segmentation' && (
-                  <div className="mb-6 sm:mb-10 rounded-xl bg-slate-50 border border-slate-200 p-4 text-left w-full max-w-sm shadow-sm transition-all hover:shadow-md">
-                    <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-800 border-b border-slate-200 pb-2">
+                  <div className="mb-6 sm:mb-10 rounded-xl bg-white p-4 text-left w-full max-w-sm shadow-sm transition-all">
+                    <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-800 border-b border-slate-100 pb-2">
                       <FolderOpen className="w-4 h-4 text-amber-500" />
                       {t('uploadPage.folderStructureTitle')}
                     </div>
                     <div className="space-y-2 text-xs text-slate-600 font-medium">
 
                       {/* Folder Item */}
-                      <div className="flex items-center gap-2 px-2 py-1.5 hover:bg-white rounded-md transition-colors cursor-default">
+                      <div className="flex items-center gap-2 px-2 py-1.5 rounded-md cursor-default">
                         <Folder className="w-4 h-4 text-blue-400 shrink-0" />
                         <span className="truncate">{t('uploadPage.folderExampleFolder')}</span>
                       </div>
 
                       {/* Inside Folder */}
                       <div className="pl-6 space-y-1.5 border-l-2 border-slate-100 ml-3">
-                        <div className="flex items-center gap-2 px-2 py-1 hover:bg-white rounded-md transition-colors cursor-default">
+                        <div className="flex items-center gap-2 px-2 py-1 rounded-md cursor-default">
                           <Image className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                           <span className="truncate">{t('uploadPage.folderExampleImg1')}</span>
                         </div>
-                        <div className="flex items-center gap-2 px-2 py-1 hover:bg-white rounded-md transition-colors cursor-default">
+                        <div className="flex items-center gap-2 px-2 py-1 rounded-md cursor-default">
                           <FileJson className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                           <span className="truncate">{t('uploadPage.folderExampleJson1')}</span>
                         </div>
-                        <div className="flex items-center gap-2 px-2 py-1 hover:bg-white rounded-md transition-colors cursor-default">
+                        <div className="flex items-center gap-2 px-2 py-1 rounded-md cursor-default">
                           <Image className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                           <span className="truncate">{t('uploadPage.folderExampleImg2')}</span>
                         </div>
-                        <div className="flex items-center gap-2 px-2 py-1 hover:bg-white rounded-md transition-colors cursor-default">
+                        <div className="flex items-center gap-2 px-2 py-1 rounded-md cursor-default">
                           <FileJson className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                           <span className="truncate">{t('uploadPage.folderExampleJson2')}</span>
                         </div>
                       </div>
                     </div>
-                    <div className="mt-3 pt-2 border-t border-slate-100 text-[11px] text-slate-500 bg-blue-50/50 p-2 rounded-lg flex items-start gap-2">
-                      <div className="bg-blue-100/50 p-1 rounded-full shrink-0 mt-0.5">
-                        <div className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                    <div className="mt-3 pt-2 text-[11px] text-slate-500 bg-slate-50 p-2 rounded-lg flex items-start gap-2">
+                      <div className="bg-blue-100 p-1 rounded-full shrink-0 mt-0.5">
+                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
                       </div>
                       <p className="leading-tight">{t('uploadPage.folderStructureNote')}</p>
                     </div>
@@ -1003,33 +1003,33 @@ export default function RegisterPage() {
                 )}
 
                 {(uploadMode === 'classification' || uploadMode === 'survival') && (
-                  <div className="mb-6 sm:mb-10 rounded-xl bg-slate-50 border border-slate-200 p-4 text-left w-full max-w-sm shadow-sm transition-all hover:shadow-md">
-                    <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-800 border-b border-slate-200 pb-2">
+                  <div className="mb-6 sm:mb-10 rounded-xl bg-white p-4 text-left w-full max-w-sm shadow-sm transition-all">
+                    <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-800 border-b border-slate-100 pb-2">
                       <FolderOpen className="w-4 h-4 text-amber-500" />
                       {t('uploadPage.folderStructureTitle')}
                     </div>
                     <div className="space-y-2 text-xs text-slate-600 font-medium">
 
                       {/* Folder Item */}
-                      <div className="flex items-center gap-2 px-2 py-1.5 hover:bg-white rounded-md transition-colors cursor-default">
+                      <div className="flex items-center gap-2 px-2 py-1.5 rounded-md cursor-default">
                         <Folder className="w-4 h-4 text-blue-400 shrink-0" />
                         <span className="truncate">{t('uploadPage.folderExampleFolder')}</span>
                       </div>
 
                       {/* Inside Folder */}
                       <div className="pl-6 space-y-1.5 border-l-2 border-slate-100 ml-3 mb-2">
-                        <div className="flex items-center gap-2 px-2 py-1 hover:bg-white rounded-md transition-colors cursor-default">
+                        <div className="flex items-center gap-2 px-2 py-1 rounded-md cursor-default">
                           <Image className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                           <span className="truncate">{t('uploadPage.folderExampleImg1')}</span>
                         </div>
-                        <div className="flex items-center gap-2 px-2 py-1 hover:bg-white rounded-md transition-colors cursor-default">
+                        <div className="flex items-center gap-2 px-2 py-1 rounded-md cursor-default">
                           <Image className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                           <span className="truncate">{t('uploadPage.folderExampleImg2')}</span>
                         </div>
                       </div>
 
                       {/* Excel File outside folder */}
-                      <div className="flex items-center gap-2 px-2 py-1.5 hover:bg-white rounded-md transition-colors cursor-default mt-2">
+                      <div className="flex items-center gap-2 px-2 py-1.5 rounded-md cursor-default mt-2">
                         <FileSpreadsheet className="w-4 h-4 text-emerald-500 shrink-0" />
                         <span className="truncate">
                           {uploadMode === 'classification'
