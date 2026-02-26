@@ -13,7 +13,7 @@ src/
 │   ├── WSIViewer.tsx        # OpenSeadragon wrapper
 │   ├── PageHeader.tsx       # Page header component
 │   └── ...
-├── pages/               # Page components (13 pages)
+│   ├── pages/               # Page components (14 pages)
 │   ├── IntroductionPage.tsx      # Product introduction (/)
 │   ├── LoginPage.tsx             # Login welcome page (/login)
 │   ├── AIChatPage.tsx            # AI assistant (/dashboard)
@@ -26,7 +26,9 @@ src/
 │   ├── TaskDetailPage.tsx        # Task details (/task/:task_id)
 │   ├── ResultsViewerPage.tsx     # Results viewer (/results)
 │   ├── ReportGeneratorPage.tsx   # Report generator (/reports)
-│   └── SettingsPage.tsx          # System settings (/settings)
+│   │   ├── ReportGeneratorPage.tsx   # Report generator (/reports)
+│   │   ├── StorageManagementPage.tsx  # Storage management (/storage)
+│   │   └── SettingsPage.tsx          # System settings (/settings)
 ├── contexts/            # React Context
 │   ├── AuthContext.tsx           # Authentication state management
 │   └── BackgroundTaskContext.tsx # Background task management
@@ -46,7 +48,7 @@ src/
 - **WSI Viewer**: OpenSeadragon
 - **State Management**: React Hooks + Context
 
-## Page Routes (13 pages)
+## Page Routes (14 pages)
 
 | Route | Page | Description |
 |-------|------|-------------|
@@ -63,6 +65,7 @@ src/
 | `/register` | UploadPage | Register/upload slide |
 | `/results` | ResultsViewerPage | Results viewer |
 | `/reports` | ReportGeneratorPage | Report generator |
+| `/storage` | StorageManagementPage | Storage management |
 
 > Note: All routes except `/` and `/login` are protected and require authentication.
 

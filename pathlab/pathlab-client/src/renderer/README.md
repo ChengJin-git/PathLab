@@ -60,7 +60,7 @@ pathlab/pathlab-client/src/renderer/
 │   │   ├── WSIViewer.tsx    # OpenSeadragon wrapper component
 │   │   ├── PageHeader.tsx   # Page header component
 │   │   └── ...
-│   ├── pages/               # Route-level page components (13 pages)
+│   ├── pages/               # Route-level page components (14 pages)
 │   ├── contexts/            # React Context
 │   │   ├── AuthContext.tsx           # Authentication state
 │   │   └── BackgroundTaskContext.tsx # Background task management

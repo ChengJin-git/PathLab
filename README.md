@@ -32,10 +32,10 @@ PathLab 采用统一代码库，支持两种运行模式：
 | WSI 阅片器 | ✅ | 基于 OpenSeadragon 的多层级 WSI 可视化 |
 | AI Chat 智能助手 | ✅ | 流式 LLM 对话，自动提取任务参数 (PathLab Agent) |
 | WSI 上传与管理 | ✅ | 支持批量 CSV 导入、元数据管理（患者信息、生存分析字段）|
-| 训练任务系统 | ✅ | 17 种特征提取器 + 8 种 MIL 聚合器，特征缓存复用 |
-| 推理分析系统 | ✅ | WSI 分类、注意力热图可视化、外部验证 |
+| 训练任务系统 | ✅ | 19 种特征提取器 + 8 种 MIL 聚合器，特征缓存复用 |
+| WSI 分类、注意力热图可视化、外部验证、分割分析 |
 | 模型管理 | ✅ | 训练模型保存、加载、默认模型切换 |
-| PostgreSQL 数据库 | ✅ | 17 个表，Repository 模式，asyncpg 异步驱动 |
+| PostgreSQL 数据库 | ✅ | 18 个表 (16 应用表 + 2 FastAPI-Users 表)，Repository 模式，asyncpg 异步驱动 |
 | Redis 缓存层 | ✅ | 训练日志 (Streams)、任务进度 (KV)、分析状态 (Hash)，异步非阻塞 |
 | 存储管理系统 | ✅ | 文件生命周期管理、级联删除、孤立文件检测 |
 | 生存分析 | ✅ | WSI-level survival analysis (lifelines) |
@@ -56,11 +56,11 @@ pathlab/
     │
     └── server/               # Python 后端 (FastAPI)
         ├── main.py           # 统一入口
-        ├── gateway/          # API 网关 (26 个路由模块)
+        ├── gateway/          # API 网关 (30 个路由模块)
         └── backend/          # 核心服务
             ├── ai/           # AI 推理与训练
             ├── preprocessing/# WSI 预处理
-            ├── database/     # PostgreSQL ORM (17 个表)
+            ├── database/     # PostgreSQL ORM (18 个表)
             └── storage/      # 文件存储管理
 ```
 
@@ -81,7 +81,7 @@ pathlab/
 
 ## 支持的 AI 模型
 
-### 特征提取器 (17 种)
+### 特征提取器 (19 种)
 
 | 模型 | ID | 维度 | 来源 |
 |------|-----|------|------|
@@ -102,6 +102,8 @@ pathlab/
 | OpenMidnight | openmidnight | 1536 | SophontAI |
 | mSTAR | mSTAR | 1024 | Smartlab |
 | GPFM | GPFM | 1024 | Smartlab |
+| SmartCCS | smartccs | 1024 | Smartlab |
+| SmartCyto | smartcyto | 768 | Smartlab |
 
 ### 聚合器 (8 种)
 
@@ -118,7 +120,7 @@ pathlab/
 
 ---
 
-## 页面路由 (13 页)
+## 页面路由 (14 页)
 
 | 路由 | 页面 | 说明 |
 |------|------|------|
@@ -134,11 +136,12 @@ pathlab/
 | `/results` | ResultsViewerPage | 结果查看器 |
 | `/reports` | ReportGeneratorPage | 报告生成器 |
 | `/tools` | ToolsPage | 实用工具集 |
+| `/storage` | StorageManagementPage | 存储管理 |
 | `/settings` | SettingsPage | 系统设置 |
 
 ---
 
-## Gateway 路由模块 (28 个)
+| Gateway 路由模块 (30 个)
 
 | 模块 | 路由前缀 | 功能 |
 |------|---------|------|
@@ -169,10 +172,12 @@ pathlab/
 | analysis_metrics | `/analysis/metrics` | 分析指标 |
 | analysis_state | `/analysis/state` | 分析状态 |
 | analysis_helpers | (内部) | 分析辅助函数 |
+| annotation | `/annotation` | 标注管理 |
+| segmentation_analysis | `/analysis/segmentation` | 分割分析 |
 
 ---
 
-## 数据库表 (17 个)
+## 数据库表 (18 个)
 
 | 表名 | 用途 |
 |------|------|
@@ -193,6 +198,7 @@ pathlab/
 | `trained_models` | 训练生成的模型检查点 |
 | `training_logs` | 训练日志（运行时通过 Redis Streams 读写，SSE 流式）|
 | `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
+| `annotation_drafts` | 标注草稿 |
 
 ---
 

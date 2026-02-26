@@ -11,7 +11,7 @@ PathLab 的 Python 后端服务，提供 WSI 处理、AI 推理和 API 网关功
 
 ## 核心特性
 
-- **零配置**: PostgreSQL 数据库 (17 表)，asyncpg 异步驱动
+- **零配置**: PostgreSQL 数据库 (18 表)，asyncpg 异步驱动
 - **Redis 缓存**: 训练日志 (Streams)、任务进度 (KV)、分析状态 (Hash)，异步非阻塞
 - **动态端口**: 自动寻找可用端口，避免端口冲突
 - **单进程架构**: 统一入口 `main.py`，简化部署
@@ -27,13 +27,13 @@ server/
 │   ├── main.py           # Gateway FastAPI 应用
 │   ├── task_queue.py     # GPU 任务队列管理器
 │   ├── models.py         # Pydantic 请求/响应模型
-│   ├── routes/           # 模块化路由 (28 个模块)
+│   ├── routes/           # 模块化路由 (30 个模块)
 │   │   ├── auth.py           # 认证 (FastAPI-Users)
 │   │   ├── wsi.py            # WSI CRUD + 数据集
 │   │   ├── wsi_upload.py     # WSI 上传 (文件/路径/CSV)
 │   │   ├── ai_tasks.py       # AI 推理任务 + 提取器列表
 │   │   ├── training.py       # 训练任务 (SSE 日志流)
-│   │   ├── results.py        # 结果查询 + 外部验证
+    │   │   ├── results.py        # 结果查询 + 外部验证 + 分割分析
 │   │   ├── models.py         # 模型管理
 │   │   ├── chat.py           # AI Chat (SSE 流式)
 │   │   ├── chat_pdf.py       # PDF 文档对话 (RAG)
@@ -44,7 +44,7 @@ server/
 │   │   ├── asr.py            # 语音识别 (DashScope)
 │   │   ├── stats.py          # 系统统计
 │   │   ├── settings.py       # 全局设置
-│   │   └── gpu.py            # GPU 信息
+    │   │   ├── annotation.py     # 标注管理
 │   └── dependencies.py   # 依赖注入
 │
 └── backend/              # 核心后端服务
@@ -52,9 +52,13 @@ server/
     │   ├── main.py           # AI FastAPI 应用
     │   ├── routes/           # 训练/推理路由
     │   ├── tasks/            # 任务类型
+    │   │   │   ├── wsi_classification/   # WSI 分类 (MIL)
+    │   │   │   ├── patch_classification/ # Patch 分类
+    │   │   │   ├── patch_segmentation/  # Patch 分割
+    │   │   │   └── wsi_survival/        # 生存分析
     │   │   ├── wsi_classification/   # WSI 分类 (MIL)
     │   │   └── patch_classification/ # Patch 分类
-    │   ├── extractors/       # 17 种特征提取器
+    │   ├── extractors/       # 19 种特征提取器
     │   ├── aggregators/      # 8 种聚合器 (ABMIL, MeanMIL, MaxMIL, DSMIL, DTFDMIL, CLAM, TransMIL)
     │   ├── classifiers/      # 分类器
     │   └── utils/            # CAM 工具 (Grad-CAM, Attention)
@@ -63,7 +67,7 @@ server/
     │   └── tiling.py         # WSI 切片、坐标提取
     ├── database/         # PostgreSQL ORM
     │   ├── database.py       # 异步连接管理 (asyncpg)
-    │   ├── models.py         # 数据模型 (17 个表)
+    │   ├── models.py         # 数据模型 (18 个表)
     │   └── repositories/     # 数据访问层 (Repository 模式，模块化目录)
     ├── storage/          # 文件存储管理
     │   └── manager.py        # 存储管理器 (级联删除)
@@ -76,7 +80,7 @@ server/
         └── logger.py         # 日志工具
 ```
 
-## 数据库模型 (17 个表)
+## 数据库模型 (18 个表)
 
 | 表名 | 用途 |
 |------|------|
@@ -97,6 +101,7 @@ server/
 | `trained_models` | 训练生成的模型信息 |
 | `training_logs` | 训练日志（运行时通过 Redis Streams 读写，SSE 流式） |
 | `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
+| `annotation_drafts` | 标注草稿 |
 
 ## GPU 任务队列
 

@@ -13,7 +13,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 - **请求路由**: 转发请求到 Preprocessing/AI 服务
 - **数据聚合**: 合并多服务响应
-- **元数据管理**: WSI/Dataset CRUD（PostgreSQL，17 表）
+- **元数据管理**: WSI/Dataset CRUD（PostgreSQL，18 表）
 - **用户认证**: FastAPI-Users + JWT，本地邮箱密码登录，客户端 SHA256 哈希
 - **AI 聊天**: OpenRouter LLM 集成，对话持久化
 - **训练管理**: 训练任务生命周期，SSE 实时日志

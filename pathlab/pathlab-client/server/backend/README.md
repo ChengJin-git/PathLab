@@ -21,7 +21,7 @@
 │  └──────────────┘  └──────────────────┘  └──────────────┘   │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │       PostgreSQL Database (asyncpg, 17 tables)       │   │
+│  │       PostgreSQL Database (asyncpg, 18 tables)       │
 │  └──────────────────────────────────────────────────────┘   │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -43,7 +43,7 @@
 - **ORM**: SQLAlchemy 2.0+
 - **WSI 处理**: ASlide, OpenSlide
 - **AI 框架**: PyTorch 2.x
-- **特征提取**: 17 种预训练模型
+- **特征提取**: 19 种预训练模型
 - **聚合器**: 8 种 MIL 聚合方法 (ABMIL, MeanMIL, MaxMIL, DSMIL, DTFDMIL, CLAM-SB, CLAM-MB, TransMIL)
 
 ---
@@ -91,7 +91,7 @@
 | GET | `/api/ai/training/{task_id}/logs` | 获取训练日志（SSE） |
 | POST | `/api/ai/training/{task_id}/stop` | 停止训练 |
 
-### 支持的特征提取器（17 种）
+### 支持的特征提取器（19 种）
 
 | 模型 | ID | 输出维度 | 来源 |
 |------|-----|---------|------|
@@ -112,6 +112,8 @@
 | mSTAR | `mSTAR` | 1024 | Smartlab |
 | GPFM | `GPFM` | 1024 | Smartlab |
 | PathoCLIP | `patho_clip` | 512 | PathLAIA |
+| SmartCCS | `smartccs` | 1024 | Smartlab |
+| SmartCyto | `smartcyto` | 768 | Smartlab |
 
 ### 支持的聚合器（8 种）
 
@@ -129,6 +131,8 @@
 ### 任务类型
 
 - **WSI 分类**: 特征提取 → 聚合 → 滑片级预测
+- **Patch 分类**: 特征提取 → 聚合 → Patch 级预测
+- **Patch 分割**: 特征提取 → 分割头 → Patch 级分割掩膜
 - **生存分析**: 特征提取 → 聚合 → 风险评分 + 生存曲线
 - **外部验证**: 使用已训练模型对新数据集进行验证
 
@@ -136,7 +140,7 @@
 
 ## 数据库架构
 
-PostgreSQL 数据库包含 17 个表（自动创建）：
+PostgreSQL 数据库包含 18 个表（自动创建）：
 
 | 表名 | 用途 |
 |------|------|
@@ -157,6 +161,7 @@ PostgreSQL 数据库包含 17 个表（自动创建）：
 | `trained_models` | 模型检查点元数据 |
 | `training_logs` | 训练日志条目（运行时通过 Redis Streams 读写，SSE 流式） |
 | `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
+| `annotation_drafts` | 标注草稿 |
 
 ### 数据库连接
 

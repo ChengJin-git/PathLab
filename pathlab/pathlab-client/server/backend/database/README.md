@@ -38,7 +38,7 @@ DATABASE_URL=postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab
 
 ## Database Schema
 
-### Tables (17 total)
+### Tables (18 total)
 
 1. **users**: User accounts (FastAPI-Users with RBAC roles)
 2. **accesstoken**: Access tokens for JWT authentication (FastAPI-Users)
@@ -62,6 +62,7 @@ DATABASE_URL=postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab
 15. **trained_models**: User-trained model metadata
 16. **training_logs**: Training log entries (runtime reads/writes via Redis Streams, SSE streaming)
 17. **storage_tasks**: Storage operation task tracking (batch import/delete)
+18. **annotation_drafts**: Annotation drafts for WSI
 
 See `models.py` for detailed schema definitions.
 
