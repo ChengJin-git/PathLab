@@ -960,8 +960,8 @@ export default function RegisterPage() {
                   {uploadMode === 'classification' ? t('uploadPage.dropHintClassification') : uploadMode === 'survival' ? t('uploadPage.dropHintSurvival') : t('uploadPage.dropHintSegmentation')}
                 </p>
                 {uploadMode === 'segmentation' && (
-                  <div className="mb-6 sm:mb-10 rounded-xl bg-white p-4 text-left w-full max-w-sm shadow-sm transition-all">
-                    <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-800 border-b border-slate-100 pb-2">
+                  <div className="mb-6 sm:mb-10 text-left w-full max-w-sm transition-all px-2 sm:px-4">
+                    <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-800">
                       <FolderOpen className="w-4 h-4 text-amber-500" />
                       {t('uploadPage.folderStructureTitle')}
                     </div>
@@ -993,8 +993,8 @@ export default function RegisterPage() {
                         </div>
                       </div>
                     </div>
-                    <div className="mt-3 pt-2 text-[11px] text-slate-500 bg-slate-50 p-2 rounded-lg flex items-start gap-2">
-                      <div className="bg-blue-100 p-1 rounded-full shrink-0 mt-0.5">
+                    <div className="mt-3 pt-2 text-[11px] text-slate-500 bg-slate-50 p-2 rounded-lg flex items-center gap-2">
+                      <div className="bg-blue-100 p-1 rounded-full shrink-0">
                         <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
                       </div>
                       <p className="leading-tight">{t('uploadPage.folderStructureNote')}</p>
@@ -1003,8 +1003,8 @@ export default function RegisterPage() {
                 )}
 
                 {(uploadMode === 'classification' || uploadMode === 'survival') && (
-                  <div className="mb-6 sm:mb-10 rounded-xl bg-white p-4 text-left w-full max-w-sm shadow-sm transition-all">
-                    <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-800 border-b border-slate-100 pb-2">
+                  <div className="mb-6 sm:mb-10 text-left w-full max-w-sm transition-all px-2 sm:px-4">
+                    <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-800">
                       <FolderOpen className="w-4 h-4 text-amber-500" />
                       {t('uploadPage.folderStructureTitle')}
                     </div>
