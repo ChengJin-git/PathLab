@@ -325,12 +325,12 @@ export function ModelConfigStep({
 
             {/* Aggregation Method (WSI-level only) */}
             {!isSegmentation && dataLevel === 'wsi' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 max-h-[340px] overflow-y-auto custom-scrollbar pr-1">
                 {AGGREGATORS.map((agg) => (
                   <div
                     key={agg.id}
                     onClick={() => setAggregator(agg.id)}
-                    className={`group relative p-3 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
+                    className={`group relative p-2.5 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
                       aggregator === agg.id ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
                     }`}
                   >
@@ -338,7 +338,7 @@ export function ModelConfigStep({
                       <div className="font-bold text-gray-900 text-xs sm:text-sm">{agg.name}</div>
                       {aggregator === agg.id && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600" />}
                     </div>
-                    <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed line-clamp-2">{agg.detail}</div>
+                    <div className="text-[10px] sm:text-xs text-gray-500 mt-0.5 leading-snug line-clamp-1">{agg.detail}</div>
                   </div>
                 ))}
               </div>
@@ -346,24 +346,29 @@ export function ModelConfigStep({
 
             {/* Feature Extractor (Patch-level classification) */}
             {!isSegmentation && dataLevel === 'patch' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 pb-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 max-h-[300px] overflow-y-auto custom-scrollbar pr-1">
                 {filteredExtractors.map((extractor) => (
                   <div
                     key={extractor.id}
                     onClick={() => setFeatureExtractor(extractor.id)}
-                    className={`p-3 sm:p-4 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
+                    className={`p-2.5 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
                       featureExtractor === extractor.id ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
                     }`}
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1 min-w-0">
                         <div className="font-bold text-gray-900 text-xs sm:text-sm truncate">{extractor.name}</div>
-                        <div className="text-[10px] sm:text-xs text-gray-500 mt-1 line-clamp-1">{extractor.description}</div>
+                        <div className="text-[10px] sm:text-xs text-gray-500 mt-0.5 line-clamp-1">{extractor.description}</div>
                       </div>
                       {featureExtractor === extractor.id && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600 flex-shrink-0" />}
                     </div>
                   </div>
                 ))}
+                {filteredExtractors.length === 0 && (
+                  <div className="col-span-2 text-center text-sm text-gray-400 py-6">
+                    {t('training.modelConfig.noResults', 'No matching extractors')}
+                  </div>
+                )}
               </div>
             )}
 
