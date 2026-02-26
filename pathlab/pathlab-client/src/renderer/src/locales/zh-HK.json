@@ -1598,6 +1598,9 @@
       "patience": "耐心值",
       "randomSeed": "隨機種子",
       "autoBalance": "自動平衡類別權重",
+      "searchBackbone": "搜索骨幹網絡...",
+      "allGroups": "全部",
+      "noBackboneResults": "未找到匹配的骨幹網絡",
       "back": "返回",
       "nextReview": "下一步：審核並提交"
     },

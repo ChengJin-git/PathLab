@@ -36,6 +36,7 @@ from backend.auth.dependencies import require_pathologist_or_admin, check_data_o
 from .analysis_state import get_analysis_state, AnalysisRequest
 from .analysis_helpers import _get_random_seed_from_task, _resolve_task_dataset_id
 from .classification_analysis import _run_classification_analysis
+from .segmentation_analysis import _run_segmentation_analysis
 from .survival_analysis import _run_survival_analysis
 from .external_validation_analysis import _run_external_validation_analysis
 from .analysis_metrics import (
@@ -723,11 +724,12 @@ async def _run_inference_if_needed(
     # Route to appropriate inference handler based on data_type and task_type
     if data_type == "patch":
         if task_type in ("segmentation", "patch_segmentation"):
-            # Patch segmentation inference not yet implemented
-            raise ValueError(
-                "Patch segmentation inference is not yet supported. "
-                "Analysis of segmentation results from training metrics is available."
-            )
+            # Segmentation analysis uses training metrics (IoU/Dice curves) from metrics.json
+            # rather than per-WSI inference results. Skip inference entirely.
+            logger.info(f"Skipping GPU inference for segmentation task {task_id} — analysis uses training metrics")
+            if progress_callback:
+                await progress_callback(1.0)
+            return True
         await _run_inference_patch_classification(task, wsi_ids, resources, db, progress_callback, assigned_device=assigned_device)
     elif task_type in ("wsi_survival", "survival"):
         await _run_inference_wsi_survival(task, wsi_ids, resources, db, progress_callback, assigned_device=assigned_device)
@@ -1891,11 +1893,14 @@ async def start_external_validation(
     model_is_survival = is_survival_task(model_task_type)
     target_is_survival = is_survival_task(target_task_type)
     model_is_segmentation = is_segmentation_task(model_task_type)
+    target_is_segmentation = is_segmentation_task(target_task_type)
 
-    if model_is_segmentation:
+    if model_is_segmentation and not target_is_segmentation:
         raise HTTPException(
             status_code=400,
-            detail="External validation for segmentation models is not yet supported."
+            detail=f"Task type mismatch: Segmentation model cannot validate non-segmentation data. "
+                   f"Model type: '{model_task_type}', Target dataset type: '{target_task_type}'. "
+                   f"Please select a segmentation dataset."
         )
 
     if model_is_classification and not target_is_classification:
@@ -1978,9 +1983,13 @@ async def start_external_validation(
 
     await asyncio.to_thread(_check_existing_results)
 
-    # Prepare analysis options
-    analysis_metrics = req.metrics or ["accuracy", "precision", "recall", "f1", "auc"]
-    analysis_charts = req.charts or ["confusion_matrix", "roc_curve"]
+    # Prepare analysis options (use segmentation-specific defaults if needed)
+    if model_is_segmentation:
+        analysis_metrics = req.metrics or ["iou", "dice", "accuracy", "precision", "recall"]
+        analysis_charts = req.charts or ["per_class_iou", "per_class_dice"]
+    else:
+        analysis_metrics = req.metrics or ["accuracy", "precision", "recall", "f1", "auc"]
+        analysis_charts = req.charts or ["confusion_matrix", "roc_curve"]
     bootstrap_ci_metrics = analysis_metrics if req.compute_bootstrap_ci else []
 
     # If we have existing results for ALL WSIs, skip GPU inference and run analysis directly.
@@ -2236,6 +2245,323 @@ async def get_validation_progress(
         "error": task.error_message,
         "results_count": model_config.get("results_count"),
     }
+
+
+async def _run_external_validation_patch_segmentation(
+    task_id: str,
+    model_task_id: str,
+    model_id: str,
+    dataset_id: str,
+    wsi_ids: List[str],
+    assigned_device: str,
+    logger_manager,
+    update_task_progress,
+):
+    """Run external validation for patch segmentation models.
+
+    Loads the segmentation model from checkpoint, discovers COCO annotations
+    for the target dataset, runs inference, computes segmentation metrics
+    (IoU, Dice, Accuracy, etc.), and saves per-image results.
+    """
+    import torch
+    import numpy as np
+    import segmentation_models_pytorch as smp
+    from backend.ai.segmentors import Segmentor
+    from backend.ai.utils.segmentation_dataset import SegmentationDataset, get_transforms
+    from backend.database.repositories import WSIRepository, TrainedModelRepository
+    from backend.database.database import safe_session
+    from backend.common.progress_store import clear_progress
+
+    uploads_dir = Config.get_uploads_dir()
+    device = assigned_device if assigned_device else ("cuda" if torch.cuda.is_available() else "cpu")
+
+    try:
+        # 1. Load model checkpoint and rebuild model
+        async with safe_session() as db:
+            trained_model = await TrainedModelRepository.get_by_id(db, model_id)
+            if not trained_model:
+                raise ValueError(f"Trained model not found: {model_id}")
+            checkpoint_path = trained_model.model_path
+
+        async with logger_manager.session() as (tl, _db):
+            await tl.info(f"Patch segmentation: loading model from {checkpoint_path}")
+
+        def _load_model():
+            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+            config = checkpoint.get("config", {})
+            architecture = config.get("architecture", "unet")
+            backbone = config.get("backbone", "resnet50")
+            dataset_cfg = config.get("dataset", {})
+            in_channels = dataset_cfg.get("channels", 3)
+            num_classes = dataset_cfg.get("classes", 1)
+
+            segmentor = Segmentor(
+                architecture=architecture,
+                encoder_name=backbone,
+                in_channels=in_channels,
+                classes=num_classes,
+            )
+            model = segmentor.build_model()
+            model.load_state_dict(checkpoint["model_state_dict"])
+            model = model.to(device)
+            model.eval()
+
+            norm_mean, norm_std = segmentor.get_normalization_params()
+            return model, config, norm_mean, norm_std, num_classes
+
+        model, model_config, norm_mean, norm_std, num_classes = await asyncio.to_thread(_load_model)
+
+        await update_task_progress(TaskStatus.PATCHING, 10)
+
+        # 2. Get image paths and discover annotations from target dataset
+        image_paths = {}
+        task_user_id = None
+        async with safe_session() as db:
+            for wsi_id in wsi_ids:
+                wsi = await WSIRepository.get_by_id(db, wsi_id)
+                if wsi and wsi.wsi_path:
+                    image_paths[wsi_id] = wsi.wsi_path
+
+            task_record = await TrainingTaskRepository.get_by_id(db, task_id)
+            task_user_id = str(task_record.user_id) if task_record and task_record.user_id else None
+
+        if not image_paths:
+            raise ValueError("No image paths found for target WSIs")
+
+        # Discover COCO annotation files by scanning image directories
+        def _discover_annotations():
+            """Search for COCO-format JSON annotation files near image directories."""
+            from pathlib import Path as _Path
+            image_dirs = set()
+            for img_path in image_paths.values():
+                image_dirs.add(str(_Path(img_path).parent))
+
+            for img_dir in image_dirs:
+                dir_path = _Path(img_dir)
+                # Search in the image directory and its parent
+                search_dirs = [dir_path, dir_path.parent]
+                for search_dir in search_dirs:
+                    if not search_dir.exists():
+                        continue
+                    for json_file in search_dir.glob("*.json"):
+                        try:
+                            with open(json_file, 'r') as f:
+                                data = json.load(f)
+                            # Validate it's a COCO-format annotation file
+                            if "images" in data and "annotations" in data and "categories" in data:
+                                return str(json_file), img_dir
+                        except Exception:
+                            continue
+            return None, None
+
+        annotations_path, annotations_img_dir = await asyncio.to_thread(_discover_annotations)
+
+        has_annotations = annotations_path is not None
+
+        async with logger_manager.session() as (tl, _db):
+            if has_annotations:
+                await tl.info(f"Found COCO annotations: {annotations_path}")
+            else:
+                await tl.info("No COCO annotations found for target dataset — running inference only (no metrics)")
+            await tl.info(f"Running inference on {len(image_paths)} images")
+
+        await update_task_progress(TaskStatus.PATCHING, 20)
+
+        # 3. Build dataset and run inference
+        val_transform = get_transforms("val", normalization_mean=norm_mean, normalization_std=norm_std)
+        ai_results_root = uploads_dir / "ai_results"
+        results_saved = 0
+        total_items = len(image_paths)
+
+        def _run_inference():
+            nonlocal results_saved
+            from pathlib import Path as _Path
+            from torch.cuda.amp import autocast
+            from PIL import Image
+            from torchvision.transforms import v2
+            from torchvision import tv_tensors
+
+            all_results = []
+
+            # If we have annotations, build a SegmentationDataset for ground truth
+            gt_dataset = None
+            gt_filename_map = {}  # filename -> dataset index
+            if has_annotations:
+                try:
+                    gt_dataset = SegmentationDataset(
+                        img_dir=annotations_img_dir,
+                        annotations_path=annotations_path,
+                        transform=val_transform,
+                    )
+                    # Build filename -> index map
+                    for idx, item in enumerate(gt_dataset.image_items):
+                        fname = _Path(item["image"]).name
+                        gt_filename_map[fname] = idx
+                except Exception as e:
+                    logger.warning(f"Failed to load annotation dataset: {e}")
+                    gt_dataset = None
+
+            with torch.no_grad():
+                for idx, (wsi_id, img_path) in enumerate(image_paths.items()):
+                    try:
+                        img = Image.open(img_path).convert("RGB")
+                        original_size = img.size  # (W, H)
+                        img_filename = _Path(img_path).name
+
+                        # Prepare image tensor
+                        img_tensor = v2.ToImage()(img)
+                        img_tensor = v2.ToDtype(torch.float32, scale=True)(img_tensor)
+                        img_tensor = v2.Resize((1024, 1024), antialias=True)(img_tensor)
+                        img_tensor = v2.Normalize(
+                            mean=norm_mean or [0.485, 0.456, 0.406],
+                            std=norm_std or [0.229, 0.224, 0.225]
+                        )(img_tensor)
+                        img_tensor = img_tensor.unsqueeze(0).to(device)
+
+                        # Run inference
+                        outputs = model(img_tensor)
+                        preds_prob = torch.sigmoid(outputs)
+                        preds_binary = (preds_prob > 0.5).float()
+
+                        # Compute per-image metrics if ground truth is available
+                        per_image_metrics = {}
+                        has_gt = False
+                        if gt_dataset is not None and img_filename in gt_filename_map:
+                            gt_idx = gt_filename_map[img_filename]
+                            _, gt_mask = gt_dataset[gt_idx]
+                            gt_mask = gt_mask.unsqueeze(0).to(device) if not isinstance(gt_mask, torch.Tensor) else gt_mask.unsqueeze(0).to(device)
+                            has_gt = True
+
+                            # Compute metrics using SMP
+                            tp, fp, fn, tn = smp.metrics.get_stats(
+                                preds_binary.long().cpu(), gt_mask.long().cpu(),
+                                mode='multilabel', threshold=None
+                            )
+                            iou_per_class = smp.metrics.iou_score(tp, fp, fn, tn, reduction='none')
+                            dice_per_class = smp.metrics.f1_score(tp, fp, fn, tn, reduction='none')
+                            accuracy = smp.metrics.accuracy(tp, fp, fn, tn, reduction='micro')
+                            precision = smp.metrics.precision(tp, fp, fn, tn, reduction='micro')
+                            recall = smp.metrics.recall(tp, fp, fn, tn, reduction='micro')
+
+                            # Flatten (batch, num_classes) -> (num_classes,)
+                            iou_flat = iou_per_class.squeeze(0) if iou_per_class.dim() > 1 else iou_per_class
+                            dice_flat = dice_per_class.squeeze(0) if dice_per_class.dim() > 1 else dice_per_class
+
+                            per_image_metrics = {
+                                "iou": iou_flat.mean().item(),
+                                "iou_per_class": iou_flat.tolist() if iou_flat.dim() > 0 else [iou_flat.item()],
+                                "dice": dice_flat.mean().item(),
+                                "dice_per_class": dice_flat.tolist() if dice_flat.dim() > 0 else [dice_flat.item()],
+                                "accuracy": accuracy.item(),
+                                "precision": precision.item(),
+                                "recall": recall.item(),
+                            }
+
+                        # Save prediction mask
+                        wsi_result_dir = ai_results_root / wsi_id
+                        wsi_result_dir.mkdir(parents=True, exist_ok=True)
+
+                        pred_mask = preds_binary.squeeze(0).cpu().numpy()
+                        mask_file = wsi_result_dir / f"extval_{task_id}_pred_mask.npy"
+                        np.save(mask_file, pred_mask)
+
+                        # Save result JSON
+                        result_data = {
+                            "wsi_id": wsi_id,
+                            "task_id": model_task_id,
+                            "validation_source": dataset_id,
+                            "validation_task_id": task_id,
+                            "task_type": "patch_segmentation",
+                            "aggregation_level": "file",
+                            "num_classes": num_classes,
+                            "image_size": list(original_size),
+                            "pred_mask_file": str(mask_file),
+                            "has_ground_truth": has_gt,
+                            "metrics": per_image_metrics,
+                        }
+
+                        result_file = wsi_result_dir / f"extval_{task_id}_result.json"
+                        with open(result_file, 'w', encoding='utf-8') as f:
+                            json.dump(result_data, f, ensure_ascii=False, indent=2)
+
+                        all_results.append({
+                            "wsi_id": wsi_id,
+                            "metrics": per_image_metrics,
+                            "has_ground_truth": has_gt,
+                            "pred_mask_file": str(mask_file),
+                            "result_file": str(result_file),
+                        })
+                        results_saved += 1
+
+                    except Exception as e:
+                        logger.warning(f"Failed to process {wsi_id}: {e}")
+                        continue
+
+            return all_results
+
+        all_results = await asyncio.to_thread(_run_inference)
+
+        # 4. Save to database
+        async with safe_session() as db:
+            from backend.database.repositories import AIResultRepository
+            for r in all_results:
+                db_result_data = {
+                    "wsi_id": r["wsi_id"],
+                    "task_id": task_id,
+                    "user_id": task_user_id,
+                    "pred": "segmentation",
+                    "probs": r["metrics"] if r["metrics"] else {},
+                    "extra_metadata": {
+                        "validation_type": "external",
+                        "model_task_id": model_task_id,
+                        "dataset_id": dataset_id,
+                        "aggregation_level": "file",
+                        "task_type": "patch_segmentation",
+                        "has_ground_truth": r["has_ground_truth"],
+                        "metrics": r["metrics"],
+                        "pred_mask_file": r["pred_mask_file"],
+                        "result_file": r["result_file"],
+                    }
+                }
+                await AIResultRepository.create(db, db_result_data)
+            await db.commit()
+
+        await clear_progress(task_id)
+        await update_task_progress(TaskStatus.COMPLETED, 100, results_saved, results_saved)
+
+        async with logger_manager.session() as (tl, _db):
+            await tl.info(f"Patch segmentation external validation completed: {results_saved}/{total_items} images processed")
+
+        # Auto-trigger analysis
+        await _auto_trigger_external_validation_analysis(
+            task_id=task_id,
+            model_task_id=model_task_id,
+            model_id=model_id,
+            dataset_id=dataset_id,
+            metrics=["iou", "dice", "accuracy", "precision", "recall"],
+            charts=["per_class_iou", "per_class_dice"],
+        )
+
+    except Exception as e:
+        import traceback
+        logger.error(f"Patch segmentation external validation {task_id} failed: {e}\n{traceback.format_exc()}")
+        try:
+            await clear_progress(task_id)
+            async with logger_manager.session() as (tl, _db):
+                await tl.error(f"Patch segmentation external validation failed: {e}")
+        except Exception:
+            pass
+        await update_task_progress(TaskStatus.FAILED, 0, error_msg=str(e))
+    finally:
+        try:
+            import gc
+            gc.collect()
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+        except Exception as cleanup_err:
+            logger.warning(f"Patch seg ext-val {task_id}: VRAM cleanup failed: {cleanup_err}")
 
 
 async def _run_external_validation_patch_classification(
@@ -2627,13 +2953,17 @@ async def _run_external_validation(
         if model_data_type == "patch":
             is_patch_segmentation = model_task_type in ("patch_segmentation", "segmentation")
             if is_patch_segmentation:
-                # TODO: Patch segmentation external validation not yet implemented.
-                # The patch segmentation training module does not register TrainedModel
-                # in the database, so this code path should not be reachable in practice.
-                raise NotImplementedError(
-                    "Patch segmentation external validation is not yet supported. "
-                    "This module is still under development."
+                await _run_external_validation_patch_segmentation(
+                    task_id=task_id,
+                    model_task_id=model_task_id,
+                    model_id=model_id,
+                    dataset_id=dataset_id,
+                    wsi_ids=wsi_ids,
+                    assigned_device=assigned_device,
+                    logger_manager=logger_manager,
+                    update_task_progress=update_task_progress,
                 )
+                return
 
             # Patch classification external validation
             await _run_external_validation_patch_classification(
@@ -4551,7 +4881,10 @@ async def run_analysis_pipeline(
             if is_kfold and has_ci_calculation and task_type_str != "external_validation":
                 has_ci_calculation = False  # K-Fold doesn't use Bootstrap CI (internal analysis only)
 
-            if task_type_str != "external_validation":
+            if task_type_str in ("segmentation", "patch_segmentation"):
+                # Segmentation analysis uses training metrics, not per-WSI inference
+                needs_gpu_inference = False
+            elif task_type_str != "external_validation":
                 # Check if AI results exist
                 resources = await _check_task_resources(task.task_id, db)
                 needs_gpu_inference = not resources["has_ai_results"]
@@ -4633,11 +4966,8 @@ async def run_analysis_pipeline(
                         task, request, db, progress_callback=update_progress, progress_config=progress_config, submitted_by=submitted_by
                     )
                 case "segmentation" | "patch_segmentation":
-                    # Segmentation analysis uses training metrics (IoU/Dice curves)
-                    # rather than inference-based analysis. Full support TBD.
-                    raise NotImplementedError(
-                        "Segmentation analysis pipeline is not yet implemented. "
-                        "Training metrics (IoU, Dice, loss curves) are available in the training results."
+                    result = await _run_segmentation_analysis(
+                        task, request, db, progress_callback=update_progress, progress_config=progress_config, submitted_by=submitted_by
                     )
                 case _:
                     result = await _run_classification_analysis(

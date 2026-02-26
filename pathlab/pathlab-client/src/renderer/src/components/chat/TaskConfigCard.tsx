@@ -17,6 +17,7 @@ import {
   TRAINING_DEFAULTS,
   SEGMENTATION_ARCHITECTURES,
   SEGMENTATION_BACKBONES,
+  BACKBONE_GROUPS,
   SEGMENTATION_LOSSES,
   SEG_TRAINING_DEFAULTS,
   DEFAULT_SEG_ARCHITECTURE,
@@ -708,8 +709,12 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                   disabled={isFormDisabled}
                   className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${disabledSelectClass}`}
                 >
-                  {SEGMENTATION_BACKBONES.map(bb => (
-                    <option key={bb.id} value={bb.id}>{bb.name}</option>
+                  {BACKBONE_GROUPS.map(group => (
+                    <optgroup key={group} label={group}>
+                      {SEGMENTATION_BACKBONES.filter(bb => bb.group === group).map(bb => (
+                        <option key={bb.id} value={bb.id}>{bb.name}</option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
               </div>

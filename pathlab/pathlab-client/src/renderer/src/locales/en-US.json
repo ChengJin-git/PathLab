@@ -1598,6 +1598,9 @@
       "patience": "Patience",
       "randomSeed": "Random Seed",
       "autoBalance": "Auto-balance class weights",
+      "searchBackbone": "Search backbones...",
+      "allGroups": "All",
+      "noBackboneResults": "No matching backbones found",
       "back": "Back",
       "nextReview": "Next: Review & Submit"
     },

@@ -4,7 +4,7 @@
  * Step 4: Aggregator/feature extractor selection and training parameters.
  */
 
-import React from 'react'
+import React, { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
@@ -20,6 +20,7 @@ import {
   SEGMENTATION_ARCHITECTURES,
   SEGMENTATION_BACKBONES,
   SEGMENTATION_LOSSES,
+  BACKBONE_GROUPS,
 } from '../../constants/training'
 
 export interface ModelConfigStepProps {
@@ -109,6 +110,27 @@ export function ModelConfigStep({
 
   const isSegmentation = taskType === 'segmentation'
 
+  // Backbone search & group filter state
+  const [backboneSearch, setBackboneSearch] = useState('')
+  const [backboneGroup, setBackboneGroup] = useState<string | null>(null)
+
+  const filteredBackbones = useMemo(() => {
+    let list = [...SEGMENTATION_BACKBONES]
+    if (backboneGroup) {
+      list = list.filter((b) => b.group === backboneGroup)
+    }
+    if (backboneSearch.trim()) {
+      const q = backboneSearch.trim().toLowerCase()
+      list = list.filter(
+        (b) =>
+          b.id.toLowerCase().includes(q) ||
+          b.name.toLowerCase().includes(q) ||
+          b.group.toLowerCase().includes(q)
+      )
+    }
+    return list
+  }, [backboneSearch, backboneGroup])
+
   // Toggle a loss function on/off
   const toggleLoss = (lossId: string) => {
     const idx = segLossNames.indexOf(lossId)
@@ -188,13 +210,54 @@ export function ModelConfigStep({
                   </div>
                 </div>
 
-                {/* Backbone Selection */}
+                {/* Backbone Selection with Search + Group Filter */}
                 <div>
-                  <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">
-                    {t('training.modelConfig.backbone')}
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
-                    {SEGMENTATION_BACKBONES.map((bb) => (
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+                    <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest">
+                      {t('training.modelConfig.backbone')}
+                    </label>
+                    <div className="relative w-full sm:w-48">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                      <input
+                        type="text"
+                        placeholder={t('training.modelConfig.searchBackbone')}
+                        className="w-full pl-8 pr-3 py-1.5 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 transition-all bg-white"
+                        value={backboneSearch}
+                        onChange={(e) => setBackboneSearch(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  {/* Group filter pills */}
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    <button
+                      type="button"
+                      onClick={() => setBackboneGroup(null)}
+                      className={`px-2.5 py-1 text-[10px] sm:text-xs rounded-full border transition-all ${
+                        backboneGroup === null
+                          ? 'bg-primary-50 border-primary-300 text-primary-700 font-semibold'
+                          : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+                      }`}
+                    >
+                      {t('training.modelConfig.allGroups')}
+                    </button>
+                    {BACKBONE_GROUPS.map((group) => (
+                      <button
+                        key={group}
+                        type="button"
+                        onClick={() => setBackboneGroup(backboneGroup === group ? null : group)}
+                        className={`px-2.5 py-1 text-[10px] sm:text-xs rounded-full border transition-all ${
+                          backboneGroup === group
+                            ? 'bg-primary-50 border-primary-300 text-primary-700 font-semibold'
+                            : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+                        }`}
+                      >
+                        {group}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Backbone grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 max-h-[300px] overflow-y-auto custom-scrollbar">
+                    {filteredBackbones.map((bb) => (
                       <div
                         key={bb.id}
                         onClick={() => setSegBackbone(bb.id)}
@@ -207,10 +270,18 @@ export function ModelConfigStep({
                             <div className="font-bold text-gray-900 text-xs sm:text-sm">{bb.name}</div>
                             <div className="text-[10px] sm:text-xs text-gray-500 mt-1 line-clamp-1">{bb.description}</div>
                           </div>
-                          {segBackbone === bb.id && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600 flex-shrink-0" />}
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <span className="text-[9px] sm:text-[10px] text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded">{bb.group}</span>
+                            {segBackbone === bb.id && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600" />}
+                          </div>
                         </div>
                       </div>
                     ))}
+                    {filteredBackbones.length === 0 && (
+                      <div className="col-span-2 text-center text-sm text-gray-400 py-6">
+                        {t('training.modelConfig.noBackboneResults')}
+                      </div>
+                    )}
                   </div>
                 </div>
 

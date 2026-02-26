@@ -19,6 +19,7 @@ Cancellation Mechanism:
 from __future__ import annotations
 
 import gc
+import json
 import logging
 import traceback
 from pathlib import Path
@@ -936,6 +937,29 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
             metrics=metrics,
         )
 
+        # Save full training history to metrics.json for analysis module
+        # This follows the same pattern as patch_classification's _save_final_metrics
+        history = results.get("history", {})
+        metrics_data = {
+            "history": {
+                "train_loss": history.get("train_loss", []),
+                "val_loss": history.get("val_loss", []),
+                "train_metrics": sanitize_for_json(history.get("train_metrics", [])),
+                "val_metrics": sanitize_for_json(history.get("val_metrics", [])),
+                "learning_rates": history.get("learning_rates", []),
+            },
+            "best_epoch": results.get("best_epoch"),
+            "best_val_metrics": sanitize_for_json(results.get("best_val_metrics", {})),
+            "test_metrics": sanitize_for_json(results.get("test_metrics")),
+            "config": {
+                "architecture": req.architecture,
+                "backbone": req.backbone,
+                "task_id": req.task_id,
+            },
+        }
+        metrics_json_path = Path(save_dir) / "metrics.json"
+        metrics_json_path.write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
+
         # Phase 3: Save model - short-lived session
         async with scoped_session.session() as (training_logger, db):
             await TrainedModelRepository.create(db, {
@@ -948,7 +972,7 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
                 "classes": [],  # segmentation categories stored in config
                 "feature_extractor": req.backbone,
                 "aggregator": req.architecture,
-                "train_metrics": sanitize_for_json({"loss": results.get("history", {}).get("train_loss", [])}),
+                "train_metrics": sanitize_for_json({"loss": history.get("train_loss", [])}),
                 "val_metrics": sanitize_for_json(results.get("best_val_metrics", {})),
                 "is_default": False,
                 "is_active": True,

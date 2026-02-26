@@ -71,6 +71,8 @@ async def _run_external_validation_analysis(task, request, db, progress_callback
     # Route to appropriate analysis based on task type
     if detected_task_type == "survival":
         return await _run_external_validation_survival_analysis(task, request, db, model_config, progress_callback, progress_config, submitted_by)
+    elif detected_task_type == "patch_segmentation":
+        return await _run_external_validation_segmentation_analysis(task, request, db, model_config, progress_callback, progress_config, submitted_by)
     else:
         return await _run_external_validation_classification_analysis(task, request, db, model_config, progress_callback, progress_config, submitted_by)
 
@@ -351,6 +353,190 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
         "summary": summary,
         "chart_paths": chart_paths
     }
+
+
+async def _run_external_validation_segmentation_analysis(task, request, db, model_config, progress_callback=None, progress_config=None, submitted_by=None):
+    """Run segmentation analysis for external validation task.
+
+    Reads per-image segmentation results from extval_{task_id}_result.json files,
+    aggregates metrics (IoU, Dice, Accuracy, Precision, Recall), and generates
+    per-class bar charts.
+
+    Args:
+        progress_callback: Optional async function to report progress (0-100).
+        progress_config: Optional dict with 'start', 'ci_start', 'ci_end', 'has_ci' for dynamic progress ranges.
+    """
+    import numpy as np
+    from .analysis_helpers import _get_random_seed_from_task
+
+    if progress_config is None:
+        progress_config = {"start": 20, "ci_start": 50, "ci_end": 90, "has_ci": False}
+    p_start = progress_config.get("start", 20)
+
+    task_id = task.task_id
+    dataset_id = model_config.get("dataset_id")
+    model_task_id = model_config.get("model_task_id")
+
+    ai_results_dir = Config.get_uploads_dir() / "ai_results"
+
+    def _sync_load_segmentation_results():
+        _image_results = []
+        _num_classes = None
+
+        if ai_results_dir.exists():
+            for wsi_dir in ai_results_dir.iterdir():
+                if wsi_dir.is_dir():
+                    result_file = wsi_dir / f"extval_{task_id}_result.json"
+                    if result_file.exists():
+                        try:
+                            with open(result_file, 'r') as f:
+                                data = json.load(f)
+                            if data.get("validation_task_id") == task_id and data.get("task_type") == "patch_segmentation":
+                                _image_results.append(data)
+                                if _num_classes is None:
+                                    _num_classes = data.get("num_classes", 1)
+                        except Exception as e:
+                            logger.warning(f"Failed to load segmentation result from {result_file}: {e}")
+                            continue
+
+        return _image_results, _num_classes
+
+    image_results, num_classes = await asyncio.to_thread(_sync_load_segmentation_results)
+
+    if not image_results:
+        raise HTTPException(status_code=400, detail="No segmentation results found for this external validation task")
+
+    if progress_callback:
+        await progress_callback(p_start + 5)
+
+    # Aggregate metrics across all images
+    has_metrics = any(r.get("has_ground_truth") and r.get("metrics") for r in image_results)
+
+    metrics = {}
+    per_class_data = {}
+
+    if has_metrics:
+        metric_keys = ["iou", "dice", "accuracy", "precision", "recall"]
+        results_with_gt = [r for r in image_results if r.get("has_ground_truth") and r.get("metrics")]
+
+        for key in metric_keys:
+            values = [r["metrics"].get(key) for r in results_with_gt if r["metrics"].get(key) is not None]
+            if values:
+                metrics[key] = {
+                    "mean": float(np.mean(values)),
+                    "std": float(np.std(values)),
+                    "min": float(np.min(values)),
+                    "max": float(np.max(values)),
+                    "median": float(np.median(values)),
+                    "count": len(values),
+                }
+
+        # Aggregate per-class IoU and Dice
+        for class_key in ["iou_per_class", "dice_per_class"]:
+            all_per_class = [r["metrics"].get(class_key) for r in results_with_gt if r["metrics"].get(class_key)]
+            if all_per_class:
+                arr = np.array(all_per_class)  # (num_images, num_classes)
+                per_class_stats = []
+                for c in range(arr.shape[1] if arr.ndim > 1 else 1):
+                    col = arr[:, c] if arr.ndim > 1 else arr
+                    per_class_stats.append({
+                        "class_index": c,
+                        "mean": float(np.mean(col)),
+                        "std": float(np.std(col)),
+                    })
+                per_class_data[class_key] = per_class_stats
+
+    if progress_callback:
+        await progress_callback(60)
+
+    # Create analysis output directory
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+
+    random_seed = _get_random_seed_from_task(task)
+
+    # Generate chart data for frontend
+    chart_data = {}
+    chart_paths = {}
+
+    if "per_class_iou" in request.charts and per_class_data.get("iou_per_class"):
+        chart_data["per_class_iou"] = {
+            "classes": [f"Class {s['class_index']}" for s in per_class_data["iou_per_class"]],
+            "means": [s["mean"] for s in per_class_data["iou_per_class"]],
+            "stds": [s["std"] for s in per_class_data["iou_per_class"]],
+        }
+
+    if "per_class_dice" in request.charts and per_class_data.get("dice_per_class"):
+        chart_data["per_class_dice"] = {
+            "classes": [f"Class {s['class_index']}" for s in per_class_data["dice_per_class"]],
+            "means": [s["mean"] for s in per_class_data["dice_per_class"]],
+            "stds": [s["std"] for s in per_class_data["dice_per_class"]],
+        }
+
+    if progress_callback:
+        await progress_callback(80)
+
+    # Build summary
+    # Flatten metrics for top-level display (mean values)
+    flat_metrics = {}
+    for key, stat in metrics.items():
+        flat_metrics[key] = stat["mean"]
+
+    summary = {
+        "task_id": task_id,
+        "task_type": "external_validation_segmentation",
+        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z',
+        "description": request.description,
+        "num_samples": len(image_results),
+        "num_with_ground_truth": sum(1 for r in image_results if r.get("has_ground_truth")),
+        "num_classes": num_classes,
+        "metrics": flat_metrics,
+        "metrics_detailed": metrics,
+        "per_class_data": per_class_data,
+        "requested_metrics": request.metrics,
+        "requested_charts": request.charts,
+        "dataset_id": dataset_id,
+        "model_id": model_config.get("model_id"),
+        "model_task_id": model_task_id,
+        "chart_paths": chart_paths,
+        "chart_data": chart_data,
+        "random_seed": random_seed,
+        "submitted_by": submitted_by,
+    }
+
+    await asyncio.to_thread(_write_json_sync, analysis_dir / "summary.json", summary)
+
+    # Save detailed per-image results
+    per_image_details = []
+    for r in image_results:
+        per_image_details.append({
+            "wsi_id": r.get("wsi_id"),
+            "has_ground_truth": r.get("has_ground_truth", False),
+            "metrics": r.get("metrics", {}),
+            "num_classes": r.get("num_classes"),
+            "image_size": r.get("image_size"),
+        })
+
+    await asyncio.to_thread(_write_json_sync, analysis_dir / "results.json", {
+        "image_results": per_image_details,
+        "aggregate_metrics": metrics,
+        "per_class_data": per_class_data,
+    })
+
+    if progress_callback:
+        await progress_callback(97)
+
+    logger.info(f"External validation segmentation analysis completed for task {task_id}, saved to {analysis_dir}")
+
+    return {
+        "task_id": task_id,
+        "analysis_id": timestamp,
+        "analysis_dir": str(analysis_dir),
+        "summary": summary,
+        "chart_paths": chart_paths,
+    }
+
 
 
 

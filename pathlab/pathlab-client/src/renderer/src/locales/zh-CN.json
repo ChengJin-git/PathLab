@@ -1598,6 +1598,9 @@
       "patience": "耐心值",
       "randomSeed": "随机种子",
       "autoBalance": "自动平衡类别权重",
+      "searchBackbone": "搜索骨干网络...",
+      "allGroups": "全部",
+      "noBackboneResults": "未找到匹配的骨干网络",
       "back": "返回",
       "nextReview": "下一步：审核并提交"
     },
