@@ -146,10 +146,12 @@ export default function NewTaskPage() {
     }
   }, [dataSelection.hasPreDefinedSplits, trainingConfig.splitStrategy])
 
-  // Auto-adjust default parameters when taskType changes (System-wide defaults: Cls=50, Survival=30)
+  // Auto-adjust default parameters when taskType changes (System-wide defaults: Cls=50, Survival=30, Seg=100)
   useEffect(() => {
     if (wizard.taskType === 'survival') {
       trainingConfig.setEpochs(30)
+    } else if (wizard.taskType === 'segmentation') {
+      trainingConfig.setEpochs(100)
     } else {
       trainingConfig.setEpochs(50)
     }
@@ -440,6 +442,31 @@ export default function NewTaskPage() {
         }
       }
 
+      // Build model config based on task type
+      const isSegTask = wizard.taskType === 'segmentation'
+      const modelConfig = isSegTask
+        ? {
+            architecture: trainingConfig.segArchitecture,
+            backbone: trainingConfig.segBackbone,
+            loss_names: trainingConfig.segLossNames,
+            loss_weights: trainingConfig.segLossWeights,
+            learning_rate: trainingConfig.learningRate,
+            epochs: trainingConfig.epochs,
+            optimizer: trainingConfig.optimizer,
+            batch_size: trainingConfig.trainBatchSize,
+            early_stopping_patience: trainingConfig.earlyStoppingPatience,
+          }
+        : {
+            aggregator: wizard.dataLevel === 'wsi' ? trainingConfig.aggregator : 'none',
+            backbone: wizard.dataLevel === 'patch' ? trainingConfig.featureExtractor : undefined,
+            learning_rate: trainingConfig.learningRate,
+            epochs: trainingConfig.epochs,
+            optimizer: trainingConfig.optimizer,
+            batch_size: trainingConfig.trainBatchSize,
+            auto_balance: trainingConfig.autoBalance,
+            early_stopping_patience: trainingConfig.earlyStoppingPatience,
+          }
+
       const result = await createTrainingTask({
         task_name: wizard.taskName,
         task_type: wizard.taskType,
@@ -462,16 +489,7 @@ export default function NewTaskPage() {
           a_h: trainingConfig.filterHoleArea,
           max_n_holes: trainingConfig.filterMaxHoles,
         },
-        model: {
-          aggregator: wizard.dataLevel === 'wsi' ? trainingConfig.aggregator : 'none',
-          backbone: wizard.dataLevel === 'patch' ? trainingConfig.featureExtractor : undefined,
-          learning_rate: trainingConfig.learningRate,
-          epochs: trainingConfig.epochs,
-          optimizer: trainingConfig.optimizer,
-          batch_size: trainingConfig.trainBatchSize,
-          auto_balance: trainingConfig.autoBalance,
-          early_stopping_patience: trainingConfig.earlyStoppingPatience,
-        },
+        model: modelConfig,
         split_config: splitConfig,
       })
 
@@ -516,8 +534,8 @@ export default function NewTaskPage() {
       warnings.push(t('newTask.validation.smallDataset'))
     }
 
-    // Check for single-class tasks (classification or survival)
-    if (wizard.taskType === 'classification') {
+    // Check for single-class tasks (classification, segmentation, or survival)
+    if (wizard.taskType === 'classification' || wizard.taskType === 'segmentation') {
       const classes = Object.keys(splitValidation.classDistribution).filter((k) => k !== '__unlabeled__')
       if (classes.length < 2) {
         errors.push(t('newTask.validation.classificationMinClasses'))
@@ -716,6 +734,7 @@ export default function NewTaskPage() {
           {wizard.currentStep === 4 && (
             <ModelConfigStep
               dataLevel={wizard.dataLevel}
+              taskType={wizard.taskType}
               aggregator={trainingConfig.aggregator}
               setAggregator={trainingConfig.setAggregator}
               featureExtractor={trainingConfig.featureExtractor}
@@ -723,6 +742,14 @@ export default function NewTaskPage() {
               filteredExtractors={filteredExtractors}
               extractorSearch={extractorSearch}
               setExtractorSearch={setExtractorSearch}
+              segArchitecture={trainingConfig.segArchitecture}
+              setSegArchitecture={trainingConfig.setSegArchitecture}
+              segBackbone={trainingConfig.segBackbone}
+              setSegBackbone={trainingConfig.setSegBackbone}
+              segLossNames={trainingConfig.segLossNames}
+              setSegLossNames={trainingConfig.setSegLossNames}
+              segLossWeights={trainingConfig.segLossWeights}
+              setSegLossWeights={trainingConfig.setSegLossWeights}
               learningRate={trainingConfig.learningRate}
               setLearningRate={trainingConfig.setLearningRate}
               epochs={trainingConfig.epochs}

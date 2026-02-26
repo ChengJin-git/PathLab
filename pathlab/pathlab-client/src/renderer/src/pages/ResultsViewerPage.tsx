@@ -17,15 +17,21 @@ import {
   CLASSIFICATION_CHARTS,
   SURVIVAL_METRICS,
   SURVIVAL_CHARTS,
+  SEGMENTATION_METRICS,
+  SEGMENTATION_CHARTS,
   EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS,
   EXTERNAL_VALIDATION_SURVIVAL_CHARTS,
+  EXTERNAL_VALIDATION_SEGMENTATION_CHARTS,
   DEFAULT_CLASSIFICATION_METRICS,
   DEFAULT_CLASSIFICATION_CHARTS,
   DEFAULT_SURVIVAL_METRICS,
+  DEFAULT_SEGMENTATION_METRICS,
+  DEFAULT_SEGMENTATION_CHARTS,
   DEFAULT_EXTERNAL_CLASSIFICATION_CHARTS,
-  DEFAULT_EXTERNAL_SURVIVAL_CHARTS
+  DEFAULT_EXTERNAL_SURVIVAL_CHARTS,
+  DEFAULT_EXTERNAL_SEGMENTATION_CHARTS
 } from '../constants/metrics'
-import { filterCompatibleDatasets, isSurvivalTask as utilIsSurvivalTask } from '../lib/externalValidationUtils'
+import { filterCompatibleDatasets, isSurvivalTask as utilIsSurvivalTask, isSegmentationTask as utilIsSegmentationTask } from '../lib/externalValidationUtils'
 
 /**
  * Helper to create fetch options with authentication header
@@ -89,8 +95,9 @@ interface AnalysisResult {
   _pending?: boolean  // Internal flag to indicate analysis is pending/running
 }
 
-// Use imported isSurvivalTask from shared utils
+// Use imported helpers from shared utils
 const isSurvivalTask = utilIsSurvivalTask
+const isSegmentationTask = utilIsSegmentationTask
 
 export default function ResultsViewerPage() {
   const navigate = useNavigate()
@@ -215,6 +222,9 @@ export default function ResultsViewerPage() {
       if (isSurvivalTask(task.task_type)) {
         setSelectedMetrics(['c_index', 'integrated_brier_score'])
         setSelectedCharts(['km_curve', 'loss_curve'])
+      } else if (isSegmentationTask(task.task_type)) {
+        setSelectedMetrics([...DEFAULT_SEGMENTATION_METRICS])
+        setSelectedCharts([...DEFAULT_SEGMENTATION_CHARTS])
       } else {
         setSelectedMetrics(['accuracy', 'precision', 'sensitivity', 'f1', 'auc', 'specificity'])
         setSelectedCharts(['confusion_matrix', 'roc_curve', 'loss_curve'])
@@ -231,6 +241,9 @@ export default function ResultsViewerPage() {
       if (isSurvivalTask(task.task_type)) {
         setSelectedMetrics([...DEFAULT_SURVIVAL_METRICS])
         setSelectedCharts([...DEFAULT_EXTERNAL_SURVIVAL_CHARTS])
+      } else if (isSegmentationTask(task.task_type)) {
+        setSelectedMetrics([...DEFAULT_SEGMENTATION_METRICS])
+        setSelectedCharts([...DEFAULT_EXTERNAL_SEGMENTATION_CHARTS])
       } else {
         setSelectedMetrics([...DEFAULT_CLASSIFICATION_METRICS])
         setSelectedCharts([...DEFAULT_EXTERNAL_CLASSIFICATION_CHARTS])
@@ -762,11 +775,14 @@ export default function ResultsViewerPage() {
                       {trainedModels.map(model => {
                         const trainTask = tasks.find(t => t.task_id === model.task_id)
                         const isSurvival = isSurvivalTask(trainTask?.task_type) || model.aggregator === 'survival'
+                        const isSegmentation = isSegmentationTask(trainTask?.task_type)
                         const metrics = model.val_metrics as Record<string, number> | undefined
                         const metricValue = isSurvival
                           ? metrics?.c_index
-                          : (metrics?.macro_auc || metrics?.auc)
-                        const metricLabel = isSurvival ? t('resultsPage.cIndex') : t('resultsPage.auc')
+                          : isSegmentation
+                            ? (metrics?.iou || metrics?.dice)
+                            : (metrics?.macro_auc || metrics?.auc)
+                        const metricLabel = isSurvival ? t('resultsPage.cIndex') : isSegmentation ? 'IoU' : t('resultsPage.auc')
 
                         return (
                           <button
@@ -879,7 +895,7 @@ export default function ResultsViewerPage() {
               <Card className="p-4 sm:p-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.metrics')}</h3>
                 <div className="space-y-3">
-                  {(isSurvivalTask(modelTask?.task_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
+                  {(isSurvivalTask(modelTask?.task_type) ? SURVIVAL_METRICS : isSegmentationTask(modelTask?.task_type) ? SEGMENTATION_METRICS : CLASSIFICATION_METRICS).map(metric => (
                     <div key={metric.id} className="flex items-start gap-3 group">
                       <input
                         type="checkbox"
@@ -935,7 +951,7 @@ export default function ResultsViewerPage() {
               <Card className="p-4 sm:p-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.charts')}</h3>
                 <div className="space-y-3">
-                  {(isSurvivalTask(modelTask?.task_type) ? EXTERNAL_VALIDATION_SURVIVAL_CHARTS : EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS).map(chart => (
+                  {(isSurvivalTask(modelTask?.task_type) ? EXTERNAL_VALIDATION_SURVIVAL_CHARTS : isSegmentationTask(modelTask?.task_type) ? EXTERNAL_VALIDATION_SEGMENTATION_CHARTS : EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS).map(chart => (
                     <label key={chart.id} className="flex items-start gap-3 cursor-pointer group">
                       <input
                         type="checkbox"
@@ -1322,7 +1338,7 @@ export default function ResultsViewerPage() {
                 )}
               </h3>
               <div className="space-y-3">
-                {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
+                {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_METRICS : isSegmentationTask(selectedTask?.task_type) ? SEGMENTATION_METRICS : CLASSIFICATION_METRICS).map(metric => (
                   <div key={metric.id} className="flex items-start gap-3 group">
                     <input
                       type="checkbox"
@@ -1379,7 +1395,7 @@ export default function ResultsViewerPage() {
                 {t('resultsPage.charts')}
               </h3>
               <div className="space-y-3">
-                {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_CHARTS : CLASSIFICATION_CHARTS).map(chart => (
+                {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_CHARTS : isSegmentationTask(selectedTask?.task_type) ? SEGMENTATION_CHARTS : CLASSIFICATION_CHARTS).map(chart => (
                   <label key={chart.id} className="flex items-start gap-3 cursor-pointer group">
                     <input
                       type="checkbox"

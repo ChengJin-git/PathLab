@@ -219,14 +219,14 @@ export function BatchEditModal({
 
 export interface EditDatasetModalProps {
   editingDatasetName: string
-  editingDatasetType: 'classification' | 'survival'
-  editingDatasetOriginalType: 'classification' | 'survival'
+  editingDatasetType: 'classification' | 'survival' | 'segmentation'
+  editingDatasetOriginalType: 'classification' | 'survival' | 'segmentation'
   editingDatasetDataLevel: 'case' | 'file'
   editingDatasetOriginalDataLevel: 'case' | 'file'
   editingDatasetSaving: boolean
   isSlideDataset: boolean
   onNameChange: (v: string) => void
-  onTypeChange: (v: 'classification' | 'survival') => void
+  onTypeChange: (v: 'classification' | 'survival' | 'segmentation') => void
   onDataLevelChange: (v: 'case' | 'file') => void
   onCancel: () => void
   onSave: () => void
@@ -260,22 +260,30 @@ export function EditDatasetModal({
         {/* Dataset Type */}
         <div className="mb-4">
           <label className="block text-sm font-semibold text-gray-700 mb-2">{t('listComponents.editModals.analysisType')}</label>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <button type="button" onClick={() => onTypeChange('classification')}
-              className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
+              className={`flex items-center justify-center gap-2 px-3 py-3 rounded-lg border-2 transition-all ${
                 editingDatasetType === 'classification'
                   ? 'border-blue-500 bg-blue-50 text-blue-700'
                   : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
               }`}>
-              <span className="font-medium">{t('listComponents.editModals.classification')}</span>
+              <span className="font-medium text-sm">{t('listComponents.editModals.classification')}</span>
             </button>
             <button type="button" onClick={() => onTypeChange('survival')}
-              className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
+              className={`flex items-center justify-center gap-2 px-3 py-3 rounded-lg border-2 transition-all ${
                 editingDatasetType === 'survival'
                   ? 'border-amber-500 bg-amber-50 text-amber-700'
                   : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
               }`}>
-              <span className="font-medium">{t('listComponents.editModals.survival')}</span>
+              <span className="font-medium text-sm">{t('listComponents.editModals.survival')}</span>
+            </button>
+            <button type="button" onClick={() => onTypeChange('segmentation')}
+              className={`flex items-center justify-center gap-2 px-3 py-3 rounded-lg border-2 transition-all ${
+                editingDatasetType === 'segmentation'
+                  ? 'border-violet-500 bg-violet-50 text-violet-700'
+                  : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+              }`}>
+              <span className="font-medium text-sm">{t('listComponents.editModals.segmentation')}</span>
             </button>
           </div>
           {editingDatasetType !== editingDatasetOriginalType && (

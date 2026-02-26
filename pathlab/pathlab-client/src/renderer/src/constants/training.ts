@@ -24,7 +24,8 @@ export interface SelectOption<T = string> {
  */
 export const TASK_TYPES: readonly SelectOption[] = [
   { value: 'classification', label: 'Classification' },
-  { value: 'survival', label: 'Survival Prediction' }
+  { value: 'survival', label: 'Survival Prediction' },
+  { value: 'segmentation', label: 'Segmentation' }
 ] as const
 
 export type TaskType = 'classification' | 'survival' | 'segmentation'
@@ -149,6 +150,135 @@ export const AGGREGATOR_OPTIONS: readonly SelectOption[] = AGGREGATORS.map(a => 
   label: a.name,
   description: a.description
 }))
+
+// ============================================================================
+// Segmentation Architectures (for patch-level segmentation)
+// ============================================================================
+
+/**
+ * Available segmentation model architectures.
+ * Matches backend SUPPORT_ARCHTECTURES in segmentors/__init__.py.
+ */
+export const SEGMENTATION_ARCHITECTURES: readonly ExtractorOption[] = [
+  { id: 'unet', name: 'U-Net', description: 'Classic encoder-decoder with skip connections' },
+  { id: 'unetplusplus', name: 'UNet++', description: 'Nested U-Net with dense skip connections' },
+  { id: 'manet', name: 'MANet', description: 'Multi-scale Attention Network' },
+  { id: 'linknet', name: 'LinkNet', description: 'Lightweight encoder-decoder with residual connections' },
+  { id: 'fpn', name: 'FPN', description: 'Feature Pyramid Network for multi-scale features' },
+  { id: 'pspnet', name: 'PSPNet', description: 'Pyramid Scene Parsing Network' },
+  { id: 'deeplabv3', name: 'DeepLabV3', description: 'Atrous Spatial Pyramid Pooling' },
+  { id: 'deeplabv3plus', name: 'DeepLabV3+', description: 'DeepLabV3 with decoder module' },
+  { id: 'pan', name: 'PAN', description: 'Pyramid Attention Network' },
+  { id: 'upernet', name: 'UPerNet', description: 'Unified Perceptual Parsing Network' },
+  { id: 'segformer', name: 'SegFormer', description: 'Transformer-based segmentation' },
+  { id: 'dpt', name: 'DPT', description: 'Dense Prediction Transformer' },
+] as const
+
+/** Default segmentation architecture */
+export const DEFAULT_SEG_ARCHITECTURE = 'unet'
+
+// ============================================================================
+// Segmentation Backbones (Encoders for segmentation models)
+// ============================================================================
+
+export interface BackboneOption {
+  id: string
+  name: string
+  description: string
+  group: string
+}
+
+/**
+ * Common segmentation backbones grouped by family.
+ * Full list available in backend SUPPORT_FEATURE_EXTRACTORS.
+ * UI shows a curated subset for usability.
+ */
+export const SEGMENTATION_BACKBONES: readonly BackboneOption[] = [
+  // ResNet family
+  { id: 'resnet18', name: 'ResNet-18', description: 'Lightweight, fast training', group: 'ResNet' },
+  { id: 'resnet34', name: 'ResNet-34', description: 'Good balance of speed and accuracy', group: 'ResNet' },
+  { id: 'resnet50', name: 'ResNet-50', description: 'Standard baseline (recommended)', group: 'ResNet' },
+  { id: 'resnet101', name: 'ResNet-101', description: 'Higher capacity, slower training', group: 'ResNet' },
+  // EfficientNet family
+  { id: 'efficientnet-b0', name: 'EfficientNet-B0', description: 'Efficient, lightweight', group: 'EfficientNet' },
+  { id: 'efficientnet-b3', name: 'EfficientNet-B3', description: 'Good accuracy-efficiency tradeoff', group: 'EfficientNet' },
+  { id: 'efficientnet-b5', name: 'EfficientNet-B5', description: 'High accuracy, more compute', group: 'EfficientNet' },
+  // DenseNet family
+  { id: 'densenet121', name: 'DenseNet-121', description: 'Dense connections, feature reuse', group: 'DenseNet' },
+  { id: 'densenet169', name: 'DenseNet-169', description: 'More layers, richer features', group: 'DenseNet' },
+  // SE-ResNet family
+  { id: 'se_resnet50', name: 'SE-ResNet-50', description: 'ResNet-50 with channel attention', group: 'SE-Net' },
+  // MobileNet
+  { id: 'mobilenet_v2', name: 'MobileNet-V2', description: 'Mobile-optimized, very fast', group: 'MobileNet' },
+  // Mix Transformer (for SegFormer)
+  { id: 'mit_b0', name: 'MiT-B0', description: 'SegFormer backbone, lightweight', group: 'MiT' },
+  { id: 'mit_b2', name: 'MiT-B2', description: 'SegFormer backbone, balanced', group: 'MiT' },
+  { id: 'mit_b4', name: 'MiT-B4', description: 'SegFormer backbone, high capacity', group: 'MiT' },
+  // VGG
+  { id: 'vgg16_bn', name: 'VGG-16 BN', description: 'Classic CNN with batch normalization', group: 'VGG' },
+] as const
+
+/** Default segmentation backbone */
+export const DEFAULT_SEG_BACKBONE = 'resnet50'
+
+// ============================================================================
+// Segmentation Loss Functions
+// ============================================================================
+
+export interface LossOption {
+  id: string
+  name: string
+  description: string
+}
+
+/**
+ * Available loss functions for segmentation tasks.
+ * Matches backend loss.py get_loss() factory.
+ */
+export const SEGMENTATION_LOSSES: readonly LossOption[] = [
+  { id: 'DiceLoss', name: 'Dice Loss', description: 'Overlap-based, handles class imbalance well' },
+  { id: 'JaccardLoss', name: 'Jaccard Loss (IoU)', description: 'IoU-based loss, similar to Dice' },
+  { id: 'TverskyLoss', name: 'Tversky Loss', description: 'Generalized Dice with adjustable FP/FN weights' },
+  { id: 'FocalLoss', name: 'Focal Loss', description: 'Down-weights easy examples, focuses on hard cases' },
+  { id: 'LovaszLoss', name: 'Lovász Loss', description: 'Submodular IoU surrogate, good for imbalanced data' },
+  { id: 'BCE', name: 'Binary Cross Entropy', description: 'Standard per-pixel binary classification loss' },
+  { id: 'CE', name: 'Cross Entropy', description: 'Standard multi-class cross entropy loss' },
+  { id: 'MCCLoss', name: 'MCC Loss', description: 'Matthews Correlation Coefficient loss' },
+] as const
+
+/** Default segmentation loss configuration */
+export const DEFAULT_SEG_LOSS_NAMES = ['DiceLoss', 'JaccardLoss']
+export const DEFAULT_SEG_LOSS_WEIGHTS = [0.5, 0.5]
+
+// ============================================================================
+// Segmentation Training Defaults
+// ============================================================================
+
+export interface SegTrainingDefaults {
+  learningRate: number
+  epochs: number
+  batchSize: number
+  optimizer: string
+  earlyStoppingPatience: number
+  scheduler: string
+  useAmp: boolean
+  gradientClip: number
+}
+
+/**
+ * Default training hyperparameters for segmentation tasks.
+ * Different from classification defaults to match backend __default_config__.
+ */
+export const SEG_TRAINING_DEFAULTS: SegTrainingDefaults = {
+  learningRate: 0.0001,
+  epochs: 100,
+  batchSize: 16,
+  optimizer: 'adamw',
+  earlyStoppingPatience: 15,
+  scheduler: 'cosine_warm_restarts',
+  useAmp: true,
+  gradientClip: 1.0,
+}
 
 // ============================================================================
 // Preprocessing Configuration

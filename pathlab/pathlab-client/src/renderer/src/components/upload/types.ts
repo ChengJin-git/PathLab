@@ -1,5 +1,5 @@
-// Upload mode type: classification (label) or survival (event_time, event_status)
-export type UploadMode = 'classification' | 'survival'
+// Upload mode type: classification (label), survival (event_time, event_status), or segmentation (COCO JSON annotations)
+export type UploadMode = 'classification' | 'survival' | 'segmentation'
 // Aggregation level type: case (case-level grouping) or file (file-level, each file independent)
 export type DataLevel = 'case' | 'file'
 // Data type: wsi (whole slide images) or patch (image patches/tiles)

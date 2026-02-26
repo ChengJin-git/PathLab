@@ -273,6 +273,12 @@ export default function TaskDetailPage() {
           batch_size: task.model_config.batch_size ?? (task.data_type === 'patch' ? 64 : 1),
           auto_balance: task.model_config.auto_balance ?? false,
           early_stopping_patience: task.model_config.early_stopping_patience,
+          // Segmentation-specific fields
+          ...(task.task_type === 'segmentation' ? {
+            architecture: task.model_config.architecture,
+            loss_names: task.model_config.loss_names,
+            loss_weights: task.model_config.loss_weights,
+          } : {}),
         },
         // Preserve the original split configuration for exact rerun
         split_config: task.preprocessing_config.split_config,

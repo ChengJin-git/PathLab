@@ -556,8 +556,10 @@
       "taskType": "Task Type",
       "classification": "Classification",
       "survivalAnalysis": "Survival Analysis",
+      "segmentation": "Segmentation",
       "classificationInfo": "Each file will be assigned a class label",
       "survivalInfo": "Each file will have event time and status",
+      "segmentationInfo": "Each file will have pixel-level segmentation annotations",
       "filesSelected": "{{count}} files selected",
       "registering": "Registering...",
       "registerSelected": "Register Selected ({{count}})",
@@ -1377,6 +1379,7 @@
     "patchCollection": "Patch Collection",
     "survival": "Survival",
     "classification": "Classification",
+    "segmentation": "Segmentation",
     "caseLevel": "Case Level",
     "fileLevel": "File Level",
     "newDataset": "New Dataset",
@@ -1578,6 +1581,10 @@
     "modelConfig": {
       "aggregationMethod": "Aggregation Method",
       "featureExtractor": "Feature Extractor",
+      "segArchitecture": "Segmentation Architecture",
+      "architecture": "Architecture",
+      "backbone": "Backbone",
+      "lossFunction": "Loss Function",
       "search": "Search...",
       "trainingParams": "Training Parameters",
       "learningRate": "Learning Rate",
@@ -1685,6 +1692,7 @@
       "survivalPrediction": "Survival Prediction",
       "timeToEvent": "Time-to-event analysis",
       "segmentation": "Segmentation",
+      "segmentationMasks": "Pixel-level mask prediction",
       "comingSoon": "Coming soon",
       "dataLevelLabel": "Data Level",
       "wsiLevel": "WSI-Level",
@@ -1775,6 +1783,9 @@
       "model": "Model",
       "linearProbe": "Linear Probe",
       "linearProbeDesc": "Direct classification without aggregation model",
+      "segArchitecture": "Architecture",
+      "segBackbone": "Backbone",
+      "segLoss": "Loss Functions",
       "advancedSettings": "Advanced Settings",
       "learningRate": "Learning Rate",
       "epochs": "Epochs",
@@ -1867,6 +1878,8 @@
       "trainingLossKFold": "Training Loss (K-Fold)",
       "kmSurvivalCurve": "KM Survival Curve",
       "survivalCurve": "Survival Curve",
+      "iouCurve": "IoU Curve",
+      "diceCurve": "Dice Curve",
       "perClassMetrics": "Per-Class Metrics"
     },
     "inferenceConfig": {
@@ -1944,6 +1957,7 @@
       "title": "Available Models",
       "survival": "Survival",
       "classification": "Classification",
+      "segmentation": "Segmentation",
       "modelId": "Model ID",
       "taskId": "Task ID",
       "classes": "Classes",
@@ -1983,7 +1997,9 @@
       "confusionMatrix": "Confusion Matrix",
       "trainingLoss": "Training Loss",
       "trainingLossKFold": "Training Loss (K-Fold)",
-      "kmCurve": "KM Survival Curve"
+      "kmCurve": "KM Survival Curve",
+      "iouCurve": "IoU Curve",
+      "diceCurve": "Dice Curve"
     },
     "csvAction": {
       "cannotProcess": "Cannot Process CSV",
@@ -2176,7 +2192,8 @@
     "kmSurvivalCurve": "KM Survival Curve",
     "time": "Time",
     "survivalProbability": "Survival Probability",
-    "survivalCurve": "Survival Curve"
+    "survivalCurve": "Survival Curve",
+    "metricCurve": "Curve"
   },
   "listComponents": {
     "editModals": {
@@ -2212,6 +2229,7 @@
       "analysisType": "Analysis Type",
       "classification": "Classification",
       "survival": "Survival",
+      "segmentation": "Segmentation",
       "changingTypeWarning": "Changing type may affect existing analyses",
       "dataLevel": "Data Level",
       "caseLevel": "Case Level",
@@ -2310,6 +2328,8 @@
       "classificationDesc": "Categorize slides into groups",
       "survivalAnalysis": "Survival Analysis",
       "survivalDesc": "Time-to-event prediction",
+      "segmentation": "Segmentation",
+      "segmentationDesc": "Pixel-level mask prediction with COCO annotations",
       "dataLevel": "Data Level",
       "caseLevel": "Case Level",
       "caseLevelDesc": "Group slides by patient case",
@@ -2420,6 +2440,7 @@
       "batchImport": "Batch Import",
       "metadataUpdate": "Metadata Update",
       "deleteExternal": "Delete External",
+      "extraction": "Extraction",
       "task": "Task",
       "import": "Import",
       "metadata": "Metadata"
@@ -2450,7 +2471,8 @@
     },
     "taskCategory": {
       "classification": "Classification",
-      "survival": "Survival"
+      "survival": "Survival",
+      "segmentation": "Segmentation"
     },
     "statusSummary": {
       "running": "running",

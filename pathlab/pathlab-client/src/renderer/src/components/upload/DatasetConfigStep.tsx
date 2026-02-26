@@ -1,6 +1,6 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, ArrowRight, Tags, Activity, Users, FileImage, Plus } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Tags, Activity, Users, FileImage, Plus, Layers } from 'lucide-react'
 import { PageHeader } from '../PageHeader'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
@@ -122,6 +122,23 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                     <div>
                       <span className={`font-bold block ${uploadMode === 'survival' ? 'text-emerald-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.survivalAnalysis')}</span>
                       <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.survivalDesc')}</span>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => !isExistingDataset && onUploadModeChange('segmentation')}
+                    disabled={isExistingDataset}
+                    className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'segmentation'
+                      ? 'border-violet-500 bg-violet-50/50'
+                      : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
+                      } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'segmentation' ? 'opacity-40' : ''}`}
+                  >
+                    <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'segmentation' ? 'bg-violet-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                      <Layers className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <span className={`font-bold block ${uploadMode === 'segmentation' ? 'text-violet-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.segmentation')}</span>
+                      <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.segmentationDesc')}</span>
                     </div>
                   </button>
                 </div>

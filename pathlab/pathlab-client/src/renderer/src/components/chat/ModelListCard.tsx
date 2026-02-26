@@ -83,7 +83,7 @@ export function ModelListCard({ config }: { config: ModelListConfig }) {
           >
             <Card className={cn(
               "overflow-hidden transition-all duration-200 hover:shadow-md border-l-4",
-              model.task_type === 'survival' ? 'border-l-orange-500' : 'border-l-blue-500'
+              model.task_type === 'survival' ? 'border-l-orange-500' : model.task_type === 'segmentation' || model.task_type === 'patch_segmentation' ? 'border-l-violet-500' : 'border-l-blue-500'
             )}>
               <div 
                 className="p-3 sm:p-4 cursor-pointer hover:bg-muted/30 transition-colors"
@@ -97,9 +97,9 @@ export function ModelListCard({ config }: { config: ModelListConfig }) {
                       </h4>
                       <Badge variant="outline" className={cn(
                         "text-[10px] h-5 px-1.5 font-normal shrink-0",
-                        model.task_type === 'survival' ? "bg-orange-50 text-orange-700 border-orange-200" : "bg-blue-50 text-blue-700 border-blue-200"
+                        model.task_type === 'survival' ? "bg-orange-50 text-orange-700 border-orange-200" : (model.task_type === 'segmentation' || model.task_type === 'patch_segmentation') ? "bg-violet-50 text-violet-700 border-violet-200" : "bg-blue-50 text-blue-700 border-blue-200"
                       )}>
-                        {model.task_type === 'survival' ? t('chatComponents.modelList.survival') : t('chatComponents.modelList.classification')}
+                        {model.task_type === 'survival' ? t('chatComponents.modelList.survival') : (model.task_type === 'segmentation' || model.task_type === 'patch_segmentation') ? t('chatComponents.modelList.segmentation') : t('chatComponents.modelList.classification')}
                       </Badge>
                     </div>
                     

@@ -431,7 +431,7 @@ Here are your trained models:
 **[MODEL_LIST] Fields:**
 - `id`: Model ID
 - `name`: Model Name
-- `task_type`: "classification" or "survival"
+- `task_type`: "classification", "survival", or "segmentation"
 - `data_type`: "wsi" or "patch"
 - `feature_extractor` (optional): Name of feature extractor used
 - `embedding_dim` (optional): Embedding dimension
@@ -469,7 +469,7 @@ To register your slides, please drag and drop the **folder** containing your ima
 **[DATASET_REGISTRATION] Fields:**
 - `dataset_id`: (Optional) ID of existing dataset to append to. If omitted, creates new dataset.
 - `dataset_name`: (Optional) Name for new dataset. Required if creating new.
-- `upload_mode`: "classification" (default) or "survival".
+- `upload_mode`: "classification" (default), "survival", or "segmentation".
 - `aggregation_level`: "file" (standard) or "case" (wsi only).
 
 **Validation Rules:**
@@ -513,11 +513,36 @@ Here's your training configuration:
 You can edit any field above, then click "Start Training" when ready.
 ```
 
+**Example - Segmentation Task:**
+```
+[TASK_CONFIG]
+{
+  "task_name": "Tissue Segmentation",
+  "task_description": "Segment tissue regions using U-Net with ResNet-50 backbone",
+  "task_type": "segmentation",
+  "data_type": "patch",
+  "dataset_id": "dataset_abc123",
+  "seg_architecture": "unet",
+  "seg_backbone": "resnet50",
+  "seg_loss_names": ["DiceLoss", "JaccardLoss"],
+  "seg_loss_weights": [0.5, 0.5],
+  "learning_rate": 0.0001,
+  "epochs": 100,
+  "batch_size": 16,
+  "optimizer": "adamw",
+  "early_stopping_patience": 15,
+  "split_strategy": "k_fold",
+  "k_fold_splits": 3
+}
+[/TASK_CONFIG]
+```
+
 IMPORTANT for [TASK_CONFIG]:
 - **data_type** MUST match the selected dataset's data_type (wsi or patch)
 - **dataset_id** should be included so the system knows which dataset to use
 - If dataset is type=patch, set data_type="patch" and batch_size=32
 - If dataset is type=wsi, set data_type="wsi" and batch_size=1
+- **Segmentation tasks** are ALWAYS patch-level (data_type="patch"). Use `seg_architecture`, `seg_backbone`, `seg_loss_names`, `seg_loss_weights` instead of encoder/aggregator. Available architectures: unet, unetplusplus, deeplabv3, deeplabv3plus, fpn, pspnet, manet, linknet, pan. Available losses: DiceLoss, JaccardLoss, FocalLoss, TverskyLoss, LovaszLoss, CrossEntropyLoss, BCEWithLogitsLoss, SoftCrossEntropyLoss.
 - **auto_balance**: Set to true if dataset has imbalanced classes (e.g., 14957 vs 36897), false if balanced
 - **early_stopping_patience**: Increase (e.g., 15-20) for small datasets, decrease (e.g., 5) for large datasets
 - **split_strategy**: PRIORITY ORDER for selecting split strategy:
@@ -536,7 +561,8 @@ IMPORTANT for [TASK_CONFIG]:
 2. After user selects an existing dataset, check its supported_tasks:
    - If ONLY classification -> set task_type="classification", proceed to step 3
    - If ONLY survival -> set task_type="survival", proceed to step 3
-   - If BOTH -> ask user which task type they want
+   - If ONLY segmentation -> set task_type="segmentation", proceed to step 3
+   - If multiple supported -> ask user which task type they want
 3. Ask speed vs quality preference -> use [OPTIONS]
 4. Generate [TASK_CONFIG] with:
    - task_type based on step 2 (auto-detected or user-selected)
@@ -702,7 +728,7 @@ If you don't have a label file yet, you can add it later from the dataset edit p
 **[METADATA_UPLOAD] Fields:**
 - `dataset_id`: (Optional) Dataset UUID if known (for existing datasets).
 - `dataset_name`: (Optional) Dataset name for lookup (for newly created datasets).
-- `upload_mode`: "classification" or "survival" - determines required columns.
+- `upload_mode`: "classification", "survival", or "segmentation" - determines required columns.
 - `aggregation_level`: "file" or "case" - for display purposes.
 
 **Required CSV/Excel columns by upload_mode:**
@@ -1448,7 +1474,7 @@ Your external validation has been submitted successfully!
 ## CONFIGURATION REFERENCE
 
 ### Task & Data
-**task_type**: classification, survival
+**task_type**: classification, survival, segmentation
 **data_type**: wsi, patch (MUST match dataset's data_type!)
 
 ### Feature Extraction

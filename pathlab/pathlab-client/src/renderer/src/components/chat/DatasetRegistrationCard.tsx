@@ -37,7 +37,7 @@ interface LocalItem {
 interface DatasetRegistrationConfig {
   dataset_id?: string
   dataset_name?: string
-  upload_mode?: 'classification' | 'survival'
+  upload_mode?: 'classification' | 'survival' | 'segmentation'
   aggregation_level?: 'file' | 'case'
   initial_view?: 'new' | 'existing'
   submitted_task_id?: string
@@ -124,12 +124,12 @@ export function DatasetRegistrationCard({
 
   const handleDownloadTemplate = async () => {
     try {
-      let uploadMode: 'classification' | 'survival' = 'classification'
-      
+      let uploadMode: 'classification' | 'survival' | 'segmentation' = 'classification'
+
       if (mode === 'existing' && selectedDatasetId) {
         const dataset = datasets.find(d => d.dataset_id === selectedDatasetId)
         if (dataset && dataset.task_type) {
-          uploadMode = dataset.task_type as 'classification' | 'survival'
+          uploadMode = dataset.task_type as 'classification' | 'survival' | 'segmentation'
         }
       } else {
         uploadMode = config?.upload_mode || 'classification'
@@ -505,12 +505,11 @@ export function DatasetRegistrationCard({
                 <Download className="w-3 h-3" />
                 {(() => {
                   let modeLabel = t('chatComponents.datasetRegistration.classification')
-                  if (mode === 'existing' && selectedDatasetId) {
-                    const dataset = datasets.find(d => d.dataset_id === selectedDatasetId)
-                    if (dataset && dataset.task_type === 'survival') modeLabel = t('chatComponents.datasetRegistration.survival')
-                  } else if (config?.upload_mode === 'survival') {
-                    modeLabel = t('chatComponents.datasetRegistration.survival')
-                  }
+                  const resolvedMode = mode === 'existing' && selectedDatasetId
+                    ? datasets.find(d => d.dataset_id === selectedDatasetId)?.task_type
+                    : config?.upload_mode
+                  if (resolvedMode === 'survival') modeLabel = t('chatComponents.datasetRegistration.survival')
+                  else if (resolvedMode === 'segmentation') modeLabel = t('chatComponents.datasetRegistration.segmentation')
                   return t('chatComponents.datasetRegistration.downloadTemplate', { mode: modeLabel })
                 })()}
               </button>

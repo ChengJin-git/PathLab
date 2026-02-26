@@ -77,7 +77,7 @@ async def run_training_pipeline(
     preprocessing_config: Dict,
     model_config: Dict,
     huggingface_token: str = None,
-    training_task_type: str = "classification",  # "classification" or "survival"
+    training_task_type: str = "classification",  # "classification", "survival", or "segmentation"
     assigned_device: str = None,  # GPU device assigned by task queue (e.g., "cuda:0")
 ):
     """
@@ -101,11 +101,90 @@ async def run_training_pipeline(
         async with logger_manager.session() as (logger, db):
             await logger.info(f"Starting training pipeline for task: {task_id} (data_type: {data_type})")
 
-        # For patch-level tasks, use Feature Extractor + Linear Probe training
+        # For patch-level tasks, route based on training_task_type
         if data_type == 'patch':
+            if training_task_type == "segmentation":
+                # Patch Segmentation: uses architecture + backbone (not feature extractor)
+                async with logger_manager.session() as (logger, db):
+                    await logger.info("Patch-level segmentation task detected")
+
+                    # Get segmentation-specific training parameters
+                    architecture = model_config.get('architecture', 'unet')
+                    backbone = model_config.get('backbone', 'resnet50')
+                    loss_names = model_config.get('loss_names', ['DiceLoss', 'JaccardLoss'])
+                    loss_weights = model_config.get('loss_weights', [0.5, 0.5])
+                    epochs = int(model_config.get('epochs', 100))
+                    lr = float(model_config.get('learning_rate', 0.0001))
+                    batch_size = int(model_config.get('batch_size', 16))
+                    optimizer = model_config.get('optimizer', 'adamw')
+                    early_stopping_patience = int(model_config.get('early_stopping_patience', 15))
+                    seed = preprocessing_config.get('split_config', {}).get('seed', 42)
+
+                    await logger.info(
+                        f"Training {architecture} with {backbone} backbone",
+                        metadata={"architecture": architecture, "backbone": backbone,
+                                  "loss_names": loss_names, "epochs": epochs, "lr": lr}
+                    )
+
+                    # Update status to training
+                    await TrainingTaskRepository.update_status(db, task_id, TaskStatus.TRAINING, progress=50)
+
+                # Call AI service for patch segmentation training
+                timeout = get_training_timeout()
+                try:
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        resp = await client.post(
+                            f"{AI_SERVICE_URL}/api/ai/training/patch_segmentation",
+                            json={
+                                "task_id": task_id,
+                                "architecture": architecture,
+                                "backbone": backbone,
+                                "loss_names": loss_names,
+                                "loss_weights": loss_weights,
+                                "epochs": epochs,
+                                "lr": lr,
+                                "batch_size": batch_size,
+                                "optimizer": optimizer,
+                                "early_stopping_patience": early_stopping_patience,
+                                "device": assigned_device,
+                                "seed": seed,
+                            },
+                        )
+                        resp.raise_for_status()
+                        _ = resp.json()
+                except httpx.HTTPStatusError as e:
+                    body = e.response.text if e.response is not None else str(e)
+                    async with logger_manager.session() as (logger, db):
+                        await logger.error(
+                            f"AI service patch segmentation training failed: {e}",
+                            metadata={"status_code": e.response.status_code if e.response else None, "body": body}
+                        )
+                    raise
+                except httpx.TimeoutException as e:
+                    async with logger_manager.session() as (logger, db):
+                        await logger.error(
+                            f"Training timeout after {timeout} seconds. Requesting AI service to cancel and release GPU.",
+                            metadata={"timeout_seconds": timeout, "error": str(e)}
+                        )
+                    await cancel_ai_service_training(task_id)
+                    raise Exception(f"Training timeout after {timeout // 3600} hours. Task cancelled.") from e
+                except httpx.RequestError as e:
+                    async with logger_manager.session() as (logger, db):
+                        await logger.error(
+                            f"Failed to connect to AI service for patch segmentation training: {e}",
+                            metadata={"ai_service_url": AI_SERVICE_URL, "error": str(e)}
+                        )
+                    raise Exception(f"AI service unavailable at {AI_SERVICE_URL}. Please ensure the AI service is running.") from e
+
+                async with logger_manager.session() as (logger, db):
+                    await logger.info("Patch segmentation training completed successfully")
+                    await TrainingTaskRepository.update_status(db, task_id, TaskStatus.COMPLETED, progress=100)
+                return
+
+            # Patch Classification: use Feature Extractor + Linear Probe training
             async with logger_manager.session() as (logger, db):
                 await logger.info("Patch-level task detected - using Feature Extractor + Linear Probe")
-                
+
                 # Get training parameters
                 feature_extractor = preprocessing_config.get('feature_extractor', 'resnet50')
                 epochs = int(model_config.get('epochs', 50))
@@ -120,7 +199,7 @@ async def run_training_pipeline(
                     f"Training Linear Probe with {feature_extractor} backbone",
                     metadata={"feature_extractor": feature_extractor, "epochs": epochs, "lr": lr, "optimizer": optimizer, "auto_balance": auto_balance}
                 )
-                
+
                 # Update status to training
                 await TrainingTaskRepository.update_status(db, task_id, TaskStatus.TRAINING, progress=50)
 

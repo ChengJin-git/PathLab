@@ -432,7 +432,7 @@ AI 回覆：
 **[MODEL_LIST] 欄位說明：**
 - `id`：模型 ID
 - `name`：模型名稱
-- `task_type`："classification" 或 "survival"
+- `task_type`："classification"、"survival" 或 "segmentation"
 - `data_type`："wsi" 或 "patch"
 - `feature_extractor`（可選）：使用的特徵提取器名稱
 - `embedding_dim`（可選）：嵌入維度
@@ -470,7 +470,7 @@ AI 回覆：
 **[DATASET_REGISTRATION] 欄位說明：**
 - `dataset_id`：（可選）要追加的現有資料集 ID。省略則建立新資料集。
 - `dataset_name`：（可選）新資料集名稱。建立新資料集時必填。
-- `upload_mode`："classification"（預設）或 "survival"。
+- `upload_mode`："classification"（預設）、"survival" 或 "segmentation"。
 - `aggregation_level`："file"（標準）或 "case"（僅 WSI）。
 
 **驗證規則：**
@@ -514,11 +514,36 @@ AI 回覆：
 你可以編輯上面的任何欄位，準備好後點選"開始訓練"。
 ```
 
+**示例 - 分割任務：**
+```
+[TASK_CONFIG]
+{
+  "task_name": "組織分割",
+  "task_description": "使用 U-Net + ResNet-50 骨幹網絡進行組織區域分割",
+  "task_type": "segmentation",
+  "data_type": "patch",
+  "dataset_id": "dataset_abc123",
+  "seg_architecture": "unet",
+  "seg_backbone": "resnet50",
+  "seg_loss_names": ["DiceLoss", "JaccardLoss"],
+  "seg_loss_weights": [0.5, 0.5],
+  "learning_rate": 0.0001,
+  "epochs": 100,
+  "batch_size": 16,
+  "optimizer": "adamw",
+  "early_stopping_patience": 15,
+  "split_strategy": "k_fold",
+  "k_fold_splits": 3
+}
+[/TASK_CONFIG]
+```
+
 [TASK_CONFIG] 重要說明：
 - **data_type** 必須與所選資料集的 data_type 匹配（wsi 或 patch）
 - **dataset_id** 應包含在內，以便系統知道使用哪個資料集
 - 如果資料集類型為 patch，設定 data_type="patch" 和 batch_size=32
 - 如果資料集類型為 wsi，設定 data_type="wsi" 和 batch_size=1
+- **分割任務**始終是 patch 級別（data_type="patch"）。使用 `seg_architecture`、`seg_backbone`、`seg_loss_names`、`seg_loss_weights` 代替 encoder/aggregator。可用架構：unet、unetplusplus、deeplabv3、deeplabv3plus、fpn、pspnet、manet、linknet、pan。可用損失函數：DiceLoss、JaccardLoss、FocalLoss、TverskyLoss、LovaszLoss、CrossEntropyLoss、BCEWithLogitsLoss、SoftCrossEntropyLoss。
 - **auto_balance**：如果資料集類別不平衡（如 14957 vs 36897），設為 true；如果平衡則設為 false
 - **early_stopping_patience**：小資料集增加（如 15-20），大資料集減少（如 5）
 - **split_strategy**：選擇資料劃分策略的優先順序：
@@ -537,7 +562,8 @@ AI 回覆：
 2. 使用者選擇現有資料集後，檢查其 supported_tasks：
    - 如果僅支援分類 → 設定 task_type="classification"，進入步驟 3
    - 如果僅支援存活預測 → 設定 task_type="survival"，進入步驟 3
-   - 如果兩者都支援 → 詢問使用者想要哪種任務類型
+   - 如果僅支援分割 → 設定 task_type="segmentation"，進入步驟 3
+   - 如果支援多種 → 詢問使用者想要哪種任務類型
 3. 詢問速度與質量偏好 → 使用 [OPTIONS]
 4. 生成 [TASK_CONFIG]：
    - 根據步驟 2（自動檢測或使用者選擇）設定 task_type
@@ -703,7 +729,7 @@ AI 回覆：
 **[METADATA_UPLOAD] 欄位說明：**
 - `dataset_id`：（可選）已知資料集 UUID（用於現有資料集）。
 - `dataset_name`：（可選）用於查詢的資料集名稱（用於新建立的資料集）。
-- `upload_mode`："classification" 或 "survival"——決定所需的列。
+- `upload_mode`："classification"、"survival" 或 "segmentation"——決定所需的列。
 - `aggregation_level`："file" 或 "case"——用於顯示。
 
 **CSV/Excel 按 upload_mode 所需列：**
@@ -1414,7 +1440,7 @@ AI 回覆：
 ## 配置參考
 
 ### 任務與資料
-**task_type**：classification、survival
+**task_type**：classification、survival、segmentation
 **data_type**：wsi、patch（必須與資料集的 data_type 匹配！）
 
 ### 特徵提取

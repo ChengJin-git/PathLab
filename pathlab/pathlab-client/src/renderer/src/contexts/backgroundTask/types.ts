@@ -5,7 +5,7 @@
 import { TrainingTaskDetail, UploadSplitsResponse } from '../../api'
 
 // Task types - includes server-side training tasks and storage tasks
-export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'analysis' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'metadata_upload'
+export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'analysis' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'metadata_upload' | 'extraction'
 export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
 
 // Storage task type from backend
@@ -46,7 +46,7 @@ export interface BackgroundTask {
   dataLevel?: 'wsi' | 'patch' // For progress calculation
   // For analysis tasks
   analysisType?: 'internal' | 'external'  // Type of analysis
-  taskCategory?: 'classification' | 'survival'  // Task category for i18n display (internal analysis only)
+  taskCategory?: 'classification' | 'survival' | 'segmentation'  // Task category for i18n display (internal analysis only)
   trainingTaskId?: string  // The training task ID this analysis belongs to (for merging external validation)
 }
 
@@ -62,7 +62,7 @@ export interface MetadataUploadTaskConfig {
   csvFile: File              // Already-converted CSV file (or raw CSV if user selected CSV)
   datasetName: string        // Dataset name to find/poll for
   datasetId?: string         // If already known
-  uploadMode: 'classification' | 'survival'
+  uploadMode: 'classification' | 'survival' | 'segmentation'
   dataLevel: 'file' | 'case'
 }
 
@@ -113,6 +113,7 @@ export interface BackgroundTaskContextType {
   addDeleteWSITask: (wsiIds: string[], mode: 'standard' | 'complete') => Promise<string>
   addDeleteTrainingTask: (taskIds: string[], mode: 'standard' | 'complete') => Promise<string>
 
+  addExtractionTask: (taskId: string, datasetName: string) => string
   addMigrationTask: (targetPath: string, deleteSource: boolean) => Promise<string>
   addMetadataUploadTask: (config: MetadataUploadTaskConfig) => string
   cancelTask: (taskId: string) => void

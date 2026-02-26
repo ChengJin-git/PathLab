@@ -209,7 +209,7 @@ export interface DatasetSummary {
   file_count: number
   total_size: number
   data_type: 'wsi' | 'patch'  // Data type: WSI collection or Patch collection
-  task_type: 'classification' | 'survival' // Task type: classification or survival
+  task_type: 'classification' | 'survival' | 'segmentation' // Task type: classification, survival, or segmentation
   aggregation_level: 'case' | 'file'  // Aggregation level: case-level or file-level dataset
   // Permission flag - whether user can delete this dataset
   can_delete?: boolean
@@ -268,19 +268,19 @@ export async function renameDataset(
 export interface UpdateDatasetTypeResponse {
   message: string
   dataset_id: string
-  new_type: 'classification' | 'survival'
+  new_type: 'classification' | 'survival' | 'segmentation'
   updated_count: number
 }
 
 /**
- * Update dataset type (classification or survival)
+ * Update dataset type (classification, survival, or segmentation)
  * @param datasetId - Dataset UUID
- * @param datasetType - New type: "classification" or "survival"
+ * @param datasetType - New type: "classification", "survival", or "segmentation"
  * @throws {ApiError} If the request fails
  */
 export async function updateDatasetType(
   datasetId: string,
-  datasetType: 'classification' | 'survival'
+  datasetType: 'classification' | 'survival' | 'segmentation'
 ): Promise<UpdateDatasetTypeResponse> {
   return apiFetch<UpdateDatasetTypeResponse>(
     `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/type`,
@@ -588,10 +588,10 @@ export async function getMigrationStatus(): Promise<MigrationStatus> {
 
 /**
  * Download CSV template for batch WSI metadata configuration.
- * @param taskType - 'classification' or 'survival'
+ * @param taskType - 'classification', 'survival', or 'segmentation'
  * @throws {ApiError} If the request fails
  */
-export async function downloadCSVTemplate(taskType: 'classification' | 'survival' = 'classification'): Promise<void> {
+export async function downloadCSVTemplate(taskType: 'classification' | 'survival' | 'segmentation' = 'classification'): Promise<void> {
   let response: Response
   try {
     const headers: Record<string, string> = {}
@@ -631,9 +631,12 @@ export async function downloadCSVTemplate(taskType: 'classification' | 'survival
   const url = window.URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  const filename =
-    taskType === 'survival' ? 'wsi_survival_metadata_template.csv' : 'wsi_classification_metadata_template.csv'
-  a.download = filename
+  const filenames: Record<string, string> = {
+    survival: 'wsi_survival_metadata_template.csv',
+    segmentation: 'segmentation_metadata_template.csv',
+    classification: 'wsi_classification_metadata_template.csv',
+  }
+  a.download = filenames[taskType] || filenames.classification
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)

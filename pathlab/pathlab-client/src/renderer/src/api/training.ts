@@ -274,6 +274,10 @@ export interface TrainingTaskConfig {
     batch_size: number
     auto_balance?: boolean  // Auto-balance class weights for imbalanced datasets
     early_stopping_patience?: number  // Number of epochs to wait before early stopping
+    // Segmentation-specific fields
+    architecture?: string      // Segmentation architecture (unet, deeplabv3, etc.)
+    loss_names?: string[]      // Segmentation loss function names
+    loss_weights?: number[]    // Segmentation loss function weights
   }
   split_config?: SplitConfig
 }

@@ -40,6 +40,7 @@ from backend.ai.tasks import WSIClassificationTrainer, WSISurvivalTrainer
 from backend.ai.extractors.registry import get_available_extractors
 from backend.ai.schemas import (
     TrainResponse,
+    TrainMetrics,
     TaskType,
 )
 from backend.ai.schemas.base import TaskStatus
@@ -834,66 +835,137 @@ async def train_patch_classification(req: PatchClassificationTrainRequest) -> Tr
 # =============================================================================
 
 class PatchSegmentationTrainRequest(BaseModel):
-    """Patch segmentation training request"""
+    """Patch segmentation training request - aligned with other training endpoints"""
     task_id: str
-    config: dict  # Full OmegaConf-compatible config
+    architecture: str = "unet"
+    backbone: str = "resnet50"
+    loss_names: List[str] = ["DiceLoss", "JaccardLoss"]
+    loss_weights: List[float] = [0.5, 0.5]
+    epochs: int = 100
+    lr: float = 0.0001
+    batch_size: int = 16
+    optimizer: str = "adamw"
+    early_stopping_patience: int = 15
+    device: Optional[str] = None
+    seed: Optional[int] = 42
 
 
-def _run_patch_segmentation_training_sync(task_id: str, config: dict) -> TrainResponse:
+@router.post("/patch_segmentation")
+async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainResponse:
     """
-    Synchronous function to run patch segmentation training.
-    Called from a thread pool to avoid blocking the event loop.
+    Patch Segmentation Training.
+
+    Uses ScopedSession pattern - creates short-lived DB sessions for each operation
+    to prevent connection pool exhaustion during long-running training.
+    The SegmentationTrainer is synchronous, so it runs in a thread pool.
     """
+    import asyncio
+    import uuid as uuid_mod
     from backend.ai.tasks import SegmentationTrainer
 
-    try:
-        # Ensure task_id is in config
-        config = config.copy()
-        config["task_id"] = task_id
+    scoped_session = ScopedSession(req.task_id)
+    scoped_logger = ScopedTrainingLogger(req.task_id)
 
-        trainer = SegmentationTrainer(config=config)
-        result = trainer.train_model(db=None)  # db not used in current implementation
+    # Phase 1: Validation - short-lived session
+    async with scoped_session.session() as (training_logger, db):
+        task = await TrainingTaskRepository.get_by_id(db, req.task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Training task not found: {req.task_id}")
+
+        user_id = task.user_id
+        preprocessing_config = task.preprocessing_config or {}
+
+        # Mark task as training
+        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=50)
+        await training_logger.info(
+            f"[Training] Starting Patch Segmentation ({req.architecture}/{req.backbone})",
+            {"task_type": "patch_segmentation", "architecture": req.architecture,
+             "backbone": req.backbone, "epochs": req.epochs, "lr": req.lr}
+        )
+    # Session closed here - connection released before training starts
+
+    try:
+        # Phase 2: Build config and run training in thread pool
+        save_dir = str(UPLOADS_DIR / req.task_id / "checkpoints")
+        config = {
+            "architecture": req.architecture,
+            "backbone": req.backbone,
+            "loss": {"names": req.loss_names, "weights": req.loss_weights},
+            "training": {
+                "epochs": req.epochs,
+                "lr": req.lr,
+                "optimizer": req.optimizer,
+                "early_stopping_patience": req.early_stopping_patience,
+            },
+            "save_dir": save_dir,
+        }
+        # Merge dataset paths from preprocessing_config (set by gateway pipeline)
+        if preprocessing_config.get("segmentation_dataset"):
+            config["dataset"] = preprocessing_config["segmentation_dataset"]
+
+        trainer = SegmentationTrainer(
+            task_id=req.task_id,
+            uploads_root=UPLOADS_DIR,
+            device=req.device,
+            batch_size=req.batch_size,
+            config=config,
+        )
+
+        # Run sync training in thread pool to avoid blocking event loop
+        results = await asyncio.to_thread(
+            trainer.train_model, req.epochs, req.lr, req.early_stopping_patience
+        )
+
+        # Build TrainResponse from results dict
+        model_id = str(uuid_mod.uuid4())
+        checkpoint_path = str(Path(save_dir) / "best_model.pth")
+
+        metrics = TrainMetrics(
+            loss_history=results.get("history", {}).get("train_loss", []),
+            lr_history=results.get("history", {}).get("learning_rates", []),
+            val_metrics=sanitize_for_json(results.get("best_val_metrics", {})),
+            test_metrics=sanitize_for_json(results.get("test_metrics")),
+            best_epoch=results.get("best_epoch"),
+        )
+
+        result = TrainResponse.success(
+            task_id=req.task_id,
+            task_type=TaskType.PATCH_SEGMENTATION,
+            model_id=model_id,
+            checkpoint_path=checkpoint_path,
+            metrics=metrics,
+        )
+
+        # Phase 3: Save model - short-lived session
+        async with scoped_session.session() as (training_logger, db):
+            await TrainedModelRepository.create(db, {
+                "model_id": model_id,
+                "task_id": req.task_id,
+                "user_id": user_id,
+                "model_name": f"{req.architecture}+{req.backbone}",
+                "model_path": checkpoint_path,
+                "config_path": str(Path(checkpoint_path).parent / "config.json"),
+                "classes": [],  # segmentation categories stored in config
+                "feature_extractor": req.backbone,
+                "aggregator": req.architecture,
+                "train_metrics": sanitize_for_json({"loss": results.get("history", {}).get("train_loss", [])}),
+                "val_metrics": sanitize_for_json(results.get("best_val_metrics", {})),
+                "is_default": False,
+                "is_active": True,
+            })
+            await training_logger.info("Training completed. Model saved.", {"model_id": model_id})
+            await _safe_update_status(db, req.task_id, TaskStatus.COMPLETED, progress=100)
 
         return result
 
     except TrainingCancelledException as e:
-        # Note: sync wrapper, use standard logger
-        logger.info(f"Patch Segmentation training cancelled: {e}")
-        return TrainResponse.cancelled(task_id, TaskType.PATCH_SEGMENTATION, message=str(e))
-
-    except FileNotFoundError as e:
-        tb = traceback.format_exc()
-        logger.error(f"Patch Segmentation training failed - File not found: {e}\n{tb}")
-        return TrainResponse.failed(task_id=task_id, task_type=TaskType.PATCH_SEGMENTATION, error_message=f"File not found: {e}")
-
-    except ValueError as e:
-        tb = traceback.format_exc()
-        logger.error(f"Patch Segmentation training failed - Invalid config: {e}\n{tb}")
-        return TrainResponse.failed(task_id=task_id, task_type=TaskType.PATCH_SEGMENTATION, error_message=f"Invalid config: {e}")
+        await scoped_logger.info(f"Patch Segmentation training cancelled: {e}")
+        async with scoped_session.session() as (training_logger, db):
+            await _safe_update_status(db, req.task_id, TaskStatus.CANCELLED, error_message=str(e))
+        return TrainResponse.cancelled(req.task_id, TaskType.PATCH_SEGMENTATION, message=str(e))
 
     except Exception as e:
-        tb = traceback.format_exc()
-        logger.error(f"Patch Segmentation training failed: {e}\n{tb}")
-        return TrainResponse.failed(task_id=task_id, task_type=TaskType.PATCH_SEGMENTATION, error_message=str(e))
+        await handle_training_error_scoped(e, req.task_id, scoped_session, "Patch Segmentation")
 
     finally:
-        cleanup_gpu_memory()
-        clear_cancellation(task_id)
-
-
-@router.post("/patch_segmentation")
-async def train_patch_segmentation(
-    req: PatchSegmentationTrainRequest,
-) -> TrainResponse:
-    """
-    Patch segmentation training endpoint.
-
-    Runs training synchronously (via thread pool) and returns result when complete.
-    """
-    import asyncio
-    try:
-        # Run sync training in thread pool to avoid blocking event loop
-        result = await asyncio.to_thread(_run_patch_segmentation_training_sync, req.task_id, req.config)
-        return result
-    finally:
-        await clear_progress(req.task_id)
+        await cleanup_training_scoped(req.task_id)

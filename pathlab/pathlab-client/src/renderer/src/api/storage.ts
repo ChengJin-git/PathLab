@@ -413,7 +413,7 @@ export interface BatchRegisterRequest {
   dataset_id?: string
   dataset_name?: string
   aggregation_level?: 'case' | 'file'  // Default: 'file' - how to organize data
-  task_type?: 'classification' | 'survival'  // Default: 'classification'
+  task_type?: 'classification' | 'survival' | 'segmentation'  // Default: 'classification'
   default_label?: string  // For classification (default: 'External Import')
   default_event_time?: number  // For survival
   default_event_status?: number  // For survival (1 = event occurred, 0 = censored)

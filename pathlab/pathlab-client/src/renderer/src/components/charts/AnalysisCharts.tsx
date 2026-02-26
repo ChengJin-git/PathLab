@@ -623,4 +623,95 @@ export const KMCurveChart = memo(function KMCurveChart({ data, title, compact }:
   )
 })
 
-export type { ConfusionMatrixData, RocCurveData, LossCurveData, KFoldLossCurveData }
+// ============================================================================
+// Generic Metric Curve Chart (IoU, Dice, etc.)
+// ============================================================================
+
+interface MetricCurveData {
+  epochs: number[]
+  train_values: number[]
+  val_values?: number[]
+  metric_name: string  // e.g., 'IoU', 'Dice'
+}
+
+export const MetricCurveChart = memo(function MetricCurveChart({ data, title, compact }: { data: MetricCurveData } & ChartProps) {
+  const { t } = useTranslation()
+  const chartRef = useRef<ReactECharts | null>(null)
+  const safeName = data.metric_name.toLowerCase().replace(/\s+/g, '_')
+  const handleExport = useCallback(() => exportChartAsPng(chartRef, `${safeName}_curve.png`, 600), [safeName])
+
+  const option: EChartsOption = useMemo(() => {
+    const series: any[] = [
+      {
+        name: `${t('analysisCharts.train')} ${data.metric_name}`,
+        type: 'line',
+        data: data.epochs.map((epoch, i) => [epoch, data.train_values[i]]),
+        lineStyle: { width: 2, color: COLORS[4] },  // violet
+        itemStyle: { color: COLORS[4] },
+        showSymbol: false,
+        smooth: true
+      }
+    ]
+    if (data.val_values && data.val_values.length > 0) {
+      series.push({
+        name: `${t('analysisCharts.val')} ${data.metric_name}`,
+        type: 'line',
+        data: data.epochs.slice(0, data.val_values.length).map((epoch, i) => [epoch, data.val_values![i]]),
+        lineStyle: { width: 2, type: 'dashed', color: COLORS[1] },  // emerald
+        itemStyle: { color: COLORS[1] },
+        showSymbol: false,
+        smooth: true
+      })
+    }
+
+    const defaultTitle = `${data.metric_name} ${t('analysisCharts.metricCurve')}`
+    return {
+      title: { text: title || defaultTitle, left: 'center', textStyle: { fontSize: compact ? 14 : 16 }, top: compact ? 5 : 10 },
+      tooltip: {
+        trigger: 'axis',
+        formatter: (params: any) => {
+          if (!Array.isArray(params) || params.length === 0) return ''
+          const epoch = params[0]?.data[0]
+          const lines = params.map((p: any) => {
+            const value = typeof p.data[1] === 'number' ? p.data[1].toFixed(4) : p.data[1]
+            return `<span style="display:inline-block;margin-right:4px;border-radius:10px;width:10px;height:10px;background-color:${p.color};"></span>${p.seriesName}: ${value}`
+          })
+          return `${t('analysisCharts.epoch')}: ${epoch}<br/>${lines.join('<br/>')}`
+        }
+      },
+      legend: {
+        top: compact ? 25 : 35,
+        left: 'center',
+        type: 'scroll',
+        width: '90%',
+        itemWidth: 15,
+        itemHeight: 10,
+        itemGap: 10,
+        textStyle: { fontSize: compact ? 10 : 11 },
+        formatter: (name: string) => {
+          const maxLen = compact ? 20 : 30
+          return name.length > maxLen ? name.substring(0, maxLen) + '...' : name
+        },
+        tooltip: { show: true }
+      },
+      grid: compact
+        ? { left: 50, right: 15, top: 60, bottom: 45 }
+        : { left: 80, right: 40, top: 70, bottom: 60 },
+      xAxis: { type: 'value', name: t('analysisCharts.epoch'), nameLocation: 'middle', nameGap: compact ? 25 : 35, min: 1, nameTextStyle: { fontSize: compact ? 10 : 12 }, axisLabel: { fontSize: compact ? 10 : 12 } },
+      yAxis: { type: 'value', name: data.metric_name, nameLocation: 'middle', nameGap: compact ? 40 : 55, min: 0, max: 1, nameTextStyle: { fontSize: compact ? 10 : 12 }, axisLabel: { fontSize: compact ? 10 : 12 } },
+      series
+    }
+  }, [data, title, compact, t])
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+      <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+        <span className="text-sm font-medium text-gray-700">{title || `${data.metric_name} ${t('analysisCharts.metricCurve')}`}</span>
+        <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title={t('analysisCharts.exportPng')}><Download className="w-4 h-4" /></button>
+      </div>
+      <ReactECharts ref={chartRef} option={option} style={{ height: compact ? '300px' : '420px', width: '100%' }} notMerge={true} />
+    </div>
+  )
+})
+
+export type { ConfusionMatrixData, RocCurveData, LossCurveData, KFoldLossCurveData, MetricCurveData }

@@ -626,7 +626,7 @@ async def upload_wsi_by_path(
 
 @router.get("/csv/template")
 async def get_csv_template(
-    task_type: str = Query("classification", description="Task type: 'classification' or 'survival'"),
+    task_type: str = Query("classification", description="Task type: 'classification', 'survival', or 'segmentation'"),
     user: User = Depends(current_active_user)
 ):
     """
@@ -637,6 +637,7 @@ async def get_csv_template(
     - filename: The original filename of the WSI slide
     - For classification: label (required)
     - For survival: event_time, event_status (required)
+    - For segmentation: label (required) — COCO annotations are provided separately
 
     Optional columns:
     - split (train, val, test), case_id, age, gender, source
@@ -656,6 +657,18 @@ async def get_csv_template(
              "case_id": "CASE003", "age": "70", "gender": "Male", "source": "Lung"}
         ]
         filename = "wsi_survival_metadata_template.csv"
+    elif task_type == "segmentation":
+        # Segmentation template — same as classification (COCO JSON annotations are uploaded separately)
+        headers = ["filename", "split", "label", "case_id", "age", "gender", "source"]
+        examples = [
+            {"filename": "image_001.png", "split": "train", "label": "tissue",
+             "case_id": "CASE001", "age": "", "gender": "", "source": ""},
+            {"filename": "image_002.png", "split": "val", "label": "tissue",
+             "case_id": "CASE002", "age": "", "gender": "", "source": ""},
+            {"filename": "image_003.png", "split": "test", "label": "tissue",
+             "case_id": "CASE003", "age": "", "gender": "", "source": ""}
+        ]
+        filename = "segmentation_metadata_template.csv"
     else:
         # Classification template (default)
         headers = ["filename", "split", "label", "case_id", "age", "gender", "source"]
@@ -680,4 +693,28 @@ async def get_csv_template(
         io.BytesIO(output.getvalue().encode('utf-8')),
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@router.get("/coco/template")
+async def get_coco_annotation_template(
+    user: User = Depends(current_active_user)
+):
+    """
+    Download COCO annotation JSON template for segmentation datasets.
+    Requires authentication.
+    """
+    import json
+    template_path = Path(__file__).parent.parent.parent / "backend" / "ai" / "utils" / "dataset_template" / "segmentation_annotation.json"
+
+    if not template_path.exists():
+        raise HTTPException(status_code=404, detail="COCO annotation template not found")
+
+    with open(template_path, "r") as f:
+        content = f.read()
+
+    return StreamingResponse(
+        io.BytesIO(content.encode('utf-8')),
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=segmentation_annotation_template.json"}
     )

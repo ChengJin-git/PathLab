@@ -38,6 +38,10 @@ export function isSurvivalTask(taskType: string | undefined): boolean {
   return taskType === 'survival' || taskType === 'wsi_survival' || taskType === 'patch_survival'
 }
 
+export function isSegmentationTask(taskType: string | undefined): boolean {
+  return taskType === 'segmentation' || taskType === 'patch_segmentation'
+}
+
 /**
  * Interface for training task metadata (minimal fields needed for validation)
  */

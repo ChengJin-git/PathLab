@@ -13,9 +13,14 @@ import {
   SEGMENTATION_DEFAULTS,
   FILTER_DEFAULTS,
   TRAINING_DEFAULTS,
+  SEG_TRAINING_DEFAULTS,
   SPLIT_DEFAULTS,
   DEFAULT_AGGREGATOR,
   DEFAULT_EXTRACTOR,
+  DEFAULT_SEG_ARCHITECTURE,
+  DEFAULT_SEG_BACKBONE,
+  DEFAULT_SEG_LOSS_NAMES,
+  DEFAULT_SEG_LOSS_WEIGHTS,
   SplitStrategy,
 } from '../constants/training'
 
@@ -61,6 +66,16 @@ export interface UseTrainingConfigReturn {
   setEarlyStoppingPatience: (patience: number) => void
   autoBalance: boolean
   setAutoBalance: (balance: boolean) => void
+
+  // Segmentation training config (Step 4 for segmentation tasks)
+  segArchitecture: string
+  setSegArchitecture: (arch: string) => void
+  segBackbone: string
+  setSegBackbone: (backbone: string) => void
+  segLossNames: string[]
+  setSegLossNames: (names: string[]) => void
+  segLossWeights: number[]
+  setSegLossWeights: (weights: number[]) => void
 
   // Split config
   splitStrategy: SplitStrategy
@@ -111,6 +126,12 @@ export function useTrainingConfig(): UseTrainingConfigReturn {
   const [earlyStoppingPatience, setEarlyStoppingPatience] = useState(TRAINING_DEFAULTS.earlyStoppingPatience)
   const [autoBalance, setAutoBalance] = useState(TRAINING_DEFAULTS.autoBalance)
 
+  // Segmentation training config (architecture, backbone, loss)
+  const [segArchitecture, setSegArchitecture] = useState(DEFAULT_SEG_ARCHITECTURE)
+  const [segBackbone, setSegBackbone] = useState(DEFAULT_SEG_BACKBONE)
+  const [segLossNames, setSegLossNames] = useState<string[]>(DEFAULT_SEG_LOSS_NAMES)
+  const [segLossWeights, setSegLossWeights] = useState<number[]>(DEFAULT_SEG_LOSS_WEIGHTS)
+
   // Split config
   const [splitStrategy, setSplitStrategy] = useState<SplitStrategy>(SPLIT_DEFAULTS.strategy)
   const [kFoldSplits, setKFoldSplits] = useState(SPLIT_DEFAULTS.kFoldSplits)
@@ -158,6 +179,16 @@ export function useTrainingConfig(): UseTrainingConfigReturn {
     setEarlyStoppingPatience,
     autoBalance,
     setAutoBalance,
+
+    // Segmentation training config
+    segArchitecture,
+    setSegArchitecture,
+    segBackbone,
+    setSegBackbone,
+    segLossNames,
+    setSegLossNames,
+    segLossWeights,
+    setSegLossWeights,
 
     // Split config
     splitStrategy,

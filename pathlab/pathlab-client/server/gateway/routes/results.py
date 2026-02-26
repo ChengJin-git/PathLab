@@ -722,6 +722,12 @@ async def _run_inference_if_needed(
 
     # Route to appropriate inference handler based on data_type and task_type
     if data_type == "patch":
+        if task_type in ("segmentation", "patch_segmentation"):
+            # Patch segmentation inference not yet implemented
+            raise ValueError(
+                "Patch segmentation inference is not yet supported. "
+                "Analysis of segmentation results from training metrics is available."
+            )
         await _run_inference_patch_classification(task, wsi_ids, resources, db, progress_callback, assigned_device=assigned_device)
     elif task_type in ("wsi_survival", "survival"):
         await _run_inference_wsi_survival(task, wsi_ids, resources, db, progress_callback, assigned_device=assigned_device)
@@ -1725,18 +1731,14 @@ async def get_datasets_for_validation(
         if not wsi_ids:
             continue  # Skip empty datasets
 
-        # For WSI datasets, require ALL WSIs to have pre-extracted features.
-        # Patch datasets are exempt (models process images directly).
-        if dg.data_type != "patch":
-            extracted_count = await DatasetRepository.get_feature_extracted_count(db, dataset_id)
-            if extracted_count < len(wsi_ids):
-                continue  # Skip datasets with missing features
-
         # Get distinct labels (names + count, for classification matching)
         distinct_labels = await DatasetRepository.get_distinct_labels(db, dataset_id)
         distinct_label_count = len(distinct_labels)
 
-        # For WSI datasets, scan feature cache to find which extractors have features
+        # For WSI datasets, scan feature cache to find which extractors have features.
+        # This replaces the old feature_extracted DB column check which was inconsistent
+        # with how the chat context detects features (disk-based).
+        # Datasets without any features on disk for WSI are skipped.
         available_feature_extractors: list = []
         if dg.data_type != "patch" and wsi_ids:
             first_wsi_id = wsi_ids[0]
@@ -1750,6 +1752,9 @@ async def get_datasets_for_validation(
                                 if feat_file.exists():
                                     available_feature_extractors.append(extractor_dir.name)
                                     break  # Found for this extractor, move to next
+            # WSI datasets must have at least one feature extractor available
+            if not available_feature_extractors:
+                continue
 
         # Get case count for case-level datasets
         total_wsi_count = len(wsi_ids)
@@ -1875,6 +1880,9 @@ async def start_external_validation(
     def is_survival_task(task_type: str) -> bool:
         return task_type in ("wsi_survival", "survival")
 
+    def is_segmentation_task(task_type: str) -> bool:
+        return task_type in ("segmentation", "patch_segmentation")
+
     model_task_type = model_data_group.task_type if model_data_group else "classification"
     target_task_type = target_data_group.task_type if target_data_group else "classification"
 
@@ -1882,6 +1890,13 @@ async def start_external_validation(
     target_is_classification = is_classification_task(target_task_type)
     model_is_survival = is_survival_task(model_task_type)
     target_is_survival = is_survival_task(target_task_type)
+    model_is_segmentation = is_segmentation_task(model_task_type)
+
+    if model_is_segmentation:
+        raise HTTPException(
+            status_code=400,
+            detail="External validation for segmentation models is not yet supported."
+        )
 
     if model_is_classification and not target_is_classification:
         raise HTTPException(
@@ -3831,7 +3846,12 @@ async def run_task_analysis(
         task_category = None
     else:
         # Internal analysis: use task name only (category sent as separate field for i18n)
-        task_category = "survival" if task_type_str in ("wsi_survival", "survival") else "classification"
+        if task_type_str in ("wsi_survival", "survival"):
+            task_category = "survival"
+        elif task_type_str in ("segmentation", "patch_segmentation"):
+            task_category = "segmentation"
+        else:
+            task_category = "classification"
         title = task.task_name
         analysis_type = "internal"
 
@@ -4046,9 +4066,13 @@ async def get_quick_analysis(
 
         # Default metrics and charts based on task type
         is_survival_task = quick_task_type_str in ("wsi_survival", "survival")
+        is_seg_task = quick_task_type_str in ("segmentation", "patch_segmentation")
         if is_survival_task:
             default_metrics = ["c_index", "integrated_brier_score"]
             default_charts = ["km_curve", "loss_curve"]
+        elif is_seg_task:
+            default_metrics = ["iou", "dice", "accuracy", "precision", "recall", "f1"]
+            default_charts = ["loss_curve", "iou_curve", "dice_curve"]
         else:
             default_metrics = ["accuracy", "precision", "recall", "specificity", "f1", "auc"]
             default_charts = ["roc_curve", "confusion_matrix", "loss_curve"]
@@ -4607,6 +4631,13 @@ async def run_analysis_pipeline(
                 case "external_validation":
                     result = await _run_external_validation_analysis(
                         task, request, db, progress_callback=update_progress, progress_config=progress_config, submitted_by=submitted_by
+                    )
+                case "segmentation" | "patch_segmentation":
+                    # Segmentation analysis uses training metrics (IoU/Dice curves)
+                    # rather than inference-based analysis. Full support TBD.
+                    raise NotImplementedError(
+                        "Segmentation analysis pipeline is not yet implemented. "
+                        "Training metrics (IoU, Dice, loss curves) are available in the training results."
                     )
                 case _:
                     result = await _run_classification_analysis(

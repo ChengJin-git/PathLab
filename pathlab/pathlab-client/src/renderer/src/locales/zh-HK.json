@@ -556,8 +556,10 @@
       "taskType": "任務類型",
       "classification": "分類",
       "survivalAnalysis": "存活預測",
+      "segmentation": "分割",
       "classificationInfo": "每個檔案將被分配一個類別標籤",
       "survivalInfo": "每個檔案將具有事件時間和狀態",
+      "segmentationInfo": "每個檔案將具有像素級分割標註",
       "filesSelected": "已選擇 {{count}} 個檔案",
       "registering": "註冊中...",
       "registerSelected": "註冊選取 ({{count}})",
@@ -1377,6 +1379,7 @@
     "patchCollection": "切片塊集合",
     "survival": "生存分析",
     "classification": "分類",
+    "segmentation": "分割",
     "caseLevel": "病例級別",
     "fileLevel": "檔案級別",
     "newDataset": "新建資料集",
@@ -1578,6 +1581,10 @@
     "modelConfig": {
       "aggregationMethod": "聚合方法",
       "featureExtractor": "特徵提取器",
+      "segArchitecture": "分割架構",
+      "architecture": "架構",
+      "backbone": "骨幹網絡",
+      "lossFunction": "損失函數",
       "search": "搜尋...",
       "trainingParams": "訓練參數",
       "learningRate": "學習率",
@@ -1685,6 +1692,7 @@
       "survivalPrediction": "存活預測",
       "timeToEvent": "事件時間分析",
       "segmentation": "分割",
+      "segmentationMasks": "像素級掩膜預測",
       "comingSoon": "即將推出",
       "dataLevelLabel": "數據層級",
       "wsiLevel": "WSI 級別",
@@ -1775,6 +1783,9 @@
       "model": "模型",
       "linearProbe": "線性探測器",
       "linearProbeDesc": "無需聚合模型，直接分類",
+      "segArchitecture": "架構",
+      "segBackbone": "骨幹網絡",
+      "segLoss": "損失函數",
       "advancedSettings": "進階設定",
       "learningRate": "學習率",
       "epochs": "訓練輪數",
@@ -1867,6 +1878,8 @@
       "trainingLossKFold": "訓練損失（K 摺）",
       "kmSurvivalCurve": "KM 生存曲線",
       "survivalCurve": "生存曲線",
+      "iouCurve": "IoU 曲線",
+      "diceCurve": "Dice 曲線",
       "perClassMetrics": "各類別指標"
     },
     "inferenceConfig": {
@@ -1944,6 +1957,7 @@
       "title": "可用模型",
       "survival": "存活預測",
       "classification": "分類",
+      "segmentation": "分割",
       "modelId": "模型 ID",
       "taskId": "任務 ID",
       "classes": "類別",
@@ -1983,7 +1997,9 @@
       "confusionMatrix": "混淆矩陣",
       "trainingLoss": "訓練損失",
       "trainingLossKFold": "訓練損失（K 折）",
-      "kmCurve": "KM 生存曲線"
+      "kmCurve": "KM 生存曲線",
+      "iouCurve": "IoU 曲線",
+      "diceCurve": "Dice 曲線"
     },
     "csvAction": {
       "cannotProcess": "無法處理 CSV",
@@ -2162,6 +2178,7 @@
       "analysisType": "分析類型",
       "classification": "分類",
       "survival": "生存分析",
+      "segmentation": "分割",
       "changingTypeWarning": "更改類型可能影響現有分析",
       "dataLevel": "數據級別",
       "caseLevel": "病例級別",
@@ -2257,9 +2274,11 @@
       "newDatasetHint": "將建立一個新數據集",
       "analysisType": "分析類型",
       "classification": "分類",
-      "classificationDesc": "將切片分類到不同組別",
+      "classificationDesc": "將圖片分類到不同組別",
       "survivalAnalysis": "生存分析",
       "survivalDesc": "生存時間預測",
+      "segmentation": "分割",
+      "segmentationDesc": "精確圈選病灶或組織區域",
       "dataLevel": "數據級別",
       "caseLevel": "病例級別",
       "caseLevelDesc": "按患者病例分組切片",
@@ -2370,6 +2389,7 @@
       "batchImport": "批量匯入",
       "metadataUpdate": "中繼資料更新",
       "deleteExternal": "刪除外部資料",
+      "extraction": "擷取區域",
       "task": "任務",
       "import": "匯入",
       "metadata": "中繼資料"
@@ -2400,7 +2420,8 @@
     },
     "taskCategory": {
       "classification": "分類",
-      "survival": "存活預測"
+      "survival": "存活預測",
+      "segmentation": "分割"
     },
     "statusSummary": {
       "running": "運行中",
@@ -2706,7 +2727,8 @@
     "kmSurvivalCurve": "KM 生存曲線",
     "time": "時間",
     "survivalProbability": "生存機率",
-    "survivalCurve": "生存曲線"
+    "survivalCurve": "生存曲線",
+    "metricCurve": "曲線"
   },
   "annotation": {
     "annotate": "標註",

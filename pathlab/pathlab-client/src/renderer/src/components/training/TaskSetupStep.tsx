@@ -135,11 +135,10 @@ export function TaskSetupStep({
                   subtitle={t('training.taskSetup.categoricalLabels')}
                 />
                 <RadioOption
-                  selected={taskType === 'survival'}
-                  disabled={dataLevel === 'patch'}
-                  onClick={() => setTaskType('survival')}
+                  selected={dataLevel === 'patch' ? taskType === 'segmentation' : taskType === 'survival'}
+                  onClick={() => setTaskType(dataLevel === 'patch' ? 'segmentation' : 'survival')}
                   title={dataLevel === 'patch' ? t('training.taskSetup.segmentation') : t('training.taskSetup.survivalPrediction')}
-                  subtitle={dataLevel === 'patch' ? t('training.taskSetup.comingSoon') : t('training.taskSetup.timeToEvent')}
+                  subtitle={dataLevel === 'patch' ? t('training.taskSetup.segmentationMasks') : t('training.taskSetup.timeToEvent')}
                 />
               </div>
             </div>

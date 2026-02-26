@@ -14,8 +14,8 @@ class DatasetRenameRequest(BaseModel):
 
 
 class DatasetUpdateTypeRequest(BaseModel):
-    """Request model for updating dataset type (classification/survival)"""
-    task_type: str  # "classification" or "survival"
+    """Request model for updating dataset type (classification/survival/segmentation)"""
+    task_type: str  # "classification", "survival", or "segmentation"
 
 
 class DatasetUpdateDataLevelRequest(BaseModel):
@@ -50,7 +50,7 @@ class TrainingTaskRequest(BaseModel):
     """Request model for creating a training task"""
     task_id: Optional[str] = None  # Client-generated task_id for fire-and-forget submission
     task_name: str
-    task_type: str  # "classification" or "survival"
+    task_type: str  # "classification", "survival", or "segmentation"
     data_type: str  # "wsi" or "patch"
     task_description: Optional[str] = None
     dataset_id: Optional[str] = None  # If provided, wsi_ids are resolved from this dataset on server
@@ -173,7 +173,7 @@ class BatchRegisterRequest(BaseModel):
     files: List[BatchRegisterFileInfo]  # List of file info objects to register
     dataset_id: Optional[str] = None  # Existing dataset UUID
     dataset_name: Optional[str] = None  # New dataset name (if creating new)
-    task_type: str = "classification"  # "classification" or "survival"
+    task_type: str = "classification"  # "classification", "survival", or "segmentation"
     # Classification fields
     default_label: str = "External Import"  # Default label for all files
     # Survival analysis fields (required when task_type is "survival")
@@ -197,7 +197,7 @@ class StartBatchImportRequest(BaseModel):
     dataset_id: Optional[str] = None  # Existing dataset UUID
     dataset_name: Optional[str] = None  # New dataset name (if creating new)
     aggregation_level: str = "file"  # "case" or "file" - aggregation level
-    task_type: str = "classification"  # "classification" or "survival"
+    task_type: str = "classification"  # "classification", "survival", or "segmentation"
     # Classification fields
     default_label: str = "External Import"  # Default label for all files
     # Survival analysis fields (required when task_type is "survival")

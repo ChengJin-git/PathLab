@@ -26,8 +26,8 @@ interface BatchRegisterCardProps {
   batchRegistering: boolean
   batchImportTaskId: string | null
   batchDatasets: DatasetSummary[]
-  batchTaskType: 'classification' | 'survival'
-  setBatchTaskType: (type: 'classification' | 'survival') => void
+  batchTaskType: 'classification' | 'survival' | 'segmentation'
+  setBatchTaskType: (type: 'classification' | 'survival' | 'segmentation') => void
   batchDataLevel: 'case' | 'file'
   setBatchDataLevel: (level: 'case' | 'file') => void
   handleSelectBatchScanDir: () => Promise<void>

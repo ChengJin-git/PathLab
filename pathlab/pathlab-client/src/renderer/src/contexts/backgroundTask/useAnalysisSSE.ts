@@ -71,7 +71,7 @@ export function useAnalysisSSE(isLoggedIn: boolean, enabled: boolean) {
             serverTaskStatus: task.status as TrainingTaskStatus,
             // Store analysis_type and training task ID for merging external validation
             analysisType: task.analysis_type,
-            taskCategory: task.task_category as 'classification' | 'survival' | undefined,
+            taskCategory: task.task_category as 'classification' | 'survival' | 'segmentation' | undefined,
             trainingTaskId: task.task_id
           }
         })

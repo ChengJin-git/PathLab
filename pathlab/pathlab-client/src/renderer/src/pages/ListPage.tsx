@@ -25,7 +25,7 @@ export default function ListPage() {
   // selectedDatasetId is used for API calls, selectedDatasetName is used for display
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(initialDatasetId || null)
   const [selectedDatasetName, setSelectedDatasetName] = useState<string>('')
-  const [selectedDatasetType, setSelectedDatasetType] = useState<'classification' | 'survival'>('classification')
+  const [selectedDatasetType, setSelectedDatasetType] = useState<'classification' | 'survival' | 'segmentation'>('classification')
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
   const [datasetsLoading, setDatasetsLoading] = useState(true)
   const [datasetsError, setDatasetsError] = useState<string | undefined>()
@@ -96,8 +96,8 @@ export default function ListPage() {
   // Edit dataset - stores dataset_id for the dataset being edited (rename + type + aggregation_level change)
   const [editingDatasetId, setEditingDatasetId] = useState<string | null>(null)
   const [editingDatasetName, setEditingDatasetName] = useState('')
-  const [editingDatasetType, setEditingDatasetType] = useState<'classification' | 'survival'>('classification')
-  const [editingDatasetOriginalType, setEditingDatasetOriginalType] = useState<'classification' | 'survival'>('classification')
+  const [editingDatasetType, setEditingDatasetType] = useState<'classification' | 'survival' | 'segmentation'>('classification')
+  const [editingDatasetOriginalType, setEditingDatasetOriginalType] = useState<'classification' | 'survival' | 'segmentation'>('classification')
   const [editingDatasetDataLevel, setEditingDatasetDataLevel] = useState<'case' | 'file'>('file')
   const [editingDatasetOriginalDataLevel, setEditingDatasetOriginalDataLevel] = useState<'case' | 'file'>('file')
   const [editingDatasetSaving, setEditingDatasetSaving] = useState(false)
@@ -980,9 +980,11 @@ export default function ListPage() {
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
                           dataset.task_type === 'survival'
                             ? 'bg-amber-50 text-amber-700 border border-amber-100/50'
-                            : 'bg-indigo-50 text-indigo-700 border border-indigo-100/50'
+                            : dataset.task_type === 'segmentation' || dataset.task_type === 'patch_segmentation'
+                              ? 'bg-violet-50 text-violet-700 border border-violet-100/50'
+                              : 'bg-indigo-50 text-indigo-700 border border-indigo-100/50'
                         }`}>
-                          {dataset.task_type === 'survival' ? t('listPage.survival') : t('listPage.classification')}
+                          {dataset.task_type === 'survival' ? t('listPage.survival') : (dataset.task_type === 'segmentation' || dataset.task_type === 'patch_segmentation') ? t('listPage.segmentation') : t('listPage.classification')}
                         </span>
                         {itemType === 'slides' && (
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${

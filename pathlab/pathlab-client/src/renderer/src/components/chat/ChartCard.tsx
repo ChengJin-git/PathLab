@@ -8,11 +8,13 @@ import {
   LossCurveChart,
   KFoldLossCurveChart,
   KMCurveChart,
+  MetricCurveChart,
   type ConfusionMatrixData,
   type RocCurveData,
   type LossCurveData,
   type KFoldLossCurveData,
-  type KMCurveData
+  type KMCurveData,
+  type MetricCurveData
 } from '../charts/AnalysisCharts'
 
 export interface AgentChartConfig {
@@ -59,6 +61,8 @@ export function ChartCard({ config, onError }: ChartCardProps) {
     roc_curve?: RocCurveData
     loss_curve?: LossCurveData | KFoldLossCurveData
     km_curve?: KMCurveData
+    iou_curve?: MetricCurveData
+    dice_curve?: MetricCurveData
   }>({})
 
   // Use ref for onError to avoid triggering useEffect on callback changes
@@ -192,6 +196,12 @@ export function ChartCard({ config, onError }: ChartCardProps) {
         )}
         {config.charts.includes('km_curve') && chartData.km_curve && (
           <KMCurveChart data={chartData.km_curve} title={t('chatComponents.chartCard.kmCurve')} />
+        )}
+        {config.charts.includes('iou_curve') && chartData.iou_curve && (
+          <MetricCurveChart data={chartData.iou_curve} title={t('chatComponents.chartCard.iouCurve')} />
+        )}
+        {config.charts.includes('dice_curve') && chartData.dice_curve && (
+          <MetricCurveChart data={chartData.dice_curve} title={t('chatComponents.chartCard.diceCurve')} />
         )}
       </div>
     </div>

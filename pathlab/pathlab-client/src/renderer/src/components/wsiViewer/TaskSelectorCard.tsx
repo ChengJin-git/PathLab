@@ -202,11 +202,13 @@ export function TaskSelectorCard({
         {(heatmapData || patchCAMData) && (
           <div className={`mt-3 p-3 rounded-lg border ${heatmapData?.task_type === 'survival'
             ? 'bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-200'
-            : 'bg-gradient-to-br from-indigo-50 to-blue-50 border-indigo-200'
+            : (heatmapData?.task_type === 'segmentation' || heatmapData?.task_type === 'patch_segmentation')
+              ? 'bg-gradient-to-br from-violet-50 to-purple-50 border-violet-200'
+              : 'bg-gradient-to-br from-indigo-50 to-blue-50 border-indigo-200'
             }`}>
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
-                <span className={`text-xs font-semibold uppercase tracking-wider ${heatmapData?.task_type === 'survival' ? 'text-emerald-700' : 'text-indigo-700'
+                <span className={`text-xs font-semibold uppercase tracking-wider ${heatmapData?.task_type === 'survival' ? 'text-emerald-700' : (heatmapData?.task_type === 'segmentation' || heatmapData?.task_type === 'patch_segmentation') ? 'text-violet-700' : 'text-indigo-700'
                   }`}>
                   {heatmapData?.task_type === 'survival' ? t('wsiViewerComponents.taskSelector.riskGroup') : t('wsiViewerComponents.taskSelector.prediction')}
                 </span>
@@ -243,7 +245,7 @@ export function TaskSelectorCard({
             ) : (
               <>
                 {/* Classification task: show prediction and probabilities */}
-                <div className="text-lg font-bold text-indigo-700">
+                <div className={`text-lg font-bold ${(heatmapData?.task_type === 'segmentation' || heatmapData?.task_type === 'patch_segmentation') ? 'text-violet-700' : 'text-indigo-700'}`}>
                   {(isPatchLevel ? patchCAMData?.prediction : heatmapData?.prediction) || 'N/A'}
                 </div>
                 {(() => {
@@ -255,7 +257,7 @@ export function TaskSelectorCard({
                           .sort(([, a], [, b]) => (b as number) - (a as number))
                           .slice(0, 3)
                           .map(([cls, prob]) => (
-                            <span key={cls} className="text-xs bg-white/70 px-2 py-0.5 rounded border border-indigo-100">
+                            <span key={cls} className={`text-xs bg-white/70 px-2 py-0.5 rounded border ${(heatmapData?.task_type === 'segmentation' || heatmapData?.task_type === 'patch_segmentation') ? 'border-violet-100' : 'border-indigo-100'}`}>
                               {cls}: {((prob as number) * 100).toFixed(1)}%
                             </span>
                           ))}

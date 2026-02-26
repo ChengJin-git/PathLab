@@ -133,7 +133,7 @@ export function AnalysisConfigCard({
             fetchDatasetsForValidation()
           ])
 
-          const model = models.find(m => m.model_id === config.model_id)
+          const model = models.items.find(m => m.model_id === config.model_id)
           if (!model) {
             setTaskExists(false)
             setValidationError(`Model not found: ${config.model_id}`)

@@ -12,6 +12,7 @@ import {
   startMigration, getMigrationStatus,
   fetchDatasets, uploadDatasetSplits
 } from '../../api'
+import { getExtractProgressSSEUrl } from '../../api/annotation'
 import { generateId } from './helpers'
 import type {
   BackgroundTask, TaskItem, TaskStatus,
@@ -625,6 +626,87 @@ export function useTaskActions(params: TaskActionsParams) {
     return taskId
   }, [updateTaskItem, setLocalTasks, setIsPanelExpanded, cancelledTasksRef, setMetadataUploadResults])
 
+  // Add extraction task (per-task SSE for annotation ROI extraction progress)
+  const addExtractionTask = useCallback((serverTaskId: string, datasetName: string): string => {
+    const taskId = generateId()
+    const task: BackgroundTask = {
+      id: taskId,
+      type: 'extraction',
+      title: datasetName,
+      items: [{
+        id: 'extraction_main',
+        name: datasetName,
+        status: 'running' as TaskStatus,
+        progress: 0
+      }],
+      status: 'running',
+      createdAt: new Date(),
+      totalProgress: 0,
+      successCount: 0,
+      failedCount: 0
+    }
+
+    setLocalTasks(prev => [task, ...prev])
+    setIsPanelExpanded(true)
+
+    // Connect to per-task SSE for progress updates
+    const sseUrl = getExtractProgressSSEUrl(serverTaskId)
+    if (!sseUrl) {
+      updateTaskItem(taskId, 'extraction_main', {
+        status: 'error',
+        progress: 0,
+        error: 'Not authenticated'
+      })
+      return taskId
+    }
+
+    const eventSource = new EventSource(sseUrl)
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        const progress = data.progress
+
+        if (cancelledTasksRef.current.has(taskId)) {
+          eventSource.close()
+          return
+        }
+
+        if (progress === null || data.done) {
+          // Task finished (cleared from Redis)
+          eventSource.close()
+          updateTaskItem(taskId, 'extraction_main', { status: 'success', progress: 100 })
+        } else if (progress < 0) {
+          // Error
+          eventSource.close()
+          updateTaskItem(taskId, 'extraction_main', {
+            status: 'error',
+            progress: 0,
+            error: 'Extraction failed'
+          })
+        } else if (progress === 100) {
+          // Completed
+          eventSource.close()
+          updateTaskItem(taskId, 'extraction_main', { status: 'success', progress: 100 })
+        } else {
+          // In progress
+          updateTaskItem(taskId, 'extraction_main', { status: 'running', progress })
+        }
+      } catch (error) {
+        console.error('Failed to parse extraction SSE data:', error)
+      }
+    }
+
+    eventSource.onerror = () => {
+      console.error('Extraction SSE connection error')
+      eventSource.close()
+      // Don't immediately mark as error - the task may have completed
+      // and the SSE connection was closed by the server
+    }
+
+    return taskId
+  }, [updateTaskItem, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
+
   // Get metadata upload result by dataset name
   const getMetadataUploadResult = useCallback((datasetName: string): MetadataUploadResult | undefined => {
     return metadataUploadResults.get(datasetName)
@@ -637,6 +719,7 @@ export function useTaskActions(params: TaskActionsParams) {
     addDeleteWSITask,
     addMigrationTask,
     addDeleteTrainingTask,
+    addExtractionTask,
     cancelTask,
     clearCompletedTasks,
     removeTask,

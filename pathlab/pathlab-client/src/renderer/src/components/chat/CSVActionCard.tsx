@@ -25,7 +25,7 @@ export interface CSVActionConfig {
   csv_type?: 'wsi_registration' | 'split_config'
   dataset_name?: string
   dataset_id?: string
-  upload_mode?: 'classification' | 'survival'
+  upload_mode?: 'classification' | 'survival' | 'segmentation'
   aggregation_level?: 'case' | 'file'
   generate_split?: boolean
   corrections?: CSVCorrection[]

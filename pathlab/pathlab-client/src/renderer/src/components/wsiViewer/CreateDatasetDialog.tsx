@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { PackagePlus, Loader2 } from 'lucide-react'
 import { AnnotationsMap, extractRegions } from '../../api/annotation'
 import { useToast } from '../../contexts/ToastContext'
+import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
 
 interface CreateDatasetDialogProps {
   show: boolean
@@ -18,6 +19,7 @@ export function CreateDatasetDialog({
 }: CreateDatasetDialogProps) {
   const { t } = useTranslation()
   const toast = useToast()
+  const { addExtractionTask } = useBackgroundTask()
   const [datasetName, setDatasetName] = useState('')
   const [taskType, setTaskType] = useState<'classification' | 'segmentation'>('classification')
   const [submitting, setSubmitting] = useState(false)
@@ -52,13 +54,14 @@ export function CreateDatasetDialog({
     setSubmitting(true)
 
     try {
-      await extractRegions({
+      const result = await extractRegions({
         draft_id: draftId,
         annotations: allAnnotations,
         dataset_name: datasetName.trim(),
         task_type: taskType,
       })
-      // Fire-and-forget: close dialog immediately, show success toast
+      // Register extraction task in background task center for progress tracking
+      addExtractionTask(result.task_id, datasetName.trim())
       toast.success(t('annotation.extractSubmitted'))
       onClose()
     } catch (err: any) {

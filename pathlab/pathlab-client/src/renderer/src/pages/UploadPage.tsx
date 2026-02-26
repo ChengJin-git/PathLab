@@ -16,6 +16,7 @@ import {
   Plus,
   Tags,
   Activity,
+  Layers,
   ArrowLeft,
   FileSpreadsheet,
   CheckCircle2,
@@ -548,7 +549,7 @@ export default function RegisterPage() {
     })
 
     // Validate based on upload mode (using resolved metadata)
-    if (uploadMode === 'classification') {
+    if (uploadMode === 'classification' || uploadMode === 'segmentation') {
       const missingLabels = itemsWithMeta.filter(({ finalMeta }) => !finalMeta.label?.toString().trim())
       if (missingLabels.length > 0) {
         // Validation failed - we rely on the UI to show red borders
@@ -707,7 +708,7 @@ export default function RegisterPage() {
           return
         }
 
-        if (uploadMode === 'classification') {
+        if (uploadMode === 'classification' || uploadMode === 'segmentation') {
           if (!headers.includes('label')) {
             setSplitFileError(t('uploadPage.missingLabelColumn'))
             return
@@ -840,6 +841,8 @@ export default function RegisterPage() {
                 <div className="p-2 sm:p-3 bg-white rounded-lg sm:rounded-xl shadow-sm border border-slate-100 flex-shrink-0">
                   {uploadMode === 'classification' ? (
                     <Tags className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" />
+                  ) : uploadMode === 'segmentation' ? (
+                    <Layers className="w-5 h-5 sm:w-6 sm:h-6 text-violet-600" />
                   ) : (
                     <Activity className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600" />
                   )}
@@ -989,7 +992,7 @@ export default function RegisterPage() {
                           <div className="sr-only">Select</div>
                         </th>
                         <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[180px] sm:min-w-[200px]">{t('uploadPage.fileName')}</th>
-                        {uploadMode === 'classification' ? (
+                        {(uploadMode === 'classification' || uploadMode === 'segmentation') ? (
                           <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[120px] sm:min-w-[150px]">{t('uploadPage.label')} <span className="text-red-500">*</span></th>
                         ) : (
                           <>
@@ -1010,7 +1013,7 @@ export default function RegisterPage() {
                         const isSelected = selectedItems.has(item.key)
                         // Validation based on mode
                         const hasError = showValidation && (
-                          uploadMode === 'classification'
+                          (uploadMode === 'classification' || uploadMode === 'segmentation')
                             ? !meta.label.trim()
                             : (!meta.event_time.trim() || !meta.event_status.trim())
                         )
@@ -1042,8 +1045,8 @@ export default function RegisterPage() {
                                 </div>
                               </div>
                             </td>
-                            {/* Classification: Label input | Survival: Event Time & Status inputs */}
-                            {uploadMode === 'classification' ? (
+                            {/* Classification/Segmentation: Label input | Survival: Event Time & Status inputs */}
+                            {(uploadMode === 'classification' || uploadMode === 'segmentation') ? (
                               <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                                 <input
                                   className={`w-full px-2 py-1.5 text-sm border rounded-lg hover:border-blue-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all ${hasError ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-slate-50/50 hover:bg-white focus:bg-white'}`}
@@ -1182,9 +1185,9 @@ export default function RegisterPage() {
 
                 {/* Help text - different for classification vs survival */}
                 <div className="mb-4 p-2 sm:p-3 bg-blue-50 rounded-lg text-[10px] sm:text-sm text-blue-800">
-                  <p className="font-bold mb-1">{t('uploadPage.fileFormatTitle', { mode: uploadMode === 'classification' ? t('uploadPage.classification') : t('uploadPage.survival') })}</p>
+                  <p className="font-bold mb-1">{t('uploadPage.fileFormatTitle', { mode: (uploadMode === 'classification' || uploadMode === 'segmentation') ? t('uploadPage.classification') : t('uploadPage.survival') })}</p>
                   <ul className="list-disc list-inside space-y-0.5 text-blue-700">
-                    <li><code className="bg-blue-100 px-1 rounded">filename</code>{uploadMode === 'classification' ? ', ' : ''}{uploadMode === 'classification' && <code className="bg-blue-100 px-1 rounded">label</code>}</li>
+                    <li><code className="bg-blue-100 px-1 rounded">filename</code>{(uploadMode === 'classification' || uploadMode === 'segmentation') ? ', ' : ''}{(uploadMode === 'classification' || uploadMode === 'segmentation') && <code className="bg-blue-100 px-1 rounded">label</code>}</li>
                     {uploadMode === 'survival' && (
                       <li><code className="bg-blue-100 px-1 rounded">event_time</code>, <code className="bg-blue-100 px-1 rounded">event_status</code></li>
                     )}

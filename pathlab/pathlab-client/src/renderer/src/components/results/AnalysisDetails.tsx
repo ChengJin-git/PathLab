@@ -97,15 +97,16 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
   const { t } = useTranslation()
   const effectiveTaskId = analysis.task_id || taskId
   const isSurvival = analysis.task_type === 'wsi_survival' || analysis.task_type === 'survival' || analysis.task_type === 'external_validation_survival'
+  const isSegmentation = analysis.task_type === 'segmentation' || analysis.task_type === 'patch_segmentation'
 
-  const accentBg = isExternal ? 'bg-orange-600' : 'bg-indigo-600'
-  const accentText = isExternal ? 'text-orange-600' : 'text-indigo-600'
-  const accentTextHover = isExternal ? 'hover:text-orange-800' : 'hover:text-indigo-800'
-  const accentHoverBorder = isExternal ? 'hover:border-orange-100' : 'hover:border-indigo-100'
-  const accentCIBadge = isExternal ? 'bg-orange-100 text-orange-700' : 'bg-indigo-100 text-indigo-700'
-  const accentRowHover = isExternal ? 'hover:bg-orange-50/30' : 'hover:bg-indigo-50/30'
-  const accentDlBtn = isExternal ? 'bg-white hover:bg-orange-50 text-orange-700 border-orange-100 hover:border-orange-200' : 'bg-white hover:bg-indigo-50 text-indigo-700 border-indigo-100 hover:border-indigo-200'
-  const accentDlIcon = isExternal ? 'bg-orange-50' : 'bg-indigo-50'
+  const accentBg = isExternal ? 'bg-orange-600' : isSegmentation ? 'bg-violet-600' : 'bg-indigo-600'
+  const accentText = isExternal ? 'text-orange-600' : isSegmentation ? 'text-violet-600' : 'text-indigo-600'
+  const accentTextHover = isExternal ? 'hover:text-orange-800' : isSegmentation ? 'hover:text-violet-800' : 'hover:text-indigo-800'
+  const accentHoverBorder = isExternal ? 'hover:border-orange-100' : isSegmentation ? 'hover:border-violet-100' : 'hover:border-indigo-100'
+  const accentCIBadge = isExternal ? 'bg-orange-100 text-orange-700' : isSegmentation ? 'bg-violet-100 text-violet-700' : 'bg-indigo-100 text-indigo-700'
+  const accentRowHover = isExternal ? 'hover:bg-orange-50/30' : isSegmentation ? 'hover:bg-violet-50/30' : 'hover:bg-indigo-50/30'
+  const accentDlBtn = isExternal ? 'bg-white hover:bg-orange-50 text-orange-700 border-orange-100 hover:border-orange-200' : isSegmentation ? 'bg-white hover:bg-violet-50 text-violet-700 border-violet-100 hover:border-violet-200' : 'bg-white hover:bg-indigo-50 text-indigo-700 border-indigo-100 hover:border-indigo-200'
+  const accentDlIcon = isExternal ? 'bg-orange-50' : isSegmentation ? 'bg-violet-50' : 'bg-indigo-50'
 
   const metricKeyToId: Record<string, string> = {
     'accuracy': 'accuracy',
@@ -121,7 +122,11 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
     'auc': 'auc',
     'c_index': 'c_index',
     'integrated_brier_score': 'integrated_brier_score',
-    'ibs': 'integrated_brier_score'
+    'ibs': 'integrated_brier_score',
+    // Segmentation-specific
+    'iou': 'iou',
+    'dice': 'dice',
+    'recall': 'recall',
   }
 
   const shouldShowMetric = (key: string): boolean => {
@@ -270,14 +275,14 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
             .map(([key, value]) => {
               const ci = analysis.bootstrap_ci?.metrics_ci?.[key] || analysis.bootstrap_ci?.metrics_ci?.[`macro_${key}`]
               return (
-                <div key={key} className={`p-4 sm:p-6 rounded-2xl border-2 transition-all hover:shadow-md ${isSurvival ? 'bg-emerald-50/50 border-emerald-100 hover:border-emerald-200' : `bg-white border-gray-100 ${accentHoverBorder}`}`}>
+                <div key={key} className={`p-4 sm:p-6 rounded-2xl border-2 transition-all hover:shadow-md ${isSurvival ? 'bg-emerald-50/50 border-emerald-100 hover:border-emerald-200' : isSegmentation ? 'bg-violet-50/50 border-violet-100 hover:border-violet-200' : `bg-white border-gray-100 ${accentHoverBorder}`}`}>
                   <p className="text-xs text-gray-400 uppercase font-bold tracking-wider mb-2">{getMetricDisplayName(key)}</p>
-                  <p className={`text-2xl sm:text-3xl font-black ${isSurvival ? 'text-emerald-600' : accentText}`}>
+                  <p className={`text-2xl sm:text-3xl font-black ${isSurvival ? 'text-emerald-600' : isSegmentation ? 'text-violet-600' : accentText}`}>
                     {formatMetricValue(key, value)}
                   </p>
                   {ci && (
                     <div className="mt-3 flex items-center gap-2">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${isSurvival ? 'bg-emerald-100 text-emerald-700' : accentCIBadge}`}>95% CI</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${isSurvival ? 'bg-emerald-100 text-emerald-700' : isSegmentation ? 'bg-violet-100 text-violet-700' : accentCIBadge}`}>95% CI</span>
                       <span className="text-sm font-medium text-gray-500">
                         {formatMetricValue(key, ci.lower)} – {formatMetricValue(key, ci.upper)}
                       </span>
@@ -292,7 +297,13 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
 
       {/* Per-Class Metrics */}
       {!isSurvival && analysis.class_metrics && Object.keys(analysis.class_metrics).length > 0 && (() => {
-        const perClassColumns = [
+        const perClassColumns = isSegmentation ? [
+          { id: 'iou', label: 'IoU', getValue: (m: any) => m.iou || 0, getCIKey: 'iou' },
+          { id: 'dice', label: 'Dice', getValue: (m: any) => m.dice || 0, getCIKey: 'dice' },
+          { id: 'precision', label: 'Precision', getValue: (m: any) => m.precision || 0, getCIKey: 'precision' },
+          { id: 'recall', label: 'Recall', getValue: (m: any) => m.recall || 0, getCIKey: 'recall' },
+          { id: 'f1', label: 'F1 Score', getValue: (m: any) => m.f1 || 0, getCIKey: 'f1' },
+        ] : [
           { id: 'precision', label: 'Precision', getValue: (m: any) => m.precision || 0, getCIKey: 'precision' },
           { id: 'sensitivity', label: 'Sensitivity', getValue: (m: any) => m.sensitivity || m.recall || 0, getCIKey: 'sensitivity' },
           { id: 'specificity', label: 'Specificity', getValue: (m: any) => m.specificity || 0, getCIKey: 'specificity' },

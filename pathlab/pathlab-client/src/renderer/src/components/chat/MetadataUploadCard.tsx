@@ -12,7 +12,7 @@ import * as XLSX from 'xlsx'
 export interface MetadataUploadConfig {
   dataset_id?: string
   dataset_name?: string
-  upload_mode?: 'classification' | 'survival'
+  upload_mode?: 'classification' | 'survival' | 'segmentation'
   aggregation_level?: 'file' | 'case'
   // Persisted after successful upload
   upload_result?: {
@@ -133,7 +133,7 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
       const headers = lines[0].toLowerCase().split(',').map(h => h.trim())
       if (!headers.includes('filename')) return t('chatComponents.metadataUpload.missingFilename')
 
-      if (uploadMode === 'classification') {
+      if (uploadMode === 'classification' || uploadMode === 'segmentation') {
         if (!headers.includes('label')) return t('chatComponents.metadataUpload.missingLabel')
       } else {
         if (!headers.includes('event_time')) return t('chatComponents.metadataUpload.missingEventTime')
@@ -378,7 +378,7 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
               className="flex items-center gap-1.5 text-xs text-primary-600 hover:text-primary-700 hover:underline"
             >
               <Download className="w-3 h-3" />
-              {t('chatComponents.metadataUpload.downloadTemplate', { type: uploadMode === 'survival' ? t('chatComponents.metadataUpload.survival') : t('chatComponents.metadataUpload.classification') })}
+              {t('chatComponents.metadataUpload.downloadTemplate', { type: uploadMode === 'survival' ? t('chatComponents.metadataUpload.survival') : uploadMode === 'segmentation' ? t('chatComponents.metadataUpload.segmentation') : t('chatComponents.metadataUpload.classification') })}
             </button>
           </div>
         )}

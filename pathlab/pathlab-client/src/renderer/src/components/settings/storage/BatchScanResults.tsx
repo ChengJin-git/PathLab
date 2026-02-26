@@ -2,7 +2,7 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CheckCircle, AlertCircle, RefreshCw, Upload,
-  Layers, Clock, Info
+  Layers, Clock, Info, Grid3X3
 } from 'lucide-react'
 import { Button } from '../../ui/button'
 import { Label } from '../../ui/label'
@@ -23,8 +23,8 @@ interface BatchScanResultsProps {
   batchRegistering: boolean
   batchImportTaskId: string | null
   batchDatasets: DatasetSummary[]
-  batchTaskType: 'classification' | 'survival'
-  setBatchTaskType: (type: 'classification' | 'survival') => void
+  batchTaskType: 'classification' | 'survival' | 'segmentation'
+  setBatchTaskType: (type: 'classification' | 'survival' | 'segmentation') => void
   batchDataLevel: 'case' | 'file'
   setBatchDataLevel: (level: 'case' | 'file') => void
   handleBatchFileToggle: (path: string) => void
@@ -174,6 +174,20 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
               {t('settings.storage.survivalAnalysis')}
             </div>
           </button>
+          <button
+            type="button"
+            onClick={() => setBatchTaskType('segmentation')}
+            className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+              batchTaskType === 'segmentation'
+                ? 'bg-primary-100 text-primary-900 border-2 border-primary-300 shadow-sm'
+                : 'bg-white text-gray-500 border border-gray-100 hover:border-primary-200 hover:text-primary-600'
+            }`}
+          >
+            <div className="flex items-center justify-center gap-2">
+              <Grid3X3 className={`w-4 h-4 ${batchTaskType === 'segmentation' ? 'text-primary-700' : 'text-gray-400'}`} />
+              {t('settings.storage.segmentation')}
+            </div>
+          </button>
         </div>
 
         <div className="flex items-start gap-2 p-3 bg-white rounded-lg border border-slate-100">
@@ -181,7 +195,9 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
           <div className="text-xs text-gray-600">
             {batchTaskType === 'classification'
               ? t('settings.storage.classificationInfo')
-              : t('settings.storage.survivalInfo')
+              : batchTaskType === 'segmentation'
+                ? t('settings.storage.segmentationInfo')
+                : t('settings.storage.survivalInfo')
             }
           </div>
         </div>
