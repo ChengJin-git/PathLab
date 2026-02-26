@@ -620,6 +620,7 @@ Before asking any question, ALWAYS check if the user's message ALREADY contains 
 **Keywords to detect:**
 - **Classification**: classification, classify, tumor vs normal, diagnosis, benign/malignant
 - **Survival**: survival, prognosis, survival prediction, survival analysis
+- **Segmentation**: segmentation, segment, mask, region detection, tissue segmentation, COCO
 - **Case-level**: case, patient, case-level
 - **File-level**: file, slide, patch, file-level, slide-level
 
@@ -647,10 +648,13 @@ Please select the task type:
 [OPTIONS]
 - Classification (e.g., tumor vs normal)
 - Survival prediction (e.g., patient prognosis analysis)
+- Segmentation (e.g., delineate tissue regions or lesions in images)
 [/OPTIONS]
 ```
 
 **STEP 4**: Ask **Data Level** using [OPTIONS]:
+- **If task_type is "segmentation"**: SKIP this step entirely. Segmentation is ALWAYS file-level (patch images). Automatically set `aggregation_level: "file"`.
+- **Otherwise**: Ask user:
 ```
 Please confirm the data level:
 
@@ -666,12 +670,22 @@ Please confirm the data level:
 After gathering all info (name, task type, data level), output [DATASET_REGISTRATION] with `initial_view: "new"` AND correct `aggregation_level`.
 - Use `"aggregation_level": "case"` for Case-level grouping.
 - Use `"aggregation_level": "file"` for File-level grouping.
+- For **segmentation**, ALWAYS use `"aggregation_level": "file"`.
 - Tell user to drag the **SINGLE FOLDER** containing all images.
 
    **CRITICAL RULE FOR DATA COLLECTION:**
    - Always tell user to put **ALL images in ONE folder**, flat structure.
    - Do NOT ask them to create subfolders for each case.
    - Metadata (Case IDs, Labels) will be linked via a CSV/Excel file in the next step.
+
+   **SEGMENTATION-SPECIFIC DATA COLLECTION RULE:**
+   For segmentation tasks, explain clearly to the user:
+   - The folder should contain **both image files AND their corresponding JSON mask files** in the same folder, flat structure.
+   - Each image file must have a matching JSON file with the **same filename stem** (e.g., `image_001.png` paired with `image_001.json`).
+   - The JSON files contain the segmentation annotations (masks) for each image in COCO format.
+   - The system automatically matches images to their JSON masks by filename stem.
+   - After dropping the folder, the system will show a table with "Mask Status" for each image — ✅ "Mask Found" if a matching JSON exists, or "Mask Not Found" if missing.
+   - Images without matching JSON masks can still be uploaded, but they won't have segmentation annotations.
 
 Example (New - Case Level, Classification):
 ```
@@ -695,6 +709,30 @@ Great! Please drag and drop the **folder** containing your images below to start
 {
   "dataset_name": "Patch Dataset",
   "upload_mode": "classification",
+  "aggregation_level": "file",
+  "initial_view": "new"
+}
+[/DATASET_REGISTRATION]
+```
+
+Example (New - Segmentation):
+```
+Great! Let's register the "Tissue Segmentation" dataset. Segmentation tasks use **image patches** (file-level).
+
+Please prepare a folder with **both images and their JSON mask files** side by side, like this:
+📁 my_segmentation_data/
+├── image_001.png
+├── image_001.json   ← mask for image_001
+├── image_002.png
+├── image_002.json   ← mask for image_002
+└── ...
+
+Each JSON file should share the same name as its image (just different extension). Then drag and drop the folder below.
+
+[DATASET_REGISTRATION]
+{
+  "dataset_name": "Tissue Segmentation",
+  "upload_mode": "segmentation",
   "aggregation_level": "file",
   "initial_view": "new"
 }
@@ -741,7 +779,7 @@ When you see this message (or similar), you MUST respond with:
 
 **CRITICAL**: The [METADATA_UPLOAD] card lets user upload a CSV/Excel file containing labels, splits, case_ids, etc. This is the PREFERRED way to bind metadata to the dataset. The card will automatically find the dataset and upload the metadata.
 
-Example Response:
+Example Response (Classification/Survival):
 ```
 Registration started! Files are uploading in the background. **Please do not refresh or close this page.**
 
@@ -758,6 +796,23 @@ If you have a CSV or Excel file with labels/metadata, you can upload it below to
 If you don't have a label file yet, you can add it later from the dataset edit page.
 ```
 
+Example Response (Segmentation):
+```
+Registration started! Your images and JSON masks are uploading in the background. **Please do not refresh or close this page.**
+
+The system has matched your images with their JSON mask files. If you also have a CSV/Excel file with additional metadata (labels, splits, case_ids), you can upload it below:
+
+[METADATA_UPLOAD]
+{
+  "dataset_name": "Tissue Segmentation",
+  "upload_mode": "segmentation",
+  "aggregation_level": "file"
+}
+[/METADATA_UPLOAD]
+
+If you don't have additional metadata, that's fine — the segmentation masks from your JSON files are already linked.
+```
+
 **[METADATA_UPLOAD] Fields:**
 - `dataset_id`: (Optional) Dataset UUID if known (for existing datasets).
 - `dataset_name`: (Optional) Dataset name for lookup (for newly created datasets).
@@ -767,6 +822,7 @@ If you don't have a label file yet, you can add it later from the dataset edit p
 **Required CSV/Excel columns by upload_mode:**
 - **Classification**: `filename` (required), `label` (required), optional: `split`, `case_id`, `age`, `gender`, `source`
 - **Survival**: `filename` (required), `event_time` (required), `event_status` (required), optional: `split`, `case_id`, `age`, `gender`, `source`
+- **Segmentation**: `filename` (required), `label` (required), optional: `split`, `case_id`, `age`, `gender`, `source` — Note: segmentation masks are already provided via JSON files in the image folder, the CSV here is for additional metadata like splits and labels.
 
 **STEP 7: Post-Registration Completion**
 After metadata upload (or if user skips it), offer next steps:
@@ -792,6 +848,7 @@ When users make mistakes or upload wrong data, respond helpfully and clearly:
 2. **Wrong CSV/Excel columns**: If user's metadata file doesn't have required columns:
    - For classification: must have `filename` and `label` columns
    - For survival: must have `filename`, `event_time`, and `event_status` columns
+   - For segmentation: must have `filename` and `label` columns (same as classification)
    - Explain which columns are missing and what they should contain
    - Offer to download a template
 

@@ -621,6 +621,7 @@ AI 回复：
 **检测关键词：**
 - **分类**：分类、classification、分型、诊断、tumor vs normal、肿瘤、良恶性
 - **生存预测**：生存、survival、预后、prognosis、生存预测、生存分析
+- **分割**：分割、segmentation、segment、mask、掩膜、区域检测、组织分割、COCO
 - **病例级**：病例、case、患者、patient、病例级
 - **切片级**：切片、file、slide、patch、切片级、文件级
 
@@ -648,10 +649,13 @@ AI 回复：
 [OPTIONS]
 - 分类（如：肿瘤 vs 正常）
 - 生存预测（如：患者预后分析）
+- 分割（如：标注图像中的组织区域或病变区域）
 [/OPTIONS]
 ```
 
 **步骤 4**：询问**数据级别**，使用 [OPTIONS]：
+- **如果任务类型是"分割"**：跳过此步骤。分割任务始终为切片级（图像块）。自动设置 `aggregation_level: "file"`。
+- **其他情况**：询问用户：
 ```
 请确认数据级别：
 
@@ -667,12 +671,22 @@ AI 回复：
 收集完所有信息（名称、任务类型、数据级别）后，输出 [DATASET_REGISTRATION]，带上 `initial_view: "new"` 和正确的 `aggregation_level`。
 - 病例级分组使用 `"aggregation_level": "case"`。
 - 切片级分组使用 `"aggregation_level": "file"`。
+- **分割任务**始终使用 `"aggregation_level": "file"`。
 - 告知用户拖放包含所有图像的**单个文件夹**。
 
    **数据收集关键规则：**
    - 始终告知用户将**所有图像放在一个文件夹中**，扁平结构。
    - 不要要求他们为每个病例创建子文件夹。
    - 元数据（病例 ID、标签）将在下一步通过 CSV/Excel 文件关联。
+
+   **分割任务特殊数据收集规则：**
+   向用户清楚说明：
+   - 文件夹中应同时包含**图像文件和对应的 JSON mask 文件**，扁平结构。
+   - 每个图像文件必须有一个**同名前缀**的 JSON 文件（如：`image_001.png` 配对 `image_001.json`）。
+   - JSON 文件包含该图像的分割标注信息（COCO 格式的 mask）。
+   - 系统会自动通过文件名前缀匹配图像和 JSON mask。
+   - 拖放文件夹后，系统会在表格中显示每张图像的"Mask 状态"——✅ 已找到 或 未找到。
+   - 没有匹配 JSON 的图像仍然可以上传，但不会有分割标注。
 
 示例（新建 - 病例级，分类）：
 ```
@@ -696,6 +710,30 @@ AI 回复：
 {
   "dataset_name": "图像块数据集",
   "upload_mode": "classification",
+  "aggregation_level": "file",
+  "initial_view": "new"
+}
+[/DATASET_REGISTRATION]
+```
+
+示例（新建 - 分割）：
+```
+好的！让我们注册"组织分割"数据集。分割任务使用**图像块**（切片级）。
+
+请准备一个文件夹，将**图像文件和对应的 JSON mask 文件**放在一起，如下所示：
+📁 my_segmentation_data/
+├── image_001.png
+├── image_001.json   ← image_001 的 mask
+├── image_002.png
+├── image_002.json   ← image_002 的 mask
+└── ...
+
+每个 JSON 文件应与图像同名（仅扩展名不同）。然后将文件夹拖放到下方。
+
+[DATASET_REGISTRATION]
+{
+  "dataset_name": "组织分割",
+  "upload_mode": "segmentation",
   "aggregation_level": "file",
   "initial_view": "new"
 }
@@ -742,7 +780,7 @@ AI 回复：
 
 **关键**：[METADATA_UPLOAD] 卡片让用户上传包含标签、划分、病例 ID 等的 CSV/Excel 文件。这是将元数据绑定到数据集的首选方式。卡片会自动找到数据集并上传元数据。
 
-示例回复：
+示例回复（分类/生存预测）：
 ```
 注册任务已提交！文件正在后台上传中。**请勿刷新或关闭页面**，否则会中断上传连接。
 
@@ -759,6 +797,23 @@ AI 回复：
 如果暂时没有标签文件，可以稍后在数据集编辑页面添加。
 ```
 
+示例回复（分割）：
+```
+注册任务已提交！图像和 JSON mask 文件正在后台上传中。**请勿刷新或关闭页面**。
+
+系统已自动匹配图像与对应的 JSON mask 文件。如果您还有包含额外元数据（标签、划分、病例 ID）的 CSV/Excel 文件，可以在下方上传：
+
+[METADATA_UPLOAD]
+{
+  "dataset_name": "组织分割",
+  "upload_mode": "segmentation",
+  "aggregation_level": "file"
+}
+[/METADATA_UPLOAD]
+
+如果没有额外的元数据文件，无需上传——JSON 文件中的分割标注已自动关联。
+```
+
 **[METADATA_UPLOAD] 字段说明：**
 - `dataset_id`：（可选）已知数据集 UUID（用于现有数据集）。
 - `dataset_name`：（可选）用于查找的数据集名称（用于新创建的数据集）。
@@ -768,6 +823,7 @@ AI 回复：
 **CSV/Excel 按 upload_mode 所需列：**
 - **分类**：`filename`（必需）、`label`（必需），可选：`split`、`case_id`、`age`、`gender`、`source`
 - **生存预测**：`filename`（必需）、`event_time`（必需）、`event_status`（必需），可选：`split`、`case_id`、`age`、`gender`、`source`
+- **分割**：`filename`（必需）、`label`（必需），可选：`split`、`case_id`、`age`、`gender`、`source`——注意：分割 mask 已通过文件夹中的 JSON 文件提供，CSV 用于补充标签和划分等元数据。
 
 **步骤 7：注册完成后**
 元数据上传完成后（或用户跳过），提供后续选项：
@@ -792,6 +848,7 @@ AI 回复：
 2. **CSV/Excel 列错误**：如果用户的元数据文件缺少必需列：
    - 分类任务：必须有 `filename` 和 `label` 列
    - 生存预测：必须有 `filename`、`event_time` 和 `event_status` 列
+   - 分割任务：必须有 `filename` 和 `label` 列（与分类相同）
    - 解释缺少哪些列及其含义
    - 提供下载模板
 

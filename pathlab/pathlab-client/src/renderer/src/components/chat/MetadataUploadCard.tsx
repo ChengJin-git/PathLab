@@ -360,9 +360,9 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
                 <p className="text-sm font-medium text-gray-900">{t('chatComponents.metadataUpload.dragAndDrop')}</p>
                 <p className="text-xs text-gray-500 mt-1">
                   {t('chatComponents.metadataUpload.orClickToBrowse')} <code className="bg-gray-100 px-1 rounded">filename</code>
-                  {uploadMode === 'classification'
-                    ? <>, <code className="bg-gray-100 px-1 rounded">label</code></>
-                    : <>, <code className="bg-gray-100 px-1 rounded">event_time</code>, <code className="bg-gray-100 px-1 rounded">event_status</code></>
+                  {uploadMode === 'survival'
+                    ? <>, <code className="bg-gray-100 px-1 rounded">event_time</code>, <code className="bg-gray-100 px-1 rounded">event_status</code></>
+                    : <>, <code className="bg-gray-100 px-1 rounded">label</code></>
                   }
                 </p>
               </div>

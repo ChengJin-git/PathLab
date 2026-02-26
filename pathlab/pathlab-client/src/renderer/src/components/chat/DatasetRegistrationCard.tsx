@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Link } from 'react-router-dom'
 import { 
   UploadCloud, FolderPlus, File as FileIcon, AlertCircle, CheckCircle, 
   Loader2, Database, AlertTriangle, FileSpreadsheet, Plus, X, Download,
@@ -79,7 +80,8 @@ export function DatasetRegistrationCard({
   const [loadingDatasets, setLoadingDatasets] = useState(false)
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>(config?.dataset_id || '')
   const [newDatasetName, setNewDatasetName] = useState(config?.dataset_name || '')
-  const [dataLevel, setDataLevel] = useState<'file' | 'case'>(config?.aggregation_level || 'file')
+  const isSegmentation = config?.upload_mode === 'segmentation'
+  const [dataLevel, setDataLevel] = useState<'file' | 'case'>(isSegmentation ? 'file' : (config?.aggregation_level || 'file'))
   
   const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
   const [submittedTaskId, setSubmittedTaskId] = useState<string>(config?.submitted_task_id || '')
@@ -92,6 +94,7 @@ export function DatasetRegistrationCard({
   )
   
   const [validationErrors, setValidationErrors] = useState<string[]>([])
+  const [segMissingMasks, setSegMissingMasks] = useState(false)
 
   useEffect(() => {
     if (config?.submitted_task_id) {
@@ -204,8 +207,10 @@ export function DatasetRegistrationCard({
         }
       }
 
+      // Separate JSON files for segmentation mask matching
+      const jsonFiles = isSegmentation ? allFiles.filter(f => f.name.toLowerCase().endsWith('.json')) : []
       const validFiles = allFiles.filter(f => isSupportedName(f.name))
-      
+
       if (validFiles.length === 0) {
         setValidationErrors([t('chatComponents.datasetRegistration.noValidImages')])
         return
@@ -215,10 +220,26 @@ export function DatasetRegistrationCard({
         key: `${f.name}-${f.size}`,
         name: f.name,
         file: f,
-        type: 'standard' as const 
+        type: 'standard' as const
       }))
-      
+
       setLocalItems(prev => [...prev, ...newItems])
+
+      // For segmentation: also include JSON mask files in the upload
+      if (isSegmentation) {
+        if (jsonFiles.length > 0) {
+          const jsonItems = jsonFiles.map(f => ({
+            key: `${f.name}-${f.size}`,
+            name: f.name,
+            file: f,
+            type: 'standard' as const
+          }))
+          setLocalItems(prev => [...prev, ...jsonItems])
+          setSegMissingMasks(false)
+        } else {
+          setSegMissingMasks(true)
+        }
+      }
 
     } catch (error) {
       console.error('File processing error:', error)
@@ -314,6 +335,28 @@ export function DatasetRegistrationCard({
                     </p>
                   </div>
                 </div>
+
+                {isSegmentation && segMissingMasks && (
+                  <div className="flex items-start gap-3 bg-orange-50 border border-orange-200 rounded-lg p-3">
+                    <AlertTriangle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs text-orange-800 font-medium">
+                        {t('chatComponents.datasetRegistration.segMissingMasksTitle')}
+                      </p>
+                      <p className="text-xs text-orange-700 mt-1 leading-relaxed">
+                        {t('chatComponents.datasetRegistration.segMissingMasksDesc')}
+                      </p>
+                      <ul className="text-xs text-orange-700 mt-1.5 space-y-1 list-disc list-inside">
+                        <li>
+                          <Link to="/wsi-list" className="text-orange-700 underline hover:text-orange-900 font-medium">
+                            {t('chatComponents.datasetRegistration.segGoToDataRepo')}
+                          </Link>
+                        </li>
+                        <li>{t('chatComponents.datasetRegistration.segAppendJsonLater')}</li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
 
                 {!helpfulnessFeedback && (
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
@@ -443,18 +486,26 @@ export function DatasetRegistrationCard({
                     </button>
                     
                     <button
-                      onClick={() => setDataLevel('case')}
+                      onClick={() => !isSegmentation && setDataLevel('case')}
+                      disabled={isSegmentation}
                       className={`border rounded-lg p-3 flex flex-col items-center gap-1 transition-all ${
-                        dataLevel === 'case' 
-                          ? 'bg-primary-50 border-primary-200 text-primary-700' 
-                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                        isSegmentation
+                          ? 'bg-gray-50 border-gray-200 text-gray-400 cursor-not-allowed opacity-60'
+                          : dataLevel === 'case'
+                            ? 'bg-primary-50 border-primary-200 text-primary-700'
+                            : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
                       }`}
                     >
                       <div className="flex items-center gap-1.5">
-                        <FolderPlus className={`w-3.5 h-3.5 ${dataLevel === 'case' ? 'text-primary-600' : 'text-gray-400'}`} />
+                        <FolderPlus className={`w-3.5 h-3.5 ${isSegmentation ? 'text-gray-300' : dataLevel === 'case' ? 'text-primary-600' : 'text-gray-400'}`} />
                         <span className="text-sm font-medium">{t('chatComponents.datasetRegistration.caseLevel')}</span>
                       </div>
-                      <span className="text-xs opacity-75 hidden sm:inline">{t('chatComponents.datasetRegistration.caseLevelDesc')}</span>
+                      <span className="text-xs opacity-75 hidden sm:inline">
+                        {isSegmentation
+                          ? t('chatComponents.datasetRegistration.segmentationFileLevelOnly')
+                          : t('chatComponents.datasetRegistration.caseLevelDesc')
+                        }
+                      </span>
                     </button>
                 </div>
               </div>
@@ -490,7 +541,10 @@ export function DatasetRegistrationCard({
                   <div>
                     <p className="text-sm font-medium text-gray-900">{t('chatComponents.datasetRegistration.dragDropFolder')}</p>
                     <p className="text-xs text-gray-500 mt-1">
-                      {t('chatComponents.datasetRegistration.dragDropFolderDesc')}
+                      {isSegmentation
+                        ? t('chatComponents.datasetRegistration.dragDropFolderDescSegmentation')
+                        : t('chatComponents.datasetRegistration.dragDropFolderDesc')
+                      }
                     </p>
                   </div>
                 </div>

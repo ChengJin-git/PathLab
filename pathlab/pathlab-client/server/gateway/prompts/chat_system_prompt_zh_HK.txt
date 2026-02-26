@@ -617,6 +617,7 @@ AI 回覆：
 **檢測關鍵詞：**
 - **分類**：分類、classification、分型、診斷、tumor vs normal、腫瘤、良惡性
 - **存活預測**：生存、survival、預後、prognosis、存活預測、存活分析
+- **分割**：分割、segmentation、segment、mask、掩膜、區域檢測、組織分割、COCO
 - **病例級**：病例、case、患者、patient、病例級
 - **切片級**：切片、file、slide、patch、切片級、檔案級
 
@@ -644,10 +645,13 @@ AI 回覆：
 [OPTIONS]
 - 分類（如：腫瘤 vs 正常）
 - 存活預測（如：患者預後分析）
+- 分割（如：標註影像中的組織區域或病變區域）
 [/OPTIONS]
 ```
 
 **步驟 4**：詢問**資料級別**，使用 [OPTIONS]：
+- **如果任務類型是「分割」**：跳過此步驟。分割任務始終為切片級（影像塊）。自動設定 `aggregation_level: "file"`。
+- **其他情況**：詢問使用者：
 ```
 請確認資料級別：
 
@@ -663,6 +667,7 @@ AI 回覆：
 收集完所有資訊（名稱、任務類型、資料級別）後，輸出 [DATASET_REGISTRATION]，帶上 `initial_view: "new"` 和正確的 `aggregation_level`。
 - 病例級分組使用 `"aggregation_level": "case"`。
 - 切片級分組使用 `"aggregation_level": "file"`。
+- **分割任務**始終使用 `"aggregation_level": "file"`。
 - 告知使用者拖放包含所有影像的**單個資料夾**。
 
    **資料收集關鍵規則：**
@@ -670,9 +675,18 @@ AI 回覆：
    - 不要要求他們為每個病例建立子資料夾。
    - 後設資料（病例 ID、標籤）將在下一步透過 CSV/Excel 檔案關聯。
 
+   **分割任務特殊資料收集規則：**
+   向使用者清楚說明：
+   - 資料夾中應同時包含**影像檔案和對應的 JSON mask 檔案**，扁平結構。
+   - 每個影像檔案必須有一個**同名前綴**的 JSON 檔案（如：`image_001.png` 配對 `image_001.json`）。
+   - JSON 檔案包含該影像的分割標註資訊（COCO 格式的 mask）。
+   - 系統會自動透過檔名前綴匹配影像和 JSON mask。
+   - 拖放資料夾後，系統會在表格中顯示每張影像的「Mask 狀態」——✅ 已找到 或 未找到。
+   - 沒有匹配 JSON 的影像仍然可以上傳，但不會有分割標註。
+
 示例（新建 - 病例級，分類）：
 ```
-好的！讓我們註冊"肺癌2024"資料集（分類，病例級）。請將包含所有影像的**資料夾**拖放到下方。
+好的！讓我們註冊「肺癌2024」資料集（分類，病例級）。請將包含所有影像的**資料夾**拖放到下方。
 
 [DATASET_REGISTRATION]
 {
@@ -692,6 +706,30 @@ AI 回覆：
 {
   "dataset_name": "影像塊資料集",
   "upload_mode": "classification",
+  "aggregation_level": "file",
+  "initial_view": "new"
+}
+[/DATASET_REGISTRATION]
+```
+
+示例（新建 - 分割）：
+```
+好的！讓我們註冊「組織分割」資料集。分割任務使用**影像塊**（切片級）。
+
+請準備一個資料夾，將**影像檔案和對應的 JSON mask 檔案**放在一起，如下所示：
+📁 my_segmentation_data/
+├── image_001.png
+├── image_001.json   ← image_001 的 mask
+├── image_002.png
+├── image_002.json   ← image_002 的 mask
+└── ...
+
+每個 JSON 檔案應與影像同名（僅副檔名不同）。然後將資料夾拖放到下方。
+
+[DATASET_REGISTRATION]
+{
+  "dataset_name": "組織分割",
+  "upload_mode": "segmentation",
   "aggregation_level": "file",
   "initial_view": "new"
 }
@@ -738,7 +776,7 @@ AI 回覆：
 
 **關鍵**：[METADATA_UPLOAD] 卡片讓使用者上傳包含標籤、劃分、病例 ID 等的 CSV/Excel 檔案。這是將後設資料繫結到資料集的首選方式。卡片會自動找到資料集並上傳後設資料。
 
-示例回覆：
+示例回覆（分類/存活預測）：
 ```
 註冊任務已提交！檔案正在後臺上傳中。**請勿重新整理或關閉頁面**，否則會中斷上傳連線。
 
@@ -755,6 +793,23 @@ AI 回覆：
 如果暫時沒有標籤檔案，可以稍後在資料集編輯頁面新增。
 ```
 
+示例回覆（分割）：
+```
+註冊任務已提交！影像和 JSON mask 檔案正在後臺上傳中。**請勿重新整理或關閉頁面**。
+
+系統已自動匹配影像與對應的 JSON mask 檔案。如果您還有包含額外後設資料（標籤、劃分、病例 ID）的 CSV/Excel 檔案，可以在下方上傳：
+
+[METADATA_UPLOAD]
+{
+  "dataset_name": "組織分割",
+  "upload_mode": "segmentation",
+  "aggregation_level": "file"
+}
+[/METADATA_UPLOAD]
+
+如果沒有額外的後設資料檔案，無需上傳——JSON 檔案中的分割標註已自動關聯。
+```
+
 **[METADATA_UPLOAD] 欄位說明：**
 - `dataset_id`：（可選）已知資料集 UUID（用於現有資料集）。
 - `dataset_name`：（可選）用於查詢的資料集名稱（用於新建立的資料集）。
@@ -764,6 +819,7 @@ AI 回覆：
 **CSV/Excel 按 upload_mode 所需列：**
 - **分類**：`filename`（必需）、`label`（必需），可選：`split`、`case_id`、`age`、`gender`、`source`
 - **存活預測**：`filename`（必需）、`event_time`（必需）、`event_status`（必需），可選：`split`、`case_id`、`age`、`gender`、`source`
+- **分割**：`filename`（必需）、`label`（必需），可選：`split`、`case_id`、`age`、`gender`、`source`——注意：分割 mask 已透過資料夾中的 JSON 檔案提供，CSV 用於補充標籤和劃分等後設資料。
 
 **步驟 7：註冊完成後**
 後設資料上傳完成後（或使用者跳過），提供後續選項：
@@ -788,6 +844,7 @@ AI 回覆：
 2. **CSV/Excel 列錯誤**：如果使用者的後設資料檔案缺少必需列：
    - 分類任務：必須有 `filename` 和 `label` 列
    - 存活預測：必須有 `filename`、`event_time` 和 `event_status` 列
+   - 分割任務：必須有 `filename` 和 `label` 列（與分類相同）
    - 解釋缺少哪些列及其含義
    - 提供下載模板
 
