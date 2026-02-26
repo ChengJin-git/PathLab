@@ -26,7 +26,7 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
-import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate, downloadCocoTemplate } from '../api'
+import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate } from '../api'
 import { useToast } from '../contexts/ToastContext'
 import { ALL_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../constants/fileTypes'
 import { parseCsvMetadata } from '../lib/csvImporter'
@@ -41,7 +41,7 @@ import {
 declare const window: Window & { api?: ElectronApi }
 
 export default function RegisterPage() {
-  const { error: toastError, warning: toastWarning } = useToast()
+  const { error: toastError, warning: toastWarning, info: toastInfo } = useToast()
   const navigate = useNavigate()
   const { addUploadTask } = useBackgroundTask()
   const { t } = useTranslation()
@@ -179,6 +179,9 @@ export default function RegisterPage() {
   const [pendingMrxsFolders, setPendingMrxsFolders] = useState<Map<string, File[]>>(new Map()) // folderName -> files
   const [pendingTmapDtFiles, setPendingTmapDtFiles] = useState<Map<string, File[]>>(new Map()) // baseName -> dt files
 
+  // Segmentation: track which images have matched JSON mask files (key = item key)
+  const [matchedMasks, setMatchedMasks] = useState<Set<string>>(new Set())
+
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 10
@@ -207,7 +210,7 @@ export default function RegisterPage() {
   // --- Interaction Logic ---
 
   const processCollectionResult = async (result: CollectionResult) => {
-    const { items, orphanFolders, orphanDtFiles } = result
+    const { items, orphanFolders, orphanDtFiles, jsonFiles } = result
 
     // First, try to match orphan data with existing items
     setLocalItems(prev => {
@@ -376,6 +379,29 @@ export default function RegisterPage() {
           })
         }
       }
+    }
+
+    // Segmentation mode: match JSON mask files to image items by filename stem
+    if (uploadMode === 'segmentation' && jsonFiles && jsonFiles.length > 0) {
+      // Build a set of JSON stems for quick lookup
+      const jsonStems = new Set(
+        jsonFiles.map(f => f.name.replace(/\.json$/i, '').toLowerCase())
+      )
+
+      setMatchedMasks(prev => {
+        const next = new Set(prev)
+        // Match against all current items (existing + newly added)
+        setLocalItems(currentItems => {
+          for (const item of currentItems) {
+            const imageStem = item.name.replace(/\.[^/.]+$/, '').toLowerCase()
+            if (jsonStems.has(imageStem)) {
+              next.add(item.key)
+            }
+          }
+          return currentItems // no mutation
+        })
+        return next
+      })
     }
   }
 
@@ -618,6 +644,14 @@ export default function RegisterPage() {
       // Show warning about not refreshing during upload
       toastWarning(t('uploadPage.uploadingWarning'), 8000)
 
+      // For segmentation: warn about missing annotations
+      if (uploadMode === 'segmentation') {
+        const missingCount = localItems.filter(item => !matchedMasks.has(item.key)).length
+        if (missingCount > 0) {
+          toastInfo(t('uploadPage.missingAnnotationWarning', { count: missingCount }), 10000)
+        }
+      }
+
       // Clear the form
       resetUpload()
       navigate('/dashboard')
@@ -637,6 +671,7 @@ export default function RegisterPage() {
     setSkippedDuplicateCount(0)
     setSelectedItems(new Set())
     setSubmitError(null)
+    setMatchedMasks(new Set())
   }
 
   // --- Selection Logic ---
@@ -740,15 +775,6 @@ export default function RegisterPage() {
       await downloadCSVTemplate(uploadMode)
     } catch (e) {
       console.error("Failed to download template", e)
-      toastError(e instanceof Error ? e.message : t('uploadPage.failedDownloadTemplate'))
-    }
-  }
-
-  const handleDownloadCocoTemplate = async () => {
-    try {
-      await downloadCocoTemplate()
-    } catch (e) {
-      console.error("Failed to download COCO template", e)
       toastError(e instanceof Error ? e.message : t('uploadPage.failedDownloadTemplate'))
     }
   }
@@ -923,8 +949,11 @@ export default function RegisterPage() {
                   <UploadCloud className="w-8 h-8 sm:w-12 sm:h-12 text-blue-600" />
                 </div>
                 <h3 className="text-xl sm:text-3xl font-bold text-slate-900 mb-2 sm:mb-4">{t('uploadPage.dropFilesHere')}</h3>
-                <p className="text-sm sm:text-lg text-slate-500 mb-6 sm:mb-10 max-w-xl leading-relaxed px-4">
-                  {uploadMode === 'segmentation' ? t('uploadPage.supportedFormatsPatch') : t('uploadPage.supportedFormats')} <br className="hidden sm:block" />
+                <p className="text-sm sm:text-lg text-slate-500 mb-2 sm:mb-4 max-w-xl leading-relaxed px-4">
+                  {uploadMode === 'segmentation' ? t('uploadPage.supportedFormatsPatch') : t('uploadPage.supportedFormats')}
+                </p>
+                <p className="text-xs sm:text-sm text-slate-400 mb-6 sm:mb-10 max-w-xl leading-relaxed px-4">
+                  {uploadMode === 'classification' ? t('uploadPage.dropHintClassification') : uploadMode === 'survival' ? t('uploadPage.dropHintSurvival') : t('uploadPage.dropHintSegmentation')}
                 </p>
                 {supportsNativePicker && (
                   <Button size="lg" className="px-6 sm:px-10 h-12 sm:h-14 text-base sm:text-lg rounded-full shadow-lg shadow-blue-500/20">
@@ -1011,6 +1040,8 @@ export default function RegisterPage() {
                             <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">{t('uploadPage.eventTime')} <span className="text-red-500">*</span></th>
                             <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[80px] sm:min-w-[90px]">{t('uploadPage.status')} <span className="text-red-500">*</span></th>
                           </>
+                        ) : uploadMode === 'segmentation' ? (
+                          <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[80px] sm:min-w-[100px]">{t('uploadPage.maskStatus')}</th>
                         ) : null}
                         <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[100px] sm:min-w-[120px]">{t('uploadPage.caseId')}</th>
                         <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[70px] sm:min-w-[80px]">{t('uploadPage.age')}</th>
@@ -1093,6 +1124,18 @@ export default function RegisterPage() {
                                   </select>
                                 </td>
                               </>
+                            ) : uploadMode === 'segmentation' ? (
+                              <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
+                                {matchedMasks.has(item.key) ? (
+                                  <span className="text-sm text-green-700">
+                                    {t('uploadPage.maskFound')}
+                                  </span>
+                                ) : (
+                                  <span className="text-sm text-slate-400">
+                                    {t('uploadPage.maskNotFound')}
+                                  </span>
+                                )}
+                              </td>
                             ) : null}
                             <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                               <input
@@ -1183,20 +1226,7 @@ export default function RegisterPage() {
                         {t('uploadPage.csvTemplate')}
                       </Button>
                     )}
-                    {showSplitConfig && uploadMode === 'segmentation' && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDownloadCocoTemplate();
-                        }}
-                        className="text-[10px] sm:text-xs h-7 gap-1 px-2 text-violet-700 border-violet-200 hover:bg-violet-50"
-                      >
-                        <Download className="w-3 h-3" />
-                        {t('uploadPage.cocoTemplate')}
-                      </Button>
-                    )}
+
                     {showSplitConfig ? (
                       <ChevronUp className="w-4 h-4 text-slate-400" />
                     ) : (
@@ -1225,7 +1255,7 @@ export default function RegisterPage() {
                       <li><code className="bg-blue-100 px-1 rounded">event_time</code>, <code className="bg-blue-100 px-1 rounded">event_status</code></li>
                     )}
                     {uploadMode === 'segmentation' && (
-                      <li><code className="bg-blue-100 px-1 rounded">filename</code> — {t('uploadPage.segmentationCsvHint')}</li>
+                      <li><code className="bg-blue-100 px-1 rounded">filename</code></li>
                     )}
                     <li className="hidden sm:list-item">{t('uploadPage.optionalFields')} <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
                   </ul>

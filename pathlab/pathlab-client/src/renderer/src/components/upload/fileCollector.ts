@@ -144,10 +144,18 @@ export const collectItemsFromDataTransfer = async (dataTransfer: DataTransfer): 
     }
   }
 
+  // Collect JSON files separately (for segmentation mask matching)
+  const jsonFiles: File[] = []
+
   // Standard
   for (const file of files) {
     if (usedFiles.has(file)) continue
     if (isTmapDataFile(file.name)) continue
+    // Separate JSON files for potential mask matching
+    if (file.name.toLowerCase().endsWith('.json')) {
+      jsonFiles.push(file)
+      continue
+    }
     if (!isSupportedName(file.name)) {
       unsupportedFileNames.push(file.name)
       continue
@@ -174,6 +182,6 @@ export const collectItemsFromDataTransfer = async (dataTransfer: DataTransfer): 
     orphanDtFiles.get(baseName)!.push(dtFile)
   }
 
-  return { items: result, orphanFolders, orphanDtFiles, unsupportedFileNames }
+  return { items: result, orphanFolders, orphanDtFiles, unsupportedFileNames, jsonFiles }
 }
 

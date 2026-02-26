@@ -56,6 +56,7 @@ export interface CollectionResult {
   orphanFolders: MrxsDataFolder[]  // Folders without matching .mrxs
   orphanDtFiles: Map<string, File[]>  // baseName -> dt files without matching .tmap
   unsupportedFileNames: string[]
+  jsonFiles: File[]  // JSON files collected for segmentation mask matching
 }
 
 export const organSources = [
