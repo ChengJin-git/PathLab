@@ -914,9 +914,10 @@ class ExtractRegionsRequest(BaseModel):
         ..., description="Map of wsi_id -> list of region specs"
     )
     dataset_name: str = Field(..., description="Name for the new dataset")
-    task_type: str = Field(..., description="Task type (classification, survival, etc.)")
+    task_type: str = Field(..., description="Task type (classification, segmentation, etc.)")
     user_id: str = Field(..., description="User ID who initiated the extraction")
     task_id: str = Field(..., description="Task ID for progress tracking")
+    source_dataset_id: Optional[str] = Field(None, description="For segmentation: reuse existing dataset instead of creating a new one")
 
 
 @app.post("/annotation/extract_regions")
@@ -942,6 +943,7 @@ async def extract_regions(req: ExtractRegionsRequest, db: AsyncSession = Depends
             task_type=req.task_type,
             user_id=req.user_id,
             task_id=req.task_id,
+            source_dataset_id=req.source_dataset_id,
         )
     )
 
@@ -954,12 +956,14 @@ async def _extract_regions_background(
     task_type: str,
     user_id: str,
     task_id: str,
+    source_dataset_id: Optional[str] = None,
 ):
     """
     Background task: extract ROI regions from WSI/patch files and create a new dataset.
 
     Steps:
     1. Create DataGroup + Dataset for the new annotated patches
+       (or reuse existing dataset for segmentation if source_dataset_id provided)
     2. For each WSI and its regions:
        a. Open the slide (WSI) or image (patch)
        b. Read the bounding-box region
@@ -983,57 +987,86 @@ async def _extract_regions_background(
         await set_progress(task_id, 0)
 
         async with async_session_maker() as db:
-            # 1. Create DataGroup + Dataset
-            data_group = await DataGroupRepository.get_or_create(
-                db,
-                data_type="patch",
-                aggregation_level="file",
-                task_type=task_type,
-            )
+            # Segmentation + source_dataset_id: reuse existing dataset, only generate COCO JSON
+            if task_type == "segmentation" and source_dataset_id:
+                logger.info(
+                    f"Segmentation reuse mode: adding COCO JSON to existing dataset {source_dataset_id}"
+                )
+                completed = await _extract_segmentation_dataset(
+                    db=db,
+                    regions=regions,
+                    dataset_id=source_dataset_id,
+                    user_id=user_id,
+                    task_id=task_id,
+                    total_regions=total_regions,
+                    reuse_existing=True,
+                )
+                await db.commit()
+            else:
+                # Create new DataGroup + Dataset
+                data_group = await DataGroupRepository.get_or_create(
+                    db,
+                    data_type="patch",
+                    aggregation_level="file",
+                    task_type=task_type,
+                )
 
-            dataset = await DatasetRepository.get_or_create(
-                db,
-                name=dataset_name,
-                group_id=data_group.group_id,
-                user_id=user_id,
-            )
-            dataset_id = dataset.dataset_id
-            await db.commit()
+                dataset = await DatasetRepository.get_or_create(
+                    db,
+                    name=dataset_name,
+                    group_id=data_group.group_id,
+                    user_id=user_id,
+                )
+                dataset_id = dataset.dataset_id
+                await db.commit()
 
-            # 2. Extract each region
-            for source_wsi_id, region_list in regions.items():
-                # Load source WSI info
-                source_wsi = await WSIRepository.get_by_id(db, source_wsi_id)
-                if not source_wsi:
-                    logger.warning(f"Source WSI not found during extraction: {source_wsi_id}")
-                    completed += len(region_list)
-                    continue
+                # 2. Extract regions — segmentation vs classification have different flows
+                if task_type == "segmentation":
+                    # Segmentation on patches: copy original images + generate COCO JSON
+                    completed = await _extract_segmentation_dataset(
+                        db=db,
+                        regions=regions,
+                        dataset_id=dataset_id,
+                        user_id=user_id,
+                        task_id=task_id,
+                        total_regions=total_regions,
+                        reuse_existing=False,
+                    )
+                else:
+                    # Classification/other: crop each annotation region as a new image
+                    for source_wsi_id, region_list in regions.items():
+                        # Load source WSI info
+                        source_wsi = await WSIRepository.get_by_id(db, source_wsi_id)
+                        if not source_wsi:
+                            logger.warning(f"Source WSI not found during extraction: {source_wsi_id}")
+                            completed += len(region_list)
+                            continue
 
-                source_path = Path(source_wsi.wsi_path)
-                source_is_patch = is_patch_file(str(source_path), source_wsi.file_size or 0)
+                        source_path = Path(source_wsi.wsi_path)
+                        source_is_patch = is_patch_file(str(source_path), source_wsi.file_size or 0)
 
-                for region in region_list:
-                    try:
-                        await _extract_single_region(
-                            db=db,
-                            source_wsi_id=source_wsi_id,
-                            source_path=source_path,
-                            source_is_patch=source_is_patch,
-                            region=region,
-                            dataset_id=dataset_id,
-                            user_id=user_id,
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to extract region from {source_wsi_id}: {e}",
-                            exc_info=True,
-                        )
+                        for region in region_list:
+                            try:
+                                await _extract_single_region(
+                                    db=db,
+                                    source_wsi_id=source_wsi_id,
+                                    source_path=source_path,
+                                    source_is_patch=source_is_patch,
+                                    region=region,
+                                    dataset_id=dataset_id,
+                                    user_id=user_id,
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to extract region from {source_wsi_id}: {e}",
+                                    exc_info=True,
+                                )
 
-                    completed += 1
-                    progress = int(completed / total_regions * 100)
-                    await set_progress(task_id, progress)
+                            completed += 1
+                            progress = int(completed / total_regions * 100)
+                            await set_progress(task_id, progress)
 
-            await db.commit()
+                await db.commit()
 
         logger.info(f"Annotation extraction completed: task_id={task_id}, {completed}/{total_regions} regions")
         await set_progress(task_id, 100)
@@ -1133,3 +1166,186 @@ def _read_wsi_region(slide, x: int, y: int, w: int, h: int) -> Image.Image:
 def _save_image_jpeg(img: Image.Image, output_path: Path):
     """Save a PIL Image as JPEG (runs in thread)."""
     img.save(output_path, format="JPEG", quality=90)
+
+
+
+async def _extract_segmentation_dataset(
+    db,
+    regions: Dict[str, List["RegionSpec"]],
+    dataset_id: str,
+    user_id: str,
+    task_id: str,
+    total_regions: int,
+    reuse_existing: bool = False,
+) -> int:
+    """
+    Segmentation-specific dataset creation from viewer annotations on patch images.
+
+    When reuse_existing=False (new dataset):
+    1. Copies each source patch image once to the dataset directory
+    2. Aggregates all annotations into a single COCO JSON file
+    3. Creates one WSISlide record per source patch (not per annotation)
+
+    When reuse_existing=True (source_dataset_id provided):
+    1. Uses existing images in the dataset (no copy, no new WSISlide records)
+    2. Only generates/updates the COCO JSON with annotations
+
+    The COCO JSON is saved to uploads/annotations/<dataset_id>_coco.json
+    and follows the format expected by SegmentationDataset.
+
+    Returns:
+        Number of annotation regions processed (for progress tracking).
+    """
+    import uuid
+    import json
+    import shutil
+    from backend.database.repositories import WSIRepository
+    from backend.common.progress_store import set_progress
+
+    output_dir = UPLOADS_DIR / "wsi_files"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    annotations_dir = UPLOADS_DIR / "annotations"
+    annotations_dir.mkdir(parents=True, exist_ok=True)
+
+    # COCO JSON structure
+    coco_images = []
+    coco_annotations = []
+    label_to_category_id: Dict[str, int] = {}
+    image_id_counter = 0
+    annotation_id_counter = 0
+    completed = 0
+
+    for source_wsi_id, region_list in regions.items():
+        # Load source WSI info
+        source_wsi = await WSIRepository.get_by_id(db, source_wsi_id)
+        if not source_wsi:
+            logger.warning(f"Source WSI not found during extraction: {source_wsi_id}")
+            completed += len(region_list)
+            continue
+
+        source_path = Path(source_wsi.wsi_path)
+        source_is_patch = is_patch_file(str(source_path), source_wsi.file_size or 0)
+
+        if not source_is_patch:
+            # WSI segmentation dataset creation is not supported (frontend blocks this)
+            logger.warning(f"Skipping WSI source for segmentation: {source_wsi_id}")
+            completed += len(region_list)
+            continue
+
+        if reuse_existing:
+            # Reuse mode: no file copy, no new DB record.
+            # Use the existing file path for COCO JSON file_name reference.
+            file_name = Path(source_wsi.wsi_path).name
+            img_width = source_wsi.width
+            img_height = source_wsi.height
+            if not img_width or not img_height:
+                with Image.open(source_path) as img:
+                    img_width, img_height = img.size
+        else:
+            # New dataset mode: copy source patch image once (keep original format)
+            new_wsi_id = str(uuid.uuid4())
+            ext = source_path.suffix or ".jpg"
+            output_path = output_dir / f"{new_wsi_id}{ext}"
+            await asyncio.to_thread(shutil.copy2, str(source_path), str(output_path))
+
+            file_size = output_path.stat().st_size
+            file_name = f"{new_wsi_id}{ext}"
+
+            # Get source image dimensions
+            img_width = source_wsi.width
+            img_height = source_wsi.height
+            if not img_width or not img_height:
+                with Image.open(output_path) as img:
+                    img_width, img_height = img.size
+
+        # Add COCO image entry
+        image_id_counter += 1
+        coco_images.append({
+            "id": image_id_counter,
+            "width": img_width,
+            "height": img_height,
+            "file_name": file_name,
+        })
+
+        # Convert each annotation region to COCO annotation
+        for region in region_list:
+            # Map label to category ID
+            if region.label not in label_to_category_id:
+                label_to_category_id[region.label] = len(label_to_category_id)
+            cat_id = label_to_category_id[region.label]
+
+            annotation_id_counter += 1
+
+            # Build segmentation polygon
+            if region.type == "polygon" and region.points:
+                # Polygon: flatten [[x,y], [x,y], ...] → [x,y,x,y,...]
+                flat_points = []
+                for pt in region.points:
+                    flat_points.extend(pt)
+                segmentation = [flat_points]
+            else:
+                # Rectangle: convert bbox to 4-corner polygon
+                x, y, w, h = region.x, region.y, region.width, region.height
+                segmentation = [[x, y, x + w, y, x + w, y + h, x, y + h]]
+
+            # Compute area
+            area = region.width * region.height
+
+            coco_annotations.append({
+                "id": annotation_id_counter,
+                "image_id": image_id_counter,
+                "category_id": cat_id,
+                "segmentation": segmentation,
+                "bbox": [region.x, region.y, region.width, region.height],
+                "area": area,
+                "iscrowd": 0,
+            })
+
+            completed += 1
+            progress = int(completed / total_regions * 100)
+            await set_progress(task_id, progress)
+
+        if not reuse_existing:
+            # Create WSI record for the copied patch (one per source, not per annotation)
+            wsi_data = {
+                "wsi_id": new_wsi_id,
+                "original_filename": source_wsi.original_filename or source_path.name,
+                "dataset_id": dataset_id,
+                "label": None,  # Segmentation labels are in COCO JSON, not per-slide
+                "wsi_path": str(output_path),
+                "file_size": file_size,
+                "width": img_width,
+                "height": img_height,
+                "user_id": user_id,
+                "parent_wsi_id": source_wsi_id,
+            }
+            await WSIRepository.create(db, wsi_data)
+
+    # Build categories dict (matches the format used by SegmentationDataset)
+    categories = {str(cat_id): label for label, cat_id in label_to_category_id.items()}
+
+    # Assemble full COCO JSON
+    coco_json = {
+        "images": coco_images,
+        "annotations": coco_annotations,
+        "categories": categories,
+    }
+
+    # Save COCO JSON
+    coco_path = annotations_dir / f"{dataset_id}_coco.json"
+    await asyncio.to_thread(_save_coco_json, coco_json, coco_path)
+
+    logger.info(
+        f"Segmentation dataset created: dataset_id={dataset_id}, "
+        f"{len(coco_images)} images, {len(coco_annotations)} annotations, "
+        f"{len(categories)} categories, COCO JSON: {coco_path}"
+    )
+
+    return completed
+
+
+def _save_coco_json(coco_data: dict, output_path: Path):
+    """Save COCO JSON to file (runs in thread)."""
+    import json
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(coco_data, f, indent=2, ensure_ascii=False)

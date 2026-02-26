@@ -150,16 +150,20 @@ async def extract_regions(
         ]
 
     try:
+        payload = {
+            "regions": regions,
+            "dataset_name": req.dataset_name,
+            "task_type": req.task_type,
+            "user_id": user_id,
+            "task_id": task_id,
+        }
+        if req.source_dataset_id:
+            payload["source_dataset_id"] = req.source_dataset_id
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{PREPROCESSING_SERVICE_URL}/annotation/extract_regions",
-                json={
-                    "regions": regions,
-                    "dataset_name": req.dataset_name,
-                    "task_type": req.task_type,
-                    "user_id": user_id,
-                    "task_id": task_id,
-                },
+                json=payload,
             )
             if response.status_code != 200:
                 raise HTTPException(status_code=response.status_code, detail=response.text)

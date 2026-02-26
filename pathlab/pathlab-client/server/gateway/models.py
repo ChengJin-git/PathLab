@@ -238,4 +238,5 @@ class AnnotationExtractRequest(BaseModel):
     draft_id: Optional[str] = None       # Load annotations from saved draft
     annotations: Optional[Dict] = None   # Or provide directly (overrides draft)
     dataset_name: str
-    task_type: str = "classification"     # classification or survival
+    task_type: str = "classification"     # classification or segmentation
+    source_dataset_id: Optional[str] = None  # For segmentation: reuse existing dataset

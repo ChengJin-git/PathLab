@@ -28,6 +28,7 @@ import { AnnotationListPanel } from '../components/wsiViewer/AnnotationListPanel
 import { CreateDatasetDialog } from '../components/wsiViewer/CreateDatasetDialog'
 import { AnnotationRegion, AnnotationsMap, saveDraft, listDrafts, deleteDraft } from '../api/annotation'
 import { useToast } from '../contexts/ToastContext'
+import { PATCH_EXTENSIONS } from '../constants/fileTypes'
 
 export default function WSIViewerPage() {
   const { t } = useTranslation()
@@ -222,6 +223,21 @@ export default function WSIViewerPage() {
   const [slideHeight, setSlideHeight] = useState(0)
   const [showCreateDatasetDialog, setShowCreateDatasetDialog] = useState(false)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Determine if any annotated source slide is a WSI (not a patch image)
+  // Used to disable segmentation dataset creation for WSI data
+  const hasWsiSources = useMemo(() => {
+    const annotatedWsiIds = new Set(
+      Object.keys(allAnnotations).filter(id => allAnnotations[id]?.length > 0)
+    )
+    if (annotatedWsiIds.size === 0) return false
+    return allWSIs.some(wsi => {
+      if (!annotatedWsiIds.has(wsi.wsi_id)) return false
+      const ext = wsi.file_extension?.toLowerCase() || ''
+      // Patch extensions are always patches; others are WSI
+      return !PATCH_EXTENSIONS.includes(ext)
+    })
+  }, [allAnnotations, allWSIs])
 
   // Load WSI list for navigation
   // If coming from a dataset, load only that dataset's WSIs; otherwise load all
@@ -874,6 +890,7 @@ export default function WSIViewerPage() {
         labelColors={labelColors}
         sourceDatasetId={datasetId}
         draftId={draftId || undefined}
+        hasWsiSources={hasWsiSources}
       />
     </div>
   )

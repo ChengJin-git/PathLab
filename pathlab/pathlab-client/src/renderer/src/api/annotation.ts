@@ -54,6 +54,8 @@ export interface ExtractRegionsRequest {
   annotations?: AnnotationsMap
   dataset_name: string
   task_type: string
+  /** For segmentation: reuse existing dataset instead of creating a new one */
+  source_dataset_id?: string
 }
 
 /**
