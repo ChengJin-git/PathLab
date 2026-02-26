@@ -15,7 +15,7 @@ export type StorageTaskType = 'batch_import' | 'delete_external' | 'batch_update
 export type TrainingTaskStatus = 'pending' | 'queued' | 'patching' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
 
 // Server task type from backend
-export type ServerTaskType = 'classification' | 'survival' | 'external_validation'
+export type ServerTaskType = 'classification' | 'survival' | 'segmentation' | 'external_validation'
 
 // Individual task item (e.g., one file in a batch)
 export interface TaskItem {

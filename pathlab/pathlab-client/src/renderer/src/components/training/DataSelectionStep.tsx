@@ -307,12 +307,16 @@ function DatasetGrid({
         <p className="text-base sm:text-lg font-bold text-gray-700">
           {taskType === 'survival'
             ? t('training.dataSelection.noSurvivalDatasets')
-            : t('training.dataSelection.noClassificationDatasets')}
+            : taskType === 'segmentation'
+              ? t('training.dataSelection.noSegmentationDatasets')
+              : t('training.dataSelection.noClassificationDatasets')}
         </p>
         <p className="text-xs sm:text-sm text-gray-500 mt-1">
           {taskType === 'survival'
             ? t('training.dataSelection.registerSurvivalHint')
-            : t('training.dataSelection.registerClassificationHint')}
+            : taskType === 'segmentation'
+              ? t('training.dataSelection.registerSegmentationHint')
+              : t('training.dataSelection.registerClassificationHint')}
         </p>
       </div>
     )

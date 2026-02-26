@@ -1,6 +1,6 @@
-import React from 'react'
+import React, { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, ArrowRight, Tags, Activity, Users, FileImage, Plus, Layers } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Tags, Activity, Users, FileImage, Plus, Layers, Info } from 'lucide-react'
 import { PageHeader } from '../PageHeader'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
@@ -27,6 +27,17 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
   showValidation, fromAIChat, onNext, onBack
 }) => {
   const { t } = useTranslation()
+
+  const isSegmentation = uploadMode === 'segmentation'
+
+  // When switching to segmentation, force data level to 'file' (patch-only)
+  const handleUploadModeChange = useCallback((mode: UploadMode) => {
+    onUploadModeChange(mode)
+    if (mode === 'segmentation') {
+      onDataLevelChange('file')
+    }
+  }, [onUploadModeChange, onDataLevelChange])
+
   return (
     <>
       <div className="flex-none mb-2">
@@ -92,7 +103,7 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                 <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">{t('uploadComponents.datasetConfig.analysisType')}</label>
                 <div className="grid grid-cols-1 gap-3 sm:gap-4">
                   <button
-                    onClick={() => !isExistingDataset && onUploadModeChange('classification')}
+                    onClick={() => !isExistingDataset && handleUploadModeChange('classification')}
                     disabled={isExistingDataset}
                     className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'classification'
                       ? 'border-blue-500 bg-blue-50/50'
@@ -109,7 +120,7 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                   </button>
 
                   <button
-                    onClick={() => !isExistingDataset && onUploadModeChange('survival')}
+                    onClick={() => !isExistingDataset && handleUploadModeChange('survival')}
                     disabled={isExistingDataset}
                     className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'survival'
                       ? 'border-emerald-500 bg-emerald-50/50'
@@ -126,7 +137,7 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                   </button>
 
                   <button
-                    onClick={() => !isExistingDataset && onUploadModeChange('segmentation')}
+                    onClick={() => !isExistingDataset && handleUploadModeChange('segmentation')}
                     disabled={isExistingDataset}
                     className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'segmentation'
                       ? 'border-violet-500 bg-violet-50/50'
@@ -148,12 +159,12 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                 <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">{t('uploadComponents.datasetConfig.dataLevel')}</label>
                 <div className="grid grid-cols-1 gap-3 sm:gap-4">
                   <button
-                    onClick={() => !isExistingDataset && onDataLevelChange('case')}
-                    disabled={isExistingDataset}
+                    onClick={() => !isExistingDataset && !isSegmentation && onDataLevelChange('case')}
+                    disabled={isExistingDataset || isSegmentation}
                     className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'case'
                       ? 'border-purple-500 bg-purple-50/50'
-                      : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                      } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && dataLevel !== 'case' ? 'opacity-40' : ''}`}
+                      : `border-slate-100 bg-white ${!isExistingDataset && !isSegmentation ? 'hover:border-slate-200' : ''}`
+                      } ${isExistingDataset || isSegmentation ? 'cursor-not-allowed' : ''} ${(isExistingDataset || isSegmentation) && dataLevel !== 'case' ? 'opacity-40' : ''}`}
                   >
                     <div className={`p-2 rounded-lg mr-4 ${dataLevel === 'case' ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                       <Users className="w-5 h-5" />
@@ -182,6 +193,12 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                     </div>
                   </button>
                 </div>
+                {isSegmentation && (
+                  <div className="flex items-start gap-2 mt-3 p-3 bg-violet-50 border border-violet-100 rounded-xl">
+                    <Info className="w-4 h-4 text-violet-500 mt-0.5 shrink-0" />
+                    <span className="text-xs text-violet-700">{t('uploadComponents.datasetConfig.segmentationPatchOnly')}</span>
+                  </div>
+                )}
               </div>
               </div>
 

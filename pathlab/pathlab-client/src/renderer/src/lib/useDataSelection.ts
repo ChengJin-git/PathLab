@@ -168,8 +168,12 @@ export function useDataSelection({
   }, [dataLevel, taskType])
 
   // Filter datasets by task type
+  // Segmentation tasks may be stored as 'segmentation' or 'patch_segmentation' in backend
   const filteredDatasets = useMemo(() => {
     if (!datasets || datasets.length === 0) return []
+    if (taskType === 'segmentation') {
+      return datasets.filter((d) => d.task_type === 'segmentation' || (d.task_type as string) === 'patch_segmentation')
+    }
     return datasets.filter((d) => d.task_type === taskType)
   }, [datasets, taskType])
 
