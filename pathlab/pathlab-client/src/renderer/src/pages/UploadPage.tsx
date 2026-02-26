@@ -28,7 +28,7 @@ import { Checkbox } from '../components/ui/checkbox'
 import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
 import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate } from '../api'
 import { useToast } from '../contexts/ToastContext'
-import { ALL_EXTENSIONS, isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../constants/fileTypes'
+import { ALL_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../constants/fileTypes'
 import { parseCsvMetadata } from '../lib/csvImporter'
 import {
   type LocalItem, type FileMetadata, type UploadMode, type DataLevel, type DataType,
@@ -405,7 +405,10 @@ export default function RegisterPage() {
 
   const handleLocalPathSelect = async () => {
     if (!window.api?.files?.selectFiles) return
-    const filters = [{ name: 'Supported Formats (WSI & Patch)', extensions: ALL_EXTENSIONS.map(ext => ext.replace(/^\./, '')) }]
+    const patchOnlyExtensions = [...PATCH_EXTENSIONS, ...TIF_EXTENSIONS]
+    const activeExtensions = uploadMode === 'segmentation' ? patchOnlyExtensions : ALL_EXTENSIONS
+    const filterName = uploadMode === 'segmentation' ? 'Patch Images' : 'Supported Formats (WSI & Patch)'
+    const filters = [{ name: filterName, extensions: activeExtensions.map(ext => ext.replace(/^\./, '')) }]
     const paths = await window.api.files.selectFiles({ title: 'Select local files', filters })
 
     if (paths && paths.length > 0) {
@@ -912,7 +915,7 @@ export default function RegisterPage() {
                 </div>
                 <h3 className="text-xl sm:text-3xl font-bold text-slate-900 mb-2 sm:mb-4">{t('uploadPage.dropFilesHere')}</h3>
                 <p className="text-sm sm:text-lg text-slate-500 mb-6 sm:mb-10 max-w-xl leading-relaxed px-4">
-                  {t('uploadPage.supportedFormats')} <br className="hidden sm:block" />
+                  {uploadMode === 'segmentation' ? t('uploadPage.supportedFormatsPatch') : t('uploadPage.supportedFormats')} <br className="hidden sm:block" />
                 </p>
                 {supportsNativePicker && (
                   <Button size="lg" className="px-6 sm:px-10 h-12 sm:h-14 text-base sm:text-lg rounded-full shadow-lg shadow-blue-500/20">

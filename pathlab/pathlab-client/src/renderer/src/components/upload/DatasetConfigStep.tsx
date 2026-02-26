@@ -98,10 +98,10 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
-              <div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8 items-stretch">
+              <div className="flex flex-col">
                 <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">{t('uploadComponents.datasetConfig.analysisType')}</label>
-                <div className="grid grid-cols-1 gap-3 sm:gap-4">
+                <div className="grid grid-cols-1 gap-3 sm:gap-4 flex-1">
                   <button
                     onClick={() => !isExistingDataset && handleUploadModeChange('classification')}
                     disabled={isExistingDataset}
@@ -155,13 +155,13 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                 </div>
               </div>
 
-              <div>
+              <div className="flex flex-col">
                 <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">{t('uploadComponents.datasetConfig.dataLevel')}</label>
-                <div className="grid grid-cols-1 gap-3 sm:gap-4">
+                <div className="flex flex-col gap-3 sm:gap-4 flex-1">
                   <button
                     onClick={() => !isExistingDataset && !isSegmentation && onDataLevelChange('case')}
                     disabled={isExistingDataset || isSegmentation}
-                    className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'case'
+                    className={`flex-1 flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'case'
                       ? 'border-purple-500 bg-purple-50/50'
                       : `border-slate-100 bg-white ${!isExistingDataset && !isSegmentation ? 'hover:border-slate-200' : ''}`
                       } ${isExistingDataset || isSegmentation ? 'cursor-not-allowed' : ''} ${(isExistingDataset || isSegmentation) && dataLevel !== 'case' ? 'opacity-40' : ''}`}
@@ -179,7 +179,7 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                   <button
                     onClick={() => !isExistingDataset && onDataLevelChange('file')}
                     disabled={isExistingDataset}
-                    className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'file'
+                    className={`flex-1 flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'file'
                       ? 'border-orange-500 bg-orange-50/50'
                       : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
                       } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && dataLevel !== 'file' ? 'opacity-40' : ''}`}

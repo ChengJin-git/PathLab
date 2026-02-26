@@ -1202,6 +1202,7 @@
     "skippedUnsupportedFiles": "Skipped {{count}} unsupported file(s): {{files}}{{more}}. Supported formats: {{extensions}}",
     "dropFilesHere": "Drop files here",
     "supportedFormats": "SVS, TIFF, NDPI, MRXS, SCN, VSI, DICOM, PNG, JPG",
+    "supportedFormatsPatch": "PNG, JPG, JPEG, BMP, TIFF",
     "browseFiles": "Browse Files",
     "selectAll": "Select All ({{count}})",
     "fileCount": "{{count}} files",
@@ -2337,7 +2338,7 @@
       "caseLevelDesc": "Group slides by patient case",
       "fileLevel": "File Level",
       "fileLevelDesc": "Each slide is independent",
-      "segmentationPatchOnly": "Segmentation only supports file-level (patch) data. Case-level grouping is not available for segmentation tasks.",
+      "segmentationPatchOnly": "Segmentation only supports patch image data, not whole slide image data.",
       "nextChooseFiles": "Next: Choose Files"
     },
     "successStep": {

@@ -1202,6 +1202,7 @@
     "skippedUnsupportedFiles": "已跳過 {{count}} 個不支援的檔案：{{files}}{{more}}。支援的格式：{{extensions}}",
     "dropFilesHere": "將檔案拖放至此處",
     "supportedFormats": "SVS、TIFF、NDPI、MRXS、SCN、VSI、DICOM、PNG、JPG",
+    "supportedFormatsPatch": "PNG、JPG、JPEG、BMP、TIFF",
     "browseFiles": "瀏覽檔案",
     "selectAll": "全選（{{count}}）",
     "fileCount": "{{count}} 個檔案",
@@ -2286,7 +2287,7 @@
       "caseLevelDesc": "按患者病例分組切片",
       "fileLevel": "檔案級別",
       "fileLevelDesc": "每張切片獨立",
-      "segmentationPatchOnly": "分割任務僅支援檔案級別（Patch）資料，不支援病例級別分組。",
+      "segmentationPatchOnly": "分割任務僅支援普通圖片資料，不支援全切片圖像資料。",
       "nextChooseFiles": "下一步：選擇檔案"
     },
     "successStep": {
