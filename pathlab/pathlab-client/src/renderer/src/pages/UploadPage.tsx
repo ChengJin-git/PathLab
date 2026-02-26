@@ -23,6 +23,7 @@ import {
   FolderOpen,
   Image,
   FileJson,
+  Folder,
 } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -521,17 +522,17 @@ export default function RegisterPage() {
     // --- CSV BINDING STRATEGY ---
     // 1. Existing Dataset: Use handleUploadSplit (Client uploads raw CSV, Backend binds)
     // 2. New Dataset: Parse CSV on Client, bind to files, create dataset with metadata
-    
+
     let csvMetadataMap = new Map<string, any>()
 
     // Case 1: Existing Dataset - Upload CSV separately
     if (splitFile && datasetId) {
       const success = await handleUploadSplit()
       if (!success) {
-         setSubmitError(t('uploadPage.failedUploadCsv'))
-         return 
+        setSubmitError(t('uploadPage.failedUploadCsv'))
+        return
       }
-      
+
       // If we only had a CSV and no files, we are done
       if (localItems.length === 0) {
         setStep(3)
@@ -590,7 +591,7 @@ export default function RegisterPage() {
         // If NO CSV, we obviously block.
         // We set error message to help user
         if (csvMetadataMap.size > 0) {
-           setSubmitError(t('uploadPage.validationMissingLabels', { count: missingLabels.length }))
+          setSubmitError(t('uploadPage.validationMissingLabels', { count: missingLabels.length }))
         }
         return
       }
@@ -601,7 +602,7 @@ export default function RegisterPage() {
       })
       if (missingSurvival.length > 0) {
         if (csvMetadataMap.size > 0) {
-           setSubmitError(t('uploadPage.validationMissingSurvival', { count: missingSurvival.length }))
+          setSubmitError(t('uploadPage.validationMissingSurvival', { count: missingSurvival.length }))
         }
         return
       }
@@ -612,7 +613,7 @@ export default function RegisterPage() {
       const age = finalMeta.age ? parseInt(String(finalMeta.age)) : undefined
       const eventTime = finalMeta.event_time ? parseFloat(String(finalMeta.event_time)) : undefined
       const eventStatus = finalMeta.event_status ? parseInt(String(finalMeta.event_status)) : undefined
-      
+
       return {
         key: item.key,
         name: item.name,
@@ -959,34 +960,84 @@ export default function RegisterPage() {
                   {uploadMode === 'classification' ? t('uploadPage.dropHintClassification') : uploadMode === 'survival' ? t('uploadPage.dropHintSurvival') : t('uploadPage.dropHintSegmentation')}
                 </p>
                 {uploadMode === 'segmentation' && (
-                  <div className="mb-6 sm:mb-10 rounded-xl px-5 py-4 text-left max-w-md">
-                    <div className="flex items-center gap-2 mb-2 text-sm font-semibold text-slate-700">
+                  <div className="mb-6 sm:mb-10 rounded-xl bg-slate-50 border border-slate-200 p-4 text-left w-full max-w-sm shadow-sm transition-all hover:shadow-md">
+                    <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-800 border-b border-slate-200 pb-2">
                       <FolderOpen className="w-4 h-4 text-amber-500" />
                       {t('uploadPage.folderStructureTitle')}
                     </div>
-                    <div className="ml-2 space-y-1 text-xs text-slate-500 font-mono">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-slate-300">├──</span>
-                        <Image className="w-3.5 h-3.5 text-blue-400" />
-                        <span>{t('uploadPage.folderExampleImg1')}</span>
+                    <div className="space-y-2 text-xs text-slate-600 font-medium">
+
+                      {/* Folder Item */}
+                      <div className="flex items-center gap-2 px-2 py-1.5 hover:bg-white rounded-md transition-colors cursor-default">
+                        <Folder className="w-4 h-4 text-blue-400 shrink-0" />
+                        <span className="truncate">{t('uploadPage.folderExampleFolder')}</span>
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-slate-300">├──</span>
-                        <FileJson className="w-3.5 h-3.5 text-violet-400" />
-                        <span>{t('uploadPage.folderExampleJson1')}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-slate-300">├──</span>
-                        <Image className="w-3.5 h-3.5 text-blue-400" />
-                        <span>{t('uploadPage.folderExampleImg2')}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-slate-300">└──</span>
-                        <FileJson className="w-3.5 h-3.5 text-violet-400" />
-                        <span>{t('uploadPage.folderExampleJson2')}</span>
+
+                      {/* Inside Folder */}
+                      <div className="pl-6 space-y-1.5 border-l-2 border-slate-100 ml-3">
+                        <div className="flex items-center gap-2 px-2 py-1 hover:bg-white rounded-md transition-colors cursor-default">
+                          <Image className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                          <span className="truncate">{t('uploadPage.folderExampleImg1')}</span>
+                        </div>
+                        <div className="flex items-center gap-2 px-2 py-1 hover:bg-white rounded-md transition-colors cursor-default">
+                          <FileJson className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                          <span className="truncate">{t('uploadPage.folderExampleJson1')}</span>
+                        </div>
+                        <div className="flex items-center gap-2 px-2 py-1 hover:bg-white rounded-md transition-colors cursor-default">
+                          <Image className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                          <span className="truncate">{t('uploadPage.folderExampleImg2')}</span>
+                        </div>
+                        <div className="flex items-center gap-2 px-2 py-1 hover:bg-white rounded-md transition-colors cursor-default">
+                          <FileJson className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                          <span className="truncate">{t('uploadPage.folderExampleJson2')}</span>
+                        </div>
                       </div>
                     </div>
-                    <p className="mt-2 text-[10px] text-slate-400 ml-2">{t('uploadPage.folderStructureNote')}</p>
+                    <div className="mt-3 pt-2 border-t border-slate-100 text-[11px] text-slate-500 bg-blue-50/50 p-2 rounded-lg flex items-start gap-2">
+                      <div className="bg-blue-100/50 p-1 rounded-full shrink-0 mt-0.5">
+                        <div className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                      </div>
+                      <p className="leading-tight">{t('uploadPage.folderStructureNote')}</p>
+                    </div>
+                  </div>
+                )}
+
+                {(uploadMode === 'classification' || uploadMode === 'survival') && (
+                  <div className="mb-6 sm:mb-10 rounded-xl bg-slate-50 border border-slate-200 p-4 text-left w-full max-w-sm shadow-sm transition-all hover:shadow-md">
+                    <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-800 border-b border-slate-200 pb-2">
+                      <FolderOpen className="w-4 h-4 text-amber-500" />
+                      {t('uploadPage.folderStructureTitle')}
+                    </div>
+                    <div className="space-y-2 text-xs text-slate-600 font-medium">
+
+                      {/* Folder Item */}
+                      <div className="flex items-center gap-2 px-2 py-1.5 hover:bg-white rounded-md transition-colors cursor-default">
+                        <Folder className="w-4 h-4 text-blue-400 shrink-0" />
+                        <span className="truncate">{t('uploadPage.folderExampleFolder')}</span>
+                      </div>
+
+                      {/* Inside Folder */}
+                      <div className="pl-6 space-y-1.5 border-l-2 border-slate-100 ml-3 mb-2">
+                        <div className="flex items-center gap-2 px-2 py-1 hover:bg-white rounded-md transition-colors cursor-default">
+                          <Image className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                          <span className="truncate">{t('uploadPage.folderExampleImg1')}</span>
+                        </div>
+                        <div className="flex items-center gap-2 px-2 py-1 hover:bg-white rounded-md transition-colors cursor-default">
+                          <Image className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                          <span className="truncate">{t('uploadPage.folderExampleImg2')}</span>
+                        </div>
+                      </div>
+
+                      {/* Excel File outside folder */}
+                      <div className="flex items-center gap-2 px-2 py-1.5 hover:bg-white rounded-md transition-colors cursor-default mt-2">
+                        <FileSpreadsheet className="w-4 h-4 text-emerald-500 shrink-0" />
+                        <span className="truncate">
+                          {uploadMode === 'classification'
+                            ? t('uploadPage.folderExampleExcelClassification')
+                            : t('uploadPage.folderExampleExcelSurvival')}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 )}
                 {supportsNativePicker && (
@@ -1195,8 +1246,8 @@ export default function RegisterPage() {
                                 onChange={e => handleMetadataChange(item.key, 'gender', e.target.value)}
                               >
                                 <option value="">-</option>
-                                 <option value="Male">{t('uploadPage.genderM')}</option>
-                                 <option value="Female">{t('uploadPage.genderF')}</option>
+                                <option value="Male">{t('uploadPage.genderM')}</option>
+                                <option value="Female">{t('uploadPage.genderF')}</option>
                                 <option value="Unspecified">?</option>
                               </select>
                             </td>
@@ -1275,77 +1326,77 @@ export default function RegisterPage() {
                       {t('uploadPage.uploadMetadataDescription')}
                     </p>
 
-                {/* Help text - different for classification vs survival vs segmentation */}
-                <div className="mb-4 p-2 sm:p-3 bg-blue-50 rounded-lg text-[10px] sm:text-sm text-blue-800">
-                  <p className="font-bold mb-1">{t('uploadPage.fileFormatTitle', { mode: uploadMode === 'classification' ? t('uploadPage.classification') : uploadMode === 'survival' ? t('uploadPage.survival') : t('uploadPage.segmentation') })}</p>
-                  <ul className="list-disc list-inside space-y-0.5 text-blue-700">
-                    {uploadMode === 'classification' && (
-                      <li><code className="bg-blue-100 px-1 rounded">filename</code>, <code className="bg-blue-100 px-1 rounded">label</code></li>
-                    )}
-                    {uploadMode === 'survival' && (
-                      <li><code className="bg-blue-100 px-1 rounded">filename</code></li>
-                    )}
-                    {uploadMode === 'survival' && (
-                      <li><code className="bg-blue-100 px-1 rounded">event_time</code>, <code className="bg-blue-100 px-1 rounded">event_status</code></li>
-                    )}
-                    {uploadMode === 'segmentation' && (
-                      <li><code className="bg-blue-100 px-1 rounded">filename</code></li>
-                    )}
-                    <li className="hidden sm:list-item">{t('uploadPage.optionalFields')} <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
-                  </ul>
-                </div>
+                    {/* Help text - different for classification vs survival vs segmentation */}
+                    <div className="mb-4 p-2 sm:p-3 bg-blue-50 rounded-lg text-[10px] sm:text-sm text-blue-800">
+                      <p className="font-bold mb-1">{t('uploadPage.fileFormatTitle', { mode: uploadMode === 'classification' ? t('uploadPage.classification') : uploadMode === 'survival' ? t('uploadPage.survival') : t('uploadPage.segmentation') })}</p>
+                      <ul className="list-disc list-inside space-y-0.5 text-blue-700">
+                        {uploadMode === 'classification' && (
+                          <li><code className="bg-blue-100 px-1 rounded">filename</code>, <code className="bg-blue-100 px-1 rounded">label</code></li>
+                        )}
+                        {uploadMode === 'survival' && (
+                          <li><code className="bg-blue-100 px-1 rounded">filename</code></li>
+                        )}
+                        {uploadMode === 'survival' && (
+                          <li><code className="bg-blue-100 px-1 rounded">event_time</code>, <code className="bg-blue-100 px-1 rounded">event_status</code></li>
+                        )}
+                        {uploadMode === 'segmentation' && (
+                          <li><code className="bg-blue-100 px-1 rounded">filename</code></li>
+                        )}
+                        <li className="hidden sm:list-item">{t('uploadPage.optionalFields')} <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
+                      </ul>
+                    </div>
 
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 bg-gray-50 p-3 sm:p-4 rounded-lg border border-dashed border-gray-300">
-                  {splitFile ? (
-                    // Show selected file info when we have a splitFile
-                    <div className="flex-1 flex items-center gap-3">
-                      <div className="flex items-center gap-2 px-3 py-2 bg-white rounded-lg border border-green-200 flex-1 min-w-0">
-                        <FileSpreadsheet className="w-4 h-4 text-green-600 flex-shrink-0" />
-                        <span className="text-sm text-gray-700 truncate">{splitFile.name}</span>
-                        <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full flex-shrink-0">
-                          {(splitFile.size / 1024).toFixed(1)} KB
-                        </span>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 bg-gray-50 p-3 sm:p-4 rounded-lg border border-dashed border-gray-300">
+                      {splitFile ? (
+                        // Show selected file info when we have a splitFile
+                        <div className="flex-1 flex items-center gap-3">
+                          <div className="flex items-center gap-2 px-3 py-2 bg-white rounded-lg border border-green-200 flex-1 min-w-0">
+                            <FileSpreadsheet className="w-4 h-4 text-green-600 flex-shrink-0" />
+                            <span className="text-sm text-gray-700 truncate">{splitFile.name}</span>
+                            <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full flex-shrink-0">
+                              {(splitFile.size / 1024).toFixed(1)} KB
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => setSplitFile(null)}
+                            className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                            title={t('uploadPage.removeFile')}
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        // Show file input when no file is selected
+                        <div className="flex-1 overflow-hidden">
+                          <input
+                            type="file"
+                            accept=".csv,.xlsx,.xls"
+                            className="block w-full text-[10px] sm:text-sm text-gray-500 file:mr-2 sm:file:mr-4 file:py-1.5 sm:file:py-2 file:px-3 sm:file:px-4 file:rounded-full file:border-0 file:text-[10px] sm:file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+                            onChange={handleSplitFileSelect}
+                          />
+                        </div>
+                      )}
+                      {splitFile && (
+                        <div className="flex items-center gap-2 text-[10px] sm:text-sm text-green-600 font-medium bg-green-50 px-3 py-1.5 rounded-lg border border-green-100 justify-center">
+                          <CheckCircle2 className="w-3 h-3 sm:w-4 sm:h-4" />
+                          {t('uploadPage.ready')}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Error message */}
+                    {splitFileError && (
+                      <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                        <span className="font-medium">{t('uploadPage.errorPrefix')} </span>{splitFileError}
                       </div>
-                      <button
-                        onClick={() => setSplitFile(null)}
-                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
-                        title={t('uploadPage.removeFile')}
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    // Show file input when no file is selected
-                    <div className="flex-1 overflow-hidden">
-                      <input
-                        type="file"
-                        accept=".csv,.xlsx,.xls"
-                        className="block w-full text-[10px] sm:text-sm text-gray-500 file:mr-2 sm:file:mr-4 file:py-1.5 sm:file:py-2 file:px-3 sm:file:px-4 file:rounded-full file:border-0 file:text-[10px] sm:file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
-                        onChange={handleSplitFileSelect}
-                      />
-                    </div>
-                  )}
-                  {splitFile && (
-                     <div className="flex items-center gap-2 text-[10px] sm:text-sm text-green-600 font-medium bg-green-50 px-3 py-1.5 rounded-lg border border-green-100 justify-center">
-                        <CheckCircle2 className="w-3 h-3 sm:w-4 sm:h-4" />
-                        {t('uploadPage.ready')}
-                     </div>
-                  )}
-                </div>
+                    )}
 
-                {/* Error message */}
-                {splitFileError && (
-                  <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-                    <span className="font-medium">{t('uploadPage.errorPrefix')} </span>{splitFileError}
-                  </div>
-                )}
-
-                {/* Success message */}
-                {splitUploadSuccess && (
-                  <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
-                    <span className="font-medium">{t('uploadPage.successPrefix')} </span>{splitUploadSuccess}
-                  </div>
-                )}
+                    {/* Success message */}
+                    {splitUploadSuccess && (
+                      <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+                        <span className="font-medium">{t('uploadPage.successPrefix')} </span>{splitUploadSuccess}
+                      </div>
+                    )}
                   </div>
                 )}
               </Card>
