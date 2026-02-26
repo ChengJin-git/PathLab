@@ -1120,6 +1120,7 @@
     "voiceInput": "Voice input",
     "stopVoiceInput": "Stop voice input",
     "sendMessage": "Send message",
+    "sendVoiceMessage": "Send voice message",
     "removeAttachment": "Remove attachment",
     "closeNotification": "Close notification",
     "chatMessages": "Chat messages",

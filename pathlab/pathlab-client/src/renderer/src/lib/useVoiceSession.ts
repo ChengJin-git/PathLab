@@ -44,6 +44,12 @@ export interface UseVoiceSessionReturn {
   /** Force-stop everything. Safe to call from any closure. */
   stop: () => void
   /**
+   * Force-send the current partial transcript immediately.
+   * Stops the current ASR recording and triggers onTranscript with the given text.
+   * Use this when the user wants to manually send without waiting for VAD silence detection.
+   */
+  forceSend: (currentPartialText: string) => void
+  /**
    * Notify that the LLM response is complete.
    * Parses VOICE_CONTROL from aiContent to decide whether to continue.
    * Must be called from handleSubmit's finally block.
@@ -169,6 +175,16 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     stopRef.current()
   }, [setSessionActive, setProcessing])
 
+  const forceSend = useCallback((currentPartialText: string) => {
+    const text = currentPartialText.trim()
+    if (!text) return
+    console.log('[VoiceSession] Force send partial text:', text)
+    // Same flow as handleTranscriptComplete: stop recording → processing → call onTranscript
+    setProcessing(true)
+    stopRef.current()
+    optionsRef.current.onTranscript(text)
+  }, [setProcessing])
+
   const notifyResponseComplete = useCallback((aiContent: string) => {
     if (!sessionActiveRef.current) {
       // Session was stopped while LLM was responding
@@ -201,6 +217,7 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     mediaStream,
     toggle,
     stop,
+    forceSend,
     notifyResponseComplete,
     lastError,
   }

@@ -1120,6 +1120,7 @@
     "voiceInput": "語音輸入",
     "stopVoiceInput": "停止語音輸入",
     "sendMessage": "傳送訊息",
+    "sendVoiceMessage": "傳送語音訊息",
     "removeAttachment": "移除附件",
     "closeNotification": "關閉通知",
     "chatMessages": "聊天訊息",

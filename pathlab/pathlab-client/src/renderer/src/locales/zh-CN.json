@@ -1120,6 +1120,7 @@
     "voiceInput": "语音输入",
     "stopVoiceInput": "停止语音输入",
     "sendMessage": "发送消息",
+    "sendVoiceMessage": "发送语音消息",
     "removeAttachment": "移除附件",
     "closeNotification": "关闭通知",
     "chatMessages": "聊天消息",

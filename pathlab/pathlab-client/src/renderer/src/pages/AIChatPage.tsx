@@ -232,6 +232,7 @@ export default function AIChatPage() {
     mediaStream: realtimeMediaStream,
     toggle: toggleVoiceSession,
     stop: stopVoiceSession,
+    forceSend: voiceForceSend,
     notifyResponseComplete: notifyVoiceResponseComplete,
   } = useVoiceSession({
     onTranscript: (transcript) => {
@@ -2351,16 +2352,18 @@ export default function AIChatPage() {
 
 
                 <div className="absolute right-1.5 bottom-1.5 flex items-center gap-1 sm:gap-1.5">
-                  {/* File Upload */}
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isGenerating || realtimeIsRecording || voiceSessionActive}
-                    className="p-2 sm:p-2.5 rounded-full transition-all text-gray-400 hover:text-gray-600 hover:bg-gray-100 active:scale-95 disabled:opacity-50"
-                    aria-label={t('aiChat.attachFile')}
-                  >
-                    <Paperclip className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </button>
+                  {/* File Upload - hidden during voice recording */}
+                  {!realtimeIsRecording && !realtimeIsConnecting && !voiceSessionActive && (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isGenerating}
+                      className="p-2 sm:p-2.5 rounded-full transition-all text-gray-400 hover:text-gray-600 hover:bg-gray-100 active:scale-95 disabled:opacity-50"
+                      aria-label={t('aiChat.attachFile')}
+                    >
+                      <Paperclip className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                  )}
 
                   {/* Voice Button */}
                   <button
@@ -2370,17 +2373,21 @@ export default function AIChatPage() {
                     aria-label={voiceSessionActive || realtimeIsRecording ? t('aiChat.stopVoiceInput') : t('aiChat.voiceInput')}
                     className={`
                       p-2 sm:p-2.5 rounded-full transition-all duration-300 active:scale-95
-                      ${realtimeIsRecording || realtimeIsConnecting
-                        ? 'bg-red-500 text-white shadow-md animate-pulse'
-                        : voiceSessionActive
-                          ? 'bg-primary-500 text-white shadow-md'
-                          : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                      ${realtimeIsRecording
+                        ? 'bg-red-50 text-red-500 hover:bg-red-100'
+                        : realtimeIsConnecting
+                          ? 'bg-primary-50 text-primary-500'
+                          : voiceSessionActive
+                            ? 'bg-primary-500 text-white shadow-md'
+                            : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
                       }
                     `}
                   >
                     {realtimeIsConnecting ? (
                       <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
-                    ) : (realtimeIsRecording || voiceSessionActive) ? (
+                    ) : realtimeIsRecording ? (
+                      <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="currentColor" />
+                    ) : voiceSessionActive ? (
                       <MicOff className="w-4 h-4 sm:w-5 sm:h-5" />
                     ) : (
                       <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -2397,6 +2404,23 @@ export default function AIChatPage() {
                       aria-label={t('aiChat.stopGenerating')}
                     >
                       <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="currentColor" />
+                    </button>
+                  ) : realtimeIsRecording ? (
+                    /* Force-send partial transcript during recording */
+                    <button
+                      type="button"
+                      onClick={() => voiceForceSend(realtimePartialText)}
+                      disabled={!realtimePartialText?.trim()}
+                      aria-label={t('aiChat.sendVoiceMessage')}
+                      className={`
+                        p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm
+                        ${!realtimePartialText?.trim()
+                          ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                          : 'bg-primary-600 text-white hover:bg-primary-700 shadow-md active:scale-95'
+                        }
+                      `}
+                    >
+                      <Send className="w-4 h-4 sm:w-5 sm:h-5" />
                     </button>
                   ) : (
                     <button
