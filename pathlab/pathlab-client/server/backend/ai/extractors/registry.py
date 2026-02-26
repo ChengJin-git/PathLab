@@ -1,49 +1,45 @@
-"""Registry for feature extractors."""
+"""Registry for feature extractors.
+
+Uses lazy imports so that a broken dependency in one extractor does not
+prevent the rest of the system from loading.
+"""
 from __future__ import annotations
 
-from typing import Dict, Type, List, Callable
+import importlib
+import logging
+from typing import Dict, Type, List, Callable, Tuple
 
 from .base import BaseExtractor
-from .resnet50 import ResNet50Extractor
-from .vit_l_16 import ViTL16Extractor
-from .conch_model import CONCHExtractor
-from .uni_model import UNIExtractor
-from .uni2_model import UNI2Extractor
-from .virchow_model import VirchowExtractor
-from .virchow2_model import Virchow2Extractor
-from .plip_model import PLIPExtractor
-from .phikon_model import PhikonExtractor
-from .phikon2_model import Phikon2Extractor
-from .patho_clip_model import PathoCLIPExtractor
-from .openmidnight_model import OpenMidnightExtractor
-from .conch15_model import CONCH15Extractor
-from .h_optimus_0_model import H_Optimus_0Extractor
-from .h_optimus_1_model import H_Optimus_1Extractor
-from .mSTAR_model import mSTARExtractor
-from .gpfm_model import GPFMExtractor
 from .transforms import get_default_transforms
 
+logger = logging.getLogger(__name__)
 
-# Global registry mapping extractor names to classes
-_EXTRACTOR_REGISTRY: Dict[str, Type[BaseExtractor]] = {
-    "resnet50": ResNet50Extractor,
-    "vit_l_16": ViTL16Extractor,
-    "conch": CONCHExtractor,
-    "uni": UNIExtractor,
-    "uni2": UNI2Extractor,
-    'virchow': VirchowExtractor,
-    'virchow2': Virchow2Extractor,
-    'plip': PLIPExtractor,
-    'phikon': PhikonExtractor,
-    'phikon2': Phikon2Extractor,
-    'patho_clip': PathoCLIPExtractor,
-    'openmidnight': OpenMidnightExtractor,
-    'conch15': CONCH15Extractor,
-    'H-Optimus-1': H_Optimus_1Extractor,
-    'H-Optimus-0': H_Optimus_0Extractor,
-    'mSTAR': mSTARExtractor,
-    'GPFM': GPFMExtractor,
+# Lazy registry: maps extractor id -> (module_path_relative_to_package, class_name)
+# The module is only imported when the extractor is actually requested.
+_EXTRACTOR_LAZY_REGISTRY: Dict[str, Tuple[str, str]] = {
+    "resnet50":       (".resnet50",             "ResNet50Extractor"),
+    "vit_l_16":       (".vit_l_16",             "ViTL16Extractor"),
+    "conch":          (".conch_model",           "CONCHExtractor"),
+    "uni":            (".uni_model",             "UNIExtractor"),
+    "uni2":           (".uni2_model",            "UNI2Extractor"),
+    "virchow":        (".virchow_model",         "VirchowExtractor"),
+    "virchow2":       (".virchow2_model",        "Virchow2Extractor"),
+    "plip":           (".plip_model",             "PLIPExtractor"),
+    "phikon":         (".phikon_model",           "PhikonExtractor"),
+    "phikon2":        (".phikon2_model",          "Phikon2Extractor"),
+    "patho_clip":     (".patho_clip_model",       "PathoCLIPExtractor"),
+    "openmidnight":   (".openmidnight_model",     "OpenMidnightExtractor"),
+    "conch15":        (".conch15_model",          "CONCH15Extractor"),
+    "H-Optimus-1":    (".h_optimus_1_model",      "H_Optimus_1Extractor"),
+    "H-Optimus-0":    (".h_optimus_0_model",      "H_Optimus_0Extractor"),
+    "mSTAR":          (".mSTAR_model",            "mSTARExtractor"),
+    "GPFM":           (".gpfm_model",             "GPFMExtractor"),
+    "SmartCCS":       (".smartccs_model",          "SmartCCSExtractor"),
+    "SmartCyto":      (".smartcyto_model",         "SmartCytoExtractor"),
 }
+
+# Cache for already-imported extractor classes
+_EXTRACTOR_CLASS_CACHE: Dict[str, Type[BaseExtractor]] = {}
 
 _EXTRACTOR_METADATA: Dict[str, Dict[str, str]] = {
     "resnet50": {"name": "ResNet50", "description": "ImageNet pretrained CNN, 2048-dim, general-purpose baseline"},
@@ -63,7 +59,34 @@ _EXTRACTOR_METADATA: Dict[str, Dict[str, str]] = {
     "H-Optimus-0": {"name": "H-Optimus-0", "description": "ViT 1.1B, 1536-dim (Bioptimus)"},
     "mSTAR": {"name": "mSTAR", "description": "ViT-L/16, 1024-dim (Smartlab)"},
     "GPFM": {"name": "GPFM", "description": "DINOv2 ViT-L/14, 1024-dim (Smartlab)"},
+    "SmartCCS": {"name": "Smart-CCS", "description": "DINOv2 ViT-L/14, 1024-dim (Smartlab)"},
+    "SmartCyto": {"name": "SmartCyto", "description": "DINOv3 ViT-B/16, 768-dim (Smartlab)"},
 }
+
+
+def _resolve_extractor_class(name: str) -> Type[BaseExtractor]:
+    """Lazily import and return the extractor class for the given name."""
+    if name in _EXTRACTOR_CLASS_CACHE:
+        return _EXTRACTOR_CLASS_CACHE[name]
+
+    if name not in _EXTRACTOR_LAZY_REGISTRY:
+        raise ValueError(
+            f"Unknown extractor: '{name}'. "
+            f"Available extractors: {list(_EXTRACTOR_LAZY_REGISTRY.keys())}"
+        )
+
+    module_path, class_name = _EXTRACTOR_LAZY_REGISTRY[name]
+    try:
+        module = importlib.import_module(module_path, package=__package__)
+        cls = getattr(module, class_name)
+    except Exception as e:
+        logger.error(f"Failed to import extractor '{name}' from {module_path}: {e}")
+        raise ImportError(
+            f"Could not load extractor '{name}' ({module_path}.{class_name}): {e}"
+        ) from e
+
+    _EXTRACTOR_CLASS_CACHE[name] = cls
+    return cls
 
 
 def register_extractor(name: str, extractor_class: Type[BaseExtractor]):
@@ -74,9 +97,9 @@ def register_extractor(name: str, extractor_class: Type[BaseExtractor]):
         name: Unique identifier for the extractor (e.g., "resnet50", "uni", "conch")
         extractor_class: Class inheriting from BaseExtractor
     """
-    if name in _EXTRACTOR_REGISTRY:
+    if name in _EXTRACTOR_LAZY_REGISTRY or name in _EXTRACTOR_CLASS_CACHE:
         raise ValueError(f"Extractor '{name}' is already registered")
-    _EXTRACTOR_REGISTRY[name] = extractor_class
+    _EXTRACTOR_CLASS_CACHE[name] = extractor_class
 
 
 def get_extractor(name: str, pretrained: bool = True, **kwargs) -> BaseExtractor:
@@ -94,11 +117,7 @@ def get_extractor(name: str, pretrained: bool = True, **kwargs) -> BaseExtractor
     Raises:
         ValueError: If extractor name is not registered
     """
-    if name not in _EXTRACTOR_REGISTRY:
-        raise ValueError(
-            f"Unknown extractor: '{name}'. Available extractors: {list(_EXTRACTOR_REGISTRY.keys())}"
-        )
-    extractor_class = _EXTRACTOR_REGISTRY[name]
+    extractor_class = _resolve_extractor_class(name)
     return extractor_class.build(pretrained=pretrained, **kwargs)
 
 
@@ -111,9 +130,6 @@ def get_extractor_transforms(
     """
     Get preprocessing transforms for an extractor without loading the full model.
 
-    This is useful when you need the transforms but want to avoid loading
-    model weights (e.g., for data preprocessing before training).
-
     Args:
         name: Extractor identifier (e.g., "resnet50")
         mode: "train" for training with augmentation, "eval" for inference
@@ -122,28 +138,20 @@ def get_extractor_transforms(
 
     Returns:
         Transform callable for preprocessing images
-
-    Example:
-        transform = get_extractor_transforms("resnet50", mode="eval")
-        processed_image = transform(pil_image)
     """
-    # Build extractor to get its transforms
-    # Note: This does load the model, but for most extractors the transforms
-    # are defined based on class properties, so this is acceptable.
-    # For heavy models, consider caching or using class-level transform methods.
     extractor = get_extractor(name, pretrained=pretrained, **kwargs)
     return extractor.get_transforms(mode=mode)
 
 
 def list_extractors() -> List[str]:
     """Return list of all registered extractor names."""
-    return list(_EXTRACTOR_REGISTRY.keys())
+    return list(_EXTRACTOR_LAZY_REGISTRY.keys())
 
 
 def get_available_extractors() -> List[Dict[str, str]]:
     """Return detailed metadata for all registered extractors."""
     results = []
-    for extractor_id in _EXTRACTOR_REGISTRY.keys():
+    for extractor_id in _EXTRACTOR_LAZY_REGISTRY.keys():
         metadata = _EXTRACTOR_METADATA.get(extractor_id, {
             "name": extractor_id.capitalize(),
             "description": f"Feature extractor: {extractor_id}"

@@ -58,6 +58,8 @@ async def list_available_extractors(
             {"id": "phikon2", "name": "Phikon2", "description": "DINOv2 ViT-L/16, 1024-dim (Owkin)"},
             {"id": "mSTAR", "name": "mSTAR", "description": "ViT-L/16, 1024-dim (Smartlab)"},
             {"id": "GPFM", "name": "GPFM", "description": "DINOv2 ViT-L/14, 1024-dim (Smartlab)"},
+            {"id": "SmartCCS", "name": "Smart-CCS", "description": "DINOv2 ViT-L/14, 1024-dim (Smartlab)"},
+            {"id": "SmartCyto", "name": "SmartCyto", "description": "DINOv3 ViT-B/16, 768-dim (Smartlab)"},
         ]}
 
 
