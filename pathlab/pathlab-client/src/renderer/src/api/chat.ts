@@ -39,7 +39,8 @@ export async function chatWithAI(
   conversationId?: string,
   onMessageId?: (messageId: number) => void,
   signal?: AbortSignal,
-  onPdfWaitStart?: () => void
+  onPdfWaitStart?: () => void,
+  onContextLimit?: () => void
 ): Promise<void> {
   // Get AI configuration from localStorage
   const apiKey = localStorage.getItem('openrouter_api_key') || ''
@@ -143,6 +144,10 @@ export async function chatWithAI(
             // Handle pdf_wait_start event — initial LLM response done, entering PDF wait phase
             if (parsed.pdf_wait_start && onPdfWaitStart) {
               onPdfWaitStart()
+            }
+            // Handle context_limit event — LLM output was truncated (finish_reason: "length")
+            if (parsed.context_limit && onContextLimit) {
+              onContextLimit()
             }
           } catch (e) {
             // Skip invalid JSON

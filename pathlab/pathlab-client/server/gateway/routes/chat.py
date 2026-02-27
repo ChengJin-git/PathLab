@@ -646,20 +646,32 @@ async def _stream_from_openai_compatible(
         ) as response:
             response.raise_for_status()
 
+            last_finish_reason = None
             async for line in response.aiter_lines():
                 if line.startswith("data: "):
                     data = line[6:]
                     if data == "[DONE]":
+                        # Emit context_limit event before [DONE] if output was truncated
+                        if last_finish_reason == "length":
+                            yield f"data: {json.dumps({'context_limit': True})}\n\n"
                         yield "data: [DONE]\n\n"
                         break
                     try:
                         parsed = json.loads(data)
                         if "choices" in parsed and len(parsed["choices"]) > 0:
-                            delta = parsed["choices"][0].get("delta", {})
+                            choice = parsed["choices"][0]
+                            delta = choice.get("delta", {})
                             if "content" in delta and delta["content"] is not None:
                                 yield f"data: {json.dumps({'content': delta['content']})}\n\n"
+                            # Track finish_reason from the last chunk
+                            fr = choice.get("finish_reason")
+                            if fr:
+                                last_finish_reason = fr
                     except json.JSONDecodeError:
                         continue
+            # If stream ended without [DONE] but finish_reason was "length"
+            if last_finish_reason == "length":
+                yield f"data: {json.dumps({'context_limit': True})}\n\n"
 
 
 async def _check_local_vllm_available(base_url: str, api_key: str = None) -> tuple[bool, str | None]:

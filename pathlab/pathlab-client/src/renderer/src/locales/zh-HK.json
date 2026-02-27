@@ -1128,6 +1128,11 @@
     "listening": "正在聆聽...",
     "inputPlaceholder": "描述您的研究任務...",
     "stopGenerating": "停止生成",
+    "contextLimit": {
+      "title": "上下文長度已達上限",
+      "description": "當前對話已過長，AI 無法有效處理。為確保最佳回答質素，請開始新的對話。",
+      "newResearch": "新建研究"
+    },
     "disclaimer": "PathLab 智能助手可能會出錯，請注意核實重要資訊。",
     "uploadedExcelWarning": "\n\n📎 **上傳的 Excel：{{name}}**\n **警告：此檔案有多個工作表（{{sheets}}）**\n請僅將資料工作表另存為單獨的 CSV 檔案並重新上傳。",
     "uploadedExcelError": "\n\n📎 **上傳的 Excel：{{name}}**\n **錯誤：解析檔案失敗** - {{error}}",
@@ -1259,8 +1264,8 @@
     "enterLabel": "輸入標籤",
     "months": "月",
     "statusDefault": "——",
-    "eventOption": "事件",
-    "censoredOption": "刪失",
+    "eventOption": "事件發生",
+    "censoredOption": "資料刪失",
     "caseIdPlaceholder": "病例 ID",
     "agePlaceholder": "年齡",
     "sourceDefault": "選擇來源",

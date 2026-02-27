@@ -29,7 +29,7 @@ import {
 import { AudioVisualizer } from '../components/common/AudioVisualizer'
 
 // Extracted modules
-import AssistantMessage, { parseSubmitTask, parseCancelTaskNow, isInternalOnlyMessage } from '../components/chat/AssistantMessage'
+import AssistantMessage, { parseSubmitTask, parseCancelTaskNow, isInternalOnlyMessage, removeContextLimitBlock } from '../components/chat/AssistantMessage'
 import { sanitizeConfigBlocksForAI, isPdfContextMessage } from '../lib/chatMessageParser'
 import { SCENARIO_CARDS } from '../constants/scenarios'
 
@@ -882,6 +882,17 @@ export default function AIChatPage() {
         if (generationIdRef.current === currentGenerationId) {
           setGenerationPhase('pdf_waiting')
         }
+      }, () => {
+        // Context limit reached — append [CONTEXT_LIMIT] block to the AI message
+        const contextLimitBlock = '\n\n[CONTEXT_LIMIT][/CONTEXT_LIMIT]'
+        const currentTrackingId = trackingId
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === currentTrackingId
+              ? { ...m, content: m.content + contextLimitBlock }
+              : m
+          )
+        )
       })
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -1176,6 +1187,8 @@ export default function AIChatPage() {
     cleaned = removeModelListBlock(cleaned)
     // Remove PDF_PARSE_STATUS blocks - internal status tags
     cleaned = removePdfParseStatusBlock(cleaned)
+    // Remove CONTEXT_LIMIT block - UI-only warning card
+    cleaned = removeContextLimitBlock(cleaned)
     return cleaned.trim()
   }, [])
 
@@ -2094,6 +2107,7 @@ export default function AIChatPage() {
                         onMetadataUploadSuccess={handleMetadataUploadSuccess}
                         submitTaskTrigger={index === lastTaskConfigIndex ? submitTaskTrigger : undefined}
                         cancelTaskTrigger={index === lastCancelTaskIndex ? cancelTaskTrigger : undefined}
+                        onNewChat={handleNewChat}
                       />
                     )}
                   </div>

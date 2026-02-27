@@ -1128,6 +1128,11 @@
     "listening": "Listening...",
     "inputPlaceholder": "Describe your research task...",
     "stopGenerating": "Stop generating",
+    "contextLimit": {
+      "title": "Context limit reached",
+      "description": "This conversation has become too long for the AI to process effectively. To ensure the best quality responses, please start a new conversation.",
+      "newResearch": "New Research"
+    },
     "disclaimer": "PathLab Agent can make mistakes. Consider checking important information.",
     "uploadedExcelWarning": "\n\n📎 **Uploaded Excel: {{name}}**\n **Warning: This file has multiple sheets ({{sheets}})**\nPlease save only the data sheet as a separate CSV file and re-upload.",
     "uploadedExcelError": "\n\n📎 **Uploaded Excel: {{name}}**\n **Error: Failed to parse file** - {{error}}",

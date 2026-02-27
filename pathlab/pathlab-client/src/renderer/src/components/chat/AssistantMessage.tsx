@@ -6,6 +6,7 @@
 import React, { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
+import { AlertTriangle, Plus } from 'lucide-react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -86,6 +87,7 @@ export interface AssistantMessageProps {
   onMetadataUploadSuccess: (result: import('../../api').UploadSplitsResponse, datasetId: string, messageId: string) => void
   submitTaskTrigger?: number  // When this changes, trigger submit on TaskConfigCard
   cancelTaskTrigger?: number  // When this changes, trigger cancel on CancelTaskCard
+  onNewChat?: () => void  // Callback to start a new conversation (context limit card)
 }
 
 // All special block tag names used in the chat
@@ -200,6 +202,16 @@ export function removeCancelTaskNowBlock(content: string): string {
   return content.replace(/\[CANCEL_TASK_NOW\][\s\S]*?\[\/CANCEL_TASK_NOW\]/g, '').trim()
 }
 
+// Parse [CONTEXT_LIMIT] block — signals that the LLM output was truncated
+export function parseContextLimit(content: string): boolean {
+  return /\[CONTEXT_LIMIT\][\s\S]*?\[\/CONTEXT_LIMIT\]/i.test(content)
+}
+
+// Remove [CONTEXT_LIMIT] block from content
+export function removeContextLimitBlock(content: string): string {
+  return content.replace(/\[CONTEXT_LIMIT\][\s\S]*?\[\/CONTEXT_LIMIT\]/gi, '').trim()
+}
+
 // ── Citation Contexts (article reading) ─────────────────────────────────────
 
 /** Parsed citation context for a single [N, p.Y] reference. */
@@ -265,11 +277,13 @@ const AssistantMessage = React.memo(function AssistantMessage({
   onRegistrationSuccess,
   onMetadataUploadSuccess,
   submitTaskTrigger,
-  cancelTaskTrigger
+  cancelTaskTrigger,
+  onNewChat
 }: AssistantMessageProps) {
   const { t } = useTranslation()
 
   // Parse special blocks
+  const contextLimitReached = parseContextLimit(content)
   const searchStatus = parseSearchStatus(content)
   const webSearchResult = parseWebSearchResult(content)
   const options = parseOptions(content)
@@ -489,6 +503,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
   displayContent = displayContent.replace(/\[WEB_SEARCH\][\s\S]*?\[\/WEB_SEARCH\]/g, '').trim()
   // Remove READ_ARTICLE request block - AI's internal article reading request
   displayContent = displayContent.replace(/\[READ_ARTICLE\][\s\S]*?\[\/READ_ARTICLE\]/g, '').trim()
+  // Remove CONTEXT_LIMIT block - rendered as a card
+  if (contextLimitReached) displayContent = removeContextLimitBlock(displayContent)
   // Remove VOICE_CONTROL block - it's for internal use only
   displayContent = removeVoiceControlBlock(displayContent)
   // Remove SUBMIT_TASK block - it's for internal use only (voice command to trigger submit)
@@ -795,6 +811,36 @@ const AssistantMessage = React.memo(function AssistantMessage({
         ) : incompleteTag === 'NAVIGATE' && (
           <motion.div key="navigate-skeleton" {...cardTransition}>
             <NavigationCardSkeleton />
+          </motion.div>
+        )}
+
+        {/* Context limit warning card */}
+        {contextLimitReached && !isStreaming && (
+          <motion.div key="context-limit" {...cardTransition}>
+            <div className="my-4 p-4 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl shadow-sm">
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0 w-8 h-8 bg-amber-100 rounded-full flex items-center justify-center">
+                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-amber-800">
+                    {t('aiChat.contextLimit.title')}
+                  </p>
+                  <p className="text-xs text-amber-600 mt-1">
+                    {t('aiChat.contextLimit.description')}
+                  </p>
+                </div>
+              </div>
+              {onNewChat && (
+                <button
+                  onClick={onNewChat}
+                  className="mt-3 w-full px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg flex items-center justify-center gap-2 shadow-sm hover:shadow-md transition-all"
+                >
+                  <Plus className="w-4 h-4" />
+                  {t('aiChat.contextLimit.newResearch')}
+                </button>
+              )}
+            </div>
           </motion.div>
         )}
 

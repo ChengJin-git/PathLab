@@ -1128,6 +1128,11 @@
     "listening": "正在聆听...",
     "inputPlaceholder": "描述您的研究任务...",
     "stopGenerating": "停止生成",
+    "contextLimit": {
+      "title": "上下文长度已达上限",
+      "description": "当前对话已过长，AI 无法有效处理。为确保最佳回答质量，请开始新的对话。",
+      "newResearch": "新建研究"
+    },
     "disclaimer": "PathLab 智能助手可能会出错，请注意核实重要信息。",
     "uploadedExcelWarning": "\n\n📎 **上传的 Excel：{{name}}**\n **警告：此文件有多个工作表（{{sheets}}）**\n请仅将数据工作表另存为单独的 CSV 文件并重新上传。",
     "uploadedExcelError": "\n\n📎 **上传的 Excel：{{name}}**\n **错误：解析文件失败** - {{error}}",
@@ -1466,8 +1471,8 @@
     "wsi": "WSI",
     "patch": "切片块",
     "notSet": "未设置",
-    "event": "事件",
-    "censored": "删失",
+    "event": "事件发生",
+    "censored": "数据删失",
     "noLabel": "无标签",
     "notSpecified": "未指定",
     "sourcePrefix": "来源：",
