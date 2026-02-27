@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MessageSquare, RefreshCw, Trash2, Download, X, ThumbsUp, ThumbsDown, Clock, Search, Calendar, BarChart3 } from 'lucide-react'
+import { MessageSquare, RefreshCw, Trash2, Download, X, ThumbsUp, ThumbsDown, Clock, Search, Calendar, BarChart3, ChevronLeft, ChevronRight, Users } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Label } from '../ui/label'
@@ -44,6 +44,39 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
   const [usageData, setUsageData] = useState<UserUsageItem[]>([])
   const [usageLoading, setUsageLoading] = useState(false)
   const [usageError, setUsageError] = useState<string | null>(null)
+  const [usagePage, setUsagePage] = useState(0)
+  const [usagePageSize, setUsagePageSize] = useState(10)
+
+  // Compute totals across all users
+  const usageTotals = useMemo(() => {
+    return usageData.reduce(
+      (acc, u) => ({
+        wsi_count: acc.wsi_count + u.wsi_count,
+        ai_task_count: acc.ai_task_count + u.ai_task_count,
+        training_count: acc.training_count + u.training_count,
+        message_count: acc.message_count + u.message_count,
+        annotation_count: acc.annotation_count + u.annotation_count,
+        feedback_count: acc.feedback_count + u.feedback_count,
+        thumbs_up: acc.thumbs_up + u.thumbs_up,
+        thumbs_down: acc.thumbs_down + u.thumbs_down,
+      }),
+      { wsi_count: 0, ai_task_count: 0, training_count: 0, message_count: 0, annotation_count: 0, feedback_count: 0, thumbs_up: 0, thumbs_down: 0 }
+    )
+  }, [usageData])
+
+  // Paginated usage data
+  const usageTotalPages = Math.ceil(usageData.length / usagePageSize)
+  const paginatedUsageData = useMemo(() => {
+    const start = usagePage * usagePageSize
+    return usageData.slice(start, start + usagePageSize)
+  }, [usageData, usagePage, usagePageSize])
+
+  // Reset page when page size changes or data loads
+  useEffect(() => {
+    if (usagePage >= usageTotalPages && usageTotalPages > 0) {
+      setUsagePage(usageTotalPages - 1)
+    }
+  }, [usageTotalPages, usagePage])
 
   // Load usage stats on mount
   useEffect(() => {
@@ -190,9 +223,33 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
           <div className="text-center py-8 text-gray-400 text-sm">{t('settings.feedbackTab.usageNoData')}</div>
         ) : (
           <>
+            {/* Summary Totals Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 mb-5">
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 border border-blue-200/60 rounded-xl p-3 text-center">
+                <div className="flex items-center justify-center mb-1">
+                  <Users className="w-3.5 h-3.5 text-blue-500 mr-1" />
+                  <span className="text-[10px] text-blue-600 uppercase font-semibold tracking-wider">{t('settings.feedbackTab.usageTotalUsers')}</span>
+                </div>
+                <div className="text-2xl font-bold text-blue-700">{usageData.length}</div>
+              </div>
+              {([
+                { key: 'usageWsi', value: usageTotals.wsi_count, color: 'indigo' },
+                { key: 'usageAiTasks', value: usageTotals.ai_task_count, color: 'violet' },
+                { key: 'usageTraining', value: usageTotals.training_count, color: 'purple' },
+                { key: 'usageMessages', value: usageTotals.message_count, color: 'cyan' },
+                { key: 'usageAnnotations', value: usageTotals.annotation_count, color: 'teal' },
+                { key: 'usageFeedback', value: usageTotals.feedback_count, color: 'amber' },
+              ] as const).map(({ key, value, color }) => (
+                <div key={key} className={`bg-gradient-to-br from-${color}-50 to-${color}-100/50 border border-${color}-200/60 rounded-xl p-3 text-center`}>
+                  <div className={`text-[10px] text-${color}-600 uppercase font-semibold tracking-wider mb-1`}>{t(`settings.feedbackTab.${key}`)}</div>
+                  <div className={`text-2xl font-bold text-${color}-700`}>{value}</div>
+                </div>
+              ))}
+            </div>
+
             {/* Mobile: Card layout */}
             <div className="block md:hidden space-y-3">
-              {usageData.map((u) => (
+              {paginatedUsageData.map((u) => (
                 <div key={u.user_id} className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
                   <div className="flex items-center justify-between mb-3">
                     <div>
@@ -249,7 +306,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 bg-white">
-                    {usageData.map((u) => (
+                    {paginatedUsageData.map((u) => (
                       <tr key={u.user_id} className="hover:bg-gray-50/80 transition-colors">
                         <td className="px-4 py-3 text-gray-900 font-medium text-sm truncate max-w-[200px]" title={u.email}>
                           {u.nickname || u.email}
@@ -271,6 +328,48 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                 </table>
               </div>
             </div>
+
+            {/* Pagination Controls */}
+            {usageTotalPages > 1 && (
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t border-gray-100">
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <span>{t('settings.feedbackTab.usageRowsPerPage')}</span>
+                  <select
+                    value={usagePageSize}
+                    onChange={(e) => { setUsagePageSize(Number(e.target.value)); setUsagePage(0) }}
+                    className="h-8 px-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                  >
+                    <option value={5}>5</option>
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-500">
+                    {t('settings.feedbackTab.usagePageInfo', {
+                      current: usagePage + 1,
+                      total: usageTotalPages,
+                    })}
+                  </span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setUsagePage((p) => Math.max(0, p - 1))}
+                      disabled={usagePage === 0}
+                      className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setUsagePage((p) => Math.min(usageTotalPages - 1, p + 1))}
+                      disabled={usagePage >= usageTotalPages - 1}
+                      className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>

@@ -342,7 +342,10 @@
       "usageFeedback": "回饋",
       "usageThumbsUp": "👍",
       "usageThumbsDown": "👎",
-      "usageNoData": "暫無使用者使用資料"
+      "usageNoData": "暫無使用者使用資料",
+      "usageTotalUsers": "使用者數",
+      "usageRowsPerPage": "每頁顯示",
+      "usagePageInfo": "{{current}} / {{total}}"
     },
     "tasksTab": {
       "failedToLoadQueueStatus": "載入佇列狀態失敗",

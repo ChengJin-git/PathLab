@@ -342,7 +342,10 @@
       "usageFeedback": "反馈",
       "usageThumbsUp": "👍",
       "usageThumbsDown": "👎",
-      "usageNoData": "暂无用户使用数据"
+      "usageNoData": "暂无用户使用数据",
+      "usageTotalUsers": "用户数",
+      "usageRowsPerPage": "每页显示",
+      "usagePageInfo": "{{current}} / {{total}}"
     },
     "tasksTab": {
       "failedToLoadQueueStatus": "加载队列状态失败",

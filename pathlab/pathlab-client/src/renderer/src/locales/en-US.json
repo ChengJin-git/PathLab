@@ -342,7 +342,10 @@
       "usageFeedback": "Feedback",
       "usageThumbsUp": "👍",
       "usageThumbsDown": "👎",
-      "usageNoData": "No user usage data available"
+      "usageNoData": "No user usage data available",
+      "usageTotalUsers": "Users",
+      "usageRowsPerPage": "Rows per page",
+      "usagePageInfo": "{{current}} / {{total}}"
     },
     "tasksTab": {
       "failedToLoadQueueStatus": "Failed to load queue status",
