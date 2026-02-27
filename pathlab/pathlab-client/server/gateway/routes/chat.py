@@ -19,7 +19,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.database import get_db
 from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository, DatasetPermissionRepository, DatasetRepository, TrainingTaskRepository, AITaskRepository
-from backend.database.models import TrainingTask, DataGroup
+from backend.database.models import TrainingTask, DataGroup, WSISlide, TrainingTaskWSI
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import check_data_ownership, get_user_id_filter, get_user_from_header_or_param
 from backend.common.config import Config
@@ -1713,16 +1713,35 @@ async def chat_with_ai(
         # Batch query all training tasks to get detailed info with eager loading
         task_ids = list(set(m.task_id for m in trained_models if m.task_id))
         training_tasks_map = {}
+        # task_id -> set of dataset_ids actually used in training (via TrainingTaskWSI → WSISlide)
+        training_dataset_ids_map: Dict[str, set] = {}
         if task_ids:
             from sqlalchemy import select
-            # Eager load data_group and datasets to avoid lazy loading issues
+            # Eager load data_group (for data_type / task_type), no need to load datasets relation
             stmt = select(TrainingTask).options(
-                selectinload(TrainingTask.data_group).selectinload(DataGroup.datasets)
+                selectinload(TrainingTask.data_group)
             ).where(TrainingTask.task_id.in_(task_ids))
             result = await db.execute(stmt)
             tasks = result.scalars().all()
             for task in tasks:
                 training_tasks_map[task.task_id] = task
+
+            # Batch-query the actual dataset_ids used in each training task
+            # Join TrainingTaskWSI → WSISlide to get the real training datasets
+            ds_rows = await db.execute(
+                select(TrainingTaskWSI.task_id, WSISlide.dataset_id)
+                .join(WSISlide, TrainingTaskWSI.wsi_id == WSISlide.wsi_id)
+                .where(
+                    TrainingTaskWSI.task_id.in_(task_ids),
+                    WSISlide.dataset_id.isnot(None)
+                )
+                .distinct()
+            )
+            for row in ds_rows.all():
+                tid, did = row[0], row[1]
+                if tid not in training_dataset_ids_map:
+                    training_dataset_ids_map[tid] = set()
+                training_dataset_ids_map[tid].add(did)
 
         for m in trained_models:
             model_name = m.model_name
@@ -1734,19 +1753,19 @@ async def chat_with_ai(
 
             # Get data_type and task_type from training task's DataGroup
             training_task = training_tasks_map.get(model_task_id)
-            training_dataset_name = None
-            training_dataset_id = None
+            # Actual dataset_ids this model was trained on (from WSI associations)
+            training_dataset_ids = training_dataset_ids_map.get(model_task_id, set())
             if training_task and training_task.data_group:
                 data_type = training_task.data_group.data_type
                 task_type = training_task.data_group.task_type
-                # Get the dataset name/id from the data group
-                if training_task.data_group.datasets:
-                    # Assuming one dataset per group for training tasks
-                    training_dataset_name = training_task.data_group.datasets[0].name
-                    training_dataset_id = training_task.data_group.datasets[0].dataset_id
             else:
                 data_type = "unknown"
                 task_type = "unknown"
+            # Resolve training dataset names using the stats_datasets lookup
+            dataset_id_to_name = {ds["dataset_id"]: ds["dataset_name"] for ds in stats_datasets}
+            training_dataset_names = [
+                dataset_id_to_name[did] for did in training_dataset_ids if did in dataset_id_to_name
+            ]
 
             # Get embedding dimension for WSI models
             embed_dim = EXTRACTOR_EMBED_DIM.get(model_feature_extractor, 0)
@@ -1770,8 +1789,8 @@ async def chat_with_ai(
                     cand_survival = ds.get("survival_count", 0)
                     cand_name = ds["dataset_name"]
 
-                    # Rule 5: skip the training dataset itself
-                    if cand_id == training_dataset_id:
+                    # Rule 5: skip any dataset this model was actually trained on
+                    if cand_id in training_dataset_ids:
                         continue
 
                     # Rule 1: data_type must match
@@ -1816,9 +1835,9 @@ async def chat_with_ai(
                 if embed_dim > 0:
                     info_parts.append(f"embedding_dim={embed_dim}")
 
-            # Add training dataset name for reference
-            if training_dataset_name:
-                info_parts.append(f"trained_on_dataset={training_dataset_name}")
+            # Add training dataset names for reference
+            if training_dataset_names:
+                info_parts.append(f"trained_on_dataset={', '.join(training_dataset_names)}")
 
             info_parts.append(f"trained_on_task={model_task_id}")
 

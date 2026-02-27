@@ -147,6 +147,8 @@ export default function ResultsViewerPage() {
   const [validationProgress, setValidationProgress] = useState<ValidationProgress | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
+  // Ref that always holds the latest selectedTaskId to avoid stale closures in async callbacks
+  const selectedTaskIdRef = useRef<string | null>(selectedTaskId)
 
   // Completed external validation tasks (for restoring results on page return)
   interface CompletedExtValTask {
@@ -338,6 +340,11 @@ export default function ResultsViewerPage() {
     }
   }, [analysisTasks, selectedTaskId, currentResult])
 
+  // Keep ref in sync with state
+  useEffect(() => {
+    selectedTaskIdRef.current = selectedTaskId
+  }, [selectedTaskId])
+
   const loadTasks = async () => {
     setLoading(true)
     try {
@@ -346,7 +353,9 @@ export default function ResultsViewerPage() {
         const data = await response.json()
         const taskList = data.items || []
         setTasks(taskList)
-        if (taskList.length > 0 && !selectedTaskId) {
+        // Use ref to get the current selectedTaskId — avoids stale closure when called from
+        // the empty-deps useEffect that captured an earlier render's selectedTaskId value
+        if (taskList.length > 0 && !selectedTaskIdRef.current) {
           setSelectedTaskId(taskList[0].task_id)
         }
       }
