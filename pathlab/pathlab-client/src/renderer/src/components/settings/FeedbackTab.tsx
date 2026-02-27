@@ -224,8 +224,8 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
         ) : (
           <>
             {/* Summary Totals Cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 mb-5">
-              <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 border border-blue-200/60 rounded-xl p-3 text-center">
+            <div className="grid grid-cols-7 gap-3 mb-5">
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 rounded-xl p-3 text-center">
                 <div className="flex items-center justify-center mb-1">
                   <Users className="w-3.5 h-3.5 text-blue-500 mr-1" />
                   <span className="text-[10px] text-blue-600 uppercase font-semibold tracking-wider">{t('settings.feedbackTab.usageTotalUsers')}</span>
@@ -240,7 +240,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                 { key: 'usageAnnotations', value: usageTotals.annotation_count, color: 'teal' },
                 { key: 'usageFeedback', value: usageTotals.feedback_count, color: 'amber' },
               ] as const).map(({ key, value, color }) => (
-                <div key={key} className={`bg-gradient-to-br from-${color}-50 to-${color}-100/50 border border-${color}-200/60 rounded-xl p-3 text-center`}>
+                <div key={key} className={`bg-gradient-to-br from-${color}-50 to-${color}-100/50 rounded-xl p-3 text-center`}>
                   <div className={`text-[10px] text-${color}-600 uppercase font-semibold tracking-wider mb-1`}>{t(`settings.feedbackTab.${key}`)}</div>
                   <div className={`text-2xl font-bold text-${color}-700`}>{value}</div>
                 </div>
