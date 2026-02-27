@@ -1610,8 +1610,12 @@ async def chat_with_ai(
 
     # Format user data context for System Prompt
     wsi_count = stats["total_count"]
-    datasets = stats["datasets"]
+    stats_datasets = stats["datasets"]  # Keep original reference; `datasets` may be overwritten later
+    datasets = stats_datasets
     data_type_dist = stats["data_types"]
+
+    # Auxiliary lookup dict built during the dataset loop (used later for model compatibility)
+    available_extractors_per_dataset: dict = {}  # dataset_id -> list[str]
 
     # Format datasets with detailed info (data_type and labels per dataset)
     # Each dataset has its own labels and survival data - do NOT show global labels to avoid confusion
@@ -1672,6 +1676,8 @@ async def chat_with_ai(
                                             break  # Found for this extractor, move to next
                     if available_extractors:
                         available_extractors_str = f", available_extractors=[{', '.join(available_extractors)}]"
+                    # Store for model compatibility lookup
+                    available_extractors_per_dataset[ds_id] = available_extractors
 
             # Add access type marker for elevated (temporary permission) datasets
             access_marker = " [ELEVATED ACCESS - temporary permission]" if ds_access_type == "elevated" else ""
@@ -1729,19 +1735,69 @@ async def chat_with_ai(
             # Get data_type and task_type from training task's DataGroup
             training_task = training_tasks_map.get(model_task_id)
             training_dataset_name = None
+            training_dataset_id = None
             if training_task and training_task.data_group:
                 data_type = training_task.data_group.data_type
                 task_type = training_task.data_group.task_type
-                # Get the dataset name from the data group
+                # Get the dataset name/id from the data group
                 if training_task.data_group.datasets:
                     # Assuming one dataset per group for training tasks
                     training_dataset_name = training_task.data_group.datasets[0].name
+                    training_dataset_id = training_task.data_group.datasets[0].dataset_id
             else:
                 data_type = "unknown"
                 task_type = "unknown"
 
             # Get embedding dimension for WSI models
             embed_dim = EXTRACTOR_EMBED_DIM.get(model_feature_extractor, 0)
+
+            # -----------------------------------------------------------------------
+            # Pre-compute compatible datasets for external validation at API level
+            # Rules (mirrors frontend externalValidationUtils.ts isDatasetCompatible):
+            #   1. data_type must match
+            #   2. task_type must match (inferred from dataset's labels/survival_count)
+            #   3. For classification: model classes must be a subset of dataset labels
+            #   4. For WSI: dataset must have features extracted with the same extractor
+            #   5. Exclude the dataset this model was trained on
+            # -----------------------------------------------------------------------
+            compatible_datasets = []
+            if data_type != "unknown" and task_type != "unknown":
+                model_classes_set = set(model_classes)
+                for ds in stats_datasets:
+                    cand_id = ds["dataset_id"]
+                    cand_type = ds.get("data_type", "unknown")
+                    cand_labels = ds.get("labels", {})
+                    cand_survival = ds.get("survival_count", 0)
+                    cand_name = ds["dataset_name"]
+
+                    # Rule 5: skip the training dataset itself
+                    if cand_id == training_dataset_id:
+                        continue
+
+                    # Rule 1: data_type must match
+                    if cand_type != data_type:
+                        continue
+
+                    # Rule 2 + 3: task_type and label compatibility
+                    if task_type == "classification":
+                        # Dataset must support classification (has labels)
+                        if not cand_labels:
+                            continue
+                        # Model classes must be a subset of the dataset's label set
+                        if model_classes_set and not model_classes_set.issubset(set(cand_labels.keys())):
+                            continue
+                    elif task_type == "survival":
+                        # Dataset must have survival data
+                        if cand_survival == 0:
+                            continue
+
+                    # Rule 4: for WSI, feature extractor must be available in the dataset
+                    if data_type == "wsi" and model_feature_extractor != "unknown":
+                        ds_extractors = available_extractors_per_dataset.get(cand_id, [])
+                        if model_feature_extractor not in ds_extractors:
+                            continue
+
+                    compatible_datasets.append(f"{cand_name} (dataset_id={cand_id})")
 
             # Build model info string
             info_parts = [
@@ -1760,11 +1816,18 @@ async def chat_with_ai(
                 if embed_dim > 0:
                     info_parts.append(f"embedding_dim={embed_dim}")
 
-            # Add training dataset name for external validation overlap detection
+            # Add training dataset name for reference
             if training_dataset_name:
                 info_parts.append(f"trained_on_dataset={training_dataset_name}")
 
             info_parts.append(f"trained_on_task={model_task_id}")
+
+            # Add pre-computed compatible datasets list (API-level filtering)
+            if compatible_datasets:
+                compat_str = ", ".join(compatible_datasets)
+                info_parts.append(f"compatible_validation_datasets=[{compat_str}]")
+            else:
+                info_parts.append("compatible_validation_datasets=[]")
 
             models_details.append(f"  - {model_name} ({', '.join(info_parts)})")
 

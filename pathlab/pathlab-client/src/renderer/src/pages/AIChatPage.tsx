@@ -40,7 +40,6 @@ import { removeImageRecommendationBlock } from '../components/chat/ImageRecommen
 import { removeCSVActionBlock } from '../components/chat/CSVActionCard'
 import { removeNavigateBlock } from '../components/chat/NavigationCard'
 import { CSVPreviewCard, parseCSVPreview, removeCSVPreviewBlock } from '../components/chat/CSVPreviewCard'
-import { removeInferenceConfigBlock } from '../components/chat/InferenceConfigCard'
 import { parseAnalysisConfig } from '../components/chat/AnalysisConfigCard'
 import { removeMetricConfigBlock } from '../components/chat/MetricCard'
 import { removeChartConfigBlock } from '../components/chat/ChartCard'
@@ -1130,7 +1129,6 @@ export default function AIChatPage() {
     cleaned = removeImageRecommendationBlock(cleaned)
     cleaned = removeCSVActionBlock(cleaned)
     cleaned = removeNavigateBlock(cleaned)
-    cleaned = removeInferenceConfigBlock(cleaned)
     cleaned = removeCSVPreviewBlock(cleaned)
     cleaned = removeMetricConfigBlock(cleaned)
     cleaned = removeChartConfigBlock(cleaned)
@@ -1559,54 +1557,7 @@ export default function AIChatPage() {
     setInput(errorMessage)
   }, [showToast, t])
 
-  // Handle inference submission success
-  const handleInferenceSubmitSuccess = useCallback(async (taskId: string, messageId: string) => {
-    // Update the original message's INFERENCE_CONFIG block to include submitted_task_id
-    // This persists the submission status so it's preserved when reloading the conversation
 
-    // Compute updated content from ref
-    let updatedContent: string | null = null
-    const currentMessage = messagesRef.current.find(m => m.id === messageId)
-    if (currentMessage) {
-      updatedContent = currentMessage.content.replace(
-        /\[INFERENCE_CONFIG\]([\s\S]*?)\[\/INFERENCE_CONFIG\]/,
-        (_match, json) => {
-          try {
-            const config = JSON.parse(json.trim())
-            config.submitted_task_id = taskId
-            return `[INFERENCE_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/INFERENCE_CONFIG]`
-          } catch {
-            return _match // If parsing fails, keep original
-          }
-        }
-      )
-    }
-
-    if (updatedContent) {
-      const finalContent = updatedContent
-      setMessages(prev => prev.map(m =>
-        m.id === messageId ? { ...m, content: finalContent } : m
-      ))
-      await persistMessageUpdate(messageId, updatedContent, 'aiChat.failedToSaveTaskStatus')
-    }
-
-    // Add a success message with navigation card to Results Viewer and persist to backend
-    const successContent = `${t('aiChat.taskSuccess.inferenceSubmitted', { taskId })}\n\n[NAVIGATE]\n${JSON.stringify({
-      target: '/results',
-      state: { selectedTaskId: taskId },
-      buttonTextKey: 'aiChat.taskSuccess.viewResults',
-      descriptionKey: 'aiChat.taskSuccess.inferenceResultsDesc'
-    }, null, 2)}\n[/NAVIGATE]`
-    const successMessage: Message = {
-      id: Date.now().toString(),
-      role: 'assistant',
-      content: successContent,
-      timestamp: new Date()
-    }
-    setMessages(prev => [...prev, successMessage])
-
-    await persistNewAssistantMessage(successMessage.id, successContent)
-  }, [persistMessageUpdate, persistNewAssistantMessage, t])
 
   // Handle analysis submission success (internal or external)
   const handleInternalAnalysisSubmitSuccess = useCallback(async (taskId: string, analysisId: string, messageId: string) => {
@@ -2086,7 +2037,6 @@ export default function AIChatPage() {
                         messageId={message.id}
                         onOptionSelect={handleOptionSelect}
                         onTaskSubmitSuccess={handleTaskSubmitSuccess}
-                        onInferenceSubmitSuccess={handleInferenceSubmitSuccess}
                         onInternalAnalysisSubmitSuccess={handleInternalAnalysisSubmitSuccess}
                         onTaskSubmitError={handleTaskSubmitError}
                         onTaskHistoryDataLoaded={handleTaskHistoryDataLoaded}

@@ -136,9 +136,7 @@ pathlab/
 | `/results` | ResultsViewerPage | 结果查看器 |
 | `/reports` | ReportGeneratorPage | 报告生成器 |
 | `/tools` | ToolsPage | 实用工具集 |
-| `/storage` | StorageManagementPage | 存储管理 |
-| `/settings` | SettingsPage | 系统设置 |
-
+| `/settings` | SettingsPage | 系统设置（含存储管理） |
 ---
 
 | Gateway 路由模块 (30 个)

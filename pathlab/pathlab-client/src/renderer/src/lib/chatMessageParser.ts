@@ -27,7 +27,6 @@ export function sanitizeConfigBlocksForAI(content: string): string {
   // Fields to strip per config block type
   const PERSISTENCE_FIELDS: Record<string, string[]> = {
     TASK_CONFIG: ['submitted_task_id'],
-    INFERENCE_CONFIG: ['submitted_task_id'],
     ANALYSIS_CONFIG: ['submitted_analysis_id', 'external_validation_task_id'],
     DATASET_REGISTRATION: ['submitted_task_id', 'submitted_file_count', 'submitted_dataset_name', 'submitted_mode'],
   }

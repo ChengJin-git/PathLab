@@ -1,8 +1,6 @@
 # Storage Management System
 
-PathLab 文件资源管理系统，提供完整的文件生命周期管理。
-
-> 📌 无论是网页端（调试模式）还是本地端（打包模式），都使用相同的存储管理策略。
+PathLab File Storage Management System, providing complete file lifecycle management.
 
 ## Overview
 

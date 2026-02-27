@@ -124,7 +124,7 @@ export function TaskConfigSkeleton() {
     )
 }
 
-export function InferenceConfigSkeleton() {
+export function AnalysisConfigSkeleton() {
     return (
         <SkeletonContainer>
             {/* Header */}
@@ -152,10 +152,6 @@ export function InferenceConfigSkeleton() {
             </div>
         </SkeletonContainer>
     )
-}
-
-export function AnalysisConfigSkeleton() {
-    return <InferenceConfigSkeleton />
 }
 
 export function ChartSkeleton() {

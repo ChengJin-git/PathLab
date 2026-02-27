@@ -27,7 +27,7 @@ src/
 │   ├── ResultsViewerPage.tsx     # Results viewer (/results)
 │   ├── ReportGeneratorPage.tsx   # Report generator (/reports)
 │   │   ├── ReportGeneratorPage.tsx   # Report generator (/reports)
-│   │   ├── StorageManagementPage.tsx  # Storage management (/storage)
+│   │   ├── StorageManagementPage.tsx  # Storage management (in Settings tab)
 │   │   └── SettingsPage.tsx          # System settings (/settings)
 ├── contexts/            # React Context
 │   ├── AuthContext.tsx           # Authentication state management
@@ -65,7 +65,7 @@ src/
 | `/register` | UploadPage | Register/upload slide |
 | `/results` | ResultsViewerPage | Results viewer |
 | `/reports` | ReportGeneratorPage | Report generator |
-| `/storage` | StorageManagementPage | Storage management |
+| `/settings` | SettingsPage | System settings (with Storage tab) |
 
 > Note: All routes except `/` and `/login` are protected and require authentication.
 

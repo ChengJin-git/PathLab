@@ -21,7 +21,6 @@ import { NavigationCard, parseNavigateBlock, removeNavigateBlock } from './Navig
 import { ReferenceCardList, parseAllReferenceCards, removeAllReferenceBlocks } from './ReferenceCard'
 import InlineCitation from './InlineCitation'
 
-import { InferenceConfigCard, parseInferenceConfig, removeInferenceConfigBlock } from './InferenceConfigCard'
 import { AnalysisConfigCard, parseAnalysisConfig, removeAnalysisConfigBlock } from './AnalysisConfigCard'
 import { MetricCard, parseMetricConfig, removeMetricConfigBlock } from './MetricCard'
 import { ChartCard, parseChartConfig, removeChartConfigBlock } from './ChartCard'
@@ -48,7 +47,6 @@ import SearchingStatus, {
 import {
   TaskConfigSkeleton,
   OptionButtonsSkeleton,
-  InferenceConfigSkeleton,
   AnalysisConfigSkeleton,
   ChartSkeleton,
   MetricSkeleton,
@@ -67,7 +65,6 @@ export interface AssistantMessageProps {
   messageId: string
   onOptionSelect: (text: string) => void
   onTaskSubmitSuccess: (taskId: string, messageId: string) => void
-  onInferenceSubmitSuccess: (taskId: string, messageId: string) => void
   onInternalAnalysisSubmitSuccess: (taskId: string, analysisId: string, messageId: string) => void
   onTaskSubmitError: (error: string) => void
   onTaskHistoryDataLoaded: (data: CachedTaskData[], messageId: string) => void
@@ -98,7 +95,6 @@ const SPECIAL_BLOCK_TAGS = [
   'IMAGE_RECOMMENDATION',
   'CSV_ACTION',
   'NAVIGATE',
-  'INFERENCE_CONFIG',
   'ANALYSIS_CONFIG',
   'METRIC_CONFIG',
   'CHART_CONFIG',
@@ -255,7 +251,6 @@ const AssistantMessage = React.memo(function AssistantMessage({
   messageId,
   onOptionSelect,
   onTaskSubmitSuccess,
-  onInferenceSubmitSuccess,
   onInternalAnalysisSubmitSuccess,
   onTaskSubmitError,
   onTaskHistoryDataLoaded,
@@ -282,7 +277,6 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const imageRecommendation = parseImageRecommendation(content)
   const csvAction = parseCSVAction(content)
   const navigateBlock = parseNavigateBlock(content)
-  const inferenceConfig = parseInferenceConfig(content)
   const analysisConfig = parseAnalysisConfig(content)
   const metricConfig = parseMetricConfig(content)
   const chartConfig = parseChartConfig(content)
@@ -475,7 +469,6 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (imageRecommendation) displayContent = removeImageRecommendationBlock(displayContent)
   if (csvAction) displayContent = removeCSVActionBlock(displayContent)
   if (navigateBlock) displayContent = removeNavigateBlock(displayContent)
-  if (inferenceConfig) displayContent = removeInferenceConfigBlock(displayContent)
   if (analysisConfig) displayContent = removeAnalysisConfigBlock(displayContent)
   if (metricConfig) displayContent = removeMetricConfigBlock(displayContent)
   if (chartConfig) displayContent = removeChartConfigBlock(displayContent)
@@ -697,24 +690,6 @@ const AssistantMessage = React.memo(function AssistantMessage({
           </motion.div>
         )}
 
-        {/* Inference config card */}
-        {inferenceConfig ? (
-          <motion.div key="inference-config-real" {...cardTransition}>
-            <InferenceConfigCard
-              config={inferenceConfig}
-              onSubmitSuccess={(taskId) => onInferenceSubmitSuccess(taskId, messageId)}
-              onSubmitError={onTaskSubmitError}
-              messageId={messageId}
-              onHelpfulnessFeedback={onHelpfulnessFeedback}
-              savedHelpfulnessFeedback={savedHelpfulnessFeedback}
-            />
-          </motion.div>
-        ) : incompleteTag === 'INFERENCE_CONFIG' && (
-          <motion.div key="inference-config-skeleton" {...cardTransition}>
-            <InferenceConfigSkeleton />
-          </motion.div>
-        )}
-
         {/* Analysis config card (internal or external) */}
         {analysisConfig ? (
           <motion.div key="analysis-config-real" {...cardTransition}>
@@ -924,7 +899,6 @@ const AssistantMessage = React.memo(function AssistantMessage({
         {incompleteTag && ![
           'OPTIONS',
           'TASK_CONFIG',
-          'INFERENCE_CONFIG',
           'ANALYSIS_CONFIG',
           'QUICK_ANALYSIS_CONFIG',
           'METRIC_CONFIG',
