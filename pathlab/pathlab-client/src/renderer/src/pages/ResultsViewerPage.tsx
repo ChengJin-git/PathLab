@@ -188,7 +188,7 @@ export default function ResultsViewerPage() {
         setPageMode('internal-analysis')
       }
     }
-    
+
     // Check navigation state for mode switching or pre-selection
     const state = location.state as { pageMode?: PageMode, selectedModelId?: string, selectedTaskId?: string } | null
     if (state?.pageMode && state.pageMode !== pageMode) {
@@ -198,9 +198,15 @@ export default function ResultsViewerPage() {
       // We need to wait for trainedModels to load, but we can set the intent
       setSelectedModelId(state.selectedModelId)
     }
-    // Also handle task_id from state if not in URL
+    // Handle task_id from state
     if (state?.selectedTaskId && !taskIdFromUrl && state.selectedTaskId !== selectedTaskId) {
-      setSelectedTaskId(state.selectedTaskId)
+      if (state?.pageMode === 'external-validation') {
+        // For external validation, load analyses directly instead of setting internal selectedTaskId
+        loadExtAnalyses(state.selectedTaskId)
+        loadCompletedExtValTasks()
+      } else {
+        setSelectedTaskId(state.selectedTaskId)
+      }
     }
   }, [location.state, taskIdFromUrl]) // removed dependency loop risks
 
@@ -251,6 +257,18 @@ export default function ResultsViewerPage() {
       setBootstrapCIMetrics([])
     }
   }, [pageMode, selectedModelId, trainedModels, tasks])
+
+  // Auto-select most recent completed external validation task's model+dataset
+  // when entering external validation mode with nothing selected
+  useEffect(() => {
+    if (pageMode !== 'external-validation') return
+    if (selectedModelId || datasetId) return // Already have a selection
+    if (completedExtValTasks.length === 0) return
+
+    const latestTask = completedExtValTasks[0] // Sorted by created_at desc from backend
+    if (latestTask.model_id) setSelectedModelId(latestTask.model_id)
+    if (latestTask.dataset_id) setDatasetId(latestTask.dataset_id)
+  }, [pageMode, completedExtValTasks])
 
   // Auto-restore external validation results when model+dataset selection matches a completed task
   useEffect(() => {

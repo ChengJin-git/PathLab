@@ -1671,7 +1671,7 @@ export default function AIChatPage() {
     const successContent = isExternalValidation
       ? `${t('aiChat.taskSuccess.externalValidationStarted', { taskId })}${quickAnalysisBlock}\n\n[NAVIGATE]\n${JSON.stringify({
           target: '/results',
-          state: { selectedTaskId: taskId },
+          state: { selectedTaskId: taskId, pageMode: 'external-validation' },
           buttonTextKey: 'aiChat.taskSuccess.viewResults',
           descriptionKey: 'aiChat.taskSuccess.validationResultsDesc'
         }, null, 2)}\n[/NAVIGATE]`
