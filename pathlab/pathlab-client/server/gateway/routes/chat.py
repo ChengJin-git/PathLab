@@ -465,6 +465,23 @@ def extract_text_from_content(content) -> str:
     return ""
 
 
+def _extract_images_from_content(content) -> list[str]:
+    """Extract image base64 URLs from multimodal message content.
+
+    Returns a list of data URLs (e.g. 'data:image/jpeg;base64,...') for persistence.
+    Returns empty list for text-only messages.
+    """
+    if not isinstance(content, list):
+        return []
+    images = []
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "image_url":
+            url = part.get("image_url", {}).get("url", "")
+            if url:
+                images.append(url)
+    return images
+
+
 def _extract_citation_contexts(
     ai_response: str, article_pdf_content: str,
     per_paper_content: dict[int, str] | None = None,
@@ -1997,18 +2014,22 @@ async def chat_with_ai(
         messages.insert(0, system_prompt)
 
     # If conversation_id is provided, save user message to database
-    # For multimodal messages, only save the text content
+    # For multimodal messages, save text content and persist images in extra_metadata
     if req.conversation_id and len(req.messages) > 0:
         last_user_message = req.messages[-1]
         if last_user_message.get("role") == "user":
             # Extract text content (handles both string and multimodal format)
             content = last_user_message.get("content", "")
             text_content = extract_text_from_content(content)
+            # Extract image URLs from multimodal content for persistence
+            images = _extract_images_from_content(content)
             message_data = {
                 "conversation_id": req.conversation_id,
                 "role": "user",
                 "content": text_content,
             }
+            if images:
+                message_data["extra_metadata"] = {"images": images}
             await ChatRepository.add_message(db, message_data)
             await db.commit()
 

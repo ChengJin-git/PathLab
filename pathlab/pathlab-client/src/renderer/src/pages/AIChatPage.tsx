@@ -412,6 +412,10 @@ export default function AIChatPage() {
         id: String(msg.id),
         role: msg.role as 'user' | 'assistant',
         content: msg.content,
+        // Restore persisted images from extra_metadata
+        ...((msg as { metadata?: { images?: string[] } | null }).metadata?.images?.length
+          ? { images: (msg as { metadata?: { images?: string[] } | null }).metadata!.images }
+          : {}),
         timestamp: new Date(msg.created_at)
       }))
       setMessages(loadedMessages)

@@ -178,6 +178,7 @@ export interface ConversationWithMessages extends Conversation {
     conversation_id: string
     role: 'user' | 'assistant'
     content: string
+    metadata?: { images?: string[] } | null
     created_at: string
   }>
 }
