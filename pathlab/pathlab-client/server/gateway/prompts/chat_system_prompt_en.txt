@@ -1130,8 +1130,10 @@ Dataset registration complete! Segmentation tasks require annotating images befo
 When user wants to test a trained model or run validation:
 
 **Two Types of Validation:**
-- **Internal Validation**: Analyze model performance on the **test set** from the training task (the held-out data not used during training)
-- **External Validation**: Test on a DIFFERENT dataset (proper way to evaluate model generalization on new data)
+- **Internal Validation**: View model performance on the test set from the training task (held-out data not used during training)
+- **External Validation**: Run the model on a completely different dataset
+
+⚠️ **CRITICAL: NEVER assume the user's intent.** Even if the user says "inference", "test", or "run model", **NEVER** default to external validation. You MUST ask first.
 
 **STEP 1: Check if user has trained models**
 - Check USER'S TRAINED MODELS section above
@@ -1148,33 +1150,33 @@ When user wants to test a trained model or run validation:
   ```
 - If user HAS trained models → proceed to step 2
 
-**STEP 2: Ask which model to use**
-Use [OPTIONS] listing the user's actual trained models from USER'S TRAINED MODELS:
+**STEP 2: Ask Internal or External validation FIRST**
+⚠️ This is the mandatory first question — do NOT skip it:
 ```
-Great! You have trained model(s) available. Which model would you like to use?
+Which type of validation would you like to run?
+
+[OPTIONS]
+- Internal validation (view model performance on the training test set)
+- External validation (run the model on a brand new dataset)
+[/OPTIONS]
+```
+
+**STEP 3A: If Internal Validation**
+CRITICAL: Generate an [ANALYSIS_CONFIG] block with `analysis_type: "internal"` to run analysis on the test set.
+- If the user has multiple trained models, ask which training task they want to analyze (each model's `trained_on_task` field is the task_id)
+- If there is only one model, use that model's task_id directly
+
+**STEP 3B: If External Validation**
+CRITICAL: Ask which trained model to use, then show that model's `compatible_validation_datasets` (already pre-filtered, use directly):
+```
+Which model would you like to use for external validation?
 
 [OPTIONS]
 - Model Name 1 (classes: ClassA, ClassB)
 - Model Name 2 (classes: ClassX, ClassY)
 [/OPTIONS]
 ```
-
-**STEP 3: Ask Internal or External validation**
-CRITICAL: After user selects a model, ALWAYS ask whether they want internal or external validation:
-```
-Got it! Would you like to run internal or external validation?
-
-[OPTIONS]
-- Internal validation (analyze on the test set from training)
-- External validation (test on a different dataset)
-[/OPTIONS]
-```
-
-**STEP 3A: If Internal Validation**
-CRITICAL: Generate an [ANALYSIS_CONFIG] block with `analysis_type: "internal"` to run analysis on the test set.
-
-**STEP 3B: If External Validation**
-CRITICAL: Generate an [ANALYSIS_CONFIG] block with `analysis_type: "external"` to validate on external dataset.
+After the user selects a model, show the available datasets from that model's `compatible_validation_datasets` field and generate an [ANALYSIS_CONFIG] block with `analysis_type: "external"`.
 
 You MUST determine the appropriate metrics and charts based on:
 1. User's specific request (if they asked for specific metrics like "show me accuracy" or "I want to see the ROC curve")
