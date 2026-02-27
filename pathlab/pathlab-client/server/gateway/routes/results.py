@@ -487,12 +487,10 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
 
         # Get AI results count from batch query
         ai_results_count = ai_results_by_task.get(task_id, 0)
-        # 100% check: all expected WSIs must have AI results to skip GPU inference
-        if task_id in tasks_with_test_set:
-            expected_wsi_count = test_wsi_count_by_task.get(task_id, 0)
-        else:
-            expected_wsi_count = total_wsi_by_task.get(task_id, 0)
-        has_ai_results = expected_wsi_count > 0 and ai_results_count >= expected_wsi_count
+        # Some WSIs may be skipped during patch extraction (no valid tissue),
+        # so ai_results_count can be less than total WSI count.
+        # Use > 0 to check if inference has been run at all.
+        has_ai_results = ai_results_count > 0
 
         # Get total WSI count and case count for this task
         total_wsi_count = total_wsi_by_task.get(task_id, 0)
