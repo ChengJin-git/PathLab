@@ -836,7 +836,7 @@
       "patchExtraction": "图像切片",
       "featureExtraction": "特征提取",
       "modelTraining": "模型训练",
-      "runningInference": "推论中",
+      "runningInference": "推理中",
       "dataLoading": "数据加载"
     },
     "configuration": {

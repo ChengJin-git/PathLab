@@ -62,7 +62,9 @@ export interface TaskDetail {
     // External validation specific fields
     model_id?: string
     model_task_id?: string
+    model_task_name?: string  // Training task name for display
     dataset_id?: string
+    dataset_name?: string  // Dataset name for display
     total_wsi?: number
   }
   classes?: string[]
@@ -71,4 +73,3 @@ export interface TaskDetail {
   processed_patches?: number
   current_epoch?: number
 }
-

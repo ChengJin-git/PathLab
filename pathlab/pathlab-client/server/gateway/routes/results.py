@@ -2086,7 +2086,9 @@ async def start_external_validation(
         model_config={
             "model_id": req.model_id,
             "model_task_id": trained_model.task_id,
+            "model_task_name": model_task.task_name,  # Store training task name for display
             "dataset_id": req.dataset_id,
+            "dataset_name": target_dataset.name,  # Store dataset name for display
             "total_wsi": len(wsi_ids),
             "aggregator": trained_model.aggregator,  # Store aggregator name for task list display
             # Store analysis options for auto-triggered analysis
