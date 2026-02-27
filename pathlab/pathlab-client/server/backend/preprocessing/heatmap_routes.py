@@ -463,16 +463,18 @@ async def get_available_heatmaps(
         if not result_dir.exists():
             return {"wsi_id": wsi_id, "heatmaps": []}
 
-        # Find all attention files (WSI-level) and CAM files (patch-level)
+        # Find all attention files (WSI-level), CAM files (patch-level), and segmentation masks
         attention_files = list(result_dir.glob("*_attention.npy"))
         cam_files = list(result_dir.glob("*_cam.npy"))
+        seg_mask_files = list(result_dir.glob("*_pred_mask.npy"))
 
-        if not attention_files and not cam_files:
+        if not attention_files and not cam_files and not seg_mask_files:
             return {"wsi_id": wsi_id, "heatmaps": []}
 
         # Phase 1: Parse all files and collect task_ids that need DB lookup
         attention_data_list = []  # List of (file, task_type, task_id, fold_key, result_meta)
         cam_data_list = []  # List of (file, task_type, task_id, result_meta)
+        seg_mask_data_list = []  # List of (file, task_type, task_id, fold_key, result_meta)
         task_ids_needing_db = set()
 
         # Process WSI-level attention files (parse only, no DB calls yet)
@@ -534,6 +536,32 @@ async def get_available_heatmaps(
                 task_ids_needing_db.add(effective_task_id)
 
             cam_data_list.append((cam_file, task_type, effective_task_id, effective_fold_key, result_meta))
+
+        # Process patch-level segmentation mask files (parse only, no DB calls yet)
+        for mask_file in seg_mask_files:
+            filename = mask_file.stem
+            base_name = filename.replace("_pred_mask", "")
+
+            fold_key = None
+            if "_fold_" in base_name:
+                fold_match = re.search(r'(fold_\d+)$', base_name)
+                if fold_match:
+                    fold_key = fold_match.group(1)
+                    base_name = base_name[:fold_match.start()].rstrip("_")
+
+            parts = base_name.split("_", 1)
+            task_type = parts[0] if parts else "unknown"
+            task_id = parts[1] if len(parts) > 1 else None
+
+            result_meta = load_result_meta(mask_file, "_pred_mask.npy")
+
+            effective_task_id = task_id or result_meta.get("task_id")
+            effective_fold_key = fold_key or result_meta.get("fold_key")
+
+            if effective_task_id:
+                task_ids_needing_db.add(effective_task_id)
+
+            seg_mask_data_list.append((mask_file, task_type, effective_task_id, effective_fold_key, result_meta))
 
         # Phase 2: Batch fetch all needed training tasks from DB (single query)
         training_tasks_map: Dict[str, any] = {}
@@ -628,12 +656,41 @@ async def get_available_heatmaps(
                 "cam_size": result_meta.get("cam_size"),
             })
 
+        # Build heatmap entries for segmentation masks
+        for mask_file, task_type, effective_task_id, effective_fold_key, result_meta in seg_mask_data_list:
+            task_name = result_meta.get("task_name")
+
+            if effective_task_id and effective_task_id in training_tasks_map:
+                training_task = training_tasks_map[effective_task_id]
+                if not task_name and training_task.task_name:
+                    task_name = training_task.task_name
+
+            num_classes = result_meta.get("num_classes", 1)
+            class_names = result_meta.get("class_names", [])
+
+            heatmaps.append({
+                "task_id": effective_task_id,
+                "task_type": "segmentation",
+                "task_name": task_name or "segmentation",
+                "fold_key": effective_fold_key,
+                "prediction": "segmentation",
+                "probs": result_meta.get("metrics"),
+                "classes": class_names or None,
+                "feature_extractor": None,
+                "created_at": mask_file.stat().st_mtime,
+                "attention_file": str(mask_file.name),
+                "data_type": "patch_segmentation",
+                "num_classes": num_classes,
+                "image_size": result_meta.get("image_size"),
+            })
+
         # Get best_fold info and validation performance for each model from metrics.json
         model_metrics: Dict[str, Dict] = {}
         task_best_folds: Dict[str, str] = {}
 
         possible_prefixes = [
             "patch_cls",  # Patch classification
+            "patch_seg",  # Patch segmentation
             "abmil", "meanmil", "maxmil", "dsmil", "dtfdmil",  # WSI aggregators
             "clam_sb", "clam_mb", "transmil",
         ]
@@ -900,3 +957,134 @@ async def get_patch_cam(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to get patch CAM: {str(e)}")
 
+
+
+# ============================================================================
+# Segmentation Mask Visualization
+# ============================================================================
+
+# Distinct colors for segmentation classes (RGBA, alpha=160 for overlay)
+_SEG_COLORS = [
+    (255, 0, 0, 160),     # Red
+    (0, 255, 0, 160),     # Green
+    (0, 0, 255, 160),     # Blue
+    (255, 255, 0, 160),   # Yellow
+    (255, 0, 255, 160),   # Magenta
+    (0, 255, 255, 160),   # Cyan
+    (255, 128, 0, 160),   # Orange
+    (128, 0, 255, 160),   # Purple
+    (0, 128, 255, 160),   # Sky Blue
+    (255, 0, 128, 160),   # Pink
+]
+
+
+@router.get("/wsi/{wsi_id}/seg_mask")
+async def get_seg_mask(
+    wsi_id: str,
+    task_id: Optional[str] = Query(None, description="Specific task ID"),
+    fold_key: Optional[str] = Query(None, description="Fold key for k-fold results"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get patch segmentation mask overlay image.
+
+    Loads the pred_mask.npy (shape: (num_classes, H, W), binary), assigns
+    a distinct colour per class, composites over the original patch image,
+    and returns a PNG.
+    """
+    import numpy as np
+    from PIL import Image
+    import io
+
+    try:
+        result_dir = AI_RESULTS_DIR / wsi_id
+        if not result_dir.exists():
+            raise HTTPException(status_code=404, detail="No results for this WSI")
+
+        mask_files = list(result_dir.glob("*_pred_mask.npy"))
+        if not mask_files:
+            raise HTTPException(status_code=404, detail="No segmentation mask found")
+
+        # Select the right mask file
+        if task_id:
+            matching = [f for f in mask_files if task_id in f.name]
+            if not matching:
+                raise HTTPException(status_code=404, detail=f"No mask for task {task_id}")
+
+            if fold_key:
+                fold_matching = [f for f in matching if fold_key in f.name]
+                if fold_matching:
+                    matching = fold_matching
+            else:
+                non_fold = [f for f in matching if "fold_" not in f.name]
+                if non_fold:
+                    matching = non_fold
+                elif matching:
+                    best_fold = find_best_fold(task_id, UPLOADS_DIR)
+                    if best_fold:
+                        best_matching = [f for f in matching if best_fold in f.name]
+                        if best_matching:
+                            matching = best_matching
+
+            mask_file = matching[0]
+        else:
+            mask_file = sorted(mask_files, key=lambda f: f.stat().st_mtime, reverse=True)[0]
+
+        # Load mask: shape (num_classes, H, W), values 0/1
+        mask = np.load(str(mask_file), allow_pickle=True)
+        logger.info(f"Loaded seg mask: shape={mask.shape}")
+
+        # Load original image
+        from backend.database.repositories import WSIRepository
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if not wsi:
+            raise HTTPException(status_code=404, detail=f"Patch not found: {wsi_id}")
+
+        file_path = Path(wsi.wsi_path)
+        with Image.open(file_path) as img:
+            original_image = img.convert('RGB')
+
+        orig_w, orig_h = original_image.size
+
+        # Build RGBA overlay
+        overlay = np.zeros((orig_h, orig_w, 4), dtype=np.uint8)
+
+        if mask.ndim == 3:
+            num_classes = mask.shape[0]
+            for c in range(num_classes):
+                color = _SEG_COLORS[c % len(_SEG_COLORS)]
+                # Resize class mask to original size
+                class_mask = Image.fromarray((mask[c] * 255).astype(np.uint8), mode='L')
+                class_mask = class_mask.resize((orig_w, orig_h), Image.Resampling.NEAREST)
+                class_arr = np.array(class_mask) > 127  # binary
+                for ch in range(4):
+                    overlay[:, :, ch][class_arr] = color[ch]
+        elif mask.ndim == 2:
+            # Single-class mask
+            color = _SEG_COLORS[0]
+            class_mask = Image.fromarray((mask * 255).astype(np.uint8), mode='L')
+            class_mask = class_mask.resize((orig_w, orig_h), Image.Resampling.NEAREST)
+            class_arr = np.array(class_mask) > 127
+            for ch in range(4):
+                overlay[:, :, ch][class_arr] = color[ch]
+
+        overlay_img = Image.fromarray(overlay, mode='RGBA')
+
+        # Composite
+        original_rgba = original_image.convert('RGBA')
+        blended = Image.alpha_composite(original_rgba, overlay_img)
+        blended_rgb = blended.convert('RGB')
+
+        buf = io.BytesIO()
+        blended_rgb.save(buf, format='PNG')
+        buf.seek(0)
+
+        return Response(content=buf.getvalue(), media_type="image/png")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get seg mask: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to get seg mask: {str(e)}")

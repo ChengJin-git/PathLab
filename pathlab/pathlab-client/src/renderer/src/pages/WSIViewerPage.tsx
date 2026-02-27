@@ -13,6 +13,7 @@ import {
   fetchPatchCAMData,
   getPatchCAMImageUrl,
   getPatchFileImageUrl,
+  getSegMaskImageUrl,
 } from '../api'
 import WSIViewer from '../components/WSIViewer'
 import { Card } from '../components/common'
@@ -43,6 +44,7 @@ export default function WSIViewerPage() {
   const conversationId = (location.state as { conversationId?: string } | null)?.conversationId
   const [detail, setDetail] = useState<any>()
   const [showHeatmap, setShowHeatmap] = useState(false)
+  const [showSegMask, setShowSegMask] = useState(false)
   const [heatmapOpacity, setHeatmapOpacity] = useState(0.5)
 
   // Navigation state
@@ -197,6 +199,7 @@ export default function WSIViewerPage() {
           setSelectedTaskId(undefined)
           setHeatmapData(null)
           setShowHeatmap(false)
+          setShowSegMask(false)
         }
       }
 
@@ -296,6 +299,7 @@ export default function WSIViewerPage() {
   // Get selected task and check if it's patch-level
   const selectedTask = availableHeatmaps.find(h => h.task_id === selectedTaskId && (!h.fold_key || h.fold_key === selectedFoldKey))
   const isPatchLevel = selectedTask?.data_type === 'patch'
+  const isPatchSegmentation = selectedTask?.data_type === 'patch_segmentation'
 
   // Get available folds for the selected task (K-fold support)
   const availableFolds = useMemo(() => {
@@ -507,6 +511,8 @@ export default function WSIViewerPage() {
           console.error('Failed to delete empty annotation draft:', err)
         })
       }
+      // Nothing to save — clear unsaved flag so navigation guard doesn't trigger
+      setHasUnsavedChanges(false)
       return
     }
 
@@ -695,8 +701,8 @@ export default function WSIViewerPage() {
           </div>
         </div>
         <div className="flex-1 relative bg-gray-100 overflow-hidden">
-          {/* Conditional Viewer: WSI Viewer for WSI-level, Patch Viewer for patch-level */}
-          {isPatchLevel ? (
+          {/* Conditional Viewer: WSI Viewer for WSI-level, Patch Viewer for patch-level / seg mask */}
+          {(isPatchLevel || isPatchSegmentation) ? (
             // Patch-level heatmap viewer with zoom/pan controls
             // Note: wheel event is handled via useEffect with { passive: false } to allow preventDefault
             <div
@@ -759,13 +765,23 @@ export default function WSIViewerPage() {
                   className="w-full h-full object-contain rounded-xl shadow-lg select-none"
                   draggable={false}
                 />
-                {/* Heatmap overlay */}
+                {/* CAM overlay (for both classification and segmentation) */}
                 {showHeatmap && selectedTaskId && (
                   <img
                     src={getPatchCAMImageUrl(wsi_id, selectedTaskId, selectedFoldKey)}
                     alt={t('wsiViewer.heatmapOverlayAlt')}
                     className="absolute inset-0 w-full h-full object-contain rounded-xl pointer-events-none select-none"
                     style={{ opacity: heatmapOpacity }}
+                    draggable={false}
+                  />
+                )}
+                {/* Segmentation mask overlay (only for segmentation tasks) */}
+                {isPatchSegmentation && showSegMask && selectedTaskId && (
+                  <img
+                    src={getSegMaskImageUrl(wsi_id, selectedTaskId, selectedFoldKey)}
+                    alt="Segmentation Mask"
+                    className="absolute inset-0 w-full h-full object-contain rounded-xl pointer-events-none select-none"
+                    style={{ opacity: 1 }}
                     draggable={false}
                   />
                 )}
@@ -781,7 +797,7 @@ export default function WSIViewerPage() {
                 taskId={selectedTaskId}
                 foldKey={selectedFoldKey}
                 classIdx={selectedClassIdx}
-                dataLevel={selectedTask?.data_type || 'wsi'}
+                dataLevel={(selectedTask?.data_type === 'patch_segmentation' ? 'wsi' : selectedTask?.data_type) || 'wsi'}
                 onHeatmapLoaded={handleHeatmapLoaded}
                 onViewerReady={handleViewerReady}
                 onSlideInfo={handleSlideInfo}
@@ -807,6 +823,7 @@ export default function WSIViewerPage() {
           {availableHeatmaps.length > 0 && (
             <div className="absolute bottom-4 left-4 right-4 sm:right-auto bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200 p-2 sm:p-3 z-20">
               <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                {/* CAM / Heatmap toggle */}
                 <button
                   onClick={() => setShowHeatmap(!showHeatmap)}
                   className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${showHeatmap
@@ -815,8 +832,25 @@ export default function WSIViewerPage() {
                     }`}
                 >
                   <Layers className="w-4 h-4" />
-                  {showHeatmap ? t('wsiViewer.hideHeatmap') : t('wsiViewer.showHeatmap')}
+                  {isPatchSegmentation
+                    ? (showHeatmap ? 'Hide CAM' : 'Show CAM')
+                    : (showHeatmap ? t('wsiViewer.hideHeatmap') : t('wsiViewer.showHeatmap'))
+                  }
                 </button>
+
+                {/* Segmentation mask toggle (only for segmentation tasks) */}
+                {isPatchSegmentation && (
+                  <button
+                    onClick={() => setShowSegMask(!showSegMask)}
+                    className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${showSegMask
+                      ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200'
+                      }`}
+                  >
+                    <Layers className="w-4 h-4" />
+                    {showSegMask ? 'Hide Mask' : 'Show Mask'}
+                  </button>
+                )}
 
                 {showHeatmap && (
                   <div className="flex items-center gap-2 px-2 sm:px-0 sm:pl-3 border-t sm:border-t-0 sm:border-l border-gray-200 pt-2 sm:pt-0">

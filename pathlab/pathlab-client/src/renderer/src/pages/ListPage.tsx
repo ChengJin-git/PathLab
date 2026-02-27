@@ -3,13 +3,14 @@ import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
 import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, invalidateWSIListCache, getFileType } from '../api'
-import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage } from 'lucide-react'
+import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { ALL_ACCEPT_STRING } from '../constants/fileTypes'
 import { formatBytes } from '../lib/utils'
+import { useAuth } from '../contexts/AuthContext'
 import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal } from '../components/list'
 
 export default function ListPage() {
@@ -20,6 +21,7 @@ export default function ListPage() {
   const initialDatasetId = (location.state as { dataset_id?: string } | null)?.dataset_id
   const { error: toastError, success: toastSuccess } = useToast()
   const { addDeleteWSITask } = useBackgroundTask()
+  const { isAdmin } = useAuth()
 
   // Dataset view state - null means showing dataset list, otherwise showing files in that dataset
   // selectedDatasetId is used for API calls, selectedDatasetName is used for display
@@ -1010,6 +1012,12 @@ export default function ListPage() {
                           <CheckCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
                           {formatBytes(dataset.total_size)}
                         </span>
+                        {isAdmin && dataset.username && (
+                          <span className="flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap text-slate-400 ml-auto">
+                            <User className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-300" />
+                            <span className="truncate max-w-[80px] sm:max-w-[120px]" title={dataset.username}>{dataset.username}</span>
+                          </span>
+                        )}
                       </div>
                     </div>
                   </Card>

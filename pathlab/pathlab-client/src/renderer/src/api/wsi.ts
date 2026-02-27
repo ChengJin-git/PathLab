@@ -206,6 +206,7 @@ export interface DatasetSummary {
   dataset_id: string | null  // UUID for API calls (null for uncategorized)
   dataset_name: string  // Display name
   user_id: string | null  // Dataset owner
+  username?: string | null  // Username of dataset owner (only for admin users)
   file_count: number
   total_size: number
   data_type: 'wsi' | 'patch'  // Data type: WSI collection or Patch collection

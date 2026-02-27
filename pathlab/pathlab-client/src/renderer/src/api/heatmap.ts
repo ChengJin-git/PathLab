@@ -32,7 +32,7 @@ export interface AvailableHeatmap {
   aggregator?: string | null  // MIL aggregator type (e.g., abmil, clam_sb, transmil)
   created_at: number
   attention_file: string
-  data_type?: 'wsi' | 'patch'  // WSI-level attention or patch-level CAM
+  data_type?: 'wsi' | 'patch' | 'patch_segmentation'  // WSI-level attention, patch-level CAM, or patch segmentation mask
   cam_size?: [number, number]   // CAM size for patch-level
   is_best_fold?: boolean | null  // Whether this is the best fold (for k-fold training)
   is_kfold?: boolean  // Whether this task was trained with K-Fold cross-validation
@@ -184,6 +184,32 @@ export function getPatchCAMImageUrl(wsi_id: string, task_id?: string, fold_key?:
   }
   if (token) {
     url += `&token=${encodeURIComponent(token)}`
+  }
+  return url
+}
+
+/**
+ * Get segmentation mask overlay image URL
+ * @param wsi_id - The WSI/patch ID
+ * @param task_id - Optional task ID for specific mask
+ * @param fold_key - Optional fold key for k-fold results
+ * @returns URL for the seg mask overlay PNG image (with auth token for <img> tags)
+ */
+export function getSegMaskImageUrl(wsi_id: string, task_id?: string, fold_key?: string): string {
+  const token = getAuthToken()
+  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/seg_mask`
+  const params: string[] = []
+  if (task_id) {
+    params.push(`task_id=${encodeURIComponent(task_id)}`)
+  }
+  if (fold_key) {
+    params.push(`fold_key=${encodeURIComponent(fold_key)}`)
+  }
+  if (token) {
+    params.push(`token=${encodeURIComponent(token)}`)
+  }
+  if (params.length > 0) {
+    url += `?${params.join('&')}`
   }
   return url
 }

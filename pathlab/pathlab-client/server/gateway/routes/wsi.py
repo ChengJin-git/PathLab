@@ -212,10 +212,28 @@ async def list_datasets(
     # User can delete if: admin OR owns the dataset
     user_id_str = str(user.id)
     is_admin = user.is_admin()
+
+    # For admin users, batch-lookup usernames for all dataset owners
+    username_map: dict = {}
+    if is_admin:
+        from sqlalchemy import select as sql_select, cast, String
+        from backend.auth.models import User as AuthUser
+        owner_ids = list({d.get("user_id") for d in datasets if d.get("user_id")})
+        if owner_ids:
+            result = await db.execute(
+                sql_select(cast(AuthUser.id, String), AuthUser.email, AuthUser.nickname)
+                .where(cast(AuthUser.id, String).in_(owner_ids))
+            )
+            for uid, email, nickname in result.all():
+                username_map[uid] = nickname or email or None
+
     items = []
     for dataset in datasets:
         # can_delete: True if admin or user owns the dataset
         dataset["can_delete"] = is_admin or (dataset.get("user_id") == user_id_str)
+        # Add username for admin users
+        if is_admin:
+            dataset["username"] = username_map.get(dataset.get("user_id")) if dataset.get("user_id") else None
         items.append(dataset)
 
     return {"items": items, "total": len(items)}

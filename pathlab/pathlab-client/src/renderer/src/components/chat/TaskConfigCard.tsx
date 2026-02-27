@@ -275,6 +275,9 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           setPredefinedSplitCounts(counts)
           if (hasSplits && !initialConfig.split_strategy) {
             setSplitStrategy('manual')
+          } else if (!hasSplits && initialConfig.split_strategy === 'manual') {
+            // Agent recommended manual split but dataset has no predefined splits — fall back
+            setSplitStrategy('random')
           }
         }
       }
@@ -535,6 +538,9 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                     // Auto-select manual split if CSV splits are available
                     if (hasSplits) {
                       setSplitStrategy('manual')
+                    } else if (splitStrategy === 'manual') {
+                      // No predefined splits — fall back from manual
+                      setSplitStrategy('random')
                     }
                   }
                 } else {

@@ -1317,6 +1317,38 @@ async def _run_inference_patch_classification(
     }
 
 
+def _get_seg_grad_cam_target_layers(model):
+    """Determine the target layer for Grad-CAM in a segmentation model.
+
+    Supports:
+    - FMSegmentationModel: uses last decoder block (before head)
+    - SMP models (UNet, etc.): uses last decoder block
+    """
+    import torch.nn as nn
+    from backend.ai.segmentors.fm_segmentation_model import FMSegmentationModel
+
+    if isinstance(model, FMSegmentationModel):
+        # FM model: decoder is nn.Sequential of _DecoderBlock
+        return [model.decoder[-1]]
+
+    # SMP models: try common decoder structures
+    if hasattr(model, 'decoder'):
+        dec = model.decoder
+        if hasattr(dec, 'blocks') and len(dec.blocks) > 0:
+            return [dec.blocks[-1]]
+        # Fallback: last child of decoder
+        children = list(dec.children())
+        if children:
+            return [children[-1]]
+
+    # Last resort: find the last Conv2d layer before segmentation_head
+    if hasattr(model, 'segmentation_head'):
+        return [model.segmentation_head[0]]
+
+    raise ValueError("Cannot determine Grad-CAM target layer for segmentation model")
+
+
+
 async def _run_inference_patch_segmentation(
     task, wsi_ids: List[str], resources: dict, db: AsyncSession,
     progress_callback: Optional[Callable[[float], Any]] = None,
@@ -1523,6 +1555,36 @@ async def _run_inference_patch_segmentation(
                     mask_file = wsi_result_dir / f"train_{task_id}_pred_mask.npy"
                     np.save(mask_file, pred_mask)
 
+                    # Extract Grad-CAM for segmentation model
+                    try:
+                        from pytorch_grad_cam import GradCAM
+                        from pytorch_grad_cam.utils.model_targets import SemanticSegmentationTarget
+
+                        # Determine target layer based on model type
+                        target_layers = _get_seg_grad_cam_target_layers(model)
+
+                        # Use dominant predicted class for Grad-CAM target
+                        pred_mask_for_cam = preds_binary.squeeze(0).cpu().numpy()  # (C, H, W)
+                        if pred_mask_for_cam.ndim == 3 and pred_mask_for_cam.shape[0] > 1:
+                            dominant_class = int(pred_mask_for_cam.sum(axis=(1, 2)).argmax())
+                        else:
+                            dominant_class = 0
+                        sem_mask = pred_mask_for_cam[dominant_class]  # (H, W) binary
+
+                        targets = [SemanticSegmentationTarget(dominant_class, sem_mask)]
+                        cam_input = img_tensor.clone().detach().requires_grad_(True)
+
+                        with torch.enable_grad():
+                            with GradCAM(model=model, target_layers=target_layers) as grad_cam:
+                                cam_map = grad_cam(input_tensor=cam_input, targets=targets)
+                        cam_map = cam_map[0]  # (H, W)
+                    except Exception as cam_err:
+                        logger.warning(f"Grad-CAM extraction failed for {wsi_id}: {cam_err}")
+                        cam_map = np.zeros((img_tensor.shape[2], img_tensor.shape[3]), dtype=np.float32)
+
+                    cam_file = wsi_result_dir / f"train_{task_id}_cam.npy"
+                    np.save(cam_file, cam_map)
+
                     # Save result JSON
                     result_data = {
                         "wsi_id": wsi_id,
@@ -1532,6 +1594,8 @@ async def _run_inference_patch_segmentation(
                         "num_classes": num_classes,
                         "image_size": list(original_size),
                         "pred_mask_file": str(mask_file),
+                        "cam_file": str(cam_file),
+                        "cam_size": list(cam_map.shape),
                         "has_ground_truth": has_gt,
                         "metrics": per_image_metrics,
                     }
@@ -2773,6 +2837,34 @@ async def _run_external_validation_patch_segmentation(
                         mask_file = wsi_result_dir / f"extval_{task_id}_pred_mask.npy"
                         np.save(mask_file, pred_mask)
 
+                        # Extract Grad-CAM for segmentation model
+                        try:
+                            from pytorch_grad_cam import GradCAM
+                            from pytorch_grad_cam.utils.model_targets import SemanticSegmentationTarget
+
+                            target_layers = _get_seg_grad_cam_target_layers(model)
+
+                            pred_mask_for_cam = preds_binary.squeeze(0).cpu().numpy()  # (C, H, W)
+                            if pred_mask_for_cam.ndim == 3 and pred_mask_for_cam.shape[0] > 1:
+                                dominant_class = int(pred_mask_for_cam.sum(axis=(1, 2)).argmax())
+                            else:
+                                dominant_class = 0
+                            sem_mask = pred_mask_for_cam[dominant_class]  # (H, W) binary
+
+                            targets = [SemanticSegmentationTarget(dominant_class, sem_mask)]
+                            cam_input = img_tensor.clone().detach().requires_grad_(True)
+
+                            with torch.enable_grad():
+                                with GradCAM(model=model, target_layers=target_layers) as grad_cam:
+                                    cam_map = grad_cam(input_tensor=cam_input, targets=targets)
+                            cam_map = cam_map[0]  # (H, W)
+                        except Exception as cam_err:
+                            logger.warning(f"Grad-CAM extraction failed for {wsi_id}: {cam_err}")
+                            cam_map = np.zeros((img_tensor.shape[2], img_tensor.shape[3]), dtype=np.float32)
+
+                        cam_file = wsi_result_dir / f"extval_{task_id}_cam.npy"
+                        np.save(cam_file, cam_map)
+
                         # Save result JSON
                         result_data = {
                             "wsi_id": wsi_id,
@@ -2784,6 +2876,8 @@ async def _run_external_validation_patch_segmentation(
                             "num_classes": num_classes,
                             "image_size": list(original_size),
                             "pred_mask_file": str(mask_file),
+                            "cam_file": str(cam_file),
+                            "cam_size": list(cam_map.shape),
                             "has_ground_truth": has_gt,
                             "metrics": per_image_metrics,
                         }
