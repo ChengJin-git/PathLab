@@ -384,6 +384,35 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
                 if char_count + len(last_text) <= _PDF_MAX_CHARS_PER_PAPER:
                     content_parts.append(last_text)
 
+            # ── Re-hydrate image links from pages referenced by vector results ──
+            # Image markdown (![...](http://...pdf-images/...)) often ends up in
+            # its own chunk and scores poorly in semantic search.  To ensure the
+            # LLM can reference figures, we scan the *full* page text for every
+            # page that contributed a chunk and collect any image links that are
+            # NOT already present in the assembled content.
+            chunk_page_nums = {c["page_num"] for c in sorted_chunks}
+            # Also include first/last page nums which are already fully included
+            chunk_page_nums.discard(first_pn)
+            chunk_page_nums.discard(last_pn)
+            page_map = {pn: content for pn, content in all_pages}
+            assembled_text = "\n".join(content_parts)
+            image_lines: list[str] = []
+            for pn in sorted(chunk_page_nums):
+                page_content = page_map.get(pn, "")
+                for m in re.finditer(r'!\[[^\]]*\]\([^\)]+\)', page_content):
+                    img_md = m.group(0)
+                    if img_md not in assembled_text:
+                        image_lines.append(f"[From Page {pn}] {img_md}")
+            if image_lines:
+                img_section = (
+                    "\n\n--- Figures from relevant pages ---\n"
+                    + "\n".join(image_lines)
+                    + "\n"
+                )
+                if char_count + len(img_section) <= _PDF_MAX_CHARS_PER_PAPER:
+                    content_parts.append(img_section)
+                    logger.info(f"[ImageRehydrate] Added {len(image_lines)} image links from relevant pages")
+
             total_p = page_count or (len(all_pages) if all_pages else 0)
             note = (
                 f"[Semantic search: showing {len(seen_chunks)} most relevant chunks "
