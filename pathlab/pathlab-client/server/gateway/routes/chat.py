@@ -32,6 +32,7 @@ from .chat_pdf import (
     search_pdf_pages, get_cached_markdown, get_cached_pdf_meta, _split_md_into_pages,
     _get_url_hash, _get_pdf_cache_dir, _tokenize_for_search,
     detect_source_type, is_academic_content, format_reference_card,
+    trigger_mineru_upgrade_by_hash,
 )
 from .chat_pdf_vectorstore import search_pdf_chunks
 
@@ -2249,6 +2250,8 @@ async def serve_pdf_image(
     image_path = get_pdf_image_path(url_hash, filename)
 
     if not image_path.exists() or not image_path.is_file():
+        # Image not found — likely MinerU hasn't run yet. Schedule upgrade.
+        await trigger_mineru_upgrade_by_hash(url_hash)
         raise HTTPException(status_code=404, detail="Image not found")
 
     content_type, _ = mimetypes.guess_type(str(image_path))

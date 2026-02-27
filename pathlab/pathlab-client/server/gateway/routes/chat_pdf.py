@@ -534,6 +534,39 @@ async def _background_mineru_upgrade(url: str, pdf_bytes: bytes, max_pages: int 
             os.environ.pop("CUDA_VISIBLE_DEVICES", None)
 
 
+async def trigger_mineru_upgrade_by_hash(url_hash: str) -> bool:
+    """Look up a cached PDF by its url_hash and schedule a MinerU background upgrade.
+
+    Returns True if an upgrade was scheduled, False otherwise (already upgraded,
+    no cached PDF found, or GPU unavailable).  Safe to call repeatedly — the
+    underlying ``_background_mineru_upgrade`` is idempotent.
+    """
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        # Already have MinerU result — nothing to do
+        if (cache_dir / f"{url_hash}.mineru.md").exists():
+            return False
+
+        meta_file = cache_dir / f"{url_hash}.json"
+        pdf_file = cache_dir / f"{url_hash}.pdf"
+        if not meta_file.exists() or not pdf_file.exists():
+            return False
+
+        with open(meta_file, 'r') as f:
+            meta = json.load(f)
+        url = meta.get("url")
+        if not url:
+            return False
+
+        pdf_bytes = pdf_file.read_bytes()
+        asyncio.create_task(_background_mineru_upgrade(url, pdf_bytes))
+        logger.info(f"[BG MinerU] Triggered upgrade from 404 image request for url_hash={url_hash}")
+        return True
+    except Exception as e:
+        logger.error(f"[BG MinerU] trigger_mineru_upgrade_by_hash error: {e}")
+        return False
+
+
 def cleanup_expired_pdf_cache() -> int:
     cleaned = 0
     try:
