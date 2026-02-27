@@ -584,7 +584,7 @@ def cleanup_expired_pdf_cache() -> int:
 
 
 def get_arxiv_pdf_url(url: str) -> str:
-    match = re.search(r'arxiv\.org/(abs|pdf)/([\w\.\-]+)', url)
+    match = re.search(r'arxiv\.org/(abs|pdf|html)/([\w\.\-]+)', url)
     if match:
         paper_id = match.group(2)
         paper_id = paper_id.replace('.pdf', '')
