@@ -788,6 +788,22 @@ export default function AIChatPage() {
     abortControllerRef.current = abortController
     const currentGenerationId = ++generationIdRef.current
 
+    // --- Silence timeout: abort if no output chunk received for 60 seconds ---
+    const SILENCE_TIMEOUT_MS = 60_000
+    let isTimeoutAbort = false
+    let silenceTimer: ReturnType<typeof setTimeout> | null = null
+
+    const startSilenceTimer = () => {
+      if (silenceTimer !== null) clearTimeout(silenceTimer)
+      silenceTimer = setTimeout(() => {
+        isTimeoutAbort = true
+        abortController.abort()
+      }, SILENCE_TIMEOUT_MS)
+    }
+
+    // Start the timer immediately (covers the "thinking" phase before first chunk)
+    startSilenceTimer()
+
     // --- Chunk batching: accumulate chunks in a buffer, flush via rAF ---
     // This reduces setMessages calls from ~30/s (per-chunk) to ~16/s (per-frame).
     let chunkBuffer = ''
@@ -815,6 +831,8 @@ export default function AIChatPage() {
     try {
       let hasReceivedContent = false
       await chatWithAI(chatMessages, (chunk) => {
+        // Reset silence timer on every received chunk
+        startSilenceTimer()
         if (!hasReceivedContent) {
           hasReceivedContent = true
           setGenerationPhase('streaming')
@@ -867,18 +885,33 @@ export default function AIChatPage() {
       })
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
-        console.log('AI generation stopped by user')
-        // Fill cancelled message with i18n text (append if partial content exists)
-        const cancelText = t('aiChat.generationCancelled')
-        setMessages(prev =>
-          prev.map(m => {
-            if (m.id !== trackingId) return m
-            const content = m.content
-              ? `${m.content}\n\n---\n\n*${cancelText}*`
-              : `*${cancelText}*`
-            return { ...m, content }
-          })
-        )
+        if (isTimeoutAbort) {
+          console.log('AI generation timed out (no output for 60 seconds)')
+          // Fill timed-out message with i18n text (append if partial content exists)
+          const timeoutText = t('aiChat.generationTimeout')
+          setMessages(prev =>
+            prev.map(m => {
+              if (m.id !== trackingId) return m
+              const content = m.content
+                ? `${m.content}\n\n---\n\n*${timeoutText}*`
+                : `*${timeoutText}*`
+              return { ...m, content }
+            })
+          )
+        } else {
+          console.log('AI generation stopped by user')
+          // Fill cancelled message with i18n text (append if partial content exists)
+          const cancelText = t('aiChat.generationCancelled')
+          setMessages(prev =>
+            prev.map(m => {
+              if (m.id !== trackingId) return m
+              const content = m.content
+                ? `${m.content}\n\n---\n\n*${cancelText}*`
+                : `*${cancelText}*`
+              return { ...m, content }
+            })
+          )
+        }
       } else {
         console.error('Failed to get AI response:', error)
         setMessages(prev =>
@@ -891,6 +924,11 @@ export default function AIChatPage() {
       }
       options?.onError?.()
     } finally {
+      // Clear silence timer
+      if (silenceTimer !== null) {
+        clearTimeout(silenceTimer)
+        silenceTimer = null
+      }
       // Flush any remaining buffered chunks before finishing
       if (rafId !== null) {
         cancelAnimationFrame(rafId)

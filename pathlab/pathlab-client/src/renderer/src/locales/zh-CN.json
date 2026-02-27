@@ -1087,6 +1087,7 @@
     "failedToSaveAnalysisStatus": "保存分析状态到服务器失败",
     "aiErrorFallback": "抱歉，我遇到了错误。请重试。",
     "generationCancelled": "用户取消了回答。",
+    "generationTimeout": "回答超时，请重试。",
     "imageAnalysis": "图像分析",
     "excelMultipleSheets": "Excel 文件有 {{count}} 个工作表：",
     "excelMoreSheets": "  ... 以及另外 {{count}} 个",
