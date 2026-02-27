@@ -57,7 +57,7 @@ server/
     │   │   ├── patch_segmentation/  # Patch 分割
     │   │   └── wsi_survival/        # 生存分析
     │   ├── extractors/       # 19 种特征提取器
-    │   ├── aggregators/      # 8 种聚合器 (ABMIL, MeanMIL, MaxMIL, DSMIL, DTFDMIL, CLAM, TransMIL)
+    │   │   ├── aggregators/      # 8 种聚合器 (ABMIL, MeanMIL, MaxMIL, DSMIL, DTFDMIL, CLAM-SB, CLAM-MB, TransMIL)
     │   ├── classifiers/      # 分类器
     ├── preprocessing/    # 预处理服务 (内部端口)
     │   ├── main.py           # 预处理 FastAPI 应用

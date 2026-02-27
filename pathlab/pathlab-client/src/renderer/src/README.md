@@ -13,7 +13,7 @@ src/
 │   ├── WSIViewer.tsx        # OpenSeadragon wrapper
 │   ├── PageHeader.tsx       # Page header component
 │   └── ...
-│   ├── pages/               # Page components (14 pages)
+├── pages/               # Page components (14 pages)
 │   ├── IntroductionPage.tsx      # Product introduction (/)
 │   ├── LoginPage.tsx             # Login welcome page (/login)
 │   ├── AIChatPage.tsx            # AI assistant (/dashboard)
@@ -28,10 +28,6 @@ src/
 │   ├── ReportGeneratorPage.tsx   # Report generator (/reports)
 │   ├── StorageManagementPage.tsx  # Storage management (in Settings tab)
 │   └── SettingsPage.tsx          # System settings (/settings)
-│   ├── ReportGeneratorPage.tsx   # Report generator (/reports)
-│   │   ├── ReportGeneratorPage.tsx   # Report generator (/reports)
-│   │   ├── StorageManagementPage.tsx  # Storage management (in Settings tab)
-│   │   └── SettingsPage.tsx          # System settings (/settings)
 ├── contexts/            # React Context
 │   ├── AuthContext.tsx           # Authentication state management
 │   └── BackgroundTaskContext.tsx # Background task management
@@ -59,7 +55,7 @@ src/
 | `/login` | LoginPage | Login welcome page (public) |
 | `/dashboard` | AIChatPage | AI assistant (SSE streaming) |
 | `/tools` | ToolsPage | Utility tools |
-| `/settings` | SettingsPage | System settings |
+| `/settings` | SettingsPage | System settings (with Storage tab) |
 | `/task-setup` | NewTaskPage | Task configuration |
 | `/task-list` | TaskListPage | Task list |
 | `/task/:task_id` | TaskDetailPage | Task details |
@@ -68,7 +64,6 @@ src/
 | `/register` | UploadPage | Register/upload slide |
 | `/results` | ResultsViewerPage | Results viewer |
 | `/reports` | ReportGeneratorPage | Report generator |
-| `/settings` | SettingsPage | System settings (with Storage tab) |
 
 > Note: All routes except `/` and `/login` are protected and require authentication.
 

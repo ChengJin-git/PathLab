@@ -75,7 +75,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
-| GET | `/tasks/extractors` | 列出可用特征提取器（17种） | 已登录 |
+| GET | `/tasks/extractors` | 列出可用特征提取器（19种） | 已登录 |
 | POST | `/tasks/wsi_classification` | 创建 WSI 分类任务 | 已登录 |
 | GET | `/tasks/{task_id}` | 获取任务状态 | 已登录 |
 
