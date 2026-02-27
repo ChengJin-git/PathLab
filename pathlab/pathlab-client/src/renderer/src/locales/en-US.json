@@ -1333,6 +1333,7 @@
     "selectTaskPlaceholder": "Select a task...",
     "resultsCount": "{{count}} results",
     "noResults": "no results",
+    "analysisAvailable": "analyzed",
     "noTasksAvailable": "No tasks available",
     "analysisSubmitted": "Analysis Submitted",
     "runAnalysis": "Run Analysis",

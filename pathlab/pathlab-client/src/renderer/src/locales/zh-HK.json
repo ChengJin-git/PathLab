@@ -1333,6 +1333,7 @@
     "selectTaskPlaceholder": "選擇任務...",
     "resultsCount": "{{count}} 個結果",
     "noResults": "無結果",
+    "analysisAvailable": "已分析",
     "noTasksAvailable": "沒有可用的任務",
     "analysisSubmitted": "分析已提交",
     "runAnalysis": "執行分析",

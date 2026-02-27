@@ -1315,11 +1315,17 @@ export default function ResultsViewerPage() {
                                   <span className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full transition-colors duration-200 ${
                                     selectedTaskId === task.task_id
                                       ? 'bg-white/20 text-white'
-                                      : task.has_ai_results
+                                      : task.ai_results_count > 0
                                         ? 'bg-green-50 text-green-700'
-                                        : 'bg-amber-50 text-amber-700'
+                                        : task.has_analysis
+                                          ? 'bg-blue-50 text-blue-700'
+                                          : 'bg-amber-50 text-amber-700'
                                   }`}>
-                                    {task.has_ai_results ? t('resultsPage.resultsCount', { count: task.ai_results_count }) : t('resultsPage.noResults')}
+                                    {task.ai_results_count > 0
+                                      ? t('resultsPage.resultsCount', { count: task.ai_results_count })
+                                      : task.has_analysis
+                                        ? t('resultsPage.analysisAvailable')
+                                        : t('resultsPage.noResults')}
                                   </span>
                                 </div>
                               </div>
