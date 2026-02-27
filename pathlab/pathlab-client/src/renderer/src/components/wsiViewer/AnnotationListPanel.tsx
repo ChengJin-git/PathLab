@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Pencil, Trash2, PackagePlus, ChevronDown, ChevronUp } from 'lucide-react'
+import { Pencil, Trash2, PackagePlus, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react'
 import { AnnotationRegion, AnnotationsMap } from '../../api/annotation'
 import { Card } from '../common'
 
@@ -33,6 +33,8 @@ export function AnnotationListPanel({
   const [showSummary, setShowSummary] = useState(true)
   const [selectedRegionIds, setSelectedRegionIds] = useState<Set<string>>(new Set())
   const [selectedCrossSlideLabels, setSelectedCrossSlideLabels] = useState<Set<string>>(new Set())
+  // Confirmation dialog state: { type, message } or null
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'current' | 'crossSlide'; message: string } | null>(null)
 
   // Cross-slide summary: total ROIs per label
   const summary = useMemo(() => {
@@ -89,10 +91,10 @@ export function AnnotationListPanel({
 
   const handleBatchDeleteCurrent = () => {
     if (selectedRegionIds.size === 0) return
-    if (confirm(t('annotation.confirmDeleteSelected', { count: selectedRegionIds.size }))) {
-      onDeleteRegions(Array.from(selectedRegionIds))
-      setSelectedRegionIds(new Set())
-    }
+    setDeleteConfirm({
+      type: 'current',
+      message: t('annotation.confirmDeleteSelected', { count: selectedRegionIds.size }),
+    })
   }
 
   const toggleSelectCrossSlideLabel = (label: string) => {
@@ -128,10 +130,22 @@ export function AnnotationListPanel({
 
   const handleBatchDeleteCrossSlide = () => {
     if (selectedCrossSlideLabels.size === 0) return
-    if (confirm(t('annotation.confirmDeleteByLabel', { count: selectedCrossSlideCount.total, slides: selectedCrossSlideCount.slides }))) {
+    setDeleteConfirm({
+      type: 'crossSlide',
+      message: t('annotation.confirmDeleteByLabel', { count: selectedCrossSlideCount.total, slides: selectedCrossSlideCount.slides }),
+    })
+  }
+
+  const handleConfirmDelete = () => {
+    if (!deleteConfirm) return
+    if (deleteConfirm.type === 'current') {
+      onDeleteRegions(Array.from(selectedRegionIds))
+      setSelectedRegionIds(new Set())
+    } else {
       onDeleteCrossSlideByLabel(Array.from(selectedCrossSlideLabels))
       setSelectedCrossSlideLabels(new Set())
     }
+    setDeleteConfirm(null)
   }
 
   return (
@@ -290,6 +304,38 @@ export function AnnotationListPanel({
           </div>
         )}
       </Card>
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+            <div className="flex items-center gap-3 px-6 pt-6 pb-2">
+              <div className="p-2 bg-red-100 rounded-full">
+                <AlertTriangle className="w-5 h-5 text-red-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">{t('common.delete')}</h3>
+            </div>
+            <p className="px-6 py-3 text-sm text-gray-600 leading-relaxed">
+              {deleteConfirm.message}
+            </p>
+            <div className="flex items-center justify-end gap-3 px-6 py-4 bg-gray-50 border-t border-gray-100">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {t('common.delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

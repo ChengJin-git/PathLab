@@ -16,7 +16,7 @@ import {
 } from '../api'
 import WSIViewer from '../components/WSIViewer'
 import { Card } from '../components/common'
-import { ArrowLeft, Microscope, Layers, Loader2, ChevronLeft, ChevronRight, Plus, Minus, RotateCcw, Maximize2, X } from 'lucide-react'
+import { ArrowLeft, Microscope, Layers, Loader2, ChevronLeft, ChevronRight, Plus, Minus, RotateCcw, Maximize2, X, Save, AlertTriangle } from 'lucide-react'
 import { exportPatchesAsZip } from '../components/wsiViewer/utils'
 import { TaskSelectorCard } from '../components/wsiViewer/TaskSelectorCard'
 import { AttentionClassSelector } from '../components/wsiViewer/AttentionClassSelector'
@@ -202,7 +202,7 @@ export default function WSIViewerPage() {
       setShowDeleteConfirm(false)
     } catch (err) {
       console.error('Failed to delete results:', err)
-      alert(t('wsiViewer.deleteResultsFailed', { error: String(err) }))
+      toast('error', t('wsiViewer.deleteResultsFailed', { error: String(err) }))
     } finally {
       setDeletingResults(false)
     }
@@ -223,6 +223,12 @@ export default function WSIViewerPage() {
   const [slideHeight, setSlideHeight] = useState(0)
   const [showCreateDatasetDialog, setShowCreateDatasetDialog] = useState(false)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Manual save & unsaved-changes tracking
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [savingAnnotations, setSavingAnnotations] = useState(false)
+  // Pending navigation when user tries to leave with unsaved changes
+  const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null)
 
   // Determine if any annotated source slide is a WSI (not a patch image)
   // Used to disable segmentation dataset creation for WSI data
@@ -385,6 +391,7 @@ export default function WSIViewerPage() {
       ...prev,
       [wsi_id]: [...(prev[wsi_id] || []), newRegion],
     }))
+    setHasUnsavedChanges(true)
     // Auto-assign color to label
     if (region.label && !labelColors[region.label]) {
       const color = getColorForLabel(region.label, labelColors)
@@ -401,6 +408,7 @@ export default function WSIViewerPage() {
       ...prev,
       [wsi_id]: (prev[wsi_id] || []).map(r => r.id === regionId ? { ...r, ...updates } : r),
     }))
+    setHasUnsavedChanges(true)
   }, [wsi_id])
 
   const handleDeleteRegion = useCallback((regionId: string) => {
@@ -408,6 +416,7 @@ export default function WSIViewerPage() {
       ...prev,
       [wsi_id]: (prev[wsi_id] || []).filter(r => r.id !== regionId),
     }))
+    setHasUnsavedChanges(true)
   }, [wsi_id])
 
   const handleDeleteRegions = useCallback((regionIds: string[]) => {
@@ -416,6 +425,7 @@ export default function WSIViewerPage() {
       ...prev,
       [wsi_id]: (prev[wsi_id] || []).filter(r => !idSet.has(r.id)),
     }))
+    setHasUnsavedChanges(true)
   }, [wsi_id])
 
   const handleDeleteCrossSlideByLabel = useCallback((labels: string[]) => {
@@ -427,6 +437,7 @@ export default function WSIViewerPage() {
       }
       return next
     })
+    setHasUnsavedChanges(true)
   }, [])
 
   const handleLabelChange = useCallback((label: string) => {
@@ -436,6 +447,46 @@ export default function WSIViewerPage() {
       setLabelColors(prev => ({ ...prev, [label]: color }))
     }
   }, [labelColors])
+
+  // Manual save handler
+  const handleManualSave = useCallback(async () => {
+    setSavingAnnotations(true)
+    try {
+      const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
+      if (totalRegions === 0) {
+        // Nothing to save; if a draft exists, delete it
+        if (draftId) {
+          const idToDelete = draftId
+          setDraftId(null)
+          await deleteDraft(idToDelete)
+        }
+      } else {
+        const id = draftId || crypto.randomUUID()
+        if (!draftId) setDraftId(id)
+        await saveDraft({
+          draft_id: id,
+          source_dataset_id: datasetId,
+          annotations: allAnnotations,
+        })
+      }
+      setHasUnsavedChanges(false)
+      toast('success', t('annotation.saved'))
+    } catch (err) {
+      console.error('Failed to save annotation draft:', err)
+      toast('error', t('annotation.saveFailed'))
+    } finally {
+      setSavingAnnotations(false)
+    }
+  }, [allAnnotations, draftId, datasetId, t, toast])
+
+  // Navigation guard: wrap navigation in unsaved-changes check
+  const guardedNavigate = useCallback((navigateFn: () => void) => {
+    if (hasUnsavedChanges && annotationMode) {
+      setPendingNavigation(() => navigateFn)
+    } else {
+      navigateFn()
+    }
+  }, [hasUnsavedChanges, annotationMode])
 
   // Annotation: auto-save draft (debounced 2s)
   useEffect(() => {
@@ -505,10 +556,9 @@ export default function WSIViewerPage() {
     })
   }, [annotationMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Annotation: beforeunload warning
+  // Annotation: beforeunload warning (only when there are unsaved changes)
   useEffect(() => {
-    const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
-    if (totalRegions === 0) return
+    if (!hasUnsavedChanges || !annotationMode) return
 
     const handler = (e: BeforeUnloadEvent) => {
       e.preventDefault()
@@ -516,7 +566,7 @@ export default function WSIViewerPage() {
     }
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
-  }, [allAnnotations])
+  }, [hasUnsavedChanges, annotationMode])
 
   if (!detail) {
     return (
@@ -537,17 +587,15 @@ export default function WSIViewerPage() {
       <div className="flex-1 flex flex-col bg-gray-50 relative min-h-[50vh] lg:min-h-0">
         <div className="flex items-center px-2 sm:px-4 py-2 sm:py-3 bg-white border-b border-gray-200 gap-2 sm:gap-4 shadow-sm z-10">
           <button
-            onClick={() => {
+            onClick={() => guardedNavigate(() => {
               if (fromAIChat) {
                 navigate('/dashboard')
               } else if (fromDataset && datasetId) {
-                // Return to the same dataset in ListPage
                 navigate('/wsi-list', { state: { dataset_id: datasetId } })
               } else {
-                // Return to all datasets list
                 navigate('/wsi-list')
               }
-            }}
+            })}
             className="flex items-center gap-1 sm:gap-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100/80 text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg transition-all"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -567,14 +615,14 @@ export default function WSIViewerPage() {
           <div className="flex items-center gap-1 sm:gap-2">
             <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-100">
               <button
-                onClick={() => prevWSI && navigate(`/wsi/${prevWSI.wsi_id}`, {
+                onClick={() => prevWSI && guardedNavigate(() => navigate(`/wsi/${prevWSI.wsi_id}`, {
                   state: {
                     fromAIChat,
                     fromDataset,
                     datasetId,
                     datasetName
                   }
-                })}
+                }))}
                 disabled={!prevWSI}
                 className="p-1 sm:p-1.5 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all"
                 title={prevWSI ? t('common.previous') : t('wsiViewer.noPreviousSlide')}
@@ -583,14 +631,14 @@ export default function WSIViewerPage() {
               </button>
               <div className="w-px h-4 bg-gray-200"></div>
               <button
-                onClick={() => nextWSI && navigate(`/wsi/${nextWSI.wsi_id}`, {
+                onClick={() => nextWSI && guardedNavigate(() => navigate(`/wsi/${nextWSI.wsi_id}`, {
                   state: {
                     fromAIChat,
                     fromDataset,
                     datasetId,
                     datasetName
                   }
-                })}
+                }))}
                 disabled={!nextWSI}
                 className="p-1 sm:p-1.5 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all"
                 title={nextWSI ? t('common.next') : t('wsiViewer.noNextSlide')}
@@ -611,6 +659,29 @@ export default function WSIViewerPage() {
               allLabels={allLabels}
               onDropdownOpenChange={setIsLabelDropdownOpen}
             />
+
+            {/* Save Annotations Button — visible only in annotation mode */}
+            {annotationMode && (
+              <button
+                onClick={handleManualSave}
+                disabled={savingAnnotations || !hasUnsavedChanges}
+                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+                  hasUnsavedChanges
+                    ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm'
+                    : 'bg-gray-100 text-gray-400 cursor-default'
+                }`}
+                title={t('annotation.saveAnnotations')}
+              >
+                {savingAnnotations ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Save className="w-3.5 h-3.5" />
+                )}
+                <span className="hidden sm:inline">
+                  {savingAnnotations ? t('annotation.saving') : t('annotation.saveAnnotations')}
+                </span>
+              </button>
+            )}
 
             <button
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -892,6 +963,55 @@ export default function WSIViewerPage() {
         draftId={draftId || undefined}
         hasWsiSources={hasWsiSources}
       />
+
+      {/* Unsaved Annotations Confirmation Modal */}
+      {pendingNavigation && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 px-6 pt-6 pb-2">
+              <div className="p-2 bg-amber-100 rounded-full">
+                <AlertTriangle className="w-5 h-5 text-amber-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">{t('annotation.unsavedTitle')}</h3>
+            </div>
+            <p className="px-6 py-3 text-sm text-gray-600 leading-relaxed">
+              {t('annotation.unsavedMessage')}
+            </p>
+            <div className="flex items-center justify-end gap-3 px-6 py-4 bg-gray-50 border-t border-gray-100">
+              <button
+                onClick={() => setPendingNavigation(null)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={() => {
+                  const nav = pendingNavigation
+                  setPendingNavigation(null)
+                  setHasUnsavedChanges(false)
+                  nav()
+                }}
+                className="px-4 py-2 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors"
+              >
+                {t('annotation.discardAndLeave')}
+              </button>
+              <button
+                onClick={async () => {
+                  await handleManualSave()
+                  const nav = pendingNavigation
+                  setPendingNavigation(null)
+                  nav()
+                }}
+                disabled={savingAnnotations}
+                className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {savingAnnotations && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {t('annotation.saveAndLeave')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

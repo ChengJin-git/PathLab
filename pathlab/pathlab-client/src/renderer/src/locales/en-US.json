@@ -2841,6 +2841,14 @@
     "deselectAll": "Deselect all",
     "deleteSelected": "Delete selected ({{count}})",
     "confirmDeleteSelected": "Are you sure you want to delete {{count}} selected regions?",
-    "confirmDeleteByLabel": "Are you sure you want to delete all regions with the selected labels ({{count}} ROIs across {{slides}} slides)?"
+    "confirmDeleteByLabel": "Are you sure you want to delete all regions with the selected labels ({{count}} ROIs across {{slides}} slides)?",
+    "saveAnnotations": "Save",
+    "saving": "Saving...",
+    "saved": "Annotations saved",
+    "saveFailed": "Failed to save annotations",
+    "unsavedTitle": "Unsaved Annotations",
+    "unsavedMessage": "You have unsaved annotation changes. Would you like to save before leaving?",
+    "discardAndLeave": "Discard & Leave",
+    "saveAndLeave": "Save & Leave"
   }
 }

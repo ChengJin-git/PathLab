@@ -2841,6 +2841,14 @@
     "deselectAll": "取消全選",
     "deleteSelected": "刪除選中 ({{count}})",
     "confirmDeleteSelected": "確定要刪除選中的 {{count}} 個區域嗎？",
-    "confirmDeleteByLabel": "確定要刪除選中標籤的所有區域嗎？（共 {{count}} 個 ROI，涉及 {{slides}} 張切片）"
+    "confirmDeleteByLabel": "確定要刪除選中標籤的所有區域嗎？（共 {{count}} 個 ROI，涉及 {{slides}} 張切片）",
+    "saveAnnotations": "儲存",
+    "saving": "儲存中...",
+    "saved": "標註已儲存",
+    "saveFailed": "儲存標註失敗",
+    "unsavedTitle": "未儲存的標註",
+    "unsavedMessage": "您有未儲存的標註更改，是否在離開前儲存？",
+    "discardAndLeave": "捨棄並離開",
+    "saveAndLeave": "儲存並離開"
   }
 }
