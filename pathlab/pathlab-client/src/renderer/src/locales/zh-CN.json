@@ -1139,6 +1139,8 @@
     "registrationAutoMessage": "注册已提交。{{count}} 个文件正在后台上传。",
     "taskSubmitErrorMessage": "任务提交失败，错误信息：\"{{error}}\"。你能帮我理解出了什么问题以及如何修复吗？",
     "fileTooLarge": "文件 \"{{name}}\" 过大（{{size}}）。最大允许 {{max}}。",
+    "imageTooLarge": "图片 \"{{name}}\" 过大（{{size}}）。图片最大允许 {{max}}。",
+    "modelNotMultimodal": "当前模型不支持图片输入。请在设置中切换到多模态模型（如 Qwen3.5-Plus、GLM-5、Kimi-K2.5）。",
     "tooManyFiles": "文件过多。一次最多允许 {{max}} 个文件。",
     "fileReadError": "读取文件 \"{{name}}\" 失败。",
     "dropFilesHere": "将文件拖放到此处",

@@ -50,6 +50,7 @@ import { removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
 import { removeModelListBlock } from '../components/chat/ModelListCard'
 import { removePdfParseStatusBlock } from '../components/chat/SearchingStatus'
 import { parseRenameTaskConfig, removeRenameTaskBlock } from '../components/chat/RenameTaskCard'
+import { MULTIMODAL_MODELS } from '../components/settings/GeneralTab'
 
 
 interface Message {
@@ -498,7 +499,12 @@ export default function AIChatPage() {
 
   // File upload validation constants
   const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB
+  const MAX_IMAGE_SIZE = 10 * 1024 * 1024 // 10MB
   const MAX_FILES = 10
+
+  // Check if current model supports image input (reads from shared multimodal models list)
+  const currentModel = localStorage.getItem('openrouter_model') || 'qwen/qwen3.5-plus-02-15'
+  const isMultimodalModel = MULTIMODAL_MODELS.has(currentModel)
 
   // File upload handlers (images, CSV, XLSX)
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement> | FileList) => {
@@ -535,6 +541,22 @@ export default function AIChatPage() {
 
       // Handle image files
       if (file.type.startsWith('image/')) {
+        // Only multimodal models support image input
+        if (!isMultimodalModel) {
+          showToastRef.current('error', t('aiChat.modelNotMultimodal'))
+          if ('target' in e && fileInputRef.current) fileInputRef.current.value = ''
+          return
+        }
+        // Image-specific size limit: 10MB
+        if (file.size > MAX_IMAGE_SIZE) {
+          showToastRef.current('error', t('aiChat.imageTooLarge', {
+            name: file.name,
+            size: formatFileSize(file.size),
+            max: formatFileSize(MAX_IMAGE_SIZE)
+          }))
+          if ('target' in e && fileInputRef.current) fileInputRef.current.value = ''
+          return
+        }
         try {
           const base64 = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader()

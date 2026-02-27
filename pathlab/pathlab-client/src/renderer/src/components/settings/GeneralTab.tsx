@@ -44,6 +44,33 @@ function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: () =>
   )
 }
 
+/**
+ * Single source of truth for all available AI models.
+ * Used by GeneralTab (<select>) and AIChatPage (multimodal upload validation).
+ */
+export interface ModelOption {
+  id: string
+  label: string
+  multimodal: boolean
+}
+
+export const MODEL_OPTIONS: ModelOption[] = [
+  // Multimodal models (support image input)
+  { id: 'qwen/qwen3.5-plus-02-15', label: 'Qwen3.5-Plus-02-15', multimodal: true },
+  { id: 'moonshotai/kimi-k2.5', label: 'Kimi-K2.5', multimodal: true },
+  // Text-only models
+  { id: 'z-ai/glm-5', label: 'GLM-5', multimodal: false },
+  { id: 'qwen/qwen3-235b-a22b-instruct-2507', label: 'Qwen3-235B-A22B-Instruct-2507', multimodal: false },
+  { id: 'stepfun/step-3.5-flash:free', label: 'Step-3.5-Flash', multimodal: false },
+  { id: 'z-ai/glm-4.7-flash', label: 'GLM-4.7-Flash', multimodal: false },
+  { id: 'moonshotai/kimi-k2-0905', label: 'Kimi-K2-Instruct-0905', multimodal: false },
+]
+
+/** Quick lookup: is a given model ID multimodal? */
+export const MULTIMODAL_MODELS = new Set(
+  MODEL_OPTIONS.filter(m => m.multimodal).map(m => m.id)
+)
+
 export interface GeneralTabProps {
   showConfirmDialog: ShowConfirmDialog
   closeConfirmDialog: () => void
@@ -230,15 +257,14 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                     className="h-8 w-full px-2.5 py-1 border border-slate-300 rounded-lg bg-white text-xs text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
                   >
                     <optgroup label={t('settings.general.multimodalModels')}>
-                      <option value="qwen/qwen3.5-plus-02-15">Qwen3.5-Plus-02-15</option>
-                      <option value="z-ai/glm-5">GLM-5</option>
-                      <option value="moonshotai/kimi-k2.5">Kimi-K2.5</option>
+                      {MODEL_OPTIONS.filter(m => m.multimodal).map(m => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                      ))}
                     </optgroup>
                     <optgroup label={t('settings.general.textModels')}>
-                      <option value="qwen/qwen3-235b-a22b-instruct-2507">Qwen3-235B-A22B-Instruct-2507</option>
-                      <option value="stepfun/step-3.5-flash:free">Step-3.5-Flash</option>
-                      <option value="z-ai/glm-4.7-flash">GLM-4.7-Flash</option>
-                      <option value="moonshotai/kimi-k2-0905">Kimi-K2-Instruct-0905</option>
+                      {MODEL_OPTIONS.filter(m => !m.multimodal).map(m => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                      ))}
                     </optgroup>
                   </select>
                 </div>

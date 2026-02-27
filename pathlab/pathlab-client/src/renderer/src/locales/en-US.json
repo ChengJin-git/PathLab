@@ -1139,6 +1139,8 @@
     "registrationAutoMessage": "Registration submitted. {{count}} files are uploading in the background.",
     "taskSubmitErrorMessage": "The task submission failed with error: \"{{error}}\". Can you help me understand what went wrong and how to fix it?",
     "fileTooLarge": "File \"{{name}}\" is too large ({{size}}). Maximum size is {{max}}.",
+    "imageTooLarge": "Image \"{{name}}\" is too large ({{size}}). Maximum image size is {{max}}.",
+    "modelNotMultimodal": "The current model does not support image input. Please switch to a multimodal model (e.g. Qwen3.5-Plus, GLM-5, Kimi-K2.5) in Settings.",
     "tooManyFiles": "Too many files. Maximum {{max}} files allowed at once.",
     "fileReadError": "Failed to read file \"{{name}}\".",
     "dropFilesHere": "Drop files here",
