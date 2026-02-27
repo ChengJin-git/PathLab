@@ -212,16 +212,21 @@ export default function ResultsViewerPage() {
     }
   }, [location.state, taskIdFromUrl]) // removed dependency loop risks
 
-  // Auto-expand the most recent analysis when navigating via URL param or state
+  // Track whether we've already done the initial auto-expand (one-shot, don't re-expand after user collapses)
+  const autoExpandedRef = useRef(false)
+
+  // Auto-expand the most recent analysis when navigating via URL param or state — fires once per mount
   useEffect(() => {
-    if (initialSelectedTaskId && analyses.length > 0 && !expandedAnalysis) {
+    if (autoExpandedRef.current) return  // already done, user is in control now
+    if (initialSelectedTaskId && analyses.length > 0) {
       // Sort by timestamp descending and expand the most recent
       const sortedAnalyses = [...analyses].sort((a, b) =>
         new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
       )
       setExpandedAnalysis(sortedAnalyses[0].analysis_id)
+      autoExpandedRef.current = true
     }
-  }, [analyses, initialSelectedTaskId, expandedAnalysis])
+  }, [analyses, initialSelectedTaskId])
 
   // Reset metrics/charts selection when task type changes
   useEffect(() => {
