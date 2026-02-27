@@ -52,16 +52,13 @@ server/
     │   ├── main.py           # AI FastAPI 应用
     │   ├── routes/           # 训练/推理路由
     │   ├── tasks/            # 任务类型
-    │   │   │   ├── wsi_classification/   # WSI 分类 (MIL)
-    │   │   │   ├── patch_classification/ # Patch 分类
-    │   │   │   ├── patch_segmentation/  # Patch 分割
-    │   │   │   └── wsi_survival/        # 生存分析
     │   │   ├── wsi_classification/   # WSI 分类 (MIL)
-    │   │   └── patch_classification/ # Patch 分类
+    │   │   ├── patch_classification/ # Patch 分类
+    │   │   ├── patch_segmentation/  # Patch 分割
+    │   │   └── wsi_survival/        # 生存分析
     │   ├── extractors/       # 19 种特征提取器
     │   ├── aggregators/      # 8 种聚合器 (ABMIL, MeanMIL, MaxMIL, DSMIL, DTFDMIL, CLAM, TransMIL)
     │   ├── classifiers/      # 分类器
-    │   └── utils/            # CAM 工具 (Grad-CAM, Attention)
     ├── preprocessing/    # 预处理服务 (内部端口)
     │   ├── main.py           # 预处理 FastAPI 应用
     │   └── tiling.py         # WSI 切片、坐标提取
