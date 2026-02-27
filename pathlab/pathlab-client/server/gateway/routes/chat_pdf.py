@@ -1738,6 +1738,14 @@ async def process_pdf_url(
         if cached_markdown:
             pdf_content = cached_markdown
             logger.info(f"Using cached parsed markdown for {url}")
+            # Re-schedule MinerU background upgrade on cache hit if only pymupdf
+            # cache exists.  The initial upgrade attempt may have been skipped
+            # (GPU busy / lock contention) and is never retried otherwise.
+            if use_cache and pdf_bytes and not _has_mineru_cache(url):
+                asyncio.create_task(
+                    _background_mineru_upgrade(url, pdf_bytes)
+                )
+                logger.info(f"[BG MinerU] Re-scheduled upgrade on cache hit for {url}")
         else:
             # ── Two-tier parsing ──────────────────────────────────────────────
             # Tier 1: Fast pymupdf (CPU, <1 s).  Returns immediately.
