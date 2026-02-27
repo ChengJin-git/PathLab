@@ -40,6 +40,7 @@ export default function WSIViewerPage() {
   const fromDataset = (location.state as { fromDataset?: boolean } | null)?.fromDataset === true
   const datasetId = (location.state as { datasetId?: string } | null)?.datasetId
   const datasetName = (location.state as { datasetName?: string } | null)?.datasetName
+  const conversationId = (location.state as { conversationId?: string } | null)?.conversationId
   const [detail, setDetail] = useState<any>()
   const [showHeatmap, setShowHeatmap] = useState(false)
   const [heatmapOpacity, setHeatmapOpacity] = useState(0.5)
@@ -537,8 +538,8 @@ export default function WSIViewerPage() {
     if (Object.keys(allAnnotations).length > 0) return
 
     listDrafts().then(drafts => {
-      // Find a draft matching this dataset
-      const matching = drafts.find(d => d.source_dataset_id === datasetId)
+      // Find a draft matching this dataset (use == to handle null vs undefined)
+      const matching = drafts.find(d => (d.source_dataset_id ?? undefined) === (datasetId ?? undefined))
       if (matching && Object.keys(matching.annotations).length > 0) {
         setAllAnnotations(matching.annotations)
         setDraftId(matching.draft_id)
@@ -589,7 +590,7 @@ export default function WSIViewerPage() {
           <button
             onClick={() => guardedNavigate(() => {
               if (fromAIChat) {
-                navigate('/dashboard')
+                navigate(conversationId ? `/dashboard/${conversationId}` : '/dashboard')
               } else if (fromDataset && datasetId) {
                 navigate('/wsi-list', { state: { dataset_id: datasetId } })
               } else {
@@ -620,7 +621,8 @@ export default function WSIViewerPage() {
                     fromAIChat,
                     fromDataset,
                     datasetId,
-                    datasetName
+                    datasetName,
+                    conversationId
                   }
                 }))}
                 disabled={!prevWSI}
@@ -636,7 +638,8 @@ export default function WSIViewerPage() {
                     fromAIChat,
                     fromDataset,
                     datasetId,
-                    datasetName
+                    datasetName,
+                    conversationId
                   }
                 }))}
                 disabled={!nextWSI}

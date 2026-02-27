@@ -296,7 +296,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
     if (conversationId) {
       sessionStorage.setItem('ai-chat-conversation-id', conversationId)
     }
-    navigate(`/wsi/${wsiId}`, { state: { fromAIChat: true } })
+    navigate(`/wsi/${wsiId}`, { state: { fromAIChat: true, conversationId: conversationId || undefined } })
   }
 
   // Count images with heatmaps for summary
