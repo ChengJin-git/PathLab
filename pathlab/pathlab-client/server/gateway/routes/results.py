@@ -305,8 +305,9 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
     Uses database queries instead of file system scanning for better performance.
     Returns a dict mapping task_id -> resource info.
 
-    NOTE: ai_results_count only counts results for test set WSIs to match
-    the analysis behavior which only evaluates on test set.
+    NOTE: ai_results_count counts results for test set WSIs (when test set is
+    defined) or all WSIs. has_ai_results uses > 0 check because some WSIs may
+    be skipped during patch extraction (no valid tissue patches).
 
     Task type handling:
     - WSI classification/survival: requires features/*.pt and aggregator.pth
