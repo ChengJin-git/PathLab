@@ -2,18 +2,24 @@
 Segmentation Analysis Module
 
 Handles running analysis for segmentation training tasks.
-Since segmentation tasks don't produce per-WSI inference results (AIResult),
-analysis is based on training metrics (IoU, Dice, loss curves) stored in
-metrics.json alongside the model checkpoint.
+Computes per-image segmentation metrics from AIResult records and
+provides bootstrap 95% CI at the image level, consistent with
+classification and survival analysis modules.
+Training curves (IoU, Dice, loss) are loaded from metrics.json.
 """
 import asyncio
+import functools
 import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
+
+import numpy as np
+from sqlalchemy import select
 
 from backend.common.config import Config
+from backend.database.models import AIResult, TrainingTaskWSI
 from backend.database.repositories import TrainedModelRepository
 
 from .analysis_helpers import _get_random_seed_from_task
@@ -96,22 +102,99 @@ def _extract_metric_series(metrics_list: list, metric_name: str) -> list:
     return [m.get(metric_name, 0.0) for m in metrics_list if isinstance(m, dict)]
 
 
+def _calculate_segmentation_bootstrap_ci(
+    per_image_metrics: List[Dict[str, float]],
+    requested_metrics: List[str],
+    n_bootstrap: int = 1000,
+    confidence_level: float = 0.95,
+    progress_callback: Optional[Callable[[float], None]] = None,
+) -> Dict[str, Any]:
+    """Calculate 95% CI for segmentation metrics using bootstrap resampling at image level.
+
+    Each element of *per_image_metrics* is a dict like
+    ``{"iou": 0.82, "dice": 0.90, "accuracy": 0.95, ...}``
+    produced by ``_run_inference_patch_segmentation``.
+
+    Returns a dict with ``metrics_ci`` keyed by metric name.
+    """
+    n_samples = len(per_image_metrics)
+    if n_samples < 2:
+        logger.warning("Bootstrap CI requires at least 2 images")
+        return {"metrics_ci": {}, "n_bootstrap": n_bootstrap, "confidence_level": confidence_level}
+
+    # Supported segmentation metrics
+    seg_metric_keys = ["iou", "dice", "accuracy", "precision", "recall"]
+    # Only compute CI for metrics that exist in the data AND were requested
+    available_keys = set()
+    for m in per_image_metrics:
+        available_keys.update(m.keys())
+    target_keys = [k for k in seg_metric_keys if k in available_keys and k in requested_metrics]
+
+    if not target_keys:
+        return {"metrics_ci": {}, "n_bootstrap": n_bootstrap, "confidence_level": confidence_level}
+
+    # Build arrays for fast vectorised bootstrap
+    arrays: Dict[str, np.ndarray] = {}
+    for key in target_keys:
+        arrays[key] = np.array([m.get(key, 0.0) for m in per_image_metrics], dtype=np.float64)
+
+    boot_results: Dict[str, List[float]] = {k: [] for k in target_keys}
+
+    rng = np.random.default_rng()
+    for i in range(n_bootstrap):
+        if progress_callback and i % 50 == 0:
+            progress_callback(i / n_bootstrap)
+
+        indices = rng.integers(0, n_samples, size=n_samples)
+        for key in target_keys:
+            boot_results[key].append(float(np.mean(arrays[key][indices])))
+
+    alpha = 1 - confidence_level
+    lo = alpha / 2 * 100
+    hi = (1 - alpha / 2) * 100
+
+    metrics_ci: Dict[str, Any] = {}
+    for key in target_keys:
+        arr = np.array(boot_results[key])
+        metrics_ci[key] = {
+            "lower": round(float(np.percentile(arr, lo)), 4),
+            "upper": round(float(np.percentile(arr, hi)), 4),
+            "mean": round(float(np.mean(arr)), 4),
+            "n_samples": n_samples,
+        }
+
+    if progress_callback:
+        progress_callback(1.0)
+
+    logger.info(
+        f"Segmentation bootstrap CI computed: {len(boot_results[target_keys[0]])} valid samples, "
+        f"metrics: {target_keys}"
+    )
+    return {
+        "metrics_ci": metrics_ci,
+        "n_bootstrap": n_bootstrap,
+        "confidence_level": confidence_level,
+    }
+
+
 async def _run_segmentation_analysis(
     task, request, db, progress_callback=None, progress_config=None, submitted_by=None
 ):
     """Run analysis for segmentation task.
 
-    Unlike classification/survival analysis which uses per-WSI inference results,
-    segmentation analysis is based on training metrics (IoU, Dice, loss curves)
-    stored in metrics.json alongside the model checkpoint.
+    Combines training curves from metrics.json with per-image metrics from
+    AIResult records (populated by ``_run_inference_patch_segmentation``).
+    Bootstrap 95% CI is computed by resampling at the *image* level.
 
     Args:
         progress_callback: Optional async function to report progress (0-100).
         progress_config: Optional dict with progress range configuration.
     """
     if progress_config is None:
-        progress_config = {"start": 20, "ci_start": 30, "ci_end": 95, "has_ci": False}
+        progress_config = {"start": 20, "ci_start": 30, "ci_end": 95, "has_ci": True}
     p_start = progress_config.get("start", 20)
+    p_ci_start = progress_config.get("ci_start", 30)
+    p_ci_end = progress_config.get("ci_end", 95)
 
     task_id = task.task_id
 
@@ -167,6 +250,97 @@ async def _run_segmentation_analysis(
     if progress_callback:
         await progress_callback(p_start + 10)
 
+    # ----------------------------------------------------------------
+    # Query per-image metrics from AIResult records for bootstrap CI
+    # These are populated by _run_inference_patch_segmentation
+    # ----------------------------------------------------------------
+    per_image_metrics: List[Dict[str, float]] = []
+
+    # Determine test set WSI IDs (same pattern as classification)
+    test_wsi_query = (
+        select(TrainingTaskWSI.wsi_id)
+        .where(TrainingTaskWSI.task_id == task_id)
+        .where(TrainingTaskWSI.split == "test")
+    )
+    test_wsi_result = await db.execute(test_wsi_query)
+    test_wsi_ids = {row[0] for row in test_wsi_result.all()}
+
+    # Query AIResult records
+    query = (
+        select(AIResult)
+        .where(AIResult.task_id == task_id)
+        .where(AIResult.pred.isnot(None))
+    )
+    if test_wsi_ids:
+        query = query.where(AIResult.wsi_id.in_(test_wsi_ids))
+        logger.info(f"Segmentation analysis for task {task_id}: using {len(test_wsi_ids)} test set images")
+    else:
+        logger.info(f"Segmentation analysis for task {task_id}: no test set found, using all images")
+
+    ai_result = await db.execute(query)
+    ai_rows = ai_result.scalars().all()
+
+    for row in ai_rows:
+        # Per-image metrics are stored in probs (primary) or extra_metadata.metrics
+        metrics_dict = row.probs or {}
+        if not metrics_dict and row.extra_metadata:
+            metrics_dict = row.extra_metadata.get("metrics", {})
+        if metrics_dict and any(k in metrics_dict for k in ("iou", "dice", "accuracy")):
+            per_image_metrics.append(metrics_dict)
+
+    logger.info(f"Segmentation analysis: loaded {len(per_image_metrics)} per-image metric records from AIResult")
+
+    # Override summary_metrics with mean of per-image metrics if available
+    if per_image_metrics:
+        for key in ("iou", "dice", "accuracy", "precision", "recall"):
+            values = [m.get(key) for m in per_image_metrics if m.get(key) is not None]
+            if values:
+                summary_metrics[key] = round(float(np.mean(values)), 4)
+        metrics_source = "per_image"
+
+    # ----------------------------------------------------------------
+    # Bootstrap 95% CI (image-level resampling)
+    # ----------------------------------------------------------------
+    bootstrap_ci_result = None
+    ci_metrics = (
+        request.bootstrap_ci_metrics
+        if request.bootstrap_ci_metrics
+        else (request.metrics if getattr(request, "compute_bootstrap_ci", False) else [])
+    )
+
+    if ci_metrics and per_image_metrics:
+        logger.info(
+            f"Computing segmentation bootstrap 95% CI for task {task_id} "
+            f"with {len(per_image_metrics)} images, metrics: {ci_metrics}..."
+        )
+        loop = asyncio.get_event_loop()
+
+        ci_range = p_ci_end - p_ci_start
+        def bootstrap_progress_sync(fraction: float):
+            if progress_callback:
+                overall_progress = int(p_ci_start + fraction * ci_range)
+                loop.call_soon_threadsafe(
+                    lambda p=overall_progress: asyncio.create_task(progress_callback(p))
+                )
+
+        bootstrap_ci_result = await loop.run_in_executor(
+            None,
+            functools.partial(
+                _calculate_segmentation_bootstrap_ci,
+                per_image_metrics, ci_metrics,
+                progress_callback=bootstrap_progress_sync,
+            ),
+        )
+        logger.info(f"Segmentation bootstrap CI completed for task {task_id}")
+    elif ci_metrics and not per_image_metrics:
+        logger.warning(
+            f"Bootstrap CI requested but no per-image AIResult records found for task {task_id}. "
+            "Skipping CI calculation."
+        )
+
+    if progress_callback:
+        await progress_callback(p_ci_end)
+
     # Create analysis output directory
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
@@ -190,7 +364,12 @@ async def _run_segmentation_analysis(
         "requested_charts": request.charts,
         "random_seed": random_seed,
         "submitted_by": submitted_by,
+        "num_images": len(per_image_metrics),
     }
+
+    # Add bootstrap CI if computed
+    if bootstrap_ci_result:
+        summary["bootstrap_ci"] = bootstrap_ci_result
 
     if progress_callback:
         await progress_callback(p_start + 20)

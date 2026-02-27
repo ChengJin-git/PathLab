@@ -128,3 +128,43 @@ export function hasValidRecentActivityCache(): boolean {
   return recentActivityCache.hasValidData()
 }
 
+
+// ============================================================================
+// Admin: Per-User Usage Statistics
+// ============================================================================
+
+/**
+ * Per-user usage statistics (admin only)
+ */
+export interface UserUsageItem {
+  user_id: string
+  email: string
+  nickname: string | null
+  role: string
+  wsi_count: number
+  ai_task_count: number
+  training_count: number
+  conversation_count: number
+  message_count: number
+  annotation_count: number
+  feedback_count: number
+  thumbs_up: number
+  thumbs_down: number
+}
+
+export interface UserUsageResponse {
+  users: UserUsageItem[]
+}
+
+/**
+ * Fetch per-user usage statistics (admin only).
+ * Returns aggregated counts for all non-admin users.
+ * @throws {ApiError} If the request fails or user is not admin
+ */
+export async function fetchUserUsageStats(): Promise<UserUsageResponse> {
+  return apiFetch<UserUsageResponse>(
+    `${API_BASE}/stats/user-usage`,
+    undefined,
+    'Failed to get user usage statistics'
+  )
+}

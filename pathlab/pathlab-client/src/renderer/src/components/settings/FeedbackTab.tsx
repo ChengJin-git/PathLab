@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MessageSquare, RefreshCw, Trash2, Download, X, ThumbsUp, ThumbsDown, Clock, Search, Calendar } from 'lucide-react'
+import { MessageSquare, RefreshCw, Trash2, Download, X, ThumbsUp, ThumbsDown, Clock, Search, Calendar, BarChart3 } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Label } from '../ui/label'
@@ -9,7 +9,7 @@ import {
   MessageFeedback, FeedbackStats,
   getAdminFeedbacks, getFeedbackStats, exportFeedbacks as exportFeedbacksApi,
   resetAllFeedbacks, startAsyncExport, getExportTaskStatus, downloadExportFile,
-  ExportTaskStatus
+  ExportTaskStatus, fetchUserUsageStats, UserUsageItem
 } from '../../api'
 import { ShowConfirmDialog } from './ConfirmDialog'
 
@@ -39,6 +39,30 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
   const [exportTaskId, setExportTaskId] = useState<string | null>(null)
   const [exportTaskStatus, setExportTaskStatus] = useState<ExportTaskStatus | null>(null)
   const [exportPollingInterval, setExportPollingInterval] = useState<NodeJS.Timeout | null>(null)
+
+  // Usage stats state
+  const [usageData, setUsageData] = useState<UserUsageItem[]>([])
+  const [usageLoading, setUsageLoading] = useState(false)
+  const [usageError, setUsageError] = useState<string | null>(null)
+
+  // Load usage stats on mount
+  useEffect(() => {
+    let cancelled = false
+    const loadUsage = async () => {
+      setUsageLoading(true)
+      setUsageError(null)
+      try {
+        const res = await fetchUserUsageStats()
+        if (!cancelled) setUsageData(res.users)
+      } catch (err) {
+        if (!cancelled) setUsageError(err instanceof Error ? err.message : t('settings.feedbackTab.usageError'))
+      } finally {
+        if (!cancelled) setUsageLoading(false)
+      }
+    }
+    loadUsage()
+    return () => { cancelled = true }
+  }, [])
 
   // Load feedbacks
   const loadFeedbacks = useCallback(async () => {
@@ -148,9 +172,116 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
 
   return (
     <Card className="p-4 sm:p-6">
+      {/* ===== Usage Overview Section ===== */}
+      <div className="mb-8">
+        <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center mb-4">
+          <BarChart3 className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700 flex-shrink-0" />
+          {t('settings.feedbackTab.usageOverview')}
+        </h2>
+
+        {usageLoading ? (
+          <div className="flex flex-col items-center justify-center py-8 text-gray-500">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600 mb-2"></div>
+            <p className="text-sm">{t('settings.feedbackTab.usageLoading')}</p>
+          </div>
+        ) : usageError ? (
+          <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{usageError}</div>
+        ) : usageData.length === 0 ? (
+          <div className="text-center py-8 text-gray-400 text-sm">{t('settings.feedbackTab.usageNoData')}</div>
+        ) : (
+          <>
+            {/* Mobile: Card layout */}
+            <div className="block md:hidden space-y-3">
+              {usageData.map((u) => (
+                <div key={u.user_id} className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <span className="font-medium text-gray-900 text-sm">{u.nickname || u.email}</span>
+                      <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium uppercase bg-gray-100 text-gray-600">{u.role}</span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="bg-gray-50 rounded-lg p-2">
+                      <div className="text-lg font-semibold text-gray-900">{u.wsi_count}</div>
+                      <div className="text-[10px] text-gray-500 uppercase">{t('settings.feedbackTab.usageWsi')}</div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-2">
+                      <div className="text-lg font-semibold text-gray-900">{u.ai_task_count}</div>
+                      <div className="text-[10px] text-gray-500 uppercase">{t('settings.feedbackTab.usageAiTasks')}</div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-2">
+                      <div className="text-lg font-semibold text-gray-900">{u.training_count}</div>
+                      <div className="text-[10px] text-gray-500 uppercase">{t('settings.feedbackTab.usageTraining')}</div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-2">
+                      <div className="text-lg font-semibold text-gray-900">{u.message_count}</div>
+                      <div className="text-[10px] text-gray-500 uppercase">{t('settings.feedbackTab.usageMessages')}</div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-2">
+                      <div className="text-lg font-semibold text-gray-900">{u.annotation_count}</div>
+                      <div className="text-[10px] text-gray-500 uppercase">{t('settings.feedbackTab.usageAnnotations')}</div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-2">
+                      <div className="text-lg font-semibold text-gray-900">{u.feedback_count}</div>
+                      <div className="text-[10px] text-gray-500 uppercase">{t('settings.feedbackTab.usageFeedback')}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Desktop: Table layout */}
+            <div className="hidden md:block overflow-hidden rounded-lg border border-gray-200 shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50/80">
+                    <tr className="border-b border-gray-200">
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('settings.feedbackTab.usageUser')}</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('settings.feedbackTab.usageRole')}</th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('settings.feedbackTab.usageWsi')}</th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('settings.feedbackTab.usageAiTasks')}</th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('settings.feedbackTab.usageTraining')}</th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('settings.feedbackTab.usageMessages')}</th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('settings.feedbackTab.usageAnnotations')}</th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('settings.feedbackTab.usageFeedback')}</th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('settings.feedbackTab.usageThumbsUp')}</th>
+                      <th className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('settings.feedbackTab.usageThumbsDown')}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 bg-white">
+                    {usageData.map((u) => (
+                      <tr key={u.user_id} className="hover:bg-gray-50/80 transition-colors">
+                        <td className="px-4 py-3 text-gray-900 font-medium text-sm truncate max-w-[200px]" title={u.email}>
+                          {u.nickname || u.email}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-gray-100 text-gray-600">{u.role}</span>
+                        </td>
+                        <td className="px-3 py-3 text-center text-gray-700 font-mono text-xs">{u.wsi_count}</td>
+                        <td className="px-3 py-3 text-center text-gray-700 font-mono text-xs">{u.ai_task_count}</td>
+                        <td className="px-3 py-3 text-center text-gray-700 font-mono text-xs">{u.training_count}</td>
+                        <td className="px-3 py-3 text-center text-gray-700 font-mono text-xs">{u.message_count}</td>
+                        <td className="px-3 py-3 text-center text-gray-700 font-mono text-xs">{u.annotation_count}</td>
+                        <td className="px-3 py-3 text-center text-gray-700 font-mono text-xs">{u.feedback_count}</td>
+                        <td className="px-3 py-3 text-center text-green-600 font-mono text-xs">{u.thumbs_up}</td>
+                        <td className="px-3 py-3 text-center text-red-600 font-mono text-xs">{u.thumbs_down}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ===== Divider ===== */}
+      <hr className="border-gray-200 mb-6" />
+
+      {/* ===== Feedback Section ===== */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-6">
         <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
-          <MessageSquare className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700 font-shrink-0" />
+          <MessageSquare className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700 flex-shrink-0" />
           <div className="flex flex-col">
             <span>{t('settings.feedbackTab.title')}</span>
             <span className="text-gray-500 font-normal text-sm mt-0.5 sm:hidden">

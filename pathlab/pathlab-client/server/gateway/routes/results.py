@@ -2377,6 +2377,7 @@ async def start_external_validation(
         },
         model_config={
             "model_id": req.model_id,
+            "model_name": trained_model.model_name,  # Store model name for display
             "model_task_id": trained_model.task_id,
             "model_task_name": model_task.task_name,  # Store training task name for display
             "dataset_id": req.dataset_id,
@@ -3758,11 +3759,11 @@ async def _run_external_validation(
                     )
         else:
             # No missing WSIs - all features cached
-            await update_task_progress(TaskStatus.PATCHING, 35)
+            await update_task_progress(TaskStatus.TRAINING, 35)
             await set_progress(task_id, 35)
 
-        # Update status back to PATCHING for inference phase
-        await update_task_progress(TaskStatus.PATCHING, 35)
+        # Update status to TRAINING for inference phase
+        await update_task_progress(TaskStatus.TRAINING, 35)
         await set_progress(task_id, 35)
         async with logger_manager.session() as (tl, _db):
             valid_count = len(cached_wsi_ids)
@@ -4105,8 +4106,8 @@ async def _run_external_validation(
                 all_risk_scores.extend(chunk_risk_scores)
                 saved_result_files.extend(chunk_result_files)
 
-            # Update progress via file-based store
-            progress = int(chunk_end / total * 90)
+            # Update progress via file-based store (35% to 95% for inference phase)
+            progress = 35 + int(chunk_end / total * 60)
             await set_progress(task_id, progress)
 
             # Yield to event loop - this is the KEY fix that prevents blocking
@@ -4141,7 +4142,7 @@ async def _run_external_validation(
                 await db.commit()
             logger.info(f"Saved {len(db_records)} results to database")
 
-        await update_task_progress(TaskStatus.PATCHING, 95, results_saved, results_saved)
+        await update_task_progress(TaskStatus.TRAINING, 95, results_saved, results_saved)
 
         # Clear file-based progress (task is finishing)
         await clear_progress(task_id)
@@ -5195,10 +5196,7 @@ async def run_analysis_pipeline(
             if is_kfold and has_ci_calculation and task_type_str != "external_validation":
                 has_ci_calculation = False  # K-Fold doesn't use Bootstrap CI (internal analysis only)
 
-            if task_type_str in ("segmentation", "patch_segmentation"):
-                # Segmentation analysis uses training metrics, not per-WSI inference
-                needs_gpu_inference = False
-            elif task_type_str != "external_validation":
+            if task_type_str != "external_validation":
                 # Check if AI results exist
                 resources = await _check_task_resources(task.task_id, db)
                 needs_gpu_inference = not resources["has_ai_results"]

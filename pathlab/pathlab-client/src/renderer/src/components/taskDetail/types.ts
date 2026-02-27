@@ -61,6 +61,7 @@ export interface TaskDetail {
     loss_weights?: number[]    // Segmentation loss function weights
     // External validation specific fields
     model_id?: string
+    model_name?: string  // Model name for display
     model_task_id?: string
     model_task_name?: string  // Training task name for display
     dataset_id?: string

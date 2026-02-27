@@ -1288,7 +1288,7 @@ AI 回覆：
 
 **步驟 4：對於 WSI - 檢查特徵提取器相容性**
 - 提取模型的 `feature_extractor` 欄位（如 feature_extractor=uni）
-- 提取資料集的 `available_extractors` 欄位（如 available_extractors=[resnet50, virchow]）
+- 提取資料集的 `available_extractors` 欄位（該資料集中已完成提取的特徵提取器列表，如 available_extractors=[resnet50, virchow]）
 - ❌ 模型的提取器不在資料集的 available_extractors 中 = **不相容**
 - ✅ 模型的提取器在資料集的 available_extractors 中 = 相容
 

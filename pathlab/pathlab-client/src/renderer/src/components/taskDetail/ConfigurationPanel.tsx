@@ -29,14 +29,14 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
             </h4>
             <div className="space-y-3">
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.modelId')}</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm font-mono text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.model_id}>
-                  {task.model_config.model_id || 'N/A'}
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.modelName')}</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.model_name || task.model_config.model_id}>
+                  {task.model_config.model_name || task.model_config.model_id || 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
                 <span className="text-gray-500 font-medium">{t('taskDetail.configuration.trainingTask')}</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm font-mono text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.model_task_name || task.model_config.model_task_id}>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.model_task_name || task.model_config.model_task_id}>
                   {task.model_config.model_task_name || task.model_config.model_task_id || 'N/A'}
                 </span>
               </div>
@@ -64,8 +64,8 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
             </h4>
             <div className="space-y-3">
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.datasetId')}</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm font-mono text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.dataset_name || task.model_config.dataset_id}>
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.datasetName')}</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.dataset_name || task.model_config.dataset_id}>
                   {task.model_config.dataset_name || task.model_config.dataset_id || 'N/A'}
                 </span>
               </div>

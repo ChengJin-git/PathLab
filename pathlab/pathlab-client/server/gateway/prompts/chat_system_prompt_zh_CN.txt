@@ -1292,7 +1292,7 @@ AI 回复：
 
 **步骤 4：对于 WSI - 检查特征提取器兼容性**
 - 提取模型的 `feature_extractor` 字段（如 feature_extractor=uni）
-- 提取数据集的 `available_extractors` 字段（如 available_extractors=[resnet50, virchow]）
+- 提取数据集的 `available_extractors` 字段（该数据集中已提取的完成的特征提取器列表，如 available_extractors=[resnet50, virchow]）
 - ❌ 模型的提取器不在数据集的 available_extractors 中 = **不兼容**
 - ✅ 模型的提取器在数据集的 available_extractors 中 = 兼容
 

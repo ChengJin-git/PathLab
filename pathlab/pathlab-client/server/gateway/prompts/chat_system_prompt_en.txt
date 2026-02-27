@@ -1288,7 +1288,7 @@ DO NOT skip any step. DO NOT assume compatibility without checking.
 
 **STEP 4: For WSI - check feature extractor compatibility**
 - Extract model's `feature_extractor` field (e.g., feature_extractor=uni)
-- Extract dataset's `available_extractors` field (e.g., available_extractors=[resnet50, virchow])
+- Extract dataset's `available_extractors` field (list of feature extractors already completed extracted in this dataset, e.g., available_extractors=[resnet50, virchow])
 - ❌ Model's extractor NOT in dataset's available_extractors = **INCOMPATIBLE**
 - ✅ Model's extractor IS in dataset's available_extractors = COMPATIBLE
 
