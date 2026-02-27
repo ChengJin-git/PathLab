@@ -119,14 +119,43 @@ export function AnnotationOverlay({
     }
 
     // Label text
-    ctx.font = '11px system-ui, sans-serif'
+    ctx.font = 'bold 14px system-ui, -apple-system, sans-serif'
     ctx.fillStyle = color
-    const textY = topLeft.y - 4
+    const textY = topLeft.y - 6
     const metrics = ctx.measureText(region.label)
-    ctx.fillStyle = 'rgba(255,255,255,0.85)'
-    ctx.fillRect(topLeft.x, textY - 12, metrics.width + 6, 15)
+    // Background pill
+    const pillPadX = 6
+    const pillPadY = 3
+    const pillH = 18
+    ctx.fillStyle = 'rgba(255,255,255,0.92)'
+    ctx.beginPath()
+    const rx = topLeft.x
+    const ry = textY - pillH + pillPadY + 2
+    const rw = metrics.width + pillPadX * 2
+    const rh = pillH
+    const radius = 4
+    ctx.moveTo(rx + radius, ry)
+    ctx.lineTo(rx + rw - radius, ry)
+    ctx.quadraticCurveTo(rx + rw, ry, rx + rw, ry + radius)
+    ctx.lineTo(rx + rw, ry + rh - radius)
+    ctx.quadraticCurveTo(rx + rw, ry + rh, rx + rw - radius, ry + rh)
+    ctx.lineTo(rx + radius, ry + rh)
+    ctx.quadraticCurveTo(rx, ry + rh, rx, ry + rh - radius)
+    ctx.lineTo(rx, ry + radius)
+    ctx.quadraticCurveTo(rx, ry, rx + radius, ry)
+    ctx.closePath()
+    ctx.fill()
+    // Shadow
+    ctx.shadowColor = 'rgba(0,0,0,0.1)'
+    ctx.shadowBlur = 4
+    ctx.shadowOffsetY = 1
+    ctx.fill()
+    ctx.shadowColor = 'transparent'
+    ctx.shadowBlur = 0
+    ctx.shadowOffsetY = 0
+    // Text
     ctx.fillStyle = color
-    ctx.fillText(region.label, topLeft.x + 3, textY)
+    ctx.fillText(region.label, topLeft.x + pillPadX, textY)
   }, [l0ToScreen, labelColors])
 
   // Render all annotations + in-progress drawing

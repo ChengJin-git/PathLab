@@ -486,7 +486,7 @@ export default function WSIViewer({
       )}
 
       {/* Custom Control Bar (Apple Style) */}
-      <div className="absolute top-4 left-4 z-[100] flex flex-col gap-2 transition-opacity duration-200">
+      <div className="absolute top-4 left-4 z-20 flex flex-col gap-2 transition-opacity duration-200">
         <div className="bg-white/90 backdrop-blur-xl border border-white/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-xl p-1.5 flex items-center gap-1">
           <button
             onClick={handleZoomIn}

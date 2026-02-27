@@ -2801,7 +2801,8 @@
     "polygon": "多边形",
     "noLabel": "无标签",
     "setLabel": "设置标签",
-    "newLabel": "新标签...",
+    "defaultLabel": "默认标签",
+    "newLabel": "新标签，按回车确认",
     "currentSlide": "当前文件",
     "regions": "个区域",
     "noAnnotations": "当前文件暂无标注",
@@ -2849,6 +2850,7 @@
     "unsavedTitle": "未保存的标注",
     "unsavedMessage": "您有未保存的标注更改，是否在离开前保存？",
     "discardAndLeave": "放弃并离开",
-    "saveAndLeave": "保存并离开"
+    "saveAndLeave": "保存并离开",
+    "labelHint": "请先设置标签再开始标注"
   }
 }

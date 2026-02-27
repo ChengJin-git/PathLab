@@ -206,7 +206,7 @@ export default function WSIViewerPage() {
       setShowDeleteConfirm(false)
     } catch (err) {
       console.error('Failed to delete results:', err)
-      toast('error', t('wsiViewer.deleteResultsFailed', { error: String(err) }))
+      toast.error(t('wsiViewer.deleteResultsFailed', { error: String(err) }))
     } finally {
       setDeletingResults(false)
     }
@@ -446,12 +446,38 @@ export default function WSIViewerPage() {
   }, [])
 
   const handleLabelChange = useCallback((label: string) => {
+    const defaultLabel = t('annotation.defaultLabel')
+    // When user sets a real label and there are regions with the default label,
+    // replace all default-label regions with the new label and remove the default from colors
+    if (label !== defaultLabel) {
+      setAllAnnotations(prev => {
+        const updated: typeof prev = {}
+        let changed = false
+        for (const [wsiId, regions] of Object.entries(prev)) {
+          updated[wsiId] = regions.map(r => {
+            if (r.label === defaultLabel) {
+              changed = true
+              return { ...r, label }
+            }
+            return r
+          })
+        }
+        return changed ? updated : prev
+      })
+      setLabelColors(prev => {
+        if (prev[defaultLabel]) {
+          const { [defaultLabel]: _, ...rest } = prev
+          return rest
+        }
+        return prev
+      })
+    }
     setCurrentLabel(label)
     if (label && !labelColors[label]) {
       const color = getColorForLabel(label, labelColors)
       setLabelColors(prev => ({ ...prev, [label]: color }))
     }
-  }, [labelColors])
+  }, [labelColors, t])
 
   // Manual save handler
   const handleManualSave = useCallback(async () => {
@@ -475,10 +501,10 @@ export default function WSIViewerPage() {
         })
       }
       setHasUnsavedChanges(false)
-      toast('success', t('annotation.saved'))
+      toast.success(t('annotation.saved'))
     } catch (err) {
       console.error('Failed to save annotation draft:', err)
-      toast('error', t('annotation.saveFailed'))
+      toast.error(t('annotation.saveFailed'))
     } finally {
       setSavingAnnotations(false)
     }
@@ -659,7 +685,16 @@ export default function WSIViewerPage() {
             <div className="w-px h-5 bg-gray-200" />
             <AnnotationToolbar
               annotationMode={annotationMode}
-              onToggleMode={() => setAnnotationMode(m => !m)}
+              onToggleMode={() => {
+                setAnnotationMode(m => {
+                  if (!m && !currentLabel) {
+                    // Entering annotation mode with no label — set default
+                    const defaultLabel = t('annotation.defaultLabel')
+                    handleLabelChange(defaultLabel)
+                  }
+                  return !m
+                })
+              }}
               drawingTool={drawingTool}
               onToolChange={setDrawingTool}
               currentLabel={currentLabel}
@@ -676,7 +711,7 @@ export default function WSIViewerPage() {
                 disabled={savingAnnotations || !hasUnsavedChanges}
                 className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
                   hasUnsavedChanges
-                    ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm'
+                    ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'
                     : 'bg-gray-100 text-gray-400 cursor-default'
                 }`}
                 title={t('annotation.saveAnnotations')}
@@ -1003,7 +1038,7 @@ export default function WSIViewerPage() {
 
       {/* Unsaved Annotations Confirmation Modal */}
       {pendingNavigation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="flex items-center gap-3 px-6 pt-6 pb-2">
               <div className="p-2 bg-amber-100 rounded-full">
@@ -1040,7 +1075,7 @@ export default function WSIViewerPage() {
                   nav()
                 }}
                 disabled={savingAnnotations}
-                className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center gap-1.5"
               >
                 {savingAnnotations && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 {t('annotation.saveAndLeave')}

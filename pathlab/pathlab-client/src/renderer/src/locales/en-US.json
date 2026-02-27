@@ -2801,7 +2801,8 @@
     "polygon": "Polygon",
     "noLabel": "No Label",
     "setLabel": "Set Label",
-    "newLabel": "New label...",
+    "defaultLabel": "Default",
+    "newLabel": "New label, press Enter",
     "currentSlide": "Current File",
     "regions": "regions",
     "noAnnotations": "No annotations on this file yet",
@@ -2849,6 +2850,7 @@
     "unsavedTitle": "Unsaved Annotations",
     "unsavedMessage": "You have unsaved annotation changes. Would you like to save before leaving?",
     "discardAndLeave": "Discard & Leave",
-    "saveAndLeave": "Save & Leave"
+    "saveAndLeave": "Save & Leave",
+    "labelHint": "Please set a label before annotating"
   }
 }

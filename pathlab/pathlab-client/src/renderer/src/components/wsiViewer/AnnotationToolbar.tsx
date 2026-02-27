@@ -110,47 +110,40 @@ export function AnnotationToolbar({
           <div className="relative" ref={dropdownRef}>
             <button
               onClick={() => setIsLabelDropdownOpen(!isLabelDropdownOpen)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                currentLabel
-                  ? 'bg-gray-100 border border-gray-200 text-gray-700 hover:bg-gray-200'
-                  : 'bg-amber-50 border border-amber-300 text-amber-700 hover:bg-amber-100 animate-pulse'
-              }`}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all bg-gray-100 border border-gray-200 text-gray-700 hover:bg-gray-200"
             >
-              {currentLabel ? (
-                <span className="w-2.5 h-2.5 rounded-full border border-gray-300 flex-shrink-0" style={{ backgroundColor: currentColor }} />
-              ) : (
-                <Tag className="w-3 h-3 text-amber-500" />
-              )}
-              <span className="max-w-[80px] truncate">{currentLabel || t('annotation.setLabel')}</span>
-              <ChevronDown className={`w-3 h-3 ${currentLabel ? 'text-gray-400' : 'text-amber-400'}`} />
+              <span className="w-2.5 h-2.5 rounded-full border border-gray-300 flex-shrink-0" style={{ backgroundColor: currentColor }} />
+              <span className="max-w-[80px] truncate">{currentLabel || t('annotation.defaultLabel')}</span>
+              <ChevronDown className="w-3 h-3 text-gray-400" />
             </button>
 
             {isLabelDropdownOpen && (
-              <div className="absolute top-full mt-1 left-0 bg-white border border-gray-200 rounded-lg shadow-lg z-50 w-48 py-1">
+              <div className="absolute top-full mt-1 left-0 bg-white border border-gray-200 rounded-xl shadow-xl z-50 w-52 py-1.5 overflow-hidden">
                 {allLabels.map(label => (
                   <button
                     key={label}
                     onClick={() => { onLabelChange(label); setIsLabelDropdownOpen(false) }}
-                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-50 transition-colors ${label === currentLabel ? 'bg-indigo-50 text-indigo-700' : 'text-gray-700'}`}
+                    className={`w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-gray-50 transition-colors ${label === currentLabel ? 'bg-indigo-50 text-indigo-700' : 'text-gray-700'}`}
                   >
                     <span className="w-2.5 h-2.5 rounded-full border border-gray-200 flex-shrink-0" style={{ backgroundColor: labelColors[label] }} />
                     <span className="truncate">{label}</span>
                   </button>
                 ))}
                 {allLabels.length > 0 && <div className="border-t border-gray-100 mx-2 my-1" />}
-                <div className="px-2 py-1">
-                  <div className="flex items-center gap-1">
+                <div className="px-2.5 py-2">
+                  <div className="flex items-center gap-1.5">
                     <input
                       type="text"
                       value={customLabel}
                       onChange={e => setCustomLabel(e.target.value)}
                       placeholder={t('annotation.newLabel')}
-                      className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                      className="flex-1 px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
                       onKeyDown={e => { if (e.key === 'Enter') handleCustomLabelSubmit() }}
+                      autoFocus
                     />
                     <button
                       onClick={handleCustomLabelSubmit}
-                      className="p-1 text-indigo-600 hover:bg-indigo-50 rounded disabled:opacity-30"
+                      className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg disabled:opacity-30 transition-colors"
                       disabled={!customLabel.trim()}
                     >
                       <Tag className="w-3 h-3" />

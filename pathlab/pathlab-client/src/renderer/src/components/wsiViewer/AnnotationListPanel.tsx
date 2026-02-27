@@ -164,28 +164,22 @@ export function AnnotationListPanel({
           )}
           <Pencil className="w-4 h-4 text-indigo-500" />
           <h3 className="m-0 text-sm font-semibold text-gray-900">{t('annotation.currentSlide')}</h3>
-          <span className="ml-auto text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-            {regions.length} {t('annotation.regions')}
-          </span>
-        </div>
-        {/* Batch delete bar for current slide */}
-        {someCurrentSelected && (
-          <div className="flex items-center gap-2 px-4 py-2 bg-red-50 border-b border-red-100">
-            <button
-              onClick={handleBatchDeleteCurrent}
-              className="flex items-center gap-1.5 px-3 py-1 bg-red-500 text-white text-xs font-medium rounded-md hover:bg-red-600 transition-colors"
-            >
-              <Trash2 className="w-3 h-3" />
-              {t('annotation.deleteSelected', { count: selectedRegionIds.size })}
-            </button>
-            <button
-              onClick={() => setSelectedRegionIds(new Set())}
-              className="text-xs text-gray-500 hover:text-gray-700 transition-colors"
-            >
-              {t('annotation.deselectAll')}
-            </button>
+          <div className="ml-auto flex items-center gap-2">
+            {someCurrentSelected && (
+              <button
+                onClick={handleBatchDeleteCurrent}
+                className="flex items-center gap-1 px-2 py-0.5 text-red-500 hover:text-red-600 text-xs transition-colors"
+                title={t('annotation.deleteSelected', { count: selectedRegionIds.size })}
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>{selectedRegionIds.size}</span>
+              </button>
+            )}
+            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+              {regions.length} {t('annotation.regions')}
+            </span>
           </div>
-        )}
+        </div>
         <div className="p-3 max-h-[300px] overflow-y-auto">
           {regions.length === 0 ? (
             <p className="text-xs text-gray-400 text-center py-6">{t('annotation.noAnnotations')}</p>
@@ -246,29 +240,23 @@ export function AnnotationListPanel({
           )}
           <PackagePlus className="w-4 h-4 text-emerald-500" />
           <h3 className="m-0 text-sm font-semibold text-gray-900">{t('annotation.crossSlideSummary')}</h3>
-          <span className="ml-auto text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-            {totalRegions} ROIs · {totalSlides} {t('annotation.slides')}
-          </span>
+          <div className="ml-auto flex items-center gap-2">
+            {selectedCrossSlideLabels.size > 0 && (
+              <span
+                onClick={(e) => { e.stopPropagation(); handleBatchDeleteCrossSlide() }}
+                className="flex items-center gap-1 px-2 py-0.5 text-red-500 hover:text-red-600 text-xs transition-colors cursor-pointer"
+                title={t('annotation.deleteSelected', { count: selectedCrossSlideCount.total })}
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>{selectedCrossSlideCount.total}</span>
+              </span>
+            )}
+            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+              {totalRegions} ROIs · {totalSlides} {t('annotation.slides')}
+            </span>
+          </div>
           {showSummary ? <ChevronUp className="w-3.5 h-3.5 text-gray-400" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />}
         </button>
-        {/* Batch delete bar for cross-slide */}
-        {selectedCrossSlideLabels.size > 0 && (
-          <div className="flex items-center gap-2 px-4 py-2 bg-red-50 border-b border-red-100">
-            <button
-              onClick={handleBatchDeleteCrossSlide}
-              className="flex items-center gap-1.5 px-3 py-1 bg-red-500 text-white text-xs font-medium rounded-md hover:bg-red-600 transition-colors"
-            >
-              <Trash2 className="w-3 h-3" />
-              {t('annotation.deleteSelected', { count: selectedCrossSlideCount.total })}
-            </button>
-            <button
-              onClick={() => setSelectedCrossSlideLabels(new Set())}
-              className="text-xs text-gray-500 hover:text-gray-700 transition-colors"
-            >
-              {t('annotation.deselectAll')}
-            </button>
-          </div>
-        )}
         {showSummary && (
           <div className="p-3">
             {Object.keys(summary).length === 0 ? (
@@ -307,7 +295,7 @@ export function AnnotationListPanel({
 
       {/* Delete Confirmation Modal */}
       {deleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
             <div className="flex items-center gap-3 px-6 pt-6 pb-2">
               <div className="p-2 bg-red-100 rounded-full">
