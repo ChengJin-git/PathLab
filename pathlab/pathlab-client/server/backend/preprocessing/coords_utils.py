@@ -414,18 +414,22 @@ def get_or_compute_coordinates(
         seg_params=seg_params, filter_params=filter_params
     )
 
-    # Adaptive seg_level fallback: if no coordinates found, try lower seg_levels
-    # Lower levels have higher resolution, making it easier to detect small tissue regions
-    if len(coordinates) == 0 and initial_seg_level > 0:
-        logger.warning(
-            f"No coordinates found at seg_level={initial_seg_level} for {wsi_id}, "
-            f"trying lower levels adaptively..."
-        )
-        for fallback_level in range(initial_seg_level - 1, -1, -1):
-            logger.info(f"[Adaptive fallback] Trying seg_level={fallback_level} for {wsi_id}")
+    # Get default sthresh value for adaptive fallback
+    default_sthresh = seg_params.get('sthresh', 8) if seg_params else 8
+
+    # Adaptive sthresh fallback: if no coordinates found, try lower sthresh values first
+    # This is cheaper than falling back to lower seg_levels
+    STHREAD_FALLBACK_VALUES = [5, 3, 1]
+
+    if len(coordinates) == 0 and default_sthresh > 1:
+        for fallback_sthresh in STHREAD_FALLBACK_VALUES:
+            if fallback_sthresh >= default_sthresh:
+                continue
+
+            logger.info(f"[Adaptive sthresh fallback] Trying sthresh={fallback_sthresh} (default={default_sthresh}) for {wsi_id}")
 
             fallback_seg_params = dict(seg_params or {})
-            fallback_seg_params['seg_level'] = fallback_level
+            fallback_seg_params['sthresh'] = fallback_sthresh
 
             fallback_segmenter = TissueSegmenter(
                 **fallback_seg_params,
@@ -443,21 +447,74 @@ def get_or_compute_coordinates(
 
             coordinates = fallback_tiler.compute_coordinates(
                 slide, save_path=None,
-                seg_params=seg_params, filter_params=filter_params
+                seg_params=fallback_seg_params, filter_params=filter_params
             )
 
             if len(coordinates) > 0:
                 logger.info(
-                    f"[Adaptive fallback] Found {len(coordinates)} coordinates at "
-                    f"seg_level={fallback_level} for {wsi_id} "
-                    f"(original auto-selected level={initial_seg_level})"
+                    f"[Adaptive sthresh fallback] Found {len(coordinates)} coordinates at "
+                    f"sthresh={fallback_sthresh} for {wsi_id} "
+                    f"(original sthresh={default_sthresh}, seg_level={initial_seg_level})"
                 )
+                # Update seg_params for final save
+                seg_params = fallback_seg_params
+                break
+
+    # Adaptive seg_level fallback: if no coordinates found after sthresh fallback, try lower seg_levels
+    # Lower levels have higher resolution, making it easier to detect small tissue regions
+    if len(coordinates) == 0 and initial_seg_level > 0:
+        logger.warning(
+            f"No coordinates found at seg_level={initial_seg_level} (sthresh fallback exhausted) for {wsi_id}, "
+            f"trying lower seg_levels with adaptive sthresh..."
+        )
+        for fallback_level in range(initial_seg_level - 1, -1, -1):
+            logger.info(f"[Adaptive fallback] Trying seg_level={fallback_level} for {wsi_id}")
+
+            # For each seg_level, also try adaptive sthresh values
+            for sthresh_val in [default_sthresh] + STHREAD_FALLBACK_VALUES:
+                if sthresh_val >= default_sthresh:
+                    sthresh_val = default_sthresh
+
+                fallback_seg_params = dict(seg_params or {})
+                fallback_seg_params['seg_level'] = fallback_level
+                fallback_seg_params['sthresh'] = sthresh_val
+
+                fallback_segmenter = TissueSegmenter(
+                    **fallback_seg_params,
+                    filter_params=filter_params
+                )
+
+                fallback_tiler = WSITiler(
+                    level=level,
+                    segmenter=fallback_segmenter,
+                    contour_fn=contour_fn,
+                    use_padding=use_padding,
+                    native_mpp=native_mpp,
+                    level_downsample=level_downsample,
+                )
+
+                coordinates = fallback_tiler.compute_coordinates(
+                    slide, save_path=None,
+                    seg_params=fallback_seg_params, filter_params=filter_params
+                )
+
+                if len(coordinates) > 0:
+                    logger.info(
+                        f"[Adaptive fallback] Found {len(coordinates)} coordinates at "
+                        f"seg_level={fallback_level}, sthresh={sthresh_val} for {wsi_id} "
+                        f"(original: seg_level={initial_seg_level}, sthresh={default_sthresh})"
+                    )
+                    # Update seg_params for final save
+                    seg_params = fallback_seg_params
+                    break
+
+            if len(coordinates) > 0:
                 break
 
         if len(coordinates) == 0:
             logger.error(
                 f"No tissue coordinates found at any seg_level (0 to {initial_seg_level}) "
-                f"for {wsi_id}. The slide may not contain detectable tissue."
+                f"or sthresh fallback for {wsi_id}. The slide may not contain detectable tissue."
             )
 
     # Only save coordinates if we actually found tissue patches.
