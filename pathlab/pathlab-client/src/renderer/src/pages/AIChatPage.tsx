@@ -2259,60 +2259,63 @@ export default function AIChatPage() {
         {/* Input Area - Floating Island - Fixed to viewport bottom */}
         <div className="fixed bottom-6 left-0 right-0 px-4 z-30 pointer-events-none">
           <div className="max-w-4xl mx-auto pointer-events-auto">
-            {/* Attachments Preview */}
-            {(imageAttachments.length > 0 || fileAttachments.length > 0) && (
-              <div className="mb-3 flex flex-wrap gap-2 p-3 bg-white/90 backdrop-blur-xl rounded-2xl border border-gray-200/50 shadow-lg animate-in slide-in-from-bottom-2 duration-300">
-                {imageAttachments.map((attachment) => (
-                  <div key={attachment.id} className="relative group">
-                    <img
-                      src={attachment.preview}
-                      alt={t('aiChat.attachment')}
-                      className="w-14 h-14 object-cover rounded-xl border border-white/50 shadow-sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleImageRemove(attachment.id)}
-                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-900/80 text-white rounded-full flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity backdrop-blur-sm"
-                      aria-label={t('aiChat.removeAttachment')}
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-                {fileAttachments.map((attachment) => (
-                  <div key={attachment.id} className="relative group flex items-start p-2 bg-gray-50/50 rounded-xl border border-gray-100">
-                    <div className="flex-shrink-0 w-10 h-10 bg-white rounded-lg shadow-sm flex items-center justify-center mr-2">
-                      <FileSpreadsheet className="w-5 h-5 text-green-600" />
-                    </div>
-                    <div className="max-w-[120px]">
-                      <div className="text-xs font-medium text-gray-900 truncate">{attachment.name}</div>
-                      <div className="text-[10px] text-gray-500 uppercase">{attachment.type}</div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleFileRemove(attachment.id)}
-                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-900/80 text-white rounded-full flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity backdrop-blur-sm"
-                      aria-label={t('aiChat.removeAttachment')}
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
             <form ref={formRef} id="chat-form" onSubmit={handleSubmit} className="relative group">
               <div className={`
-                relative flex items-center 
-                bg-white/80 backdrop-blur-xl 
-                rounded-[28px] shadow-[0_8px_32px_rgba(0,0,0,0.12)] 
+                relative flex flex-col
+                bg-white/80 backdrop-blur-xl
+                rounded-[28px] shadow-[0_8px_32px_rgba(0,0,0,0.12)]
                 border transition-all duration-300
                 ${voiceSessionActive
                   ? 'border-primary-300 shadow-[0_0_0_4px_rgba(102,126,234,0.15)] bg-white/90'
                   : 'border-gray-200/50 hover:border-gray-300/80 hover:shadow-[0_8px_40px_rgba(0,0,0,0.15)]'
                 }
-                min-h-[56px] pl-4 pr-[104px] sm:pr-[120px] py-1.5
+                min-h-[56px] py-1.5
               `}>
+                {/* Inline Attachments Preview */}
+                {(imageAttachments.length > 0 || fileAttachments.length > 0) && (
+                  <div className="flex flex-wrap gap-2 px-4 pt-2.5 pb-1 animate-in fade-in slide-in-from-bottom-1 duration-200">
+                    {imageAttachments.map((attachment) => (
+                      <div key={attachment.id} className="relative group/thumb flex-shrink-0">
+                        <div className="w-16 h-16 sm:w-[72px] sm:h-[72px] rounded-xl overflow-hidden ring-1 ring-gray-200/60 shadow-sm bg-gray-50">
+                          <img
+                            src={attachment.preview}
+                            alt={t('aiChat.attachment')}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleImageRemove(attachment.id)}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-800/90 hover:bg-red-500 text-white rounded-full flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover/thumb:opacity-100 transition-all shadow-sm"
+                          aria-label={t('aiChat.removeAttachment')}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                    {fileAttachments.map((attachment) => (
+                      <div key={attachment.id} className="relative group/thumb flex-shrink-0">
+                        <div className="h-16 sm:h-[72px] flex items-center gap-2 px-3 rounded-xl bg-gray-50/80 ring-1 ring-gray-200/60">
+                          <FileSpreadsheet className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                          <div className="max-w-[100px] sm:max-w-[140px]">
+                            <div className="text-xs font-medium text-gray-800 truncate">{attachment.name}</div>
+                            <div className="text-[10px] text-gray-400 uppercase">{attachment.type}</div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleFileRemove(attachment.id)}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-800/90 hover:bg-red-500 text-white rounded-full flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover/thumb:opacity-100 transition-all shadow-sm"
+                          aria-label={t('aiChat.removeAttachment')}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="relative flex items-center min-h-[52px] pl-4 pr-[104px] sm:pr-[120px]">
                 <textarea
                   ref={textareaRef}
                   value={input}
@@ -2462,6 +2465,7 @@ export default function AIChatPage() {
                       <Send className="w-4 h-4 sm:w-5 sm:h-5" />
                     </button>
                   )}
+                </div>
                 </div>
               </div>
             </form>
