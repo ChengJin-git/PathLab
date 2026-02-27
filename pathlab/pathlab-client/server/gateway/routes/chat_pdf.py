@@ -10,13 +10,14 @@ Features:
 - Reference card generation for AI responses
 """
 import json
+import multiprocessing
 import os
 import re
 import shutil
 import tempfile
 import asyncio
 import hashlib
-import threading
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 from datetime import datetime, timedelta
@@ -26,8 +27,12 @@ from ..dependencies import logger
 from backend.common.config import Config
 from backend.common.gpu_utils import select_optimal_gpu_for_task
 
-# Serialize MinerU GPU access: only one parse at a time to avoid GPU memory conflicts
-_mineru_gpu_lock = threading.Lock()
+# Process pool for MinerU heavy parsing — runs in a separate process with its own
+# GIL so CPU-intensive PyTorch / vLLM operations do NOT block the asyncio event loop.
+_mineru_process_executor = ProcessPoolExecutor(
+    max_workers=1,
+    mp_context=multiprocessing.get_context('spawn'),
+)
 
 # Minimum free VRAM (MB) required to run MinerU hybrid_auto with VLM backend
 MIN_VRAM_MB_FOR_MINERU = 8000
@@ -472,46 +477,33 @@ async def _background_mineru_upgrade(url: str, pdf_bytes: bytes, max_pages: int 
     """Background task: run MinerU on a PDF that was already served via pymupdf.
 
     Saves the high-precision result to {url_hash}.mineru.md so the *next* cache hit
-    will automatically return the better parse.  Silently no-ops if:
-    - A MinerU cache already exists for this URL
-    - No GPU with sufficient VRAM is available
-    - The MinerU GPU lock cannot be acquired without blocking (another parse is
-      already in progress — we just skip rather than queue indefinitely)
+    will automatically return the better parse.  Silently no-ops if a MinerU cache
+    already exists for this URL.
+
+    GPU selection happens inside the subprocess at execution time (not submission
+    time) so VRAM readings are accurate even when tasks are queued.  The
+    ProcessPoolExecutor(max_workers=1) serializes execution automatically.
 
     max_pages=0 means unlimited: this task runs in the background so there is no
-    UX penalty for parsing all pages.  MinerU's value (tables, formulas, layout)
-    is most visible in the later sections of a paper (results, conclusions, appendices).
+    UX penalty for parsing all pages.
     """
     if _has_mineru_cache(url):
         return  # already upgraded
-
-    gpu_idx, free_mb = select_optimal_gpu_for_task(min_vram_mb=MIN_VRAM_MB_FOR_MINERU)
-    if gpu_idx == -1:
-        logger.info(
-            f"[BG MinerU] Skipping upgrade for {url}: "
-            f"no GPU with >= {MIN_VRAM_MB_FOR_MINERU} MB free (best: {free_mb:.0f} MB)"
-        )
-        return
-
-    # Non-blocking lock attempt: if another MinerU parse is running, skip.
-    acquired = _mineru_gpu_lock.acquire(blocking=False)
-    if not acquired:
-        logger.info(f"[BG MinerU] Skipping upgrade for {url}: MinerU GPU lock busy")
-        return
 
     # Prepare persistent image directory so MinerU images survive temp-dir cleanup.
     url_hash = _get_url_hash(url)
     images_output_dir = _get_pdf_cache_dir() / "images" / url_hash
     images_url_prefix = f"{Config.GATEWAY_SERVICE_URL}/pdf-images/{url_hash}"
 
-    original_cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
     try:
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
-        logger.info(f"[BG MinerU] Starting upgrade for {url} on cuda:{gpu_idx}")
+        logger.info(f"[BG MinerU] Queuing upgrade for {url}")
         loop = asyncio.get_event_loop()
         markdown = await loop.run_in_executor(
-            None, _parse_pdf_sync_inner, pdf_bytes, max_pages,
-            images_output_dir, images_url_prefix,
+            _mineru_process_executor,
+            _run_mineru_in_process,
+            pdf_bytes, max_pages,
+            str(images_output_dir), images_url_prefix,
+            MIN_VRAM_MB_FOR_MINERU,
         )
         if markdown and not markdown.startswith("[Error"):
             # Recover paper title from cached meta for vector re-indexing
@@ -523,15 +515,6 @@ async def _background_mineru_upgrade(url: str, pdf_bytes: bytes, max_pages: int 
             logger.warning(f"[BG MinerU] Upgrade failed for {url}: {markdown[:80]}")
     except Exception as e:
         logger.error(f"[BG MinerU] Upgrade error for {url}: {e}")
-    finally:
-        # Safety-net: ensure vLLM processes are cleaned up even if
-        # _parse_pdf_sync_inner's own cleanup somehow failed.
-        _shutdown_mineru_vlm_singleton()
-        _mineru_gpu_lock.release()
-        if original_cuda_devices is not None:
-            os.environ["CUDA_VISIBLE_DEVICES"] = original_cuda_devices
-        else:
-            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
 
 
 async def trigger_mineru_upgrade_by_hash(url_hash: str) -> bool:
@@ -1172,54 +1155,6 @@ def _parse_pdf_with_pymupdf(pdf_bytes: bytes, max_pages: int = 10) -> str | None
         return None
 
 
-def _parse_pdf_sync(
-    pdf_bytes: bytes,
-    max_pages: int = 10,
-    images_output_dir: Path | None = None,
-    images_url_prefix: str | None = None,
-) -> str:
-    """Two-tier PDF parsing: fast PyMuPDF first, MinerU GPU fallback.
-
-    Tier 1 (PyMuPDF): CPU-only, <1 second. Works for most academic PDFs with text layers.
-    Tier 2 (MinerU):  GPU-based, 10-30 seconds. Handles scanned/image-only PDFs.
-
-    Returns markdown with `--- Page X ---` markers between pages.
-    images_output_dir / images_url_prefix are forwarded to MinerU tier only
-    (PyMuPDF does not extract images).
-    """
-    # --- Tier 1: Fast PyMuPDF extraction (no GPU, <1s) ---
-    pymupdf_result = _parse_pdf_with_pymupdf(pdf_bytes, max_pages)
-    if pymupdf_result is not None:
-        return pymupdf_result
-
-    # --- Tier 2: MinerU GPU-based parsing (slow but handles scanned PDFs) ---
-    logger.info("PyMuPDF extraction insufficient, falling back to MinerU GPU parsing")
-
-    # --- GPU resource check (before acquiring heavy lock) ---
-    gpu_idx, free_mb = select_optimal_gpu_for_task(min_vram_mb=MIN_VRAM_MB_FOR_MINERU)
-    if gpu_idx == -1:
-        logger.warning(
-            f"No GPU with >= {MIN_VRAM_MB_FOR_MINERU} MB free VRAM available for PDF parsing. "
-            f"Best available: {free_mb:.0f} MB."
-        )
-        return "[Error: GPU unavailable — no GPU with sufficient free memory for PDF parsing. Please try again later.]"
-
-    logger.info(f"PDF parsing: selected GPU cuda:{gpu_idx} with {free_mb:.0f} MB free VRAM")
-
-    # Acquire lock so only one MinerU parse runs at a time (GPU memory safety)
-    with _mineru_gpu_lock:
-        # Set CUDA_VISIBLE_DEVICES so MinerU/vLLM targets the selected GPU
-        original_cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
-        try:
-            return _parse_pdf_sync_inner(pdf_bytes, max_pages, images_output_dir, images_url_prefix)
-        finally:
-            # Restore original CUDA_VISIBLE_DEVICES
-            if original_cuda_devices is not None:
-                os.environ["CUDA_VISIBLE_DEVICES"] = original_cuda_devices
-            else:
-                os.environ.pop("CUDA_VISIBLE_DEVICES", None)
-
 
 def _cleanup_vllm_processes() -> None:
     """Force-kill any orphaned vLLM EngineCore subprocesses spawned by this process.
@@ -1306,6 +1241,45 @@ def _shutdown_mineru_vlm_singleton() -> None:
 
     # 3) Fallback: kill any remaining vLLM child processes by PID.
     _cleanup_vllm_processes()
+
+
+def _run_mineru_in_process(
+    pdf_bytes: bytes,
+    max_pages: int,
+    images_output_dir_str: str | None = None,
+    images_url_prefix: str | None = None,
+    min_vram_mb: float = 0,
+) -> str:
+    """Run MinerU parsing in a subprocess (called via ProcessPoolExecutor).
+
+    This function is the subprocess entry-point.  It selects the best GPU at
+    execution time (not submission time — the queue may delay execution), sets
+    CUDA_VISIBLE_DEVICES, runs MinerU, cleans up VLM resources, and returns
+    markdown.  All arguments must be picklable (no Path, no Lock).
+    """
+    import os as _os
+    import logging as _logging
+    _logger = _logging.getLogger(__name__)
+
+    # Select GPU at execution time for accurate VRAM readings
+    from backend.common.gpu_utils import select_optimal_gpu_for_task as _select_gpu
+    gpu_idx, free_mb = _select_gpu(min_vram_mb=min_vram_mb)
+    if gpu_idx == -1:
+        return (
+            "[Error: GPU unavailable — no GPU with sufficient free memory "
+            "for PDF parsing. Please try again later.]"
+        )
+
+    _os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
+    _logger.info(f"[MinerU subprocess] Using cuda:{gpu_idx} ({free_mb:.0f} MB free)")
+
+    images_output_dir = Path(images_output_dir_str) if images_output_dir_str else None
+    try:
+        return _parse_pdf_sync_inner(
+            pdf_bytes, max_pages, images_output_dir, images_url_prefix,
+        )
+    finally:
+        _shutdown_mineru_vlm_singleton()
 
 
 def _parse_pdf_sync_inner(
@@ -1420,9 +1394,29 @@ async def parse_pdf(
     images_output_dir: Path | None = None,
     images_url_prefix: str | None = None,
 ) -> str:
+    """Async two-tier PDF parsing: fast PyMuPDF first, MinerU GPU fallback.
+
+    Tier 1 (PyMuPDF) is fast enough to run synchronously on the event loop.
+    Tier 2 (MinerU) runs in a dedicated subprocess via ProcessPoolExecutor
+    so heavy PyTorch / vLLM operations never hold the main-process GIL.
+    The executor has max_workers=1, so multiple requests queue automatically.
+    GPU selection happens inside the subprocess at execution time.
+    """
+    # --- Tier 1: Fast PyMuPDF extraction (no GPU, <1s) ---
+    pymupdf_result = _parse_pdf_with_pymupdf(pdf_bytes, max_pages)
+    if pymupdf_result is not None:
+        return pymupdf_result
+
+    # --- Tier 2: MinerU GPU-based parsing in subprocess ---
+    logger.info("PyMuPDF extraction insufficient, falling back to MinerU GPU parsing (queued)")
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        None, _parse_pdf_sync, pdf_bytes, max_pages, images_output_dir, images_url_prefix,
+        _mineru_process_executor,
+        _run_mineru_in_process,
+        pdf_bytes, max_pages,
+        str(images_output_dir) if images_output_dir else None,
+        images_url_prefix,
+        MIN_VRAM_MB_FOR_MINERU,
     )
 
 
