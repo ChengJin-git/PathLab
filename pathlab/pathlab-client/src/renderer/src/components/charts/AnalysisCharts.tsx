@@ -87,7 +87,7 @@ export const ConfusionMatrixChart = memo(function ConfusionMatrixChart({ data, t
       },
       grid: compact
         ? { left: 60, right: 35, top: 40, bottom: 125, containLabel: false }
-        : { left: '20%', right: 110, top: 60, bottom: 100, containLabel: false },
+        : { left: '25%', right: 110, top: 60, bottom: 100, containLabel: false },
       xAxis: {
         type: 'category',
         data: data.classes,

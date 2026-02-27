@@ -368,7 +368,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
             <div className={`w-1.5 h-6 ${accentBg} rounded-full`} />
             {t('analysisDetails.analysisCharts')}
           </h5>
-          <div className={`grid grid-cols-1 ${isSurvival ? 'xl:grid-cols-2 lg:max-w-5xl' : 'xl:grid-cols-2 2xl:grid-cols-3'} gap-8`}>
+          <div className={`grid grid-cols-1 ${isSurvival ? 'xl:grid-cols-2 lg:max-w-5xl' : 'xl:grid-cols-2'} gap-8`}>
             {/* Confusion Matrix */}
             {shouldShowChart('confusion_matrix') && (analysis.chart_data?.confusion_matrix ? (
               <ConfusionMatrixChart data={analysis.chart_data.confusion_matrix} title={t('analysisDetails.confusionMatrix')} />
