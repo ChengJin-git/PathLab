@@ -105,6 +105,24 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 | GET | `/results` | 获取所有 AI 结果 | 已登录 |
 | GET | `/results/analysis/stats` | 获取分析统计 | 已登录 |
 | GET | `/results/tasks` | 获取可分析任务列表 | 已登录 |
+| GET | `/results/datasets-for-validation` | 获取可用于验证的数据集 | 已登录 |
+| POST | `/results/external-validation` | 开始外部验证 | 已登录 |
+| GET | `/results/external-validation/completed` | 获取已完成的外部验证 | 已登录 |
+| GET | `/results/external-validation/{task_id}` | 获取验证进度 | 已登录 |
+| POST | `/results/tasks/{task_id}/analysis` | 运行任务分析 | 已登录 |
+| GET | `/results/tasks/{task_id}/analysis` | 获取任务分析结果 | 已登录 |
+| GET | `/results/tasks/{task_id}/analysis/stream` | 获取分析流 | 已登录 |
+| GET | `/results/tasks/{task_id}/quick-analysis` | 快速分析 | 已登录 |
+| GET | `/results/tasks/{task_id}/analysis/{analysis_id}/file/{filename}` | 获取分析文件 | 已登录 |
+| GET | `/results/analysis/{analysis_id}/status` | 获取分析状态 | 已登录 |
+| DELETE | `/results/tasks/{task_id}/analysis/{analysis_id}` | 删除分析 | 已登录 |
+| POST | `/results/tasks/{task_id}/regenerate` | 重新生成 AI 结果 | 已登录 |
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/results` | 获取所有 AI 结果 | 已登录 |
+| GET | `/results/analysis/stats` | 获取分析统计 | 已登录 |
+| GET | `/results/tasks` | 获取可分析任务列表 | 已登录 |
 | POST | `/results/tasks/{task_id}/regenerate` | 重新生成 AI 结果 | 已登录 |
 | POST | `/results/external-validation` | 开始外部验证 | 已登录 |
 | GET | `/results/external-validation/{task_id}` | 获取验证进度 | 已登录 |
@@ -227,6 +245,14 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
+| GET | `/wsi/permissions/my-permissions` | 获取当前用户权限列表 | 已登录 |
+| GET | `/wsi/permissions/user-permissions/{target_user_id}` | 获取指定用户的权限 | 已登录 |
+| GET | `/wsi/permissions/datasets/{dataset_id}/permissions` | 获取数据集的权限列表 | 已登录 |
+| POST | `/wsi/permissions/datasets/{dataset_id}/permissions` | 创建数据集权限 | 已登录 |
+| DELETE | `/wsi/permissions/datasets/{dataset_id}/permissions/{target_user_id}` | 删除数据集权限 | 已登录 |
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
 | GET | `/wsi/permissions` | 获取 WSI 权限列表 | 已登录 |
 | POST | `/wsi/permissions` | 创建 WSI 权限 | 已登录 |
 | DELETE | `/wsi/permissions/{id}` | 删除 WSI 权限 | 已登录 |
@@ -234,6 +260,20 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 ---
 
 ### 18. 消息反馈 API (`/feedback/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| POST | `/feedback/messages/{message_id}/feedback` | 提交消息反馈 | 已登录 |
+| GET | `/feedback/messages/{message_id}/feedback` | 获取消息反馈 | 已登录 |
+| DELETE | `/feedback/messages/{message_id}/feedback` | 删除消息反馈 | 已登录 |
+| GET | `/feedback/conversations/{conversation_id}/feedbacks` | 获取会话反馈列表 | 已登录 |
+| GET | `/feedback/admin/feedbacks` | 获取所有反馈（管理员） | 管理员 |
+| GET | `/feedback/admin/feedbacks/stats` | 获取反馈统计 | 管理员 |
+| GET | `/feedback/admin/feedbacks/export` | 导出反馈数据 | 管理员 |
+| POST | `/feedback/admin/feedbacks/export-async` | 异步导出反馈 | 管理员 |
+| GET | `/feedback/admin/feedbacks/export-async/{task_id}` | 获取导出任务状态 | 管理员 |
+| GET | `/feedback/admin/feedbacks/export-async/{task_id}/download` | 下载导出文件 | 管理员 |
+| DELETE | `/feedback/admin/feedbacks/reset` | 重置反馈数据 | 管理员 |
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -248,11 +288,31 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
 | GET | `/storage/tasks` | 获取存储任务列表 | 已登录 |
+| GET | `/storage/tasks/{task_id}` | 获取存储任务详情 | 已登录 |
+| DELETE | `/storage/tasks/{task_id}` | 删除存储任务 | 已登录 |
+| GET | `/storage/tasks/tasks/stream` | 获取任务流 | 已登录 |
+| POST | `/storage/tasks/reset-derived-data` | 重置派生数据 | 管理员 |
+| POST | `/storage/tasks/tasks/batch-import` | 批量导入 | 管理员 |
+| POST | `/storage/tasks/tasks/delete-external` | 删除外部数据 | 管理员 |
+| POST | `/storage/tasks/tasks/batch-update-metadata` | 批量更新元数据 | 管理员 |
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/storage/tasks` | 获取存储任务列表 | 已登录 |
 | GET | `/storage/tasks/{id}` | 获取存储任务详情 | 已登录 |
 
 ---
 
 ### 20. 存储扫描 API (`/storage/scan/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| POST | `/storage/scan/scan-directory` | 启动存储扫描 | 管理员 |
+| GET | `/storage/scan/status` | 获取扫描状态 | 已登录 |
+| GET | `/storage/scan/external-datasets-summary` | 获取外部数据集摘要 | 已登录 |
+| POST | `/storage/scan/tasks/unbind-dataset` | 解绑数据集 | 管理员 |
+| POST | `/storage/scan/check-external-files` | 检查外部文件 | 管理员 |
+| POST | `/storage/scan/delete-unavailable-files` | 删除不可用文件 | 管理员 |
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -329,6 +389,8 @@ PostgreSQL 数据库包含 18 个表（自动创建）：
 | `training_task_wsi` | 训练任务与 WSI 多对多关联 |
 | `trained_models` | 模型检查点元数据 |
 | `training_logs` | 训练日志条目（运行时通过 Redis Streams 读写，SSE 流式） |
+| `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
+| `annotation_drafts` | 标注草稿 |
 | `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
 
 ---

@@ -4,7 +4,8 @@ PDF Vector Store — LanceDB + sentence-transformers for semantic chunk retrieva
 Replaces BM25 page-level search with paragraph-level vector search.
 - Embedding model: paraphrase-multilingual-MiniLM-L12-v2 (384-dim, 中英混合)
 - Vector DB: LanceDB (embedded, local file storage, 0 port)
-- Chunking: ~500 chars with 100 char overlap
+- Chunking: LlamaIndex MarkdownNodeParser + SentenceSplitter for structure-
+  and sentence-aware chunking (with character-based fallback).
 """
 import re
 import threading
@@ -22,8 +23,14 @@ _embedding_lock = threading.Lock()
 
 EMBEDDING_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 EMBEDDING_DIM = 384
-CHUNK_SIZE = 500
-CHUNK_OVERLAP = 100
+# Token-based chunk size for SentenceSplitter (tiktoken tokens).
+# 256 tokens ≈ 600-1000 chars — well-suited for the 128-token embedding model
+# while preserving enough context for LLM consumption.
+CHUNK_SIZE_TOKENS = 256
+CHUNK_OVERLAP_TOKENS = 64
+# Fallback character-based constants (used when llama-index is unavailable)
+CHUNK_SIZE_CHARS = 500
+CHUNK_OVERLAP_CHARS = 100
 TABLE_NAME = "pdf_chunks"
 
 
@@ -53,20 +60,13 @@ def _embed_texts(texts: list[str]) -> np.ndarray:
     return model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
 
 
-# ── Chunking ────────────────────────────────────────────────────────────────
+# ── Page marker extraction ─────────────────────────────────────────────────
 
-def _chunk_markdown(markdown: str, url_hash: str, paper_title: str) -> list[dict]:
-    """Split markdown into overlapping chunks with metadata.
-
-    Each chunk dict has: url_hash, paper_title, page_num, chunk_index, chunk_text.
-    """
-    chunks: list[dict] = []
-
-    # Split by page markers: '--- Page N ---'
+def _extract_pages(markdown: str) -> list[tuple[int, str]]:
+    """Split markdown by ``--- Page N ---`` markers into (page_num, content) pairs."""
     page_pattern = re.compile(r'---\s*Page\s+(\d+)\s*---')
     parts = page_pattern.split(markdown)
 
-    # parts = [before_first_marker, page_num_1, content_1, page_num_2, content_2, ...]
     pages: list[tuple[int, str]] = []
     if parts[0].strip():
         pages.append((0, parts[0].strip()))
@@ -77,16 +77,110 @@ def _chunk_markdown(markdown: str, url_hash: str, paper_title: str) -> list[dict
             pages.append((page_num, content))
 
     if not pages:
-        # No page markers — treat entire doc as page 0
         pages = [(0, markdown.strip())]
+    return pages
 
+
+# ── Chunking (LlamaIndex pipeline) ────────────────────────────────────────
+
+def _chunk_markdown(markdown: str, url_hash: str, paper_title: str) -> list[dict]:
+    """Split markdown into structure- and sentence-aware chunks with metadata.
+
+    Pipeline:
+      1. Split by ``--- Page N ---`` markers to preserve page tracking.
+      2. Apply ``MarkdownNodeParser`` to each page for header-based splitting.
+      3. Apply ``SentenceSplitter`` to further split oversized sections while
+         respecting sentence boundaries.
+      4. Prepend the section header path to each chunk so the embedding
+         captures structural context.
+
+    Falls back to a simple character-based splitter when ``llama-index-core``
+    is not installed.
+
+    Each chunk dict has: url_hash, paper_title, page_num, chunk_index, chunk_text.
+    """
+    try:
+        return _chunk_markdown_llamaindex(markdown, url_hash, paper_title)
+    except ImportError:
+        logger.warning(
+            "[VectorStore] llama-index-core not installed — "
+            "falling back to character-based chunking"
+        )
+        return _chunk_markdown_fallback(markdown, url_hash, paper_title)
+    except Exception as e:
+        logger.error(
+            f"[VectorStore] LlamaIndex chunking failed, falling back: {e}"
+        )
+        return _chunk_markdown_fallback(markdown, url_hash, paper_title)
+
+
+def _chunk_markdown_llamaindex(
+    markdown: str, url_hash: str, paper_title: str,
+) -> list[dict]:
+    """Structure-aware chunking via LlamaIndex MarkdownNodeParser + SentenceSplitter."""
+    from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
+    from llama_index.core.schema import Document
+
+    md_parser = MarkdownNodeParser.from_defaults()
+    sentence_splitter = SentenceSplitter(
+        chunk_size=CHUNK_SIZE_TOKENS,
+        chunk_overlap=CHUNK_OVERLAP_TOKENS,
+    )
+
+    pages = _extract_pages(markdown)
+    chunks: list[dict] = []
     chunk_index = 0
+
     for page_num, page_text in pages:
-        # Split page text into chunks with overlap
+        # Wrap page content as a LlamaIndex Document
+        doc = Document(text=page_text)
+
+        # Step 1: split by markdown headers → one node per section
+        section_nodes = md_parser.get_nodes_from_documents([doc])
+
+        for section_node in section_nodes:
+            section_text = section_node.get_content()
+            header_path = section_node.metadata.get("header_path", "/")
+
+            # Step 2: further split large sections by sentence boundaries
+            sub_texts = sentence_splitter.split_text(section_text)
+
+            for sub_text in sub_texts:
+                sub_text = sub_text.strip()
+                if not sub_text:
+                    continue
+
+                # Prepend header path for embedding context (skip if root-only)
+                if header_path and header_path != "/":
+                    chunk_text = f"[Section: {header_path}]\n{sub_text}"
+                else:
+                    chunk_text = sub_text
+
+                chunks.append({
+                    "url_hash": url_hash,
+                    "paper_title": paper_title,
+                    "page_num": page_num,
+                    "chunk_index": chunk_index,
+                    "chunk_text": chunk_text,
+                })
+                chunk_index += 1
+
+    return chunks
+
+
+def _chunk_markdown_fallback(
+    markdown: str, url_hash: str, paper_title: str,
+) -> list[dict]:
+    """Simple character-based chunking (fallback when llama-index is unavailable)."""
+    pages = _extract_pages(markdown)
+    chunks: list[dict] = []
+    chunk_index = 0
+
+    for page_num, page_text in pages:
         start = 0
         text_len = len(page_text)
         while start < text_len:
-            end = start + CHUNK_SIZE
+            end = start + CHUNK_SIZE_CHARS
             chunk_text = page_text[start:end].strip()
             if chunk_text:
                 chunks.append({
@@ -97,8 +191,7 @@ def _chunk_markdown(markdown: str, url_hash: str, paper_title: str) -> list[dict
                     "chunk_text": chunk_text,
                 })
                 chunk_index += 1
-            # Advance by (CHUNK_SIZE - CHUNK_OVERLAP) to create overlap
-            start += CHUNK_SIZE - CHUNK_OVERLAP
+            start += CHUNK_SIZE_CHARS - CHUNK_OVERLAP_CHARS
             if end >= text_len:
                 break
 
