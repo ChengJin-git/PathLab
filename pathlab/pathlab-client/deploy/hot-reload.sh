@@ -97,6 +97,25 @@ restart_service() {
         sleep 0.5
     fi
 
+    # 强制杀掉仍然占用端口的进程
+    local port_pids=$(lsof -ti :"$port" 2>/dev/null || true)
+    if [ -n "$port_pids" ]; then
+        echo -e "  ${YELLOW}端口 $port 仍被占用 (PID: $port_pids)，强制释放...${NC}"
+        for pid in $port_pids; do kill -9 "$pid" 2>/dev/null || true; done
+    fi
+
+    # 等待端口完全释放
+    echo -n "  等待端口 $port 释放"
+    for i in {1..20}; do
+        if ! lsof -ti :"$port" > /dev/null 2>&1; then
+            echo " ✓"; break
+        fi
+        if [ "$i" -eq 20 ]; then
+            echo ""; echo -e "${RED}[$name]${NC} ✗ 端口 $port 释放超时！"; return 1
+        fi
+        echo -n "."; sleep 0.5
+    done
+
     # Start new process
     cd "$SERVER_DIR"
     nohup "$PYTHON" -m uvicorn "$app" \
