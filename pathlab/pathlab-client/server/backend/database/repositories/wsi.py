@@ -451,9 +451,9 @@ class WSIRepository:
         labels_result = await db.execute(labels_query)
         labels = {label: count for label, count in labels_result.all() if label}
 
-        # Query for datasets (with join to Dataset table)
-        # Include data_type (WSI/Patch) and labels per dataset
-        from ..models import Dataset
+        # Query for datasets (with join to Dataset and DataGroup tables)
+        # Include data_type (WSI/Patch), labels per dataset, and DataGroup task_type
+        from ..models import Dataset, DataGroup
 
         # Build data_type case expressions
         is_wsi_case = case((is_wsi, 1), else_=0)
@@ -463,15 +463,20 @@ class WSIRepository:
             Dataset.dataset_id,
             Dataset.name.label("dataset_name"),
             Dataset.user_id.label("dataset_owner_id"),
+            DataGroup.task_type.label("group_task_type"),
             func.count(WSISlide.id).label("file_count"),
             func.sum(is_wsi_case).label("wsi_count"),
             func.sum(is_patch_case).label("patch_count")
-        ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
+        ).select_from(WSISlide).outerjoin(
+            Dataset, WSISlide.dataset_id == Dataset.dataset_id
+        ).outerjoin(
+            DataGroup, Dataset.group_id == DataGroup.group_id
+        )
 
         if user_filter is not None:
             datasets_query = datasets_query.where(user_filter)
 
-        datasets_query = datasets_query.group_by(Dataset.dataset_id, Dataset.name, Dataset.user_id).order_by(Dataset.name)
+        datasets_query = datasets_query.group_by(Dataset.dataset_id, Dataset.name, Dataset.user_id, DataGroup.task_type).order_by(Dataset.name)
         datasets_result = await db.execute(datasets_query)
 
         # Get labels per dataset
@@ -612,6 +617,7 @@ class WSIRepository:
                 "dataset_name": row.dataset_name or "Uncategorized",
                 "file_count": row.file_count,
                 "data_type": data_type,
+                "group_task_type": row.group_task_type,  # DataGroup task_type: 'classification', 'survival', 'segmentation'
                 "labels": ds_labels,
                 "survival_count": survival_count,  # Number of records with survival data
                 "event_status": event_status_dist,  # Distribution of event_status: {'event': count, 'censored': count}

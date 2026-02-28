@@ -1792,6 +1792,9 @@ async def chat_with_ai(
                 task_types.append("classification")
             if ds_survival > 0:
                 task_types.append("survival")
+            ds_group_task_type = d.get('group_task_type', '')
+            if ds_group_task_type == 'segmentation':
+                task_types.append("segmentation")
             task_types_str = f", supported_tasks=[{', '.join(task_types)}]" if task_types else ""
 
             # For WSI datasets, scan feature cache to find available extractors (for external validation compatibility)

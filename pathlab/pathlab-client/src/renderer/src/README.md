@@ -12,6 +12,7 @@ src/
 │   ├── Layout.tsx           # Main layout (sidebar navigation)
 │   ├── WSIViewer.tsx        # OpenSeadragon wrapper
 │   ├── PageHeader.tsx       # Page header component
+│   ├── HeatmapOverlay.tsx  # Attention heatmap overlay
 │   └── ...
 ├── pages/               # Page components (14 pages)
 │   ├── IntroductionPage.tsx      # Product introduction (/)
@@ -76,6 +77,26 @@ The frontend obtains dynamic port via Electron preload script to communicate wit
 const backendUrl = await window.api.getBackendUrl()
 // Returns: http://127.0.0.1:48427 (port dynamically allocated)
 ```
+
+## Supported AI Models
+
+### Feature Extractors (19 models)
+
+- ResNet50, ViT-Large (ImageNet)
+- UNI, UNI2, CONCH, CONCH 1.5 (Mahmood Lab)
+- Virchow, Virchow2 (Paige AI)
+- H-Optimus-0, H-Optimus-1 (Bioptimus)
+- Phikon, Phikon2 (Owkin)
+- PLIP, PathoCLIP (PathLAIA)
+- OpenMidnight (SophontAI)
+- mSTAR, GPFM, SmartCCS, SmartCyto (HKUST Smart Lab)
+
+### MIL Aggregators (8 models)
+
+- ABMIL, MeanMIL, MaxMIL
+- DSMIL, DTFDMIL
+- CLAM-SB, CLAM-MB
+- TransMIL
 
 ## Related Documentation
 

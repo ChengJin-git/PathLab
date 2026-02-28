@@ -236,6 +236,13 @@ Example:
 2. ✅ **Storage Migration** - Move storage to new location (`POST /storage/migrate`)
 3. ✅ **Disk Space Monitoring** - Get disk usage statistics (`GET /storage/disk-space`)
 4. ✅ **Storage Configuration** - Get/update storage settings (`GET/PUT /storage/config`)
+5. ✅ **Batch Import** - Batch import WSI files (`POST /storage/tasks/batch-import`)
+6. ✅ **External File Management** - Manage external data files (`POST /storage/scan/*`)
+
+1. ✅ **Orphan File Detection** - Scan and identify files not referenced in database (`GET /storage/orphaned`)
+2. ✅ **Storage Migration** - Move storage to new location (`POST /storage/migrate`)
+3. ✅ **Disk Space Monitoring** - Get disk usage statistics (`GET /storage/disk-space`)
+4. ✅ **Storage Configuration** - Get/update storage settings (`GET/PUT /storage/config`)
 
 ## Future Extensions
 

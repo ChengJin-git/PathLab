@@ -97,13 +97,13 @@ pathlab/
 | H-Optimus-1 | H-Optimus-1 | 1536 | Bioptimus |
 | Phikon | phikon | 768 | Owkin |
 | Phikon2 | phikon2 | 1024 | Owkin |
-| PLIP | plip | 512 | PathLAIA |
-| PathoCLIP | patho_clip | 512 | PathLAIA |
+| PLIP | plip | 512 | James Zou Lab |
+| PathoCLIP | patho_clip | 512 | Hong Bu Lab |
 | OpenMidnight | openmidnight | 1536 | SophontAI |
-| mSTAR | mSTAR | 1024 | Smartlab |
-| GPFM | GPFM | 1024 | Smartlab |
-| SmartCCS | smartccs | 1024 | Smartlab |
-| SmartCyto | smartcyto | 768 | Smartlab |
+| mSTAR | mSTAR | 1024 | HKUST Smart Lab |
+| GPFM | GPFM | 1024 | HKUST Smart Lab |
+| SmartCCS | smartccs | 1024 | HKUST Smart Lab |
+| SmartCyto | smartcyto | 768 | HKUST Smart Lab |
 
 ### 聚合器 (8 种)
 
@@ -137,9 +137,10 @@ pathlab/
 | `/reports` | ReportGeneratorPage | 报告生成器 |
 | `/tools` | ToolsPage | 实用工具集 |
 | `/settings` | SettingsPage | 系统设置（含存储管理） |
+
 ---
 
-| Gateway 路由模块 (30 个)
+## Gateway 路由模块 (30 个)
 
 | 模块 | 路由前缀 | 功能 |
 |------|---------|------|
