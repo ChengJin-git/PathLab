@@ -55,6 +55,7 @@ src/
 | `/` | IntroductionPage | Product introduction page (public) |
 | `/login` | LoginPage | Login welcome page (public) |
 | `/dashboard` | AIChatPage | AI assistant (SSE streaming) |
+| `/dashboard/:conversationId` | AIChatPage | AI assistant with specific conversation |
 | `/tools` | ToolsPage | Utility tools |
 | `/settings` | SettingsPage | System settings (with Storage tab) |
 | `/task-setup` | NewTaskPage | Task configuration |

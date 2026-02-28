@@ -29,7 +29,7 @@ server/
 │   ├── task_queue.py     # GPU 任务队列管理器
 │   ├── models.py         # Pydantic 请求/响应模型
 │   ├── pipeline.py       # AI Pipeline 编排
-│   ├── routes/           # 模块化路由 (30 个模块)
+│   ├── routes/           # 模块化路由 (29 个模块)
 │   │   ├── auth.py           # 认证 (FastAPI-Users)
 │   │   ├── wsi.py            # WSI CRUD + 数据集
 │   │   ├── wsi_upload.py     # WSI 上传 (文件/路径/CSV)
@@ -91,9 +91,11 @@ server/
         ├── redis_client.py   # Redis 异步连接池
         ├── progress_store.py # 任务进度存储 (Redis)
         ├── port_utils.py     # 端口发现工具
-        ├── auth.py           # 认证工具
         ├── config.py         # 配置管理
-        └── logger.py         # 日志工具
+        ├── logger.py         # 日志工具
+        ├── file_types.py     # 支持的文件类型定义
+        ├── gpu_utils.py      # GPU 工具函数
+        └── slide_utils.py    # WSI 切片工具函数
 ```
 
 ## 数据库模型 (18 个表)

@@ -17,7 +17,8 @@ import shutil
 import tempfile
 import asyncio
 import hashlib
-from concurrent.futures import ProcessPoolExecutor, BrokenProcessPool
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from typing import Any
 from datetime import datetime, timedelta

@@ -56,7 +56,7 @@ pathlab/
     │
     └── server/               # Python 后端 (FastAPI)
         ├── main.py           # 统一入口
-        ├── gateway/          # API 网关 (30 个路由模块)
+        ├── gateway/          # API 网关 (29 个路由模块)
         └── backend/          # 核心服务
             ├── ai/           # AI 推理与训练
             ├── preprocessing/# WSI 预处理
@@ -120,13 +120,14 @@ pathlab/
 
 ---
 
-## 页面路由 (14 页)
+## 页面路由 (14 路由, 13 页面组件)
 
 | 路由 | 页面 | 说明 |
 |------|------|------|
 | `/` | IntroductionPage | 产品介绍页 |
 | `/login` | LoginPage | 登录欢迎页 |
 | `/dashboard` | AIChatPage | PathLab Agent 智能助手 |
+| `/dashboard/:conversationId` | AIChatPage | 指定会话的智能助手 |
 | `/task-setup` | NewTaskPage | 任务配置 |
 | `/task-list` | TaskListPage | 任务列表 |
 | `/task/:task_id` | TaskDetailPage | 任务详情 |
@@ -140,7 +141,7 @@ pathlab/
 
 ---
 
-## Gateway 路由模块 (30 个)
+## Gateway 路由模块 (29 个文件, 16 个顶层路由器)
 
 | 模块 | 路由前缀 | 功能 |
 |------|---------|------|

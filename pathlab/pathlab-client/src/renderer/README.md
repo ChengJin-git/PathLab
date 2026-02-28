@@ -65,33 +65,6 @@
    - Orphaned file detection
    - Storage migration support
 
-1. **WSI Viewer** - Interactive multi-gigapixel image viewer
-   - Deep Zoom Image (DZI) protocol
-   - Tile-based rendering for performance
-   - Navigation controls and mini-map
-   - Full-screen support
-
-2. **AI Chat Assistant** - Natural language interface for research tasks
-   - Streaming LLM responses
-   - Task description parsing
-   - Automatic parameter extraction
-   - Conversation history (database-persisted)
-
-3. **Dashboard** - System overview and statistics
-   - WSI count and label distribution
-   - Task status monitoring
-   - Quick access to recent analyses
-
-4. **File Browser** - WSI library management
-   - Grid/list view of all slides
-   - Metadata display (case ID, label, dimensions)
-   - Quick navigation to viewer
-
-5. **Analysis Setup** - Configure AI analysis tasks
-   - Parameter customization (tile size, stride, model selection)
-   - Device selection (CPU/GPU)
-   - Real-time task submission
-
 ## Project Structure
 
 ```
