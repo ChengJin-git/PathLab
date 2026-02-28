@@ -223,7 +223,29 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
           <div className="text-center py-8 text-gray-400 text-sm">{t('settings.feedbackTab.usageNoData')}</div>
         ) : (
           <>
-            {/* Summary Totals Cards */}
+            {/* Summary Totals Cards - Responsive grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2 sm:gap-3 mb-5">
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 rounded-xl p-2 sm:p-3 text-center">
+                <div className="flex items-center justify-center mb-0.5 sm:mb-1">
+                  <Users className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-blue-500 mr-0.5 sm:mr-1" />
+                  <span className="text-[8px] sm:text-[10px] text-blue-600 uppercase font-semibold tracking-wider">{t('settings.feedbackTab.usageTotalUsers')}</span>
+                </div>
+                <div className="text-lg sm:text-xl md:text-2xl font-bold text-blue-700">{usageData.length}</div>
+              </div>
+              {([
+                { key: 'usageWsi', value: usageTotals.wsi_count, color: 'indigo' },
+                { key: 'usageAiTasks', value: usageTotals.ai_task_count, color: 'violet' },
+                { key: 'usageTraining', value: usageTotals.training_count, color: 'purple' },
+                { key: 'usageMessages', value: usageTotals.message_count, color: 'cyan' },
+                { key: 'usageAnnotations', value: usageTotals.annotation_count, color: 'teal' },
+                { key: 'usageFeedback', value: usageTotals.feedback_count, color: 'amber' },
+              ] as const).map(({ key, value, color }) => (
+                <div key={key} className={`bg-gradient-to-br from-${color}-50 to-${color}-100/50 rounded-xl p-2 sm:p-3 text-center`}>
+                  <div className={`text-[8px] sm:text-[10px] text-${color}-600 uppercase font-semibold tracking-wider mb-0.5 sm:mb-1`}>{t(`settings.feedbackTab.${key}`)}</div>
+                  <div className={`text-lg sm:text-xl md:text-2xl font-bold text-${color}-700`}>{value}</div>
+                </div>
+              ))}
+            </div>
             <div className="grid grid-cols-7 gap-3 mb-5">
               <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 rounded-xl p-3 text-center">
                 <div className="flex items-center justify-center mb-1">

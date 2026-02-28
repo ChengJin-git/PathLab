@@ -294,7 +294,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 | POST | `/storage/tasks/reset-derived-data` | 重置派生数据 | 管理员 |
 | POST | `/storage/tasks/tasks/batch-import` | 批量导入 | 管理员 |
 | POST | `/storage/tasks/tasks/delete-external` | 删除外部数据 | 管理员 |
-| POST | `/storage/tasks/tasks/batch-update-metadata` | 批量更新元数据 | 管理员 |
+| POST | `/storage/tasks/batch-update-metadata` | 批量更新元数据 | 管理员 |
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|

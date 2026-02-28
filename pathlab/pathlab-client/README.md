@@ -73,14 +73,15 @@ pathlab-client/
     │   │   │   └── gpu.py            # GPU 信息
     └── backend/              # 核心服务
         ├── ai/               # AI 服务 (内部端口)
-    │   ├── tasks/            # 任务类型
-    │   │   │   ├── wsi_classification/   # WSI 分类 (MIL)
-    │   │   │   ├── patch_classification/ # Patch 分类
-    │   │   │   ├── patch_segmentation/  # Patch 分割
-    │   │   │   └── wsi_survival/        # 生存分析
+        ├── tasks/            # 任务类型
+        │   │   ├── wsi_classification/   # WSI 分类 (MIL)
+        │   │   ├── patch_classification/ # Patch 分类
+        │   │   ├── patch_segmentation/  # Patch 分割
+        │   │   │   └── wsi_survival/        # 生存分析
+        ├── extractors/       # 19 种特征提取器
         │   │   ├── wsi_classification/   # WSI 分类 (MIL)
         │   │   └── patch_classification/ # Patch 分类
-    │   │   ├── extractors/       # 19 种特征提取器
+        │   ├── extractors/       # 19 种特征提取器
         │   ├── aggregators/      # 8 种聚合器 (ABMIL, MeanMIL, MaxMIL, DSMIL, DTFDMIL, CLAM, TransMIL)
         │   └── utils/            # CAM 工具 (Grad-CAM, Attention)
         ├── preprocessing/    # 预处理服务 (内部端口)
@@ -88,7 +89,7 @@ pathlab-client/
         │   └── tiling.py         # WSI 切片 + 坐标提取
         ├── database/         # PostgreSQL ORM
         │   ├── database.py       # 异步 PostgreSQL 连接 (asyncpg)
-    │   │   ├── models.py         # 数据模型 (18 个表)
+        │   ├── models.py         # 数据模型 (18 个表)
         │   └── repositories/     # 数据访问层 (Repository 模式，模块化目录)
         ├── storage/          # 文件存储管理
         │   └── manager.py        # 存储管理器 (级联删除)
