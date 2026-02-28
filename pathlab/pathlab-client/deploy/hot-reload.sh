@@ -88,33 +88,51 @@ restart_service() {
     local old_pids=$(pgrep -f "$pattern" 2>/dev/null || true)
     if [ -n "$old_pids" ]; then
         echo "  停止旧进程 (PID: $old_pids)..."
+        # 1) 先杀子进程树 (uvicorn workers)
+        for pid in $old_pids; do
+            pkill -9 -P "$pid" 2>/dev/null || true
+        done
+        # 2) SIGTERM 优雅关闭主进程
         for pid in $old_pids; do kill -TERM "$pid" 2>/dev/null || true; done
         for i in {1..10}; do
             pgrep -f "$pattern" > /dev/null 2>&1 || break
             sleep 0.5
         done
+        # 3) 仍未退出则 SIGKILL
         for pid in $old_pids; do kill -9 "$pid" 2>/dev/null || true; done
         sleep 0.5
     fi
 
-    # 强制杀掉仍然占用端口的进程
-    local port_pids=$(lsof -ti :"$port" 2>/dev/null || true)
-    if [ -n "$port_pids" ]; then
-        echo -e "  ${YELLOW}端口 $port 仍被占用 (PID: $port_pids)，强制释放...${NC}"
-        for pid in $port_pids; do kill -9 "$pid" 2>/dev/null || true; done
+    # 从 PID 文件清理旧进程树 (兜底: 捕获孤儿子进程)
+    if [ -f "$LOG_DIR/${name}.pid" ]; then
+        local old_main_pid=$(cat "$LOG_DIR/${name}.pid" 2>/dev/null)
+        if [ -n "$old_main_pid" ] && kill -0 "$old_main_pid" 2>/dev/null; then
+            echo "  清理旧进程树 (PID: $old_main_pid)"
+            pkill -9 -P "$old_main_pid" 2>/dev/null || true
+            kill -9 "$old_main_pid" 2>/dev/null || true
+        fi
     fi
 
-    # 等待端口完全释放
-    echo -n "  等待端口 $port 释放"
-    for i in {1..20}; do
-        if ! lsof -ti :"$port" > /dev/null 2>&1; then
-            echo " ✓"; break
+    # 按端口强制清理 + 重试循环 (对齐 start.sh 逻辑)
+    local max_retries=5
+    for retry in $(seq 1 $max_retries); do
+        sleep 1
+        local port_pids=$(ss -tlnp 2>/dev/null | grep ":$port " | grep -oP 'pid=\K[0-9]+' | sort -u)
+        if [ -z "$port_pids" ]; then
+            break
         fi
-        if [ "$i" -eq 20 ]; then
-            echo ""; echo -e "${RED}[$name]${NC} ✗ 端口 $port 释放超时！"; return 1
+        if [ "$retry" -lt "$max_retries" ]; then
+            echo -e "  ${YELLOW}端口 $port 仍被占用 (PID: $port_pids)，强制清理... (尝试 $retry/$max_retries)${NC}"
+            for pid in $port_pids; do kill -9 "$pid" 2>/dev/null || true; done
         fi
-        echo -n "."; sleep 0.5
     done
+
+    # 最终检查
+    if ss -tlnp 2>/dev/null | grep -q ":$port "; then
+        echo -e "${RED}[$name]${NC} ✗ 端口 $port 释放失败！请手动执行: sudo fuser -k ${port}/tcp"
+        return 1
+    fi
+    echo -e "  端口 $port 已释放 ✓"
 
     # Start new process
     cd "$SERVER_DIR"
