@@ -1216,8 +1216,17 @@ def _parse_pdf_with_pymupdf(
         logger.info("pymupdf4llm not installed, skipping fast extraction")
         return None
 
+    # pymupdf4llm internally accesses doc.name for image filenames.
+    # When a Document is opened from a byte stream, doc.name is None,
+    # causing a TypeError in pymupdf4llm's save_image().  Work around
+    # this by writing to a temp file so the Document has a valid name.
+    import tempfile as _tempfile
+    tmp_file = _tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
     try:
-        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+        tmp_file.write(pdf_bytes)
+        tmp_file.close()
+
+        doc = pymupdf.open(tmp_file.name)
         total_pages = len(doc)
         pages_to_process = min(total_pages, max_pages) if max_pages > 0 else total_pages
         page_list = list(range(pages_to_process))
@@ -1289,6 +1298,12 @@ def _parse_pdf_with_pymupdf(
     except Exception as e:
         logger.warning(f"PyMuPDF extraction failed: {e}")
         return None
+    finally:
+        # Clean up temp file
+        try:
+            os.unlink(tmp_file.name)
+        except OSError:
+            pass
 
 
 

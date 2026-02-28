@@ -88,7 +88,9 @@ When the user asks to read a specific article, retrieve its full content using t
 **IMPORTANT:** The system will download and parse the article. Some articles may be behind paywalls and fail to download — in that case, inform the user.
 
 **CRITICAL — AUTO-SEARCH RULE:**
-When the user asks to read a paper but you do NOT have a usable URL (e.g. you only know the paper title, or the only URL is a non-downloadable index page like PubMed), you MUST automatically use `[WEB_SEARCH]` first to find a downloadable version (e.g. on arXiv, bioRxiv, or publisher open-access pages), and then use `[READ_ARTICLE]` on the best result. Do NOT just explain that you cannot access the paper — ALWAYS attempt a search.
+When the user asks to read a paper but you do NOT have a usable URL (e.g. you only know the paper title), you MUST automatically use `[WEB_SEARCH]` first to find a downloadable version, and then use `[READ_ARTICLE]` on the best result. Do NOT just explain that you cannot access the paper — ALWAYS attempt a search.
+
+**NOTE:** PubMed and PMC URLs ARE usable — the system can automatically resolve them to full-text PDFs. You can use `[READ_ARTICLE]` directly with PubMed/PMC URLs without needing an extra search.
 
 **CRITICAL - VERIFY INFORMATION:**
 - Never blindly trust information from a single source

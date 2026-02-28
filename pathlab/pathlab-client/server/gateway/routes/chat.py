@@ -1011,8 +1011,9 @@ After saving, return here and start chatting!"""
         effective_base_url = openrouter_base_url
         effective_api_key = openrouter_api_key
 
-    # Tool loop: up to 3 iterations (web search + read article)
-    max_tool_iterations = 3
+    # Tool loop: up to 5 iterations (web search + read article)
+    # Need enough iterations for: search → re-search → read article → stream summary
+    max_tool_iterations = 5
     current_messages = messages.copy()
     article_pdf_content: str | None = None  # raw PDF markdown (with page markers) for citation context extraction
     _per_paper_pdf_content: dict[int, str] | None = None  # per-paper content for multi-paper follow-ups
@@ -1200,6 +1201,12 @@ After saving, return here and start chatting!"""
 
         if search_match and exa_api_key:
             # ── Handle [WEB_SEARCH] ──
+            # If text was already streamed before the tool block, tell the
+            # frontend to clear it so the search results appear cleanly
+            # instead of being concatenated with the initial text.
+            if _response_already_streamed:
+                yield f"data: {json.dumps({'content': '__CLEAR_CONTENT__'})}\n\n"
+
             query = search_match.get("query", "")
             reason = search_match.get("reason", "")
             ai_num_results = min(int(search_match.get("num_results", 5)), 10)
@@ -1274,6 +1281,10 @@ After saving, return here and start chatting!"""
             read_article_match = None
 
         if read_article_match:
+            # If text was already streamed before the tool block, clear it.
+            if _response_already_streamed:
+                yield f"data: {json.dumps({'content': '__CLEAR_CONTENT__'})}\n\n"
+
             article_url = read_article_match.get("url", "")
             article_title = read_article_match.get("title", "Unknown")
             article_index = read_article_match.get("index")  # search result number
@@ -1371,7 +1382,9 @@ After saving, return here and start chatting!"""
                     _stream_next_iteration = True
                     continue
                 else:
-                    # PDF failed — let AI know and break to stream response
+                    # PDF failed — let AI know; use smart-streaming (NOT the
+                    # dumb streaming path) so tool blocks like [WEB_SEARCH]
+                    # can still be detected if the AI wants to retry.
                     error_detail = pdf_result.get("error_detail") or pdf_result.get("error") or "unknown error"
                     current_messages = current_messages + [
                         {"role": "assistant", "content": full_response},
@@ -1381,7 +1394,8 @@ After saving, return here and start chatting!"""
                             "Please inform the user about this issue and suggest alternatives."
                         )}
                     ]
-                    _stream_next_iteration = True
+                    # Keep _stream_next_iteration = False so smart-streaming
+                    # can detect any follow-up tool calls (e.g. [WEB_SEARCH]).
                     continue
 
             except ClientDisconnectedError:
@@ -1404,7 +1418,8 @@ After saving, return here and start chatting!"""
                         "(e.g. trying another article, or accessing the URL directly)."
                     )}
                 ]
-                _stream_next_iteration = True
+                # Keep _stream_next_iteration = False so smart-streaming
+                # can detect any follow-up tool calls (e.g. [WEB_SEARCH]).
                 continue
 
         # No tool requested — break out of loop
@@ -1413,7 +1428,48 @@ After saving, return here and start chatting!"""
     # ── Emit final AI response ──
     final_response_text = full_response or ""
 
-    if not _response_already_streamed and final_response_text:
+    # If the loop exhausted without streaming a proper response (e.g. the last
+    # iteration set _stream_next_iteration but ran out of iterations, or the
+    # buffered response is just a raw tool-call block), emit a friendly fallback
+    # so the user isn't left staring at a dead chat.
+    _has_dangling_tool_block = (
+        "[READ_ARTICLE]" in final_response_text
+        or "[WEB_SEARCH]" in final_response_text
+    )
+    if not _response_already_streamed and (not final_response_text or _has_dangling_tool_block):
+        _FALLBACK_MSGS = {
+            "zh-CN": (
+                "抱歉，我在获取论文全文时遇到了一些问题，处理流程未能完成。"
+                "您可以再发一条消息让我重试，或者换一个关键词搜索试试看 😊"
+            ),
+            "zh-HK": (
+                "抱歉，我在獲取論文全文時遇到了一些問題，處理流程未能完成。"
+                "您可以再發一條訊息讓我重試，或者換一個關鍵詞搜尋試試看 😊"
+            ),
+            "en": (
+                "Sorry, I ran into some issues while trying to retrieve the full text "
+                "and couldn't complete the process. "
+                "Feel free to send another message so I can try again, "
+                "or try searching with different keywords 😊"
+            ),
+        }
+        fallback_msg = _FALLBACK_MSGS.get(detected_lang, _FALLBACK_MSGS["en"])
+        # Strip the raw tool block from the response — only keep natural text
+        if _has_dangling_tool_block:
+            import re as _re
+            cleaned = _re.sub(
+                r'\[(?:READ_ARTICLE|WEB_SEARCH)\].*?\[/(?:READ_ARTICLE|WEB_SEARCH)\]',
+                '', final_response_text, flags=_re.DOTALL
+            ).strip()
+            if cleaned:
+                _CHUNK_SIZE = 80
+                for i in range(0, len(cleaned), _CHUNK_SIZE):
+                    yield f"data: {json.dumps({'content': cleaned[i:i+_CHUNK_SIZE]})}\n\n"
+                yield f"data: {json.dumps({'content': chr(10) + chr(10)})}\n\n"
+        yield f"data: {json.dumps({'content': fallback_msg})}\n\n"
+        final_response_text = fallback_msg  # for citation context below
+
+    elif not _response_already_streamed and final_response_text:
         # Buffered response (tool-call iteration that fell through) — emit now
         _CHUNK_SIZE = 80
         for i in range(0, len(final_response_text), _CHUNK_SIZE):

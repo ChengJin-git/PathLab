@@ -863,6 +863,24 @@ export default function AIChatPage() {
           hasReceivedContent = true
           setGenerationPhase('streaming')
         }
+        // Handle __CLEAR_CONTENT__ marker: the backend emits this when text
+        // was already streamed but a tool block ([WEB_SEARCH] / [READ_ARTICLE])
+        // was found afterwards.  Clear the message so the follow-up AI response
+        // (with search results) appears cleanly instead of being concatenated.
+        if (chunk === '__CLEAR_CONTENT__') {
+          if (rafId !== null) {
+            cancelAnimationFrame(rafId)
+            rafId = null
+          }
+          chunkBuffer = ''
+          const currentId = trackingId
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === currentId ? { ...m, content: '' } : m
+            )
+          )
+          return
+        }
         chunkBuffer += chunk
         // Schedule a flush on the next animation frame (batches multiple chunks)
         if (rafId === null) {
