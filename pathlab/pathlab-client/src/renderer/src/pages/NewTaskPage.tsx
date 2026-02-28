@@ -805,6 +805,10 @@ export default function NewTaskPage() {
               earlyStoppingPatience={trainingConfig.earlyStoppingPatience}
               autoBalance={trainingConfig.autoBalance}
               classifier={trainingConfig.classifier}
+              segArchitecture={trainingConfig.segArchitecture}
+              segBackbone={trainingConfig.segBackbone}
+              segLossNames={trainingConfig.segLossNames}
+              segLossWeights={trainingConfig.segLossWeights}
               validateConfiguration={validateConfiguration}
               trainingStatus={wizard.trainingStatus}
               submitError={wizard.submitError}

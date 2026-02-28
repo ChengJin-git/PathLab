@@ -17,7 +17,7 @@ import shutil
 import tempfile
 import asyncio
 import hashlib
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, BrokenProcessPool
 from pathlib import Path
 from typing import Any
 from datetime import datetime, timedelta
@@ -336,13 +336,17 @@ def _trigger_vector_index(url_hash: str, markdown: str, paper_title: str) -> Non
 # ── BM25 Page-Level Search ──────────────────────────────────────────────────
 
 def _tokenize_for_search(text: str) -> list[str]:
-    """Simple tokenizer for BM25 search. Handles English, numbers, and CJK.
+    """Simple tokenizer for BM25 search. Handles English, numbers, CJK, Japanese, and Korean.
 
     - Lowercases all text
     - Keeps alphanumeric runs (e.g. ``bm25``, ``page3``) as single tokens
-    - Splits each CJK character as an individual token
+    - Splits each CJK / Hiragana / Katakana / Hangul character as an individual token
     """
-    return re.findall(r'[a-z0-9]+|[\u4e00-\u9fff\u3400-\u4dbf]', text.lower())
+    # CJK Unified + Extension A + Hiragana + Katakana + Hangul Syllables
+    return re.findall(
+        r'[a-z0-9]+|[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]',
+        text.lower(),
+    )
 
 
 def _split_md_into_pages(markdown: str) -> list[tuple[int, str]]:
@@ -1078,8 +1082,17 @@ async def _try_semantic_scholar_download(url: str, doi: str | None = None) -> by
         return None
 
 
+# Maximum PDF file size to download (50 MB) — prevents OOM on huge files.
+_MAX_PDF_DOWNLOAD_BYTES = 50 * 1024 * 1024
+
+
 async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
     try:
+        # Validate URL scheme — only http(s) is supported.
+        if not url.startswith(('http://', 'https://')):
+            logger.warning(f"Invalid URL scheme (not http/https): {url}")
+            return None
+
         # Pre-step: Resolve PubMed abstract URLs to the actual content URL
         # (PMC PDF or publisher page via DOI redirect).  This MUST run before
         # the publisher elif-chain so the resolved URL can be matched below.
@@ -1142,6 +1155,13 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
 
             if response.status_code == 200:
                 content = response.content
+                # Size guard — reject files larger than _MAX_PDF_DOWNLOAD_BYTES
+                if len(content) > _MAX_PDF_DOWNLOAD_BYTES:
+                    logger.warning(
+                        f"PDF too large ({len(content) / 1024 / 1024:.1f} MB > "
+                        f"{_MAX_PDF_DOWNLOAD_BYTES / 1024 / 1024:.0f} MB limit): {url}"
+                    )
+                    return None
                 if content[:4] == b'%PDF':
                     return content
                 content_type = response.headers.get('content-type', '')
@@ -1179,6 +1199,12 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
             return oa_bytes
 
         logger.warning(f"All download attempts failed for {url}")
+        return None
+    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        logger.error(f"Network unreachable when downloading PDF from {url}: {e}")
+        return None
+    except httpx.TimeoutException as e:
+        logger.error(f"Download timed out for PDF from {url}: {e}")
         return None
     except Exception as e:
         logger.error(f"Error downloading PDF from {url}: {e}")
@@ -1274,6 +1300,18 @@ def _parse_pdf_with_pymupdf(
         if garbage_ratio > 0.1:
             logger.info(f"PyMuPDF: too much garbage ({garbage_ratio:.1%}), need MinerU fallback")
             return None
+
+        # Per-page density check: catch scanned PDFs with sparse headers/footers
+        # that pass the total char threshold but have very little content per page.
+        num_pages = len(page_sections)
+        if num_pages > 0:
+            avg_chars_per_page = total_chars / num_pages
+            if avg_chars_per_page < 50 and num_pages >= 3:
+                logger.info(
+                    f"PyMuPDF: low per-page density ({avg_chars_per_page:.0f} chars/page "
+                    f"across {num_pages} pages), likely scanned PDF — need MinerU fallback"
+                )
+                return None
 
         md_content = "\n\n".join(page_sections)
 
@@ -1623,15 +1661,27 @@ async def parse_pdf(
 
     # --- Tier 2: MinerU GPU-based parsing in subprocess ---
     logger.info("PyMuPDF extraction insufficient, falling back to MinerU GPU parsing (queued)")
+    global _mineru_process_executor
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
-        _mineru_process_executor,
-        _run_mineru_in_process,
-        pdf_bytes, max_pages,
-        str(images_output_dir) if images_output_dir else None,
-        images_url_prefix,
-        MIN_VRAM_MB_FOR_MINERU,
-    )
+    try:
+        return await loop.run_in_executor(
+            _mineru_process_executor,
+            _run_mineru_in_process,
+            pdf_bytes, max_pages,
+            str(images_output_dir) if images_output_dir else None,
+            images_url_prefix,
+            MIN_VRAM_MB_FOR_MINERU,
+        )
+    except BrokenProcessPool:
+        logger.error(
+            "[MinerU] ProcessPoolExecutor is broken (subprocess crash). "
+            "Rebuilding executor for future requests."
+        )
+        _mineru_process_executor = ProcessPoolExecutor(
+            max_workers=1,
+            mp_context=multiprocessing.get_context('spawn'),
+        )
+        return "[Error: MinerU subprocess crashed. Please retry.]"
 
 
 async def summarize_pdf_content(
@@ -2027,6 +2077,15 @@ async def process_pdf_url(
                 # Successful MinerU result goes to the high-precision cache slot
                 if not pdf_content.startswith("[Error") and use_cache:
                     _save_mineru_to_cache(url, pdf_content, paper_title=title)
+
+        # Guard: empty result (not an [Error prefix but no content extracted)
+        if not pdf_content or not pdf_content.strip():
+            result["error"] = "parse_failed"
+            result["error_detail"] = (
+                f"PDF parsing produced no content for '{title}'. "
+                "The file may be an image-only scan, empty, or in an unsupported format."
+            )
+            return result
 
         if pdf_content.startswith("[Error"):
             # Distinguish GPU unavailable from other parse errors

@@ -897,6 +897,13 @@
       "epochs": "训练轮次",
       "optimizer": "优化器",
       "trainingBatchSize": "训练批量大小",
+      "architecture": "架构",
+      "backbone": "骨干网络",
+      "decoder": "解码器",
+      "convDecoder": "卷积解码器",
+      "lossFunctions": "损失函数",
+      "autoBalance": "自动均衡",
+      "earlyStoppingPatience": "早停耐心值",
       "yes": "是",
       "no": "否"
     }
@@ -1055,7 +1062,11 @@
       "data": "数据",
       "extractor": "特征提取器",
       "model": "模型",
-      "duration": "时长"
+      "duration": "时长",
+      "backbone": "骨干网络",
+      "architecture": "架构",
+      "featureExtractorSeg": "特征提取器",
+      "decoder": "解码器"
     },
     "progress": {
       "extracting": "提取特征中",
@@ -1727,7 +1738,13 @@
       "reviewAndRetry": "审核并重试",
       "editParameters": "编辑参数",
       "processing": "处理中...",
-      "launchTraining": "启动训练"
+      "launchTraining": "启动训练",
+      "segArchitecture": "架构",
+      "segBackbone": "骨干网络",
+      "segFeatureExtractor": "特征提取器",
+      "segDecoder": "解码器",
+      "segLossFunctions": "损失函数",
+      "weight": "权重"
     },
     "taskResult": {
       "trainingFailed": "训练失败",

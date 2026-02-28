@@ -897,6 +897,13 @@
       "epochs": "Epochs",
       "optimizer": "Optimizer",
       "trainingBatchSize": "Training Batch Size",
+      "architecture": "Architecture",
+      "backbone": "Backbone",
+      "decoder": "Decoder",
+      "convDecoder": "Conv Decoder",
+      "lossFunctions": "Loss Functions",
+      "autoBalance": "Auto-Balance",
+      "earlyStoppingPatience": "Early Stopping Patience",
       "yes": "Yes",
       "no": "No"
     }
@@ -1055,7 +1062,11 @@
       "data": "Data",
       "extractor": "Feature Extractor",
       "model": "Model",
-      "duration": "Duration"
+      "duration": "Duration",
+      "backbone": "Backbone",
+      "architecture": "Architecture",
+      "featureExtractorSeg": "Feature Extractor",
+      "decoder": "Decoder"
     },
     "progress": {
       "extracting": "Extracting Features",
@@ -1727,7 +1738,13 @@
       "reviewAndRetry": "Review and retry",
       "editParameters": "Edit Parameters",
       "processing": "Processing...",
-      "launchTraining": "Launch Training"
+      "launchTraining": "Launch Training",
+      "segArchitecture": "Architecture",
+      "segBackbone": "Backbone",
+      "segFeatureExtractor": "Feature Extractor",
+      "segDecoder": "Decoder",
+      "segLossFunctions": "Loss Functions",
+      "weight": "weight"
     },
     "taskResult": {
       "trainingFailed": "Training Failed",

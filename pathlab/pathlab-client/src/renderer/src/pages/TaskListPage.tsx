@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName } from '../api'
 import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles, User, Edit2 } from 'lucide-react'
 import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES, ANALYSIS_CANCELLABLE_STATUSES, CancellableStatus } from '../constants/status'
+import { isSegFmEncoder } from '../constants/training'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -561,25 +562,51 @@ export default function TaskListPage() {
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-0.5" title={t('taskList.columns.extractor')}>
-                      <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskList.columns.extractor')}</span>
-                      <div className="flex items-center gap-1.5 sm:gap-2">
-                        <Microscope className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
-                        <span className="text-sm sm:text-base font-bold truncate text-gray-900">{task.preprocessing_config?.feature_extractor || t('taskList.na')}</span>
-                      </div>
-                    </div>
+                    {(() => {
+                      const segBackbone = task.task_type === 'segmentation' ? (task.model_config as Record<string, unknown>)?.backbone as string : undefined
+                      const segIsFm = isSegFmEncoder(segBackbone)
+                      const col1Label = task.task_type === 'segmentation'
+                        ? (segIsFm ? t('taskList.columns.featureExtractorSeg') : t('taskList.columns.backbone'))
+                        : t('taskList.columns.extractor')
+                      const col2Label = task.task_type === 'segmentation'
+                        ? (segIsFm ? t('taskList.columns.decoder') : t('taskList.columns.architecture'))
+                        : t('taskList.columns.model')
+                      return (
+                        <>
+                          <div className="flex flex-col gap-0.5" title={col1Label}>
+                            <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">
+                              {col1Label}
+                            </span>
+                            <div className="flex items-center gap-1.5 sm:gap-2">
+                              <Microscope className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
+                              <span className="text-sm sm:text-base font-bold truncate text-gray-900">
+                                {task.task_type === 'segmentation'
+                                  ? (segBackbone || t('taskList.na'))
+                                  : (task.preprocessing_config?.feature_extractor || t('taskList.na'))}
+                              </span>
+                            </div>
+                          </div>
 
-                    <div className="flex flex-col gap-0.5" title={t('taskList.columns.model')}>
-                      <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskList.columns.model')}</span>
-                      <div className="flex items-center gap-1.5 sm:gap-2">
-                        <Brain className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
-                        <span className="text-sm sm:text-base font-bold truncate text-gray-900">
-                          {task.data_type === 'patch'
-                            ? t(`taskList.classifiers.${(task.model_config as Record<string, unknown>)?.classifier || 'linear'}`, t('taskList.linearProbe'))
-                            : (task.model_config?.aggregator?.toUpperCase() || t('taskList.na'))}
-                        </span>
-                      </div>
-                    </div>
+                          <div className="flex flex-col gap-0.5" title={col2Label}>
+                            <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">
+                              {col2Label}
+                            </span>
+                            <div className="flex items-center gap-1.5 sm:gap-2">
+                              <Brain className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
+                              <span className="text-sm sm:text-base font-bold truncate text-gray-900">
+                                {task.task_type === 'segmentation'
+                                  ? (segIsFm
+                                    ? t('taskDetail.configuration.convDecoder')
+                                    : ((task.model_config as Record<string, unknown>)?.architecture as string || t('taskList.na')))
+                                  : task.data_type === 'patch'
+                                    ? t(`taskList.classifiers.${(task.model_config as Record<string, unknown>)?.classifier || 'linear'}`, t('taskList.linearProbe'))
+                                    : (task.model_config?.aggregator?.toUpperCase() || t('taskList.na'))}
+                              </span>
+                            </div>
+                          </div>
+                        </>
+                      )
+                    })()}
 
                     {(task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') ? (
                       <div className="flex flex-col gap-0.5" title={t('taskList.columns.duration')}>

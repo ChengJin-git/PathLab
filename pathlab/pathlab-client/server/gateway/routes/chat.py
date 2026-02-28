@@ -1057,6 +1057,8 @@ After saving, return here and start chatting!"""
     _stream_next_iteration = False
     _response_already_streamed = False
     full_response = ""
+    _search_count = 0  # Track consecutive web searches to prevent infinite loops
+    _MAX_SEARCHES = 2  # Max web searches per user message
 
     for iteration in range(max_tool_iterations):
 
@@ -1202,16 +1204,60 @@ After saving, return here and start chatting!"""
 
         # Check if AI requested web search
         search_match = json.loads('null')
+        _search_json_error = False
         try:
             import re
             pattern = r'\[WEB_SEARCH\](.*?)\[/WEB_SEARCH\]'
             match = re.search(pattern, full_response, re.DOTALL)
             if match:
                 search_match = json.loads(match.group(1).strip())
-        except:
+        except json.JSONDecodeError:
+            # #19: AI produced malformed JSON in tool block — flag for retry
+            _search_json_error = True
+            search_match = None
+            logger.warning(f"Malformed JSON in [WEB_SEARCH] block: {full_response[:200]}")
+        except Exception:
             search_match = None
 
+        # #19: Retry on malformed tool block JSON
+        if _search_json_error:
+            current_messages = current_messages + [
+                {"role": "assistant", "content": full_response},
+                {"role": "user", "content": (
+                    "Your [WEB_SEARCH] tool call contained invalid JSON. "
+                    "Please re-format and try again with valid JSON."
+                )}
+            ]
+            continue
+
+        # #2: AI wants to search but Exa API key is not configured
+        if search_match and not exa_api_key:
+            logger.warning("AI requested [WEB_SEARCH] but no Exa API key is configured")
+            current_messages = current_messages + [
+                {"role": "assistant", "content": full_response},
+                {"role": "user", "content": (
+                    "Web search is currently unavailable (API key not configured). "
+                    "Please answer the user's question using your existing knowledge. "
+                    "Do NOT attempt to use [WEB_SEARCH] again."
+                )}
+            ]
+            continue
+
         if search_match and exa_api_key:
+            # #4: Enforce search count limit
+            _search_count += 1
+            if _search_count > _MAX_SEARCHES:
+                logger.info(f"Search limit reached ({_MAX_SEARCHES}), forcing AI to answer with existing results")
+                current_messages = current_messages + [
+                    {"role": "assistant", "content": full_response},
+                    {"role": "user", "content": (
+                        f"You have already performed {_MAX_SEARCHES} web searches. "
+                        "Please synthesize the information from the results you already have "
+                        "and provide your answer now. Do NOT search again."
+                    )}
+                ]
+                continue
+
             # ── Handle [WEB_SEARCH] ──
             # If text was already streamed before the tool block, tell the
             # frontend to clear it so the search results appear cleanly
@@ -1239,6 +1285,23 @@ After saving, return here and start chatting!"""
                 # Deduplicate results — the same paper often appears via
                 # multiple mirrors (PubMed, nature.com, arxiv, lab pages…).
                 search_results["results"] = _deduplicate_search_results(search_results["results"])
+
+                # #1/#5: Handle empty search results explicitly
+                if not search_results["results"]:
+                    logger.info(f"Exa search returned 0 results for query: {query}")
+                    # Emit empty result to frontend so search card shows "no results"
+                    web_search_result_block = json.dumps(search_results)
+                    yield f"data: {json.dumps({'content': f'[WEB_SEARCH_RESULT]{web_search_result_block}[/WEB_SEARCH_RESULT]'})}\n\n"
+                    current_messages = current_messages + [
+                        {"role": "assistant", "content": full_response},
+                        {"role": "user", "content": (
+                            f"The web search for '{query}' returned NO results. "
+                            "Please answer the user's question using your existing knowledge, "
+                            "or suggest alternative search terms the user could try. "
+                            "Do NOT fabricate references or citations."
+                        )}
+                    ]
+                    continue
 
                 # Emit web search results to frontend so UI can display completion status
                 web_search_result_block = json.dumps(search_results)
@@ -1278,8 +1341,25 @@ After saving, return here and start chatting!"""
             except ClientDisconnectedError:
                 logger.info("Client disconnected during Exa search — stopping")
                 return
+            except httpx.TimeoutException:
+                # #3: Search timeout — update frontend card and let AI answer with existing knowledge
+                logger.warning(f"Exa search timed out for query: {query}")
+                failed_status = json.dumps({"query": query, "reason": reason, "status": "timeout"})
+                yield f"data: {json.dumps({'content': f'[SEARCH_STATUS]{failed_status}[/SEARCH_STATUS]'})}\n\n"
+                current_messages = current_messages + [
+                    {"role": "assistant", "content": full_response},
+                    {"role": "user", "content": (
+                        f"The web search for '{query}' timed out. "
+                        "Please answer the user's question using your existing knowledge. "
+                        "Do NOT attempt to use [WEB_SEARCH] again."
+                    )}
+                ]
+                continue
             except Exception as e:
                 logger.error(f"Exa search error: {e}")
+                # Emit failed status so frontend search card updates
+                failed_status = json.dumps({"query": query, "reason": reason, "status": "error"})
+                yield f"data: {json.dumps({'content': f'[SEARCH_STATUS]{failed_status}[/SEARCH_STATUS]'})}\n\n"
                 break
 
         # ── Check for [READ_ARTICLE] ──
@@ -1312,17 +1392,30 @@ After saving, return here and start chatting!"""
 
             try:
                 _active_pdf_url = article_url
-                pdf_result = await _run_or_cancel_on_disconnect(
-                    process_pdf_url(
-                        url=article_url,
-                        title=article_title,
-                        base_url=effective_base_url,
-                        api_key=effective_api_key,
-                        model=effective_model,
-                        use_cache=True
-                    ),
-                    request,
+                # #22: Run PDF processing as a task and emit heartbeats every
+                # 10 s to prevent frontend silence-timeout (~60 s).
+                _pdf_task = asyncio.create_task(
+                    _run_or_cancel_on_disconnect(
+                        process_pdf_url(
+                            url=article_url,
+                            title=article_title,
+                            base_url=effective_base_url,
+                            api_key=effective_api_key,
+                            model=effective_model,
+                            use_cache=True
+                        ),
+                        request,
+                    )
                 )
+                _HEARTBEAT_INTERVAL = 10  # seconds
+                while not _pdf_task.done():
+                    try:
+                        await asyncio.wait_for(asyncio.shield(_pdf_task), timeout=_HEARTBEAT_INTERVAL)
+                    except asyncio.TimeoutError:
+                        # Task still running — emit heartbeat to keep connection alive
+                        hb_status = {"url": article_url, "title": article_title, "status": "parsing"}
+                        yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(hb_status)}[/PDF_PARSE_STATUS]'})}\n\n"
+                pdf_result = _pdf_task.result()
                 _active_pdf_url = None
 
                 # For uncached PDFs: transition downloading → parsing → completed
