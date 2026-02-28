@@ -462,6 +462,14 @@
       "enableMaintenanceModeTitle": "启用维护模式",
       "endMaintenanceMode": "结束维护",
       "maintenanceMode": "维护模式",
+      "maintenanceNotice": "维护公告",
+      "editNotice": "编辑",
+      "sendNotice": "发布公告",
+      "clearNotice": "清除公告",
+      "noticePlaceholder": "输入维护公告内容，例如：今晚22:00系统维护，请保存数据...",
+      "cancelNotice": "取消",
+      "publishNotice": "发布",
+      "failedToSendNotice": "发送公告失败",
       "createUser": "创建用户",
       "refresh": "刷新",
       "usersSelected": "已选择 {{count}} 个",
@@ -2852,5 +2860,11 @@
     "discardAndLeave": "放弃并离开",
     "saveAndLeave": "保存并离开",
     "labelHint": "请先设置标签再开始标注"
+  },
+  "maintenanceNotice": {
+    "title": "维护公告",
+    "pleaseAcknowledge": "请仔细阅读以上公告，点击「已知悉」后继续使用系统。",
+    "processing": "处理中...",
+    "acknowledge": "已知悉"
   }
 }

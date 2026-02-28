@@ -462,6 +462,14 @@
       "enableMaintenanceModeTitle": "啟用維護模式",
       "endMaintenanceMode": "結束維護",
       "maintenanceMode": "維護模式",
+      "maintenanceNotice": "維護公告",
+      "editNotice": "編輯",
+      "sendNotice": "發佈公告",
+      "clearNotice": "清除公告",
+      "noticePlaceholder": "輸入維護公告內容，例如：今晚22:00系統維護，請儲存資料...",
+      "cancelNotice": "取消",
+      "publishNotice": "發佈",
+      "failedToSendNotice": "傳送公告失敗",
       "createUser": "建立使用者",
       "refresh": "重新整理",
       "usersSelected": "已選擇 {{count}} 個",
@@ -2850,5 +2858,11 @@
     "unsavedMessage": "您有未儲存的標註更改，是否在離開前儲存？",
     "discardAndLeave": "捨棄並離開",
     "saveAndLeave": "儲存並離開"
+  },
+  "maintenanceNotice": {
+    "title": "維護公告",
+    "pleaseAcknowledge": "請仔細閱讀以上公告，點擊「已知悉」後繼續使用系統。",
+    "processing": "處理中...",
+    "acknowledge": "已知悉"
   }
 }

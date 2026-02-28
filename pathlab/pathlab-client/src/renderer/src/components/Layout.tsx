@@ -7,6 +7,7 @@ import { Button } from './ui/button'
 import { BackgroundTaskPanel } from './BackgroundTaskPanel'
 import { InstallPWA } from './InstallPWA'
 import { DisclaimerModal } from './DisclaimerModal'
+import { MaintenanceNoticeModal } from './MaintenanceNoticeModal'
 import { uploadAvatar, deleteAvatar, ApiError } from '../api'
 import { API_BASE } from '../config'
 import { useTranslation } from 'react-i18next'
@@ -19,7 +20,7 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
   const navigate = useNavigate()
-  const { user, logout, needsAgreement, acceptAgreement, isLoading, isAdmin, refreshUser } = useAuth()
+  const { user, logout, needsAgreement, acceptAgreement, isLoading, isAdmin, refreshUser, maintenanceNoticeMessage, needsMaintenanceAcknowledgment, acknowledgeMaintenanceNotice } = useAuth()
   const { error: toastError, success: toastSuccess } = useToast()
   const { t } = useTranslation()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
@@ -272,6 +273,13 @@ export default function Layout({ children }: LayoutProps) {
         isLoading={isLoading}
         onAccept={handleAcceptAgreement}
         onDecline={handleDeclineAgreement}
+      />
+
+      {/* Maintenance Notice Modal - shown when admin posts a notice */}
+      <MaintenanceNoticeModal
+        isOpen={!needsAgreement && needsMaintenanceAcknowledgment}
+        message={maintenanceNoticeMessage || ''}
+        onAcknowledge={acknowledgeMaintenanceNotice}
       />
     </div>
   )

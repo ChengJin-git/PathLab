@@ -462,6 +462,14 @@
       "enableMaintenanceModeTitle": "Enable Maintenance Mode",
       "endMaintenanceMode": "End Maintenance",
       "maintenanceMode": "Maintenance Mode",
+      "maintenanceNotice": "Maintenance Notice",
+      "editNotice": "Edit",
+      "sendNotice": "New Notice",
+      "clearNotice": "Clear notice",
+      "noticePlaceholder": "Enter maintenance notice content, e.g. system maintenance at 22:00 tonight, please save your work...",
+      "cancelNotice": "Cancel",
+      "publishNotice": "Publish",
+      "failedToSendNotice": "Failed to send notice",
       "createUser": "Create User",
       "refresh": "Refresh",
       "usersSelected": "{{count}} selected",
@@ -2852,5 +2860,11 @@
     "discardAndLeave": "Discard & Leave",
     "saveAndLeave": "Save & Leave",
     "labelHint": "Please set a label before annotating"
+  },
+  "maintenanceNotice": {
+    "title": "Maintenance Notice",
+    "pleaseAcknowledge": "Please read the above notice carefully and click \"Acknowledged\" to continue using the system.",
+    "processing": "Processing...",
+    "acknowledge": "Acknowledged"
   }
 }

@@ -88,6 +88,14 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         doc="IP address of user when they accepted the terms of service."
     )
 
+    # Maintenance notice acknowledgment tracking
+    notice_acknowledged_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime,
+        nullable=True,
+        default=None,
+        doc="Timestamp when user last acknowledged a maintenance notice. Compared against notice updated_at."
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

@@ -315,6 +315,28 @@ class Config:
         """Set maintenance mode status."""
         cls._write_config({"maintenance_mode": enabled})
 
+    # ========== Maintenance Notice (Announcement) ==========
+    @classmethod
+    def get_maintenance_notice(cls) -> dict | None:
+        """Get current maintenance notice. Returns {message, updated_at} or None."""
+        config_data = cls._read_config()
+        return config_data.get("maintenance_notice", None)
+
+    @classmethod
+    def set_maintenance_notice(cls, message: str | None) -> dict | None:
+        """Set or clear maintenance notice. Returns the saved notice or None."""
+        from datetime import datetime, timezone
+        if message and message.strip():
+            notice = {
+                "message": message.strip(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+            cls._write_config({"maintenance_notice": notice})
+            return notice
+        else:
+            cls._write_config({"maintenance_notice": None})
+            return None
+
 
 # Create singleton instance
 config = Config()

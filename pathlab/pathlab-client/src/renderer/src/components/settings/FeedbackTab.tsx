@@ -239,35 +239,14 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                 { key: 'usageMessages', value: usageTotals.message_count, color: 'cyan' },
                 { key: 'usageAnnotations', value: usageTotals.annotation_count, color: 'teal' },
                 { key: 'usageFeedback', value: usageTotals.feedback_count, color: 'amber' },
-              ] as const).map(({ key, value, color }) => (
-                <div key={key} className={`bg-gradient-to-br from-${color}-50 to-${color}-100/50 rounded-xl p-2 sm:p-3 text-center`}>
+              ] as const).map(({ key, value, color }, index, arr) => (
+                <div key={key} className={`bg-gradient-to-br from-${color}-50 to-${color}-100/50 rounded-xl p-2 sm:p-3 text-center${index === arr.length - 1 ? ' col-span-2 sm:col-span-1' : ''}`}>
                   <div className={`text-[8px] sm:text-[10px] text-${color}-600 uppercase font-semibold tracking-wider mb-0.5 sm:mb-1`}>{t(`settings.feedbackTab.${key}`)}</div>
                   <div className={`text-lg sm:text-xl md:text-2xl font-bold text-${color}-700`}>{value}</div>
                 </div>
               ))}
             </div>
-            <div className="grid grid-cols-7 gap-3 mb-5">
-              <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 rounded-xl p-3 text-center">
-                <div className="flex items-center justify-center mb-1">
-                  <Users className="w-3.5 h-3.5 text-blue-500 mr-1" />
-                  <span className="text-[10px] text-blue-600 uppercase font-semibold tracking-wider">{t('settings.feedbackTab.usageTotalUsers')}</span>
-                </div>
-                <div className="text-2xl font-bold text-blue-700">{usageData.length}</div>
-              </div>
-              {([
-                { key: 'usageWsi', value: usageTotals.wsi_count, color: 'indigo' },
-                { key: 'usageAiTasks', value: usageTotals.ai_task_count, color: 'violet' },
-                { key: 'usageTraining', value: usageTotals.training_count, color: 'purple' },
-                { key: 'usageMessages', value: usageTotals.message_count, color: 'cyan' },
-                { key: 'usageAnnotations', value: usageTotals.annotation_count, color: 'teal' },
-                { key: 'usageFeedback', value: usageTotals.feedback_count, color: 'amber' },
-              ] as const).map(({ key, value, color }) => (
-                <div key={key} className={`bg-gradient-to-br from-${color}-50 to-${color}-100/50 rounded-xl p-3 text-center`}>
-                  <div className={`text-[10px] text-${color}-600 uppercase font-semibold tracking-wider mb-1`}>{t(`settings.feedbackTab.${key}`)}</div>
-                  <div className={`text-2xl font-bold text-${color}-700`}>{value}</div>
-                </div>
-              ))}
-            </div>
+
 
             {/* Mobile: Card layout */}
             <div className="block md:hidden space-y-3">

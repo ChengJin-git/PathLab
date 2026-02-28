@@ -214,3 +214,56 @@ export async function setMaintenanceMode(enabled: boolean): Promise<{ enabled: b
   )
 }
 
+// ============================================================================
+// Maintenance Notice (Announcement for non-admin users)
+// ============================================================================
+
+export interface MaintenanceNotice {
+  active: boolean
+  message: string | null
+  updated_at?: string
+  needs_acknowledgment: boolean
+}
+
+/**
+ * Get current maintenance notice and whether user needs to acknowledge it
+ * @throws {ApiError} If request fails
+ */
+export async function getMaintenanceNotice(): Promise<MaintenanceNotice> {
+  return apiFetch<MaintenanceNotice>(
+    `${API_BASE}/auth/maintenance-notice`,
+    undefined,
+    'Failed to get maintenance notice'
+  )
+}
+
+/**
+ * Set or clear maintenance notice (admin only)
+ * @param message - Notice message, or null/empty to clear
+ * @throws {ApiError} If request fails or not authorized
+ */
+export async function setMaintenanceNotice(message: string | null): Promise<{ active: boolean; message: string | null }> {
+  return apiFetch<{ active: boolean; message: string | null }>(
+    `${API_BASE}/auth/maintenance-notice`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message })
+    },
+    'Failed to set maintenance notice'
+  )
+}
+
+/**
+ * Acknowledge the current maintenance notice
+ * @returns Updated user
+ * @throws {ApiError} If request fails
+ */
+export async function acknowledgeNotice(): Promise<AuthUser> {
+  return apiFetch<AuthUser>(
+    `${API_BASE}/auth/acknowledge-notice`,
+    { method: 'POST' },
+    'Failed to acknowledge notice'
+  )
+}
+

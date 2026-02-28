@@ -18,6 +18,7 @@ export interface AuthUser {
   is_verified: boolean
   agreement_accepted_at?: string | null
   agreement_ip?: string | null
+  notice_acknowledged_at?: string | null
   created_at?: string
   updated_at?: string
 }

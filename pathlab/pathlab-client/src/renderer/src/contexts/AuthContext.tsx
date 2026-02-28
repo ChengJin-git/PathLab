@@ -17,6 +17,8 @@ import {
   acceptAgreement as apiAcceptAgreement,
   getMyDatasetPermissions,
   getClientIP,
+  getMaintenanceNotice,
+  acknowledgeNotice as apiAcknowledgeNotice,
   SESSION_EXPIRED_EVENT
 } from '../api'
 import { useToast } from './ToastContext'
@@ -30,6 +32,8 @@ interface AuthContextType {
   error: string | null
   needsAgreement: boolean  // User needs to accept terms of service
   elevatedDatasetIds: string[]  // Dataset IDs where user has temporary elevated access
+  maintenanceNoticeMessage: string | null  // Current maintenance notice message
+  needsMaintenanceAcknowledgment: boolean  // User needs to acknowledge maintenance notice
 
   // Actions
   login: (username: string, password: string, turnstileToken?: string) => Promise<boolean>
@@ -37,6 +41,7 @@ interface AuthContextType {
   refreshUser: () => Promise<void>
   refreshDatasetPermissions: () => Promise<void>  // Refresh elevated dataset permissions
   acceptAgreement: () => Promise<boolean>  // Accept terms of service
+  acknowledgeMaintenanceNotice: () => Promise<boolean>  // Acknowledge maintenance notice
   clearError: () => void
 
   // Role checks
@@ -57,6 +62,8 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [elevatedDatasetIds, setElevatedDatasetIds] = useState<string[]>([])
+  const [maintenanceNoticeMessage, setMaintenanceNoticeMessage] = useState<string | null>(null)
+  const [needsMaintenanceAcknowledgment, setNeedsMaintenanceAcknowledgment] = useState(false)
   const toast = useToast()
   const { t } = useTranslation()
 
@@ -215,6 +222,45 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     }
   }, [])
 
+  // Fetch maintenance notice after user logs in
+  const checkMaintenanceNotice = useCallback(async () => {
+    try {
+      const notice = await getMaintenanceNotice()
+      if (notice.active && notice.message) {
+        setMaintenanceNoticeMessage(notice.message)
+        setNeedsMaintenanceAcknowledgment(notice.needs_acknowledgment)
+      } else {
+        setMaintenanceNoticeMessage(null)
+        setNeedsMaintenanceAcknowledgment(false)
+      }
+    } catch (err) {
+      console.error('Failed to check maintenance notice:', err)
+    }
+  }, [])
+
+  // Check maintenance notice when user changes
+  useEffect(() => {
+    if (user) {
+      checkMaintenanceNotice()
+    } else {
+      setMaintenanceNoticeMessage(null)
+      setNeedsMaintenanceAcknowledgment(false)
+    }
+  }, [user, checkMaintenanceNotice])
+
+  // Acknowledge maintenance notice
+  const acknowledgeMaintenanceNotice = useCallback(async (): Promise<boolean> => {
+    try {
+      const updatedUser = await apiAcknowledgeNotice()
+      setUser(updatedUser)
+      setNeedsMaintenanceAcknowledgment(false)
+      return true
+    } catch (err) {
+      console.error('Acknowledge notice error:', err)
+      return false
+    }
+  }, [])
+
   // Role checks
   const isAdmin = user?.role === 'admin'
   const isPathologist = user?.role === 'pathologist'
@@ -238,11 +284,14 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     error,
     needsAgreement,
     elevatedDatasetIds,
+    maintenanceNoticeMessage,
+    needsMaintenanceAcknowledgment,
     login,
     logout,
     refreshUser,
     refreshDatasetPermissions,
     acceptAgreement,
+    acknowledgeMaintenanceNotice,
     clearError,
     isAdmin,
     isPathologist,

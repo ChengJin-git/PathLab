@@ -663,6 +663,91 @@ async def set_maintenance_mode(
     return {"enabled": request.enabled, "affected_users": affected_users}
 
 
+# ============================================================================
+# Maintenance Notice (Announcement for non-admin users)
+# ============================================================================
+
+class MaintenanceNoticeRequest(BaseModel):
+    """Request model for setting maintenance notice."""
+    message: Optional[str] = Field(default=None, description="Notice message. Empty or null to clear.")
+
+
+@router.get("/auth/maintenance-notice", tags=["User Management"])
+async def get_maintenance_notice(
+    user: User = Depends(current_active_user),
+):
+    """
+    Get current maintenance notice and whether current user needs to acknowledge it.
+    Admin users never need to acknowledge.
+    """
+    notice = Config.get_maintenance_notice()
+    if not notice:
+        return {"active": False, "message": None, "needs_acknowledgment": False}
+
+    # Admin users never need to acknowledge
+    needs_ack = False
+    if user.role != "admin":
+        notice_time = notice.get("updated_at")
+        if notice_time:
+            from datetime import datetime, timezone
+            notice_dt = datetime.fromisoformat(notice_time)
+            if notice_dt.tzinfo is None:
+                notice_dt = notice_dt.replace(tzinfo=timezone.utc)
+            # Compare with user's last acknowledgment
+            if user.notice_acknowledged_at is None:
+                needs_ack = True
+            else:
+                user_ack = user.notice_acknowledged_at
+                if user_ack.tzinfo is None:
+                    user_ack = user_ack.replace(tzinfo=timezone.utc)
+                needs_ack = notice_dt > user_ack
+
+    return {
+        "active": True,
+        "message": notice.get("message"),
+        "updated_at": notice.get("updated_at"),
+        "needs_acknowledgment": needs_ack,
+    }
+
+
+@router.post("/auth/maintenance-notice", tags=["User Management"])
+async def set_maintenance_notice(
+    request: MaintenanceNoticeRequest,
+    admin: User = Depends(require_admin),
+):
+    """
+    Set or clear maintenance notice (admin only).
+    When set, non-admin users will see a modal they must acknowledge.
+    Send null/empty message to clear the notice.
+    """
+    result = Config.set_maintenance_notice(request.message)
+    if result:
+        logger.info(f"Admin {admin.email} set maintenance notice: {request.message[:50]}...")
+        return {"active": True, "message": result["message"], "updated_at": result["updated_at"]}
+    else:
+        logger.info(f"Admin {admin.email} cleared maintenance notice")
+        return {"active": False, "message": None}
+
+
+@router.post("/auth/acknowledge-notice", response_model=UserRead, tags=["Authentication"])
+async def acknowledge_notice(
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Acknowledge the current maintenance notice.
+    Records the current timestamp so the user won't see the same notice again.
+    """
+    from datetime import datetime, timezone
+    user.notice_acknowledged_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    await db.commit()
+    await db.refresh(user)
+    logger.info(f"User {user.email} acknowledged maintenance notice")
+    if user.avatar_path:
+        user.avatar_url = f"/avatars/{user.avatar_path}?t={int(user.updated_at.timestamp())}"
+    return user
+
+
 # Avatar management routes
 @router.get("/auth/me", response_model=UserRead, tags=["Authentication"])
 async def get_me(user: User = Depends(current_active_user)):

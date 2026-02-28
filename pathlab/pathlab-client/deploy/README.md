@@ -42,8 +42,8 @@
 pathlab-client/
 ├── deploy/
 │   ├── README.md              # 本文档
-│   ├── start.sh               # 后端启动脚本
-│   ├── deploy.sh              # 构建脚本
+│   ├── start.sh               # 全量启动脚本 (首次部署/冷启动)
+│   ├── hot-reload.sh          # 热更新脚本 (零停机滚动重启)
 │   ├── nginx/
 │   │   ├── pathlab.conf           # HTTPS 配置模板
 │   │   └── pathlab-http-only.conf # HTTP 配置模板
@@ -56,7 +56,10 @@ pathlab-client/
 │   └── main.py                # 后端入口
 └── logs/                      # 运行日志
     ├── backend.log
-    └── backend.pid
+    ├── gateway.log
+    ├── preprocessing.log
+    ├── ai.log
+    └── *.pid
 ```
 
 ## 快速命令
@@ -64,23 +67,22 @@ pathlab-client/
 ```bash
 cd /path/to/pathlab-client
 
-# 查看服务状态
-./deploy/start.sh status
+# ===== 热更新 (推荐，零停机) =====
+./deploy/hot-reload.sh frontend        # 仅更新前端
+./deploy/hot-reload.sh backend         # 滚动重启所有后端
+./deploy/hot-reload.sh gateway         # 仅重启 Gateway
+./deploy/hot-reload.sh preprocessing   # 仅重启 Preprocessing
+./deploy/hot-reload.sh ai              # 仅重启 AI
+./deploy/hot-reload.sh all             # 前端 + 后端全部更新
 
-# 启动后端
-./deploy/start.sh start
+# ===== 冷启动 (全量重启，会中断服务) =====
+./deploy/start.sh                      # 停止旧进程 → 构建前端 → 启动后端
 
-# 停止后端
-./deploy/start.sh stop
-
-# 重启后端
-./deploy/start.sh restart
-
-# 查看日志
-./deploy/start.sh logs
-
-# 重新构建前端
-./deploy/deploy.sh build
+# ===== 日志 =====
+tail -f logs/gateway.log               # Gateway 日志
+tail -f logs/preprocessing.log         # Preprocessing 日志
+tail -f logs/ai.log                    # AI 日志
+tail -f logs/backend.log               # 全量启动日志 (start.sh)
 ```
 
 ## 首次部署步骤
@@ -341,16 +343,40 @@ sudo tail -f /var/log/crowdsec.log
 
 ## 更新部署
 
+### 热更新 (推荐，零停机)
+
+使用 `hot-reload.sh` 可以在不中断服务的情况下更新前端或后端：
+
 ```bash
-# 1. 拉取最新代码
+cd /path/to/pathlab-client
+
+# 拉取最新代码
 git pull
 
-# 2. 重新构建前端 (如有前端更新)
-./deploy/deploy.sh build
+# 仅更新前端 (零停机，构建后原子替换 dist 目录)
+./deploy/hot-reload.sh frontend
 
-# 3. 重启后端 (如有后端更新)
-./deploy/start.sh restart
-# 或
-sudo systemctl restart pathlab
+# 仅重启某个后端服务 (短暂 502，约 1-2 秒)
+./deploy/hot-reload.sh gateway
+./deploy/hot-reload.sh preprocessing
+./deploy/hot-reload.sh ai
+
+# 滚动重启所有后端 (逐个重启，每个服务约 1-2 秒不可用)
+./deploy/hot-reload.sh backend
+
+# 全量更新 (前端 + 后端)
+./deploy/hot-reload.sh all
+```
+
+**原理**：
+- **前端**：构建到临时目录，然后用 `mv` 原子替换 `dist` 目录。Nginx 无需 reload，Vite 的 content hash 保证新旧文件名不冲突，用户刷新即拿到新版
+- **后端**：逐服务 SIGTERM 优雅关闭 → 启动新进程 → 健康检查通过。重启顺序为 AI → Preprocessing → Gateway（从最不关键到最关键）
+- **停机时间**：前端零停机，单个后端服务约 1-2 秒 502
+
+### 冷启动 (首次部署或全量重启)
+
+```bash
+# 全量停止 + 重建 + 重启 (会中断服务)
+./deploy/start.sh
 ```
 

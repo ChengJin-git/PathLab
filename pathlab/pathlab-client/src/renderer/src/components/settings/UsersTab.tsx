@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, Key, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, AlertTriangle, Construction, Search, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, Key, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, AlertTriangle, Construction, Search, ChevronLeft, ChevronRight, Megaphone, Send, X } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -10,6 +10,7 @@ import {
   listUsers, updateUser, deleteUser, registerUser, revokeUserAgreement,
   batchActivateUsers, batchDeactivateUsers, batchDeleteUsers,
   getMaintenanceMode, setMaintenanceMode as setMaintenanceModeApi,
+  getMaintenanceNotice, setMaintenanceNotice as setMaintenanceNoticeApi,
   getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, fetchDatasets
 } from '../../api'
 import { ShowConfirmDialog } from './ConfirmDialog'
@@ -45,6 +46,10 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
   const [createForm, setCreateForm] = useState<{ username: string; password: string; nickname: string; role: string }>({ username: '', password: '', nickname: '', role: 'pathologist' })
   const [creatingUser, setCreatingUser] = useState(false)
   const [maintenanceMode, setMaintenanceMode] = useState(false)
+  const [noticeMessage, setNoticeMessage] = useState('')
+  const [currentNotice, setCurrentNotice] = useState<string | null>(null)
+  const [showNoticeInput, setShowNoticeInput] = useState(false)
+  const [sendingNotice, setSendingNotice] = useState(false)
 
   // Dataset Permission Management State
   const [permissionUser, setPermissionUser] = useState<UserListItem | null>(null)
@@ -86,10 +91,20 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
     }
   }, [])
 
+  const loadMaintenanceNotice = useCallback(async () => {
+    try {
+      const result = await getMaintenanceNotice()
+      setCurrentNotice(result.active ? result.message : null)
+    } catch (err) {
+      console.error('Failed to load maintenance notice:', err)
+    }
+  }, [])
+
   useEffect(() => {
     loadUsers()
     loadMaintenanceMode()
-  }, [loadUsers, loadMaintenanceMode])
+    loadMaintenanceNotice()
+  }, [loadUsers, loadMaintenanceMode, loadMaintenanceNotice])
 
   // --- User CRUD handlers ---
   const handleSaveUser = async () => {
@@ -382,6 +397,72 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
           </div>
         </div>
       )}
+
+      {/* Maintenance Notice Section */}
+      <div className="mb-4 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <Megaphone className="w-4 h-4 text-amber-600" />
+            <span className="font-medium text-sm text-gray-800">{t('settings.usersTab.maintenanceNotice')}</span>
+          </div>
+          {!showNoticeInput && (
+            <Button variant="outline" size="sm" onClick={() => { setShowNoticeInput(true); setNoticeMessage(currentNotice || '') }} className="gap-1 h-7 text-xs">
+              <Send className="w-3 h-3" />
+              {currentNotice ? t('settings.usersTab.editNotice') : t('settings.usersTab.sendNotice')}
+            </Button>
+          )}
+        </div>
+        {currentNotice && !showNoticeInput && (
+          <div className="flex items-start gap-2 mt-2">
+            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded px-3 py-2 flex-1 whitespace-pre-wrap">{currentNotice}</p>
+            <Button variant="ghost" size="sm" onClick={async () => {
+              setSendingNotice(true)
+              try {
+                await setMaintenanceNoticeApi(null)
+                setCurrentNotice(null)
+              } catch (err) {
+                setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToSendNotice'))
+              } finally {
+                setSendingNotice(false)
+              }
+            }} className="h-7 w-7 p-0 text-gray-400 hover:text-red-500" title={t('settings.usersTab.clearNotice')}>
+              <X className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        )}
+        {showNoticeInput && (
+          <div className="mt-2 space-y-2">
+            <textarea
+              value={noticeMessage}
+              onChange={(e) => setNoticeMessage(e.target.value)}
+              placeholder={t('settings.usersTab.noticePlaceholder')}
+              className="w-full border border-gray-300 rounded-lg p-3 text-sm resize-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+              rows={3}
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => { setShowNoticeInput(false); setNoticeMessage('') }} disabled={sendingNotice}>
+                {t('settings.usersTab.cancelNotice')}
+              </Button>
+              <Button size="sm" className="bg-amber-600 hover:bg-amber-700 text-white gap-1" disabled={sendingNotice || !noticeMessage.trim()} onClick={async () => {
+                setSendingNotice(true)
+                try {
+                  const result = await setMaintenanceNoticeApi(noticeMessage.trim())
+                  setCurrentNotice(result.active ? result.message : null)
+                  setShowNoticeInput(false)
+                  setNoticeMessage('')
+                } catch (err) {
+                  setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToSendNotice'))
+                } finally {
+                  setSendingNotice(false)
+                }
+              }}>
+                <Send className="w-3 h-3" />
+                {t('settings.usersTab.publishNotice')}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
         <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
