@@ -680,7 +680,11 @@ async def _resolve_pubmed_to_pdf_url(url: str) -> str:
     """Resolve a PubMed abstract URL to a downloadable PDF URL.
 
     Uses the NCBI ID converter API to map PMID → PMCID / DOI.
-    Priority: PMC PDF (free full text) > DOI redirect.
+    Priority: PMC PDF (free full text) > publisher URL (via DOI redirect).
+
+    When a DOI is found, follows the doi.org redirect to obtain the actual
+    publisher URL (e.g. sciencedirect.com, nature.com) so that
+    ``download_pdf``'s publisher-specific URL converters can be applied.
 
     Returns the best resolved URL, or the original URL unchanged on failure.
     """
@@ -710,15 +714,42 @@ async def _resolve_pubmed_to_pdf_url(url: str) -> str:
                 pdf_url = f"https://pmc.ncbi.nlm.nih.gov/articles/{pmcid}/pdf/"
                 logger.info(f"PubMed {pmid} → PMC PDF: {pdf_url}")
                 return pdf_url
-            # Fall back to DOI (will be resolved by Unpaywall/Semantic Scholar later)
+            # Fall back to DOI — follow the redirect to get the real publisher URL
+            # so that download_pdf's elif chain can apply the right converter
+            # (e.g. ScienceDirect pdfft, Nature /content/pdf, etc.)
             doi = record.get("doi")
             if doi:
-                doi_url = f"https://doi.org/{doi}"
-                logger.info(f"PubMed {pmid} → DOI: {doi_url}")
-                return doi_url
+                return await _follow_doi_redirect(doi, pmid)
     except Exception as e:
         logger.warning(f"NCBI ID converter error for PMID {pmid}: {e}")
     return url
+
+
+async def _follow_doi_redirect(doi: str, pmid: str | None = None) -> str:
+    """Follow a doi.org redirect to get the final publisher URL.
+
+    Uses HEAD with follow_redirects to efficiently resolve without
+    downloading the full page.  Returns the final URL on success,
+    or ``https://doi.org/{doi}`` as fallback.
+    """
+    doi_url = f"https://doi.org/{doi}"
+    label = f"PMID {pmid}" if pmid else f"DOI {doi}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            head_resp = await client.head(doi_url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                              "AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,*/*",
+            })
+            final_url = str(head_resp.url)
+            if final_url and final_url != doi_url:
+                logger.info(f"{label} → DOI redirect → {final_url}")
+                return final_url
+    except Exception as e:
+        logger.warning(f"DOI redirect failed for {label} ({doi_url}): {e}")
+    logger.info(f"{label} → DOI (no redirect): {doi_url}")
+    return doi_url
 
 
 def get_acl_pdf_url(url: str) -> str:
@@ -1049,6 +1080,12 @@ async def _try_semantic_scholar_download(url: str, doi: str | None = None) -> by
 
 async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
     try:
+        # Pre-step: Resolve PubMed abstract URLs to the actual content URL
+        # (PMC PDF or publisher page via DOI redirect).  This MUST run before
+        # the publisher elif-chain so the resolved URL can be matched below.
+        if 'pubmed.ncbi.nlm.nih.gov' in url:
+            url = await _resolve_pubmed_to_pdf_url(url)
+
         # Step 1: Convert article page URLs to direct PDF download URLs.
         if 'arxiv.org' in url:
             url = get_arxiv_pdf_url(url)
@@ -1062,8 +1099,6 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
             url = get_wiley_pdf_url(url)
         elif 'biorxiv.org' in url or 'medrxiv.org' in url:
             url = get_biorxiv_pdf_url(url)
-        elif 'pubmed.ncbi.nlm.nih.gov' in url:
-            url = await _resolve_pubmed_to_pdf_url(url)
         elif 'pmc.ncbi.nlm.nih.gov' in url or 'ncbi.nlm.nih.gov/pmc' in url:
             url = get_pmc_pdf_url(url)
         elif 'aclanthology.org' in url:
