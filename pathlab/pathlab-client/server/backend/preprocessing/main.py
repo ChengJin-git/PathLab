@@ -3,7 +3,9 @@ from fastapi.responses import Response, JSONResponse
 from PIL import Image
 import io
 import os
-import json
+import gc
+import ctypes
+
 import logging
 from pathlib import Path
 from collections import OrderedDict
@@ -11,15 +13,32 @@ from typing import Dict, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 import asyncio
 
+# Load libc for malloc_trim() - returns freed C-heap memory to OS.
+# This is critical for long-running workers that use C libraries (SdpcSlide SDK)
+# which may accumulate fragmented heap memory that gc.collect() alone won't release.
+_libc = None
+try:
+    _libc = ctypes.CDLL("libc.so.6")
+except OSError:
+    pass
+
+
+def _force_release_memory():
+    """Force Python GC and return freed C-heap memory to OS."""
+    gc.collect()
+    if _libc is not None:
+        try:
+            _libc.malloc_trim(0)
+        except Exception:
+            pass
+
 from .tiling import (
     get_or_compute_coordinates,
     check_coords_cache_valid,
     WSITiler,
     TissueSegmenter,
     visualize_segmentation,
-    safe_load_h5_coords,
 )
-from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 
 # Database imports
 import sys
@@ -32,7 +51,24 @@ from backend.common.config import Config
 from backend.common.file_types import is_patch_file
 
 # Preprocessing service: WSI processing, tissue segmentation, patch extraction
-app = FastAPI(title="PathLab Preprocessing Service")
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(_app):
+    # Startup: nothing extra needed
+    yield
+    # Shutdown: close all cached slides to release file handles and memory
+    logger.info(f"Shutting down: closing {len(slide_cache)} cached slides")
+    for _wsi_id, slide in list(slide_cache.items()):
+        try:
+            slide.close()
+        except Exception:
+            pass
+    slide_cache.clear()
+    dzg_cache.clear()
+    logger.info("All cached slides closed")
+
+app = FastAPI(title="PathLab Preprocessing Service", lifespan=lifespan)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -81,6 +117,74 @@ def _load_slide(file_path: str):
     except Exception as e:
         logger.error(f"Failed to open WSI: {e}")
         raise
+
+
+def _mask_visualization_worker(wsi_file_path: str, tissue_contours, hole_contours, mask_save_path: str):
+    """
+    Worker function for mask visualization subprocess.
+
+    Runs in a separate process to isolate C library crashes (segfaults).
+    Opens the slide independently (C handles can't cross process boundaries),
+    generates the mask visualization, and saves it to disk.
+    """
+    try:
+        from backend.common.slide_utils import load_slide
+        slide = load_slide(wsi_file_path)
+        mask_img = visualize_segmentation(
+            slide,
+            tissue_contours,
+            hole_contours,
+            -1,  # vis_level: Auto-select ~64x downsample
+            3,   # line_thickness
+            (0, 255, 0),  # color: Green for tissue
+            (255, 0, 0),  # hole_color: Red for holes
+        )
+        mask_img.save(mask_save_path, format='PNG', optimize=True)
+        del mask_img
+        try:
+            slide.close()
+        except Exception:
+            pass
+    except Exception as e:
+        # Log to stderr (subprocess stdout/stderr is not captured by parent logger)
+        import sys
+        print(f"[mask_worker] Failed to generate mask: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _run_mask_visualization_subprocess(
+    wsi_file_path: str,
+    tissue_contours,
+    hole_contours,
+    mask_save_path: str,
+    timeout: int = 120,
+) -> int:
+    """
+    Run mask visualization in a subprocess to isolate C library segfaults.
+
+    Returns:
+        Exit code: 0 = success, non-zero = failure (including segfault = -11)
+    """
+    import multiprocessing
+    ctx = multiprocessing.get_context('fork')  # fork is fastest on Linux (COW for contour arrays)
+    p = ctx.Process(
+        target=_mask_visualization_worker,
+        args=(wsi_file_path, tissue_contours, hole_contours, mask_save_path),
+    )
+    p.start()
+    p.join(timeout=timeout)
+
+    if p.is_alive():
+        # Timeout: kill the subprocess
+        logger.warning(f"Mask visualization subprocess timed out after {timeout}s, killing it")
+        p.kill()
+        p.join(timeout=5)
+        return -1
+
+    exit_code = p.exitcode
+    if exit_code != 0:
+        logger.warning(f"Mask visualization subprocess exited with code {exit_code}")
+    return exit_code
 
 async def get_wsi_path_from_db(wsi_id: str, db: AsyncSession) -> Optional[Path]:
     """Get WSI file path from database"""
@@ -286,6 +390,7 @@ async def get_thumbnail(
                 return Response(content=img_bytes.getvalue(), media_type='image/jpeg')
         else:
             # WSI file: use ASlide to get thumbnail
+            slide = None
             try:
                 # Use _load_slide to ensure color correction is applied
                 slide = _load_slide(str(file_path))
@@ -315,6 +420,12 @@ async def get_thumbnail(
             except Exception as e:
                 logger.error(f"Failed to generate WSI thumbnail: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to generate thumbnail: {str(e)}")
+            finally:
+                if slide is not None:
+                    try:
+                        slide.close()
+                    except Exception:
+                        pass
     except HTTPException:
         raise
     except Exception as e:
@@ -403,23 +514,24 @@ async def get_tile(
                 detail=f"Invalid tile coordinates: ({col}, {row}), valid range: x: 0-{level_tiles[0]-1}, y: 0-{level_tiles[1]-1}"
             )
 
-        # Get tile image
-        tile = dzg.get_tile(level, (col, row))
-
-        # Convert to bytes
-        img_bytes = io.BytesIO()
+        # Run blocking tile I/O in thread pool to avoid blocking the event loop
         fmt_lower = format.lower()
-        save_format = "JPEG" if fmt_lower in ("jpeg", "jpg") else "PNG"
 
-        if save_format == "JPEG":
-            tile.save(img_bytes, format=save_format, quality=85, optimize=True)
-        else:
-            tile.save(img_bytes, format=save_format, optimize=True)
+        def _generate_tile_bytes() -> bytes:
+            """Blocking: read tile from disk + encode to image bytes"""
+            tile = dzg.get_tile(level, (col, row))
+            buf = io.BytesIO()
+            save_format = "JPEG" if fmt_lower in ("jpeg", "jpg") else "PNG"
+            if save_format == "JPEG":
+                tile.save(buf, format=save_format, quality=85, optimize=True)
+            else:
+                tile.save(buf, format=save_format, optimize=True)
+            return buf.getvalue()
 
-        img_bytes.seek(0)
+        tile_bytes = await asyncio.to_thread(_generate_tile_bytes)
 
         content_type = f"image/{fmt_lower}"
-        return Response(content=img_bytes.getvalue(), media_type=content_type)
+        return Response(content=tile_bytes, media_type=content_type)
     except HTTPException:
         raise
     except Exception as e:
@@ -523,7 +635,11 @@ async def compute_patches(
                 return JSONResponse(response_data)
 
         # Cache miss or force_recompute - need to compute coordinates
+        # import time as _time
+        # _t0 = _time.monotonic()
         slide = await get_slide(wsi_id, db)
+        # _t1 = _time.monotonic()
+        # logger.info(f"[Timing] get_slide took {_t1 - _t0:.1f}s for {wsi_id}")
 
         # Perform tissue segmentation to get contours
         # NOTE: segment_tissue() is CPU-intensive (OpenCV operations).
@@ -533,7 +649,10 @@ async def compute_patches(
         tissue_contours, hole_contours = await asyncio.to_thread(
             segmenter.segment_tissue, slide
         )
-        logger.info(f"Found {len(tissue_contours)} tissue contours")
+        del segmenter  # Release segmenter (holds references to filter params, etc.)
+        _force_release_memory()  # GC + malloc_trim after heavy image processing
+        # _t2 = _time.monotonic()
+        # logger.info(f"[Timing] segment_tissue took {_t2 - _t1:.1f}s, found {len(tissue_contours)} tissue contours")
 
         # Compute coordinates with PrePATH-style tiling (patch_size auto-determined by MPP)
         # Returns (coordinates, coords_file_path) tuple
@@ -551,37 +670,70 @@ async def compute_patches(
             contour_fn=contour_fn,
             use_padding=use_padding,
             seg_level=seg_level,
+            tissue_contours=tissue_contours,
+            hole_contours=hole_contours,
         )
+        _force_release_memory()  # GC + malloc_trim after coordinate computation
+        # _t3 = _time.monotonic()
+        # logger.info(f"[Timing] get_or_compute_coordinates took {_t3 - _t2:.1f}s, {len(coordinates)} coords for {wsi_id}")
 
         # Generate and save mask visualization
+        # IMPORTANT: Run in a **subprocess** to isolate C library crashes (segfaults).
+        # The Aslide/SdpcSlide C SDK can segfault on certain slides (e.g., large .sdpc files),
+        # which would kill the entire uvicorn worker process. By running in a subprocess,
+        # a segfault only kills the child process; the worker survives and returns normally.
         mask_file = None
         if save_mask:
             try:
                 logger.info(f"Generating tissue segmentation mask visualization")
-                # NOTE: visualize_segmentation() is CPU-intensive (image processing).
-                # Run in thread pool to avoid blocking the event loop.
-                mask_img = await asyncio.to_thread(
-                    visualize_segmentation,
-                    slide,
+                wsi_file_path = slide.filepath  # Get path before passing to subprocess
+                mask_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # Run in subprocess to isolate potential C library segfaults
+                exit_code = await asyncio.to_thread(
+                    _run_mask_visualization_subprocess,
+                    wsi_file_path,
                     tissue_contours,
                     hole_contours,
-                    -1,  # vis_level: Auto-select ~64x downsample
-                    3,   # line_thickness
-                    (0, 255, 0),  # color: Green for tissue
-                    (255, 0, 0),  # hole_color: Red for holes
+                    str(mask_path),
+                    timeout=120,  # 2 min timeout for mask generation
                 )
 
-                mask_path.parent.mkdir(parents=True, exist_ok=True)
-                mask_img.save(mask_path, format='PNG', optimize=True)
-                mask_file = str(mask_path)
-                logger.info(f"Saved mask visualization to {mask_path}")
+                if exit_code == 0 and mask_path.exists():
+                    mask_file = str(mask_path)
+                    logger.info(f"Mask visualization saved: {mask_path}")
+                else:
+                    logger.warning(
+                        f"Mask visualization subprocess failed (exit_code={exit_code}) for {wsi_id}. "
+                        f"Skipping mask - this does not affect patch coordinates."
+                    )
             except Exception as e:
-                logger.warning(f"Failed to generate mask visualization: {e}")
+                logger.warning(f"Failed to generate mask visualization: {e}. Skipping mask.")
+
+        # Prepare response before releasing resources
+        num_patches = len(coordinates)
+        num_contours = len(tissue_contours)
+
+        # Release heavy objects no longer needed
+        del tissue_contours, hole_contours, coordinates
+
+        # Close and evict slide from cache to release C library resources.
+        # During batch processing (e.g., training pipeline), slides are processed
+        # sequentially and won't be reused immediately. Keeping them in cache
+        # accumulates memory from the underlying C libraries (e.g., SdpcSlide SDK).
+        if wsi_id in slide_cache:
+            try:
+                evicted = slide_cache.pop(wsi_id)
+                evicted.close()
+            except Exception:
+                pass
+        del slide
+        _force_release_memory()  # GC + malloc_trim: return C-heap to OS after slide processing
 
         response_data = {
             "wsi_id": wsi_id,
-            "num_patches": len(coordinates),
-            "num_contours": len(tissue_contours),
+            "num_patches": num_patches,
+            "num_contours": num_contours,
             "level": level,
             "coords_file": str(coords_file),
             "cached": False
@@ -690,844 +842,9 @@ def get_mask(wsi_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to get mask: {str(e)}")
 
 
-# AI Results directory
-AI_RESULTS_DIR = UPLOADS_DIR / "ai_results"
-
-
-@app.get("/wsi/{wsi_id}/heatmap")
-async def get_heatmap_data(
-    wsi_id: str,
-    task_id: Optional[str] = Query(None, description="Specific task ID for the result"),
-    fold_key: Optional[str] = Query(None, description="Fold key for k-fold results (e.g., 'fold_0')"),
-    patch_size: int = Query(512, description="Patch size used during inference"),
-    class_idx: Optional[int] = Query(None, description="Class index for multi-class attention (e.g., CLAM_MB)"),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get attention heatmap data for visualization overlay.
-
-    For multi-class attention models (e.g., CLAM_MB), use class_idx to select which class's attention to visualize.
-    If class_idx is not provided for multi-class attention, defaults to the predicted class.
-
-    Returns:
-        JSON with coordinates, attention weights, and metadata for rendering heatmap
-    """
-    import numpy as np
-    import h5py
-
-    logger.info(f"Getting heatmap data for {wsi_id}, task_id={task_id}, fold_key={fold_key}")
-
-    # Helper function to return empty heatmap response
-    def empty_heatmap_response(message: str = "No heatmap data available"):
-        return {
-            "wsi_id": wsi_id,
-            "task_id": task_id,
-            "fold_key": fold_key,
-            "task_name": None,
-            "patch_size": patch_size,
-            "slide_width": 0,
-            "slide_height": 0,
-            "num_patches": 0,
-            "attention_min": 0,
-            "attention_max": 0,
-            "prediction": None,
-            "probs": None,
-            "heatmap": [],
-            "top_patches": [],
-            "bottom_patches": [],
-            "message": message
-        }
-
-    try:
-        # Find result directory
-        result_dir = AI_RESULTS_DIR / wsi_id
-        if not result_dir.exists():
-            # Return empty data instead of 404 when no inference results
-            logger.info(f"No AI results directory for {wsi_id}")
-            return empty_heatmap_response("No inference results available")
-
-        # Find attention file (with or without task_id and fold_key)
-        attention_files = list(result_dir.glob("*_attention.npy"))
-        if not attention_files:
-            # Return empty data instead of 404 when no attention files
-            logger.info(f"No attention files found for {wsi_id}")
-            return empty_heatmap_response("No attention data available")
-
-        # Select the right attention file based on task_id and fold_key
-        if task_id:
-            if fold_key:
-                # K-fold: look for train_{task_id}_{fold_key}_attention.npy
-                matching = [f for f in attention_files if task_id in f.name and fold_key in f.name]
-            else:
-                # Regular or auto-select: match task_id but exclude fold files if there's a non-fold version
-                matching = [f for f in attention_files if task_id in f.name]
-                # If there are both fold and non-fold files, prefer non-fold (shouldn't happen but be safe)
-                non_fold = [f for f in matching if "fold_" not in f.name]
-                if non_fold:
-                    matching = non_fold
-            if not matching:
-                # Return empty data when specific task not found
-                logger.info(f"No attention data found for task {task_id}, fold_key={fold_key}")
-                return empty_heatmap_response(f"No attention data for task {task_id}" + (f" fold {fold_key}" if fold_key else ""))
-            attention_file = matching[0]
-        else:
-            # Use the most recent
-            attention_file = sorted(attention_files, key=lambda f: f.stat().st_mtime, reverse=True)[0]
-
-        # Load attention weights
-        attention = np.load(str(attention_file), allow_pickle=True)
-        logger.info(f"Loaded attention: shape={attention.shape}, min={attention.min()}, max={attention.max()}")
-
-        # Load corresponding result.json for metadata
-        result_json_file = attention_file.with_name(
-            attention_file.name.replace("_attention.npy", "_result.json")
-        )
-        result_meta = {}
-        if result_json_file.exists():
-            with open(result_json_file, 'r') as f:
-                result_meta = json.load(f)
-
-        # Load coordinates from coords.h5 (search across all params_hash directories)
-        coords_file = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
-        if coords_file is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Coordinates not found for {wsi_id}. Run compute_patches first."
-            )
-
-        # Use safe loading to handle corrupted files
-        coords, _, load_error = safe_load_h5_coords(coords_file, delete_if_corrupted=False)
-        if coords is None:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to load coordinates for {wsi_id}: {load_error}. Please rerun compute_patches."
-            )
-
-        logger.info(f"Loaded coordinates: shape={coords.shape}")
-
-        # Handle multi-class attention (e.g., CLAM_MB returns shape (num_classes, N))
-        attention_type = result_meta.get("attention_type", "single")
-        classes = result_meta.get("classes", [])
-        num_attention_classes = None
-        selected_class_idx = class_idx
-
-        if attention.ndim == 2:
-            # Multi-class attention: shape (num_classes, N)
-            num_attention_classes = attention.shape[0]
-            logger.info(f"Multi-class attention detected: {num_attention_classes} classes")
-
-            # Select which class's attention to use
-            if selected_class_idx is None:
-                # Default to predicted class
-                pred_label = result_meta.get("pred")
-                if pred_label and pred_label in classes:
-                    selected_class_idx = classes.index(pred_label)
-                else:
-                    selected_class_idx = 0  # Fallback to first class
-
-            # Validate class_idx
-            if selected_class_idx < 0 or selected_class_idx >= num_attention_classes:
-                selected_class_idx = 0
-
-            logger.info(f"Using attention for class {selected_class_idx}: {classes[selected_class_idx] if selected_class_idx < len(classes) else 'unknown'}")
-            attention = attention[selected_class_idx]  # Now shape (N,)
-        else:
-            # Single-class attention: shape (N,)
-            selected_class_idx = None
-
-        # Verify shapes match
-        num_patches = len(coords)
-        if len(attention) != num_patches:
-            logger.warning(f"Shape mismatch: attention={len(attention)}, coords={num_patches}")
-            # Truncate to smaller size
-            min_len = min(len(attention), num_patches)
-            attention = attention[:min_len]
-            coords = coords[:min_len]
-
-        # Check if attention is already softmax-normalized (sums to ~1) or raw logits
-        attention_sum = attention.sum()
-        if abs(attention_sum - 1.0) < 0.01:
-            # Already softmax normalized - use min-max with percentile clipping for visualization
-            # This enhances contrast for visualization
-            p_low, p_high = np.percentile(attention, [5, 95])
-            attention_clipped = np.clip(attention, p_low, p_high)
-            attention_normalized = (attention_clipped - p_low) / (p_high - p_low + 1e-8)
-            logger.info(f"Using percentile normalization: p5={p_low:.6f}, p95={p_high:.6f}")
-        else:
-            # Raw logits - apply softmax first
-            # Numerically stable softmax
-            attention_shifted = attention - attention.max()
-            exp_attention = np.exp(attention_shifted)
-            attention_softmax = exp_attention / exp_attention.sum()
-            # Then percentile normalization for visualization
-            p_low, p_high = np.percentile(attention_softmax, [5, 95])
-            attention_clipped = np.clip(attention_softmax, p_low, p_high)
-            attention_normalized = (attention_clipped - p_low) / (p_high - p_low + 1e-8)
-            attention = attention_softmax  # Use softmax values for raw_weight
-            logger.info(f"Applied softmax, then percentile normalization: p5={p_low:.6f}, p95={p_high:.6f}")
-
-        # Build heatmap data with index for sorting
-        heatmap_data = []
-        for i, (coord, weight) in enumerate(zip(coords, attention_normalized)):
-            heatmap_data.append({
-                "index": i,
-                "x": int(coord[0]),
-                "y": int(coord[1]),
-                "weight": float(weight),
-                "raw_weight": float(attention[i])
-            })
-
-        # Sort by weight to get top and bottom patches
-        sorted_by_weight = sorted(heatmap_data, key=lambda p: p["weight"], reverse=True)
-        top_patches = sorted_by_weight[:10]  # Top 10 highest attention
-        bottom_patches = sorted_by_weight[-10:][::-1]  # Bottom 10 lowest attention (reversed for ascending order)
-
-        # Get slide dimensions
-        slide = await get_slide(wsi_id, db)
-        width, height = slide.level_dimensions[0]
-
-        # Determine task type from result_meta or file prefix
-        task_type = result_meta.get("task_type")
-        if not task_type:
-            # Infer from file name (train_xxx for classification, survival_xxx for survival)
-            if attention_file.stem.startswith("train_"):
-                # Check if this is a survival task by looking for risk_score
-                task_type = "survival" if "risk_score" in result_meta else "train"
-            else:
-                task_type = "unknown"
-
-        return {
-            "wsi_id": wsi_id,
-            "task_id": result_meta.get("task_id"),
-            "task_type": task_type,
-            "fold_key": result_meta.get("fold_key"),  # K-fold: which fold this attention comes from
-            "task_name": result_meta.get("task_name"),
-            "patch_size": patch_size,
-            "slide_width": width,
-            "slide_height": height,
-            "num_patches": len(heatmap_data),
-            "attention_min": float(attention.min()),
-            "attention_max": float(attention.max()),
-            "prediction": result_meta.get("pred"),
-            "probs": result_meta.get("probs"),
-            "heatmap": heatmap_data,
-            "top_patches": top_patches,
-            "bottom_patches": bottom_patches,
-            # Multi-class attention info
-            "aggregator": result_meta.get("aggregator"),
-            "attention_type": attention_type,
-            "num_attention_classes": num_attention_classes,
-            "selected_class_idx": selected_class_idx,
-            "classes": classes,
-            # Survival prediction fields
-            "risk_score": result_meta.get("risk_score"),
-            "risk_group": result_meta.get("risk_group"),
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get heatmap data: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to get heatmap data: {str(e)}")
-
-
-@app.get("/wsi/{wsi_id}/heatmap_thumbnail")
-async def get_heatmap_thumbnail(
-    wsi_id: str,
-    task_id: Optional[str] = Query(None, description="Specific task ID for the result"),
-    fold_key: Optional[str] = Query(None, description="Fold key for k-fold results (e.g., 'fold_0')"),
-    patch_size: int = Query(512, description="Patch size used during inference"),
-    size: int = Query(256, description="Max thumbnail size (width or height)"),
-    class_idx: Optional[int] = Query(None, description="Class index for multi-class attention"),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get a rendered heatmap thumbnail image for a WSI.
-
-    This endpoint generates a thumbnail-sized heatmap overlay image by:
-    1. Getting the WSI thumbnail
-    2. Rendering the attention heatmap on top
-    3. Returning the blended image
-
-    Returns:
-        PNG image with heatmap overlay
-    """
-    import numpy as np
-    from PIL import Image
-    import io
-
-    logger.info(f"Getting heatmap thumbnail for {wsi_id}, task_id={task_id}, size={size}")
-
-    try:
-        # Find result directory
-        result_dir = AI_RESULTS_DIR / wsi_id
-        if not result_dir.exists():
-            raise HTTPException(status_code=404, detail="No inference results available")
-
-        # Find attention file
-        attention_files = list(result_dir.glob("*_attention.npy"))
-        if not attention_files:
-            raise HTTPException(status_code=404, detail="No attention data available")
-
-        # Select the right attention file
-        if task_id:
-            if fold_key:
-                # Explicit fold_key specified - use it
-                matching = [f for f in attention_files if task_id in f.name and fold_key in f.name]
-            else:
-                # No fold_key specified - try to find best fold from metrics.json
-                matching = [f for f in attention_files if task_id in f.name]
-                non_fold = [f for f in matching if "fold_" not in f.name]
-                if non_fold:
-                    # Non-k-fold files exist - use them
-                    matching = non_fold
-                elif matching:
-                    # All files are k-fold - try to find best fold
-                    best_fold = None
-                    # Check model directory for metrics.json
-                    # WSI classification: {aggregator}_{task_id}, Patch classification: patch_cls_{task_id}
-                    possible_prefixes = [
-                        "patch_cls",  # Patch classification
-                        "abmil", "meanmil", "maxmil", "dsmil", "dtfdmil",  # WSI aggregators
-                        "clam_sb", "clam_mb", "transmil",
-                    ]
-                    for model_prefix in possible_prefixes:
-                        model_id = f"{model_prefix}_{task_id}"
-                        metrics_file = UPLOADS_DIR / "models" / model_id / "metrics.json"
-                        if metrics_file.exists():
-                            try:
-                                with open(metrics_file, 'r') as f:
-                                    metrics_data = json.load(f)
-                                    best_fold = metrics_data.get("best_fold")
-                                    if best_fold:
-                                        break
-                            except Exception as e:
-                                logger.warning(f"Failed to read metrics.json for {model_id}: {e}")
-
-                    if best_fold:
-                        # Filter to best fold only
-                        best_matching = [f for f in matching if best_fold in f.name]
-                        if best_matching:
-                            matching = best_matching
-                            logger.info(f"Using best fold {best_fold} for task {task_id}")
-                    # If no best_fold found, use first matching file (fallback)
-            if not matching:
-                raise HTTPException(status_code=404, detail=f"No attention data for task {task_id}")
-            attention_file = matching[0]
-        else:
-            attention_file = sorted(attention_files, key=lambda f: f.stat().st_mtime, reverse=True)[0]
-
-        # Load attention weights
-        attention = np.load(str(attention_file), allow_pickle=True)
-
-        # Load result metadata
-        result_json_file = attention_file.with_name(
-            attention_file.name.replace("_attention.npy", "_result.json")
-        )
-        result_meta = {}
-        if result_json_file.exists():
-            with open(result_json_file, 'r') as f:
-                result_meta = json.load(f)
-
-        # Load coordinates (search across all params_hash directories)
-        coords_file = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
-        if coords_file is None:
-            raise HTTPException(status_code=404, detail="Coordinates not found")
-
-        # Use safe loading to handle corrupted files
-        coords, _, load_error = safe_load_h5_coords(coords_file, delete_if_corrupted=False)
-        if coords is None:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to load coordinates: {load_error}. Please rerun compute_patches."
-            )
-
-        # Handle multi-class attention
-        classes = result_meta.get("classes", [])
-        if attention.ndim == 2:
-            num_attention_classes = attention.shape[0]
-            selected_class_idx = class_idx
-            if selected_class_idx is None:
-                pred_label = result_meta.get("pred")
-                if pred_label and pred_label in classes:
-                    selected_class_idx = classes.index(pred_label)
-                else:
-                    selected_class_idx = 0
-            if selected_class_idx < 0 or selected_class_idx >= num_attention_classes:
-                selected_class_idx = 0
-            attention = attention[selected_class_idx]
-
-        # Verify shapes match
-        num_patches = len(coords)
-        if len(attention) != num_patches:
-            min_len = min(len(attention), num_patches)
-            attention = attention[:min_len]
-            coords = coords[:min_len]
-
-        # Normalize attention for visualization
-        attention_sum = attention.sum()
-        if abs(attention_sum - 1.0) < 0.01:
-            p_low, p_high = np.percentile(attention, [5, 95])
-            attention_clipped = np.clip(attention, p_low, p_high)
-            attention_normalized = (attention_clipped - p_low) / (p_high - p_low + 1e-8)
-        else:
-            attention_shifted = attention - attention.max()
-            exp_attention = np.exp(attention_shifted)
-            attention_softmax = exp_attention / exp_attention.sum()
-            p_low, p_high = np.percentile(attention_softmax, [5, 95])
-            attention_clipped = np.clip(attention_softmax, p_low, p_high)
-            attention_normalized = (attention_clipped - p_low) / (p_high - p_low + 1e-8)
-
-        # Get slide dimensions
-        slide = await get_slide(wsi_id, db)
-        slide_width, slide_height = slide.level_dimensions[0]
-
-        # Calculate thumbnail dimensions maintaining aspect ratio
-        aspect_ratio = slide_width / slide_height
-        if aspect_ratio > 1:
-            thumb_width = size
-            thumb_height = int(size / aspect_ratio)
-        else:
-            thumb_height = size
-            thumb_width = int(size * aspect_ratio)
-
-        # Get WSI thumbnail
-        wsi = await WSIRepository.get_by_id(db, wsi_id)
-        if not wsi:
-            raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
-
-        file_path = Path(wsi.wsi_path)
-        file_size = wsi.file_size or file_path.stat().st_size
-
-        if is_patch_file(str(file_path), file_size):
-            # Patch file
-            with Image.open(file_path) as img:
-                thumbnail = img.convert('RGB')
-                thumbnail.thumbnail((thumb_width, thumb_height), Image.Resampling.LANCZOS)
-        else:
-            # WSI file
-            aslide = _load_slide(str(file_path))
-            lowest_level = len(aslide.level_dimensions) - 1
-            level_dims = aslide.level_dimensions[lowest_level]
-            region = aslide.read_region((0, 0), lowest_level, level_dims)
-            thumbnail = region.convert('RGB')
-            thumbnail.thumbnail((thumb_width, thumb_height), Image.Resampling.LANCZOS)
-
-        # Get actual thumbnail dimensions after resize (may differ from calculated)
-        actual_thumb_width, actual_thumb_height = thumbnail.size
-
-        # Create heatmap overlay using coolwarm colormap (matching WSI Viewer)
-        # Coolwarm: blue (low) -> white (mid) -> red (high)
-        def weight_to_rgb(w: float) -> tuple:
-            """Convert attention weight to RGB using coolwarm colormap"""
-            w = max(0, min(1, w))
-            if w < 0.5:
-                # Blue to White
-                t = w / 0.5
-                r = int(59 + (255 - 59) * t)
-                g = int(76 + (255 - 76) * t)
-                b = int(192 + (255 - 192) * t)
-            else:
-                # White to Red
-                t = (w - 0.5) / 0.5
-                r = 255
-                g = int(255 * (1 - t))
-                b = int(255 * (1 - t * 0.8))
-            return (r, g, b)
-
-        # Scale factor from slide coordinates to actual thumbnail size
-        scale_x = actual_thumb_width / slide_width
-        scale_y = actual_thumb_height / slide_height
-        patch_w = max(1, int(patch_size * scale_x))
-        patch_h = max(1, int(patch_size * scale_y))
-
-        # Create RGB heatmap image (no alpha - matching WSI Viewer approach)
-        # WSI Viewer: draws opaque patches first, then applies blur, then blends with globalAlpha
-        # Use actual thumbnail dimensions to ensure size match
-        heatmap_rgb = np.zeros((actual_thumb_height, actual_thumb_width, 3), dtype=np.uint8)
-
-        # Draw patches on heatmap with coolwarm colors (opaque, no alpha)
-        for coord, weight in zip(coords, attention_normalized):
-            x = int(coord[0] * scale_x)
-            y = int(coord[1] * scale_y)
-            # Clamp to bounds
-            x_end = min(x + patch_w, actual_thumb_width)
-            y_end = min(y + patch_h, actual_thumb_height)
-            x = max(0, x)
-            y = max(0, y)
-            if x < x_end and y < y_end:
-                rgb = weight_to_rgb(weight)
-                heatmap_rgb[y:y_end, x:x_end, 0] = rgb[0]  # R
-                heatmap_rgb[y:y_end, x:x_end, 1] = rgb[1]  # G
-                heatmap_rgb[y:y_end, x:x_end, 2] = rgb[2]  # B
-
-        # Apply Gaussian blur to RGB image only (matching WSI Viewer: blur radius = max(2, patchW / 2))
-        # This way, only colors are blurred, not alpha channel
-        from PIL import ImageFilter
-        heatmap_image = Image.fromarray(heatmap_rgb, mode='RGB')
-        blur_radius = max(2, patch_w / 2)
-        heatmap_blurred = heatmap_image.filter(ImageFilter.GaussianBlur(radius=blur_radius))
-
-        # Blend heatmap with thumbnail using 50% opacity (matching WSI Viewer's globalAlpha = 0.5)
-        # Image.blend(im1, im2, alpha) = im1 * (1 - alpha) + im2 * alpha
-        heatmap_opacity = 0.5
-        blended_rgb = Image.blend(thumbnail, heatmap_blurred, alpha=heatmap_opacity)
-
-        # Convert to bytes
-        buf = io.BytesIO()
-        blended_rgb.save(buf, format='PNG')
-        buf.seek(0)
-
-        return Response(content=buf.getvalue(), media_type="image/png")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get heatmap thumbnail: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to get heatmap thumbnail: {str(e)}")
-
-
-def _get_npy_shape_fast(filepath: Path) -> Optional[tuple]:
-    """
-    Read numpy array shape from file header without loading the entire array.
-    This is much faster than np.load() for large arrays.
-    """
-    import struct
-    try:
-        with open(filepath, 'rb') as f:
-            # Read magic string and version
-            magic = f.read(6)
-            if magic[:6] != b'\x93NUMPY':
-                return None
-
-            # Re-read properly
-            f.seek(0)
-            f.read(6)  # Skip magic
-            version_major = struct.unpack('B', f.read(1))[0]
-            f.read(1)  # Skip version_minor
-
-            # Read header length
-            if version_major == 1:
-                header_len = struct.unpack('<H', f.read(2))[0]
-            else:  # version 2 or 3
-                header_len = struct.unpack('<I', f.read(4))[0]
-
-            # Read and parse header
-            header = f.read(header_len).decode('latin1')
-            # Parse the dict-like string to extract shape
-            # Format: {'descr': '<f4', 'fortran_order': False, 'shape': (10, 20), }
-            import ast
-            header_dict = ast.literal_eval(header.strip())
-            return header_dict.get('shape')
-    except Exception:
-        return None
-
-
-@app.get("/wsi/{wsi_id}/available_heatmaps")
-async def get_available_heatmaps(
-    wsi_id: str,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get list of available heatmaps (attention data) for a WSI.
-
-    Returns:
-        List of available tasks with attention data
-    """
-    import re
-    from backend.database.repositories import TrainingTaskRepository
-
-    logger.info(f"Getting available heatmaps for {wsi_id}")
-
-    try:
-        # Find result directory
-        result_dir = AI_RESULTS_DIR / wsi_id
-        if not result_dir.exists():
-            return {"wsi_id": wsi_id, "heatmaps": []}
-
-        # Find all attention files (WSI-level) and CAM files (patch-level)
-        attention_files = list(result_dir.glob("*_attention.npy"))
-        cam_files = list(result_dir.glob("*_cam.npy"))
-
-        if not attention_files and not cam_files:
-            return {"wsi_id": wsi_id, "heatmaps": []}
-
-        # Phase 1: Parse all files and collect task_ids that need DB lookup
-        # Store intermediate data for later processing
-        attention_data_list = []  # List of (file, task_type, task_id, fold_key, result_meta)
-        cam_data_list = []  # List of (file, task_type, task_id, result_meta)
-        task_ids_needing_db = set()
-
-        # Process WSI-level attention files (parse only, no DB calls yet)
-        for attention_file in attention_files:
-            filename = attention_file.stem
-            base_name = filename.replace("_attention", "")
-
-            fold_key = None
-            if "_fold_" in base_name:
-                fold_match = re.search(r'(fold_\d+)$', base_name)
-                if fold_match:
-                    fold_key = fold_match.group(1)
-                    base_name = base_name[:fold_match.start()].rstrip("_")
-
-            parts = base_name.split("_", 1)
-            task_type = parts[0] if parts else "unknown"
-            task_id = parts[1] if len(parts) > 1 else None
-
-            # Load result.json for metadata
-            result_json_file = attention_file.with_name(
-                attention_file.name.replace("_attention.npy", "_result.json")
-            )
-            result_meta = {}
-            if result_json_file.exists():
-                with open(result_json_file, 'r') as f:
-                    result_meta = json.load(f)
-
-            effective_task_id = task_id or result_meta.get("task_id")
-            effective_fold_key = fold_key or result_meta.get("fold_key")
-
-            # Check if we need DB lookup for this task
-            classes = result_meta.get("classes")
-            feature_extractor = result_meta.get("feature_extractor")
-            if effective_task_id and (not classes or not feature_extractor):
-                task_ids_needing_db.add(effective_task_id)
-
-            attention_data_list.append((
-                attention_file, task_type, effective_task_id, effective_fold_key, result_meta
-            ))
-
-        # Process patch-level CAM files (parse only, no DB calls yet)
-        for cam_file in cam_files:
-            filename = cam_file.stem
-            base_name = filename.replace("_cam", "")
-
-            # Extract fold_key if present (e.g., train_taskid_fold_0_cam.npy)
-            fold_key = None
-            if "_fold_" in base_name:
-                fold_match = re.search(r'(fold_\d+)$', base_name)
-                if fold_match:
-                    fold_key = fold_match.group(1)
-                    base_name = base_name[:fold_match.start()].rstrip("_")
-
-            parts = base_name.split("_", 1)
-            task_type = parts[0] if parts else "unknown"
-            task_id = parts[1] if len(parts) > 1 else None
-
-            result_json_file = cam_file.with_name(
-                cam_file.name.replace("_cam.npy", "_result.json")
-            )
-            result_meta = {}
-            if result_json_file.exists():
-                with open(result_json_file, 'r') as f:
-                    result_meta = json.load(f)
-
-            effective_task_id = task_id or result_meta.get("task_id")
-            effective_fold_key = fold_key or result_meta.get("fold_key")
-
-            classes = result_meta.get("classes")
-            feature_extractor = result_meta.get("feature_extractor")
-            if effective_task_id and (not classes or not feature_extractor):
-                task_ids_needing_db.add(effective_task_id)
-
-            cam_data_list.append((cam_file, task_type, effective_task_id, effective_fold_key, result_meta))
-
-        # Phase 2: Batch fetch all needed training tasks from DB (single query)
-        training_tasks_map: Dict[str, any] = {}
-        if task_ids_needing_db:
-            try:
-                training_tasks_map = await TrainingTaskRepository.get_by_ids(db, list(task_ids_needing_db))
-            except Exception as e:
-                logger.warning(f"Failed to batch fetch training tasks: {e}")
-
-        # Phase 3: Build heatmap entries with all data
-        heatmaps = []
-
-        for attention_file, task_type, effective_task_id, effective_fold_key, result_meta in attention_data_list:
-            classes = result_meta.get("classes")
-            feature_extractor = result_meta.get("feature_extractor")
-            task_name = result_meta.get("task_name")
-            aggregator = result_meta.get("aggregator")
-
-            # Fill in missing data from DB if available
-            if effective_task_id and effective_task_id in training_tasks_map:
-                training_task = training_tasks_map[effective_task_id]
-                if not classes and training_task.classes:
-                    classes = training_task.classes
-                if not feature_extractor and training_task.preprocessing_config:
-                    feature_extractor = training_task.preprocessing_config.get("feature_extractor")
-                # Get task_name from DB if not in result_meta
-                if not task_name and training_task.task_name:
-                    task_name = training_task.task_name
-                # Get aggregator from model_config if not in result_meta
-                if not aggregator and training_task.model_config:
-                    aggregator = training_task.model_config.get("aggregator")
-
-            # Detect multi-class attention using fast header read (no full array load)
-            attention_type = result_meta.get("attention_type", "single")
-            num_attention_classes = result_meta.get("num_attention_classes")
-
-            # Only read from file if not in result_meta
-            if "attention_type" not in result_meta:
-                shape = _get_npy_shape_fast(attention_file)
-                if shape and len(shape) == 2:
-                    attention_type = "multi_class"
-                    num_attention_classes = shape[0]
-
-            # Determine if this is a survival task by checking for risk_score
-            is_survival = "risk_score" in result_meta
-            actual_task_type = "survival" if is_survival else task_type
-
-            heatmaps.append({
-                "task_id": effective_task_id,
-                "fold_key": effective_fold_key,
-                "task_type": actual_task_type,
-                "task_name": task_name or actual_task_type,
-                "prediction": result_meta.get("pred"),
-                "probs": result_meta.get("probs"),
-                "classes": classes,
-                "feature_extractor": feature_extractor,
-                "aggregator": aggregator,
-                "created_at": attention_file.stat().st_mtime,
-                "attention_file": str(attention_file.name),
-                "data_type": "wsi",
-                "attention_type": attention_type,
-                "num_attention_classes": num_attention_classes,
-                # Survival prediction fields
-                "risk_score": result_meta.get("risk_score"),
-                "risk_group": result_meta.get("risk_group"),
-            })
-
-        for cam_file, task_type, effective_task_id, effective_fold_key, result_meta in cam_data_list:
-            classes = result_meta.get("classes")
-            feature_extractor = result_meta.get("feature_extractor")
-            task_name = result_meta.get("task_name")
-
-            if effective_task_id and effective_task_id in training_tasks_map:
-                training_task = training_tasks_map[effective_task_id]
-                if not classes and training_task.classes:
-                    classes = training_task.classes
-                if not feature_extractor and training_task.preprocessing_config:
-                    feature_extractor = training_task.preprocessing_config.get("feature_extractor")
-                # Get task_name from DB if not in result_meta
-                if not task_name and training_task.task_name:
-                    task_name = training_task.task_name
-
-            heatmaps.append({
-                "task_id": effective_task_id,
-                "task_type": task_type,
-                "task_name": task_name or task_type,
-                "fold_key": effective_fold_key,
-                "prediction": result_meta.get("pred"),
-                "probs": result_meta.get("probs"),
-                "classes": classes,
-                "feature_extractor": feature_extractor,
-                "created_at": cam_file.stat().st_mtime,
-                "attention_file": str(cam_file.name),
-                "data_type": "patch",
-                "cam_size": result_meta.get("cam_size"),
-            })
-
-        # Get best_fold info and validation performance for each model from metrics.json
-        # Key: (task_id, aggregator) for WSI or (task_id, None) for patch
-        # Value: {"best_fold": str, "val_accuracy": float}
-        model_metrics: Dict[str, Dict] = {}
-        task_best_folds: Dict[str, str] = {}
-
-        possible_prefixes = [
-            "patch_cls",  # Patch classification
-            "abmil", "meanmil", "maxmil", "dsmil", "dtfdmil",  # WSI aggregators
-            "clam_sb", "clam_mb", "transmil",
-        ]
-
-        # Collect all unique task_ids
-        task_ids = set(h.get("task_id") for h in heatmaps if h.get("task_id"))
-
-        for task_id in task_ids:
-            for model_prefix in possible_prefixes:
-                model_id = f"{model_prefix}_{task_id}"
-                metrics_file = UPLOADS_DIR / "models" / model_id / "metrics.json"
-                if metrics_file.exists():
-                    try:
-                        with open(metrics_file, 'r') as f:
-                            metrics_data = json.load(f)
-                            best_fold = metrics_data.get("best_fold")
-
-                            # Get validation accuracy (best fold's accuracy for k-fold, or single accuracy)
-                            val_accuracy = None
-                            if metrics_data.get("is_kfold") and metrics_data.get("aggregated"):
-                                # K-fold: use mean accuracy
-                                val_accuracy = metrics_data["aggregated"].get("accuracy", {}).get("mean")
-                            elif metrics_data.get("accuracy") is not None:
-                                # Single training: use accuracy directly
-                                val_accuracy = metrics_data.get("accuracy")
-                            elif metrics_data.get("val_accuracy") is not None:
-                                val_accuracy = metrics_data.get("val_accuracy")
-
-                            # Determine aggregator from model_prefix (None for patch_cls)
-                            aggregator = model_prefix if model_prefix != "patch_cls" else None
-
-                            # Get K-Fold info
-                            is_kfold = metrics_data.get("is_kfold", False)
-                            num_folds = metrics_data.get("num_folds")
-
-                            model_metrics[(task_id, aggregator)] = {
-                                "best_fold": best_fold,
-                                "val_accuracy": val_accuracy or 0.0,
-                                "is_kfold": is_kfold,
-                                "num_folds": num_folds,
-                            }
-
-                            if best_fold and task_id not in task_best_folds:
-                                task_best_folds[task_id] = best_fold
-                    except Exception as e:
-                        logger.warning(f"Failed to read metrics.json for {model_id}: {e}")
-
-        # Mark is_best_fold and val_accuracy for each heatmap
-        for heatmap in heatmaps:
-            task_id = heatmap.get("task_id")
-            fold_key = heatmap.get("fold_key")
-            aggregator = heatmap.get("aggregator")
-
-            # Get model metrics
-            model_key = (task_id, aggregator)
-            metrics = model_metrics.get(model_key, {})
-
-            # Set val_accuracy for sorting
-            heatmap["val_accuracy"] = metrics.get("val_accuracy", 0.0)
-
-            # Set K-Fold info
-            heatmap["is_kfold"] = metrics.get("is_kfold", False)
-            heatmap["num_folds"] = metrics.get("num_folds")
-
-            # Set is_best_fold
-            if fold_key and task_id in task_best_folds:
-                heatmap["is_best_fold"] = (fold_key == task_best_folds[task_id])
-            else:
-                heatmap["is_best_fold"] = None  # Not a k-fold task or no fold info
-
-        # Sort:
-        # 1. By validation accuracy (highest first) - best performing model
-        # 2. By is_best_fold (True > None > False) - best fold within same model
-        # 3. By creation time (newest first)
-        def heatmap_sort_key(h):
-            val_acc = h.get("val_accuracy", 0.0)
-            is_best = h.get("is_best_fold")
-            best_priority = 0 if is_best is True else (1 if is_best is None else 2)
-            return (-val_acc, best_priority, -h["created_at"])
-
-        heatmaps.sort(key=heatmap_sort_key)
-
-        return {"wsi_id": wsi_id, "heatmaps": heatmaps}
-
-    except Exception as e:
-        logger.error(f"Failed to get available heatmaps: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to get available heatmaps: {str(e)}")
+# --- Heatmap & CAM routes (extracted to heatmap_routes.py) ---
+from .heatmap_routes import router as heatmap_router
+app.include_router(heatmap_router)
 
 
 @app.get("/wsi/{wsi_id}/patch_image")
@@ -1573,195 +890,462 @@ async def get_patch_image(
         raise HTTPException(status_code=500, detail=f"Failed to get patch image: {str(e)}")
 
 
-@app.get("/wsi/{wsi_id}/patch_cam")
-async def get_patch_cam(
-    wsi_id: str,
-    task_id: Optional[str] = Query(None, description="Specific task ID for the result"),
-    format: str = Query("image", description="Output format: 'image' for colored PNG, 'json' for raw data"),
-    db: AsyncSession = Depends(get_db)
+
+# --- Annotation Region Extraction ---
+from pydantic import BaseModel, Field
+from typing import Any
+
+
+class RegionSpec(BaseModel):
+    """Specification for a single annotation region."""
+    type: str = Field(..., description="Region type: 'rect' or 'polygon'")
+    x: int = Field(..., description="Bounding box x (level-0 pixel)")
+    y: int = Field(..., description="Bounding box y (level-0 pixel)")
+    width: int = Field(..., description="Bounding box width (level-0 pixel)")
+    height: int = Field(..., description="Bounding box height (level-0 pixel)")
+    label: str = Field(..., description="Region label")
+    # Polygon-only: original polygon points stored as metadata
+    points: Optional[List[List[int]]] = Field(None, description="Polygon vertices [[x,y], ...]")
+
+
+class ExtractRegionsRequest(BaseModel):
+    """Request body for region extraction."""
+    regions: Dict[str, List[RegionSpec]] = Field(
+        ..., description="Map of wsi_id -> list of region specs"
+    )
+    dataset_name: str = Field(..., description="Name for the new dataset")
+    task_type: str = Field(..., description="Task type (classification, segmentation, etc.)")
+    user_id: str = Field(..., description="User ID who initiated the extraction")
+    task_id: str = Field(..., description="Task ID for progress tracking")
+    source_dataset_id: Optional[str] = Field(None, description="For segmentation: reuse existing dataset instead of creating a new one")
+
+
+@app.post("/annotation/extract_regions")
+async def extract_regions(req: ExtractRegionsRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Extract annotation regions from WSI/patch images and create a new dataset.
+
+    This endpoint is called by the Gateway after auth/access checks are done.
+    Runs extraction in a background task and tracks progress via Redis.
+    Returns immediately with the task_id.
+    """
+    # Validate all WSIs exist before starting
+    for wsi_id in req.regions:
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if not wsi:
+            raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+
+    # Start background extraction
+    asyncio.create_task(
+        _extract_regions_background(
+            regions=req.regions,
+            dataset_name=req.dataset_name,
+            task_type=req.task_type,
+            user_id=req.user_id,
+            task_id=req.task_id,
+            source_dataset_id=req.source_dataset_id,
+        )
+    )
+
+    return {"task_id": req.task_id, "status": "started"}
+
+
+async def _extract_regions_background(
+    regions: Dict[str, List[RegionSpec]],
+    dataset_name: str,
+    task_type: str,
+    user_id: str,
+    task_id: str,
+    source_dataset_id: Optional[str] = None,
 ):
     """
-    Get patch-level CAM (Class Activation Map) data for visualization overlay.
+    Background task: extract ROI regions from WSI/patch files and create a new dataset.
 
-    For patch classification tasks, returns the CAM heatmap that can be overlaid
-    on the patch image to show which regions contributed to the classification.
-
-    Args:
-        wsi_id: The WSI/patch ID
-        task_id: Optional specific task ID
-        format: 'image' returns colored heatmap PNG with transparency,
-                'json' returns raw CAM data
-
-    Returns:
-        PNG image (format=image) or JSON with CAM data (format=json)
+    Steps:
+    1. Create DataGroup + Dataset for the new annotated patches
+       (or reuse existing dataset for segmentation if source_dataset_id provided)
+    2. For each WSI and its regions:
+       a. Open the slide (WSI) or image (patch)
+       b. Read the bounding-box region
+       c. Save as JPEG to uploads/wsi_files/
+       d. Create WSISlide record with parent_wsi_id
+    3. Update progress via Redis
     """
-    import numpy as np
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    from matplotlib import cm
+    import uuid
+    from backend.database import async_session_maker
+    from backend.database.repositories import (
+        DataGroupRepository,
+        DatasetRepository,
+        WSIRepository,
+    )
+    from backend.common.progress_store import set_progress, clear_progress
 
-    logger.info(f"Getting patch CAM for {wsi_id}, task_id={task_id}, format={format}")
-
-    # Helper function to return empty CAM response
-    def empty_cam_response(message: str = "No CAM data available"):
-        if format == "json":
-            return {
-                "wsi_id": wsi_id,
-                "task_id": task_id,
-                "task_name": None,
-                "cam": [],
-                "cam_size": [0, 0],
-                "prediction": None,
-                "probs": None,
-                "message": message
-            }
-        else:
-            # Return a 1x1 transparent PNG for image format
-            import io
-            from PIL import Image
-            img = Image.new('RGBA', (1, 1), (0, 0, 0, 0))
-            buf = io.BytesIO()
-            img.save(buf, format='PNG')
-            buf.seek(0)
-            return Response(content=buf.getvalue(), media_type="image/png")
+    total_regions = sum(len(r) for r in regions.values())
+    completed = 0
 
     try:
-        # Find result directory
-        result_dir = AI_RESULTS_DIR / wsi_id
-        if not result_dir.exists():
-            # Return empty data instead of 404 when no inference results
-            logger.info(f"No AI results directory for {wsi_id}")
-            return empty_cam_response("No inference results available")
+        await set_progress(task_id, 0)
 
-        # Find CAM file
-        cam_files = list(result_dir.glob("*_cam.npy"))
-        if not cam_files:
-            # Return empty data instead of 404 when no CAM files
-            logger.info(f"No CAM files found for {wsi_id}")
-            return empty_cam_response("No CAM data available")
-
-        # Select the right CAM file based on task_id
-        if task_id:
-            matching = [f for f in cam_files if task_id in f.name]
-            if not matching:
-                # Return empty data when specific task not found
-                logger.info(f"No CAM data found for task {task_id}")
-                return empty_cam_response(f"No CAM data for task {task_id}")
-
-            # Handle K-Fold: prefer non-fold files, or use best_fold from metrics.json
-            non_fold = [f for f in matching if "fold_" not in f.name]
-            if non_fold:
-                # Non-k-fold files exist - use them
-                matching = non_fold
-            elif matching:
-                # All files are k-fold - try to find best fold from metrics.json
-                best_fold = None
-                # Patch classification model: patch_cls_{task_id}
-                model_id = f"patch_cls_{task_id}"
-                metrics_file = UPLOADS_DIR / "models" / model_id / "metrics.json"
-                if metrics_file.exists():
-                    try:
-                        with open(metrics_file, 'r') as f:
-                            metrics_data = json.load(f)
-                            best_fold = metrics_data.get("best_fold")
-                    except Exception as e:
-                        logger.warning(f"Failed to read metrics.json for {model_id}: {e}")
-
-                if best_fold:
-                    # Filter to best fold only
-                    best_matching = [f for f in matching if best_fold in f.name]
-                    if best_matching:
-                        matching = best_matching
-                        logger.info(f"Using best fold {best_fold} for patch CAM task {task_id}")
-                # If no best_fold found, use first matching file (fallback)
-
-            cam_file = matching[0]
-        else:
-            # Use the most recent
-            cam_file = sorted(cam_files, key=lambda f: f.stat().st_mtime, reverse=True)[0]
-
-        # Load CAM data
-        cam = np.load(str(cam_file), allow_pickle=True)
-        logger.info(f"Loaded CAM: shape={cam.shape}, min={cam.min():.4f}, max={cam.max():.4f}")
-
-        # Load corresponding result.json for metadata
-        result_json_file = cam_file.with_name(
-            cam_file.name.replace("_cam.npy", "_result.json")
-        )
-        result_meta = {}
-        if result_json_file.exists():
-            with open(result_json_file, 'r') as f:
-                result_meta = json.load(f)
-
-        if format == "json":
-            # Return raw CAM data as JSON
-            return {
-                "wsi_id": wsi_id,
-                "task_id": result_meta.get("task_id"),
-                "prediction": result_meta.get("pred"),
-                "probs": result_meta.get("probs"),
-                "classes": result_meta.get("classes"),
-                "cam_size": list(cam.shape),
-                "cam_min": float(cam.min()),
-                "cam_max": float(cam.max()),
-                "cam_data": cam.tolist()  # 2D array
-            }
-        else:
-            # Return colored heatmap overlaid on original patch image
-            # First, get the original patch image
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
-            if not wsi:
-                raise HTTPException(status_code=404, detail=f"Patch not found: {wsi_id}")
-
-            file_path = Path(wsi.wsi_path)
-            with Image.open(file_path) as img:
-                original_image = img.convert('RGB')
-
-            orig_width, orig_height = original_image.size
-
-            # Normalize CAM to 0-1 if not already
-            if cam.max() > cam.min():
-                cam_normalized = (cam - cam.min()) / (cam.max() - cam.min())
+        async with async_session_maker() as db:
+            # Segmentation + source_dataset_id: reuse existing dataset, only generate COCO JSON
+            if task_type == "segmentation" and source_dataset_id:
+                logger.info(
+                    f"Segmentation reuse mode: adding COCO JSON to existing dataset {source_dataset_id}"
+                )
+                completed = await _extract_segmentation_dataset(
+                    db=db,
+                    regions=regions,
+                    dataset_id=source_dataset_id,
+                    user_id=user_id,
+                    task_id=task_id,
+                    total_regions=total_regions,
+                    reuse_existing=True,
+                )
+                await db.commit()
             else:
-                cam_normalized = np.zeros_like(cam)
+                # Create new DataGroup + Dataset
+                data_group = await DataGroupRepository.get_or_create(
+                    db,
+                    data_type="patch",
+                    aggregation_level="file",
+                    task_type=task_type,
+                )
 
-            # Apply colormap (jet is commonly used for heatmaps)
-            colormap = cm.get_cmap('jet')
-            colored_cam = colormap(cam_normalized)  # Returns RGBA (H, W, 4)
+                dataset = await DatasetRepository.get_or_create(
+                    db,
+                    name=dataset_name,
+                    group_id=data_group.group_id,
+                    user_id=user_id,
+                )
+                dataset_id = dataset.dataset_id
+                await db.commit()
 
-            # Convert to uint8
-            colored_cam_uint8 = (colored_cam * 255).astype(np.uint8)
+                # 2. Extract regions — segmentation vs classification have different flows
+                if task_type == "segmentation":
+                    # Segmentation on patches: copy original images + generate COCO JSON
+                    completed = await _extract_segmentation_dataset(
+                        db=db,
+                        regions=regions,
+                        dataset_id=dataset_id,
+                        user_id=user_id,
+                        task_id=task_id,
+                        total_regions=total_regions,
+                        reuse_existing=False,
+                    )
+                else:
+                    # Classification/other: crop each annotation region as a new image
+                    for source_wsi_id, region_list in regions.items():
+                        # Load source WSI info
+                        source_wsi = await WSIRepository.get_by_id(db, source_wsi_id)
+                        if not source_wsi:
+                            logger.warning(f"Source WSI not found during extraction: {source_wsi_id}")
+                            completed += len(region_list)
+                            continue
 
-            # Set alpha to 50% for overlay
-            colored_cam_uint8[:, :, 3] = 128
+                        source_path = Path(source_wsi.wsi_path)
+                        source_is_patch = is_patch_file(str(source_path), source_wsi.file_size or 0)
 
-            # Create PIL image and resize to match original
-            cam_image = Image.fromarray(colored_cam_uint8, mode='RGBA')
-            cam_image = cam_image.resize((orig_width, orig_height), Image.Resampling.BILINEAR)
+                        for region in region_list:
+                            try:
+                                await _extract_single_region(
+                                    db=db,
+                                    source_wsi_id=source_wsi_id,
+                                    source_path=source_path,
+                                    source_is_patch=source_is_patch,
+                                    region=region,
+                                    dataset_id=dataset_id,
+                                    user_id=user_id,
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to extract region from {source_wsi_id}: {e}",
+                                    exc_info=True,
+                                )
 
-            # Apply Gaussian blur for smoother appearance
-            from PIL import ImageFilter
-            blur_radius = max(2, orig_width / 50)  # Adaptive blur based on image size
-            cam_image = cam_image.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+                            completed += 1
+                            progress = int(completed / total_regions * 100)
+                            await set_progress(task_id, progress)
 
-            # Composite CAM over original image
-            original_rgba = original_image.convert('RGBA')
-            blended = Image.alpha_composite(original_rgba, cam_image)
-            blended_rgb = blended.convert('RGB')
+                await db.commit()
 
-            # Convert to bytes
-            buf = io.BytesIO()
-            blended_rgb.save(buf, format='PNG')
-            buf.seek(0)
+        logger.info(f"Annotation extraction completed: task_id={task_id}, {completed}/{total_regions} regions")
+        await set_progress(task_id, 100)
 
-            return Response(content=buf.getvalue(), media_type="image/png")
-
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Failed to get patch CAM: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to get patch CAM: {str(e)}")
+        logger.error(f"Annotation extraction failed: task_id={task_id}, error={e}", exc_info=True)
+        await set_progress(task_id, -1)  # -1 signals error
 
+    finally:
+        # Don't clear progress immediately — let SSE client read the final state
+        await asyncio.sleep(5)
+        await clear_progress(task_id)
+
+
+async def _extract_single_region(
+    db: AsyncSession,
+    source_wsi_id: str,
+    source_path: Path,
+    source_is_patch: bool,
+    region: RegionSpec,
+    dataset_id: str,
+    user_id: str,
+):
+    """
+    Extract a single annotation region from a WSI or patch image.
+
+    For WSI files: uses ASlide read_region at level 0.
+    For patch files: uses PIL Image.crop.
+
+    Saves the cropped image as JPEG and creates a WSI database record.
+    """
+    import uuid
+    from backend.database.repositories import WSIRepository
+
+    new_wsi_id = str(uuid.uuid4())
+
+    # Ensure output directory exists
+    output_dir = UPLOADS_DIR / "wsi_files"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{new_wsi_id}.jpg"
+
+    # Extract region image
+    if source_is_patch:
+        # Patch file: crop with PIL
+        cropped = await asyncio.to_thread(
+            _crop_patch_image, source_path, region.x, region.y, region.width, region.height
+        )
+    else:
+        # WSI file: read_region via ASlide
+        slide = await get_slide(source_wsi_id, db)
+        cropped = await asyncio.to_thread(
+            _read_wsi_region, slide, region.x, region.y, region.width, region.height
+        )
+
+    # Save as JPEG
+    await asyncio.to_thread(_save_image_jpeg, cropped, output_path)
+
+    file_size = output_path.stat().st_size
+
+    # Create WSI record for the extracted patch
+    wsi_data = {
+        "wsi_id": new_wsi_id,
+        "original_filename": f"{source_wsi_id}_roi_{region.label}.jpg",
+        "dataset_id": dataset_id,
+        "label": region.label,
+        "wsi_path": str(output_path),
+        "file_size": file_size,
+        "width": region.width,
+        "height": region.height,
+        "user_id": user_id,
+        "parent_wsi_id": source_wsi_id,
+    }
+    await WSIRepository.create(db, wsi_data)
+
+    logger.info(f"Extracted region: {new_wsi_id} from {source_wsi_id} ({region.label})")
+
+
+def _crop_patch_image(file_path: Path, x: int, y: int, w: int, h: int) -> Image.Image:
+    """Crop a region from a patch image file (runs in thread)."""
+    with Image.open(file_path) as img:
+        img = img.convert("RGB")
+        cropped = img.crop((x, y, x + w, y + h))
+        return cropped.copy()  # Copy to detach from source file
+
+
+def _read_wsi_region(slide, x: int, y: int, w: int, h: int) -> Image.Image:
+    """Read a region from a WSI slide at level 0 (runs in thread)."""
+    region = slide.read_region((x, y), 0, (w, h))
+    # Convert RGBA to RGB (ASlide returns RGBA)
+    if region.mode == "RGBA":
+        background = Image.new("RGB", region.size, (255, 255, 255))
+        background.paste(region, mask=region.split()[3])
+        return background
+    return region.convert("RGB")
+
+
+def _save_image_jpeg(img: Image.Image, output_path: Path):
+    """Save a PIL Image as JPEG (runs in thread)."""
+    img.save(output_path, format="JPEG", quality=90)
+
+
+
+async def _extract_segmentation_dataset(
+    db,
+    regions: Dict[str, List["RegionSpec"]],
+    dataset_id: str,
+    user_id: str,
+    task_id: str,
+    total_regions: int,
+    reuse_existing: bool = False,
+) -> int:
+    """
+    Segmentation-specific dataset creation from viewer annotations on patch images.
+
+    When reuse_existing=False (new dataset):
+    1. Copies each source patch image once to the dataset directory
+    2. Aggregates all annotations into a single COCO JSON file
+    3. Creates one WSISlide record per source patch (not per annotation)
+
+    When reuse_existing=True (source_dataset_id provided):
+    1. Uses existing images in the dataset (no copy, no new WSISlide records)
+    2. Only generates/updates the COCO JSON with annotations
+
+    The COCO JSON is saved to uploads/annotations/<dataset_id>_coco.json
+    and follows the format expected by SegmentationDataset.
+
+    Returns:
+        Number of annotation regions processed (for progress tracking).
+    """
+    import uuid
+    import json
+    import shutil
+    from backend.database.repositories import WSIRepository
+    from backend.common.progress_store import set_progress
+
+    output_dir = UPLOADS_DIR / "wsi_files"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    annotations_dir = UPLOADS_DIR / "annotations"
+    annotations_dir.mkdir(parents=True, exist_ok=True)
+
+    # COCO JSON structure
+    coco_images = []
+    coco_annotations = []
+    label_to_category_id: Dict[str, int] = {}
+    image_id_counter = 0
+    annotation_id_counter = 0
+    completed = 0
+
+    for source_wsi_id, region_list in regions.items():
+        # Load source WSI info
+        source_wsi = await WSIRepository.get_by_id(db, source_wsi_id)
+        if not source_wsi:
+            logger.warning(f"Source WSI not found during extraction: {source_wsi_id}")
+            completed += len(region_list)
+            continue
+
+        source_path = Path(source_wsi.wsi_path)
+        source_is_patch = is_patch_file(str(source_path), source_wsi.file_size or 0)
+
+        if not source_is_patch:
+            # WSI segmentation dataset creation is not supported (frontend blocks this)
+            logger.warning(f"Skipping WSI source for segmentation: {source_wsi_id}")
+            completed += len(region_list)
+            continue
+
+        if reuse_existing:
+            # Reuse mode: no file copy, no new DB record.
+            # Use the existing file path for COCO JSON file_name reference.
+            file_name = Path(source_wsi.wsi_path).name
+            img_width = source_wsi.width
+            img_height = source_wsi.height
+            if not img_width or not img_height:
+                with Image.open(source_path) as img:
+                    img_width, img_height = img.size
+        else:
+            # New dataset mode: copy source patch image once (keep original format)
+            new_wsi_id = str(uuid.uuid4())
+            ext = source_path.suffix or ".jpg"
+            output_path = output_dir / f"{new_wsi_id}{ext}"
+            await asyncio.to_thread(shutil.copy2, str(source_path), str(output_path))
+
+            file_size = output_path.stat().st_size
+            file_name = f"{new_wsi_id}{ext}"
+
+            # Get source image dimensions
+            img_width = source_wsi.width
+            img_height = source_wsi.height
+            if not img_width or not img_height:
+                with Image.open(output_path) as img:
+                    img_width, img_height = img.size
+
+        # Add COCO image entry
+        image_id_counter += 1
+        coco_images.append({
+            "id": image_id_counter,
+            "width": img_width,
+            "height": img_height,
+            "file_name": file_name,
+        })
+
+        # Convert each annotation region to COCO annotation
+        for region in region_list:
+            # Map label to category ID
+            if region.label not in label_to_category_id:
+                label_to_category_id[region.label] = len(label_to_category_id)
+            cat_id = label_to_category_id[region.label]
+
+            annotation_id_counter += 1
+
+            # Build segmentation polygon
+            if region.type == "polygon" and region.points:
+                # Polygon: flatten [[x,y], [x,y], ...] → [x,y,x,y,...]
+                flat_points = []
+                for pt in region.points:
+                    flat_points.extend(pt)
+                segmentation = [flat_points]
+            else:
+                # Rectangle: convert bbox to 4-corner polygon
+                x, y, w, h = region.x, region.y, region.width, region.height
+                segmentation = [[x, y, x + w, y, x + w, y + h, x, y + h]]
+
+            # Compute area
+            area = region.width * region.height
+
+            coco_annotations.append({
+                "id": annotation_id_counter,
+                "image_id": image_id_counter,
+                "category_id": cat_id,
+                "segmentation": segmentation,
+                "bbox": [region.x, region.y, region.width, region.height],
+                "area": area,
+                "iscrowd": 0,
+            })
+
+            completed += 1
+            progress = int(completed / total_regions * 100)
+            await set_progress(task_id, progress)
+
+        if not reuse_existing:
+            # Create WSI record for the copied patch (one per source, not per annotation)
+            wsi_data = {
+                "wsi_id": new_wsi_id,
+                "original_filename": source_wsi.original_filename or source_path.name,
+                "dataset_id": dataset_id,
+                "label": None,  # Segmentation labels are in COCO JSON, not per-slide
+                "wsi_path": str(output_path),
+                "file_size": file_size,
+                "width": img_width,
+                "height": img_height,
+                "user_id": user_id,
+                "parent_wsi_id": source_wsi_id,
+            }
+            await WSIRepository.create(db, wsi_data)
+
+    # Build categories dict (matches the format used by SegmentationDataset)
+    categories = {str(cat_id): label for label, cat_id in label_to_category_id.items()}
+
+    # Assemble full COCO JSON
+    coco_json = {
+        "images": coco_images,
+        "annotations": coco_annotations,
+        "categories": categories,
+    }
+
+    # Save COCO JSON
+    coco_path = annotations_dir / f"{dataset_id}_coco.json"
+    await asyncio.to_thread(_save_coco_json, coco_json, coco_path)
+
+    logger.info(
+        f"Segmentation dataset created: dataset_id={dataset_id}, "
+        f"{len(coco_images)} images, {len(coco_annotations)} annotations, "
+        f"{len(categories)} categories, COCO JSON: {coco_path}"
+    )
+
+    return completed
+
+
+def _save_coco_json(coco_data: dict, output_path: Path):
+    """Save COCO JSON to file (runs in thread)."""
+    import json
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(coco_data, f, indent=2, ensure_ascii=False)

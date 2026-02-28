@@ -14,8 +14,8 @@ class DatasetRenameRequest(BaseModel):
 
 
 class DatasetUpdateTypeRequest(BaseModel):
-    """Request model for updating dataset type (classification/survival)"""
-    task_type: str  # "classification" or "survival"
+    """Request model for updating dataset type (classification/survival/segmentation)"""
+    task_type: str  # "classification", "survival", or "segmentation"
 
 
 class DatasetUpdateDataLevelRequest(BaseModel):
@@ -48,15 +48,22 @@ class SplitConfig(BaseModel):
 
 class TrainingTaskRequest(BaseModel):
     """Request model for creating a training task"""
+    task_id: Optional[str] = None  # Client-generated task_id for fire-and-forget submission
     task_name: str
-    task_type: str  # "classification" or "survival"
+    task_type: str  # "classification", "survival", or "segmentation"
     data_type: str  # "wsi" or "patch"
     task_description: Optional[str] = None
-    wsi_ids: List[str]
+    dataset_id: Optional[str] = None  # If provided, wsi_ids are resolved from this dataset on server
+    wsi_ids: List[str] = []  # Optional when dataset_id is provided
     preprocessing: Dict  # {tile_size, stride, feature_extractor, feature_batch_size, use_gpu}
     model: Dict  # {aggregator, learning_rate, epochs, optimizer, batch_size}
     huggingface_token: Optional[str] = None  # HuggingFace token for gated models
     split_config: Optional[SplitConfig] = None
+
+
+class TrainingTaskUpdateRequest(BaseModel):
+    """Request model for updating a training task"""
+    task_name: str  # New task name
 
 
 class UploadByPathRequest(BaseModel):
@@ -166,7 +173,7 @@ class BatchRegisterRequest(BaseModel):
     files: List[BatchRegisterFileInfo]  # List of file info objects to register
     dataset_id: Optional[str] = None  # Existing dataset UUID
     dataset_name: Optional[str] = None  # New dataset name (if creating new)
-    task_type: str = "classification"  # "classification" or "survival"
+    task_type: str = "classification"  # "classification", "survival", or "segmentation"
     # Classification fields
     default_label: str = "External Import"  # Default label for all files
     # Survival analysis fields (required when task_type is "survival")
@@ -190,7 +197,7 @@ class StartBatchImportRequest(BaseModel):
     dataset_id: Optional[str] = None  # Existing dataset UUID
     dataset_name: Optional[str] = None  # New dataset name (if creating new)
     aggregation_level: str = "file"  # "case" or "file" - aggregation level
-    task_type: str = "classification"  # "classification" or "survival"
+    task_type: str = "classification"  # "classification", "survival", or "segmentation"
     # Classification fields
     default_label: str = "External Import"  # Default label for all files
     # Survival analysis fields (required when task_type is "survival")
@@ -215,3 +222,21 @@ class StartBatchUpdateMetadataRequest(BaseModel):
     # Survival analysis fields
     event_time: Optional[float] = None
     event_status: Optional[int] = None
+
+
+# ── Annotation ──────────────────────────────────────────────────────────────
+
+class AnnotationDraftSaveRequest(BaseModel):
+    """Request model for creating/updating an annotation draft (auto-save)"""
+    draft_id: str
+    source_dataset_id: Optional[str] = None
+    # { wsi_id: [{ type, x, y, width, height, points, label, color }, ...] }
+    annotations: Dict
+
+class AnnotationExtractRequest(BaseModel):
+    """Request model for extracting annotated ROIs into a new dataset"""
+    draft_id: Optional[str] = None       # Load annotations from saved draft
+    annotations: Optional[Dict] = None   # Or provide directly (overrides draft)
+    dataset_name: str
+    task_type: str = "classification"     # classification or segmentation
+    source_dataset_id: Optional[str] = None  # For segmentation: reuse existing dataset

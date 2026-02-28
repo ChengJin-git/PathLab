@@ -237,4 +237,8 @@ class FeatureExtractionResponse(BaseModel):
     status: str = Field(..., description="Status: success | failed")
     results: List[Dict[str, Any]] = Field(default=[], description="List of extracted features")
     error_message: Optional[str] = Field(None, description="Error message")
+    skipped_wsi_ids: List[str] = Field(
+        default=[],
+        description="WSI IDs skipped due to insufficient patches (< MIN_PATCHES_THRESHOLD)"
+    )
 

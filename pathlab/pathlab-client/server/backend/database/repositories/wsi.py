@@ -1,0 +1,1155 @@
+"""
+WSIRepository - Data Access Layer
+"""
+import logging
+from datetime import datetime
+from typing import List, Optional, Dict
+from sqlalchemy import select, update, delete, func, desc, and_, or_
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+logger = logging.getLogger(__name__)
+
+from ..models import DataGroup, Dataset, WSISlide, utc_now
+from backend.common.file_types import WSI_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD
+
+
+class WSIRepository:
+    """Repository for WSI Slide operations"""
+
+    @staticmethod
+    async def get_by_id_with_dataset(db: AsyncSession, wsi_id: str) -> Optional[WSISlide]:
+        """Get WSI by wsi_id with dataset relationship loaded"""
+        result = await db.execute(
+            select(WSISlide).options(selectinload(WSISlide.dataset)).where(WSISlide.wsi_id == wsi_id)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_by_ids_with_dataset(
+        db: AsyncSession,
+        wsi_ids: List[str],
+        batch_size: int = 500
+    ) -> Dict[str, WSISlide]:
+        """
+        Get multiple WSI slides by IDs in a single query (batch operation).
+
+        This is optimized for validating large numbers of WSI IDs - avoids N+1 query problem.
+        For datasets exceeding batch_size, queries are batched for memory efficiency.
+
+        Args:
+            db: Database session
+            wsi_ids: List of WSI IDs to fetch
+            batch_size: Number of IDs per batch (default 500)
+
+        Returns:
+            Dict mapping wsi_id to WSISlide for found slides
+        """
+        if not wsi_ids:
+            return {}
+
+        result_dict: Dict[str, WSISlide] = {}
+
+        # Batch query for memory efficiency with large ID lists
+        for i in range(0, len(wsi_ids), batch_size):
+            batch_ids = wsi_ids[i:i + batch_size]
+            result = await db.execute(
+                select(WSISlide)
+                .options(selectinload(WSISlide.dataset))
+                .where(WSISlide.wsi_id.in_(batch_ids))
+            )
+            wsis = result.scalars().all()
+            for wsi in wsis:
+                result_dict[wsi.wsi_id] = wsi
+
+        return result_dict
+
+    @staticmethod
+    async def get_by_ids(
+        db: AsyncSession,
+        wsi_ids: List[str],
+        batch_size: int = 500
+    ) -> Dict[str, WSISlide]:
+        """
+        Get multiple WSI slides by IDs in a single query (batch operation).
+
+        Simpler version without loading dataset relationship - faster when only
+        basic WSI fields are needed (e.g., dataset_id, user_id, wsi_path).
+
+        Args:
+            db: Database session
+            wsi_ids: List of WSI IDs to fetch
+            batch_size: Number of IDs per batch (default 500)
+
+        Returns:
+            Dict mapping wsi_id to WSISlide for found slides
+        """
+        if not wsi_ids:
+            return {}
+
+        result_dict: Dict[str, WSISlide] = {}
+
+        # Batch query for memory efficiency with large ID lists
+        for i in range(0, len(wsi_ids), batch_size):
+            batch_ids = wsi_ids[i:i + batch_size]
+            result = await db.execute(
+                select(WSISlide).where(WSISlide.wsi_id.in_(batch_ids))
+            )
+            wsis = result.scalars().all()
+            for wsi in wsis:
+                result_dict[wsi.wsi_id] = wsi
+
+        return result_dict
+
+    @staticmethod
+    async def get_all_with_dataset(
+        db: AsyncSession,
+        skip: int = 0,
+        limit: int = 0,
+        user_id: Optional[str] = None,
+        data_type: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
+    ) -> List[WSISlide]:
+        """Get all WSI slides with dataset relationship loaded.
+
+        Args:
+            db: Database session
+            skip: Number of records to skip
+            limit: Maximum number of records to return (0 = all)
+            user_id: Optional user ID filter. If provided, only returns WSI belonging to this user.
+                     If None, returns all WSI (for admin users).
+            data_type: Optional filter - "wsi" for WSI files, "patch" for image files
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  WSI slides in these datasets will be included even if user doesn't own them.
+        """
+        from sqlalchemy import or_
+
+        query = select(WSISlide).options(selectinload(WSISlide.dataset))
+
+        # Apply user_id filter with elevated_dataset_ids support
+        if user_id is not None:
+            if elevated_dataset_ids:
+                # Include user's own data OR data from elevated permission datasets
+                query = query.where(
+                    or_(
+                        WSISlide.user_id == user_id,
+                        WSISlide.dataset_id.in_(elevated_dataset_ids)
+                    )
+                )
+            else:
+                query = query.where(WSISlide.user_id == user_id)
+
+        # Apply data_type filter
+        data_type_filter = WSIRepository._build_data_type_filter(data_type)
+        if data_type_filter is not None:
+            query = query.where(data_type_filter)
+
+        query = query.order_by(desc(WSISlide.created_at)).offset(skip)
+        if limit > 0:
+            query = query.limit(limit)
+        result = await db.execute(query)
+        return result.scalars().all()
+
+    @staticmethod
+    async def create(db: AsyncSession, wsi_data: Dict) -> WSISlide:
+        """Create a new WSI slide record"""
+        wsi = WSISlide(**wsi_data)
+        db.add(wsi)
+        await db.flush()
+        await db.refresh(wsi)
+        return wsi
+
+    @staticmethod
+    async def get_by_id(db: AsyncSession, wsi_id: str) -> Optional[WSISlide]:
+        """Get WSI by wsi_id"""
+        result = await db.execute(
+            select(WSISlide).where(WSISlide.wsi_id == wsi_id)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_all(db: AsyncSession, skip: int = 0, limit: int = 0) -> List[WSISlide]:
+        """Get all WSI slides with pagination. If limit=0, return all records."""
+        query = select(WSISlide).order_by(desc(WSISlide.created_at)).offset(skip)
+        if limit > 0:
+            query = query.limit(limit)
+        result = await db.execute(query)
+        return result.scalars().all()
+
+    @staticmethod
+    async def count(
+        db: AsyncSession,
+        user_id: Optional[str] = None,
+        data_type: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
+    ) -> int:
+        """Get total count of WSI slides.
+
+        Args:
+            db: Database session
+            user_id: Optional user ID filter. If provided, only counts WSI belonging to this user.
+                     If None, counts all WSI (for admin users).
+            data_type: Optional filter - "wsi" for WSI files, "patch" for image files
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  WSI slides in these datasets will be counted even if user doesn't own them.
+        """
+        from sqlalchemy import or_
+
+        query = select(func.count(WSISlide.id))
+
+        # Apply user_id filter with elevated_dataset_ids support
+        if user_id is not None:
+            if elevated_dataset_ids:
+                # Count user's own data OR data from elevated permission datasets
+                query = query.where(
+                    or_(
+                        WSISlide.user_id == user_id,
+                        WSISlide.dataset_id.in_(elevated_dataset_ids)
+                    )
+                )
+            else:
+                query = query.where(WSISlide.user_id == user_id)
+
+        # Apply data_type filter
+        data_type_filter = WSIRepository._build_data_type_filter(data_type)
+        if data_type_filter is not None:
+            query = query.where(data_type_filter)
+
+        result = await db.execute(query)
+        return result.scalar_one()
+
+    @staticmethod
+    async def get_by_label(db: AsyncSession, label: str) -> List[WSISlide]:
+        """Get all WSI slides with specific label"""
+        result = await db.execute(
+            select(WSISlide).where(WSISlide.label == label)
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def update(db: AsyncSession, wsi_id: str, update_data: Dict) -> Optional[WSISlide]:
+        """Update WSI slide (returns WSISlide with dataset relationship loaded)"""
+        update_data["updated_at"] = utc_now()
+        await db.execute(
+            update(WSISlide)
+            .where(WSISlide.wsi_id == wsi_id)
+            .values(**update_data)
+        )
+        await db.flush()
+        return await WSIRepository.get_by_id_with_dataset(db, wsi_id)
+
+    @staticmethod
+    async def update_splits(db: AsyncSession, dataset_name: str, updates: List[tuple]) -> int:
+        """
+        Batch update split column for multiple WSIs.
+        
+        Args:
+            db: Database session
+            dataset_name: Dataset name for validation (optional but recommended)
+            updates: List of (wsi_id, split_value) tuples
+            
+        Returns:
+            Number of successfully updated records
+        """
+        count = 0
+        for wsi_id, split_val in updates:
+            # We can optimize this with a single update statement using a CASE/binding
+            # but for simplicity relative to list size, individual updates are acceptable
+            # or we could do `UPDATE wsi_slides SET split = :split WHERE wsi_id = :wsi_id` in a batch.
+            
+            # Simple check + update
+            stmt = (
+                update(WSISlide)
+                .where(WSISlide.wsi_id == wsi_id)
+                # .where(WSISlide.dataset_name == dataset_name) # Check dataset if needed
+                .values(split=split_val, updated_at=utc_now())
+            )
+            result = await db.execute(stmt)
+            count += result.rowcount
+            
+        await db.commit()
+        return count
+
+
+    @staticmethod
+    async def delete(db: AsyncSession, wsi_id: str) -> bool:
+        """Delete WSI slide"""
+        result = await db.execute(
+            delete(WSISlide).where(WSISlide.wsi_id == wsi_id)
+        )
+        await db.flush()
+        return result.rowcount > 0
+
+    @staticmethod
+    async def get_label_distribution(db: AsyncSession, user_id: Optional[str] = None) -> Dict[str, int]:
+        """Get distribution of labels.
+
+        Args:
+            db: Database session
+            user_id: Optional user ID filter. If provided, only counts labels for WSI belonging to this user.
+                     If None, counts all labels (for admin users).
+        """
+        query = select(WSISlide.label, func.count(WSISlide.id)).group_by(WSISlide.label)
+        if user_id is not None:
+            query = query.where(WSISlide.user_id == user_id)
+        result = await db.execute(query)
+        return {label: count for label, count in result.all() if label}
+
+    @staticmethod
+    async def get_event_status_distribution(db: AsyncSession, user_id: Optional[str] = None) -> Dict[str, int]:
+        """Get distribution of event_status for survival prediction tasks.
+
+        Args:
+            db: Database session
+            user_id: Optional user ID filter. If provided, only counts event_status for WSI belonging to this user.
+                     If None, counts all event_status (for admin users).
+
+        Returns:
+            Dict with keys 'event' (status=1) and 'censored' (status=0) and their counts
+        """
+        query = select(WSISlide.event_status, func.count(WSISlide.id)).group_by(WSISlide.event_status)
+        if user_id is not None:
+            query = query.where(WSISlide.user_id == user_id)
+        # Only count WSI with valid survival data (event_status is not None and event_time is not None)
+        query = query.where(WSISlide.event_status.isnot(None))
+        query = query.where(WSISlide.event_time.isnot(None))
+
+        result = await db.execute(query)
+        distribution = {}
+        for status, count in result.all():
+            if status == 1:
+                distribution['event'] = count
+            elif status == 0:
+                distribution['censored'] = count
+        return distribution
+
+    @staticmethod
+    async def get_existing_original_filenames(db: AsyncSession, filenames: List[str], user_id: Optional[str] = None) -> List[str]:
+        """
+        Check which original_filenames already exist in the database.
+
+        Args:
+            db: Database session
+            filenames: List of original_filename values to check
+            user_id: Optional user ID filter. If provided, only checks filenames belonging to this user.
+                     If None, checks all filenames (for admin users).
+
+        Returns:
+            List of filenames that already exist in the database
+        """
+        if not filenames:
+            return []
+        query = select(WSISlide.original_filename).where(WSISlide.original_filename.in_(filenames))
+        if user_id is not None:
+            query = query.where(WSISlide.user_id == user_id)
+        result = await db.execute(query)
+        return [row[0] for row in result.all() if row[0]]
+
+    # File type constants imported from backend.common.file_types
+
+    @staticmethod
+    def _build_data_type_filter(data_type: Optional[str]):
+        """
+        Build SQLAlchemy filter for data_type (wsi/patch).
+
+        Args:
+            data_type: "wsi" for WSI files, "patch" for image files, None for all
+
+        Returns:
+            SQLAlchemy filter condition or None
+        """
+        from sqlalchemy import or_, and_
+
+        if data_type == "wsi":
+            wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
+            tif_conditions = [
+                and_(
+                    or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+                    WSISlide.file_size >= SIZE_THRESHOLD
+                )
+            ]
+            return or_(*wsi_ext_conditions, *tif_conditions)
+        elif data_type == "patch":
+            patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
+            tif_conditions = [
+                and_(
+                    or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+                    or_(
+                        WSISlide.file_size < SIZE_THRESHOLD,
+                        WSISlide.file_size.is_(None)
+                    )
+                )
+            ]
+            return or_(*patch_ext_conditions, *tif_conditions)
+        return None
+
+    @staticmethod
+    async def get_chat_context_stats(
+        db: AsyncSession,
+        user_id: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
+    ) -> Dict:
+        """
+        Get all statistics needed for chat context in a SINGLE optimized query.
+        This combines count, label distribution, data type distribution, and dataset info.
+
+        Args:
+            db: Database session
+            user_id: Optional user ID filter.
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  These datasets will be included and marked as "elevated" access.
+
+        Returns:
+            Dict with total_count, labels (dict), data_types (dict), datasets (list)
+            Each dataset in the list has an "access_type" field: "own" or "elevated"
+        """
+        from sqlalchemy import case, or_, and_
+
+        # Build WSI/Patch conditions
+        wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
+        tif_wsi_condition = and_(
+            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+            WSISlide.file_size >= SIZE_THRESHOLD
+        )
+        is_wsi = or_(*wsi_ext_conditions, tif_wsi_condition)
+
+        patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
+        tif_patch_condition = and_(
+            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+            or_(WSISlide.file_size < SIZE_THRESHOLD, WSISlide.file_size.is_(None))
+        )
+        is_patch = or_(*patch_ext_conditions, tif_patch_condition)
+
+        # Build user filter condition (own data OR elevated datasets)
+        if user_id is not None:
+            if elevated_dataset_ids:
+                user_filter = or_(
+                    WSISlide.user_id == user_id,
+                    WSISlide.dataset_id.in_(elevated_dataset_ids)
+                )
+            else:
+                user_filter = WSISlide.user_id == user_id
+        else:
+            user_filter = None
+
+        # Single query for total count and data type distribution
+        stats_query = select(
+            func.count(WSISlide.id).label("total_count"),
+            func.sum(case((is_wsi, 1), else_=0)).label("wsi_count"),
+            func.sum(case((is_patch, 1), else_=0)).label("patch_count")
+        )
+        if user_filter is not None:
+            stats_query = stats_query.where(user_filter)
+
+        stats_result = await db.execute(stats_query)
+        stats_row = stats_result.one()
+
+        # Query for label distribution (simple GROUP BY)
+        labels_query = select(WSISlide.label, func.count(WSISlide.id)).group_by(WSISlide.label)
+        if user_filter is not None:
+            labels_query = labels_query.where(user_filter)
+        labels_result = await db.execute(labels_query)
+        labels = {label: count for label, count in labels_result.all() if label}
+
+        # Query for datasets (with join to Dataset table)
+        # Include data_type (WSI/Patch) and labels per dataset
+        from ..models import Dataset
+
+        # Build data_type case expressions
+        is_wsi_case = case((is_wsi, 1), else_=0)
+        is_patch_case = case((is_patch, 1), else_=0)
+
+        datasets_query = select(
+            Dataset.dataset_id,
+            Dataset.name.label("dataset_name"),
+            Dataset.user_id.label("dataset_owner_id"),
+            func.count(WSISlide.id).label("file_count"),
+            func.sum(is_wsi_case).label("wsi_count"),
+            func.sum(is_patch_case).label("patch_count")
+        ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
+
+        if user_filter is not None:
+            datasets_query = datasets_query.where(user_filter)
+
+        datasets_query = datasets_query.group_by(Dataset.dataset_id, Dataset.name, Dataset.user_id).order_by(Dataset.name)
+        datasets_result = await db.execute(datasets_query)
+
+        # Get labels per dataset
+        labels_per_dataset_query = select(
+            Dataset.dataset_id,
+            WSISlide.label,
+            func.count(WSISlide.id).label("count")
+        ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
+
+        if user_filter is not None:
+            labels_per_dataset_query = labels_per_dataset_query.where(user_filter)
+
+        labels_per_dataset_query = labels_per_dataset_query.where(WSISlide.label.isnot(None))
+        labels_per_dataset_query = labels_per_dataset_query.group_by(Dataset.dataset_id, WSISlide.label)
+        labels_per_dataset_result = await db.execute(labels_per_dataset_query)
+
+        # Build labels dict per dataset_id
+        dataset_labels_map = {}
+        for row in labels_per_dataset_result.all():
+            ds_id = row.dataset_id
+            if ds_id not in dataset_labels_map:
+                dataset_labels_map[ds_id] = {}
+            dataset_labels_map[ds_id][row.label] = row.count
+
+        # Get survival data per dataset (count of records with event_time and event_status)
+        survival_per_dataset_query = select(
+            Dataset.dataset_id,
+            func.count(WSISlide.id).label("survival_count")
+        ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
+
+        if user_filter is not None:
+            survival_per_dataset_query = survival_per_dataset_query.where(user_filter)
+
+        # Only count records that have both event_time and event_status
+        survival_per_dataset_query = survival_per_dataset_query.where(
+            and_(WSISlide.event_time.isnot(None), WSISlide.event_status.isnot(None))
+        )
+        survival_per_dataset_query = survival_per_dataset_query.group_by(Dataset.dataset_id)
+        survival_per_dataset_result = await db.execute(survival_per_dataset_query)
+
+        # Build survival count map per dataset_id
+        dataset_survival_map = {}
+        for row in survival_per_dataset_result.all():
+            dataset_survival_map[row.dataset_id] = row.survival_count
+
+        # Get split counts per dataset (train/val/test)
+        splits_per_dataset_query = select(
+            Dataset.dataset_id,
+            func.sum(case(
+                (func.lower(WSISlide.split) == 'train', 1),
+                else_=0
+            )).label("split_train_count"),
+            func.sum(case(
+                (or_(func.lower(WSISlide.split) == 'val', func.lower(WSISlide.split) == 'validation'), 1),
+                else_=0
+            )).label("split_val_count"),
+            func.sum(case(
+                (func.lower(WSISlide.split) == 'test', 1),
+                else_=0
+            )).label("split_test_count"),
+        ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
+
+        if user_filter is not None:
+            splits_per_dataset_query = splits_per_dataset_query.where(user_filter)
+
+        splits_per_dataset_query = splits_per_dataset_query.group_by(Dataset.dataset_id)
+        splits_per_dataset_result = await db.execute(splits_per_dataset_query)
+
+        # Build splits map per dataset_id
+        dataset_splits_map = {}
+        for row in splits_per_dataset_result.all():
+            train_count = row.split_train_count or 0
+            val_count = row.split_val_count or 0
+            test_count = row.split_test_count or 0
+            dataset_splits_map[row.dataset_id] = {
+                "has_predefined_splits": train_count > 0,  # At least train split must exist
+                "train": train_count,
+                "val": val_count,
+                "test": test_count
+            }
+
+        # Get event_status distribution per dataset (for survival prediction)
+        event_status_per_dataset_query = select(
+            Dataset.dataset_id,
+            WSISlide.event_status,
+            func.count(WSISlide.id).label("count")
+        ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
+
+        if user_filter is not None:
+            event_status_per_dataset_query = event_status_per_dataset_query.where(user_filter)
+
+        # Only count records that have both event_time and event_status
+        event_status_per_dataset_query = event_status_per_dataset_query.where(
+            and_(WSISlide.event_time.isnot(None), WSISlide.event_status.isnot(None))
+        )
+        event_status_per_dataset_query = event_status_per_dataset_query.group_by(Dataset.dataset_id, WSISlide.event_status)
+        event_status_per_dataset_result = await db.execute(event_status_per_dataset_query)
+
+        # Build event_status distribution map per dataset_id
+        dataset_event_status_map = {}
+        for row in event_status_per_dataset_result.all():
+            ds_id = row.dataset_id
+            if ds_id not in dataset_event_status_map:
+                dataset_event_status_map[ds_id] = {}
+            if row.event_status == 1:
+                dataset_event_status_map[ds_id]['event'] = row.count
+            elif row.event_status == 0:
+                dataset_event_status_map[ds_id]['censored'] = row.count
+
+        datasets = []
+        for row in datasets_result.all():
+            wsi_cnt = row.wsi_count or 0
+            patch_cnt = row.patch_count or 0
+            # Determine data_type based on file counts
+            if wsi_cnt > 0 and patch_cnt == 0:
+                data_type = "wsi"
+            elif patch_cnt > 0 and wsi_cnt == 0:
+                data_type = "patch"
+            elif wsi_cnt > 0 and patch_cnt > 0:
+                data_type = "mixed"
+            else:
+                data_type = "unknown"
+
+            ds_labels = dataset_labels_map.get(row.dataset_id, {})
+            survival_count = dataset_survival_map.get(row.dataset_id, 0)
+            splits_info = dataset_splits_map.get(row.dataset_id, {"has_predefined_splits": False, "train": 0, "val": 0, "test": 0})
+            event_status_dist = dataset_event_status_map.get(row.dataset_id, {})
+
+            # Determine access_type: "own" if user owns it, "elevated" if via temporary permission
+            elevated_set = set(elevated_dataset_ids) if elevated_dataset_ids else set()
+            if user_id is not None and row.dataset_owner_id != user_id and row.dataset_id in elevated_set:
+                access_type = "elevated"
+            else:
+                access_type = "own"
+
+            datasets.append({
+                "dataset_id": row.dataset_id,
+                "dataset_name": row.dataset_name or "Uncategorized",
+                "file_count": row.file_count,
+                "data_type": data_type,
+                "labels": ds_labels,
+                "survival_count": survival_count,  # Number of records with survival data
+                "event_status": event_status_dist,  # Distribution of event_status: {'event': count, 'censored': count}
+                "has_predefined_splits": splits_info["has_predefined_splits"],
+                "predefined_split_counts": {
+                    "train": splits_info["train"],
+                    "val": splits_info["val"],
+                    "test": splits_info["test"]
+                },
+                "access_type": access_type  # "own" or "elevated"
+            })
+
+        return {
+            "total_count": stats_row.total_count or 0,
+            "data_types": {
+                "wsi": stats_row.wsi_count or 0,
+                "patch": stats_row.patch_count or 0
+            },
+            "labels": labels,
+            "datasets": datasets
+        }
+
+    @staticmethod
+    async def get_data_type_distribution(db: AsyncSession, user_id: Optional[str] = None) -> Dict[str, int]:
+        """
+        Get distribution of data types (WSI vs Patch).
+
+        Args:
+            db: Database session
+            user_id: Optional user ID filter. If provided, only counts for WSI belonging to this user.
+                     If None, counts all (for admin users).
+
+        Returns:
+            Dict with 'wsi' and 'patch' counts
+        """
+        from sqlalchemy import case, or_, and_
+
+        # Build WSI condition
+        wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
+        tif_wsi_condition = and_(
+            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+            WSISlide.file_size >= SIZE_THRESHOLD
+        )
+        is_wsi = or_(*wsi_ext_conditions, tif_wsi_condition)
+
+        # Build Patch condition
+        patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
+        tif_patch_condition = and_(
+            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+            or_(WSISlide.file_size < SIZE_THRESHOLD, WSISlide.file_size.is_(None))
+        )
+        is_patch = or_(*patch_ext_conditions, tif_patch_condition)
+
+        # Count WSI and Patch
+        query = select(
+            func.sum(case((is_wsi, 1), else_=0)).label("wsi_count"),
+            func.sum(case((is_patch, 1), else_=0)).label("patch_count")
+        )
+
+        if user_id is not None:
+            query = query.where(WSISlide.user_id == user_id)
+
+        result = await db.execute(query)
+        row = result.one()
+
+        return {
+            "wsi": row.wsi_count or 0,
+            "patch": row.patch_count or 0
+        }
+
+    @staticmethod
+    async def get_datasets(
+        db: AsyncSession,
+        data_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
+    ) -> List[Dict]:
+        """
+        Get all datasets with file count, total size, and split statistics.
+
+        Args:
+            db: Database session
+            data_type: Optional filter - "wsi" for WSI files, "patch" for image files
+                       If None, returns all datasets
+            user_id: Optional user ID filter. If provided, only returns datasets containing WSI belonging to this user.
+                     If None, returns all datasets (for admin users).
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  These datasets will be included even if user doesn't own any WSI in them.
+
+        Returns:
+            List of dicts with dataset_id (UUID), name (display), file_count, total_size, group info,
+            has_predefined_splits, and predefined_split_counts
+        """
+        from sqlalchemy import or_, and_, case
+
+        # Build file type filter based on data_type
+        if data_type == "wsi":
+            wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
+            tif_conditions = [
+                and_(
+                    or_(
+                        func.lower(WSISlide.wsi_path).like('%' + ext)
+                        for ext in TIF_EXTENSIONS
+                    ),
+                    WSISlide.file_size >= SIZE_THRESHOLD
+                )
+            ]
+            file_filter = or_(*wsi_ext_conditions, *tif_conditions)
+        elif data_type == "patch":
+            patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
+            tif_conditions = [
+                and_(
+                    or_(
+                        func.lower(WSISlide.wsi_path).like('%' + ext)
+                        for ext in TIF_EXTENSIONS
+                    ),
+                    or_(
+                        WSISlide.file_size < SIZE_THRESHOLD,
+                        WSISlide.file_size.is_(None)
+                    )
+                )
+            ]
+            file_filter = or_(*patch_ext_conditions, *tif_conditions)
+        else:
+            file_filter = None
+
+        # Join with Dataset and DataGroup tables to get all info
+        query = select(
+            Dataset.dataset_id,
+            Dataset.name.label("dataset_name"),
+            Dataset.user_id.label("dataset_user_id"),
+            Dataset.group_id,
+            DataGroup.data_type,
+            DataGroup.aggregation_level,
+            DataGroup.task_type,
+            func.count(WSISlide.id).label("file_count"),
+            func.sum(WSISlide.file_size).label("total_size"),
+            # Count splits - normalize 'validation' to 'val'
+            func.sum(case(
+                (func.lower(WSISlide.split) == 'train', 1),
+                else_=0
+            )).label("split_train_count"),
+            func.sum(case(
+                (or_(func.lower(WSISlide.split) == 'val', func.lower(WSISlide.split) == 'validation'), 1),
+                else_=0
+            )).label("split_val_count"),
+            func.sum(case(
+                (func.lower(WSISlide.split) == 'test', 1),
+                else_=0
+            )).label("split_test_count"),
+        ).select_from(WSISlide).outerjoin(
+            Dataset, WSISlide.dataset_id == Dataset.dataset_id
+        ).outerjoin(
+            DataGroup, Dataset.group_id == DataGroup.group_id
+        )
+
+        # Apply user_id filter with elevated_dataset_ids support
+        # User can see: their own datasets OR datasets they have elevated permissions for
+        if user_id is not None:
+            if elevated_dataset_ids:
+                # Include user's own data OR data from elevated permission datasets
+                query = query.where(
+                    or_(
+                        WSISlide.user_id == user_id,
+                        WSISlide.dataset_id.in_(elevated_dataset_ids)
+                    )
+                )
+            else:
+                query = query.where(WSISlide.user_id == user_id)
+
+        if file_filter is not None:
+            query = query.where(file_filter)
+
+        query = query.group_by(
+            Dataset.dataset_id, Dataset.name, Dataset.user_id, Dataset.group_id,
+            DataGroup.data_type, DataGroup.aggregation_level, DataGroup.task_type
+        ).order_by(Dataset.name)
+
+        result = await db.execute(query)
+        datasets = []
+        for row in result.all():
+            train_count = row.split_train_count or 0
+            val_count = row.split_val_count or 0
+            test_count = row.split_test_count or 0
+            has_predefined_splits = train_count > 0  # At least train split must exist
+
+            datasets.append({
+                "dataset_id": row.dataset_id,  # UUID for API calls
+                "dataset_name": row.dataset_name or "Uncategorized",  # Display name
+                "user_id": row.dataset_user_id,  # Dataset owner
+                "group_id": row.group_id,
+                "data_type": row.data_type,  # wsi or patch (for frontend display)
+                "aggregation_level": row.aggregation_level,  # file or case
+                "task_type": row.task_type or "classification",  # classification, survival
+                "file_count": row.file_count,
+                "total_size": row.total_size or 0,
+                "has_predefined_splits": has_predefined_splits,
+                "predefined_split_counts": {
+                    "train": train_count,
+                    "val": val_count,
+                    "test": test_count
+                }
+            })
+        return datasets
+
+    @staticmethod
+    async def get_by_dataset(
+        db: AsyncSession,
+        dataset_id: str,
+        skip: int = 0,
+        limit: int = 0,
+        user_id: Optional[str] = None,
+        data_type: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
+    ) -> List[WSISlide]:
+        """
+        Get all WSI slides in a specific dataset with pagination.
+
+        Args:
+            db: Database session
+            dataset_id: Dataset UUID to filter by (use "Uncategorized" for NULL dataset_id)
+            skip: Number of records to skip
+            limit: Maximum number of records to return (0 = all)
+            user_id: Optional user ID filter. If provided, only returns WSI belonging to this user.
+                     If None, returns all WSI in the dataset (for admin users).
+            data_type: Optional filter - "wsi" for WSI files, "patch" for image files
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  If the requested dataset_id is in this list, user_id filter is bypassed.
+
+        Returns:
+            List of WSISlide objects with dataset relationship loaded
+        """
+        query = select(WSISlide).options(selectinload(WSISlide.dataset))
+
+        if dataset_id == "Uncategorized":
+            query = query.where(WSISlide.dataset_id.is_(None))
+        else:
+            query = query.where(WSISlide.dataset_id == dataset_id)
+
+        # Apply user_id filter, but bypass if user has elevated permission for this dataset
+        if user_id is not None:
+            # Check if user has elevated permission for this specific dataset
+            has_elevated_permission = elevated_dataset_ids and dataset_id in elevated_dataset_ids
+            if not has_elevated_permission:
+                # User doesn't have elevated permission, apply user_id filter
+                query = query.where(WSISlide.user_id == user_id)
+            # If has_elevated_permission is True, don't filter by user_id - show all files in dataset
+
+        # Apply data_type filter
+        data_type_filter = WSIRepository._build_data_type_filter(data_type)
+        if data_type_filter is not None:
+            query = query.where(data_type_filter)
+
+        query = query.order_by(desc(WSISlide.created_at)).offset(skip)
+        if limit > 0:
+            query = query.limit(limit)
+
+        result = await db.execute(query)
+        return result.scalars().all()
+
+    @staticmethod
+    async def count_by_dataset(
+        db: AsyncSession,
+        dataset_id: str,
+        user_id: Optional[str] = None,
+        data_type: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None
+    ) -> int:
+        """
+        Count WSI slides in a specific dataset.
+
+        Args:
+            db: Database session
+            dataset_id: Dataset UUID to filter by (use "Uncategorized" for NULL dataset_id)
+            user_id: Optional user ID filter. If provided, only counts WSI belonging to this user.
+                     If None, counts all WSI in the dataset (for admin users).
+            data_type: Optional filter - "wsi" for WSI files, "patch" for image files
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  If the requested dataset_id is in this list, user_id filter is bypassed.
+
+        Returns:
+            Number of WSI slides in the dataset
+        """
+        query = select(func.count(WSISlide.id))
+
+        if dataset_id == "Uncategorized":
+            query = query.where(WSISlide.dataset_id.is_(None))
+        else:
+            query = query.where(WSISlide.dataset_id == dataset_id)
+
+        # Apply user_id filter, but bypass if user has elevated permission for this dataset
+        if user_id is not None:
+            # Check if user has elevated permission for this specific dataset
+            has_elevated_permission = elevated_dataset_ids and dataset_id in elevated_dataset_ids
+            if not has_elevated_permission:
+                # User doesn't have elevated permission, apply user_id filter
+                query = query.where(WSISlide.user_id == user_id)
+            # If has_elevated_permission is True, don't filter by user_id - count all files in dataset
+
+        # Apply data_type filter
+        data_type_filter = WSIRepository._build_data_type_filter(data_type)
+        if data_type_filter is not None:
+            query = query.where(data_type_filter)
+
+        result = await db.execute(query)
+        return result.scalar_one()
+
+    # ------------------------------------------------------------------
+    # Search helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_search_filter(search: Optional[str]):
+        """Build ILIKE filter across searchable columns.
+
+        Matches original_filename, case_id, label, source, wsi_id.
+        Returns None when *search* is empty/None.
+        """
+        if not search or not search.strip():
+            return None
+        from sqlalchemy import or_
+        pattern = f"%{search.strip()}%"
+        return or_(
+            WSISlide.original_filename.ilike(pattern),
+            WSISlide.case_id.ilike(pattern),
+            WSISlide.label.ilike(pattern),
+            WSISlide.source.ilike(pattern),
+            WSISlide.wsi_id.ilike(pattern),
+        )
+
+    # ------------------------------------------------------------------
+    # Case-level pagination helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def count_cases_by_dataset(
+        db: AsyncSession,
+        dataset_id: str,
+        search: Optional[str] = None,
+        user_id: Optional[str] = None,
+        data_type: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None,
+    ) -> dict:
+        """Count distinct case groups for case-level pagination.
+
+        A "case" is a distinct non-NULL case_id.  Files with NULL case_id
+        form a single ``__no_case__`` group.
+
+        Returns dict with keys:
+            named_case_count  – number of distinct non-NULL case_ids
+            no_case_count     – number of files without case_id
+            total_cases       – named_case_count + (1 if no_case_count > 0 else 0)
+            total_files       – total matching file count
+            has_multi_slide_cases – whether any case_id has more than one file
+        """
+        from sqlalchemy import or_, case, literal_column
+
+        # ---- shared WHERE filters ----
+        filters = []
+        if dataset_id == "Uncategorized":
+            filters.append(WSISlide.dataset_id.is_(None))
+        else:
+            filters.append(WSISlide.dataset_id == dataset_id)
+
+        if user_id is not None:
+            has_elevated = elevated_dataset_ids and dataset_id in elevated_dataset_ids
+            if not has_elevated:
+                filters.append(WSISlide.user_id == user_id)
+
+        dt_filter = WSIRepository._build_data_type_filter(data_type)
+        if dt_filter is not None:
+            filters.append(dt_filter)
+
+        search_filter = WSIRepository._build_search_filter(search)
+        if search_filter is not None:
+            filters.append(search_filter)
+
+        # named_case_count
+        q_named = select(func.count(func.distinct(WSISlide.case_id))).where(
+            WSISlide.case_id.isnot(None), *filters
+        )
+        named_case_count = (await db.execute(q_named)).scalar_one()
+
+        # no_case_count (files without case_id)
+        q_no_case = select(func.count(WSISlide.id)).where(
+            WSISlide.case_id.is_(None), *filters
+        )
+        no_case_count = (await db.execute(q_no_case)).scalar_one()
+
+        # total files
+        q_total = select(func.count(WSISlide.id)).where(*filters)
+        total_files = (await db.execute(q_total)).scalar_one()
+
+        total_cases = named_case_count + (1 if no_case_count > 0 else 0)
+
+        # has_multi_slide_cases: any non-NULL case_id with count > 1
+        q_multi = (
+            select(func.count())
+            .select_from(
+                select(WSISlide.case_id)
+                .where(WSISlide.case_id.isnot(None), *filters)
+                .group_by(WSISlide.case_id)
+                .having(func.count(WSISlide.id) > 1)
+                .subquery()
+            )
+        )
+        multi_count = (await db.execute(q_multi)).scalar_one()
+        has_multi_slide_cases = multi_count > 0
+
+        return {
+            "named_case_count": named_case_count,
+            "no_case_count": no_case_count,
+            "total_cases": total_cases,
+            "total_files": total_files,
+            "has_multi_slide_cases": has_multi_slide_cases,
+        }
+
+    @staticmethod
+    async def get_by_dataset_case_paginated(
+        db: AsyncSession,
+        dataset_id: str,
+        page: int = 1,
+        page_size: int = 10,
+        search: Optional[str] = None,
+        user_id: Optional[str] = None,
+        data_type: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None,
+    ) -> List[WSISlide]:
+        """Fetch files for a *page* of case groups.
+
+        Ordering: named cases alphabetically by case_id first, then the
+        ``__no_case__`` group (NULL case_id files) last.
+
+        Each named case_id counts as 1 page unit; ALL files without case_id
+        together count as 1 page unit (consistent with frontend grouping).
+
+        Returns the list of WSISlide objects belonging to the cases on the
+        requested page (with dataset relationship loaded).
+        """
+        from sqlalchemy import or_
+
+        # ---- shared WHERE filters ----
+        filters = []
+        if dataset_id == "Uncategorized":
+            filters.append(WSISlide.dataset_id.is_(None))
+        else:
+            filters.append(WSISlide.dataset_id == dataset_id)
+
+        if user_id is not None:
+            has_elevated = elevated_dataset_ids and dataset_id in elevated_dataset_ids
+            if not has_elevated:
+                filters.append(WSISlide.user_id == user_id)
+
+        dt_filter = WSIRepository._build_data_type_filter(data_type)
+        if dt_filter is not None:
+            filters.append(dt_filter)
+
+        search_filter = WSIRepository._build_search_filter(search)
+        if search_filter is not None:
+            filters.append(search_filter)
+
+        # Step 1: Get paginated named case_ids
+        offset = (page - 1) * page_size
+        q_case_ids = (
+            select(WSISlide.case_id)
+            .where(WSISlide.case_id.isnot(None), *filters)
+            .group_by(WSISlide.case_id)
+            .order_by(WSISlide.case_id)
+            .offset(offset)
+            .limit(page_size)
+        )
+        case_ids_result = await db.execute(q_case_ids)
+        page_case_ids = [row[0] for row in case_ids_result.all()]
+
+        results: List[WSISlide] = []
+
+        # Step 2: Fetch files for the named cases
+        if page_case_ids:
+            q_files = (
+                select(WSISlide)
+                .options(selectinload(WSISlide.dataset))
+                .where(WSISlide.case_id.in_(page_case_ids), *filters)
+                .order_by(WSISlide.case_id, desc(WSISlide.created_at))
+            )
+            file_result = await db.execute(q_files)
+            results.extend(file_result.scalars().all())
+
+        # Step 3: Check if __no_case__ group falls on this page
+        # __no_case__ is always the LAST case unit.
+        # Count named cases first to know if __no_case__ is on this page.
+        q_named_count = select(func.count(func.distinct(WSISlide.case_id))).where(
+            WSISlide.case_id.isnot(None), *filters
+        )
+        named_count = (await db.execute(q_named_count)).scalar_one()
+
+        # __no_case__ index (0-based) = named_count
+        no_case_index = named_count
+        page_start = offset
+        page_end = offset + page_size  # exclusive
+        if page_start <= no_case_index < page_end:
+            # __no_case__ is on this page – fetch all uncased files
+            q_no_case = (
+                select(WSISlide)
+                .options(selectinload(WSISlide.dataset))
+                .where(WSISlide.case_id.is_(None), *filters)
+                .order_by(desc(WSISlide.created_at))
+            )
+            no_case_result = await db.execute(q_no_case)
+            results.extend(no_case_result.scalars().all())
+
+        return results
+
+    @staticmethod
+    async def bulk_update_feature_extracted(
+        db: AsyncSession, wsi_ids: List[str], extracted: bool = True
+    ) -> int:
+        """Bulk update feature_extracted flag for multiple WSIs.
+
+        Args:
+            db: Database session
+            wsi_ids: List of WSI IDs to update
+            extracted: Value to set (default True)
+
+        Returns:
+            Number of rows updated
+        """
+        if not wsi_ids:
+            return 0
+        total_updated = 0
+        batch_size = 500
+        for i in range(0, len(wsi_ids), batch_size):
+            batch = wsi_ids[i:i + batch_size]
+            result = await db.execute(
+                update(WSISlide)
+                .where(WSISlide.wsi_id.in_(batch))
+                .values(feature_extracted=extracted)
+            )
+            total_updated += result.rowcount
+        return total_updated
+
+

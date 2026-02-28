@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { Loader2, BarChart3, TrendingUp, AlertCircle, RefreshCw, Activity, Target, Percent } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { Loader2, BarChart3, TrendingUp, AlertCircle, RefreshCw, Activity, Target, Percent, Layers } from 'lucide-react'
 import { getTaskQuickAnalysis, getTrainingTasks, getAnalysisStatus } from '../../api'
-import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KFoldLossCurveData, type KMCurveData } from '../charts/AnalysisCharts'
+import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, MetricCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KFoldLossCurveData, type KMCurveData, type MetricCurveData } from '../charts/AnalysisCharts'
 import {
   METRIC_COLORS,
   METRIC_ABBREVIATIONS,
@@ -57,7 +58,44 @@ const METRIC_ICONS: Record<string, React.ReactNode> = {
   sensitivity: <Percent className="w-4 h-4" />,
   specificity: <Percent className="w-4 h-4" />,
   c_index: <TrendingUp className="w-4 h-4" />,
-  integrated_brier_score: <BarChart3 className="w-4 h-4" />
+  integrated_brier_score: <BarChart3 className="w-4 h-4" />,
+  // Segmentation-specific metrics
+  iou: <Layers className="w-4 h-4" />,
+  dice: <Layers className="w-4 h-4" />,
+  mean_iou: <Layers className="w-4 h-4" />,
+  mean_dice: <Layers className="w-4 h-4" />,
+  pixel_accuracy: <Target className="w-4 h-4" />,
+}
+
+/** Check if task type is segmentation */
+function isSegmentationTask(taskType: string): boolean {
+  return taskType === 'segmentation' || taskType === 'patch_segmentation'
+}
+
+/** Check if task type is survival */
+function isSurvivalTask(taskType: string): boolean {
+  return taskType === 'survival'
+}
+
+/** Get header gradient classes based on task type */
+function getHeaderGradient(taskType: string): string {
+  if (isSegmentationTask(taskType)) return 'bg-gradient-to-r from-violet-50 via-purple-50 to-fuchsia-50'
+  if (isSurvivalTask(taskType)) return 'bg-gradient-to-r from-emerald-50 via-teal-50 to-cyan-50'
+  return 'bg-gradient-to-r from-indigo-50 via-purple-50 to-blue-50'
+}
+
+/** Get header icon color based on task type */
+function getHeaderIconColor(taskType: string): string {
+  if (isSegmentationTask(taskType)) return 'text-violet-600'
+  if (isSurvivalTask(taskType)) return 'text-emerald-600'
+  return 'text-indigo-600'
+}
+
+/** Get header hover color based on task type */
+function getHeaderHoverColor(taskType: string): string {
+  if (isSegmentationTask(taskType)) return 'hover:text-violet-600'
+  if (isSurvivalTask(taskType)) return 'hover:text-emerald-600'
+  return 'hover:text-indigo-600'
 }
 
 /** Parse [QUICK_ANALYSIS_CONFIG] block from message */
@@ -84,6 +122,7 @@ interface KFoldTrainingData {
 }
 
 export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnalysisViewerProps) {
+  const { t } = useTranslation()
   // Check if we have cached data (metrics only - charts are not cached)
   const cachedData = config.cached_data
   const hasCachedData = !!cachedData && Object.keys(cachedData.metrics || {}).length > 0
@@ -94,7 +133,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
   const [metrics, setMetrics] = useState<Record<string, MetricValue>>(cachedData?.metrics || {})
   const [classMetrics, setClassMetrics] = useState<Record<string, Record<string, number>>>(cachedData?.class_metrics || {})
   // Charts are not cached (too large), will be fetched on demand
-  const [chartData, setChartData] = useState<{ confusion_matrix?: ConfusionMatrixData; roc_curve?: RocCurveData; loss_curve?: LossCurveData | KFoldLossCurveData; km_curve?: KMCurveData }>({})
+  const [chartData, setChartData] = useState<{ confusion_matrix?: ConfusionMatrixData; roc_curve?: RocCurveData; loss_curve?: LossCurveData | KFoldLossCurveData; km_curve?: KMCurveData; iou_curve?: MetricCurveData; dice_curve?: MetricCurveData }>({})
   const [numSamples, setNumSamples] = useState<number | undefined>(cachedData?.num_samples)
   const [taskType, setTaskType] = useState<string>(cachedData?.task_type || 'classification')
   // Reconstruct partial K-Fold data from partial K-Fold data from cache (aggregated only, no per-fold history)
@@ -109,7 +148,10 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
 
   // Update active tab based on available data
   useEffect(() => {
-    if (chartData.roc_curve) setActiveTab('roc_curve')
+    // Prioritize segmentation charts when available
+    if (chartData.iou_curve) setActiveTab('iou_curve')
+    else if (chartData.dice_curve) setActiveTab('dice_curve')
+    else if (chartData.roc_curve) setActiveTab('roc_curve')
     else if (chartData.confusion_matrix) setActiveTab('confusion_matrix')
     else if (chartData.loss_curve) setActiveTab('loss_curve')
     else if (chartData.km_curve) setActiveTab('km_curve')
@@ -249,7 +291,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
           clearInterval(pollingRef.current)
           pollingRef.current = null
         }
-        setError(status.error_message || 'Analysis failed')
+        setError(status.error_message || t('chatComponents.quickAnalysis.analysisFailed'))
         setIsLoading(false)
       }
     } catch (err) {
@@ -269,20 +311,20 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
 
       try {
         const tasks = await getTrainingTasks()
-        const found = tasks.some(t => t.task_id === config.task_id && t.status === 'completed')
+        const found = tasks.some(task => task.task_id === config.task_id && task.status === 'completed')
         if (!found) {
           if (config.is_external_validation && !hasCachedData) {
             // External validation: task may not be completed yet (inference still running)
             // Set waiting state and poll for task completion
             setAnalysisStatus('waiting')
-            setStatusMessage('Waiting for external validation to complete...')
+            setStatusMessage(t('chatComponents.quickAnalysis.waitingForValidation'))
             if (!pollingRef.current) {
               pollingRef.current = setInterval(() => fetchData(), 5000)
             }
             return
           }
           if (!hasCachedData) {
-            setTaskExists(false); setError('Task not found or not completed'); setIsLoading(false)
+            setTaskExists(false); setError(t('chatComponents.quickAnalysis.taskNotFound')); setIsLoading(false)
           }
           return
         }
@@ -303,7 +345,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
             setAnalysisId(aid)
             setAnalysisStatus(result.status)
             setProgress(result.progress || 0)
-            setStatusMessage(result.message || 'Analysis in progress...')
+            setStatusMessage(result.message || t('chatComponents.quickAnalysis.analysisInProgress'))
 
             // Start polling interval
             pollingRef.current = setInterval(() => currentPollStatus(aid), POLL_INTERVAL)
@@ -313,7 +355,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
 
         if (!result.has_analysis) {
           if (!hasCachedData) {
-            setError(result.message || 'No analysis results available'); setIsLoading(false)
+            setError(result.message || t('chatComponents.quickAnalysis.noResults')); setIsLoading(false)
           }
           return
         }
@@ -340,7 +382,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
       } catch (err) {
         // Only show error if we don't have cached data to display
         if (!hasCachedData) {
-          const msg = err instanceof Error ? err.message : 'Failed to fetch analysis'
+          const msg = err instanceof Error ? err.message : t('chatComponents.quickAnalysis.fetchFailed')
           setError(msg); onErrorRef.current?.(msg)
         } else {
           console.warn('Failed to fetch charts for cached analysis:', err)
@@ -377,13 +419,13 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
           <div className="flex items-center gap-2">
             <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
             <span className="text-gray-600 text-sm sm:text-base">
-              {isPolling ? statusMessage || 'Running analysis...' : 'Loading analysis...'}
+              {isPolling ? statusMessage || t('chatComponents.quickAnalysis.runningAnalysis') : t('chatComponents.quickAnalysis.loadingAnalysis')}
             </span>
           </div>
           {isPolling && (
             <div className="w-full max-w-xs">
               <div className="flex justify-between text-xs text-gray-500 mb-1">
-                <span>{analysisStatus === 'waiting' ? 'Waiting for inference' : analysisStatus === 'pending' ? 'Queued' : 'Processing'}</span>
+                <span>{analysisStatus === 'waiting' ? t('chatComponents.quickAnalysis.waitingForInference') : analysisStatus === 'pending' ? t('chatComponents.quickAnalysis.queued') : t('chatComponents.quickAnalysis.processing')}</span>
                 <span>{analysisStatus === 'waiting' ? '' : `${Math.round(animatedProgress)}%`}</span>
               </div>
               {analysisStatus !== 'waiting' && (
@@ -403,8 +445,8 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
 
   if (!taskExists || error) return (
     <div className="mt-4 w-full max-w-full bg-white border border-red-200 rounded-2xl shadow-sm overflow-hidden">
-      <div className="px-4 sm:px-5 py-3 sm:py-4 bg-red-50 border-b border-red-100"><h3 className="font-semibold text-red-800 flex items-center gap-2 text-sm sm:text-base"><AlertCircle className="w-4 h-4 flex-shrink-0" />Analysis Unavailable</h3></div>
-      <div className="p-4 sm:p-5"><p className="text-red-700 text-sm">{error}</p><p className="text-gray-500 text-xs mt-2 truncate">Task: {config.task_name || config.task_id}</p></div>
+      <div className="px-4 sm:px-5 py-3 sm:py-4 bg-red-50 border-b border-red-100"><h3 className="font-semibold text-red-800 flex items-center gap-2 text-sm sm:text-base"><AlertCircle className="w-4 h-4 flex-shrink-0" />{t('chatComponents.quickAnalysis.analysisUnavailable')}</h3></div>
+      <div className="p-4 sm:p-5"><p className="text-red-700 text-sm">{error}</p><p className="text-gray-500 text-xs mt-2 truncate">{t('chatComponents.quickAnalysis.task')}: {config.task_name || config.task_id}</p></div>
     </div>
   )
 
@@ -414,19 +456,29 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
   return (
     <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="px-4 sm:px-5 py-3 sm:py-4 bg-gradient-to-r from-indigo-50 via-purple-50 to-blue-50 border-b border-gray-100 flex items-center justify-between">
+      <div className={`px-4 sm:px-5 py-3 sm:py-4 ${getHeaderGradient(taskType)} border-b border-gray-100 flex items-center justify-between`}>
         <div className="min-w-0 flex-1">
-          <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm sm:text-base"><BarChart3 className="w-4 h-4 text-indigo-600 flex-shrink-0" /><span className="truncate">Analysis Results</span></h3>
-          <p className="text-xs text-gray-500 mt-1 truncate">{config.task_name || config.task_id}{numSamples && ` • ${numSamples} test samples`}{taskType && ` • ${taskType}`}</p>
+          <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
+            {isSegmentationTask(taskType)
+              ? <Layers className={`w-4 h-4 ${getHeaderIconColor(taskType)} flex-shrink-0`} />
+              : <BarChart3 className={`w-4 h-4 ${getHeaderIconColor(taskType)} flex-shrink-0`} />}
+            <span className="truncate">{t('chatComponents.quickAnalysis.analysisResults')}</span>
+          </h3>
+          <p className="text-xs text-gray-500 mt-1 truncate">{config.task_name || config.task_id}{numSamples && ` • ${t('chatComponents.quickAnalysis.testSamples', { count: numSamples })}`}{taskType && ` • ${taskType}`}</p>
         </div>
-        <button onClick={handleRefresh} className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-colors flex-shrink-0" title="Refresh"><RefreshCw className="w-4 h-4" /></button>
+        <button onClick={handleRefresh} className={`p-1.5 text-gray-400 ${getHeaderHoverColor(taskType)} hover:bg-white rounded-lg transition-colors flex-shrink-0`} title={t('chatComponents.quickAnalysis.refresh')}><RefreshCw className="w-4 h-4" /></button>
       </div>
 
       <div className="p-4 sm:p-5 space-y-4 sm:space-y-6">
         {/* Metrics */}
         {hasMetrics && (
           <div>
-            <h4 className="text-sm font-semibold text-gray-700 mb-2 sm:mb-3 flex items-center gap-2"><TrendingUp className="w-4 h-4 text-indigo-500" />Metrics</h4>
+            <h4 className="text-sm font-semibold text-gray-700 mb-2 sm:mb-3 flex items-center gap-2">
+              {isSegmentationTask(taskType)
+                ? <Layers className="w-4 h-4 text-violet-500" />
+                : <TrendingUp className={`w-4 h-4 ${isSurvivalTask(taskType) ? 'text-emerald-500' : 'text-indigo-500'}`} />}
+              {t('chatComponents.quickAnalysis.metrics')}
+            </h4>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
               {displayMetrics.map(({ key, value }) => {
                 const val = typeof value === 'object' ? value.value : value
@@ -463,13 +515,13 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
           <div className="pt-3 sm:pt-4 border-t border-gray-100">
             <h4 className="text-sm font-semibold text-gray-700 mb-2 sm:mb-3 flex items-center gap-2">
               <Activity className="w-4 h-4 text-purple-500 flex-shrink-0" />
-              <span className="truncate">K-Fold Cross-Validation ({kfoldTraining.num_folds} folds)</span>
+              <span className="truncate">{t('chatComponents.quickAnalysis.kfoldTitle', { folds: kfoldTraining.num_folds })}</span>
             </h4>
 
             {/* Aggregated metrics */}
             {Object.keys(kfoldTraining.aggregated).length > 0 && (
               <div className="mb-3 sm:mb-4">
-                <div className="text-xs text-gray-500 mb-2">Aggregated (Mean ± Std)</div>
+                <div className="text-xs text-gray-500 mb-2">{t('chatComponents.quickAnalysis.aggregatedMeanStd')}</div>
                 <div className="flex flex-wrap gap-2">
                   {Object.entries(kfoldTraining.aggregated).map(([metricName, stats]) => (
                     <div key={metricName} className="bg-purple-50 border border-purple-200 rounded-lg px-2 sm:px-3 py-1.5 sm:py-2">
@@ -484,14 +536,18 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
             )}
 
             {/* Per-fold metrics */}
-            <div className="text-xs text-gray-500 mb-2">Per-Fold Results</div>
+            <div className="text-xs text-gray-500 mb-2">{t('chatComponents.quickAnalysis.perFoldResults')}</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
               {Object.entries(kfoldTraining.folds)
                 .sort(([a], [b]) => a.localeCompare(b))
-                .map(([foldName, foldData]) => (
+                .map(([foldName, foldData]) => {
+                  // Convert fold_0 to FOLD 1, fold_1 to FOLD 2, etc.
+                  const foldNumber = parseInt(foldName.replace('fold_', ''), 10) + 1
+                  const displayName = t('chatComponents.quickAnalysis.foldLabel', { number: foldNumber })
+                  return (
                   <div key={foldName} className="bg-white border border-gray-200 rounded-lg p-3 shadow-sm hover:border-purple-300 transition-colors">
                     <div className="text-xs font-bold text-gray-700 mb-2 uppercase tracking-wider border-b border-gray-100 pb-2">
-                      {foldName.replace('_', ' ')}
+                      {displayName}
                     </div>
                     {foldData.val_metrics && (
                       <div className="space-y-2">
@@ -508,7 +564,8 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
                       </div>
                     )}
                   </div>
-                ))}
+                  )
+                })}
             </div>
           </div>
         )}
@@ -518,19 +575,21 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
           <div>
             <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-purple-500" />
-              Charts
+              {t('chatComponents.quickAnalysis.charts')}
             </h4>
 
             {/* Desktop View: Stacked */}
             <div className="hidden sm:block space-y-4">
-              {chartData.roc_curve && <RocCurveChart data={chartData.roc_curve} title="ROC Curve" />}
-              {chartData.confusion_matrix && <ConfusionMatrixChart data={chartData.confusion_matrix} title="Confusion Matrix" />}
+              {chartData.iou_curve && <MetricCurveChart data={chartData.iou_curve} title={t('chatComponents.quickAnalysis.iouCurve')} />}
+              {chartData.dice_curve && <MetricCurveChart data={chartData.dice_curve} title={t('chatComponents.quickAnalysis.diceCurve')} />}
+              {chartData.roc_curve && <RocCurveChart data={chartData.roc_curve} title={t('chatComponents.quickAnalysis.rocCurve')} />}
+              {chartData.confusion_matrix && <ConfusionMatrixChart data={chartData.confusion_matrix} title={t('chatComponents.quickAnalysis.confusionMatrix')} />}
               {chartData.loss_curve && (
                 'is_kfold' in chartData.loss_curve && chartData.loss_curve.is_kfold
-                  ? <KFoldLossCurveChart data={chartData.loss_curve as KFoldLossCurveData} title="Training Loss (K-Fold)" />
-                  : <LossCurveChart data={chartData.loss_curve as LossCurveData} title="Training Loss" />
+                  ? <KFoldLossCurveChart data={chartData.loss_curve as KFoldLossCurveData} title={t('chatComponents.quickAnalysis.trainingLossKFold')} />
+                  : <LossCurveChart data={chartData.loss_curve as LossCurveData} title={t('chatComponents.quickAnalysis.trainingLoss')} />
               )}
-              {chartData.km_curve && <KMCurveChart data={chartData.km_curve} title="Kaplan-Meier Survival Curve" />}
+              {chartData.km_curve && <KMCurveChart data={chartData.km_curve} title={t('chatComponents.quickAnalysis.kmSurvivalCurve')} />}
             </div>
 
             {/* Mobile View: Tabs */}
@@ -544,7 +603,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
                       : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100'
                       }`}
                   >
-                    ROC Curve
+                    {t('chatComponents.quickAnalysis.rocCurve')}
                   </button>
                 )}
                 {chartData.confusion_matrix && (
@@ -555,7 +614,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
                       : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100'
                       }`}
                   >
-                    Confusion Matrix
+                    {t('chatComponents.quickAnalysis.confusionMatrix')}
                   </button>
                 )}
                 {chartData.loss_curve && (
@@ -566,7 +625,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
                       : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100'
                       }`}
                   >
-                    Training Loss
+                    {t('chatComponents.quickAnalysis.trainingLoss')}
                   </button>
                 )}
                 {chartData.km_curve && (
@@ -577,25 +636,53 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
                       : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100'
                       }`}
                   >
-                    Survival Curve
+                    {t('chatComponents.quickAnalysis.survivalCurve')}
+                  </button>
+                )}
+                {chartData.iou_curve && (
+                  <button
+                    onClick={() => setActiveTab('iou_curve')}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${activeTab === 'iou_curve'
+                      ? 'bg-violet-100 text-violet-700 ring-1 ring-violet-200'
+                      : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100'
+                      }`}
+                  >
+                    {t('chatComponents.quickAnalysis.iouCurve')}
+                  </button>
+                )}
+                {chartData.dice_curve && (
+                  <button
+                    onClick={() => setActiveTab('dice_curve')}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${activeTab === 'dice_curve'
+                      ? 'bg-violet-100 text-violet-700 ring-1 ring-violet-200'
+                      : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100'
+                      }`}
+                  >
+                    {t('chatComponents.quickAnalysis.diceCurve')}
                   </button>
                 )}
               </div>
 
               <div className="min-h-[350px]">
+                {activeTab === 'iou_curve' && chartData.iou_curve && (
+                  <MetricCurveChart data={chartData.iou_curve} title={t('chatComponents.quickAnalysis.iouCurve')} compact={true} />
+                )}
+                {activeTab === 'dice_curve' && chartData.dice_curve && (
+                  <MetricCurveChart data={chartData.dice_curve} title={t('chatComponents.quickAnalysis.diceCurve')} compact={true} />
+                )}
                 {activeTab === 'roc_curve' && chartData.roc_curve && (
-                  <RocCurveChart data={chartData.roc_curve} title="ROC Curve" compact={true} />
+                  <RocCurveChart data={chartData.roc_curve} title={t('chatComponents.quickAnalysis.rocCurve')} compact={true} />
                 )}
                 {activeTab === 'confusion_matrix' && chartData.confusion_matrix && (
-                  <ConfusionMatrixChart data={chartData.confusion_matrix} title="Confusion Matrix" compact={true} />
+                  <ConfusionMatrixChart data={chartData.confusion_matrix} title={t('chatComponents.quickAnalysis.confusionMatrix')} compact={true} />
                 )}
                 {activeTab === 'loss_curve' && chartData.loss_curve && (
                   'is_kfold' in chartData.loss_curve && chartData.loss_curve.is_kfold
-                    ? <KFoldLossCurveChart data={chartData.loss_curve as KFoldLossCurveData} title="Training Loss (K-Fold)" compact={true} />
-                    : <LossCurveChart data={chartData.loss_curve as LossCurveData} title="Training Loss" compact={true} />
+                    ? <KFoldLossCurveChart data={chartData.loss_curve as KFoldLossCurveData} title={t('chatComponents.quickAnalysis.trainingLossKFold')} compact={true} />
+                    : <LossCurveChart data={chartData.loss_curve as LossCurveData} title={t('chatComponents.quickAnalysis.trainingLoss')} compact={true} />
                 )}
                 {activeTab === 'km_curve' && chartData.km_curve && (
-                  <KMCurveChart data={chartData.km_curve} title="Kaplan-Meier Survival Curve" compact={true} />
+                  <KMCurveChart data={chartData.km_curve} title={t('chatComponents.quickAnalysis.kmSurvivalCurve')} compact={true} />
                 )}
               </div>
             </div>
@@ -605,7 +692,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
         {/* Class metrics */}
         {config.show_class_metrics && Object.keys(classMetrics).length > 0 && (
           <div className="pt-3 sm:pt-4 border-t border-gray-100">
-            <h4 className="text-xs sm:text-sm font-semibold text-gray-700 mb-2 sm:mb-3">Per-Class Metrics</h4>
+            <h4 className="text-xs sm:text-sm font-semibold text-gray-700 mb-2 sm:mb-3">{t('chatComponents.quickAnalysis.perClassMetrics')}</h4>
             <div className="space-y-2 sm:space-y-3">
               {Object.entries(classMetrics).map(([cls, m]) => (
                 <div key={cls} className="bg-gray-50 rounded-lg p-2 sm:p-3">

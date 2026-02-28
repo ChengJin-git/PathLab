@@ -24,7 +24,8 @@ export interface SelectOption<T = string> {
  */
 export const TASK_TYPES: readonly SelectOption[] = [
   { value: 'classification', label: 'Classification' },
-  { value: 'survival', label: 'Survival Prediction' }
+  { value: 'survival', label: 'Survival Prediction' },
+  { value: 'segmentation', label: 'Segmentation' }
 ] as const
 
 export type TaskType = 'classification' | 'survival' | 'segmentation'
@@ -81,7 +82,9 @@ export const FEATURE_EXTRACTORS: readonly ExtractorOption[] = [
   { id: 'H-Optimus-1', name: 'H-Optimus-1', description: 'ViT-G/14, 1536-dim (Bioptimus)' },
   { id: 'H-Optimus-0', name: 'H-Optimus-0', description: 'ViT-G/14, 1536-dim (Bioptimus)' },
   { id: 'mSTAR', name: 'mSTAR', description: 'DINOv2 ViT-L/16, 1024-dim' },
-  { id: 'GPFM', name: 'GPFM', description: 'DINOv2 ViT-G/14, 1536-dim' }
+  { id: 'GPFM', name: 'GPFM', description: 'DINOv2 ViT-G/14, 1536-dim' },
+  { id: 'SmartCCS', name: 'Smart-CCS', description: 'DINOv2 ViT-L/14, 1024-dim (Smartlab)' },
+  { id: 'SmartCyto', name: 'SmartCyto', description: 'DINOv3 ViT-B/16, 768-dim (Smartlab)' }
 ] as const
 
 /** Default feature extractor ID */
@@ -111,6 +114,23 @@ export const OPTIMIZERS: readonly SelectOption[] = [
 
 /** Default optimizer */
 export const DEFAULT_OPTIMIZER = 'adam'
+
+// ============================================================================
+// Patch Classifiers (for patch-level classification heads)
+// ============================================================================
+
+/**
+ * Available classifier heads for patch-level classification.
+ * These are trained on top of frozen FM features.
+ */
+export const PATCH_CLASSIFIERS: readonly SelectOption[] = [
+  { value: 'linear', label: 'Linear Probe', description: 'Single linear layer' },
+  { value: 'mlp', label: 'MLP', description: 'Multi-layer perceptron with hidden layers' },
+  { value: 'attention', label: 'Attention', description: 'Attention-pooling classifier' },
+] as const
+
+/** Default patch classifier */
+export const DEFAULT_PATCH_CLASSIFIER = 'linear'
 
 // ============================================================================
 // MIL Aggregators (for WSI-level classification)
@@ -149,6 +169,208 @@ export const AGGREGATOR_OPTIONS: readonly SelectOption[] = AGGREGATORS.map(a => 
   label: a.name,
   description: a.description
 }))
+
+// ============================================================================
+// Segmentation Architectures (for patch-level segmentation)
+// ============================================================================
+
+/**
+ * Available segmentation model architectures.
+ * Matches backend SUPPORT_ARCHTECTURES in segmentors/__init__.py.
+ */
+export const SEGMENTATION_ARCHITECTURES: readonly ExtractorOption[] = [
+  { id: 'unet', name: 'U-Net', description: 'Classic encoder-decoder with skip connections' },
+  { id: 'unetplusplus', name: 'UNet++', description: 'Nested U-Net with dense skip connections' },
+  { id: 'manet', name: 'MANet', description: 'Multi-scale Attention Network' },
+  { id: 'linknet', name: 'LinkNet', description: 'Lightweight encoder-decoder with residual connections' },
+  { id: 'fpn', name: 'FPN', description: 'Feature Pyramid Network for multi-scale features' },
+  { id: 'pspnet', name: 'PSPNet', description: 'Pyramid Scene Parsing Network' },
+  { id: 'deeplabv3', name: 'DeepLabV3', description: 'Atrous Spatial Pyramid Pooling' },
+  { id: 'deeplabv3plus', name: 'DeepLabV3+', description: 'DeepLabV3 with decoder module' },
+  { id: 'pan', name: 'PAN', description: 'Pyramid Attention Network' },
+  { id: 'upernet', name: 'UPerNet', description: 'Unified Perceptual Parsing Network' },
+  { id: 'segformer', name: 'SegFormer', description: 'Transformer-based segmentation' },
+  { id: 'dpt', name: 'DPT', description: 'Dense Prediction Transformer' },
+] as const
+
+/** Default segmentation architecture */
+export const DEFAULT_SEG_ARCHITECTURE = 'unet'
+
+// ============================================================================
+// Segmentation Backbones (Encoders for segmentation models)
+// ============================================================================
+
+export interface BackboneOption {
+  id: string
+  name: string
+  description: string
+  group: string
+}
+
+/**
+ * All segmentation backbones matching backend SUPPORT_FEATURE_EXTRACTORS.
+ * Grouped by family for UI filtering.
+ */
+export const SEGMENTATION_BACKBONES: readonly BackboneOption[] = [
+  // ── ResNet ──
+  { id: 'resnet18', name: 'ResNet-18', description: '11M params, lightweight baseline', group: 'ResNet' },
+  { id: 'resnet34', name: 'ResNet-34', description: '21M params, good speed/accuracy balance', group: 'ResNet' },
+  { id: 'resnet50', name: 'ResNet-50', description: '23M params, standard baseline (recommended)', group: 'ResNet' },
+  { id: 'resnet101', name: 'ResNet-101', description: '42M params, higher capacity', group: 'ResNet' },
+  { id: 'resnet152', name: 'ResNet-152', description: '58M params, deep model', group: 'ResNet' },
+  // ── ResNeXt ──
+  { id: 'resnext50_32x4d', name: 'ResNeXt-50', description: '22M params, grouped convolutions', group: 'ResNeXt' },
+  { id: 'resnext101_32x4d', name: 'ResNeXt-101 (32×4d)', description: '42M params', group: 'ResNeXt' },
+  { id: 'resnext101_32x8d', name: 'ResNeXt-101 (32×8d)', description: '86M params, high capacity', group: 'ResNeXt' },
+  { id: 'resnext101_32x16d', name: 'ResNeXt-101 (32×16d)', description: '191M params', group: 'ResNeXt' },
+  { id: 'resnext101_32x32d', name: 'ResNeXt-101 (32×32d)', description: '466M params', group: 'ResNeXt' },
+  { id: 'resnext101_32x48d', name: 'ResNeXt-101 (32×48d)', description: '826M params', group: 'ResNeXt' },
+  // ── DPN ──
+  { id: 'dpn68', name: 'DPN-68', description: '11M params, dual path network', group: 'DPN' },
+  { id: 'dpn68b', name: 'DPN-68b', description: '11M params, ImageNet+5k pretrained', group: 'DPN' },
+  { id: 'dpn92', name: 'DPN-92', description: '34M params', group: 'DPN' },
+  { id: 'dpn98', name: 'DPN-98', description: '58M params', group: 'DPN' },
+  { id: 'dpn107', name: 'DPN-107', description: '84M params', group: 'DPN' },
+  { id: 'dpn131', name: 'DPN-131', description: '76M params', group: 'DPN' },
+  // ── VGG ──
+  { id: 'vgg11', name: 'VGG-11', description: '9M params', group: 'VGG' },
+  { id: 'vgg11_bn', name: 'VGG-11 BN', description: '9M params, with batch norm', group: 'VGG' },
+  { id: 'vgg13', name: 'VGG-13', description: '9M params', group: 'VGG' },
+  { id: 'vgg13_bn', name: 'VGG-13 BN', description: '9M params, with batch norm', group: 'VGG' },
+  { id: 'vgg16', name: 'VGG-16', description: '14M params', group: 'VGG' },
+  { id: 'vgg16_bn', name: 'VGG-16 BN', description: '14M params, with batch norm', group: 'VGG' },
+  { id: 'vgg19', name: 'VGG-19', description: '20M params', group: 'VGG' },
+  { id: 'vgg19_bn', name: 'VGG-19 BN', description: '20M params, with batch norm', group: 'VGG' },
+  // ── SE-Net ──
+  { id: 'senet154', name: 'SENet-154', description: '113M params, squeeze-and-excitation', group: 'SE-Net' },
+  { id: 'se_resnet50', name: 'SE-ResNet-50', description: '26M params, channel attention', group: 'SE-Net' },
+  { id: 'se_resnet101', name: 'SE-ResNet-101', description: '47M params', group: 'SE-Net' },
+  { id: 'se_resnet152', name: 'SE-ResNet-152', description: '64M params', group: 'SE-Net' },
+  { id: 'se_resnext50_32x4d', name: 'SE-ResNeXt-50', description: '25M params', group: 'SE-Net' },
+  { id: 'se_resnext101_32x4d', name: 'SE-ResNeXt-101', description: '46M params', group: 'SE-Net' },
+  // ── DenseNet ──
+  { id: 'densenet121', name: 'DenseNet-121', description: '6M params, dense connections', group: 'DenseNet' },
+  { id: 'densenet169', name: 'DenseNet-169', description: '12M params', group: 'DenseNet' },
+  { id: 'densenet201', name: 'DenseNet-201', description: '18M params', group: 'DenseNet' },
+  { id: 'densenet161', name: 'DenseNet-161', description: '26M params', group: 'DenseNet' },
+  // ── Inception ──
+  { id: 'inceptionresnetv2', name: 'Inception-ResNet-V2', description: '54M params', group: 'Inception' },
+  { id: 'inceptionv4', name: 'Inception-V4', description: '41M params', group: 'Inception' },
+  // ── EfficientNet ──
+  { id: 'efficientnet-b0', name: 'EfficientNet-B0', description: '4M params, lightweight', group: 'EfficientNet' },
+  { id: 'efficientnet-b1', name: 'EfficientNet-B1', description: '6M params', group: 'EfficientNet' },
+  { id: 'efficientnet-b2', name: 'EfficientNet-B2', description: '7M params', group: 'EfficientNet' },
+  { id: 'efficientnet-b3', name: 'EfficientNet-B3', description: '10M params, good tradeoff', group: 'EfficientNet' },
+  { id: 'efficientnet-b4', name: 'EfficientNet-B4', description: '17M params', group: 'EfficientNet' },
+  { id: 'efficientnet-b5', name: 'EfficientNet-B5', description: '28M params, high accuracy', group: 'EfficientNet' },
+  { id: 'efficientnet-b6', name: 'EfficientNet-B6', description: '40M params', group: 'EfficientNet' },
+  { id: 'efficientnet-b7', name: 'EfficientNet-B7', description: '63M params', group: 'EfficientNet' },
+  // ── MobileNet ──
+  { id: 'mobilenet_v2', name: 'MobileNet-V2', description: '2M params, mobile-optimized', group: 'MobileNet' },
+  // ── Xception ──
+  { id: 'xception', name: 'Xception', description: '20M params, depthwise separable convs', group: 'Xception' },
+  // ── timm EfficientNet ──
+  { id: 'timm-efficientnet-b0', name: 'timm EfficientNet-B0', description: '4M params, noisy-student available', group: 'timm-EfficientNet' },
+  { id: 'timm-efficientnet-b1', name: 'timm EfficientNet-B1', description: '6M params', group: 'timm-EfficientNet' },
+  { id: 'timm-efficientnet-b2', name: 'timm EfficientNet-B2', description: '7M params', group: 'timm-EfficientNet' },
+  { id: 'timm-efficientnet-b3', name: 'timm EfficientNet-B3', description: '10M params', group: 'timm-EfficientNet' },
+  { id: 'timm-efficientnet-b4', name: 'timm EfficientNet-B4', description: '17M params', group: 'timm-EfficientNet' },
+  { id: 'timm-efficientnet-b5', name: 'timm EfficientNet-B5', description: '28M params', group: 'timm-EfficientNet' },
+  { id: 'timm-efficientnet-b6', name: 'timm EfficientNet-B6', description: '40M params', group: 'timm-EfficientNet' },
+  { id: 'timm-efficientnet-b7', name: 'timm EfficientNet-B7', description: '63M params', group: 'timm-EfficientNet' },
+  { id: 'timm-efficientnet-b8', name: 'timm EfficientNet-B8', description: '84M params', group: 'timm-EfficientNet' },
+  { id: 'timm-efficientnet-l2', name: 'timm EfficientNet-L2', description: '474M params, largest', group: 'timm-EfficientNet' },
+  // ── timm EfficientNet Lite ──
+  { id: 'timm-tf_efficientnet_lite0', name: 'timm EfficientNet-Lite0', description: '3M params', group: 'timm-EfficientNet' },
+  { id: 'timm-tf_efficientnet_lite1', name: 'timm EfficientNet-Lite1', description: '4M params', group: 'timm-EfficientNet' },
+  { id: 'timm-tf_efficientnet_lite2', name: 'timm EfficientNet-Lite2', description: '4M params', group: 'timm-EfficientNet' },
+  { id: 'timm-tf_efficientnet_lite3', name: 'timm EfficientNet-Lite3', description: '6M params', group: 'timm-EfficientNet' },
+  { id: 'timm-tf_efficientnet_lite4', name: 'timm EfficientNet-Lite4', description: '11M params', group: 'timm-EfficientNet' },
+  // ── timm SK-ResNet ──
+  { id: 'timm-skresnet18', name: 'timm SK-ResNet-18', description: '11M params, selective kernel', group: 'timm-SKNet' },
+  { id: 'timm-skresnet34', name: 'timm SK-ResNet-34', description: '21M params', group: 'timm-SKNet' },
+  { id: 'timm-skresnext50_32x4d', name: 'timm SK-ResNeXt-50', description: '23M params', group: 'timm-SKNet' },
+  // ── MiT (Mix Vision Transformer) ──
+  { id: 'mit_b0', name: 'MiT-B0', description: '3M params, SegFormer backbone, lightweight', group: 'MiT' },
+  { id: 'mit_b1', name: 'MiT-B1', description: '13M params', group: 'MiT' },
+  { id: 'mit_b2', name: 'MiT-B2', description: '24M params, balanced', group: 'MiT' },
+  { id: 'mit_b3', name: 'MiT-B3', description: '44M params', group: 'MiT' },
+  { id: 'mit_b4', name: 'MiT-B4', description: '60M params, high capacity', group: 'MiT' },
+  { id: 'mit_b5', name: 'MiT-B5', description: '81M params, largest MiT', group: 'MiT' },
+  // ── MobileOne ──
+  { id: 'mobileone_s0', name: 'MobileOne-S0', description: '4M params, ultra-fast inference', group: 'MobileOne' },
+  { id: 'mobileone_s1', name: 'MobileOne-S1', description: '3M params', group: 'MobileOne' },
+  { id: 'mobileone_s2', name: 'MobileOne-S2', description: '5M params', group: 'MobileOne' },
+  { id: 'mobileone_s3', name: 'MobileOne-S3', description: '8M params', group: 'MobileOne' },
+  { id: 'mobileone_s4', name: 'MobileOne-S4', description: '12M params', group: 'MobileOne' },
+] as const
+
+/** Unique backbone group names for UI filtering */
+export const BACKBONE_GROUPS: readonly string[] = [
+  ...new Set(SEGMENTATION_BACKBONES.map(b => b.group))
+] as unknown as readonly string[]
+
+/** Default segmentation backbone */
+export const DEFAULT_SEG_BACKBONE = 'resnet50'
+
+// ============================================================================
+// Segmentation Loss Functions
+// ============================================================================
+
+export interface LossOption {
+  id: string
+  name: string
+  description: string
+}
+
+/**
+ * Available loss functions for segmentation tasks.
+ * Matches backend loss.py get_loss() factory.
+ */
+export const SEGMENTATION_LOSSES: readonly LossOption[] = [
+  { id: 'DiceLoss', name: 'Dice Loss', description: 'Overlap-based, handles class imbalance well' },
+  { id: 'JaccardLoss', name: 'Jaccard Loss (IoU)', description: 'IoU-based loss, similar to Dice' },
+  { id: 'TverskyLoss', name: 'Tversky Loss', description: 'Generalized Dice with adjustable FP/FN weights' },
+  { id: 'FocalLoss', name: 'Focal Loss', description: 'Down-weights easy examples, focuses on hard cases' },
+  { id: 'LovaszLoss', name: 'Lovász Loss', description: 'Submodular IoU surrogate, good for imbalanced data' },
+  { id: 'BCE', name: 'Binary Cross Entropy', description: 'Standard per-pixel binary classification loss' },
+  { id: 'CE', name: 'Cross Entropy', description: 'Standard multi-class cross entropy loss' },
+  { id: 'MCCLoss', name: 'MCC Loss', description: 'Matthews Correlation Coefficient loss' },
+] as const
+
+/** Default segmentation loss configuration */
+export const DEFAULT_SEG_LOSS_NAMES = ['DiceLoss', 'JaccardLoss']
+export const DEFAULT_SEG_LOSS_WEIGHTS = [0.5, 0.5]
+
+// ============================================================================
+// Segmentation Training Defaults
+// ============================================================================
+
+export interface SegTrainingDefaults {
+  learningRate: number
+  epochs: number
+  batchSize: number
+  optimizer: string
+  earlyStoppingPatience: number
+  scheduler: string
+  useAmp: boolean
+  gradientClip: number
+}
+
+/**
+ * Default training hyperparameters for segmentation tasks.
+ * Different from classification defaults to match backend __default_config__.
+ */
+export const SEG_TRAINING_DEFAULTS: SegTrainingDefaults = {
+  learningRate: 0.0001,
+  epochs: 100,
+  batchSize: 16,
+  optimizer: 'adamw',
+  earlyStoppingPatience: 15,
+  scheduler: 'cosine_warm_restarts',
+  useAmp: true,
+  gradientClip: 1.0,
+}
 
 // ============================================================================
 // Preprocessing Configuration

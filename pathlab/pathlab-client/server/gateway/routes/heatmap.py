@@ -163,6 +163,7 @@ async def get_patch_image(
 async def get_patch_cam(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID"),
+    fold_key: Optional[str] = Query(None, description="Fold key for k-fold results (e.g., 'fold_0')"),
     format: str = Query("image", description="Output format: 'image' or 'json'"),
     user: User = Depends(get_user_from_header_or_param),
     db: AsyncSession = Depends(get_db)
@@ -182,6 +183,8 @@ async def get_patch_cam(
         params = {"format": format}
         if task_id:
             params["task_id"] = task_id
+        if fold_key:
+            params["fold_key"] = fold_key
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
@@ -208,6 +211,90 @@ async def get_patch_cam(
         raise
     except Exception as e:
         logger.error(f"Failed to get patch CAM: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/wsi/{wsi_id}/seg_mask")
+async def get_seg_mask(
+    wsi_id: str,
+    task_id: Optional[str] = Query(None, description="Specific task ID"),
+    fold_key: Optional[str] = Query(None, description="Fold key for k-fold results"),
+    user: User = Depends(get_user_from_header_or_param),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get patch segmentation mask overlay image.
+    Proxies to: GET /wsi/{wsi_id}/seg_mask
+    """
+    await _check_wsi_access(wsi_id, user, db)
+    try:
+        params = {}
+        if task_id:
+            params["task_id"] = task_id
+        if fold_key:
+            params["fold_key"] = fold_key
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/seg_mask",
+                params=params
+            )
+
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=response.text
+                )
+
+            return Response(
+                content=response.content,
+                media_type=response.headers.get("content-type", "image/png")
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Preprocessing service timeout")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get seg mask: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/wsi/{wsi_id}/info")
+async def get_wsi_info(
+    wsi_id: str,
+    user: User = Depends(get_user_from_header_or_param),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get WSI info including whether it's a patch or WSI.
+    Used by frontend to determine display mode.
+
+    Supports authentication via:
+    - Authorization header: Bearer <token>
+    - Query parameter: ?token=<token> (for <img> tags)
+
+    Proxies to: GET /wsi/{wsi_id}/info
+    """
+    await _check_wsi_access(wsi_id, user, db)
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/info"
+            )
+
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=response.text
+                )
+
+            return response.json()
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Preprocessing service timeout")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get WSI info: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

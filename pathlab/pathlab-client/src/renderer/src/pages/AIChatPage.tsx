@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { AnimatePresence, motion } from 'framer-motion'
+import { useTranslation } from 'react-i18next'
 
 import {
   chatWithAI,
@@ -15,51 +15,42 @@ import {
   getConversationFeedbacks,
   type Conversation,
   type ChatMessage,
-  type ChatMessageContent,
-  type MessageFeedback
+  type ChatMessageContent
 } from '../api'
 import { useVoiceSession } from '../lib/useVoiceSession'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { formatFileSize } from '../lib/utils'
 import * as XLSX from 'xlsx'
 import {
   Send, Loader2, Bot, User, MessageSquare, Trash2, Plus, Clock,
-  Mic, MicOff, Paperclip, X, Rocket, Database,
-  FlaskConical, Microscope, ArrowLeft, Sparkles, FileSpreadsheet, PanelLeft, History,
-  ThumbsUp, ThumbsDown, Square
+  Mic, MicOff, Paperclip, X, Sparkles, FileSpreadsheet, History,
+  ThumbsUp, ThumbsDown, Square, Menu,
+  Database, Brain, LineChart, ChevronRight, Wrench
 } from 'lucide-react'
-import { Button } from '../components/ui/button'
 import { AudioVisualizer } from '../components/common/AudioVisualizer'
-import { OptionButtons, parseOptions, removeOptionsBlock } from '../components/chat/OptionButtons'
-import { TaskConfigCard, parseTaskConfig, removeTaskConfigBlock } from '../components/chat/TaskConfigCard'
-import { ImageRecommendationCard, parseImageRecommendation, removeImageRecommendationBlock } from '../components/chat/ImageRecommendationCard'
-import { CSVActionCard, parseCSVAction, removeCSVActionBlock } from '../components/chat/CSVActionCard'
-import { NavigationCard, parseNavigateBlock, removeNavigateBlock } from '../components/chat/NavigationCard'
+
+// Extracted modules
+import AssistantMessage, { parseSubmitTask, parseCancelTaskNow, isInternalOnlyMessage, removeContextLimitBlock } from '../components/chat/AssistantMessage'
+import { sanitizeConfigBlocksForAI, isPdfContextMessage } from '../lib/chatMessageParser'
+import { SCENARIO_CARDS } from '../constants/scenarios'
+
+// Chat component imports still needed by AIChatPage main body
+import { removeOptionsBlock } from '../components/chat/OptionButtons'
+import { parseTaskConfig, removeTaskConfigBlock } from '../components/chat/TaskConfigCard'
+import { removeImageRecommendationBlock } from '../components/chat/ImageRecommendationCard'
+import { removeCSVActionBlock } from '../components/chat/CSVActionCard'
+import { removeNavigateBlock } from '../components/chat/NavigationCard'
 import { CSVPreviewCard, parseCSVPreview, removeCSVPreviewBlock } from '../components/chat/CSVPreviewCard'
-import { InferenceConfigCard, parseInferenceConfig, removeInferenceConfigBlock } from '../components/chat/InferenceConfigCard'
-import { AnalysisConfigCard, parseAnalysisConfig, removeAnalysisConfigBlock } from '../components/chat/AnalysisConfigCard'
-import { MetricCard, parseMetricConfig, removeMetricConfigBlock } from '../components/chat/MetricCard'
-import { ChartCard, parseChartConfig, removeChartConfigBlock } from '../components/chat/ChartCard'
-import { QuickAnalysisViewer, parseQuickAnalysisConfig, removeQuickAnalysisConfigBlock, CachedAnalysisData } from '../components/chat/QuickAnalysisViewer'
-import { TaskHistoryCard, parseTaskHistoryConfig, removeTaskHistoryConfigBlock, CachedTaskData } from '../components/chat/TaskHistoryCard'
-import { CancelTaskCard, parseCancelTaskConfig, removeCancelTaskBlock } from '../components/chat/CancelTaskCard'
-import { DatasetRegistrationCard, parseDatasetRegistrationConfig, removeDatasetRegistrationBlock } from '../components/chat/DatasetRegistrationCard'
-import { MetadataUploadCard, parseMetadataUploadConfig, removeMetadataUploadBlock } from '../components/chat/MetadataUploadCard'
+import { parseAnalysisConfig } from '../components/chat/AnalysisConfigCard'
+import { removeMetricConfigBlock } from '../components/chat/MetricCard'
+import { removeChartConfigBlock } from '../components/chat/ChartCard'
+import { removeQuickAnalysisConfigBlock, CachedAnalysisData } from '../components/chat/QuickAnalysisViewer'
+import { CachedTaskData } from '../components/chat/TaskHistoryCard'
+import { parseCancelTaskConfig } from '../components/chat/CancelTaskCard'
 import { removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
-import {
-  TaskConfigSkeleton,
-  OptionButtonsSkeleton,
-  InferenceConfigSkeleton,
-  AnalysisConfigSkeleton,
-  ChartSkeleton,
-  MetricSkeleton,
-  ImageRecommendationSkeleton,
-  CSVActionSkeleton,
-  NavigationCardSkeleton,
-  QuickAnalysisViewerSkeleton,
-  GenericCardSkeleton,
-  cardTransition
-} from '../components/chat/CardSkeletons'
+import { removeModelListBlock } from '../components/chat/ModelListCard'
+import { removePdfParseStatusBlock } from '../components/chat/SearchingStatus'
+import { parseRenameTaskConfig, removeRenameTaskBlock } from '../components/chat/RenameTaskCard'
+import { MULTIMODAL_MODELS } from '../components/settings/GeneralTab'
 
 
 interface Message {
@@ -87,584 +78,59 @@ interface FileAttachment {
   preview: string[] // first few rows for preview
 }
 
-/**
- * Strip persistence-only fields from config blocks before sending message content to the AI API.
- * This prevents the AI from seeing and copying fields like submitted_task_id into new responses,
- * which would cause new config cards to initialize as already submitted.
- */
-function sanitizeConfigBlocksForAI(content: string): string {
-  // Fields to strip per config block type
-  const PERSISTENCE_FIELDS: Record<string, string[]> = {
-    TASK_CONFIG: ['submitted_task_id'],
-    INFERENCE_CONFIG: ['submitted_task_id'],
-    ANALYSIS_CONFIG: ['submitted_analysis_id', 'external_validation_task_id'],
-    DATASET_REGISTRATION: ['submitted_task_id', 'submitted_file_count', 'submitted_dataset_name', 'submitted_mode'],
-  }
-
-  let sanitized = content
-  for (const [blockType, fields] of Object.entries(PERSISTENCE_FIELDS)) {
-    const regex = new RegExp(`\\[${blockType}\\]([\\s\\S]*?)\\[\\/${blockType}\\]`, 'g')
-    sanitized = sanitized.replace(regex, (match, json) => {
-      try {
-        const config = JSON.parse(json.trim())
-        let changed = false
-        for (const field of fields) {
-          if (field in config) {
-            delete config[field]
-            changed = true
-          }
-        }
-        if (!changed) return match
-        return `[${blockType}]\n${JSON.stringify(config, null, 2)}\n[/${blockType}]`
-      } catch {
-        return match
-      }
-    })
-  }
-  return sanitized
-}
-
-// Scenario cards for guided experience
-const SCENARIO_CARDS = [
-  {
-    id: 'start-fresh',
-    icon: Rocket,
-    title: 'Fresh Start',
-    description: 'Begin a new pathology research project',
-    prompt: 'I want to start a new pathology research project. Can you help me understand what options I have?',
-    color: 'from-blue-500 to-cyan-500',
-    bgColor: 'bg-blue-50 hover:bg-blue-100',
-    iconColor: 'text-blue-600'
-  },
-  {
-    id: 'train-model',
-    icon: Database,
-    title: 'Train Model',
-    description: 'I have a dataset ready for training',
-    prompt: 'I have a dataset of pathology images and want to train a deep learning model. What do I need to configure?',
-    color: 'from-purple-500 to-pink-500',
-    bgColor: 'bg-purple-50 hover:bg-purple-100',
-    iconColor: 'text-purple-600'
-  },
-  {
-    id: 'test-model',
-    icon: FlaskConical,
-    title: 'Test Model',
-    description: 'Run inference with a trained model',
-    prompt: 'I have a trained model and want to run inference. How do I proceed?',
-    color: 'from-green-500 to-emerald-500',
-    bgColor: 'bg-green-50 hover:bg-green-100',
-    iconColor: 'text-green-600'
-  },
-  {
-    id: 'browse-images',
-    icon: Microscope,
-    title: 'Browse Images',
-    description: 'Browse and analyze WSI or patches',
-    prompt: 'I want to browse and analyze some pathology images (WSI or patches). Can you help me find the right ones based on my needs?',
-    color: 'from-orange-500 to-amber-500',
-    bgColor: 'bg-orange-50 hover:bg-orange-100',
-    iconColor: 'text-orange-600'
-  }
-]
-
-// Props interface for AssistantMessage component
-interface AssistantMessageProps {
-  content: string
-  messageId: string
-  onOptionSelect: (text: string) => void
-  onTaskSubmitSuccess: (taskId: string, messageId: string) => void
-  onInferenceSubmitSuccess: (taskId: string, messageId: string) => void
-  onInternalAnalysisSubmitSuccess: (taskId: string, analysisId: string, messageId: string) => void
-  onTaskSubmitError: (error: string) => void
-  onTaskHistoryDataLoaded: (data: CachedTaskData[], messageId: string) => void
-  onQuickAnalysisDataLoaded: (data: CachedAnalysisData, messageId: string) => void
-  onHelpfulnessFeedback: (
-    messageId: string,
-    helpfulness: 'helpful' | 'not_helpful',
-    relatedTaskId: string,
-    taskType?: 'training' | 'inference' | 'analysis' | 'registration',
-    taskTitle?: string
-  ) => void
-  savedHelpfulnessFeedback?: 'helpful' | 'not_helpful' | null
-  isStreaming: boolean
-  isLoading: boolean
-  csvContent?: string
-  csvFileName?: string
-  onToast: (toast: { type: 'error' | 'success' | 'info'; message: string }) => void
-  onRegistrationSuccess: (taskId: string, fileCount: number, datasetName: string, mode: 'existing' | 'new', messageId: string) => void
-  onMetadataUploadSuccess: (result: import('../api').UploadSplitsResponse, datasetId: string, messageId: string) => void
-  submitTaskTrigger?: number  // When this changes, trigger submit on TaskConfigCard
-  cancelTaskTrigger?: number  // When this changes, trigger cancel on CancelTaskCard
-}
-
-// All special block tag names used in the chat
-const SPECIAL_BLOCK_TAGS = [
-  'OPTIONS',
-  'TASK_CONFIG',
-  'IMAGE_RECOMMENDATION',
-  'CSV_ACTION',
-  'NAVIGATE',
-  'INFERENCE_CONFIG',
-  'ANALYSIS_CONFIG',
-  'METRIC_CONFIG',
-  'CHART_CONFIG',
-  'QUICK_ANALYSIS_CONFIG',
-  'CSV_PREVIEW',
-  'CANCEL_TASK',
-  'TASK_HISTORY_CONFIG',
-  'VOICE_CONTROL',
-  'SUBMIT_TASK',  // Voice command to trigger submit on existing TaskConfigCard
-  'CANCEL_TASK_NOW',  // Voice command to trigger cancel on existing CancelTaskCard
-  'DATASET_UPLOAD',
-  'METADATA_UPLOAD'
-]
-
-/**
- * Identify any incomplete/streaming special blocks in content.
- * Returns the cleaned content (without the incomplete block) and the tag of the incomplete block.
- */
-function getIncompleteBlock(content: string): { content: string; incompleteTag: string | null } {
-  let result = content
-  let incompleteTag: string | null = null
-
-  for (const tag of SPECIAL_BLOCK_TAGS) {
-    // Pattern: [TAG_NAME] exists but [/TAG_NAME] doesn't exist
-    const openTag = `[${tag}]`
-    const closeTag = `[/${tag}]`
-    const openIndex = result.indexOf(openTag)
-
-    // Check if tag is opened but not closed
-    // Also ensuring regular text before the tag is preserved
-    if (openIndex !== -1 && result.indexOf(closeTag) === -1) {
-      // Remove everything from the opening tag to the end for display
-      result = result.substring(0, openIndex).trim()
-      incompleteTag = tag
-      break // Assume only one incomplete block at a time
-    }
-  }
-  return { content: result, incompleteTag }
-}
-
-// Parse [SUBMIT_TASK] block - triggers submit on existing TaskConfigCard
-function parseSubmitTask(content: string): boolean {
-  const match = content.match(/\[SUBMIT_TASK\]([\s\S]*?)\[\/SUBMIT_TASK\]/)
-  return !!match
-}
-
-// Remove [SUBMIT_TASK] block from content
-function removeSubmitTaskBlock(content: string): string {
-  return content.replace(/\[SUBMIT_TASK\][\s\S]*?\[\/SUBMIT_TASK\]/g, '').trim()
-}
-
-// Parse [CANCEL_TASK_NOW] block - triggers cancel on existing CancelTaskCard
-function parseCancelTaskNow(content: string): boolean {
-  const match = content.match(/\[CANCEL_TASK_NOW\]([\s\S]*?)\[\/CANCEL_TASK_NOW\]/)
-  return !!match
-}
-
-// Remove [CANCEL_TASK_NOW] block from content
-function removeCancelTaskNowBlock(content: string): string {
-  return content.replace(/\[CANCEL_TASK_NOW\][\s\S]*?\[\/CANCEL_TASK_NOW\]/g, '').trim()
-}
-
-/**
- * Check if an assistant message contains only internal-use blocks (no user-facing content).
- * Such messages should not be rendered as visible bubbles.
- * This handles the case where AI responds with only [VOICE_CONTROL], [SUBMIT_TASK], or [CANCEL_TASK_NOW].
- */
-function isInternalOnlyMessage(content: string): boolean {
-  if (!content) return false // empty content shows "Thinking..." indicator
-  let stripped = content
-  stripped = removeVoiceControlBlock(stripped)
-  stripped = removeSubmitTaskBlock(stripped)
-  stripped = removeCancelTaskNowBlock(stripped)
-  return stripped.trim() === ''
-}
-
-
-// Assistant message component with special markup parsing
-// Defined outside of AIChatPage to prevent re-creation on every render
-const AssistantMessage = React.memo(function AssistantMessage({
-  content,
-  messageId,
-  onOptionSelect,
-  onTaskSubmitSuccess,
-  onInferenceSubmitSuccess,
-  onInternalAnalysisSubmitSuccess,
-  onTaskSubmitError,
-  onTaskHistoryDataLoaded,
-  onQuickAnalysisDataLoaded,
-  onHelpfulnessFeedback,
-  savedHelpfulnessFeedback,
-  isStreaming,
-  isLoading,
-  csvContent,
-  csvFileName,
-  onToast,
-  onRegistrationSuccess,
-  onMetadataUploadSuccess,
-  submitTaskTrigger,
-  cancelTaskTrigger
-}: AssistantMessageProps) {
-  // Parse special blocks
-  const options = parseOptions(content)
-  const taskConfig = parseTaskConfig(content)
-  const imageRecommendation = parseImageRecommendation(content)
-  const csvAction = parseCSVAction(content)
-  const navigateBlock = parseNavigateBlock(content)
-  const inferenceConfig = parseInferenceConfig(content)
-  const analysisConfig = parseAnalysisConfig(content)
-  const metricConfig = parseMetricConfig(content)
-  const chartConfig = parseChartConfig(content)
-  const quickAnalysisConfig = parseQuickAnalysisConfig(content)
-  const taskHistoryConfig = parseTaskHistoryConfig(content)
-  const cancelTaskConfig = parseCancelTaskConfig(content)
-  const datasetRegistrationConfig = parseDatasetRegistrationConfig(content)
-  const metadataUploadConfig = parseMetadataUploadConfig(content)
-
-  // Remove special blocks from display content
-  // Keep the text content but strip out the special markup blocks
-  let displayContent = content
-  if (options) displayContent = removeOptionsBlock(displayContent)
-  if (taskConfig) displayContent = removeTaskConfigBlock(displayContent)
-  if (imageRecommendation) displayContent = removeImageRecommendationBlock(displayContent)
-  if (csvAction) displayContent = removeCSVActionBlock(displayContent)
-  if (navigateBlock) displayContent = removeNavigateBlock(displayContent)
-  if (inferenceConfig) displayContent = removeInferenceConfigBlock(displayContent)
-  if (analysisConfig) displayContent = removeAnalysisConfigBlock(displayContent)
-  if (metricConfig) displayContent = removeMetricConfigBlock(displayContent)
-  if (chartConfig) displayContent = removeChartConfigBlock(displayContent)
-  if (quickAnalysisConfig) displayContent = removeQuickAnalysisConfigBlock(displayContent)
-  if (taskHistoryConfig) displayContent = removeTaskHistoryConfigBlock(displayContent)
-  if (cancelTaskConfig) displayContent = removeCancelTaskBlock(displayContent)
-  if (datasetRegistrationConfig) displayContent = removeDatasetRegistrationBlock(displayContent)
-  if (metadataUploadConfig) displayContent = removeMetadataUploadBlock(displayContent)
-  // Remove VOICE_CONTROL block - it's for internal use only
-  displayContent = removeVoiceControlBlock(displayContent)
-  // Remove SUBMIT_TASK block - it's for internal use only (voice command to trigger submit)
-  displayContent = removeSubmitTaskBlock(displayContent)
-  // Remove CANCEL_TASK_NOW block - it's for internal use only (voice command to trigger cancel)
-  displayContent = removeCancelTaskNowBlock(displayContent)
-
-  // Remove any incomplete blocks that are still streaming
-  const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent)
-  displayContent = cleanedContent
-
-
-  return (
-    <div className="w-full min-w-0">
-      {/* Markdown content */}
-      {displayContent.trim() && (
-        <div className="prose prose-slate max-w-none prose-sm
-          prose-p:my-2 prose-p:leading-relaxed
-          prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-headings:text-gray-900
-          prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5
-          prose-ol:my-2 prose-ol:list-decimal prose-ol:pl-5
-          prose-li:my-1
-          prose-code:bg-gray-100 prose-code:text-gray-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
-          prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:p-4 prose-pre:my-3
-          prose-strong:text-gray-900 prose-strong:font-semibold
-          prose-a:text-primary-600 prose-a:no-underline hover:prose-a:underline
-          prose-hr:border-gray-200 prose-hr:my-4
-          prose-table:text-sm prose-th:bg-gray-50 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:border-gray-200">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-            {displayContent}
-          </ReactMarkdown>
-        </div>
-      )}
-
-      {/* Animated Components Section */}
-      <AnimatePresence mode="wait">
-
-        {/* Option buttons */}
-        {options ? (
-          <motion.div key="options-real" {...cardTransition}>
-            <OptionButtons
-              options={options}
-              onSelect={onOptionSelect}
-              disabled={isLoading}
-            />
-          </motion.div>
-        ) : incompleteTag === 'OPTIONS' && (
-          <motion.div key="options-skeleton" {...cardTransition}>
-            <OptionButtonsSkeleton />
-          </motion.div>
-        )}
-
-        {/* Task config card */}
-        {taskConfig ? (
-          <motion.div key="task-config-real" {...cardTransition}>
-            <TaskConfigCard
-              config={taskConfig}
-              onSubmitSuccess={(taskId) => onTaskSubmitSuccess(taskId, messageId)}
-              onSubmitError={onTaskSubmitError}
-              messageId={messageId}
-              onHelpfulnessFeedback={onHelpfulnessFeedback}
-              savedHelpfulnessFeedback={savedHelpfulnessFeedback}
-              submitTrigger={submitTaskTrigger}
-            />
-          </motion.div>
-        ) : incompleteTag === 'TASK_CONFIG' && (
-          <motion.div key="task-config-skeleton" {...cardTransition}>
-            <TaskConfigSkeleton />
-          </motion.div>
-        )}
-
-        {/* Inference config card */}
-        {inferenceConfig ? (
-          <motion.div key="inference-config-real" {...cardTransition}>
-            <InferenceConfigCard
-              config={inferenceConfig}
-              onSubmitSuccess={(taskId) => onInferenceSubmitSuccess(taskId, messageId)}
-              onSubmitError={onTaskSubmitError}
-              messageId={messageId}
-              onHelpfulnessFeedback={onHelpfulnessFeedback}
-              savedHelpfulnessFeedback={savedHelpfulnessFeedback}
-            />
-          </motion.div>
-        ) : incompleteTag === 'INFERENCE_CONFIG' && (
-          <motion.div key="inference-config-skeleton" {...cardTransition}>
-            <InferenceConfigSkeleton />
-          </motion.div>
-        )}
-
-        {/* Analysis config card (internal or external) */}
-        {analysisConfig ? (
-          <motion.div key="analysis-config-real" {...cardTransition}>
-            <AnalysisConfigCard
-              config={analysisConfig}
-              onSubmitSuccess={(taskId, analysisId) => onInternalAnalysisSubmitSuccess(taskId, analysisId, messageId)}
-              onSubmitError={onTaskSubmitError}
-              messageId={messageId}
-              onHelpfulnessFeedback={onHelpfulnessFeedback}
-              savedHelpfulnessFeedback={savedHelpfulnessFeedback}
-            />
-          </motion.div>
-        ) : incompleteTag === 'ANALYSIS_CONFIG' && (
-          <motion.div key="analysis-config-skeleton" {...cardTransition}>
-            <AnalysisConfigSkeleton />
-          </motion.div>
-        )}
-
-        {/* Quick analysis viewer - shows both metrics and charts */}
-        {quickAnalysisConfig ? (
-          <motion.div key="quick-analysis-real" {...cardTransition}>
-            <QuickAnalysisViewer
-              config={quickAnalysisConfig}
-              onError={(error) => onToast({ type: 'error', message: error })}
-              onDataLoaded={(data) => onQuickAnalysisDataLoaded(data, messageId)}
-            />
-          </motion.div>
-        ) : incompleteTag === 'QUICK_ANALYSIS_CONFIG' && (
-          <motion.div key="quick-analysis-skeleton" {...cardTransition}>
-            <QuickAnalysisViewerSkeleton />
-          </motion.div>
-        )}
-
-        {/* Metric card - shows specific metrics */}
-        {metricConfig ? (
-          <motion.div key="metric-real" {...cardTransition}>
-            <MetricCard
-              config={metricConfig}
-              onError={(error) => onToast({ type: 'error', message: error })}
-            />
-          </motion.div>
-        ) : incompleteTag === 'METRIC_CONFIG' && (
-          <motion.div key="metric-skeleton" {...cardTransition}>
-            <MetricSkeleton />
-          </motion.div>
-        )}
-
-        {/* Chart card - shows specific charts */}
-        {chartConfig ? (
-          <motion.div key="chart-real" {...cardTransition}>
-            <ChartCard
-              config={chartConfig}
-              onError={(error) => onToast({ type: 'error', message: error })}
-            />
-          </motion.div>
-        ) : incompleteTag === 'CHART_CONFIG' && (
-          <motion.div key="chart-skeleton" {...cardTransition}>
-            <ChartSkeleton />
-          </motion.div>
-        )}
-
-        {/* Image recommendation card */}
-        {imageRecommendation ? (
-          <motion.div key="image-rec-real" {...cardTransition}>
-            <ImageRecommendationCard recommendation={imageRecommendation} />
-          </motion.div>
-        ) : incompleteTag === 'IMAGE_RECOMMENDATION' && (
-          <motion.div key="image-rec-skeleton" {...cardTransition}>
-            <ImageRecommendationSkeleton />
-          </motion.div>
-        )}
-
-        {/* CSV action card */}
-        {(csvAction && csvContent && csvFileName) ? (
-          <motion.div key="csv-action-real" {...cardTransition}>
-            <CSVActionCard
-              config={csvAction}
-              csvContent={csvContent}
-              fileName={csvFileName}
-              onSuccess={() => {
-                onToast({ type: 'success', message: 'CSV uploaded successfully!' })
-              }}
-              onError={(error) => {
-                onToast({ type: 'error', message: error })
-              }}
-            />
-          </motion.div>
-        ) : incompleteTag === 'CSV_ACTION' && (
-          <motion.div key="csv-action-skeleton" {...cardTransition}>
-            <CSVActionSkeleton />
-          </motion.div>
-        )}
-
-        {/* Navigation card */}
-        {navigateBlock ? (
-          <motion.div key="navigate-real" {...cardTransition}>
-            <NavigationCard
-              config={navigateBlock}
-              csvContent={csvContent}
-              csvFileName={csvFileName}
-            />
-          </motion.div>
-        ) : incompleteTag === 'NAVIGATE' && (
-          <motion.div key="navigate-skeleton" {...cardTransition}>
-            <NavigationCardSkeleton />
-          </motion.div>
-        )}
-
-        {/* Task History card */}
-        {taskHistoryConfig ? (
-          <motion.div key="task-history-real" {...cardTransition}>
-            <TaskHistoryCard
-              config={taskHistoryConfig}
-              onError={(error) => onToast({ type: 'error', message: error })}
-              onDataLoaded={(data) => onTaskHistoryDataLoaded(data, messageId)}
-            />
-          </motion.div>
-        ) : incompleteTag === 'TASK_HISTORY_CONFIG' && (
-          <motion.div key="task-history-skeleton" {...cardTransition}>
-            <GenericCardSkeleton />
-          </motion.div>
-        )}
-
-        {/* Cancel Task card */}
-        {cancelTaskConfig ? (
-          <motion.div key="cancel-task-real" {...cardTransition}>
-            <CancelTaskCard
-              config={cancelTaskConfig}
-              onSuccess={(taskId) => onToast({ type: 'success', message: `Task ${taskId} cancelled successfully` })}
-              onError={(error) => onToast({ type: 'error', message: error })}
-              cancelTrigger={cancelTaskTrigger}
-            />
-          </motion.div>
-        ) : incompleteTag === 'CANCEL_TASK' && (
-          <motion.div key="cancel-task-skeleton" {...cardTransition}>
-            <GenericCardSkeleton />
-          </motion.div>
-        )}
-
-        {/* Dataset Upload Card */}
-        {datasetRegistrationConfig ? (
-          <motion.div key="dataset-reg-real" {...cardTransition}>
-            <DatasetRegistrationCard
-              config={datasetRegistrationConfig}
-              onUploadStarted={(taskId, fileCount, datasetName, mode) => onRegistrationSuccess(taskId, fileCount, datasetName, mode, messageId)}
-              onError={(error) => onToast({ type: 'error', message: error })}
-              messageId={messageId}
-              onHelpfulnessFeedback={onHelpfulnessFeedback}
-              savedHelpfulnessFeedback={savedHelpfulnessFeedback}
-            />
-          </motion.div>
-        ) : incompleteTag === 'DATASET_REGISTRATION' && (
-          <motion.div key="dataset-reg-skeleton" {...cardTransition}>
-            <GenericCardSkeleton />
-          </motion.div>
-        )}
-
-        {/* Metadata Upload Card */}
-        {metadataUploadConfig ? (
-          <motion.div key="metadata-upload-real" {...cardTransition}>
-            <MetadataUploadCard
-              config={metadataUploadConfig}
-              onSuccess={(result, datasetId) => onMetadataUploadSuccess(result, datasetId, messageId)}
-              onError={(error) => onToast({ type: 'error', message: error })}
-            />
-          </motion.div>
-        ) : incompleteTag === 'METADATA_UPLOAD' && (
-          <motion.div key="metadata-upload-skeleton" {...cardTransition}>
-            <GenericCardSkeleton />
-          </motion.div>
-        )}
-
-        {/* CSV Preview (Generic Skeleton) */}
-        {incompleteTag === 'CSV_PREVIEW' && (
-          <motion.div key="csv-preview-skeleton" {...cardTransition}>
-            <GenericCardSkeleton />
-          </motion.div>
-        )}
-
-        {/* Fallback for other unfinished blocks */}
-        {incompleteTag && ![
-          'OPTIONS',
-          'TASK_CONFIG',
-          'INFERENCE_CONFIG',
-          'ANALYSIS_CONFIG',
-          'QUICK_ANALYSIS_CONFIG',
-          'METRIC_CONFIG',
-          'CHART_CONFIG',
-          'IMAGE_RECOMMENDATION',
-          'CSV_ACTION',
-          'NAVIGATE',
-          'CSV_PREVIEW',
-          'TASK_HISTORY_CONFIG',
-          'CANCEL_TASK',
-          'DATASET_REGISTRATION',
-          'METADATA_UPLOAD'
-        ].includes(incompleteTag) && (
-            <motion.div key="generic-skeleton" {...cardTransition}>
-              <GenericCardSkeleton />
-            </motion.div>
-          )}
-      </AnimatePresence>
-
-    </div>
-  )
-})
-
 export default function AIChatPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const { conversationId: urlConversationId } = useParams<{ conversationId?: string }>()
+  const { t } = useTranslation()
 
   // Chat state
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const [isGenerating, setIsGenerating] = useState(false)
+
+  // Generation lifecycle: single enum replaces 3 independent booleans
+  // idle → thinking (waiting for first chunk) → streaming (receiving chunks) → pdf_waiting (post-stream PDF parse) → idle
+  type GenerationPhase = 'idle' | 'thinking' | 'streaming' | 'pdf_waiting'
+  const [generationPhase, setGenerationPhase] = useState<GenerationPhase>('idle')
+  // Derived booleans for backward compatibility with existing read sites
+  const isLoading = generationPhase === 'thinking'
+  const isGenerating = generationPhase !== 'idle'
+  const isPdfWaiting = generationPhase === 'pdf_waiting'
+
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([])
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([])
+  const [isDraggingFile, setIsDraggingFile] = useState(false)
+  // Monotonic counter to distinguish active generation from stale ones
+  const generationIdRef = useRef(0)
 
   // Conversation management
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
   // Initialize from localStorage, defaulting to true on desktop, false on mobile
   const [showHistory, setShowHistory] = useState(() => {
+    // Mobile always defaults to hidden (false) regardless of previous state
+    if (window.innerWidth < 1024) {
+      return false
+    }
+
     const saved = localStorage.getItem('ai-chat-sidebar-open')
     if (saved !== null) {
       return saved === 'true'
     }
-    return window.innerWidth >= 1024
+    return true
   })
 
   // Persist sidebar state
   useEffect(() => {
     localStorage.setItem('ai-chat-sidebar-open', String(showHistory))
   }, [showHistory])
+
+  // Listen for mobile sidebar toggle from Layout header hamburger button
+  useEffect(() => {
+    const handleToggle = () => setShowHistory((prev) => !prev)
+    window.addEventListener('toggle-ai-sidebar', handleToggle)
+    return () => window.removeEventListener('toggle-ai-sidebar', handleToggle)
+  }, [])
 
   const [isLoadingConversations, setIsLoadingConversations] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
@@ -701,9 +167,60 @@ export default function AIChatPage() {
   const inputRef = useRef('')
   inputRef.current = input
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
+  const formRef = useRef<HTMLFormElement>(null)
+
+  // ── Smart auto-scroll ──────────────────────────────────────────────────
+  // Track whether the user has intentionally scrolled away from the bottom.
+  // When true we suppress auto-scroll so the user can read earlier content
+  // while new chunks keep streaming in.
+  const userScrolledAwayRef = useRef(false)
+  const scrollRafRef = useRef<number | null>(null)
+
+  // Helper: is the scroll container "near bottom"? (within 150px)
+  const isNearBottom = useCallback(() => {
+    const el = messagesContainerRef.current
+    if (!el) return true
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 150
+  }, [])
+
+  const scrollToBottom = useCallback(() => {
+    // Skip if user has scrolled away — let them read in peace
+    if (userScrolledAwayRef.current) return
+    if (scrollRafRef.current !== null) return // already scheduled
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    })
+  }, [])
+
+  // Detect user scroll intent via wheel / touchmove on the messages container.
+  // When user scrolls UP → mark as "scrolled away".
+  // When user scrolls back to near-bottom → reset so auto-scroll resumes.
+  useEffect(() => {
+    const el = messagesContainerRef.current
+    if (!el) return
+
+    const handleUserScroll = () => {
+      if (isNearBottom()) {
+        userScrolledAwayRef.current = false
+      } else {
+        userScrolledAwayRef.current = true
+      }
+    }
+
+    el.addEventListener('scroll', handleUserScroll, { passive: true })
+    return () => el.removeEventListener('scroll', handleUserScroll)
+  }, [isNearBottom])
+
+  // Programmatically submit the chat form after setting input.
+  // Uses ref-based approach instead of DOM query to avoid fragile setTimeout + querySelector patterns.
+  const submitFormProgrammatically = useCallback((text: string) => {
+    setInput(text)
+    inputRef.current = text
+    setTimeout(() => {
+      formRef.current?.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }))
+    }, 50)
+  }, [])
 
   // Toast helper function (defined early for use in hook callbacks)
   const showToastRef = useRef<(type: 'error' | 'success' | 'info', message: string) => void>(() => { })
@@ -715,6 +232,7 @@ export default function AIChatPage() {
     mediaStream: realtimeMediaStream,
     toggle: toggleVoiceSession,
     stop: stopVoiceSession,
+    forceSend: voiceForceSend,
     notifyResponseComplete: notifyVoiceResponseComplete,
   } = useVoiceSession({
     onTranscript: (transcript) => {
@@ -724,20 +242,11 @@ export default function AIChatPage() {
         ? `${currentInput} ${transcript}`
         : transcript
 
-      // Set input state AND ref simultaneously to avoid race condition
-      setInput(newInput)
-      inputRef.current = newInput
-
-      // Auto-submit: dispatch form submit after React has the new input
-      setTimeout(() => {
-        const form = document.getElementById('chat-form') as HTMLFormElement
-        if (form) {
-          form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }))
-        }
-      }, 50)
+      // Auto-submit via unified helper (sets input + ref + dispatches form submit)
+      submitFormProgrammatically(newInput)
     },
     onError: (error) => {
-      showToastRef.current('error', `Voice input error: ${error}`)
+      showToastRef.current('error', t('aiChat.voiceInputError', { error }))
     },
     silenceDurationMs: 800,
     maxRecordingSeconds: 120,
@@ -749,7 +258,10 @@ export default function AIChatPage() {
   const realtimeIsConnecting = voiceState === 'connecting'
 
   // Pre-compute CSV content mapping: assistant message ID -> most recent CSV from any previous user message
-  // Uses O(n) single pass: track the most recent CSV as we iterate forward
+  // Uses O(n) single pass: track the most recent CSV as we iterate forward.
+  // Only recalculates when message count changes — CSV attachments are on user messages
+  // and never change during streaming (which only appends content to the last assistant message).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const csvContentMap = useMemo(() => {
     const map = new Map<string, { content: string; fileName: string }>()
     let lastCSV: { content: string; fileName: string } | null = null
@@ -765,7 +277,7 @@ export default function AIChatPage() {
       }
     }
     return map
-  }, [messages])
+  }, [messages.length])
 
   useEffect(() => {
     // Don't scroll to bottom if we're restoring scroll position
@@ -798,7 +310,9 @@ export default function AIChatPage() {
     }
   }, [urlConversationId])
 
-  // Restore scroll position after messages are loaded (when returning from another page)
+  // Restore scroll position after messages are loaded (when returning from another page).
+  // Depends on messages.length instead of messages to avoid re-running on every streaming chunk.
+  // Scroll restore only matters when message count changes (initial load / conversation switch).
   useEffect(() => {
     const savedScrollPosition = sessionStorage.getItem('ai-chat-scroll-position')
     if (savedScrollPosition && messagesContainerRef.current && messages.length > 0) {
@@ -811,7 +325,8 @@ export default function AIChatPage() {
       })
       sessionStorage.removeItem('ai-chat-scroll-position')
     }
-  }, [messages])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.length])
 
   // Use useLayoutEffect for textarea resize to prevent visual jitter
   // This runs synchronously after DOM updates but before browser paint
@@ -828,20 +343,21 @@ export default function AIChatPage() {
     loadConversations()
   }, [])
 
+  // Abort any in-progress generation when the component unmounts (e.g., navigating away).
+  // This triggers the AbortError catch in executeChatGeneration, which fills the cancel text.
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort()
+    }
+  }, [])
+
   // Handle initial message from navigation state
   useEffect(() => {
     const state = location.state as { initialMessage?: string; autoStartRecording?: boolean; fromDashboard?: boolean } | null
 
     if (state?.initialMessage && !initialMessageSent.current) {
       initialMessageSent.current = true
-      setInput(state.initialMessage)
-      // Auto-submit after a short delay
-      setTimeout(() => {
-        const form = document.querySelector('form')
-        if (form) {
-          form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }))
-        }
-      }, 100)
+      submitFormProgrammatically(state.initialMessage)
     }
 
     if (state?.autoStartRecording) {
@@ -865,6 +381,7 @@ export default function AIChatPage() {
       setConversations(convs)
     } catch (error) {
       console.error('Failed to load conversations:', error)
+      showToastRef.current('error', t('aiChat.historyLoadFailed'))
     } finally {
       setIsLoadingConversations(false)
     }
@@ -882,7 +399,7 @@ export default function AIChatPage() {
     setHelpfulnessFeedbacks(new Map())
     // Update URL to base path (remove conversationId from URL)
     if (urlConversationId) {
-      navigate('/ai-chat', { replace: true })
+      navigate('/dashboard', { replace: true })
     }
   }
 
@@ -895,6 +412,10 @@ export default function AIChatPage() {
         id: String(msg.id),
         role: msg.role as 'user' | 'assistant',
         content: msg.content,
+        // Restore persisted images from extra_metadata
+        ...((msg as { metadata?: { images?: string[] } | null }).metadata?.images?.length
+          ? { images: (msg as { metadata?: { images?: string[] } | null }).metadata!.images }
+          : {}),
         timestamp: new Date(msg.created_at)
       }))
       setMessages(loadedMessages)
@@ -904,7 +425,7 @@ export default function AIChatPage() {
 
       // Update URL to reflect the current conversation (for page refresh support)
       if (urlConversationId !== conversationId) {
-        navigate(`/ai-chat/${conversationId}`, { replace: true })
+        navigate(`/dashboard/${conversationId}`, { replace: true })
       }
 
       // Load feedbacks for this conversation
@@ -929,9 +450,10 @@ export default function AIChatPage() {
       }
     } catch (error) {
       console.error('Failed to load conversation:', error)
+      showToastRef.current('error', t('aiChat.conversationLoadFailed'))
       // If loading fails, navigate back to clean URL
       if (urlConversationId) {
-        navigate('/ai-chat', { replace: true })
+        navigate('/dashboard', { replace: true })
       }
     }
   }
@@ -979,10 +501,40 @@ export default function AIChatPage() {
     setDeleteConfirmId(null)
   }
 
+  // File upload validation constants
+  const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB
+  const MAX_IMAGE_SIZE = 10 * 1024 * 1024 // 10MB
+  const MAX_FILES = 10
+
+  // Check if current model supports image input (reads from shared multimodal models list)
+  const currentModel = localStorage.getItem('openrouter_model') || 'qwen/qwen3.5-plus-02-15'
+  const isMultimodalModel = MULTIMODAL_MODELS.has(currentModel)
+
   // File upload handlers (images, CSV, XLSX)
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement> | FileList) => {
+    const files = 'target' in e ? e.target.files : e
     if (!files) return
+
+    // Validate file count
+    const totalFiles = imageAttachments.length + fileAttachments.length + files.length
+    if (totalFiles > MAX_FILES) {
+      showToastRef.current('error', t('aiChat.tooManyFiles', { max: MAX_FILES }))
+      if ('target' in e && fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+
+    // Validate file sizes
+    for (let i = 0; i < files.length; i++) {
+      if (files[i].size > MAX_FILE_SIZE) {
+        showToastRef.current('error', t('aiChat.fileTooLarge', {
+          name: files[i].name,
+          size: formatFileSize(files[i].size),
+          max: formatFileSize(MAX_FILE_SIZE)
+        }))
+        if ('target' in e && fileInputRef.current) fileInputRef.current.value = ''
+        return
+      }
+    }
 
     const newImageAttachments: ImageAttachment[] = []
     const newFileAttachments: FileAttachment[] = []
@@ -993,39 +545,65 @@ export default function AIChatPage() {
 
       // Handle image files
       if (file.type.startsWith('image/')) {
-        const base64 = await new Promise<string>((resolve) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(reader.result as string)
-          reader.readAsDataURL(file)
-        })
+        // Only multimodal models support image input
+        if (!isMultimodalModel) {
+          showToastRef.current('error', t('aiChat.modelNotMultimodal'))
+          if ('target' in e && fileInputRef.current) fileInputRef.current.value = ''
+          return
+        }
+        // Image-specific size limit: 10MB
+        if (file.size > MAX_IMAGE_SIZE) {
+          showToastRef.current('error', t('aiChat.imageTooLarge', {
+            name: file.name,
+            size: formatFileSize(file.size),
+            max: formatFileSize(MAX_IMAGE_SIZE)
+          }))
+          if ('target' in e && fileInputRef.current) fileInputRef.current.value = ''
+          return
+        }
+        try {
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(reader.result as string)
+            reader.onerror = () => reject(reader.error)
+            reader.readAsDataURL(file)
+          })
 
-        newImageAttachments.push({
-          id: `${Date.now()}-${i}`,
-          file,
-          preview: base64,
-          base64
-        })
+          newImageAttachments.push({
+            id: `${Date.now()}-${i}`,
+            file,
+            preview: base64,
+            base64
+          })
+        } catch {
+          showToastRef.current('error', t('aiChat.fileReadError', { name: file.name }))
+        }
       }
       // Handle CSV files
       else if (fileName.endsWith('.csv') || file.type === 'text/csv') {
-        const content = await new Promise<string>((resolve) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(reader.result as string)
-          reader.readAsText(file)
-        })
+        try {
+          const content = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(reader.result as string)
+            reader.onerror = () => reject(reader.error)
+            reader.readAsText(file)
+          })
 
-        // Parse CSV to get preview (first 5 rows)
-        const lines = content.split('\n').filter(line => line.trim())
-        const preview = lines.slice(0, 6) // Header + 5 data rows
+          // Parse CSV to get preview (first 5 rows)
+          const lines = content.split('\n').filter(line => line.trim())
+          const preview = lines.slice(0, 6) // Header + 5 data rows
 
-        newFileAttachments.push({
-          id: `${Date.now()}-${i}`,
-          file,
-          name: file.name,
-          type: 'csv',
-          content,
-          preview
-        })
+          newFileAttachments.push({
+            id: `${Date.now()}-${i}`,
+            file,
+            name: file.name,
+            type: 'csv',
+            content,
+            preview
+          })
+        } catch {
+          showToastRef.current('error', t('aiChat.fileReadError', { name: file.name }))
+        }
       }
       // Handle XLSX files - parse and convert to CSV
       else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls') ||
@@ -1046,9 +624,9 @@ export default function AIChatPage() {
               type: 'xlsx',
               content: `__MULTIPLE_SHEETS__:${sheetNames.join(',')}`,
               preview: [
-                `Excel file has ${sheetNames.length} sheets:`,
+                t('aiChat.excelMultipleSheets', { count: sheetNames.length }),
                 ...sheetNames.slice(0, 5).map(s => `  • ${s}`),
-                sheetNames.length > 5 ? `  ... and ${sheetNames.length - 5} more` : ''
+                sheetNames.length > 5 ? t('aiChat.excelMoreSheets', { count: sheetNames.length - 5 }) : ''
               ].filter(Boolean)
             })
           } else {
@@ -1077,7 +655,7 @@ export default function AIChatPage() {
             name: file.name,
             type: 'xlsx',
             content: `__PARSE_ERROR__:${error instanceof Error ? error.message : 'Unknown error'}`,
-            preview: [`Failed to parse Excel file: ${file.name}`]
+            preview: [t('aiChat.failedToParseExcel', { name: file.name })]
           })
         }
       }
@@ -1104,12 +682,358 @@ export default function AIChatPage() {
     setFileAttachments(prev => prev.filter(f => f.id !== id))
   }
 
+  // Drag-and-drop handlers for chat area
+  const dragCounterRef = useRef(0)
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current++
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDraggingFile(true)
+    }
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current--
+    if (dragCounterRef.current === 0) {
+      setIsDraggingFile(false)
+    }
+  }, [])
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current = 0
+    setIsDraggingFile(false)
+    const files = e.dataTransfer.files
+    if (files.length > 0) {
+      handleFileSelect(files)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageAttachments.length, fileAttachments.length, t])
+
+  // Native capture-phase drop listener: resets drag overlay even when a child
+  // component calls e.stopPropagation() (e.g. DatasetRegistrationCard.handleDrop),
+  // which prevents the React synthetic drop event from bubbling to this page.
+  // Capture-phase listeners fire before React's synthetic event system, so they
+  // always run regardless of stopPropagation in child handlers.
+  useEffect(() => {
+    const resetDragState = () => {
+      dragCounterRef.current = 0
+      setIsDraggingFile(false)
+    }
+    document.addEventListener('drop', resetDragState, true)
+    return () => document.removeEventListener('drop', resetDragState, true)
+  }, [])
+
+  // Paste image handler
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items
+      if (!items) return
+
+      const imageFiles: File[] = []
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith('image/')) {
+          const file = items[i].getAsFile()
+          if (file) imageFiles.push(file)
+        }
+      }
+
+      if (imageFiles.length > 0) {
+        e.preventDefault()
+        const dt = new DataTransfer()
+        imageFiles.forEach(f => dt.items.add(f))
+        handleFileSelect(dt.files)
+      }
+    }
+
+    document.addEventListener('paste', handlePaste)
+    return () => document.removeEventListener('paste', handlePaste)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageAttachments.length, fileAttachments.length, t])
+
   const handleScenarioCardClick = (card: typeof SCENARIO_CARDS[number]) => {
-    setInput(card.prompt)
+    setInput(t(card.promptKey))
     setShowWelcomeHero(false)
     // Focus the textarea
     setTimeout(() => textareaRef.current?.focus(), 100)
   }
+
+  // --- Shared chat generation helpers (DRY handleSubmit / handleRegenerate) ---
+
+  /** Build sanitized ChatMessage array from Message[] for the AI API. */
+  const buildChatMessages = useCallback((sourceMessages: Message[]): ChatMessage[] => {
+    return sourceMessages.map(m => {
+      const sanitizedContent = sanitizeConfigBlocksForAI(m.content)
+      if (m.images && m.images.length > 0) {
+        const content: ChatMessageContent = [
+          { type: 'text' as const, text: sanitizedContent },
+          ...m.images.map(imgBase64 => ({
+            type: 'image_url' as const,
+            image_url: { url: imgBase64 }
+          }))
+        ]
+        return { role: m.role, content }
+      }
+      return { role: m.role, content: sanitizedContent }
+    })
+  }, [])
+
+  /** Execute a chat generation cycle: create AI placeholder → stream → error handling → cleanup. */
+  const executeChatGeneration = useCallback(async (
+    chatMessages: ChatMessage[],
+    conversationId: string | undefined,
+    options?: {
+      onError?: () => void
+      onFinally?: () => void
+    }
+  ) => {
+    const aiMessageId = (Date.now() + 1).toString()
+    const aiMessage: Message = {
+      id: aiMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date()
+    }
+    setMessages(prev => [...prev, aiMessage])
+    setGenerationPhase('thinking')
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
+    const currentGenerationId = ++generationIdRef.current
+
+    // --- Silence timeout: abort if no output chunk received for 60 seconds ---
+    const SILENCE_TIMEOUT_MS = 60_000
+    let isTimeoutAbort = false
+    let silenceTimer: ReturnType<typeof setTimeout> | null = null
+
+    const startSilenceTimer = () => {
+      if (silenceTimer !== null) clearTimeout(silenceTimer)
+      silenceTimer = setTimeout(() => {
+        isTimeoutAbort = true
+        abortController.abort()
+      }, SILENCE_TIMEOUT_MS)
+    }
+
+    // Start the timer immediately (covers the "thinking" phase before first chunk)
+    startSilenceTimer()
+
+    // --- Chunk batching: accumulate chunks in a buffer, flush via rAF ---
+    // This reduces setMessages calls from ~30/s (per-chunk) to ~16/s (per-frame).
+    let chunkBuffer = ''
+    let rafId: number | null = null
+    // Track the current message ID — it starts as the placeholder ID and gets
+    // replaced by the backend-assigned ID when onMessageId fires.  All buffer
+    // flushes must use this mutable variable instead of the captured `aiMessageId`
+    // so that content isn't lost after an ID rename.
+    let trackingId = aiMessageId
+
+    const flushChunks = () => {
+      rafId = null
+      if (!chunkBuffer) return
+      const buffered = chunkBuffer
+      chunkBuffer = ''
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === trackingId
+            ? { ...m, content: m.content + buffered }
+            : m
+        )
+      )
+    }
+
+    try {
+      let hasReceivedContent = false
+      await chatWithAI(chatMessages, (chunk) => {
+        // Reset silence timer on every received chunk
+        startSilenceTimer()
+        if (!hasReceivedContent) {
+          hasReceivedContent = true
+          setGenerationPhase('streaming')
+        }
+        // Handle __CLEAR_CONTENT__ marker: the backend emits this when text
+        // was already streamed but a tool block ([WEB_SEARCH] / [READ_ARTICLE])
+        // was found afterwards.  Clear the message so the follow-up AI response
+        // (with search results) appears cleanly instead of being concatenated.
+        if (chunk === '__CLEAR_CONTENT__') {
+          if (rafId !== null) {
+            cancelAnimationFrame(rafId)
+            rafId = null
+          }
+          chunkBuffer = ''
+          const currentId = trackingId
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === currentId ? { ...m, content: '' } : m
+            )
+          )
+          return
+        }
+        chunkBuffer += chunk
+        // Schedule a flush on the next animation frame (batches multiple chunks)
+        if (rafId === null) {
+          rafId = requestAnimationFrame(flushChunks)
+        }
+      }, conversationId, (messageId) => {
+        // Flush any buffered chunks BEFORE renaming the message ID.
+        // Without this, rapid-fire content chunks accumulate in chunkBuffer,
+        // then onMessageId changes the ID, and the pending flush (or finally
+        // block) can no longer find the message — causing blank output.
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId)
+          rafId = null
+        }
+        // CRITICAL: Capture trackingId in a const BEFORE any setMessages calls.
+        // React 18 batches setMessages updaters — they execute LATER, after
+        // `trackingId = newId` below has already run.  If the updater closures
+        // reference `trackingId` directly (by-reference), they will see `newId`
+        // and fail to find the message (which still has the OLD id).
+        // Using a const snapshot ensures the updaters always match the OLD id.
+        const oldTrackingId = trackingId
+        if (chunkBuffer) {
+          const buffered = chunkBuffer
+          chunkBuffer = ''
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === oldTrackingId
+                ? { ...m, content: m.content + buffered }
+                : m
+            )
+          )
+        }
+        const newId = String(messageId)
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === oldTrackingId
+              ? { ...m, id: newId }
+              : m
+          )
+        )
+        trackingId = newId
+      }, abortController.signal, () => {
+        if (generationIdRef.current === currentGenerationId) {
+          setGenerationPhase('pdf_waiting')
+        }
+      }, () => {
+        // Context limit reached — append [CONTEXT_LIMIT] block to the AI message
+        const contextLimitBlock = '\n\n[CONTEXT_LIMIT][/CONTEXT_LIMIT]'
+        const currentTrackingId = trackingId
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === currentTrackingId
+              ? { ...m, content: m.content + contextLimitBlock }
+              : m
+          )
+        )
+      })
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        if (isTimeoutAbort) {
+          console.log('AI generation timed out (no output for 60 seconds)')
+          // Fill timed-out message with i18n text (append if partial content exists)
+          const timeoutText = t('aiChat.generationTimeout')
+          setMessages(prev =>
+            prev.map(m => {
+              if (m.id !== trackingId) return m
+              const content = m.content
+                ? `${m.content}\n\n---\n\n*${timeoutText}*`
+                : `*${timeoutText}*`
+              return { ...m, content }
+            })
+          )
+        } else {
+          console.log('AI generation stopped by user')
+          // Fill cancelled message with i18n text (append if partial content exists)
+          const cancelText = t('aiChat.generationCancelled')
+          setMessages(prev =>
+            prev.map(m => {
+              if (m.id !== trackingId) return m
+              const content = m.content
+                ? `${m.content}\n\n---\n\n*${cancelText}*`
+                : `*${cancelText}*`
+              return { ...m, content }
+            })
+          )
+        }
+      } else {
+        console.error('Failed to get AI response:', error)
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === trackingId
+              ? { ...m, content: m.content || t('aiChat.aiErrorFallback') }
+              : m
+          )
+        )
+      }
+      options?.onError?.()
+    } finally {
+      // Clear silence timer
+      if (silenceTimer !== null) {
+        clearTimeout(silenceTimer)
+        silenceTimer = null
+      }
+      // Flush any remaining buffered chunks before finishing
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId)
+        rafId = null
+      }
+      if (chunkBuffer) {
+        const remaining = chunkBuffer
+        chunkBuffer = ''
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === trackingId
+              ? { ...m, content: m.content + remaining }
+              : m
+          )
+        )
+      }
+      if (generationIdRef.current === currentGenerationId) {
+        setGenerationPhase('idle')
+        abortControllerRef.current = null
+
+        // Persist the final message content (including cancel/error text) to backend.
+        // Use setTimeout(0) to let the setMessages updates above flush first,
+        // then read the latest content from messagesRef.
+        if (conversationId) {
+          // Capture trackingId for the async closure
+          const finalTrackingId = trackingId
+          setTimeout(async () => {
+            const finalMsg = messagesRef.current.find(m => m.id === finalTrackingId)
+            if (!finalMsg || !finalMsg.content) return
+            const numericId = parseInt(finalTrackingId, 10)
+            const isBackendId = !isNaN(numericId) && numericId < 1000000000
+            try {
+              if (isBackendId) {
+                await updateMessage(conversationId, numericId, finalMsg.content)
+              } else {
+                const saved = await addMessage(conversationId, 'assistant', finalMsg.content)
+                setMessages(prev => prev.map(m =>
+                  m.id === finalTrackingId ? { ...m, id: String(saved.id) } : m
+                ))
+              }
+            } catch (err) {
+              console.warn('Failed to persist cancelled/error message:', err)
+            }
+          }, 0)
+        }
+
+        options?.onFinally?.()
+      }
+    }
+  }, [t])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -1127,10 +1051,10 @@ export default function AIChatPage() {
         // Check for special error/warning markers in XLSX content
         if (f.type === 'xlsx' && f.content.startsWith('__MULTIPLE_SHEETS__:')) {
           const sheets = f.content.replace('__MULTIPLE_SHEETS__:', '')
-          return `\n\n📎 **Uploaded Excel: ${f.name}**\n **Warning: This file has multiple sheets (${sheets})**\nPlease save only the data sheet as a separate CSV file and re-upload.`
+          return t('aiChat.uploadedExcelWarning', { name: f.name, sheets })
         } else if (f.type === 'xlsx' && f.content.startsWith('__PARSE_ERROR__:')) {
           const error = f.content.replace('__PARSE_ERROR__:', '')
-          return `\n\n📎 **Uploaded Excel: ${f.name}**\n **Error: Failed to parse file** - ${error}`
+          return t('aiChat.uploadedExcelError', { name: f.name, error })
         } else {
           // Both CSV and successfully parsed XLSX (converted to CSV)
           // Use [CSV_PREVIEW] block for beautiful rendering
@@ -1168,6 +1092,8 @@ export default function AIChatPage() {
     }
 
     setShowWelcomeHero(false)
+    // Reset scroll lock so auto-scroll follows the new response
+    userScrolledAwayRef.current = false
     setMessages(prev => [...prev, userMessage])
     setInput('')
     setImageAttachments([]) // Clear attachments after sending
@@ -1180,131 +1106,48 @@ export default function AIChatPage() {
         // Generate title from first message (truncate if too long)
         const title = userMessage.content.length > 50
           ? userMessage.content.substring(0, 50) + '...'
-          : userMessage.content || 'Image Analysis'
+          : userMessage.content || t('aiChat.imageAnalysis')
         const newConv = await createConversation(title)
         conversationId = newConv.conversation_id
         setCurrentConversationId(conversationId)
         // Skip the next conversation load triggered by URL change (to avoid overwriting in-progress messages)
         skipConversationLoadRef.current = true
         // Update URL with new conversation ID for page refresh support
-        navigate(`/ai-chat/${conversationId}`, { replace: true })
+        navigate(`/dashboard/${conversationId}`, { replace: true })
         await loadConversations()
       } catch (error) {
         console.error('Failed to create conversation:', error)
       }
     }
 
-    // Create a placeholder message for streaming
-    const aiMessageId = (Date.now() + 1).toString()
-    const aiMessage: Message = {
-      id: aiMessageId,
-      role: 'assistant',
-      content: '',
-      timestamp: new Date()
-    }
-    setMessages(prev => [...prev, aiMessage])
-    setIsLoading(true)
-    setIsGenerating(true)
-
-    // Create AbortController for this request
-    const abortController = new AbortController()
-    abortControllerRef.current = abortController
-
-    try {
-      // Build chat messages for API (with multimodal support)
-      // Sanitize config blocks to strip persistence-only fields (e.g., submitted_task_id)
-      // so the AI doesn't copy them into new responses
-      const chatMessages: ChatMessage[] = messages
-        .concat([userMessage])
-        .map(m => {
-          const sanitizedContent = sanitizeConfigBlocksForAI(m.content)
-          // If message has images, use multimodal format
-          if (m.images && m.images.length > 0) {
-            const content: ChatMessageContent = [
-              { type: 'text' as const, text: sanitizedContent },
-              ...m.images.map(imgBase64 => ({
-                type: 'image_url' as const,
-                image_url: { url: imgBase64 }
-              }))
-            ]
-            return { role: m.role, content }
+    // Build chat messages and execute generation with shared helper
+    const chatMessages = buildChatMessages(messages.concat([userMessage]))
+    await executeChatGeneration(chatMessages, conversationId || undefined, {
+      onError: () => stopVoiceSession(),
+      onFinally: () => {
+        // Check for SUBMIT_TASK and CANCEL_TASK_NOW blocks in ALL cases (voice or text input)
+        setTimeout(() => {
+          const latestMessages = messagesRef.current
+          const lastMessage = latestMessages[latestMessages.length - 1]
+          if (lastMessage?.role === 'assistant') {
+            if (parseSubmitTask(lastMessage.content)) {
+              setSubmitTaskTrigger(prev => prev + 1)
+            }
+            if (parseCancelTaskNow(lastMessage.content)) {
+              setCancelTaskTrigger(prev => prev + 1)
+            }
           }
-          // Text-only message
-          return { role: m.role, content: sanitizedContent }
-        })
+        }, 100)
 
-      let hasReceivedContent = false
-      await chatWithAI(chatMessages, (chunk) => {
-        if (!hasReceivedContent) {
-          hasReceivedContent = true
-          setIsLoading(false) // Stop loading animation once we start receiving content
-        }
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === aiMessageId
-              ? { ...m, content: m.content + chunk }
-              : m
-          )
-        )
-      }, conversationId || undefined, (messageId) => {
-        // Update the AI message ID to the backend ID for proper persistence
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === aiMessageId
-              ? { ...m, id: String(messageId) }
-              : m
-          )
-        )
-      }, abortController.signal)
-    } catch (error) {
-      // If user aborted, keep partial content as-is (don't overwrite with error)
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        console.log('AI generation stopped by user')
-      } else {
-        console.error('Failed to get AI response:', error)
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === aiMessageId
-              ? { ...m, content: m.content || 'Sorry, I encountered an error. Please try again.' }
-              : m
-          )
-        )
+        // Notify voice session that LLM response is complete
+        setTimeout(() => {
+          const latestMessages = messagesRef.current
+          const lastMessage = latestMessages[latestMessages.length - 1]
+          const aiContent = lastMessage?.role === 'assistant' ? lastMessage.content : ''
+          notifyVoiceResponseComplete(aiContent)
+        }, 150)
       }
-      // On error, stop voice session
-      stopVoiceSession()
-    } finally {
-      setIsLoading(false)
-      setIsGenerating(false)
-      abortControllerRef.current = null
-
-      // Check for SUBMIT_TASK and CANCEL_TASK_NOW blocks in ALL cases (voice or text input)
-      // Use a timeout to ensure messages state is updated
-      setTimeout(() => {
-        const latestMessages = messagesRef.current
-        const lastMessage = latestMessages[latestMessages.length - 1]
-
-        if (lastMessage?.role === 'assistant') {
-          // Check for SUBMIT_TASK block - trigger submit on existing TaskConfigCard
-          if (parseSubmitTask(lastMessage.content)) {
-            setSubmitTaskTrigger(prev => prev + 1)
-          }
-
-          // Check for CANCEL_TASK_NOW block - trigger cancel on existing CancelTaskCard
-          if (parseCancelTaskNow(lastMessage.content)) {
-            setCancelTaskTrigger(prev => prev + 1)
-          }
-        }
-      }, 100)
-
-      // Notify voice session that LLM response is complete.
-      // The hook will parse VOICE_CONTROL and decide whether to restart recording.
-      setTimeout(() => {
-        const latestMessages = messagesRef.current
-        const lastMessage = latestMessages[latestMessages.length - 1]
-        const aiContent = lastMessage?.role === 'assistant' ? lastMessage.content : ''
-        notifyVoiceResponseComplete(aiContent)
-      }, 150)
-    }
+    })
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -1320,29 +1163,81 @@ export default function AIChatPage() {
     setTimeout(() => setToastMessage(null), 5000)
   }, [])
 
+  // Adapter for AssistantMessage onToast prop (object signature → auto-dismiss)
+  const handleToast = useCallback((toast: { type: 'error' | 'success' | 'info'; message: string }) => {
+    showToast(toast.type, toast.message)
+  }, [showToast])
+
   // Update ref for use in hook callbacks
   showToastRef.current = showToast
 
+  // --- Persistence helpers (DRY the repeated persist-to-backend patterns) ---
+
+  /** Persist an existing message's content update to backend (update pattern). */
+  const persistMessageUpdate = useCallback(async (
+    messageId: string,
+    updatedContent: string,
+    errorToastKey?: string
+  ) => {
+    if (!currentConversationId) return
+    const numericId = parseInt(messageId, 10)
+    const isBackendId = !isNaN(numericId) && numericId < 1000000000
+    if (!isBackendId) {
+      console.warn(`Skipping persistence for temporary message ID: ${messageId}`)
+      return
+    }
+    try {
+      await updateMessage(currentConversationId, numericId, updatedContent)
+    } catch (error) {
+      console.warn('Failed to persist message update to backend:', error)
+      if (errorToastKey) {
+        showToast('error', t(errorToastKey))
+      }
+    }
+  }, [currentConversationId, showToast, t])
+
+  /** Add a new assistant message to backend and remap its local ID (add+remap pattern). */
+  const persistNewAssistantMessage = useCallback(async (
+    localMessageId: string,
+    content: string
+  ) => {
+    if (!currentConversationId) return
+    try {
+      const savedMessage = await addMessage(currentConversationId, 'assistant', content)
+      setMessages(prev => prev.map(m =>
+        m.id === localMessageId
+          ? { ...m, id: String(savedMessage.id) }
+          : m
+      ))
+    } catch (error) {
+      console.warn('Failed to persist new assistant message to backend:', error)
+    }
+  }, [currentConversationId])
+
   // Clean message content by removing special markup blocks
-  const cleanMessageContent = (content: string): string => {
+  const cleanMessageContent = useCallback((content: string): string => {
     let cleaned = content
     cleaned = removeOptionsBlock(cleaned)
     cleaned = removeTaskConfigBlock(cleaned)
     cleaned = removeImageRecommendationBlock(cleaned)
     cleaned = removeCSVActionBlock(cleaned)
     cleaned = removeNavigateBlock(cleaned)
-    cleaned = removeInferenceConfigBlock(cleaned)
     cleaned = removeCSVPreviewBlock(cleaned)
     cleaned = removeMetricConfigBlock(cleaned)
     cleaned = removeChartConfigBlock(cleaned)
     cleaned = removeQuickAnalysisConfigBlock(cleaned)
     // Remove VOICE_CONTROL block - it's for internal use only
     cleaned = removeVoiceControlBlock(cleaned)
+    cleaned = removeModelListBlock(cleaned)
+    // Remove PDF_PARSE_STATUS blocks - internal status tags
+    cleaned = removePdfParseStatusBlock(cleaned)
+    // Remove CONTEXT_LIMIT block - UI-only warning card
+    cleaned = removeContextLimitBlock(cleaned)
     return cleaned.trim()
-  }
+  }, [])
 
   // Copy message content to clipboard (cleaned of special markup)
-  const handleCopy = async (content: string) => {
+  const handleCopy = useCallback(async (content: string) => {
     try {
       const cleanedContent = cleanMessageContent(content)
       if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -1358,35 +1253,36 @@ export default function AIChatPage() {
         document.execCommand('copy')
         document.body.removeChild(textArea)
       }
-      showToast('success', 'Copied to clipboard')
+      showToast('success', t('aiChat.copiedToClipboard'))
     } catch (error) {
       console.error('Failed to copy:', error)
-      showToast('error', 'Failed to copy to clipboard')
+      showToast('error', t('aiChat.failedToCopy'))
     }
-  }
+  }, [cleanMessageContent, showToast, t])
 
   // Handle thumbs up/down feedback for a message
-  const handleFeedback = async (messageId: string, feedbackType: 'thumbs_up' | 'thumbs_down') => {
+  const handleFeedback = useCallback(async (messageId: string, feedbackType: 'thumbs_up' | 'thumbs_down') => {
     const numericId = parseInt(messageId, 10)
     if (isNaN(numericId)) {
-      showToast('error', 'Invalid message ID')
+      showToast('error', t('aiChat.invalidMessageId'))
       return
     }
 
     const currentFeedback = feedbacks.get(numericId)
 
-    // Get message content and context for preservation
-    const messageIndex = messages.findIndex(m => m.id === messageId)
+    // Get message content and context for preservation (use ref to avoid stale closure)
+    const currentMessages = messagesRef.current
+    const messageIndex = currentMessages.findIndex(m => m.id === messageId)
     let messageContent: string | null = null
     let contextMessages: { role: 'user' | 'assistant'; content: string }[] | null = null
 
     if (messageIndex >= 0) {
-      const currentMessage = messages[messageIndex]
+      const currentMessage = currentMessages[messageIndex]
       messageContent = currentMessage.content
 
       // Get previous message for context (if exists)
       if (messageIndex > 0) {
-        const prevMessage = messages[messageIndex - 1]
+        const prevMessage = currentMessages[messageIndex - 1]
         contextMessages = [{
           role: prevMessage.role,
           content: prevMessage.content
@@ -1448,9 +1344,9 @@ export default function AIChatPage() {
           return newMap
         })
       }
-      showToast('error', 'Failed to submit feedback')
+      showToast('error', t('aiChat.failedToSubmitFeedback'))
     }
-  }
+  }, [feedbacks, showToast, t])
 
   // Format timestamp for display
   const formatTimestamp = (date: Date): string => {
@@ -1460,12 +1356,12 @@ export default function AIChatPage() {
     const diffHours = Math.floor(diffMs / 3600000)
     const diffDays = Math.floor(diffMs / 86400000)
 
-    if (diffMins < 1) return 'just now'
-    if (diffMins < 60) return `${diffMins}m ago`
-    if (diffHours < 24) return `${diffHours}h ago`
-    if (diffDays < 7) return `${diffDays}d ago`
+    if (diffMins < 1) return t('aiChat.justNow')
+    if (diffMins < 60) return t('aiChat.minutesAgo', { count: diffMins })
+    if (diffHours < 24) return t('aiChat.hoursAgo', { count: diffHours })
+    if (diffDays < 7) return t('aiChat.daysAgo', { count: diffDays })
 
-    return date.toLocaleDateString('en-US', {
+    return date.toLocaleDateString(undefined, {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
@@ -1474,7 +1370,7 @@ export default function AIChatPage() {
   }
 
   // Handle helpfulness feedback for task submission
-  const handleHelpfulnessFeedback = async (
+  const handleHelpfulnessFeedback = useCallback(async (
     messageId: string,
     helpfulness: 'helpful' | 'not_helpful',
     relatedTaskId: string,
@@ -1483,15 +1379,16 @@ export default function AIChatPage() {
   ) => {
     const numericId = parseInt(messageId, 10)
     if (isNaN(numericId)) {
-      showToast('error', 'Invalid message ID')
+      showToast('error', t('aiChat.invalidMessageId'))
       return
     }
 
     // Calculate time from FIRST message in conversation to current time (feedback submission)
     let timeToActionSeconds: number | null = null
+    const currentMessages = messagesRef.current
 
-    if (messages.length > 0) {
-      const firstMessageTime = messages[0].timestamp.getTime()
+    if (currentMessages.length > 0) {
+      const firstMessageTime = currentMessages[0].timestamp.getTime()
       const now = Date.now()
       timeToActionSeconds = (now - firstMessageTime) / 1000
     }
@@ -1523,15 +1420,16 @@ export default function AIChatPage() {
         newMap.delete(numericId)
         return newMap
       })
-      showToast('error', 'Failed to submit feedback')
+      showToast('error', t('aiChat.failedToSubmitFeedback'))
     }
-  }
+  }, [showToast, t])
 
   // Delete a message and all subsequent messages (for branching)
-  const handleDeleteMessage = async (messageIndex: number) => {
+  const handleDeleteMessage = useCallback(async (messageIndex: number) => {
     if (isGenerating) return
 
-    const targetMessage = messages[messageIndex]
+    const currentMessages = messagesRef.current
+    const targetMessage = currentMessages[messageIndex]
     if (!targetMessage) return
 
     // If we have a conversation and a valid message ID, delete from backend
@@ -1544,110 +1442,38 @@ export default function AIChatPage() {
           await deleteMessagesFrom(currentConversationId, messageId)
         } catch (error) {
           console.error('Failed to delete messages from backend:', error)
-          showToast('error', 'Failed to delete message')
+          showToast('error', t('aiChat.failedToDeleteMessage'))
           return
         }
       }
     }
 
     // Update local state
-    const newMessages = messages.slice(0, messageIndex)
+    const newMessages = currentMessages.slice(0, messageIndex)
     setMessages(newMessages)
-    showToast('info', 'Message deleted')
-  }
+    showToast('info', t('aiChat.messageDeleted'))
+  }, [isGenerating, currentConversationId, showToast, t])
 
   // Regenerate AI response for a specific message
-  const handleRegenerate = async (messageIndex: number) => {
+  const handleRegenerate = useCallback(async (messageIndex: number) => {
     if (isGenerating) return
 
     // Find the user message that prompted this response
+    const currentMessages = messagesRef.current
     const userMessageIndex = messageIndex - 1
-    if (userMessageIndex < 0 || messages[userMessageIndex].role !== 'user') {
-      showToast('error', 'Cannot regenerate: no user message found')
+    if (userMessageIndex < 0 || currentMessages[userMessageIndex].role !== 'user') {
+      showToast('error', t('aiChat.cannotRegenerate'))
       return
     }
 
     // Remove the current assistant message and keep messages up to (not including) it
-    const newMessages = messages.slice(0, messageIndex)
+    const newMessages = currentMessages.slice(0, messageIndex)
     setMessages(newMessages)
 
-    // Create a new placeholder for streaming
-    const aiMessageId = (Date.now() + 1).toString()
-    const aiMessage: Message = {
-      id: aiMessageId,
-      role: 'assistant',
-      content: '',
-      timestamp: new Date()
-    }
-    setMessages(prev => [...prev, aiMessage])
-    setIsLoading(true)
-    setIsGenerating(true)
-
-    // Create AbortController for this request
-    const abortController = new AbortController()
-    abortControllerRef.current = abortController
-
-    try {
-      // Build chat messages for API (with multimodal support)
-      // Sanitize config blocks to strip persistence-only fields (same as handleSubmit)
-      const chatMessages: ChatMessage[] = newMessages.map(m => {
-        const sanitizedContent = sanitizeConfigBlocksForAI(m.content)
-        if (m.images && m.images.length > 0) {
-          const content: ChatMessageContent = [
-            { type: 'text' as const, text: sanitizedContent },
-            ...m.images.map(imgBase64 => ({
-              type: 'image_url' as const,
-              image_url: { url: imgBase64 }
-            }))
-          ]
-          return { role: m.role, content }
-        }
-        return { role: m.role, content: sanitizedContent }
-      })
-
-      let hasReceivedContent = false
-      await chatWithAI(chatMessages, (chunk) => {
-        if (!hasReceivedContent) {
-          hasReceivedContent = true
-          setIsLoading(false)
-        }
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === aiMessageId
-              ? { ...m, content: m.content + chunk }
-              : m
-          )
-        )
-      }, currentConversationId || undefined, (messageId) => {
-        // Update the AI message ID to the backend ID for proper persistence
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === aiMessageId
-              ? { ...m, id: String(messageId) }
-              : m
-          )
-        )
-      }, abortController.signal)
-    } catch (error) {
-      // If user aborted, keep partial content as-is
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        console.log('AI regeneration stopped by user')
-      } else {
-        console.error('Failed to regenerate response:', error)
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === aiMessageId
-              ? { ...m, content: m.content || 'Sorry, I encountered an error. Please try again.' }
-              : m
-          )
-        )
-      }
-    } finally {
-      setIsLoading(false)
-      setIsGenerating(false)
-      abortControllerRef.current = null
-    }
-  }
+    // Build chat messages and execute generation with shared helper
+    const chatMessages = buildChatMessages(newMessages)
+    await executeChatGeneration(chatMessages, currentConversationId || undefined)
+  }, [isGenerating, currentConversationId, showToast, t, buildChatMessages, executeChatGeneration])
 
   // Stop AI generation and voice recording
   const handleStopGeneration = useCallback(() => {
@@ -1656,62 +1482,25 @@ export default function AIChatPage() {
   }, [stopVoiceSession])
 
   // Handle option button selection - auto-send message
-  const handleOptionSelect = (text: string) => {
-    setInput(text)
-    // Auto-submit
-    setTimeout(() => {
-      const form = document.querySelector('form')
-      if (form) {
-        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-      }
-    }, 100)
-  }
+  const handleOptionSelect = useCallback((text: string) => {
+    submitFormProgrammatically(text)
+  }, [submitFormProgrammatically])
 
   // Handle task submission success
-  const handleTaskSubmitSuccess = async (taskId: string, messageId: string) => {
+  const handleTaskSubmitSuccess = useCallback(async (taskId: string, messageId: string) => {
     // Update the original message's TASK_CONFIG block to include submitted_task_id
     // This persists the submission status so it's preserved when reloading the conversation
 
-    // Find the message in current state
-    const messageIndex = messages.findIndex(m => m.id === messageId)
-    // If message not found (shouldn't happen), return
-    if (messageIndex === -1 && messages.length > 0) {
+    // Find the message in current state (use ref to avoid stale closure)
+    const currentMessages = messagesRef.current
+    const messageIndex = currentMessages.findIndex(m => m.id === messageId)
+    if (messageIndex === -1 && currentMessages.length > 0) {
       console.warn(`Message ${messageId} not found for task update`)
     }
 
-    // Use a function to update state to ensure we're working with latest, but we need the content for API call
-    // We'll compute it based on the message passed or find it in current messages
+    // Compute updated content from ref, then update state and persist
     let updatedContent: string | null = null
-
-    setMessages(prev => {
-      return prev.map(m => {
-        if (m.id === messageId) {
-          const newContent = m.content.replace(
-            /\[TASK_CONFIG\]([\s\S]*?)\[\/TASK_CONFIG\]/,
-            (_match, json) => {
-              try {
-                const config = JSON.parse(json.trim())
-                config.submitted_task_id = taskId
-                return `[TASK_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/TASK_CONFIG]`
-              } catch {
-                return _match // If parsing fails, keep original
-              }
-            }
-          )
-          updatedContent = newContent // Capture for API call
-          return { ...m, content: newContent }
-        }
-        return m
-      })
-    })
-
-    // We need to wait for the state update or just trust our calculation. 
-    // Since we need to send the API request immediately, we'll re-calculate it safely
-    // (or simpler: assume strict mode double-invocation won't hurt the regex replace)
-
-    // Better approach: Calculate first, then update
-    // But we need the ORIGINAL content. 
-    const currentMessage = messages.find(m => m.id === messageId)
+    const currentMessage = currentMessages.find(m => m.id === messageId)
     if (currentMessage) {
       updatedContent = currentMessage.content.replace(
         /\[TASK_CONFIG\]([\s\S]*?)\[\/TASK_CONFIG\]/,
@@ -1727,38 +1516,24 @@ export default function AIChatPage() {
       )
     }
 
-    // Try to persist the update to backend if we have a conversation ID
-    // Message IDs from backend are small integers (auto-increment), while
-    // frontend-generated IDs are timestamps (large numbers like 1706191234567)
-    if (currentConversationId && updatedContent) {
-      const numericId = parseInt(messageId, 10)
-      // Backend message IDs are typically small integers (< 1000000000)
-      // Timestamps are 13-digit numbers (> 1000000000000)
-      // Check if it's a likely backend ID (safe integer and not a timestamp)
-      const isBackendId = !isNaN(numericId) && numericId < 1000000000
-
-      if (isBackendId) {
-        try {
-          await updateMessage(currentConversationId, numericId, updatedContent)
-        } catch (error) {
-          // Silently fail - local state is already updated
-          console.warn('Failed to persist message update to backend:', error)
-          showToast('error', 'Failed to save task status to server')
-        }
-      } else {
-        console.warn(`Skipping persistence for temporary message ID: ${messageId}`)
-      }
+    if (updatedContent) {
+      const finalContent = updatedContent
+      setMessages(prev => prev.map(m =>
+        m.id === messageId ? { ...m, content: finalContent } : m
+      ))
+      // Persist in background - don't block navigation
+      persistMessageUpdate(messageId, updatedContent, 'aiChat.failedToSaveTaskStatus').catch(console.error)
     }
 
-    // Add a success message with navigation card to the chat and persist to backend
+    // Add a success message with navigation card to the chat
     const navigateBlock = JSON.stringify({
       target: `/task/${taskId}`,
-      buttonText: 'View Training Progress',
-      description: 'Your training task has been submitted successfully! Click below to monitor the progress in real-time.',
+      buttonTextKey: 'aiChat.taskSuccess.viewTrainingProgress',
+      descriptionKey: 'aiChat.taskSuccess.trainingSubmittedDesc',
       type: 'task',
       taskId: taskId
     }, null, 2)
-    const successContent = `Training task created successfully!\n\n[NAVIGATE]\n${navigateBlock}\n[/NAVIGATE]`
+    const successContent = `${t('aiChat.taskSuccess.trainingCreated')}\n\n[NAVIGATE]\n${navigateBlock}\n[/NAVIGATE]`
     const successMessage: Message = {
       id: Date.now().toString(),
       role: 'assistant',
@@ -1767,24 +1542,15 @@ export default function AIChatPage() {
     }
     setMessages(prev => [...prev, successMessage])
 
-    // Persist success message to backend
-    if (currentConversationId) {
-      try {
-        const savedMessage = await addMessage(currentConversationId, 'assistant', successContent)
-        // Update the message ID to the backend ID
-        setMessages(prev => prev.map(m =>
-          m.id === successMessage.id
-            ? { ...m, id: String(savedMessage.id) }
-            : m
-        ))
-      } catch (error) {
-        console.warn('Failed to persist success message to backend:', error)
-      }
-    }
-  }
+    // Don't navigate — stay on the chat page (fire-and-forget).
+    // The success message already contains a NAVIGATE card for the user to click if they want.
+
+    // Persist success message in background
+    persistNewAssistantMessage(successMessage.id, successContent).catch(console.error)
+  }, [persistMessageUpdate, persistNewAssistantMessage, t])
 
   // Handle registration success (persist to message history)
-  const handleRegistrationSuccess = async (
+  const handleRegistrationSuccess = useCallback(async (
     taskId: string,
     fileCount: number,
     datasetName: string,
@@ -1793,42 +1559,16 @@ export default function AIChatPage() {
   ) => {
     if (!messageId) return
 
-    // Find the message in current state
-    const messageIndex = messages.findIndex(m => m.id === messageId)
-    if (messageIndex === -1 && messages.length > 0) {
+    // Find the message from ref to avoid stale closure
+    const currentMessages = messagesRef.current
+    const messageIndex = currentMessages.findIndex(m => m.id === messageId)
+    if (messageIndex === -1 && currentMessages.length > 0) {
       console.warn(`Message ${messageId} not found for registration update`)
     }
 
-    // Capture updatedContent from the state update
+    // Compute updated content from ref, then update state and persist
     let updatedContent: string | null = null
-
-    setMessages(prev => {
-      return prev.map(m => {
-        if (m.id === messageId) {
-          const newContent = m.content.replace(
-            /\[DATASET_REGISTRATION\]([\s\S]*?)\[\/DATASET_REGISTRATION\]/,
-            (_match, json) => {
-              try {
-                const config = JSON.parse(json.trim())
-                config.submitted_task_id = taskId
-                config.submitted_file_count = fileCount
-                config.submitted_dataset_name = datasetName
-                config.submitted_mode = mode
-                return `[DATASET_REGISTRATION]\n${JSON.stringify(config, null, 2)}\n[/DATASET_REGISTRATION]`
-              } catch {
-                return _match
-              }
-            }
-          )
-          updatedContent = newContent
-          return { ...m, content: newContent }
-        }
-        return m
-      })
-    })
-
-    // Re-calculate for API call (same pattern as handleTaskSubmitSuccess)
-    const currentMessage = messages.find(m => m.id === messageId)
+    const currentMessage = currentMessages.find(m => m.id === messageId)
     if (currentMessage) {
       updatedContent = currentMessage.content.replace(
         /\[DATASET_REGISTRATION\]([\s\S]*?)\[\/DATASET_REGISTRATION\]/,
@@ -1847,73 +1587,32 @@ export default function AIChatPage() {
       )
     }
 
-    // Persist to backend
-    if (currentConversationId && updatedContent) {
-      const numericId = parseInt(messageId, 10)
-      const isBackendId = !isNaN(numericId) && numericId < 1000000000
-      if (isBackendId) {
-        try {
-          await updateMessage(currentConversationId, numericId, updatedContent)
-        } catch (error) {
-          console.warn('Failed to persist registration update:', error)
-          showToast('error', 'Failed to save registration status to server')
-        }
-      } else {
-        console.warn(`Skipping persistence for temporary message ID: ${messageId}`)
-      }
+    if (updatedContent) {
+      const finalContent = updatedContent
+      setMessages(prev => prev.map(m =>
+        m.id === messageId ? { ...m, content: finalContent } : m
+      ))
+      await persistMessageUpdate(messageId, updatedContent, 'aiChat.failedToSaveRegistrationStatus')
     }
 
-    showToast('info', 'Registration started in background')
+    showToast('info', t('aiChat.registrationStarted'))
 
     // Auto-send message to trigger AI's STEP 6 response (METADATA_UPLOAD card)
-    const autoMessage = `Registration submitted. ${fileCount} Files are uploading in the background.`
-    setInput(autoMessage)
-    setTimeout(() => {
-      const form = document.querySelector('form')
-      if (form) {
-        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-      }
-    }, 100)
-  }
+    const autoMessage = t('aiChat.registrationAutoMessage', { count: fileCount })
+    submitFormProgrammatically(autoMessage)
+  }, [persistMessageUpdate, showToast, submitFormProgrammatically, t])
 
   // Handle metadata upload success (persist upload_result to message history)
-  const handleMetadataUploadSuccess = async (
+  const handleMetadataUploadSuccess = useCallback(async (
     result: import('../api').UploadSplitsResponse,
     datasetId: string,
     messageId?: string
   ) => {
     if (!messageId) return
 
+    // Compute updated content from ref, then update state and persist
     let updatedContent: string | null = null
-
-    setMessages(prev => {
-      return prev.map(m => {
-        if (m.id === messageId) {
-          const newContent = m.content.replace(
-            /\[METADATA_UPLOAD\]([\s\S]*?)\[\/METADATA_UPLOAD\]/,
-            (_match, json) => {
-              try {
-                const config = JSON.parse(json.trim())
-                config.upload_result = {
-                  updated_count: result.updated_count,
-                  not_found_count: result.not_found_count,
-                  auto_val_count: result.auto_val_count
-                }
-                return `[METADATA_UPLOAD]\n${JSON.stringify(config, null, 2)}\n[/METADATA_UPLOAD]`
-              } catch {
-                return _match
-              }
-            }
-          )
-          updatedContent = newContent
-          return { ...m, content: newContent }
-        }
-        return m
-      })
-    })
-
-    // Re-calculate for API call
-    const currentMessage = messages.find(m => m.id === messageId)
+    const currentMessage = messagesRef.current.find(m => m.id === messageId)
     if (currentMessage) {
       updatedContent = currentMessage.content.replace(
         /\[METADATA_UPLOAD\]([\s\S]*?)\[\/METADATA_UPLOAD\]/,
@@ -1933,116 +1632,36 @@ export default function AIChatPage() {
       )
     }
 
-    // Persist to backend
-    if (currentConversationId && updatedContent) {
-      const numericId = parseInt(messageId, 10)
-      const isBackendId = !isNaN(numericId) && numericId < 1000000000
-      if (isBackendId) {
-        try {
-          await updateMessage(currentConversationId, numericId, updatedContent)
-        } catch (error) {
-          console.warn('Failed to persist metadata upload update:', error)
-          showToast('error', 'Failed to save metadata upload status to server')
-        }
-      }
+    if (updatedContent) {
+      const finalContent = updatedContent
+      setMessages(prev => prev.map(m =>
+        m.id === messageId ? { ...m, content: finalContent } : m
+      ))
+      await persistMessageUpdate(messageId, updatedContent, 'aiChat.failedToSaveMetadataStatus')
     }
 
-    showToast('success', `Metadata uploaded: ${result.updated_count} files updated`)
-  }
+    showToast('success', t('aiChat.metadataUploaded', { count: result.updated_count }))
+  }, [persistMessageUpdate, showToast, t])
 
   // Handle task submission error
-  const handleTaskSubmitError = (error: string) => {
-    // Send error to agent for analysis
-    const errorMessage = `The task submission failed with error: "${error}". Can you help me understand what went wrong and how to fix it?`
+  const handleTaskSubmitError = useCallback((error: string) => {
+    // Show prominent error toast so user is immediately aware of the failure
+    showToast('error', error)
+    // Also pre-fill input to let user send the error to AI for analysis
+    const errorMessage = t('aiChat.taskSubmitErrorMessage', { error })
     setInput(errorMessage)
-  }
+  }, [showToast, t])
 
-  // Handle inference submission success
-  const handleInferenceSubmitSuccess = async (taskId: string, messageId: string) => {
-    // Update the original message's INFERENCE_CONFIG block to include submitted_task_id
-    // This persists the submission status so it's preserved when reloading the conversation
 
-    // First, compute the updated content
-    let updatedContent: string | null = null
-
-    const currentMessage = messages.find(m => m.id === messageId)
-    if (currentMessage) {
-      updatedContent = currentMessage.content.replace(
-        /\[INFERENCE_CONFIG\]([\s\S]*?)\[\/INFERENCE_CONFIG\]/,
-        (_match, json) => {
-          try {
-            const config = JSON.parse(json.trim())
-            config.submitted_task_id = taskId
-            return `[INFERENCE_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/INFERENCE_CONFIG]`
-          } catch {
-            return _match // If parsing fails, keep original
-          }
-        }
-      )
-    }
-
-    setMessages(prev => prev.map(m => {
-      if (m.id === messageId && updatedContent) {
-        return { ...m, content: updatedContent }
-      }
-      return m
-    }))
-
-    // Try to persist the update to backend if we have a conversation ID
-    if (currentConversationId && updatedContent) {
-      const numericId = parseInt(messageId, 10)
-      const isBackendId = !isNaN(numericId) && numericId < 1000000000
-
-      if (isBackendId) {
-        try {
-          await updateMessage(currentConversationId, numericId, updatedContent)
-        } catch (error) {
-          console.warn('Failed to persist message update to backend:', error)
-          showToast('error', 'Failed to save task status to server')
-        }
-      }
-    }
-
-    // Add a success message with navigation card to Results Viewer and persist to backend
-    const successContent = `Inference task submitted successfully! Task ID: \`${taskId}\`\n\nOnce the inference is complete, you can view the analysis results in the Results Viewer.\n\n[NAVIGATE]\n${JSON.stringify({
-      target: '/results',
-      state: { selectedTaskId: taskId },
-      buttonText: 'View Results',
-      description: 'Click to open the Results Viewer and analyze the inference results.'
-    }, null, 2)}\n[/NAVIGATE]`
-    const successMessage: Message = {
-      id: Date.now().toString(),
-      role: 'assistant',
-      content: successContent,
-      timestamp: new Date()
-    }
-    setMessages(prev => [...prev, successMessage])
-
-    // Persist success message to backend
-    if (currentConversationId) {
-      try {
-        const savedMessage = await addMessage(currentConversationId, 'assistant', successContent)
-        // Update the message ID to the backend ID
-        setMessages(prev => prev.map(m =>
-          m.id === successMessage.id
-            ? { ...m, id: String(savedMessage.id) }
-            : m
-        ))
-      } catch (error) {
-        console.warn('Failed to persist success message to backend:', error)
-      }
-    }
-  }
 
   // Handle analysis submission success (internal or external)
-  const handleInternalAnalysisSubmitSuccess = async (taskId: string, analysisId: string, messageId: string) => {
+  const handleInternalAnalysisSubmitSuccess = useCallback(async (taskId: string, analysisId: string, messageId: string) => {
     // Determine if this is external validation (analysisId is empty for external)
     const isExternalValidation = !analysisId
 
-    // Update the original message's ANALYSIS_CONFIG block to include submitted_analysis_id or external_validation_task_id
+    // Update the original message's ANALYSIS_CONFIG block (use ref to avoid stale closure)
     let updatedContent: string | null = null
-
-    const currentMessage = messages.find(m => m.id === messageId)
+    const currentMessage = messagesRef.current.find(m => m.id === messageId)
     if (currentMessage) {
       updatedContent = currentMessage.content.replace(
         /\[ANALYSIS_CONFIG\]([\s\S]*?)\[\/ANALYSIS_CONFIG\]/,
@@ -2063,26 +1682,12 @@ export default function AIChatPage() {
       )
     }
 
-    setMessages(prev => prev.map(m => {
-      if (m.id === messageId && updatedContent) {
-        return { ...m, content: updatedContent }
-      }
-      return m
-    }))
-
-    // Persist the update to backend
-    if (currentConversationId && updatedContent) {
-      const numericId = parseInt(messageId, 10)
-      const isBackendId = !isNaN(numericId) && numericId < 1000000000
-
-      if (isBackendId) {
-        try {
-          await updateMessage(currentConversationId, numericId, updatedContent)
-        } catch (error) {
-          console.warn('Failed to persist message update to backend:', error)
-          showToast('error', 'Failed to save analysis status to server')
-        }
-      }
+    if (updatedContent) {
+      const finalContent = updatedContent
+      setMessages(prev => prev.map(m =>
+        m.id === messageId ? { ...m, content: finalContent } : m
+      ))
+      await persistMessageUpdate(messageId, updatedContent, 'aiChat.failedToSaveAnalysisStatus')
     }
 
     // For external validation, build QUICK_ANALYSIS_CONFIG block for inline results display
@@ -2110,17 +1715,17 @@ export default function AIChatPage() {
     // Add success message with navigation card to Results Viewer
     // Different message for external validation vs internal analysis
     const successContent = isExternalValidation
-      ? `External validation started! Task ID: \`${taskId}\`\n\nThe model will run inference on the target dataset, then automatically analyze the results. You can track progress in the Background Tasks panel.${quickAnalysisBlock}\n\n[NAVIGATE]\n${JSON.stringify({
+      ? `${t('aiChat.taskSuccess.externalValidationStarted', { taskId })}${quickAnalysisBlock}\n\n[NAVIGATE]\n${JSON.stringify({
           target: '/results',
-          state: { selectedTaskId: taskId },
-          buttonText: 'View Results',
-          description: 'Click to open the Results Viewer. Results will appear once validation completes.'
+          state: { selectedTaskId: taskId, pageMode: 'external-validation' },
+          buttonTextKey: 'aiChat.taskSuccess.viewResults',
+          descriptionKey: 'aiChat.taskSuccess.validationResultsDesc'
         }, null, 2)}\n[/NAVIGATE]`
-      : `Analysis completed successfully!\n\nYou can view the detailed results including metrics and charts in the Results Viewer.\n\n[NAVIGATE]\n${JSON.stringify({
+      : `${t('aiChat.taskSuccess.analysisCompleted')}\n\n[NAVIGATE]\n${JSON.stringify({
           target: '/results',
           state: { selectedTaskId: taskId },
-          buttonText: 'View Analysis Results',
-          description: 'Click to open the Results Viewer and see your analysis results.'
+          buttonTextKey: 'aiChat.taskSuccess.viewAnalysisResults',
+          descriptionKey: 'aiChat.taskSuccess.analysisResultsDesc'
         }, null, 2)}\n[/NAVIGATE]`
 
     const successMessage: Message = {
@@ -2131,25 +1736,13 @@ export default function AIChatPage() {
     }
     setMessages(prev => [...prev, successMessage])
 
-    // Persist success message to backend
-    if (currentConversationId) {
-      try {
-        const savedMessage = await addMessage(currentConversationId, 'assistant', successContent)
-        setMessages(prev => prev.map(m =>
-          m.id === successMessage.id
-            ? { ...m, id: String(savedMessage.id) }
-            : m
-        ))
-      } catch (error) {
-        console.warn('Failed to persist success message to backend:', error)
-      }
-    }
-  }
+    await persistNewAssistantMessage(successMessage.id, successContent)
+  }, [persistMessageUpdate, persistNewAssistantMessage, t])
 
   // Handle task history data loaded - persist cached tasks to message content
-  const handleTaskHistoryDataLoaded = async (data: CachedTaskData[], messageId: string) => {
-    // Find the message and update TASK_HISTORY_CONFIG block with cached_tasks
-    const currentMessage = messages.find(m => m.id === messageId)
+  const handleTaskHistoryDataLoaded = useCallback(async (data: CachedTaskData[], messageId: string) => {
+    // Find the message from ref to avoid stale closure
+    const currentMessage = messagesRef.current.find(m => m.id === messageId)
     if (!currentMessage) return
 
     const updatedContent = currentMessage.content.replace(
@@ -2171,25 +1764,14 @@ export default function AIChatPage() {
       m.id === messageId ? { ...m, content: updatedContent } : m
     ))
 
-    // Persist to backend if we have a valid backend message ID
-    if (currentConversationId) {
-      const numericId = parseInt(messageId, 10)
-      const isBackendId = !isNaN(numericId) && numericId < 1000000000
-
-      if (isBackendId) {
-        try {
-          await updateMessage(currentConversationId, numericId, updatedContent)
-        } catch (error) {
-          console.warn('Failed to persist task history cache to backend:', error)
-        }
-      }
-    }
-  }
+    // Persist to backend
+    await persistMessageUpdate(messageId, updatedContent)
+  }, [persistMessageUpdate])
 
   // Handle quick analysis data loaded - persist cached data to message content
-  const handleQuickAnalysisDataLoaded = async (data: CachedAnalysisData, messageId: string) => {
-    // Find the message and update QUICK_ANALYSIS_CONFIG block with cached_data
-    const currentMessage = messages.find(m => m.id === messageId)
+  const handleQuickAnalysisDataLoaded = useCallback(async (data: CachedAnalysisData, messageId: string) => {
+    // Find the message from ref to avoid stale closure
+    const currentMessage = messagesRef.current.find(m => m.id === messageId)
     if (!currentMessage) return
 
     const updatedContent = currentMessage.content.replace(
@@ -2210,75 +1792,145 @@ export default function AIChatPage() {
       m.id === messageId ? { ...m, content: updatedContent } : m
     ))
 
-    // Persist to backend if we have a valid backend message ID
-    if (currentConversationId) {
-      const numericId = parseInt(messageId, 10)
-      const isBackendId = !isNaN(numericId) && numericId < 1000000000
-
-      if (isBackendId) {
-        try {
-          await updateMessage(currentConversationId, numericId, updatedContent)
-        } catch (error) {
-          console.warn('Failed to persist quick analysis cache to backend:', error)
-        }
-      }
-    }
-  }
+    // Persist to backend
+    await persistMessageUpdate(messageId, updatedContent)
+  }, [persistMessageUpdate])
 
   return (
-    <div className="flex h-full bg-gray-50 relative overflow-hidden">
-      {/* Chat History Sidebar */}
+    <div
+      className="flex h-full bg-gray-50 relative overflow-hidden"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      {/* Drag-and-drop overlay */}
+      {isDraggingFile && (
+        <div className="absolute inset-0 z-50 bg-primary-500/10 backdrop-blur-[2px] flex items-center justify-center border-4 border-primary-500 border-dashed rounded-xl pointer-events-none">
+          <div className="bg-white px-8 py-4 rounded-full shadow-xl font-bold text-primary-600 flex items-center gap-3">
+            <Paperclip className="w-6 h-6" />
+            {t('aiChat.dropFilesHere')}
+          </div>
+        </div>
+      )}
+
+      {/* Mobile sidebar overlay backdrop */}
       {showHistory && (
-        <>
-          <div
-            className="fixed top-16 inset-x-0 bottom-0 bg-black/20 z-30 lg:hidden backdrop-blur-sm transition-opacity"
-            onClick={() => setShowHistory(false)}
-          />
-          <div className="fixed top-16 bottom-0 left-0 w-80 bg-white border-r border-gray-200 z-40 flex flex-col shadow-2xl animate-in slide-in-from-left duration-300">
-            <div className="p-4 border-b border-gray-200">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setShowHistory(false)}
-                    className="p-2 -ml-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors"
-                    title="Close history"
-                  >
-                    <PanelLeft className="w-5 h-5" />
-                  </button>
-                  <h2 className="text-lg font-semibold text-gray-900">History</h2>
-                </div>
-                {conversations.length > 0 && (
-                  <button
-                    onClick={handleDeleteAllHistory}
-                    className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                    title="Delete all history"
-                  >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
-                )}
-              </div>
+        <div
+          className="fixed top-16 inset-x-0 bottom-0 bg-black/20 z-30 lg:hidden backdrop-blur-sm transition-opacity"
+          onClick={() => setShowHistory(false)}
+        />
+      )}
+
+      {/* Gemini-style Sidebar - always rendered, inline on desktop, overlay on mobile */}
+      {/* Mobile: always fixed + translate-x slide (never participates in flex layout) */}
+      {/* Desktop: inline flex child with width animation */}
+      <div
+        className={`bg-gray-50 border-r border-gray-200 flex flex-col overflow-hidden
+          fixed top-16 bottom-0 left-0 z-40 w-72 transition-transform duration-300 ease-in-out
+          ${showHistory ? 'translate-x-0' : '-translate-x-full'}
+          lg:relative lg:top-auto lg:bottom-auto lg:z-auto lg:flex-shrink-0 lg:translate-x-0 lg:transition-all
+          ${showHistory ? 'lg:w-72' : 'lg:w-14'}
+        `}
+        role="navigation"
+        aria-label={t('aiChat.history')}
+      >
+        {/* Sidebar Top Icons - hidden on mobile (header hamburger handles it) */}
+        <div className={`hidden lg:flex items-center gap-1 p-2 pt-3 ${showHistory ? 'px-3' : 'flex-col'}`}>
+          <button
+            onClick={() => setShowHistory(!showHistory)}
+            className="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors flex-shrink-0"
+            title={showHistory ? t('aiChat.closeChatHistory') : t('aiChat.openChatHistory')}
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Expanded sidebar content - always rendered, fade in/out with opacity */}
+        <div className={`w-[268px] min-w-[268px] flex flex-col flex-1 overflow-hidden transition-opacity duration-300 ease-in-out pt-6 lg:pt-0 ${showHistory ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+            {/* New Research Task Button */}
+            <div className="px-3 pb-3 pt-0">
               <button
                 onClick={handleNewChat}
                 className="w-full px-4 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 transition-all shadow-sm flex items-center justify-center gap-2"
               >
                 <Plus className="w-4 h-4" />
-                New Research Task
+                {t('aiChat.newResearchTask')}
               </button>
+            </div>
+
+            {/* Tools Section */}
+            <div className="px-3 pb-2 border-b border-gray-100">
+              <div className="flex items-center gap-2 px-2 mb-2">
+                <Wrench className="w-4 h-4 text-gray-400" />
+                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest">{t('aiChat.sidebar.tools')}</h3>
+              </div>
+              <div className="space-y-0.5">
+                <button
+                  onClick={() => { navigate('/register'); setShowHistory(false) }}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-orange-50 hover:text-orange-700 transition-colors group"
+                >
+                  <Plus className="w-4 h-4 text-orange-500 group-hover:text-orange-600" />
+                  <span className="flex-1 text-left">{t('aiChat.sidebar.registerData')}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-orange-400 opacity-0 group-hover:opacity-100 transition-all" />
+                </button>
+                <button
+                  onClick={() => { navigate('/wsi-list'); setShowHistory(false) }}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors group"
+                >
+                  <Database className="w-4 h-4 text-blue-500 group-hover:text-blue-600" />
+                  <span className="flex-1 text-left">{t('aiChat.sidebar.dataRepository')}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-all" />
+                </button>
+                <button
+                  onClick={() => { navigate('/task-list'); setShowHistory(false) }}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700 transition-colors group"
+                >
+                  <Brain className="w-4 h-4 text-violet-500 group-hover:text-violet-600" />
+                  <span className="flex-1 text-left">{t('aiChat.sidebar.analysisLab')}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-violet-400 opacity-0 group-hover:opacity-100 transition-all" />
+                </button>
+                <button
+                  onClick={() => { navigate('/tools'); setShowHistory(false) }}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 transition-colors group"
+                >
+                  <LineChart className="w-4 h-4 text-emerald-500 group-hover:text-emerald-600" />
+                  <span className="flex-1 text-left">{t('aiChat.sidebar.insightsReports')}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-emerald-400 opacity-0 group-hover:opacity-100 transition-all" />
+                </button>
+              </div>
+            </div>
+
+            {/* History Section */}
+            <div className="flex items-center justify-between px-5 pt-3 pb-1">
+              <div className="flex items-center gap-2">
+                <History className="w-4 h-4 text-gray-400" />
+                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest">{t('aiChat.history')}</h3>
+              </div>
+              {conversations.length > 0 && (
+                <button
+                  onClick={handleDeleteAllHistory}
+                  className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  title={t('aiChat.deleteAllHistory')}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
             </div>
 
             <div className="flex-1 overflow-y-auto p-3">
               {isLoadingConversations ? (
                 <div className="flex flex-col items-center justify-center py-12">
                   <Loader2 className="w-8 h-8 text-primary-500 animate-spin mb-3" />
-                  <p className="text-sm text-gray-500">Loading conversations...</p>
+                  <p className="text-sm text-gray-500">{t('aiChat.loadingConversations')}</p>
                 </div>
               ) : conversations.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <div className="w-16 h-16 rounded-full bg-gray-50 flex items-center justify-center mb-3">
                     <MessageSquare className="w-8 h-8 text-gray-300" />
                   </div>
-                  <p className="text-sm font-medium text-gray-900 mb-1">No conversations yet</p>
-                  <p className="text-xs text-gray-500">Start a new chat to begin</p>
+                  <p className="text-sm font-medium text-gray-900 mb-1">{t('aiChat.noConversationsYet')}</p>
+                  <p className="text-xs text-gray-500">{t('aiChat.startNewChat')}</p>
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -2309,8 +1961,8 @@ export default function AIChatPage() {
                         </div>
                         <button
                           onClick={(e) => handleDeleteConversation(conv.conversation_id, e)}
-                          className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                          title="Delete conversation"
+                          className="sm:opacity-0 sm:group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                          title={t('aiChat.deleteConversation')}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -2320,80 +1972,52 @@ export default function AIChatPage() {
                 </div>
               )}
             </div>
-          </div>
-        </>
-      )}
+        </div>
+      </div>
 
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col min-w-0 h-full relative z-10 overflow-hidden">
-        {/* Top Bar with History Toggle - Fixed at top of main area */}
-        <div className="flex-shrink-0 z-20 bg-gray-50 border-b border-gray-200/50 px-4 py-3">
-          <div className="max-w-4xl mx-auto flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setShowHistory(!showHistory)}
-                className={`p-2 -ml-2 rounded-full text-gray-500 hover:text-gray-900 hover:bg-white/50 transition-all ${showHistory ? 'bg-white/50 text-gray-900' : ''
-                  }`}
-                title={showHistory ? 'Close chat history' : 'Open chat history'}
-              >
-                <History className="w-5 h-5" />
-              </button>
-              <h1 className="text-base font-semibold text-gray-900 leading-tight">
-                {currentConversationId
-                  ? conversations.find(c => c.conversation_id === currentConversationId)?.title || 'Chat'
-                  : 'New Research Task'
-                }
-              </h1>
-            </div>
-            <div className="flex items-center gap-3">
-              <Button
-                variant="outline"
-                onClick={() => navigate('/dashboard')}
-                className="gap-2 text-xs font-medium rounded-full border-gray-200 bg-white/50 hover:bg-white transition-all shadow-sm"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                Back
-              </Button>
-            </div>
-          </div>
-        </div>
 
-        <div ref={messagesContainerRef} data-chat-messages-container data-current-conversation-id={currentConversationId || ''} className="flex-1 overflow-y-auto custom-scrollbar">
-          <div className="px-4 pb-40">
+        <div ref={messagesContainerRef} data-chat-messages-container data-current-conversation-id={currentConversationId || ''} className="flex-1 overflow-y-auto custom-scrollbar" role="log" aria-label={t('aiChat.chatMessages')} aria-live="polite">
+          <div className="px-4 pt-6 pb-40">
           <div className="max-w-4xl mx-auto space-y-6">
             {/* Gemini-style Welcome Hero with Scenario Cards */}
             {messages.length === 0 && showWelcomeHero && (
-              <div className="flex flex-col items-center justify-center pt-2 pb-12 text-center space-y-4">
+              <div className="flex flex-col items-center justify-center min-h-[calc(100vh-16rem)] pt-6 pb-12 text-center space-y-3 sm:space-y-4">
                 {/* Hero Title */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-center gap-2 mb-2">
-                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg">
-                      <Sparkles className="w-7 h-7 text-white" />
+                <div className="space-y-1.5 sm:space-y-2">
+                  <div className="flex items-center justify-center gap-2 mb-1 sm:mb-2">
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg">
+                      <Sparkles className="w-5 h-5 sm:w-7 sm:h-7 text-white" />
                     </div>
                   </div>
-                  <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 via-gray-700 to-gray-900 bg-clip-text text-transparent">
-                    Hello, I'm PathLab Agent
+                  <h1 className="text-xl sm:text-3xl font-bold bg-gradient-to-r from-gray-900 via-gray-700 to-gray-900 bg-clip-text text-transparent">
+                    {t('aiChat.welcomeTitle')}
                   </h1>
-                  <p className="text-gray-500 max-w-lg mx-auto text-base">
-                    Your AI assistant for pathology research. I can help you train models, run inference, and analyze whole slide images.
+                  <p className="text-gray-500 max-w-lg mx-auto text-sm sm:text-base">
+                    {t('aiChat.welcomeDescription')}
                   </p>
                 </div>
 
                 {/* Scenario Cards */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-2xl mt-2">
+                <div className="grid grid-cols-2 gap-2 sm:gap-3 w-full max-w-2xl mt-2">
                   {SCENARIO_CARDS.map((card) => {
                     const Icon = card.icon
                     return (
                       <button
                         key={card.id}
                         onClick={() => handleScenarioCardClick(card)}
-                        className={`${card.bgColor} p-5 rounded-2xl text-left transition-all duration-200 hover:shadow-md hover:scale-[1.02] group border border-transparent hover:border-gray-200`}
+                        className={`${card.bgColor} p-3 sm:p-4 rounded-2xl text-left transition-all duration-200 hover:shadow-md hover:scale-[1.02] group border border-transparent hover:border-gray-200`}
                       >
-                        <div className={`w-10 h-10 rounded-xl bg-white shadow-sm flex items-center justify-center mb-3 group-hover:shadow-md transition-shadow`}>
-                          <Icon className={`w-5 h-5 ${card.iconColor}`} />
+                        <div className="flex items-start gap-2.5 sm:gap-3">
+                          <div className={`shrink-0 w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white shadow-sm flex items-center justify-center group-hover:shadow-md transition-shadow`}>
+                            <Icon className={`w-4 h-4 ${card.iconColor}`} />
+                          </div>
+                          <div className="min-w-0">
+                            <h3 className="text-xs sm:text-sm font-semibold text-gray-900 mb-0.5">{t(card.titleKey)}</h3>
+                            <p className="text-xs text-gray-600 leading-snug">{t(card.descriptionKey)}</p>
+                          </div>
                         </div>
-                        <h3 className="font-semibold text-gray-900 mb-1">{card.title}</h3>
-                        <p className="text-sm text-gray-600">{card.description}</p>
                       </button>
                     )
                   })}
@@ -2423,6 +2047,10 @@ export default function AIChatPage() {
               return messages.map((message, index) => {
               // Skip rendering assistant messages that contain only internal blocks (e.g., VOICE_CONTROL only)
               if (message.role === 'assistant' && isInternalOnlyMessage(message.content)) {
+                return null
+              }
+              // Skip rendering hidden PDF context user messages (stored for AI follow-up context only)
+              if (message.role === 'user' && isPdfContextMessage(message.content)) {
                 return null
               }
               return (
@@ -2455,7 +2083,7 @@ export default function AIChatPage() {
                         <img
                           key={idx}
                           src={img}
-                          alt={`Attachment ${idx + 1}`}
+                          alt={t('aiChat.attachmentAlt', { index: idx + 1 })}
                           className="max-w-[200px] max-h-[200px] rounded-xl object-cover border border-gray-200 shadow-sm"
                         />
                       ))}
@@ -2489,10 +2117,14 @@ export default function AIChatPage() {
                         )
                       })()
                     ) : message.content === '' ? (
-                      // ChatGPT-like Thinking Indicator
-                      <div className="flex items-center gap-2 py-2">
-                        <div className="w-2.5 h-2.5 bg-gray-400 rounded-full animate-pulse"></div>
-                        <span className="text-sm font-medium text-gray-500 animate-pulse">Thinking...</span>
+                      // ChatGPT-like Thinking Indicator with staggered bouncing dots
+                      <div className="flex items-center gap-2.5 py-2" aria-busy="true">
+                        <div className="flex items-center gap-1" aria-hidden="true">
+                          <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '0ms', animationDuration: '1.2s' }} />
+                          <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '200ms', animationDuration: '1.2s' }} />
+                          <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '400ms', animationDuration: '1.2s' }} />
+                        </div>
+                        <span className="text-sm font-medium text-gray-400">{t('aiChat.thinking')}</span>
                       </div>
                     ) : (
                       <AssistantMessage
@@ -2500,22 +2132,26 @@ export default function AIChatPage() {
                         messageId={message.id}
                         onOptionSelect={handleOptionSelect}
                         onTaskSubmitSuccess={handleTaskSubmitSuccess}
-                        onInferenceSubmitSuccess={handleInferenceSubmitSuccess}
                         onInternalAnalysisSubmitSuccess={handleInternalAnalysisSubmitSuccess}
                         onTaskSubmitError={handleTaskSubmitError}
                         onTaskHistoryDataLoaded={handleTaskHistoryDataLoaded}
                         onQuickAnalysisDataLoaded={handleQuickAnalysisDataLoaded}
                         onHelpfulnessFeedback={handleHelpfulnessFeedback}
                         savedHelpfulnessFeedback={helpfulnessFeedbacks.get(parseInt(message.id, 10)) || null}
-                        isStreaming={isLoading && index === messages.length - 1}
+                        // "Streaming" 表示当前这条助手消息还在生成中（不管是否已经收到首个 chunk），
+                        // 用 isGenerating 而不是 isLoading，这样在 Exa 搜索阶段（只收到 SEARCH_STATUS/WEB_SEARCH_RESULT）
+                        // 也会触发搜索状态卡片和 skeleton，避免出现中间一大块空白。
+                        // isPdfWaiting: PDF 等待阶段，流仍在活跃中，需要保持 isStreaming 以显示 PDF 解析状态卡片。
+                        isStreaming={(isGenerating || isPdfWaiting) && index === messages.length - 1}
                         isLoading={isGenerating}
                         csvContent={csvContentMap.get(message.id)?.content}
                         csvFileName={csvContentMap.get(message.id)?.fileName}
-                        onToast={setToastMessage}
+                        onToast={handleToast}
                         onRegistrationSuccess={handleRegistrationSuccess}
                         onMetadataUploadSuccess={handleMetadataUploadSuccess}
                         submitTaskTrigger={index === lastTaskConfigIndex ? submitTaskTrigger : undefined}
                         cancelTaskTrigger={index === lastCancelTaskIndex ? cancelTaskTrigger : undefined}
+                        onNewChat={handleNewChat}
                       />
                     )}
                   </div>
@@ -2537,7 +2173,7 @@ export default function AIChatPage() {
                           ? 'text-green-500'
                           : 'hover:text-gray-600'
                           }`}
-                        title="Good response"
+                        title={t('aiChat.goodResponse')}
                       >
                         <ThumbsUp className="w-4 h-4" />
                       </button>
@@ -2547,7 +2183,7 @@ export default function AIChatPage() {
                           ? 'text-red-500'
                           : 'hover:text-gray-600'
                           }`}
-                        title="Bad response"
+                        title={t('aiChat.badResponse')}
                       >
                         <ThumbsDown className="w-4 h-4" />
                       </button>
@@ -2557,7 +2193,7 @@ export default function AIChatPage() {
                       <button
                         onClick={() => handleCopy(message.content)}
                         className="hover:text-gray-600 transition-colors"
-                        title="Copy"
+                        title={t('aiChat.copy')}
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
@@ -2565,7 +2201,7 @@ export default function AIChatPage() {
                         onClick={() => handleRegenerate(index)}
                         disabled={isGenerating}
                         className={`hover:text-gray-600 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        title="Regenerate"
+                        title={t('aiChat.regenerate')}
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
                       </button>
@@ -2573,7 +2209,7 @@ export default function AIChatPage() {
                         onClick={() => handleDeleteMessage(index)}
                         disabled={isGenerating}
                         className={`hover:text-red-500 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        title="Delete this message and continue from here"
+                        title={t('aiChat.deleteMessageAndContinue')}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -2582,7 +2218,7 @@ export default function AIChatPage() {
 
                   {/* Timestamp & Actions for User Messages */}
                   {message.role === 'user' && (
-                    <div className="flex items-center gap-2 mt-1.5 mr-1 text-gray-400 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-2 mt-1.5 mr-1 text-gray-400 justify-end opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                       {/* Timestamp */}
                       <span className="text-xs text-gray-400" title={message.timestamp.toLocaleString()}>
                         {formatTimestamp(message.timestamp)}
@@ -2594,7 +2230,7 @@ export default function AIChatPage() {
                         onClick={() => handleDeleteMessage(index)}
                         disabled={isGenerating}
                         className={`hover:text-red-500 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        title="Delete this message and continue from here"
+                        title={t('aiChat.deleteMessageAndContinue')}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -2645,64 +2281,69 @@ export default function AIChatPage() {
         {/* Input Area - Floating Island - Fixed to viewport bottom */}
         <div className="fixed bottom-6 left-0 right-0 px-4 z-30 pointer-events-none">
           <div className="max-w-4xl mx-auto pointer-events-auto">
-            {/* Attachments Preview */}
-            {(imageAttachments.length > 0 || fileAttachments.length > 0) && (
-              <div className="mb-3 flex flex-wrap gap-2 p-3 bg-white/90 backdrop-blur-xl rounded-2xl border border-gray-200/50 shadow-lg animate-in slide-in-from-bottom-2 duration-300">
-                {imageAttachments.map((attachment) => (
-                  <div key={attachment.id} className="relative group">
-                    <img
-                      src={attachment.preview}
-                      alt="Attachment"
-                      className="w-14 h-14 object-cover rounded-xl border border-white/50 shadow-sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleImageRemove(attachment.id)}
-                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-900/80 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-                {fileAttachments.map((attachment) => (
-                  <div key={attachment.id} className="relative group flex items-start p-2 bg-gray-50/50 rounded-xl border border-gray-100">
-                    <div className="flex-shrink-0 w-10 h-10 bg-white rounded-lg shadow-sm flex items-center justify-center mr-2">
-                      <FileSpreadsheet className="w-5 h-5 text-green-600" />
-                    </div>
-                    <div className="max-w-[120px]">
-                      <div className="text-xs font-medium text-gray-900 truncate">{attachment.name}</div>
-                      <div className="text-[10px] text-gray-500 uppercase">{attachment.type}</div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleFileRemove(attachment.id)}
-                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-900/80 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <form id="chat-form" onSubmit={handleSubmit} className="relative group">
+            <form ref={formRef} id="chat-form" onSubmit={handleSubmit} className="relative group">
               <div className={`
-                relative flex items-center 
-                bg-white/80 backdrop-blur-xl 
-                rounded-[28px] shadow-[0_8px_32px_rgba(0,0,0,0.12)] 
+                relative flex flex-col
+                bg-white/80 backdrop-blur-xl
+                rounded-[28px] shadow-[0_8px_32px_rgba(0,0,0,0.12)]
                 border transition-all duration-300
                 ${voiceSessionActive
                   ? 'border-primary-300 shadow-[0_0_0_4px_rgba(102,126,234,0.15)] bg-white/90'
                   : 'border-gray-200/50 hover:border-gray-300/80 hover:shadow-[0_8px_40px_rgba(0,0,0,0.15)]'
                 }
-                min-h-[56px] pl-4 pr-[104px] sm:pr-[120px] py-1.5
+                min-h-[56px] py-1.5
               `}>
+                {/* Inline Attachments Preview */}
+                {(imageAttachments.length > 0 || fileAttachments.length > 0) && (
+                  <div className="flex flex-wrap gap-2 px-4 pt-2.5 pb-1 animate-in fade-in slide-in-from-bottom-1 duration-200">
+                    {imageAttachments.map((attachment) => (
+                      <div key={attachment.id} className="relative group/thumb flex-shrink-0">
+                        <div className="w-16 h-16 sm:w-[72px] sm:h-[72px] rounded-xl overflow-hidden ring-1 ring-gray-200/60 shadow-sm bg-gray-50">
+                          <img
+                            src={attachment.preview}
+                            alt={t('aiChat.attachment')}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleImageRemove(attachment.id)}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-800/90 hover:bg-red-500 text-white rounded-full flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover/thumb:opacity-100 transition-all shadow-sm"
+                          aria-label={t('aiChat.removeAttachment')}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                    {fileAttachments.map((attachment) => (
+                      <div key={attachment.id} className="relative group/thumb flex-shrink-0">
+                        <div className="h-16 sm:h-[72px] flex items-center gap-2 px-3 rounded-xl bg-gray-50/80 ring-1 ring-gray-200/60">
+                          <FileSpreadsheet className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                          <div className="max-w-[100px] sm:max-w-[140px]">
+                            <div className="text-xs font-medium text-gray-800 truncate">{attachment.name}</div>
+                            <div className="text-[10px] text-gray-400 uppercase">{attachment.type}</div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleFileRemove(attachment.id)}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-800/90 hover:bg-red-500 text-white rounded-full flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover/thumb:opacity-100 transition-all shadow-sm"
+                          aria-label={t('aiChat.removeAttachment')}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="relative flex items-center min-h-[52px] pl-4 pr-[104px] sm:pr-[120px]">
                 <textarea
                   ref={textareaRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={voiceSessionActive ? "Listening..." : "Describe your research task..."}
+                  placeholder={voiceSessionActive ? t('aiChat.listening') : t('aiChat.inputPlaceholder')}
                   className={`
                     w-full bg-transparent border-none focus:outline-none resize-none 
                     text-gray-900 placeholder-gray-400 transition-all 
@@ -2713,6 +2354,7 @@ export default function AIChatPage() {
                   style={{ maxHeight: '150px' }}
                   disabled={isGenerating}
                   autoFocus
+                  aria-label={t('aiChat.messageInput')}
                 />
 
                 {/* Hidden file input */}
@@ -2752,41 +2394,49 @@ export default function AIChatPage() {
                       <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '0ms' }} />
                       <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '150ms' }} />
                       <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '300ms' }} />
-                      Thinking
+                      {t('aiChat.thinking')}
                     </span>
                   </div>
                 )}
 
 
                 <div className="absolute right-1.5 bottom-1.5 flex items-center gap-1 sm:gap-1.5">
-                  {/* File Upload */}
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isGenerating || realtimeIsRecording || voiceSessionActive}
-                    className="p-2 sm:p-2.5 rounded-full transition-all text-gray-400 hover:text-gray-600 hover:bg-gray-100 active:scale-95 disabled:opacity-50"
-                  >
-                    <Paperclip className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </button>
+                  {/* File Upload - hidden during voice recording */}
+                  {!realtimeIsRecording && !realtimeIsConnecting && !voiceSessionActive && (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isGenerating}
+                      className="p-2 sm:p-2.5 rounded-full transition-all text-gray-400 hover:text-gray-600 hover:bg-gray-100 active:scale-95 disabled:opacity-50"
+                      aria-label={t('aiChat.attachFile')}
+                    >
+                      <Paperclip className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                  )}
 
                   {/* Voice Button */}
                   <button
                     type="button"
                     onClick={toggleVoiceSession}
                     disabled={isGenerating && !voiceSessionActive}
+                    aria-label={voiceSessionActive || realtimeIsRecording ? t('aiChat.stopVoiceInput') : t('aiChat.voiceInput')}
                     className={`
                       p-2 sm:p-2.5 rounded-full transition-all duration-300 active:scale-95
-                      ${realtimeIsRecording || realtimeIsConnecting
-                        ? 'bg-red-500 text-white shadow-md animate-pulse'
-                        : voiceSessionActive
-                          ? 'bg-primary-500 text-white shadow-md'
-                          : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                      ${realtimeIsRecording
+                        ? 'bg-red-50 text-red-500 hover:bg-red-100'
+                        : realtimeIsConnecting
+                          ? 'bg-primary-50 text-primary-500'
+                          : voiceSessionActive
+                            ? 'bg-primary-500 text-white shadow-md'
+                            : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
                       }
                     `}
                   >
                     {realtimeIsConnecting ? (
                       <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
-                    ) : (realtimeIsRecording || voiceSessionActive) ? (
+                    ) : realtimeIsRecording ? (
+                      <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="currentColor" />
+                    ) : voiceSessionActive ? (
                       <MicOff className="w-4 h-4 sm:w-5 sm:h-5" />
                     ) : (
                       <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -2799,14 +2449,33 @@ export default function AIChatPage() {
                       type="button"
                       onClick={handleStopGeneration}
                       className="p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm bg-gray-800 text-white hover:bg-gray-900 shadow-md active:scale-95"
-                      title="Stop generating"
+                      title={t('aiChat.stopGenerating')}
+                      aria-label={t('aiChat.stopGenerating')}
                     >
                       <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="currentColor" />
+                    </button>
+                  ) : realtimeIsRecording ? (
+                    /* Force-send partial transcript during recording */
+                    <button
+                      type="button"
+                      onClick={() => voiceForceSend(realtimePartialText)}
+                      disabled={!realtimePartialText?.trim()}
+                      aria-label={t('aiChat.sendVoiceMessage')}
+                      className={`
+                        p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm
+                        ${!realtimePartialText?.trim()
+                          ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                          : 'bg-primary-600 text-white hover:bg-primary-700 shadow-md active:scale-95'
+                        }
+                      `}
+                    >
+                      <Send className="w-4 h-4 sm:w-5 sm:h-5" />
                     </button>
                   ) : (
                     <button
                       type="submit"
                       disabled={!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0}
+                      aria-label={t('aiChat.sendMessage')}
                       className={`
                           p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm
                           ${!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0
@@ -2819,11 +2488,12 @@ export default function AIChatPage() {
                     </button>
                   )}
                 </div>
+                </div>
               </div>
             </form>
 
-            <div className="mt-2 text-center text-[8px] sm:text-xs text-gray-400/80 font-medium truncate px-4">
-              PathLab Agent can make mistakes. Consider checking important information.
+            <div className="mt-2 text-center text-xs text-gray-400/80 font-medium px-4 leading-relaxed">
+              {t('aiChat.disclaimer')}
             </div>
           </div>
         </div>
@@ -2833,33 +2503,39 @@ export default function AIChatPage() {
 
       {/* Delete Confirmation Modal */}
       {deleteConfirmId && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-dialog-title"
+          onKeyDown={(e) => e.key === 'Escape' && cancelDelete()}
+        >
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all scale-100">
             <div className="flex items-start gap-4">
               <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
                 <Trash2 className="w-6 h-6 text-red-600" />
               </div>
               <div className="flex-1">
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  {deleteConfirmId === 'all-conversations' ? 'Delete All History' : 'Delete Conversation'}
+                <h3 id="delete-dialog-title" className="text-lg font-semibold text-gray-900 mb-2">
+                  {deleteConfirmId === 'all-conversations' ? t('aiChat.deleteAllHistoryTitle') : t('aiChat.deleteConversationTitle')}
                 </h3>
                 <p className="text-sm text-gray-600 mb-6">
                   {deleteConfirmId === 'all-conversations'
-                    ? 'Are you sure you want to delete all chat history? This action cannot be undone.'
-                    : 'Are you sure you want to delete this conversation? This action cannot be undone.'}
+                    ? t('aiChat.deleteAllHistoryConfirm')
+                    : t('aiChat.deleteConversationConfirm')}
                 </p>
                 <div className="flex gap-3 justify-end">
                   <button
                     onClick={cancelDelete}
                     className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
                   >
-                    Cancel
+                    {t('common.cancel')}
                   </button>
                   <button
                     onClick={confirmDelete}
                     className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors shadow-sm"
                   >
-                    Delete
+                    {t('common.delete')}
                   </button>
                 </div>
               </div>
@@ -2870,13 +2546,18 @@ export default function AIChatPage() {
 
       {/* Toast notification */}
       {toastMessage && (
-        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-in slide-in-from-top-2 duration-300 ${toastMessage.type === 'error' ? 'bg-red-500 text-white' :
-          toastMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'
-          }`}>
+        <div
+          className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-in slide-in-from-top-2 duration-300 ${toastMessage.type === 'error' ? 'bg-red-500 text-white' :
+            toastMessage.type === 'success' ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'
+            }`}
+          role={toastMessage.type === 'error' ? 'alert' : 'status'}
+          aria-live={toastMessage.type === 'error' ? 'assertive' : 'polite'}
+        >
           <span>{toastMessage.message}</span>
           <button
             onClick={() => setToastMessage(null)}
             className="ml-2 hover:opacity-80"
+            aria-label={t('aiChat.closeNotification')}
           >
             ×
           </button>

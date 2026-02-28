@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { Loader2, History, CheckCircle2, XCircle, Clock, PlayCircle, AlertCircle, RefreshCw, ChevronRight } from 'lucide-react'
-import { getTrainingTasks, TrainingTask } from '../../api'
+import { useTranslation } from 'react-i18next'
+import { TFunction } from 'i18next'
+import { Loader2, History, CheckCircle2, XCircle, Clock, PlayCircle, AlertCircle, RefreshCw, ChevronRight, Edit2 } from 'lucide-react'
+import { getTrainingTasks, TrainingTask, updateTrainingTaskName } from '../../api'
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../../contexts/AuthContext'
 
-// Cached task data for persistence - minimal data for display only
 export interface CachedTaskData {
   task_id: string
   task_name: string
@@ -12,8 +14,8 @@ export interface CachedTaskData {
   status: string
   created_at: string | null
   finished_at: string | null
-  num_classes?: number  // Just the count, not full class list
-  split_strategy?: string  // Just the strategy name for badge display
+  num_classes?: number
+  split_strategy?: string
 }
 
 export interface AgentTaskHistoryConfig {
@@ -21,22 +23,18 @@ export interface AgentTaskHistoryConfig {
   show_running?: boolean
   show_failed?: boolean
   limit?: number
-  split_strategy?: 'random' | 'k_fold' | 'manual'  // Filter by split strategy
-  task_type?: string    // Filter by task type: "classification", "survival", etc.
-  // Cached data for persistence (populated after first load)
+  split_strategy?: 'random' | 'k_fold' | 'manual'
+  task_type?: string
   cached_tasks?: CachedTaskData[]
-  cached_at?: string  // ISO timestamp when data was cached
+  cached_at?: string
 }
 
 interface TaskHistoryCardProps {
   config: AgentTaskHistoryConfig
   onError?: (error: string) => void
-  onDataLoaded?: (tasks: CachedTaskData[]) => void  // Callback when data is loaded, for persistence
+  onDataLoaded?: (tasks: CachedTaskData[]) => void
 }
 
-/**
- * Parse [TASK_HISTORY_CONFIG] block from message content
- */
 export function parseTaskHistoryConfig(content: string): AgentTaskHistoryConfig | null {
   const match = content.match(/\[TASK_HISTORY_CONFIG\]([\s\S]*?)\[\/TASK_HISTORY_CONFIG\]/)
   if (!match) return null
@@ -49,36 +47,30 @@ export function parseTaskHistoryConfig(content: string): AgentTaskHistoryConfig 
   }
 }
 
-/**
- * Remove [TASK_HISTORY_CONFIG] block from content for display
- */
 export function removeTaskHistoryConfigBlock(content: string): string {
   return content.replace(/\[TASK_HISTORY_CONFIG\][\s\S]*?\[\/TASK_HISTORY_CONFIG\]/g, '').trim()
 }
 
-// Status icon and color mapping
-function getStatusDisplay(status: string) {
+function getStatusDisplay(status: string, t: TFunction) {
   switch (status) {
     case 'completed':
-      return { icon: <CheckCircle2 className="w-4 h-4" />, color: 'text-green-600 bg-green-50', label: 'Completed' }
-    case 'running':
+      return { icon: <CheckCircle2 className="w-4 h-4" />, color: 'text-green-600 bg-green-50', label: t('chatComponents.taskHistory.statusCompleted') }
+    case 'patching':
     case 'training':
-    case 'preprocessing':
     case 'extracting':
-      return { icon: <PlayCircle className="w-4 h-4" />, color: 'text-blue-600 bg-blue-50', label: 'Running' }
+      return { icon: <PlayCircle className="w-4 h-4" />, color: 'text-blue-600 bg-blue-50', label: t('chatComponents.taskHistory.statusRunning') }
     case 'pending':
     case 'queued':
-      return { icon: <Clock className="w-4 h-4" />, color: 'text-amber-600 bg-amber-50', label: 'Pending' }
+      return { icon: <Clock className="w-4 h-4" />, color: 'text-amber-600 bg-amber-50', label: t('chatComponents.taskHistory.statusPending') }
     case 'failed':
-      return { icon: <XCircle className="w-4 h-4" />, color: 'text-red-600 bg-red-50', label: 'Failed' }
+      return { icon: <XCircle className="w-4 h-4" />, color: 'text-red-600 bg-red-50', label: t('chatComponents.taskHistory.statusFailed') }
     case 'cancelled':
-      return { icon: <XCircle className="w-4 h-4" />, color: 'text-gray-500 bg-gray-50', label: 'Cancelled' }
+      return { icon: <XCircle className="w-4 h-4" />, color: 'text-gray-500 bg-gray-50', label: t('chatComponents.taskHistory.statusCancelled') }
     default:
       return { icon: <Clock className="w-4 h-4" />, color: 'text-gray-600 bg-gray-50', label: status }
   }
 }
 
-// Format date for display
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return '-'
   const date = new Date(dateStr)
@@ -92,24 +84,28 @@ function formatDate(dateStr: string | null): string {
 }
 
 export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCardProps) {
-  // Check if we have cached data
+  const { t } = useTranslation()
   const hasCachedData = config.cached_tasks && config.cached_tasks.length > 0
 
   const [isLoading, setIsLoading] = useState(!hasCachedData)
   const [error, setError] = useState<string>('')
   const [tasks, setTasks] = useState<TrainingTask[]>(
-    // Initialize with cached data if available
     hasCachedData ? (config.cached_tasks as unknown as TrainingTask[]) : []
   )
   const navigate = useNavigate()
+  const { user } = useAuth()
 
-  // Use ref for callbacks to avoid triggering useEffect on callback changes
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [taskToEdit, setTaskToEdit] = useState<TrainingTask | null>(null)
+  const [editedTaskName, setEditedTaskName] = useState('')
+  const [isEditingSaving, setIsEditingSaving] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
+
   const onErrorRef = useRef(onError)
   onErrorRef.current = onError
   const onDataLoadedRef = useRef(onDataLoaded)
   onDataLoadedRef.current = onDataLoaded
 
-  // Default config values
   const showCompleted = config.show_completed ?? true
   const showRunning = config.show_running ?? true
   const showFailed = config.show_failed ?? false
@@ -117,13 +113,10 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
   const splitStrategyFilter = config.split_strategy
   const taskTypeFilter = config.task_type
 
-  // Helper to get task's split strategy
   const getTaskSplitStrategy = (task: TrainingTask | CachedTaskData): string => {
-    // For CachedTaskData, use the cached split_strategy field
     if ('split_strategy' in task && task.split_strategy) {
       return task.split_strategy
     }
-    // For TrainingTask, extract from preprocessing_config
     if ('preprocessing_config' in task && task.preprocessing_config) {
       const splitConfig = task.preprocessing_config?.split_config as { strategy?: string } | undefined
       return splitConfig?.strategy || 'random'
@@ -131,7 +124,6 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
     return 'random'
   }
 
-  // Convert TrainingTask to CachedTaskData for persistence - minimal data only
   const toCachedData = (task: TrainingTask): CachedTaskData => ({
     task_id: task.task_id,
     task_name: task.task_name,
@@ -144,7 +136,6 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
     split_strategy: getTaskSplitStrategy(task)
   })
 
-  // Helper to get number of classes from either TrainingTask or CachedTaskData
   const getNumClasses = (task: TrainingTask | CachedTaskData): number => {
     if ('classes' in task && task.classes) {
       return task.classes.length
@@ -156,7 +147,6 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
   }
 
   useEffect(() => {
-    // Skip fetching if we have cached data
     if (hasCachedData) {
       return
     }
@@ -168,28 +158,22 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
       try {
         const allTasks = await getTrainingTasks()
 
-        // Define in-progress statuses (must match backend get_status_counts)
-        const inProgressStatuses = ['running', 'training', 'pending', 'queued', 'preprocessing', 'extracting']
+        const inProgressStatuses = ['patching', 'training', 'pending', 'queued', 'extracting']
 
-        // Filter tasks based on config
         const filteredTasks = allTasks.filter(task => {
-          // Status filter
           let statusMatch = false
           if (task.status === 'completed' && showCompleted) statusMatch = true
           if (inProgressStatuses.includes(task.status) && showRunning) statusMatch = true
           if (task.status === 'failed' && showFailed) statusMatch = true
           if (!statusMatch) return false
 
-          // Split strategy filter
           if (splitStrategyFilter && getTaskSplitStrategy(task) !== splitStrategyFilter) return false
 
-          // Task type filter
           if (taskTypeFilter && task.task_type !== taskTypeFilter) return false
 
           return true
         })
 
-        // Sort by created_at descending and limit
         const sortedTasks = filteredTasks
           .sort((a, b) => {
             const dateA = a.created_at ? new Date(a.created_at).getTime() : 0
@@ -200,12 +184,11 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
 
         setTasks(sortedTasks)
 
-        // Notify parent to persist the data
         if (onDataLoadedRef.current) {
           onDataLoadedRef.current(sortedTasks.map(toCachedData))
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Failed to fetch tasks'
+        const msg = err instanceof Error ? err.message : t('chatComponents.taskHistory.errors.failedToFetch')
         setError(msg)
         onErrorRef.current?.(msg)
       } finally {
@@ -221,20 +204,16 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
     setError('')
     try {
       const allTasks = await getTrainingTasks()
-      // Define in-progress statuses (must match backend get_status_counts)
-      const inProgressStatuses = ['running', 'training', 'pending', 'queued', 'preprocessing', 'extracting']
+      const inProgressStatuses = ['patching', 'training', 'pending', 'queued', 'extracting']
       const filteredTasks = allTasks.filter(task => {
-        // Status filter
         let statusMatch = false
         if (task.status === 'completed' && showCompleted) statusMatch = true
         if (inProgressStatuses.includes(task.status) && showRunning) statusMatch = true
         if (task.status === 'failed' && showFailed) statusMatch = true
         if (!statusMatch) return false
 
-        // Split strategy filter
         if (splitStrategyFilter && getTaskSplitStrategy(task) !== splitStrategyFilter) return false
 
-        // Task type filter
         if (taskTypeFilter && task.task_type !== taskTypeFilter) return false
 
         return true
@@ -248,20 +227,56 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
         .slice(0, limit)
       setTasks(sortedTasks)
 
-      // Notify parent to persist the refreshed data
       if (onDataLoadedRef.current) {
         onDataLoadedRef.current(sortedTasks.map(toCachedData))
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to fetch tasks'
+      const msg = err instanceof Error ? err.message : t('chatComponents.taskHistory.errors.failedToFetch')
       setError(msg)
     } finally {
       setIsLoading(false)
     }
   }
 
+  const handleEditTask = (task: TrainingTask, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setTaskToEdit(task)
+    setEditedTaskName(task.task_name)
+    setEditError(null)
+    setShowEditModal(true)
+  }
+
+  const handleSaveTaskName = async () => {
+    if (!taskToEdit || !editedTaskName.trim()) {
+      setEditError(t('chatComponents.taskHistory.errors.taskNameEmpty'))
+      return
+    }
+
+    setIsEditingSaving(true)
+    setEditError(null)
+
+    try {
+      const updatedTask = await updateTrainingTaskName(taskToEdit.task_id, editedTaskName.trim())
+
+      setTasks(prevTasks =>
+        prevTasks.map(taskItem =>
+          taskItem.task_id === taskToEdit.task_id
+            ? { ...taskItem, task_name: updatedTask.task_name, updated_at: updatedTask.updated_at }
+            : taskItem
+        )
+      )
+
+      setShowEditModal(false)
+      setTaskToEdit(null)
+    } catch (err: any) {
+      console.error('Failed to update task name:', err)
+      setEditError(err.message || t('chatComponents.taskHistory.errors.failedToUpdateName'))
+    } finally {
+      setIsEditingSaving(false)
+    }
+  }
+
   const handleTaskClick = (taskId: string) => {
-    // Save scroll position and conversation ID before navigating
     const messagesContainer = document.querySelector('[data-chat-messages-container]')
     if (messagesContainer) {
       sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
@@ -278,7 +293,7 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
       <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-4 sm:p-6">
         <div className="flex items-center justify-center gap-2">
           <Loader2 className="w-5 h-5 animate-spin text-purple-600" />
-          <span className="text-gray-600 text-sm sm:text-base">Loading training history...</span>
+          <span className="text-gray-600 text-sm sm:text-base">{t('chatComponents.taskHistory.loadingHistory')}</span>
         </div>
       </div>
     )
@@ -290,7 +305,7 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
         <div className="px-4 sm:px-5 py-3 sm:py-4 bg-red-50 border-b border-red-100">
           <h3 className="font-semibold text-red-800 flex items-center gap-2 text-sm sm:text-base">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            Failed to Load History
+            {t('chatComponents.taskHistory.failedToLoadHistory')}
           </h3>
         </div>
         <div className="p-4 sm:p-5">
@@ -307,16 +322,16 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
         <div className="min-w-0 flex-1">
           <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
             <History className="w-4 h-4 text-purple-600 flex-shrink-0" />
-            <span className="truncate">Training History</span>
+            <span className="truncate">{t('chatComponents.taskHistory.title')}</span>
           </h3>
           <p className="text-xs text-gray-500 mt-1">
-            {tasks.length} task{tasks.length !== 1 ? 's' : ''} found
+            {t('chatComponents.taskHistory.tasksFound', { count: tasks.length })}
           </p>
         </div>
         <button
           onClick={handleRefresh}
           className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-white rounded-lg transition-colors flex-shrink-0"
-          title="Refresh"
+          title={t('chatComponents.taskHistory.refresh')}
         >
           <RefreshCw className="w-4 h-4" />
         </button>
@@ -327,21 +342,20 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
         {tasks.length === 0 ? (
           <div className="p-8 text-center text-gray-500">
             <History className="w-8 h-8 mx-auto mb-2 text-gray-300" />
-            <p>No training tasks found</p>
+            <p>{t('chatComponents.taskHistory.noTasksFound')}</p>
           </div>
         ) : (
           tasks.map(task => {
-            const statusDisplay = getStatusDisplay(task.status)
+            const statusDisplay = getStatusDisplay(task.status, t)
             const splitStrategy = getTaskSplitStrategy(task)
             const splitConfig = task.preprocessing_config?.split_config as { n_splits?: number; ratios?: { train: number; val: number; test: number } } | undefined
 
-            // Get split strategy display label
             const getSplitLabel = (): { label: string; color: string } | null => {
               if (splitStrategy === 'k_fold') {
                 const numFolds = splitConfig?.n_splits
                 return { label: numFolds ? `${numFolds}-Fold` : 'K-Fold', color: 'text-purple-600 bg-purple-50' }
               } else if (splitStrategy === 'manual') {
-                return { label: 'Manual Split', color: 'text-amber-600 bg-amber-50' }
+                return { label: t('chatComponents.taskHistory.manualSplit'), color: 'text-amber-600 bg-amber-50' }
               } else if (splitStrategy === 'random') {
                 const ratios = splitConfig?.ratios
                 if (ratios) {
@@ -383,23 +397,99 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
                       {getNumClasses(task) > 0 && (
                         <>
                           <span className="hidden sm:inline">•</span>
-                          <span>{getNumClasses(task)} classes</span>
+                          <span>{t('chatComponents.taskHistory.classesCount', { count: getNumClasses(task) })}</span>
                         </>
                       )}
                     </div>
                     <div className="mt-1 text-xs text-gray-400 truncate">
-                      Created: {formatDate(task.created_at)}
-                      {task.finished_at && <span className="hidden sm:inline"> • Finished: {formatDate(task.finished_at)}</span>}
+                      {t('chatComponents.taskHistory.created')}: {formatDate(task.created_at)}
+                      {task.finished_at && <span className="hidden sm:inline"> • {t('chatComponents.taskHistory.finished')}: {formatDate(task.finished_at)}</span>}
                     </div>
                   </div>
-                  <ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-purple-500 transition-colors flex-shrink-0 mt-1" />
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {user && task.user_id === user.id && (
+                      <button
+                        onClick={(e) => handleEditTask(task, e)}
+                        className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors"
+                        title={t('chatComponents.taskHistory.editTaskName')}
+                      >
+                        <Edit2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                      </button>
+                    )}
+                    <ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-purple-500 transition-colors" />
+                  </div>
                 </div>
               </div>
             )
           })
         )}
       </div>
+
+      {/* Edit Task Name Modal */}
+      {showEditModal && taskToEdit && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowEditModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-gray-100">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-50 rounded-lg">
+                  <Edit2 className="w-5 h-5 text-indigo-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">{t('chatComponents.taskHistory.editTaskNameTitle')}</h3>
+                  <p className="text-sm text-gray-500 mt-0.5">{t('chatComponents.taskHistory.editTaskNameDesc')}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-5">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    {t('chatComponents.taskHistory.taskNameLabel')}
+                  </label>
+                  <input
+                    type="text"
+                    value={editedTaskName}
+                    onChange={(e) => setEditedTaskName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !isEditingSaving) {
+                        handleSaveTaskName()
+                      }
+                    }}
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
+                    placeholder={t('chatComponents.taskHistory.taskNamePlaceholder')}
+                    autoFocus
+                  />
+                </div>
+
+                {editError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-sm text-red-700">{editError}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-gray-50 rounded-b-2xl flex items-center justify-end gap-3">
+              <button
+                onClick={() => setShowEditModal(false)}
+                disabled={isEditingSaving}
+                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {t('chatComponents.taskHistory.cancel')}
+              </button>
+              <button
+                onClick={handleSaveTaskName}
+                disabled={isEditingSaving || !editedTaskName.trim()}
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {isEditingSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+                {isEditingSaving ? t('chatComponents.taskHistory.saving') : t('chatComponents.taskHistory.save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
-

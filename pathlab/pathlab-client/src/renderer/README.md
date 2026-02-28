@@ -33,7 +33,7 @@
    - Streaming LLM responses
    - Task description parsing
    - Automatic parameter extraction
-   - Conversation history (in-memory)
+   - Conversation history (database-persisted)
 
 3. **Dashboard** - System overview and statistics
    - WSI count and label distribution
@@ -53,28 +53,14 @@
 ## Project Structure
 
 ```
-pathlab/services/frontend/
+pathlab/pathlab-client/src/renderer/
 ├── src/
 │   ├── components/          # Reusable UI components
 │   │   ├── Layout.tsx       # Main layout with sidebar navigation
 │   │   ├── WSIViewer.tsx    # OpenSeadragon wrapper component
 │   │   ├── PageHeader.tsx   # Page header component
 │   │   └── ...
-│   ├── pages/               # Route-level page components
-│   │   ├── LoginPage.tsx             # Login/welcome page (default)
-│   │   ├── DashboardPage.tsx         # System overview
-│   │   ├── AIChatPage.tsx            # AI assistant interface
-│   │   ├── ToolsPage.tsx             # Utility tools
-│   │   ├── ListPage.tsx              # WSI browser (/wsi-list)
-│   │   ├── DetailPage.tsx            # WSI viewer (/wsi/:wsi_id)
-│   │   ├── UploadPage.tsx            # WSI registration (/register)
-│   │   ├── NewTaskPage.tsx           # Manual task setup (/task-setup)
-│   │   ├── TaskListPage.tsx          # Task browser (/task-list)
-│   │   ├── TaskDetailPage.tsx        # Task details (/task/:task_id)
-│   │   ├── ResultsViewerPage.tsx     # Results viewer (/results)
-│   │   ├── ReportGeneratorPage.tsx   # Report generator (/reports)
-│   │   ├── StorageManagementPage.tsx # Storage management (/storage)
-│   │   └── SettingsPage.tsx          # Configuration (/settings)
+│   ├── pages/               # Route-level page components (14 pages)
 │   ├── contexts/            # React Context
 │   │   ├── AuthContext.tsx           # Authentication state
 │   │   └── BackgroundTaskContext.tsx # Background task management
@@ -155,7 +141,7 @@ export async function analyzeWSI(wsi_id: string, params: any): Promise<{ task_id
 
 ```bash
 # Navigate to frontend directory
-cd pathlab/services/frontend
+cd pathlab/pathlab-client/src/renderer
 
 # Install dependencies
 npm install
@@ -254,7 +240,7 @@ All components use Tailwind CSS utility classes for consistent styling:
 ```
 User navigates to /wsi/{wsi_id}
   ↓
-DetailPage fetches metadata from Gateway
+WSIViewerPage fetches metadata from Gateway
   ↓
 WSIViewer component initializes OpenSeadragon
   ↓
@@ -343,12 +329,12 @@ Currently no automated tests. Recommended setup:
 - ✅ Task submission
 - ✅ Results display
 
-### Phase 2 (Planned)
+### Phase 2 (Partially Complete)
 - [ ] Multi-user collaboration features
 - [ ] Annotation tools (drawing, measurements)
-- [ ] Advanced visualization (heatmaps, overlays)
+- ✅ Advanced visualization (heatmaps, overlays)
 - [ ] Batch analysis support
-- [ ] Export functionality (PDF reports, CSV)
+- ✅ Export functionality (PDF reports, CSV)
 
 ### Phase 3 (Future)
 - [ ] Real-time collaboration (WebSocket)

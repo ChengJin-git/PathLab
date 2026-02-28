@@ -7,6 +7,7 @@ import { BackgroundTaskPanel } from './components/BackgroundTaskPanel'
 import App from './App'
 import './index.css'
 import { initializeApiConfig, updateApiBase } from './config'
+import './i18n'
 
 // Use the base URL from Vite config
 const basename = import.meta.env.BASE_URL
@@ -29,11 +30,27 @@ if ('serviceWorker' in navigator && !isElectron) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js', { scope: '/' })
       .then((registration) => {
-        // console.log('[SW] Service Worker registered with scope:', registration.scope)
+        // Check for SW updates every 30 minutes
+        const UPDATE_INTERVAL = 30 * 60 * 1000
+        setInterval(() => {
+          registration.update().catch(() => {})
+        }, UPDATE_INTERVAL)
+
+        // When a new SW is found and installed, reload the page to use it
+        registration.addEventListener('updatefound', () => {
+          const newWorker = registration.installing
+          if (newWorker) {
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
+                // New version activated, reload to use updated resources
+                console.log('[SW] New version available, reloading...')
+                window.location.reload()
+              }
+            })
+          }
+        })
       })
-      .catch((error) => {
-        // console.log('[SW] Service Worker registration failed:', error)
-      })
+      .catch(() => {})
   })
 }
 

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { Trash2, Info } from 'lucide-react'
 import { Button } from '../ui/button'
 
@@ -11,12 +12,16 @@ export interface ConfirmDialogState {
   showCancel?: boolean
 }
 
+export type ShowConfirmDialog = (config: Omit<ConfirmDialogState, 'isOpen'>) => void
+
 export interface ConfirmDialogProps {
   dialog: ConfirmDialogState
   onClose: () => void
 }
 
 export function ConfirmDialog({ dialog, onClose }: ConfirmDialogProps) {
+  const { t } = useTranslation()
+
   if (!dialog.isOpen) return null
 
   return (
@@ -45,7 +50,7 @@ export function ConfirmDialog({ dialog, onClose }: ConfirmDialogProps) {
               className="flex-1"
               onClick={onClose}
             >
-              Cancel
+              {t('settings.confirmDialog.cancel')}
             </Button>
           )}
           <Button
@@ -58,11 +63,10 @@ export function ConfirmDialog({ dialog, onClose }: ConfirmDialogProps) {
             }`}
             onClick={dialog.onConfirm}
           >
-            {dialog.confirmText || 'Confirm'}
+            {dialog.confirmText || t('settings.confirmDialog.confirm')}
           </Button>
         </div>
       </div>
     </div>
   )
 }
-

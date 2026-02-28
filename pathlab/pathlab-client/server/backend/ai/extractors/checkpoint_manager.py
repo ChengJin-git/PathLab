@@ -264,6 +264,32 @@ def gpfm(hf_token: str) -> str:
     return local_ckpt_path
 
 
+def smartccs(hf_token: str) -> str:
+    """Return the local path to the SmartCCS model checkpoint."""
+    ckpt_filename = "CCS_vitl_100M.pth"
+    local_dir = os.path.join(FEATURE_EXTRACTOR_CKPT_SAVE_DIR, "SmartCCS")
+    local_ckpt_path = os.path.join(local_dir, ckpt_filename)
+    if not os.path.exists(local_ckpt_path):
+        raise FileNotFoundError(
+            f"SmartCCS checkpoint not found at {local_ckpt_path}. "
+            "Please place CCS_vitl_100M.pth in the SmartCCS checkpoints directory."
+        )
+    return local_ckpt_path
+
+
+def smartcyto(hf_token: str) -> str:
+    """Return the local path to the SmartCyto model checkpoint."""
+    ckpt_filename = "smartcyto_vl.pt"
+    local_dir = os.path.join(FEATURE_EXTRACTOR_CKPT_SAVE_DIR, "SmartCyto")
+    local_ckpt_path = os.path.join(local_dir, ckpt_filename)
+    if not os.path.exists(local_ckpt_path):
+        raise FileNotFoundError(
+            f"SmartCyto checkpoint not found at {local_ckpt_path}. "
+            "Please place smartcyto_vl.pt in the SmartCyto checkpoints directory."
+        )
+    return local_ckpt_path
+
+
 __supported_extractors = {
     "CONCH": conch,
     "UNI": uni,
@@ -280,6 +306,8 @@ __supported_extractors = {
     "H-Optimus-0": h_optimus_0,
     "mSTAR": mstar,
     "GPFM": gpfm,
+    "SmartCCS": smartccs,
+    "SmartCyto": smartcyto,
 }
 
 

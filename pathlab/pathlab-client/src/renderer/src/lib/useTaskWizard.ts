@@ -74,7 +74,11 @@ export function useTaskWizard(): UseTaskWizardReturn {
   // Handle dataLevel change - reset taskType if needed
   const handleSetDataLevel = useCallback((level: DataLevel) => {
     setDataLevel(level)
-    // If switching to patch and taskType is survival, reset to classification
+    // If switching to WSI and taskType is segmentation, reset to classification (segmentation is patch-only)
+    if (level === 'wsi' && taskType === 'segmentation') {
+      setTaskType('classification')
+    }
+    // If switching to patch and taskType is survival, reset to classification (survival is WSI-only)
     if (level === 'patch' && taskType === 'survival') {
       setTaskType('classification')
     }
@@ -84,6 +88,10 @@ export function useTaskWizard(): UseTaskWizardReturn {
   const handleSetTaskType = useCallback((type: TaskType) => {
     // Survival prediction is only available for WSI level
     if (type === 'survival' && dataLevel === 'patch') {
+      return
+    }
+    // Segmentation is only available for patch level
+    if (type === 'segmentation' && dataLevel === 'wsi') {
       return
     }
     setTaskType(type)

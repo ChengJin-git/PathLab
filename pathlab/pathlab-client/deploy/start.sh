@@ -37,29 +37,114 @@ echo ""
 mkdir -p "$LOG_DIR"
 
 # ========== Step 1: 停止旧进程 ==========
-echo -e "${YELLOW}[1/4]${NC} 停止旧进程..."
+echo -e "${YELLOW}[1/5]${NC} 停止旧进程..."
 
-# Kill existing backend processes
-pkill -f "python.*server/main.py" 2>/dev/null || true
-pkill -f "uvicorn.*gateway" 2>/dev/null || true
-pkill -f "uvicorn.*preprocessing" 2>/dev/null || true
-pkill -f "uvicorn.*ai" 2>/dev/null || true
+# Function to kill process by port
+kill_by_port() {
+    local port=$1
+    local pids=$(ss -tlnp 2>/dev/null | grep ":$port " | grep -oP 'pid=\K[0-9]+' | sort -u)
+    if [ -n "$pids" ]; then
+        echo "  清理端口 $port (PID: $pids)"
+        for pid in $pids; do
+            kill -9 $pid 2>/dev/null || true
+        done
+    fi
+}
 
-# Wait for ports to be released
-sleep 2
+# Kill existing backend processes by pattern
+pkill -9 -f "python.*server/main.py" 2>/dev/null || true
+pkill -9 -f "uvicorn.*gateway" 2>/dev/null || true
+pkill -9 -f "uvicorn.*preprocessing" 2>/dev/null || true
+pkill -9 -f "uvicorn.*ai" 2>/dev/null || true
 
+# Kill vllm / MinerU related processes (spawned by PDF parsing)
+pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
+pkill -9 -f "vllm.engine" 2>/dev/null || true
+pkill -9 -f "ray::vLLM" 2>/dev/null || true
+pkill -9 -f "EngineCore" 2>/dev/null || true
+pkill -9 -f "vllm.v1" 2>/dev/null || true
+
+# Kill entire process tree from previous PID file (catches orphaned children)
+if [ -f "$LOG_DIR/backend.pid" ]; then
+    OLD_PID=$(cat "$LOG_DIR/backend.pid" 2>/dev/null)
+    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+        echo "  清理旧进程树 (PID: $OLD_PID)"
+        pkill -9 -P "$OLD_PID" 2>/dev/null || true
+        kill -9 "$OLD_PID" 2>/dev/null || true
+    fi
+fi
+
+# Wait for ports to be released with retry logic
+MAX_RETRIES=5
+RETRY_COUNT=0
+
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    sleep 2
+
+    if ! ss -tlnp 2>/dev/null | grep -qE ':6100|:6101|:6102'; then
+        # Ports are free
+        break
+    fi
+
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+
+    if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+        echo -e "${YELLOW}[!] 端口仍被占用，强制清理... (尝试 $RETRY_COUNT/$MAX_RETRIES)${NC}"
+        kill_by_port 6100
+        kill_by_port 6101
+        kill_by_port 6102
+    fi
+done
+
+# Final check
 if ss -tlnp 2>/dev/null | grep -qE ':6100|:6101|:6102'; then
-    echo -e "${RED}[!] 端口仍被占用，强制清理...${NC}"
-    fuser -k 6100/tcp 2>/dev/null || true
-    fuser -k 6101/tcp 2>/dev/null || true
-    fuser -k 6102/tcp 2>/dev/null || true
-    sleep 1
+    echo -e "${RED}[✗] 端口清理失败，请手动执行:${NC}"
+    echo -e "    sudo fuser -k 6100/tcp 6101/tcp 6102/tcp"
+    exit 1
 fi
 
 echo -e "${GREEN}[✓]${NC} 旧进程已清理"
 
-# ========== Step 2: 构建前端 ==========
-echo -e "${YELLOW}[2/4]${NC} 构建前端..."
+# ========== Step 2: 确保 Redis 运行 ==========
+echo -e "${YELLOW}[2/5]${NC} 检查 Redis..."
+
+if command -v redis-cli &> /dev/null && redis-cli ping &> /dev/null; then
+    echo -e "${GREEN}[✓]${NC} Redis 已运行"
+else
+    # Try to start via systemd
+    if systemctl is-active --quiet redis-server 2>/dev/null || systemctl is-active --quiet redis 2>/dev/null; then
+        echo -e "${GREEN}[✓]${NC} Redis 已运行 (systemd)"
+    else
+        echo -n "  启动 Redis..."
+        if sudo systemctl start redis-server 2>/dev/null || sudo systemctl start redis 2>/dev/null; then
+            sleep 1
+            if redis-cli ping &> /dev/null; then
+                echo ""
+                echo -e "${GREEN}[✓]${NC} Redis 启动成功"
+            else
+                echo ""
+                echo -e "${RED}[✗] Redis 启动后无法连接，请检查 Redis 配置${NC}"
+                exit 1
+            fi
+        else
+            # Fallback: try redis-server directly
+            echo ""
+            echo -e "${YELLOW}[!]${NC} systemd 启动失败，尝试直接启动 redis-server..."
+            redis-server --daemonize yes --loglevel warning 2>/dev/null
+            sleep 1
+            if redis-cli ping &> /dev/null; then
+                echo -e "${GREEN}[✓]${NC} Redis 启动成功 (standalone)"
+            else
+                echo -e "${RED}[✗] Redis 启动失败，请手动安装/启动 Redis:${NC}"
+                echo -e "    sudo apt install redis-server && sudo systemctl enable redis-server"
+                exit 1
+            fi
+        fi
+    fi
+fi
+
+# ========== Step 3: 构建前端 ==========
+echo -e "${YELLOW}[3/5]${NC} 构建前端..."
 
 cd "$PROJECT_DIR"
 
@@ -79,8 +164,8 @@ cp -r public/images dist/ 2>/dev/null || true
 
 echo -e "${GREEN}[✓]${NC} 前端构建完成: $RENDERER_DIR/dist"
 
-# ========== Step 3: 启动后端 ==========
-echo -e "${YELLOW}[3/4]${NC} 启动后端服务..."
+# ========== Step 4: 启动后端 ==========
+echo -e "${YELLOW}[4/5]${NC} 启动后端服务..."
 
 cd "$SERVER_DIR"
 
@@ -119,8 +204,8 @@ if ! curl -s http://127.0.0.1:6100/health > /dev/null 2>&1; then
     exit 1
 fi
 
-# ========== Step 4: 检查 Nginx ==========
-echo -e "${YELLOW}[4/4]${NC} 检查 Nginx..."
+# ========== Step 5: 检查 Nginx ==========
+echo -e "${YELLOW}[5/5]${NC} 检查 Nginx..."
 
 if systemctl is-active --quiet nginx 2>/dev/null; then
     echo -e "${GREEN}[✓]${NC} Nginx 运行中"

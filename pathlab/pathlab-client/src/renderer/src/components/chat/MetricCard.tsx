@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { Loader2, TrendingUp, Target, Percent, Activity, AlertCircle, RefreshCw } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { getTaskQuickAnalysis, getTrainingTasks } from '../../api'
 import { METRIC_COLORS, formatMetricName, formatMetricValue, isPercentageMetric } from '../../constants/metrics'
 
@@ -55,6 +56,7 @@ export function removeMetricConfigBlock(content: string): string {
 }
 
 export function MetricCard({ config, onError }: MetricCardProps) {
+  const { t } = useTranslation()
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string>('')
   const [metrics, setMetrics] = useState<Record<string, MetricValue>>({})
@@ -76,11 +78,11 @@ export function MetricCard({ config, onError }: MetricCardProps) {
       try {
         // First validate task exists
         const tasks = await getTrainingTasks()
-        const found = tasks.some(t => t.task_id === config.task_id && t.status === 'completed')
+        const found = tasks.some(task => task.task_id === config.task_id && task.status === 'completed')
         
         if (!found) {
           setTaskExists(false)
-          setError('Task not found or not completed')
+          setError(t('chatComponents.metricCard.taskNotFoundOrNotCompleted'))
           return
         }
         setTaskExists(true)
@@ -92,7 +94,7 @@ export function MetricCard({ config, onError }: MetricCardProps) {
         })
 
         if (!result.has_analysis) {
-          setError(result.message || 'No analysis results available')
+          setError(result.message || t('chatComponents.metricCard.noAnalysisResults'))
           return
         }
 
@@ -101,7 +103,7 @@ export function MetricCard({ config, onError }: MetricCardProps) {
         setNumSamples(result.num_samples)
         setClasses(result.classes || [])
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Failed to fetch metrics'
+        const msg = err instanceof Error ? err.message : t('chatComponents.metricCard.failedToFetchMetrics')
         setError(msg)
         onErrorRef.current?.(msg)
       } finally {
@@ -116,7 +118,6 @@ export function MetricCard({ config, onError }: MetricCardProps) {
   const handleRefresh = () => {
     setIsLoading(true)
     setError('')
-    // Trigger re-fetch by changing key would be ideal, but for simplicity:
     window.location.reload()
   }
 
@@ -138,7 +139,7 @@ export function MetricCard({ config, onError }: MetricCardProps) {
       <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-4 sm:p-6">
         <div className="flex items-center justify-center gap-2">
           <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-          <span className="text-gray-600 text-sm sm:text-base">Loading metrics...</span>
+          <span className="text-gray-600 text-sm sm:text-base">{t('chatComponents.metricCard.loadingMetrics')}</span>
         </div>
       </div>
     )
@@ -150,12 +151,12 @@ export function MetricCard({ config, onError }: MetricCardProps) {
         <div className="px-4 sm:px-5 py-3 sm:py-4 bg-red-50 border-b border-red-100">
           <h3 className="font-semibold text-red-800 flex items-center gap-2 text-sm sm:text-base">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            Metrics Unavailable
+            {t('chatComponents.metricCard.metricsUnavailable')}
           </h3>
         </div>
         <div className="p-4 sm:p-5">
           <p className="text-red-700 text-sm">{error}</p>
-          <p className="text-gray-500 text-xs mt-2 truncate">Task: {config.task_name || config.task_id}</p>
+          <p className="text-gray-500 text-xs mt-2 truncate">{t('chatComponents.metricCard.task')}: {config.task_name || config.task_id}</p>
         </div>
       </div>
     )
@@ -168,17 +169,17 @@ export function MetricCard({ config, onError }: MetricCardProps) {
         <div className="min-w-0 flex-1">
           <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
             <TrendingUp className="w-4 h-4 text-indigo-600 flex-shrink-0" />
-            <span className="truncate">Performance Metrics</span>
+            <span className="truncate">{t('chatComponents.metricCard.title')}</span>
           </h3>
           <p className="text-xs text-gray-500 mt-1 truncate">
             {config.task_name || config.task_id}
-            {numSamples && ` • ${numSamples} samples`}
+            {numSamples && ` • ${t('chatComponents.metricCard.samples', { count: numSamples })}`}
           </p>
         </div>
         <button
           onClick={handleRefresh}
           className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-colors flex-shrink-0"
-          title="Refresh"
+          title={t('chatComponents.metricCard.refresh')}
         >
           <RefreshCw className="w-4 h-4" />
         </button>
@@ -226,7 +227,7 @@ export function MetricCard({ config, onError }: MetricCardProps) {
         {/* Class-level metrics (optional) */}
         {config.show_class_metrics && Object.keys(classMetrics).length > 0 && (
           <div className="mt-4 sm:mt-5 pt-4 sm:pt-5 border-t border-gray-100">
-            <h4 className="text-xs sm:text-sm font-semibold text-gray-700 mb-2 sm:mb-3">Per-Class Metrics</h4>
+            <h4 className="text-xs sm:text-sm font-semibold text-gray-700 mb-2 sm:mb-3">{t('chatComponents.metricCard.perClassMetrics')}</h4>
             <div className="space-y-2 sm:space-y-3">
               {Object.entries(classMetrics).map(([className, metrics]) => (
                 <div key={className} className="bg-gray-50 rounded-lg p-2 sm:p-3">
@@ -262,4 +263,3 @@ export function MetricCard({ config, onError }: MetricCardProps) {
     </div>
   )
 }
-

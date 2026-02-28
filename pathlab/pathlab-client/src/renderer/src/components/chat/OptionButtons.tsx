@@ -31,11 +31,19 @@ export function parseOptions(content: string): Option[] | null {
   const lines = optionsText.split('\n')
   for (const line of lines) {
     const trimmed = line.trim()
-    if (trimmed.startsWith('-')) {
-      const optionText = trimmed.slice(1).trim()
-      if (optionText.length > 0) {
-        options.push({ text: optionText })
+    // Support multiple list formats: "- text", "* text", "1. text", "1) text"
+    let optionText: string | null = null
+    if (trimmed.startsWith('-') || trimmed.startsWith('*')) {
+      optionText = trimmed.slice(1).trim()
+    } else {
+      // Match numbered list: "1. text" or "1) text"
+      const numberedMatch = trimmed.match(/^[0-9]+[.)]\s+(.+)/)
+      if (numberedMatch) {
+        optionText = numberedMatch[1].trim()
       }
+    }
+    if (optionText && optionText.length > 0) {
+      options.push({ text: optionText })
     }
   }
 

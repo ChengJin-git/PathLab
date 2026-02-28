@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Loader2, XCircle, CheckCircle2, AlertCircle, StopCircle } from 'lucide-react'
 import { cancelQueueTask } from '../../api'
 
@@ -38,6 +39,7 @@ export function removeCancelTaskBlock(content: string): string {
 }
 
 export function CancelTaskCard({ config, onSuccess, onError, cancelTrigger }: CancelTaskCardProps) {
+  const { t } = useTranslation()
   const [isCancelling, setIsCancelling] = useState(false)
   const [isCancelled, setIsCancelled] = useState(false)
   const [error, setError] = useState<string>('')
@@ -90,12 +92,12 @@ export function CancelTaskCard({ config, onSuccess, onError, cancelTrigger }: Ca
         <div className="px-4 sm:px-5 py-3 sm:py-4 bg-green-50 border-b border-green-100">
           <h3 className="font-semibold text-green-800 flex items-center gap-1.5 sm:gap-2 text-sm sm:text-base">
             <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-            <span className="truncate">Task Cancelled Successfully</span>
+            <span className="truncate">{t('chatComponents.cancelTask.cancelledSuccess')}</span>
           </h3>
         </div>
         <div className="px-4 sm:px-5 py-3 sm:py-4">
           <p className="text-gray-600 text-sm sm:text-base">
-            Task <span className="font-medium truncate">{config.task_name || config.task_id}</span> has been cancelled.
+            {t('chatComponents.cancelTask.taskHasBeenCancelled', { name: config.task_name || config.task_id })}
           </p>
         </div>
       </div>
@@ -108,7 +110,7 @@ export function CancelTaskCard({ config, onSuccess, onError, cancelTrigger }: Ca
         <div className="px-4 sm:px-5 py-3 sm:py-4 bg-red-50 border-b border-red-100">
           <h3 className="font-semibold text-red-800 flex items-center gap-1.5 sm:gap-2 text-sm sm:text-base">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            <span className="truncate">Failed to Cancel Task</span>
+            <span className="truncate">{t('chatComponents.cancelTask.failedToCancel')}</span>
           </h3>
         </div>
         <div className="px-4 sm:px-5 py-3 sm:py-4">
@@ -118,7 +120,7 @@ export function CancelTaskCard({ config, onSuccess, onError, cancelTrigger }: Ca
             className="mt-3 w-full sm:w-auto px-3 sm:px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm flex items-center justify-center gap-1.5 sm:gap-2"
           >
             <XCircle className="w-4 h-4 flex-shrink-0" />
-            <span>Retry</span>
+            <span>{t('chatComponents.cancelTask.retry')}</span>
           </button>
         </div>
       </div>
@@ -131,7 +133,7 @@ export function CancelTaskCard({ config, onSuccess, onError, cancelTrigger }: Ca
       <div className="px-4 sm:px-5 py-3 sm:py-4 bg-gradient-to-r from-red-50 to-orange-50 border-b border-gray-100">
         <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
           <StopCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
-          <span className="truncate">Cancel Training Task</span>
+          <span className="truncate">{t('chatComponents.cancelTask.cancelTrainingTask')}</span>
         </h3>
         {config.reason && (
           <p className="text-xs text-gray-500 mt-1">{config.reason}</p>
@@ -143,10 +145,10 @@ export function CancelTaskCard({ config, onSuccess, onError, cancelTrigger }: Ca
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
           <div className="min-w-0 flex-1">
             <p className="text-gray-700 text-sm sm:text-base truncate">
-              Task: <span className="font-medium">{config.task_name || config.task_id}</span>
+              {t('chatComponents.cancelTask.taskLabel')}: <span className="font-medium">{config.task_name || config.task_id}</span>
             </p>
             <p className="text-xs text-gray-500 mt-1 truncate">
-              ID: <span className="font-mono">{config.task_id}</span>
+              {t('chatComponents.cancelTask.idLabel')}: <span className="font-mono">{config.task_id}</span>
             </p>
           </div>
           <button
@@ -157,12 +159,12 @@ export function CancelTaskCard({ config, onSuccess, onError, cancelTrigger }: Ca
             {isCancelling ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
-                <span>Cancelling...</span>
+                <span>{t('chatComponents.cancelTask.cancelling')}</span>
               </>
             ) : (
               <>
                 <XCircle className="w-4 h-4 flex-shrink-0" />
-                <span>Cancel Task</span>
+                <span>{t('chatComponents.cancelTask.cancelTask')}</span>
               </>
             )}
           </button>

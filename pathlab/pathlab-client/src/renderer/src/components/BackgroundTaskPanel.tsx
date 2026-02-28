@@ -7,6 +7,8 @@
  */
 
 import React from 'react'
+import { useTranslation } from 'react-i18next'
+import { TFunction } from 'i18next'
 import { useBackgroundTask, BackgroundTask, TaskItem, TaskStatus } from '../contexts/BackgroundTaskContext'
 import { cn } from '../lib/utils'
 import {
@@ -15,7 +17,6 @@ import {
   ANALYSIS_STATUS_LABELS
 } from '../constants/status'
 
-// Status icons
 const StatusIcon: React.FC<{ status: TaskStatus; className?: string }> = ({ status, className }) => {
   switch (status) {
     case 'pending':
@@ -52,70 +53,76 @@ const StatusIcon: React.FC<{ status: TaskStatus; className?: string }> = ({ stat
   }
 }
 
-// Task item row
-const TaskItemRow: React.FC<{ item: TaskItem }> = ({ item }) => (
-  <div className="flex items-center gap-2 py-1 text-xs">
-    <StatusIcon status={item.status} className="flex-shrink-0" />
-    <span className="flex-1 truncate text-gray-600" title={item.name}>{item.name}</span>
-    {item.status === 'running' && (
-      <span className="text-gray-400">{item.progress}%</span>
-    )}
-    {item.error && (
-      <span className="text-red-500 truncate max-w-[100px]" title={item.error}>Error</span>
-    )}
-  </div>
-)
+const TaskItemRow: React.FC<{ item: TaskItem }> = ({ item }) => {
+  const { t } = useTranslation()
+  return (
+    <div className="flex items-center gap-2 py-1 text-xs">
+      <StatusIcon status={item.status} className="flex-shrink-0" />
+      <span className="flex-1 truncate text-gray-600" title={item.name}>{item.name}</span>
+      {item.status === 'running' && (
+        <span className="text-gray-400">{item.progress}%</span>
+      )}
+      {item.error && (
+        <span className="text-red-500 truncate max-w-[100px]" title={item.error}>{t('backgroundTask.error')}</span>
+      )}
+    </div>
+  )
+}
 
-// Get type label for display
-const getTypeLabel = (task: BackgroundTask): string => {
-  // Check if this is a merged external validation task in analysis phase
+const getTypeLabel = (task: BackgroundTask, t: TFunction): string => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isInAnalysisPhase = !!(task as any)._analysisTaskId
 
   switch (task.type) {
     case 'upload':
-      return 'Upload'
+      return t('backgroundTask.typeLabels.upload')
     case 'delete_wsi':
-      return 'Delete File(s)'
+      return t('backgroundTask.typeLabels.deleteFiles')
     case 'delete_task':
-      return 'Delete Task(s)'
+      return t('backgroundTask.typeLabels.deleteTasks')
     case 'training':
-      // Show training status if available
       if (task.serverTaskStatus) {
-        return `${TRAINING_STATUS_LABELS[task.serverTaskStatus] || task.serverTaskStatus}`
+        return t(`backgroundTask.serverStatus.training.${task.serverTaskStatus}`, { defaultValue: TRAINING_STATUS_LABELS[task.serverTaskStatus] || task.serverTaskStatus })
       }
-      return 'Training'
+      return t('backgroundTask.typeLabels.training')
     case 'external_validation':
-      // Check if in analysis phase (merged with analysis task)
       if (isInAnalysisPhase) {
-        return 'Analyzing Results'
+        return t('backgroundTask.typeLabels.analyzingResults')
       }
-      // Show validation/inference status if available
       if (task.serverTaskStatus) {
-        return `${VALIDATION_STATUS_LABELS[task.serverTaskStatus] || task.serverTaskStatus}`
+        return t(`backgroundTask.serverStatus.validation.${task.serverTaskStatus}`, { defaultValue: VALIDATION_STATUS_LABELS[task.serverTaskStatus] || task.serverTaskStatus })
       }
-      return 'External Validation'
-    case 'analysis':
-      // Show analysis type (internal/external) with status
-      const analysisTypeLabel = task.analysisType === 'external' ? 'External Analysis' : 'Internal Analysis'
-      if (task.serverTaskStatus) {
-        return `${analysisTypeLabel}`
+      return t('backgroundTask.typeLabels.externalValidation')
+    case 'analysis': {
+      const analysisTypeLabel = task.analysisType === 'external'
+        ? t('backgroundTask.typeLabels.externalAnalysis')
+        : t('backgroundTask.typeLabels.internalAnalysis')
+      if (task.serverTaskStatus === 'completed') {
+        return t('backgroundTask.serverStatus.training.completed', { defaultValue: ANALYSIS_STATUS_LABELS['completed'] || 'Completed' })
+      }
+      if (task.serverTaskStatus === 'cancelled') {
+        return t('backgroundTask.serverStatus.training.cancelled', { defaultValue: ANALYSIS_STATUS_LABELS['cancelled'] || 'Cancelled' })
+      }
+      if (task.serverTaskStatus === 'failed') {
+        return t('backgroundTask.serverStatus.training.failed', { defaultValue: ANALYSIS_STATUS_LABELS['failed'] || 'Failed' })
       }
       return analysisTypeLabel
+    }
     case 'migration':
-      return 'Storage'
+      return t('backgroundTask.typeLabels.storage')
     case 'batch_import':
-      return 'Batch Import'
+      return t('backgroundTask.typeLabels.batchImport')
     case 'batch_update_metadata':
-      return 'Metadata Update'
+      return t('backgroundTask.typeLabels.metadataUpdate')
     case 'delete_external':
-      return 'Delete External'
+      return t('backgroundTask.typeLabels.deleteExternal')
+    case 'extraction':
+      return t('backgroundTask.typeLabels.extraction')
     default:
-      return 'Task'
+      return t('backgroundTask.typeLabels.task')
   }
 }
 
-// Single task card
 const TaskCard: React.FC<{
   task: BackgroundTask;
   onCancel: () => void;
@@ -124,21 +131,20 @@ const TaskCard: React.FC<{
 }> = ({
   task, onCancel, onCancelServer, onRemove
 }) => {
+    const { t } = useTranslation()
     const [isCancelling, setIsCancelling] = React.useState(false)
     const [expanded, setExpanded] = React.useState(task.status === 'running')
     const [showCancelConfirm, setShowCancelConfirm] = React.useState(false)
     const isServerTask = task.isServerTask === true
     const isTrainingTask = task.type === 'training'
     const isExternalValidationTask = task.type === 'external_validation'
+    const isAnalysisTask = task.type === 'analysis'
 
-    const typeLabel = getTypeLabel(task)
+    const typeLabel = getTypeLabel(task, t)
 
-    // For training tasks, use different progress bar colors based on stage
     const getProgressBarColor = () => {
-      if (task.type === 'training') {
+      if (task.type === 'training' && task.serverTaskStatus) {
         switch (task.serverTaskStatus) {
-          case 'preprocessing':
-            return 'bg-yellow-500'
           case 'extracting':
             return 'bg-orange-500'
           case 'training':
@@ -179,7 +185,7 @@ const TaskCard: React.FC<{
                       </span>
                     )}
                     {task.skippedCount !== undefined && task.skippedCount > 0 && (
-                      <span className="text-gray-500 font-bold text-xs flex items-center" title="Skipped">
+                      <span className="text-gray-500 font-bold text-xs flex items-center" title={t('backgroundTask.skipped')}>
                         {task.skippedCount}
                         <svg className="w-2.5 h-2.5 ml-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M18 12H6" />
@@ -203,23 +209,30 @@ const TaskCard: React.FC<{
                 </div>
                 {task.title.startsWith('Relocating to ') ? (
                   <div className="flex flex-col text-sm font-medium text-left w-full">
-                    <span className="text-gray-500 text-xs">Relocating to</span>
+                    <span className="text-gray-500 text-xs">{t('backgroundTask.relocatingTo')}</span>
                     <span className="break-words text-gray-700 leading-tight">{task.title.replace('Relocating to ', '')}</span>
                   </div>
                 ) : (
                   <div className="text-sm font-semibold text-gray-900 break-words text-left leading-normal w-full">
                     {task.title}
+                    {task.taskCategory && (
+                      <span className="text-xs font-normal text-gray-400 ml-1">
+                        ({t(`backgroundTask.taskCategory.${task.taskCategory}`, { defaultValue: task.taskCategory })})
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
             ) : (
               <div className="flex items-center gap-2 w-full min-w-0 h-5">
                 <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider flex-shrink-0 leading-none">
-                  {task.type === 'batch_import' ? 'Import' : 
-                   task.type === 'batch_update_metadata' ? 'Metadata' : typeLabel}
+                  {task.type === 'batch_import' ? t('backgroundTask.typeLabels.import') : 
+                   task.type === 'batch_update_metadata' ? t('backgroundTask.typeLabels.metadata') : typeLabel}
                 </span>
                 <span className="text-sm font-medium text-gray-700 truncate flex-1 min-w-0 leading-none">
-                  {task.title}
+                  {task.taskCategory
+                    ? `${task.title} (${t(`backgroundTask.taskCategory.${task.taskCategory}`, { defaultValue: task.taskCategory })})`
+                    : task.title}
                 </span>
                 <div className="flex items-center gap-2 flex-shrink-0 leading-none">
                   {task.successCount > 0 && (
@@ -256,12 +269,10 @@ const TaskCard: React.FC<{
             )}
           </div>
           <div className={cn("flex flex-row items-center gap-1 h-5", expanded ? "self-start mt-0.5 h-auto" : "")}>
-            {/* Cancel button - for running/pending tasks (both local and server) */}
             {(task.status === 'running' || task.status === 'pending') && !showCancelConfirm && (
               <button
                 onClick={async (e) => {
                   e.stopPropagation()
-                  // Training tasks need confirmation before cancelling
                   if (isTrainingTask) {
                     setShowCancelConfirm(true)
                     return
@@ -276,7 +287,7 @@ const TaskCard: React.FC<{
                 }}
                 disabled={isCancelling}
                 className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-red-600 disabled:opacity-50"
-                title="Cancel"
+                title={t('backgroundTask.cancel')}
               >
                 {isCancelling ? (
                   <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -291,13 +302,12 @@ const TaskCard: React.FC<{
               </button>
             )}
 
-            {/* Inline Cancel Confirmation */}
             {showCancelConfirm && (
               <div 
                 className="flex items-center gap-1 animate-in slide-in-from-right-2 duration-200"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="text-[10px] uppercase font-bold text-gray-400 mr-1">Confirm?</div>
+                <div className="text-[10px] uppercase font-bold text-gray-400 mr-1">{t('backgroundTask.confirm')}</div>
                 <button
                   onClick={async () => {
                     setIsCancelling(true)
@@ -306,7 +316,7 @@ const TaskCard: React.FC<{
                     setIsCancelling(false)
                   }}
                   className="h-5 w-5 flex items-center justify-center text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-all shadow-sm ring-1 ring-inset ring-red-100"
-                  title="Confirm Stop"
+                  title={t('backgroundTask.confirmStop')}
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
@@ -315,7 +325,7 @@ const TaskCard: React.FC<{
                 <button
                   onClick={() => setShowCancelConfirm(false)}
                   className="h-5 w-5 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors"
-                  title="Keep Running"
+                  title={t('backgroundTask.keepRunning')}
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
@@ -324,12 +334,11 @@ const TaskCard: React.FC<{
               </div>
             )}
             
-            {/* Remove button - only for completed local tasks */}
             {!isServerTask && task.status !== 'running' && task.status !== 'pending' && (
               <button
                 onClick={(e) => { e.stopPropagation(); onRemove() }}
                 className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-gray-700"
-                title="Close"
+                title={t('backgroundTask.close')}
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
@@ -354,7 +363,7 @@ const TaskCard: React.FC<{
                 />
               </div>
             )}
-            {task.items.length > 0 && !(task.items.length === 1 && (task.items[0].name === task.title || isTrainingTask || isExternalValidationTask) && isServerTask) && (
+            {task.items.length > 0 && !(task.items.length === 1 && (task.items[0].name === task.title || isTrainingTask || isExternalValidationTask || isAnalysisTask) && isServerTask) && task.type !== 'extraction' && (
               <div className="max-h-40 overflow-y-auto mt-1">
                 {task.items.map(item => <TaskItemRow key={item.id} item={item} />)}
               </div>
@@ -365,13 +374,12 @@ const TaskCard: React.FC<{
     )
   }
 
-// Main panel component
 export function BackgroundTaskPanel(): React.ReactElement | null {
+  const { t } = useTranslation()
   const { tasks, isProcessing, cancelTask, cancelServerTask, removeTask, clearCompletedTasks, subscribeTrainingSSE, subscribeAnalysisSSE, subscribeStorageSSE } = useBackgroundTask()
   const [isOpen, setIsOpen] = React.useState(false)
   const panelRef = React.useRef<HTMLDivElement>(null)
 
-  // Subscribe to all SSE streams so background tasks are always monitored
   React.useEffect(() => {
     const unsubTraining = subscribeTrainingSSE()
     const unsubAnalysis = subscribeAnalysisSSE()
@@ -383,7 +391,6 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
     }
   }, [subscribeTrainingSSE, subscribeAnalysisSSE, subscribeStorageSSE])
 
-  // Close when clicking outside
   React.useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (panelRef.current && !panelRef.current.contains(event.target as Node)) {
@@ -406,32 +413,30 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
 
   const getStatusSummary = () => {
     const parts: string[] = []
-    if (runningCount > 0) parts.push(`${runningCount} running`)
-    if (pendingCount > 0) parts.push(`${pendingCount} queued`)
-    if (successCount > 0) parts.push(`${successCount} completed`)
-    if (failedCount > 0) parts.push(`${failedCount} failed`)
-    if (cancelledCount > 0) parts.push(`${cancelledCount} cancelled`)
+    if (runningCount > 0) parts.push(`${runningCount} ${t('backgroundTask.statusSummary.running')}`)
+    if (pendingCount > 0) parts.push(`${pendingCount} ${t('backgroundTask.statusSummary.queued')}`)
+    if (successCount > 0) parts.push(`${successCount} ${t('backgroundTask.statusSummary.completed')}`)
+    if (failedCount > 0) parts.push(`${failedCount} ${t('backgroundTask.statusSummary.failed')}`)
+    if (cancelledCount > 0) parts.push(`${cancelledCount} ${t('backgroundTask.statusSummary.cancelled')}`)
     
-    if (parts.length === 0) return `${tasks.length} tasks history`
+    if (parts.length === 0) return `${tasks.length} ${t('backgroundTask.statusSummary.tasksHistory')}`
     return parts.join(', ')
   }
 
   return (
     <div className="relative" ref={panelRef}>
-      {/* Trigger Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
           "p-2 rounded-lg transition-colors relative",
           isOpen ? "bg-gray-100 text-primary-600" : "text-gray-500 hover:text-primary-600 hover:bg-gray-100"
         )}
-        title="Background Tasks"
+        title={t('backgroundTask.title')}
       >
         <svg className={cn("w-5 h-5", isProcessing && "animate-pulse")} fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
         </svg>
 
-        {/* Badge */}
         {activeCount > 0 && (
           <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-blue-500 rounded-full border-2 border-white"></span>
         )}
@@ -440,19 +445,15 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
         )}
       </button>
 
-      {/* Dropdown Panel */}
       {isOpen && (
         <div className={cn(
           "bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden flex flex-col",
-          // Mobile: Fixed positioning for better visibility and width
           "fixed top-16 left-2 right-2 mt-2 max-h-[75vh]",
-          // Desktop: Absolute dropdown
           "sm:absolute sm:top-full sm:right-0 sm:left-auto sm:w-[450px] sm:max-h-[80vh] sm:mt-2 sm:mr-0"
         )}>
-          {/* Header */}
           <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
             <div>
-              <h3 className="font-semibold text-gray-900">Tasks</h3>
+              <h3 className="font-semibold text-gray-900">{t('backgroundTask.tasks')}</h3>
               <p className="text-xs text-gray-500">
                 {getStatusSummary()}
               </p>
@@ -462,18 +463,17 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
                 onClick={clearCompletedTasks}
                 className="text-xs text-blue-600 hover:text-blue-700 hover:underline px-2 py-1"
               >
-                Clear All
+                {t('backgroundTask.clearAll')}
               </button>
             )}
           </div>
 
-          {/* Task List */}
           {tasks.length === 0 ? (
             <div className="p-8 text-center text-gray-500 flex flex-col items-center">
               <svg className="w-12 h-12 text-gray-300 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
               </svg>
-              <p className="text-sm">No active tasks</p>
+              <p className="text-sm">{t('backgroundTask.noActiveTasks')}</p>
             </div>
           ) : (
             <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-gray-50/50">
@@ -493,4 +493,3 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
     </div>
   )
 }
-

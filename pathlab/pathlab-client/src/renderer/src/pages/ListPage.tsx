@@ -1,27 +1,33 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
 import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, invalidateWSIListCache, getFileType } from '../api'
-import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage } from 'lucide-react'
+import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { ALL_ACCEPT_STRING } from '../constants/fileTypes'
+import { formatBytes } from '../lib/utils'
+import { useAuth } from '../contexts/AuthContext'
+import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal } from '../components/list'
 
 export default function ListPage() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const location = useLocation()
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
   const initialDatasetId = (location.state as { dataset_id?: string } | null)?.dataset_id
   const { error: toastError, success: toastSuccess } = useToast()
   const { addDeleteWSITask } = useBackgroundTask()
+  const { isAdmin } = useAuth()
 
   // Dataset view state - null means showing dataset list, otherwise showing files in that dataset
   // selectedDatasetId is used for API calls, selectedDatasetName is used for display
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(initialDatasetId || null)
   const [selectedDatasetName, setSelectedDatasetName] = useState<string>('')
-  const [selectedDatasetType, setSelectedDatasetType] = useState<'classification' | 'survival'>('classification')
+  const [selectedDatasetType, setSelectedDatasetType] = useState<'classification' | 'survival' | 'segmentation'>('classification')
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
   const [datasetsLoading, setDatasetsLoading] = useState(true)
   const [datasetsError, setDatasetsError] = useState<string | undefined>()
@@ -92,8 +98,8 @@ export default function ListPage() {
   // Edit dataset - stores dataset_id for the dataset being edited (rename + type + aggregation_level change)
   const [editingDatasetId, setEditingDatasetId] = useState<string | null>(null)
   const [editingDatasetName, setEditingDatasetName] = useState('')
-  const [editingDatasetType, setEditingDatasetType] = useState<'classification' | 'survival'>('classification')
-  const [editingDatasetOriginalType, setEditingDatasetOriginalType] = useState<'classification' | 'survival'>('classification')
+  const [editingDatasetType, setEditingDatasetType] = useState<'classification' | 'survival' | 'segmentation'>('classification')
+  const [editingDatasetOriginalType, setEditingDatasetOriginalType] = useState<'classification' | 'survival' | 'segmentation'>('classification')
   const [editingDatasetDataLevel, setEditingDatasetDataLevel] = useState<'case' | 'file'>('file')
   const [editingDatasetOriginalDataLevel, setEditingDatasetOriginalDataLevel] = useState<'case' | 'file'>('file')
   const [editingDatasetSaving, setEditingDatasetSaving] = useState(false)
@@ -180,7 +186,7 @@ export default function ListPage() {
   const handleBackToDatasets = () => {
     // If we came from AI Chat, go back to AI Chat
     if (fromAIChat) {
-      navigate('/ai-chat')
+      navigate('/dashboard')
       return
     }
     // Otherwise, go back to dataset list
@@ -214,14 +220,6 @@ export default function ListPage() {
     }
   }
 
-  // Format bytes to human readable
-  const formatDatasetSize = (bytes: number): string => {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-  }
 
 
 
@@ -364,16 +362,8 @@ export default function ListPage() {
       setTimeout(() => reloadCurrentDataset(), 500)
     } catch (err) {
       console.error('Failed to add delete task:', err)
-      alert(`Failed to delete WSI: ${err}`)
+      alert(t('listPage.failedDeleteWsi', { error: String(err) }))
     }
-  }
-
-  const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
   }
 
   const toggleSelection = (wsi_id: string) => {
@@ -388,7 +378,7 @@ export default function ListPage() {
 
   const handleBatchDeleteClick = () => {
     if (selectedIds.size === 0) {
-      alert('Please select at least one file to delete')
+      alert(t('listPage.selectAtLeastOneToDelete'))
       return
     }
     setDeleteMode('standard')
@@ -416,7 +406,7 @@ export default function ListPage() {
       }
     } catch (err) {
       console.error('Batch delete error:', err)
-      alert(`Failed to delete files: ${err}`)
+      alert(t('listPage.failedDeleteFiles', { error: String(err) }))
     } finally {
       setDeleting(false)
     }
@@ -427,14 +417,14 @@ export default function ListPage() {
   const handleDatasetDeleteClick = async (e: React.MouseEvent, datasetId: string | null, datasetName: string) => {
     e.stopPropagation()
     if (!datasetId) {
-      alert("Cannot delete uncategorized dataset")
+      alert(t('listPage.cannotDeleteUncategorized'))
       return
     }
     setDeleting(true)
     try {
       const d = await fetchWSIList(datasetId)
       if (!d.items || d.items.length === 0) {
-        alert("Dataset is empty or could not be loaded")
+        alert(t('listPage.datasetEmptyOrNotLoaded'))
         return
       }
       const allIds = new Set(d.items.map((it: any) => it.wsi_id))
@@ -445,7 +435,7 @@ export default function ListPage() {
       setShowBatchDeleteModal(true)
     } catch (err) {
       console.error('Failed to prepare dataset delete:', err)
-      alert(`Failed to load dataset files: ${err}`)
+      alert(t('listPage.failedLoadDatasetFiles', { error: String(err) }))
     } finally {
       setDeleting(false)
     }
@@ -486,7 +476,7 @@ export default function ListPage() {
       await reloadCurrentDataset()
     } catch (err) {
       console.error('Failed to update WSI metadata:', err)
-      alert(`Failed to update metadata: ${err}`)
+      alert(t('listPage.failedUpdateMetadata', { error: String(err) }))
     } finally {
       setUpdating(false)
     }
@@ -494,7 +484,7 @@ export default function ListPage() {
 
   const handleBatchEditClick = () => {
     if (selectedIds.size === 0) {
-      alert('Please select at least one file to edit')
+      alert(t('listPage.selectAtLeastOneToEdit'))
       return
     }
     setBatchEditLabel('')
@@ -534,10 +524,10 @@ export default function ListPage() {
       // Close modal and clear selection immediately
       setShowBatchEditModal(false)
       setSelectedIds(new Set())
-      toastSuccess(`Metadata update started for ${request.wsi_ids.length} items. Check notification center for progress.`)
+      toastSuccess(t('listPage.batchUpdateStarted', { count: request.wsi_ids.length }))
     } catch (err) {
       console.error('Failed to start batch edit:', err)
-      toastError(err instanceof Error ? err.message : `Failed to start batch edit: ${err}`)
+      toastError(err instanceof Error ? err.message : t('listPage.failedBatchEdit', { error: String(err) }))
     } finally {
       setBatchUpdating(false)
     }
@@ -601,10 +591,10 @@ export default function ListPage() {
         setSelectedDatasetType(editingDatasetType)
       }
 
-      toastSuccess('Dataset updated successfully')
+      toastSuccess(t('listPage.datasetUpdatedSuccess'))
     } catch (err) {
       console.error('Failed to update dataset:', err)
-      toastError(`Failed to update dataset: ${err}`)
+      toastError(t('listPage.failedUpdateDataset', { error: String(err) }))
     } finally {
       handleEditDatasetCancel()
     }
@@ -638,7 +628,7 @@ export default function ListPage() {
       }
     } catch (err) {
       console.error('Failed to rename dataset:', err)
-      alert(`Failed to rename dataset: ${err}`)
+      alert(t('listPage.failedRenameDataset', { error: String(err) }))
     } finally {
       handleRenameCancel()
     }
@@ -694,8 +684,8 @@ export default function ListPage() {
 
   const allPageSelected = pageSlides.length > 0 && pageSlides.every(s => selectedIds.has(s.wsi_id))
 
-  // With server-side pagination, "select all filtered" only covers current page items
-  const allFilteredSelected = items.length > 0 && items.every(s => selectedIds.has(s.wsi_id))
+  // Check if all items across all pages are selected (based on totalCount)
+  const allFilteredSelected = selectedIds.size > 0 && selectedIds.size === totalCount
 
   const handleSelectPage = () => {
     if (allFilteredSelected) {
@@ -710,6 +700,23 @@ export default function ListPage() {
       pageSlides.forEach(s => newSelected.add(s.wsi_id))
     }
     setSelectedIds(newSelected)
+  }
+
+  // Handle selecting all filtered items (across all pages)
+  const handleSelectAllFiltered = async () => {
+    try {
+      // Fetch all IDs without loading full data
+      const d = await fetchWSIList(selectedDatasetId!, undefined, {
+        page: 1,
+        page_size: totalCount, // Request all items
+        search: debouncedSearch || undefined,
+      })
+      const allIds = new Set((d.items || []).map((item: any) => item.wsi_id))
+      setSelectedIds(allIds)
+    } catch (e) {
+      toastError(t('listPage.failedSelectAll'))
+      console.error(e)
+    }
   }
 
   // Toggle case expansion
@@ -729,18 +736,18 @@ export default function ListPage() {
     <div className="w-full space-y-6 h-full flex flex-col">
       <div className="flex-none">
         <PageHeader
-          title={selectedDatasetId ? selectedDatasetName : "Data Repository"}
+          title={selectedDatasetId ? selectedDatasetName : t('listPage.title')}
           description={
             <>
               {selectedDatasetId ? (
-                loading ? 'Loading files...' :
-                  error ? 'Error loading files' :
+                loading ? t('listPage.loadingFiles') :
+                  error ? t('listPage.errorLoadingFiles') :
                     <span className="flex items-center gap-2">
                       <FolderOpen className="w-4 h-4" />
-                      {totalCount} files stored in this dataset
+                      {t('listPage.filesInDataset', { count: totalCount })}
                     </span>
               ) : (
-                'Manage your datasets and images.'
+                t('listPage.description')
               )}
             </>
           }
@@ -754,7 +761,7 @@ export default function ListPage() {
                   className="gap-2"
                 >
                   <ArrowLeft className="w-4 h-4" />
-                  {fromAIChat ? 'Back to Chat' : 'Back to Repository'}
+                  {fromAIChat ? t('listPage.backToChat') : t('listPage.backToRepository')}
                 </Button>
               </>
             ) : (
@@ -765,14 +772,14 @@ export default function ListPage() {
                   className="gap-2"
                 >
                   <ArrowLeft className="w-4 h-4" />
-                  Back to Dashboard
+                  {t('listPage.backToDashboard')}
                 </Button>
                 <Button
                   onClick={() => navigate('/register')}
                   className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white"
                 >
                   <Upload className="w-4 h-4" />
-                  Register Files
+                  {t('listPage.registerFiles')}
                 </Button>
               </>
             )}
@@ -784,7 +791,7 @@ export default function ListPage() {
       {uploadingFiles.size > 0 && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Registering Files ({Array.from(uploadingFiles.values()).filter(f => f.status === 'success').length}/{uploadingFiles.size})
+            {t('listPage.registeringFiles', { success: Array.from(uploadingFiles.values()).filter(f => f.status === 'success').length, total: uploadingFiles.size })}
           </h3>
           <div className="space-y-3">
             {Array.from(uploadingFiles.entries()).map(([fileName, fileStatus]) => (
@@ -803,9 +810,9 @@ export default function ListPage() {
                     <span className="text-sm font-medium text-gray-900 truncate">{fileName}</span>
                   </div>
                   <span className="text-xs text-gray-500 ml-2">
-                    {fileStatus.status === 'uploading' && 'Registering...'}
-                    {fileStatus.status === 'success' && 'Complete'}
-                    {fileStatus.status === 'error' && 'Failed'}
+                    {fileStatus.status === 'uploading' && t('listPage.registering')}
+                    {fileStatus.status === 'success' && t('listPage.complete')}
+                    {fileStatus.status === 'error' && t('listPage.failed')}
                   </span>
                 </div>
                 {/* Progress Bar */}
@@ -850,7 +857,7 @@ export default function ListPage() {
           {/* Datasets Error State */}
           {datasetsError && !datasetsLoading && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-              <p className="font-medium">Error loading datasets</p>
+              <p className="font-medium">{t('listPage.errorLoadingDatasets')}</p>
               <p className="text-sm">{datasetsError}</p>
             </div>
           )}
@@ -861,9 +868,9 @@ export default function ListPage() {
               <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
                 <Database className="w-8 h-8 text-gray-400" />
               </div>
-              <h3 className="text-lg font-medium text-gray-900 mb-1">No datasets found</h3>
+              <h3 className="text-lg font-medium text-gray-900 mb-1">{t('listPage.noDatasetsFound')}</h3>
               <p className="text-sm text-gray-500 max-w-sm text-center">
-                Register files using the button above to create your first dataset.
+                {t('listPage.noDatasetsDescription')}
               </p>
             </div>
           )}
@@ -949,7 +956,7 @@ export default function ListPage() {
                                   size="icon"
                                   className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-blue-600"
                                   onClick={(e) => handleEditDatasetClick(e, dataset)}
-                                  title="Edit dataset"
+                  title={t('listPage.editDataset')}
                                 >
                                   <Pencil className="w-3.5 h-3.5" />
                                 </Button>
@@ -958,7 +965,7 @@ export default function ListPage() {
                                   size="icon"
                                   className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
                                   onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name)}
-                                  title="Delete dataset"
+                  title={t('listPage.deleteDataset')}
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </Button>
@@ -969,15 +976,17 @@ export default function ListPage() {
                       </div>
                       <div className="flex items-center gap-2 mb-3 sm:mb-4 flex-wrap">
                         <p className="text-xs sm:text-sm text-slate-500 font-medium whitespace-nowrap">
-                          {itemType === 'slides' ? 'Whole Slide Imaging' : 'Patch Collection'}
+                          {itemType === 'slides' ? t('listPage.wholeSlideImaging') : t('listPage.patchCollection')}
                         </p>
                         <div className="w-1 h-1 rounded-full bg-slate-300" />
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
                           dataset.task_type === 'survival'
                             ? 'bg-amber-50 text-amber-700 border border-amber-100/50'
-                            : 'bg-indigo-50 text-indigo-700 border border-indigo-100/50'
+                            : dataset.task_type === 'segmentation' || dataset.task_type === 'patch_segmentation'
+                              ? 'bg-violet-50 text-violet-700 border border-violet-100/50'
+                              : 'bg-indigo-50 text-indigo-700 border border-indigo-100/50'
                         }`}>
-                          {dataset.task_type === 'survival' ? 'Survival' : 'Classification'}
+                          {dataset.task_type === 'survival' ? t('listPage.survival') : (dataset.task_type === 'segmentation' || dataset.task_type === 'patch_segmentation') ? t('listPage.segmentation') : t('listPage.classification')}
                         </span>
                         {itemType === 'slides' && (
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
@@ -986,9 +995,9 @@ export default function ListPage() {
                               : 'bg-orange-50 text-orange-700 border border-orange-100/50'
                           }`}>
                             {dataset.aggregation_level === 'case' ? (
-                              <><Users className="w-3 h-3" />Case-Level</>
+                              <><Users className="w-3 h-3" />{t('listPage.caseLevel')}</>
                             ) : (
-                              <><FileImage className="w-3 h-3" />File-Level</>
+                              <><FileImage className="w-3 h-3" />{t('listPage.fileLevel')}</>
                             )}
                           </span>
                         )}
@@ -1001,8 +1010,14 @@ export default function ListPage() {
                         </span>
                         <span className="flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap">
                           <CheckCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
-                          {formatDatasetSize(dataset.total_size)}
+                          {formatBytes(dataset.total_size)}
                         </span>
+                        {isAdmin && dataset.username && (
+                          <span className="flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap text-slate-400 ml-auto">
+                            <User className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-300" />
+                            <span className="truncate max-w-[80px] sm:max-w-[120px]" title={dataset.username}>{dataset.username}</span>
+                          </span>
+                        )}
                       </div>
                     </div>
                   </Card>
@@ -1017,9 +1032,9 @@ export default function ListPage() {
                 <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-4 group-hover:bg-white group-hover:shadow-md transition-all">
                   <Upload className="w-6 h-6 text-slate-400 group-hover:text-blue-600" />
                 </div>
-                <h3 className="text-lg font-bold text-slate-600 group-hover:text-blue-700">New Dataset</h3>
+                <h3 className="text-lg font-bold text-slate-600 group-hover:text-blue-700">{t('listPage.newDataset')}</h3>
                 <p className="text-sm text-slate-400 text-center mt-2 group-hover:text-slate-500">
-                  Register new files to create a collection
+                  {t('listPage.newDatasetDescription')}
                 </p>
               </button>
             </div>
@@ -1040,7 +1055,7 @@ export default function ListPage() {
           {/* Error State */}
           {error && !loading && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-              <p className="font-medium">Error loading files</p>
+              <p className="font-medium">{t('listPage.errorLoadingFiles')}</p>
               <p className="text-sm">{error}</p>
             </div>
           )}
@@ -1051,9 +1066,9 @@ export default function ListPage() {
               <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
                 <Microscope className="w-8 h-8 text-gray-400" />
               </div>
-              <h3 className="text-lg font-medium text-gray-900 mb-1">No files in this dataset</h3>
+              <h3 className="text-lg font-medium text-gray-900 mb-1">{t('listPage.noFilesInDataset')}</h3>
               <p className="text-sm text-gray-500 max-w-sm text-center">
-                This dataset appears to be empty.
+                {t('listPage.datasetEmptyDescription')}
               </p>
             </div>
           )}
@@ -1070,7 +1085,7 @@ export default function ListPage() {
             <input
               type="text"
               className="block w-full pl-9 sm:pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm transition-all shadow-sm"
-              placeholder="Search files..."
+              placeholder={t('listPage.searchPlaceholder')}
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value)
@@ -1106,14 +1121,14 @@ export default function ListPage() {
           {items.length === 0 ? (
             <Card className="p-12 flex flex-col items-center justify-center bg-gray-50/50 border-dashed border-2 border-gray-200 rounded-2xl">
               <Search className="w-12 h-12 text-gray-300 mb-4" />
-              <h3 className="text-lg font-medium text-gray-900">No matching files</h3>
-              <p className="text-gray-500 text-sm mt-1">Try adjusting your search terms</p>
+              <h3 className="text-lg font-medium text-gray-900">{t('listPage.noMatchingFiles')}</h3>
+              <p className="text-gray-500 text-sm mt-1">{t('listPage.adjustSearchTerms')}</p>
               <Button
                 variant="ghost"
                 className="mt-4 text-primary-600 hover:text-primary-700"
                 onClick={() => setSearchQuery('')}
               >
-                Clear Search
+                {t('listPage.clearSearch')}
               </Button>
             </Card>
           ) : (
@@ -1135,14 +1150,14 @@ export default function ListPage() {
                            <div className="flex items-center justify-between w-full">
                             <div className="flex items-center gap-4">
                                <span className="text-xs sm:text-sm font-bold text-blue-900">
-                                {selectedIds.size} selected
+                                 {t('listPage.selectedCount', { count: selectedIds.size })}
                               </span>
                               {!allFilteredSelected && (
                                  <button
                                   onClick={() => setSelectedIds(new Set())}
                                   className="text-[10px] sm:text-xs font-medium text-gray-500 hover:text-gray-700 underline"
                                 >
-                                  Clear selection
+                                   {t('listPage.clearSelection')}
                                 </button>
                               )}
                             </div>
@@ -1152,47 +1167,61 @@ export default function ListPage() {
                                 className="text-blue-600 hover:text-blue-700 text-xs sm:text-sm font-semibold flex items-center gap-1"
                               >
                                 <Edit className="w-3.5 h-3.5" />
-                                Edit
+                                 {t('listPage.edit')}
                               </button>
                               <button
                                 onClick={handleBatchDeleteClick}
                                 className="text-red-600 hover:text-red-700 text-xs sm:text-sm font-semibold flex items-center gap-1"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
-                                Delete
+                                 {t('listPage.delete')}
                               </button>
                             </div>
                           </div>
                         </th>
                       ) : (
                         <>
-                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Slide ID</th>
-                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Type</th>
+                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.slideId')}</th>
+                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.type')}</th>
                           {selectedDatasetType === 'survival' ? (
                             <>
-                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Time (M)</th>
-                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Status</th>
+                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.timeMonths')}</th>
+                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.status')}</th>
                             </>
                           ) : (
-                            <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Label</th>
+                            <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.label')}</th>
                           )}
-                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Patient Info</th>
-                          <th className="px-3 sm:px-6 py-3 text-right text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Action</th>
+                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.patientInfo')}</th>
+                          <th className="px-3 sm:px-6 py-3 text-right text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.action')}</th>
                         </>
                       )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 bg-white/40">
-                     {/* Batch Selection Banner — current page items only (server-side pagination) */}
-                      {allPageSelected && (
+                     {/* Batch Selection Banner — show prompt to select all when page is selected */}
+                      {allPageSelected && !allFilteredSelected && totalCount > pageSlides.length && (
                         <tr className="bg-blue-50/50">
                           <td colSpan={100} className="px-4 py-2 text-center text-xs sm:text-sm text-gray-700 border-b border-blue-100">
-                            <span className="font-medium">All {pageSlides.length} items on this page are selected.</span>
+                            <span className="font-medium">{t('listPage.allPageSelected', { count: pageSlides.length })}</span>
+                            <button
+                              onClick={handleSelectAllFiltered}
+                              className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none"
+                            >
+                              {t('listPage.selectAllItems', { count: totalCount })}
+                            </button>
+                          </td>
+                        </tr>
+                      )}
+                      {/* Show when all items are selected */}
+                      {allFilteredSelected && totalCount > pageSlides.length && (
+                        <tr className="bg-blue-50/50">
+                          <td colSpan={100} className="px-4 py-2 text-center text-xs sm:text-sm text-gray-700 border-b border-blue-100">
+                            <span className="font-medium">{t('listPage.allItemsSelected', { count: totalCount })}</span>
                             <button
                               onClick={() => setSelectedIds(new Set())}
                               className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none"
                             >
-                              Clear selection
+                              {t('listPage.clearSelection')}
                             </button>
                           </td>
                         </tr>
@@ -1228,9 +1257,20 @@ export default function ListPage() {
                                 <div className="flex flex-col min-w-[120px] sm:min-w-[150px] min-h-[3.5rem] sm:min-h-[4rem] justify-center">
                                   <span className="text-sm sm:text-base font-semibold text-gray-900 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
                                   <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
+                                  {it.parent_wsi_id && (
+                                    <Link
+                                      to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
+                                      state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
+                                      className="text-[10px] sm:text-xs text-orange-600 hover:text-orange-700 hover:underline mt-0.5 truncate max-w-[150px] sm:max-w-[200px]"
+                                      title={t('annotation.viewSource')}
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {t('annotation.croppedFrom')} {it.parent_wsi_id.slice(0, 8)}...
+                                    </Link>
+                                  )}
                                   {it.case_id && !isNoCase && (
-                                    <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={`Case: ${it.case_id}`}>
-                                      Case: {it.case_id}
+                                    <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={t('listPage.caseLabel', { caseId: it.case_id })}>
+                                      {t('listPage.caseLabel', { caseId: it.case_id })}
                                     </span>
                                   )}
                                 </div>
@@ -1239,9 +1279,9 @@ export default function ListPage() {
                                 {(() => {
                                   const fileType = getFileType(it.file_extension, it.file_size)
                                   return fileType === 'WSI' ? (
-                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">WSI</span>
+                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">{t('listPage.wsi')}</span>
                                   ) : (
-                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">Patch</span>
+                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">{t('listPage.patch')}</span>
                                   )
                                 })()}
                               </td>
@@ -1251,16 +1291,16 @@ export default function ListPage() {
                                     {it.event_time != null ? (
                                       <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-blue-100/80 text-blue-700 border border-blue-200/60 shadow-sm whitespace-nowrap">{it.event_time}</span>
                                     ) : (
-                                      <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
+                                      <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSet')}</span>
                                     )}
                                   </td>
                                   <td className="px-3 sm:px-6 py-4 sm:py-5">
                                     {it.event_status != null ? (
                                       <span className={`inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium border shadow-sm whitespace-nowrap ${it.event_status === 1 ? 'bg-red-100/80 text-red-700 border-red-200/60' : 'bg-green-100/80 text-green-700 border-green-200/60'}`}>
-                                        {it.event_status === 1 ? 'Event' : 'Censored'}
+                                        {it.event_status === 1 ? t('listPage.event') : t('listPage.censored')}
                                       </span>
                                     ) : (
-                                      <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
+                                      <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSet')}</span>
                                     )}
                                   </td>
                                 </>
@@ -1269,17 +1309,17 @@ export default function ListPage() {
                                   {it.label ? (
                                     <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">{it.label}</span>
                                   ) : (
-                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">No Label</span>
+                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.noLabel')}</span>
                                   )}
                                 </td>
                               )}
                               <td className="px-3 sm:px-6 py-4 sm:py-5">
                                 <div className="flex flex-wrap gap-1 sm:gap-2 items-center min-w-[100px]">
                                   {!(it.age || it.gender || it.source) ? (
-                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">Not specified</span>
+                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSpecified')}</span>
                                   ) : (
                                     <>
-                                      {it.source && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap"><span className="hidden sm:inline">Source: </span><span className="sm:ml-1 text-blue-900">{it.source}</span></span>}
+                                      {it.source && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap"><span className="hidden sm:inline">{t('listPage.sourcePrefix')}</span><span className="sm:ml-1 text-blue-900">{it.source}</span></span>}
                                       {it.age && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.age}y</span>}
                                       {it.gender && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.gender}</span>}
                                     </>
@@ -1288,11 +1328,19 @@ export default function ListPage() {
                               </td>
                               <td className="px-3 sm:px-6 py-4 sm:py-5 text-right">
                                 <div className="flex items-center justify-end gap-1 sm:gap-3 sm:opacity-60 group-hover:opacity-100 transition-opacity">
-                                  <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`} title="View File">
+                                  <Link
+                                    to={`/wsi/${encodeURIComponent(it.wsi_id)}`}
+                                    state={{
+                                      fromDataset: true,
+                                      datasetId: selectedDatasetId,
+                                      datasetName: selectedDatasetName
+                                    }}
+                                    title={t('listPage.viewFile')}
+                                  >
                                     <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Microscope className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>
                                   </Link>
-                                  {it.can_delete && <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title="Edit Metadata" onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>}
-                                  {it.can_delete && <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Delete File" onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}><Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>}
+                                  {it.can_delete && <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title={t('listPage.editMetadata')} onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>}
+                                  {it.can_delete && <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title={t('listPage.deleteFile')} onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}><Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>}
                                 </div>
                               </td>
                             </tr>
@@ -1331,11 +1379,11 @@ export default function ListPage() {
                                     <div className="flex items-center gap-2">
                                       <Users className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />
                                       <span className="text-sm sm:text-base font-semibold text-gray-900">
-                                        {isNoCase ? 'No Case ID' : `Case: ${caseId}`}
+                                        {isNoCase ? t('listPage.noCaseId') : t('listPage.caseLabel', { caseId })}
                                       </span>
                                     </div>
                                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 border border-blue-200">
-                                      {slides.length} slides
+                                      {t('listPage.slidesCount', { count: slides.length })}
                                     </span>
                                   </div>
                                 </div>
@@ -1346,13 +1394,13 @@ export default function ListPage() {
                                   // eslint-disable-next-line
                                   const types = new Set(slides.map(s => getFileType(s.file_extension, s.file_size)))
                                   if (types.has('WSI') && types.has('Patch')) {
-                                    return <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">Mixed</span>
+                                    return <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">{t('listPage.mixed')}</span>
                                   }
                                   const type = types.values().next().value || 'WSI'
                                   return type === 'WSI' ? (
-                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">WSI</span>
+                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">{t('listPage.wsi')}</span>
                                   ) : (
-                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">Patch</span>
+                                    <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">{t('listPage.patch')}</span>
                                   )
                                 })()}
                               </td>
@@ -1360,17 +1408,17 @@ export default function ListPage() {
                               {selectedDatasetType === 'survival' ? (
                                 <>
                                   <td className="px-3 sm:px-6 py-4 sm:py-5">
-                                    <span className="text-gray-400 text-xs italic">See slides</span>
+                                    <span className="text-gray-400 text-xs italic">{t('listPage.seeSlides')}</span>
                                   </td>
                                   <td className="px-3 sm:px-6 py-4 sm:py-5">
                                     {(() => {
                                       const events = slides.filter(s => s.event_status === 1).length
                                       const censored = slides.filter(s => s.event_status === 0).length
-                                      if (events === 0 && censored === 0) return <span className="text-gray-300 text-xs italic">Not set</span>
+                                      if (events === 0 && censored === 0) return <span className="text-gray-300 text-xs italic">{t('listPage.notSet')}</span>
                                       return (
                                         <div className="flex flex-col gap-1">
-                                          {events > 0 && <span className="text-xs text-red-600 font-medium">{events} Event{events > 1 ? 's' : ''}</span>}
-                                          {censored > 0 && <span className="text-xs text-green-600 font-medium">{censored} Censored</span>}
+                                          {events > 0 && <span className="text-xs text-red-600 font-medium">{t('listPage.eventCount', { count: events })}</span>}
+                                          {censored > 0 && <span className="text-xs text-green-600 font-medium">{t('listPage.censoredCount', { count: censored })}</span>}
                                         </div>
                                       )
                                     })()}
@@ -1380,7 +1428,7 @@ export default function ListPage() {
                                 <td className="px-3 sm:px-6 py-4 sm:py-5">
                                   {(() => {
                                     const labels = Array.from(new Set(slides.map(s => s.label).filter(Boolean)))
-                                    if (labels.length === 0) return <span className="text-gray-300 text-xs italic">No Label</span>
+                                    if (labels.length === 0) return <span className="text-gray-300 text-xs italic">{t('listPage.noLabel')}</span>
                                     if (labels.length === 1) return <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">{labels[0]}</span>
                                     return (
                                       <div className="flex flex-wrap gap-1">
@@ -1402,14 +1450,14 @@ export default function ListPage() {
                                     const genders = Array.from(new Set(slides.map(s => s.gender as string).filter(Boolean)))
 
                                     if (sources.length === 0 && ages.length === 0 && genders.length === 0) {
-                                      return <span className="text-gray-300 text-[10px] sm:text-sm italic">Not specified</span>
+                                      return <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSpecified')}</span>
                                     }
 
                                     return (
                                       <>
                                         {sources.length > 0 && (
                                           <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
-                                            {sources.length === 1 ? <><span className="hidden sm:inline">Source: </span><span className="sm:ml-1 text-blue-900">{sources[0]}</span></> : `${sources.length} Sources`}
+                                            {sources.length === 1 ? <><span className="hidden sm:inline">{t('listPage.sourcePrefix')}</span><span className="sm:ml-1 text-blue-900">{sources[0]}</span></> : t('listPage.sourcesCount', { count: sources.length })}
                                           </span>
                                         )}
                                         {ages.length > 0 && (
@@ -1419,7 +1467,7 @@ export default function ListPage() {
                                         )}
                                         {genders.length > 0 && (
                                           <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
-                                            {genders.length === 1 ? genders[0] : 'Mixed'}
+                                            {genders.length === 1 ? genders[0] : t('listPage.mixed')}
                                           </span>
                                         )}
                                       </>
@@ -1429,7 +1477,7 @@ export default function ListPage() {
                               </td>
 
                               <td className="px-3 sm:px-6 py-4 sm:py-5 text-right">
-                                <span className="text-xs text-gray-400 whitespace-nowrap">{isExpanded ? 'Collapse' : 'Expand'}</span>
+                                <span className="text-xs text-gray-400 whitespace-nowrap">{isExpanded ? t('listPage.collapse') : t('listPage.expand')}</span>
                               </td>
                             </tr>
                             {/* Expanded slides */}
@@ -1452,15 +1500,26 @@ export default function ListPage() {
                                     <div className="flex flex-col min-w-[120px] sm:min-w-[150px] pl-4 sm:pl-6 min-h-[3rem] justify-center">
                                       <span className="text-xs sm:text-sm font-medium text-gray-700 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
                                       <span className="text-[10px] sm:text-xs text-gray-400 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
+                                      {it.parent_wsi_id && (
+                                        <Link
+                                          to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
+                                          state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
+                                          className="text-[10px] sm:text-xs text-orange-600 hover:text-orange-700 hover:underline mt-0.5 truncate max-w-[150px] sm:max-w-[200px]"
+                                          title={t('annotation.viewSource')}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          {t('annotation.croppedFrom')} {it.parent_wsi_id.slice(0, 8)}...
+                                        </Link>
+                                      )}
                                     </div>
                                   </td>
                                   <td className="px-3 sm:px-6 py-3 sm:py-4">
                                     {(() => {
                                       const fileType = getFileType(it.file_extension, it.file_size)
                                       return fileType === 'WSI' ? (
-                                        <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">WSI</span>
+                                        <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">{t('listPage.wsi')}</span>
                                       ) : (
-                                        <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">Patch</span>
+                                        <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">{t('listPage.patch')}</span>
                                       )
                                     })()}
                                   </td>
@@ -1470,16 +1529,16 @@ export default function ListPage() {
                                         {it.event_time != null ? (
                                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100/80 text-blue-700 border border-blue-200/60 whitespace-nowrap">{it.event_time}</span>
                                         ) : (
-                                          <span className="text-gray-300 text-[10px] italic">Not set</span>
+                                          <span className="text-gray-300 text-[10px] italic">{t('listPage.notSet')}</span>
                                         )}
                                       </td>
                                       <td className="px-3 sm:px-6 py-3 sm:py-4">
                                         {it.event_status != null ? (
                                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap ${it.event_status === 1 ? 'bg-red-100/80 text-red-700 border-red-200/60' : 'bg-green-100/80 text-green-700 border-green-200/60'}`}>
-                                            {it.event_status === 1 ? 'Event' : 'Censored'}
+                                            {it.event_status === 1 ? t('listPage.event') : t('listPage.censored')}
                                           </span>
                                         ) : (
-                                          <span className="text-gray-300 text-[10px] italic">Not set</span>
+                                          <span className="text-gray-300 text-[10px] italic">{t('listPage.notSet')}</span>
                                         )}
                                       </td>
                                     </>
@@ -1488,7 +1547,7 @@ export default function ListPage() {
                                       {it.label ? (
                                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 whitespace-nowrap">{it.label}</span>
                                       ) : (
-                                        <span className="text-gray-300 text-[10px] italic">No Label</span>
+                                        <span className="text-gray-300 text-[10px] italic">{t('listPage.noLabel')}</span>
                                       )}
                                     </td>
                                   )}
@@ -1507,11 +1566,19 @@ export default function ListPage() {
                                   </td>
                                   <td className="px-3 sm:px-6 py-3 sm:py-4 text-right">
                                     <div className="flex items-center justify-end gap-1 sm:gap-2 opacity-60 group-hover:opacity-100 transition-opacity">
-                                      <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`} title="View File">
+                                      <Link
+                                        to={`/wsi/${encodeURIComponent(it.wsi_id)}`}
+                                        state={{
+                                          fromDataset: true,
+                                          datasetId: selectedDatasetId,
+                                          datasetName: selectedDatasetName
+                                        }}
+                                        title={t('listPage.viewFile')}
+                                      >
                                         <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Microscope className="w-3 h-3 sm:w-4 sm:h-4" /></Button>
                                       </Link>
-                                      {it.can_delete && <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title="Edit Metadata" onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit className="w-3 h-3 sm:w-4 sm:h-4" /></Button>}
-                                      {it.can_delete && <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title="Delete File" onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}><Trash2 className="w-3 h-3 sm:w-4 sm:h-4" /></Button>}
+                                      {it.can_delete && <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title={t('listPage.editMetadata')} onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit className="w-3 h-3 sm:w-4 sm:h-4" /></Button>}
+                                      {it.can_delete && <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title={t('listPage.deleteFile')} onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}><Trash2 className="w-3 h-3 sm:w-4 sm:h-4" /></Button>}
                                     </div>
                                   </td>
                                 </tr>
@@ -1541,9 +1608,20 @@ export default function ListPage() {
                               <div className="flex flex-col min-w-[120px] sm:min-w-[150px] min-h-[3.5rem] sm:min-h-[4rem] justify-center">
                                 <span className="text-sm sm:text-base font-semibold text-gray-900 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
                                 <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
+                                {it.parent_wsi_id && (
+                                  <Link
+                                    to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
+                                    state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
+                                    className="text-[10px] sm:text-xs text-orange-600 hover:text-orange-700 hover:underline mt-0.5 truncate max-w-[150px] sm:max-w-[200px]"
+                                    title={t('annotation.viewSource')}
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    {t('annotation.croppedFrom')} {it.parent_wsi_id.slice(0, 8)}...
+                                  </Link>
+                                )}
                                 {it.case_id && !isPatchDataset && (
-                                  <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={`Case: ${it.case_id}`}>
-                                    Case: {it.case_id}
+                                   <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={t('listPage.caseLabel', { caseId: it.case_id })}>
+                                     {t('listPage.caseLabel', { caseId: it.case_id })}
                                   </span>
                                 )}
                               </div>
@@ -1553,11 +1631,11 @@ export default function ListPage() {
                                 const fileType = getFileType(it.file_extension, it.file_size)
                                 return fileType === 'WSI' ? (
                                   <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">
-                                    WSI
+                                    {t('listPage.wsi')}
                                   </span>
                                 ) : (
                                   <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap">
-                                    Patch
+                                    {t('listPage.patch')}
                                   </span>
                                 )
                               })()}
@@ -1570,7 +1648,7 @@ export default function ListPage() {
                                       {it.event_time}
                                     </span>
                                   ) : (
-                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
+                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSet')}</span>
                                   )}
                                 </td>
                                 <td className="px-3 sm:px-6 py-4 sm:py-5">
@@ -1579,10 +1657,10 @@ export default function ListPage() {
                                       ? 'bg-red-100/80 text-red-700 border-red-200/60'
                                       : 'bg-green-100/80 text-green-700 border-green-200/60'
                                       }`}>
-                                      {it.event_status === 1 ? 'Event' : 'Censored'}
+                                      {it.event_status === 1 ? t('listPage.event') : t('listPage.censored')}
                                     </span>
                                   ) : (
-                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">Not set</span>
+                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSet')}</span>
                                   )}
                                 </td>
                               </>
@@ -1593,19 +1671,19 @@ export default function ListPage() {
                                     {it.label}
                                   </span>
                                 ) : (
-                                  <span className="text-gray-300 text-[10px] sm:text-sm italic">No Label</span>
+                                  <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.noLabel')}</span>
                                 )}
                               </td>
                             )}
                             <td className="px-3 sm:px-6 py-4 sm:py-5">
                               <div className="flex flex-wrap gap-1 sm:gap-2 items-center min-w-[100px]">
                                 {!(it.age || it.gender || it.source) ? (
-                                  <span className="text-gray-300 text-[10px] sm:text-sm italic">Not specified</span>
+                                  <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSpecified')}</span>
                                 ) : (
                                   <>
                                     {it.source && (
                                       <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
-                                        <span className="hidden sm:inline">Source: </span><span className="sm:ml-1 text-blue-900">{it.source}</span>
+                                        <span className="hidden sm:inline">{t('listPage.sourcePrefix')} </span><span className="sm:ml-1 text-blue-900">{it.source}</span>
                                       </span>
                                     )}
                                     {it.age && (
@@ -1624,7 +1702,15 @@ export default function ListPage() {
                             </td>
                             <td className="px-3 sm:px-6 py-4 sm:py-5 text-right">
                               <div className="flex items-center justify-end gap-1 sm:gap-3 sm:opacity-60 group-hover:opacity-100 transition-opacity">
-                                <Link to={`/wsi/${encodeURIComponent(it.wsi_id)}`} title="View File">
+                                <Link
+                                  to={`/wsi/${encodeURIComponent(it.wsi_id)}`}
+                                  state={{
+                                    fromDataset: true,
+                                    datasetId: selectedDatasetId,
+                                    datasetName: selectedDatasetName
+                                  }}
+                                  title={t('listPage.viewFile')}
+                                >
                                   <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
                                     <Microscope className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
                                   </Button>
@@ -1635,7 +1721,7 @@ export default function ListPage() {
                                     variant="ghost"
                                     size="icon"
                                     className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
-                                    title="Edit Metadata"
+                                    title={t('listPage.editMetadata')}
                                     onClick={(e) => { e.preventDefault(); handleEditClick(it); }}
                                   >
                                     <Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
@@ -1647,7 +1733,7 @@ export default function ListPage() {
                                     variant="ghost"
                                     size="icon"
                                     className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                                    title="Delete File"
+                                    title={t('listPage.deleteFile')}
                                     onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label, it.original_filename); }}
                                   >
                                     <Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
@@ -1668,16 +1754,16 @@ export default function ListPage() {
                 <div className="text-[11px] sm:text-sm text-gray-500 font-medium order-3 lg:order-1 text-center lg:text-left">
                   {hasMultiSlideCases ? (
                     <>
-                      Showing <span className="text-gray-900">{totalCases === 0 ? 0 : startIndex + 1}</span> to{' '}
-                      <span className="text-gray-900">{Math.min(startIndex + itemsPerPage, totalCases)}</span>{' '}
-                      of <span className="text-gray-900">{totalCases}</span> cases
-                      <span className="text-gray-400 font-normal ml-1 whitespace-nowrap">({totalCount} slides total)</span>
+                       {t('listPage.showing')} <span className="text-gray-900">{totalCases === 0 ? 0 : startIndex + 1}</span> {t('listPage.to')}{' '}
+                       <span className="text-gray-900">{Math.min(startIndex + itemsPerPage, totalCases)}</span>{' '}
+                       {t('listPage.of')} <span className="text-gray-900">{totalCases}</span> {t('listPage.cases')}
+                       <span className="text-gray-400 font-normal ml-1 whitespace-nowrap">({t('listPage.slidesTotal', { count: totalCount })})</span>
                     </>
                   ) : (
                     <>
-                      Showing <span className="text-gray-900">{totalCount === 0 ? 0 : startIndex + 1}</span> to{' '}
-                      <span className="text-gray-900">{Math.min(startIndex + itemsPerPage, totalCount)}</span>{' '}
-                      of <span className="text-gray-900">{totalCount}</span> files
+                       {t('listPage.showing')} <span className="text-gray-900">{totalCount === 0 ? 0 : startIndex + 1}</span> {t('listPage.to')}{' '}
+                       <span className="text-gray-900">{Math.min(startIndex + itemsPerPage, totalCount)}</span>{' '}
+                       {t('listPage.of')} <span className="text-gray-900">{totalCount}</span> {t('listPage.files')}
                     </>
                   )}
                 </div>
@@ -1686,7 +1772,7 @@ export default function ListPage() {
                   <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 order-1 lg:order-2 w-full lg:w-auto justify-center">
                     {/* Goto Page */}
                     <div className="flex items-center justify-center gap-1.5 sm:gap-2 bg-white/50 px-3 py-1.5 rounded-full border border-gray-100 sm:border-transparent">
-                      <span className="text-[11px] sm:text-sm text-gray-500 whitespace-nowrap">Go to</span>
+                      <span className="text-[11px] sm:text-sm text-gray-500 whitespace-nowrap">{t('listPage.goTo')}</span>
                       <input
                         type="number"
                         min={1}
@@ -1757,765 +1843,118 @@ export default function ListPage() {
 
       {/* File Metadata Modal */}
       {showFileMetadataModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-            {/* Header */}
-            <div className="p-6 border-b border-gray-200">
-              <h3 className="text-2xl font-bold text-gray-900">Set Metadata for Files</h3>
-              <p className="text-gray-600 mt-1">Add metadata for each file (all fields are optional)</p>
-            </div>
-
-            {/* File List */}
-            <div className="flex-1 overflow-y-auto p-6">
-              <div className="space-y-4">
-                {selectedFiles.map((file, index) => (
-                  <div key={index} className="bg-gray-50 rounded-xl p-4 border border-gray-200">
-                    <div className="flex items-start gap-4">
-                      {/* File Icon and Name */}
-                      <div className="flex-shrink-0 w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                        <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                      </div>
-
-                      {/* File Info and Inputs */}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-gray-900 truncate mb-3">{file.name}</p>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Label (Disease Classification)
-                            </label>
-                            <input
-                              type="text"
-                              placeholder="e.g., Benign, Malignant, Grade 1"
-                              value={fileMetadata.get(file.name)?.label || ''}
-                              onChange={(e) => updateFileMetadata(file.name, 'label', e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Case ID
-                            </label>
-                            <input
-                              type="text"
-                              placeholder="e.g., case_001"
-                              value={fileMetadata.get(file.name)?.case_id || ''}
-                              onChange={(e) => updateFileMetadata(file.name, 'case_id', e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Age
-                            </label>
-                            <input
-                              type="number"
-                              placeholder="e.g., 45"
-                              value={fileMetadata.get(file.name)?.age || ''}
-                              onChange={(e) => updateFileMetadata(file.name, 'age', e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Gender
-                            </label>
-                            <select
-                              value={fileMetadata.get(file.name)?.gender || ''}
-                              onChange={(e) => updateFileMetadata(file.name, 'gender', e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                            >
-                              <option value="">Select Gender</option>
-                              <option value="Male">Male</option>
-                              <option value="Female">Female</option>
-                              <option value="Unspecified">Unspecified</option>
-                            </select>
-                          </div>
-                          <div className="col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Source (Organ/Tissue)
-                            </label>
-                            <input
-                              type="text"
-                              placeholder="e.g., Cervix, Lung, Breast"
-                              value={fileMetadata.get(file.name)?.source || ''}
-                              onChange={(e) => updateFileMetadata(file.name, 'source', e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="p-6 border-t border-gray-200 bg-gray-50">
-              <div className="flex justify-between items-center">
-                <p className="text-sm text-gray-600">
-                  {selectedFiles.length} file(s) selected
-                </p>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => {
-                      setShowFileMetadataModal(false)
-                      setSelectedFiles([])
-                      setFileMetadata(new Map())
-                      if (fileInputRef.current) {
-                        fileInputRef.current.value = ''
-                      }
-                    }}
-                    className="px-6 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleConfirmUpload}
-                    disabled={uploading}
-                    className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all font-semibold shadow-lg shadow-blue-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Upload All Files
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <FileMetadataModal
+          selectedFiles={selectedFiles}
+          fileMetadata={fileMetadata}
+          onUpdateMetadata={updateFileMetadata}
+          onCancel={() => {
+            setShowFileMetadataModal(false)
+            setSelectedFiles([])
+            setFileMetadata(new Map())
+            if (fileInputRef.current) {
+              fileInputRef.current.value = ''
+            }
+          }}
+          onConfirm={handleConfirmUpload}
+          uploading={uploading}
+        />
       )}
 
 
       {/* Delete Confirmation Modal */}
       {showDeleteModal && wsiToDelete && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="text-center mb-3 sm:mb-6">
-              <div className="w-10 h-10 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
-                <AlertCircle className="w-6 h-6 sm:w-10 sm:h-10 text-red-600" />
-              </div>
-              <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2 leading-tight">Delete Slide?</h3>
-              <p className="text-xs sm:text-base text-gray-600">This action cannot be undone</p>
-            </div>
-
-            {/* WSI Info */}
-            <div className="bg-gray-50 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4 border border-gray-100">
-              <div className="space-y-1 sm:space-y-2">
-                <div className="flex justify-between items-start gap-4">
-                  <span className="text-xs sm:text-sm font-medium text-gray-500 whitespace-nowrap">File:</span>
-                  <span className="text-xs sm:text-sm text-gray-900 font-semibold break-all text-right">{wsiToDelete.original_filename || wsiToDelete.wsi_id}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-xs sm:text-sm font-medium text-gray-500">Label:</span>
-                  <span className="text-xs sm:text-sm text-gray-900 font-medium">{wsiToDelete.label || 'Unknown'}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Storage Info */}
-            {loadingStorageInfo && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4 mb-3 sm:mb-4">
-                <div className="flex items-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
-                  <span className="text-xs sm:text-sm text-blue-800">Calculating size...</span>
-                </div>
-              </div>
-            )}
-
-            {wsiStorageInfo && !loadingStorageInfo && (() => {
-              // Calculate size and file count based on delete mode
-              const featuresSize = wsiStorageInfo.features.reduce((sum, f) => sum + f.size, 0)
-              const featuresCount = wsiStorageInfo.features.length
-              const displaySize = deleteMode === 'complete' ? wsiStorageInfo.total_size : wsiStorageInfo.total_size - featuresSize
-              const displayFiles = deleteMode === 'complete' ? wsiStorageInfo.total_files : wsiStorageInfo.total_files - featuresCount
-              return (
-                <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs sm:text-sm font-semibold text-blue-900">Reduced Storage:</span>
-                    <span className="text-base sm:text-lg font-bold text-blue-900">
-                      {formatBytes(displaySize)}
-                    </span>
-                  </div>
-                  <details className="text-xs sm:text-sm">
-                    <summary className="cursor-pointer text-blue-700 hover:text-blue-900 font-medium">
-                      Files to be removed ({displayFiles})
-                    </summary>
-                    <ul className="mt-2 space-y-1 text-blue-600/80 ml-4 border-l border-blue-100 pl-3">
-                      {wsiStorageInfo.wsi_file.exists && (
-                        <li>• WSI file ({formatBytes(wsiStorageInfo.wsi_file.size)})</li>
-                      )}
-                      {wsiStorageInfo.coordinates.exists && (
-                        <li>• Coordinates cache ({formatBytes(wsiStorageInfo.coordinates.size)})</li>
-                      )}
-                      {wsiStorageInfo.mask.exists && (
-                        <li>• Tissue mask ({formatBytes(wsiStorageInfo.mask.size)})</li>
-                      )}
-                      {wsiStorageInfo.ai_results.file_count > 0 && (
-                        <li>• AI results ({wsiStorageInfo.ai_results.file_count} files, {formatBytes(wsiStorageInfo.ai_results.size)})</li>
-                      )}
-                      {deleteMode === 'complete' && wsiStorageInfo.features.length > 0 && (
-                        <li>• Features ({wsiStorageInfo.features.length} files, {formatBytes(wsiStorageInfo.features.reduce((sum, f) => sum + f.size, 0))})</li>
-                      )}
-                    </ul>
-                  </details>
-                </div>
-              )
-            })()}
-
-            {/* Delete Mode Selection */}
-            <div className="mb-4">
-              <label className="block text-xs sm:text-sm font-bold text-gray-700 mb-2">
-                Deletion Mode
-              </label>
-              <div className="space-y-2">
-                <label className={`flex items-start gap-3 p-2 sm:p-3 border-2 rounded-xl cursor-pointer hover:bg-gray-50 transition-all ${deleteMode === 'standard' ? 'border-blue-500 bg-blue-50/20' : 'border-gray-100'}`}>
-                  <input
-                    type="radio"
-                    name="deleteMode"
-                    value="standard"
-                    checked={deleteMode === 'standard'}
-                    onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
-                    className="mt-1 h-4 w-4 text-blue-600"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold text-gray-900 text-sm">Standard Delete</div>
-                    <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
-                      Removes slide and results. <span className="text-blue-600 font-semibold">Keeps training features</span> for future research.
-                    </div>
-                  </div>
-                </label>
-
-                <label className={`flex items-start gap-3 p-2 sm:p-3 border-2 rounded-xl cursor-pointer hover:bg-gray-50 transition-all ${deleteMode === 'complete' ? 'border-red-500 bg-red-50/20' : 'border-gray-100'}`}>
-                  <input
-                    type="radio"
-                    name="deleteMode"
-                    value="complete"
-                    checked={deleteMode === 'complete'}
-                    onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
-                    className="mt-1 h-4 w-4 text-red-600"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold text-gray-900 text-sm">Complete Delete</div>
-                    <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
-                      Permanently wipes all data including training features. <span className="text-red-500 font-bold">Irreversible.</span>
-                    </div>
-                  </div>
-                </label>
-              </div>
-            </div>
-
-            {/* Warning - only on mobile */}
-            <div className="sm:hidden bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-4">
-              <p className="text-[10px] text-amber-800 leading-tight">
-                <strong>Attention:</strong> This permanent action cannot be undone.
-              </p>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowDeleteModal(false)
-                  setWsiToDelete(null)
-                }}
-                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmDelete}
-                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-bold shadow-sm"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <DeleteConfirmModal
+          wsiToDelete={wsiToDelete}
+          wsiStorageInfo={wsiStorageInfo}
+          loadingStorageInfo={loadingStorageInfo}
+          deleteMode={deleteMode}
+          onDeleteModeChange={setDeleteMode}
+          onCancel={() => {
+            setShowDeleteModal(false)
+            setWsiToDelete(null)
+          }}
+          onConfirm={handleConfirmDelete}
+        />
       )}
+
 
       {/* Batch Delete Confirmation Modal */}
       {showBatchDeleteModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="text-center mb-3 sm:mb-6">
-              <div className="w-10 h-10 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
-                <AlertCircle className="w-6 h-6 sm:w-10 sm:h-10 text-red-600" />
-              </div>
-              <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2 text-balance leading-tight">
-                {datasetToDeleteId ? 'Delete Dataset?' : 'Delete Multiple Slides?'}
-              </h3>
-              <p className="text-xs sm:text-base text-gray-600">This action cannot be undone</p>
-            </div>
-
-            {/* Selection Info */}
-            <div className="bg-gray-50 rounded-xl p-3 sm:p-4 mb-4 sm:mb-6 border border-gray-100 text-center">
-              <p className="text-xs sm:text-sm text-gray-700 leading-relaxed">
-                {datasetToDeleteId ? (
-                  <>You are about to delete dataset <span className="font-bold text-red-600">{datasetToDeleteName}</span> and all its <span className="font-bold">{selectedIds.size}</span> files</>
-                ) : (
-                  <>You are about to delete <span className="font-bold text-red-600">{selectedIds.size}</span> file{selectedIds.size > 1 ? 's' : ''}</>
-                )}
-              </p>
-            </div>
-
-            {/* Delete Mode Selection */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Deletion Mode
-              </label>
-              <div className="space-y-2">
-                <label className="flex items-start gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
-                  style={{ borderColor: deleteMode === 'standard' ? '#3b82f6' : '#e5e7eb' }}>
-                  <input
-                    type="radio"
-                    name="batchDeleteMode"
-                    value="standard"
-                    checked={deleteMode === 'standard'}
-                    onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
-                    className="mt-1 h-4 w-4 text-blue-600"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold text-gray-900 text-sm">Standard Delete</div>
-                    <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
-                      Removes slide and results. <span className="text-blue-600 font-semibold">Keeps training features</span> for future research.
-                    </div>
-                  </div>
-                </label>
-
-                <label className={`flex items-start gap-3 p-2 sm:p-3 border-2 rounded-xl cursor-pointer hover:bg-gray-50 transition-all ${deleteMode === 'complete' ? 'border-red-500 bg-red-50/20' : 'border-gray-100'}`}>
-                  <input
-                    type="radio"
-                    name="batchDeleteMode"
-                    value="complete"
-                    checked={deleteMode === 'complete'}
-                    onChange={(e) => setDeleteMode(e.target.value as 'standard' | 'complete')}
-                    className="mt-1 h-4 w-4 text-red-600"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-bold text-gray-900 text-sm">Complete Delete</div>
-                    <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
-                      Permanently wipes all data including training features. <span className="text-red-500 font-bold">Irreversible.</span>
-                    </div>
-                  </div>
-                </label>
-              </div>
-            </div>
-
-            {/* Warning - only on mobile */}
-            <div className="sm:hidden bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-4">
-              <p className="text-[10px] text-amber-800 leading-tight">
-                <strong>Attention:</strong> This permanent action cannot be undone.
-              </p>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowBatchDeleteModal(false)
-                }}
-                disabled={deleting}
-                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmBatchDelete}
-                disabled={deleting}
-                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-bold disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
-              >
-                {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
-                {deleting ? 'Deleting...' : (datasetToDeleteId ? 'Delete' : `Delete ${selectedIds.size}`)}
-              </button>
-            </div>
-          </div>
-        </div>
+        <BatchDeleteModal
+          selectedIds={selectedIds}
+          datasetToDeleteId={datasetToDeleteId}
+          datasetToDeleteName={datasetToDeleteName}
+          deleteMode={deleteMode}
+          onDeleteModeChange={setDeleteMode}
+          deleting={deleting}
+          onCancel={() => setShowBatchDeleteModal(false)}
+          onConfirm={handleConfirmBatchDelete}
+        />
       )}
 
       {/* Edit Metadata Modal */}
       {showEditModal && editingWSI && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="text-center mb-3 sm:mb-6">
-              <div className="w-10 h-10 sm:w-16 sm:h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
-                <Edit className="w-6 h-6 sm:w-10 sm:h-10 text-blue-600" />
-              </div>
-              <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2">Edit Metadata</h3>
-              <p className="text-xs sm:text-sm text-gray-600">Update slide information</p>
-            </div>
-
-            {/* WSI ID (read-only) */}
-            <div className="mb-3 sm:mb-4">
-              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                Slide ID
-              </label>
-              <input
-                type="text"
-                value={editingWSI.wsi_id}
-                disabled
-                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed text-xs sm:text-sm"
-              />
-            </div>
-
-            {/* Label Input */}
-            <div className="mb-3 sm:mb-4">
-              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                Label (Disease Classification)
-              </label>
-              <input
-                type="text"
-                value={editLabel}
-                onChange={(e) => setEditLabel(e.target.value)}
-                placeholder="e.g., Benign, Malignant, Grade 1"
-                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
-              />
-            </div>
-
-            {/* Case ID Input */}
-            <div className="mb-3 sm:mb-4">
-              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                Case ID
-              </label>
-              <input
-                type="text"
-                value={editCaseId}
-                onChange={(e) => setEditCaseId(e.target.value)}
-                placeholder="e.g., case_001"
-                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-blue-100 rounded-lg focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 text-xs sm:text-sm transition-all"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4">
-              {/* Age Input */}
-              <div>
-                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                  Age
-                </label>
-                <input
-                  type="number"
-                  value={editAge}
-                  onChange={(e) => setEditAge(e.target.value)}
-                  placeholder="e.g., 45"
-                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
-                />
-              </div>
-
-              {/* Gender Input */}
-              <div>
-                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                  Gender
-                </label>
-                <select
-                  value={editGender}
-                  onChange={(e) => setEditGender(e.target.value)}
-                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm bg-white"
-                >
-                  <option value="">Select Gender</option>
-                  <option value="Male">Male</option>
-                  <option value="Female">Female</option>
-                  <option value="Unspecified">Unspecified</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Source Input */}
-            <div className="mb-6 sm:mb-8">
-              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                Source (Organ/Tissue)
-              </label>
-              <input
-                type="text"
-                value={editSource}
-                onChange={(e) => setEditSource(e.target.value)}
-                placeholder="e.g., Cervix, Lung, Breast"
-                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
-              />
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowEditModal(false)
-                  setEditingWSI(null)
-                }}
-                disabled={updating}
-                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmEdit}
-                disabled={updating}
-                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-blue-500/10"
-              >
-                {updating ? 'Saving...' : 'Save Changes'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <EditMetadataModal
+          editingWSI={editingWSI}
+          editLabel={editLabel}
+          editCaseId={editCaseId}
+          editAge={editAge}
+          editGender={editGender}
+          editSource={editSource}
+          onEditLabelChange={setEditLabel}
+          onEditCaseIdChange={setEditCaseId}
+          onEditAgeChange={setEditAge}
+          onEditGenderChange={setEditGender}
+          onEditSourceChange={setEditSource}
+          updating={updating}
+          onCancel={() => {
+            setShowEditModal(false)
+            setEditingWSI(null)
+          }}
+          onConfirm={handleConfirmEdit}
+        />
       )}
 
       {/* Batch Edit Metadata Modal */}
       {showBatchEditModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="text-center mb-3 sm:mb-6">
-              <div className="w-10 h-10 sm:w-16 sm:h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
-                <Edit className="w-6 h-6 sm:w-10 sm:h-10 text-blue-600" />
-              </div>
-              <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2">Batch Edit Metadata</h3>
-              <p className="text-xs sm:text-sm text-gray-600">Update {selectedIds.size} slide(s)</p>
-            </div>
-
-            {/* Info Message */}
-            <div className="mb-3 sm:mb-4 p-2.5 sm:p-3 bg-blue-50 border border-blue-100 rounded-lg">
-              <p className="text-[10px] sm:text-sm text-blue-800 font-medium">
-                Leave fields empty to keep existing values unchanged
-              </p>
-            </div>
-
-            <div className="space-y-3 sm:space-y-4">
-              {/* Label Input */}
-              <div>
-                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                  Label (Disease Classification)
-                </label>
-                <input
-                  type="text"
-                  value={batchEditLabel}
-                  onChange={(e) => setBatchEditLabel(e.target.value)}
-                  placeholder="Keep existing..."
-                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
-                />
-              </div>
-
-              {/* Case ID Input */}
-              <div>
-                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                  Case ID
-                </label>
-                <input
-                  type="text"
-                  value={batchEditCaseId}
-                  onChange={(e) => setBatchEditCaseId(e.target.value)}
-                  placeholder="Keep existing..."
-                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                {/* Age Input */}
-                <div>
-                  <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                    Age
-                  </label>
-                  <input
-                    type="number"
-                    value={batchEditAge}
-                    onChange={(e) => setBatchEditAge(e.target.value)}
-                    placeholder="Existing..."
-                    className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
-                  />
-                </div>
-
-                {/* Gender Input */}
-                <div>
-                  <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                    Gender
-                  </label>
-                  <select
-                    value={batchEditGender}
-                    onChange={(e) => setBatchEditGender(e.target.value)}
-                    className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm bg-white"
-                  >
-                    <option value="">Keep existing</option>
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                    <option value="Unspecified">Unspecified</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Source Input */}
-              <div className="mb-4 sm:mb-6">
-                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">
-                  Source (Organ/Tissue)
-                </label>
-                <input
-                  type="text"
-                  value={batchEditSource}
-                  onChange={(e) => setBatchEditSource(e.target.value)}
-                  placeholder="Keep existing..."
-                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm"
-                />
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowBatchEditModal(false)
-                }}
-                disabled={batchUpdating}
-                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmBatchEdit}
-                disabled={batchUpdating}
-                className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-blue-500/10"
-              >
-                {batchUpdating ? 'Updating...' : `Update ${selectedIds.size}`}
-              </button>
-            </div>
-          </div>
-        </div>
+        <BatchEditModal
+          selectedCount={selectedIds.size}
+          batchEditLabel={batchEditLabel}
+          batchEditCaseId={batchEditCaseId}
+          batchEditAge={batchEditAge}
+          batchEditGender={batchEditGender}
+          batchEditSource={batchEditSource}
+          onBatchEditLabelChange={setBatchEditLabel}
+          onBatchEditCaseIdChange={setBatchEditCaseId}
+          onBatchEditAgeChange={setBatchEditAge}
+          onBatchEditGenderChange={setBatchEditGender}
+          onBatchEditSourceChange={setBatchEditSource}
+          batchUpdating={batchUpdating}
+          onCancel={() => setShowBatchEditModal(false)}
+          onConfirm={handleConfirmBatchEdit}
+        />
       )}
 
       {/* Edit Dataset Modal */}
       {editingDatasetId && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={handleEditDatasetCancel}>
-          <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-md p-4 sm:p-6 animate-in zoom-in-95 fade-in duration-200" onClick={e => e.stopPropagation()}>
-            {/* Header */}
-            <div className="flex items-center justify-between mb-4 sm:mb-6">
-              <h3 className="text-lg sm:text-xl font-bold text-gray-900">Edit Dataset</h3>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-gray-400 hover:text-gray-600"
-                onClick={handleEditDatasetCancel}
-              >
-                <X className="w-5 h-5" />
-              </Button>
-            </div>
-
-            {/* Dataset Name */}
-            <div className="mb-4">
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Dataset Name
-              </label>
-              <input
-                type="text"
-                value={editingDatasetName}
-                onChange={(e) => setEditingDatasetName(e.target.value)}
-                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Enter dataset name"
-                autoFocus
-              />
-            </div>
-
-            {/* Dataset Type */}
-            <div className="mb-4">
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Analysis Type
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setEditingDatasetType('classification')}
-                  className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
-                    editingDatasetType === 'classification'
-                      ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                  }`}
-                >
-                  <span className="font-medium">Classification</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingDatasetType('survival')}
-                  className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
-                    editingDatasetType === 'survival'
-                      ? 'border-amber-500 bg-amber-50 text-amber-700'
-                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                  }`}
-                >
-                  <span className="font-medium">Survival</span>
-                </button>
-              </div>
-              {editingDatasetType !== editingDatasetOriginalType && (
-                <p className="mt-2 text-xs text-amber-600">
-                  Changing type will modify metadata for all slides in this dataset
-                </p>
-              )}
-            </div>
-
-            {/* Data Level */}
-            {(() => {
-              const ds = datasets.find(d => d.dataset_id === editingDatasetId)
-              if (ds && getDatasetItemType(ds.total_size, ds.file_count) === 'slides') {
-                return (
-                  <div className="mb-6">
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Data Level
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setEditingDatasetDataLevel('case')}
-                        className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
-                          editingDatasetDataLevel === 'case'
-                            ? 'border-purple-500 bg-purple-50 text-purple-700'
-                            : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                        }`}
-                      >
-                        <Users className="w-4 h-4" />
-                        <span className="font-medium">Case-Level</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingDatasetDataLevel('file')}
-                        className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
-                          editingDatasetDataLevel === 'file'
-                            ? 'border-orange-500 bg-orange-50 text-orange-700'
-                            : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                        }`}
-                      >
-                        <FileImage className="w-4 h-4" />
-                        <span className="font-medium">File-Level</span>
-                      </button>
-                    </div>
-                    {editingDatasetDataLevel !== editingDatasetOriginalDataLevel && (
-                      <p className="mt-2 text-xs text-purple-600">
-                        Changing data level affects how files are grouped for analysis
-                      </p>
-                    )}
-                  </div>
-                )
-              }
-              return null
-            })()}
-
-            {/* Action Buttons */}
-            <div className="flex gap-3">
-              <button
-                onClick={handleEditDatasetCancel}
-                disabled={editingDatasetSaving}
-                className="flex-1 px-4 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleEditDatasetSave}
-                disabled={editingDatasetSaving || !editingDatasetName.trim()}
-                className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-bold disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {editingDatasetSaving ? 'Saving...' : 'Save Changes'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <EditDatasetModal
+          editingDatasetName={editingDatasetName}
+          editingDatasetType={editingDatasetType}
+          editingDatasetOriginalType={editingDatasetOriginalType}
+          editingDatasetDataLevel={editingDatasetDataLevel}
+          editingDatasetOriginalDataLevel={editingDatasetOriginalDataLevel}
+          editingDatasetSaving={editingDatasetSaving}
+          isSlideDataset={(() => {
+            const ds = datasets.find(d => d.dataset_id === editingDatasetId)
+            return ds ? getDatasetItemType(ds.total_size, ds.file_count) === 'slides' : false
+          })()}
+          onNameChange={setEditingDatasetName}
+          onTypeChange={setEditingDatasetType}
+          onDataLevelChange={setEditingDatasetDataLevel}
+          onCancel={handleEditDatasetCancel}
+          onSave={handleEditDatasetSave}
+        />
       )}
     </div>
   )
 }
-

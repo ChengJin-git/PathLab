@@ -1,24 +1,37 @@
 import { useState, useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
-import { BarChart3, Play, History, Download, ChevronDown, ChevronUp, Loader2, CheckCircle2, CheckCircle, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star, Plus, Check } from 'lucide-react'
+import { BarChart3, Play, History, ChevronDown, ChevronUp, Loader2, CheckCircle2, CheckCircle, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star, Plus, Check } from 'lucide-react'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
-import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KFoldLossCurveData, type KMCurveData } from '../components/charts/AnalysisCharts'
+
 import { getTrainedModels, TrainedModel, getAuthToken, startExternalValidation as apiStartExternalValidation, fetchDatasetsForValidation, ValidationDataset } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
+import { useAuth } from '../contexts/AuthContext'
+import { AnalysisDetails, type AnalysisSummary, type BootstrapCI, type ChartData } from '../components/results/AnalysisDetails'
 import {
   CLASSIFICATION_METRICS,
   CLASSIFICATION_CHARTS,
   SURVIVAL_METRICS,
   SURVIVAL_CHARTS,
+  SEGMENTATION_METRICS,
+  SEGMENTATION_CHARTS,
   EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS,
   EXTERNAL_VALIDATION_SURVIVAL_CHARTS,
+  EXTERNAL_VALIDATION_SEGMENTATION_CHARTS,
   DEFAULT_CLASSIFICATION_METRICS,
-  DEFAULT_CLASSIFICATION_CHARTS
+  DEFAULT_CLASSIFICATION_CHARTS,
+  DEFAULT_SURVIVAL_METRICS,
+  DEFAULT_SEGMENTATION_METRICS,
+  DEFAULT_SEGMENTATION_CHARTS,
+  DEFAULT_EXTERNAL_CLASSIFICATION_CHARTS,
+  DEFAULT_EXTERNAL_SURVIVAL_CHARTS,
+  DEFAULT_EXTERNAL_SEGMENTATION_CHARTS
 } from '../constants/metrics'
+import { filterCompatibleDatasets, isSurvivalTask as utilIsSurvivalTask, isSegmentationTask as utilIsSegmentationTask } from '../lib/externalValidationUtils'
 
 /**
  * Helper to create fetch options with authentication header
@@ -32,16 +45,6 @@ function authFetchOptions(options: RequestInit = {}): RequestInit {
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     }
   }
-}
-
-/**
- * Helper to add auth token to URL for <img> tags
- */
-function authUrl(url: string): string {
-  const token = getAuthToken()
-  if (!token) return url
-  const separator = url.includes('?') ? '&' : '?'
-  return `${url}${separator}token=${encodeURIComponent(token)}`
 }
 
 type PageMode = 'internal-analysis' | 'external-validation'
@@ -81,64 +84,6 @@ interface TrainingTask {
   is_kfold: boolean  // Whether this task was trained with K-Fold cross-validation
 }
 
-interface ChartData {
-  confusion_matrix?: ConfusionMatrixData
-  roc_curve?: RocCurveData
-  loss_curve?: LossCurveData | KFoldLossCurveData
-  km_curve?: KMCurveData
-}
-
-// K-Fold training metrics structure
-interface KFoldMetricValue {
-  mean: number
-  std: number
-}
-
-interface KFoldFoldResult {
-  history: Record<string, number[]>
-  val_metrics: Record<string, number>
-}
-
-interface KFoldTrainingInfo {
-  is_kfold: boolean
-  num_folds: number
-  folds: Record<string, KFoldFoldResult>
-  aggregated: Record<string, KFoldMetricValue>
-}
-
-// Bootstrap CI types (matching api.ts)
-interface BootstrapCI {
-  lower: number
-  upper: number
-  n_samples: number
-}
-
-interface BootstrapCIResult {
-  metrics_ci: Record<string, BootstrapCI | null>
-  class_metrics_ci?: Record<string, Record<string, BootstrapCI | null>>
-  n_bootstrap: number
-  confidence_level: number
-}
-
-interface AnalysisSummary {
-  analysis_id: string
-  task_id: string
-  task_type?: string  // 'classification' or 'survival'
-  timestamp: string
-  description: string | null
-  num_samples: number
-  classes?: string[]
-  is_binary?: boolean
-  requested_metrics?: string[]
-  requested_charts?: string[]
-  metrics: Record<string, number>
-  class_metrics?: Record<string, Record<string, number>>
-  chart_paths?: Record<string, string>
-  chart_data?: ChartData
-  kfold_training?: KFoldTrainingInfo  // K-Fold training info if available
-  bootstrap_ci?: BootstrapCIResult  // Bootstrap 95% confidence intervals if computed
-}
-
 interface AnalysisResult {
   task_id: string
   analysis_id: string
@@ -150,16 +95,17 @@ interface AnalysisResult {
   _pending?: boolean  // Internal flag to indicate analysis is pending/running
 }
 
-// Helper to check if task is survival type
-const isSurvivalTask = (modelType: string | undefined): boolean => {
-  return modelType === 'wsi_survival' || modelType === 'survival'
-}
+// Use imported helpers from shared utils
+const isSurvivalTask = utilIsSurvivalTask
+const isSegmentationTask = utilIsSegmentationTask
 
 export default function ResultsViewerPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
   const { analysisTasks, subscribeAnalysisSSE } = useBackgroundTask()
+  const { isAdmin } = useAuth()
+  const { t } = useTranslation()
 
   // Subscribe to analysis SSE when this page is mounted
   useEffect(() => {
@@ -201,6 +147,8 @@ export default function ResultsViewerPage() {
   const [validationProgress, setValidationProgress] = useState<ValidationProgress | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
+  // Ref that always holds the latest selectedTaskId to avoid stale closures in async callbacks
+  const selectedTaskIdRef = useRef<string | null>(selectedTaskId)
 
   // Completed external validation tasks (for restoring results on page return)
   interface CompletedExtValTask {
@@ -215,6 +163,11 @@ export default function ResultsViewerPage() {
   }
   const [completedExtValTasks, setCompletedExtValTasks] = useState<CompletedExtValTask[]>([])
 
+  // External validation analysis history (mirrors `analyses` for internal)
+  const [extAnalyses, setExtAnalyses] = useState<AnalysisSummary[]>([])
+  const [showExtHistory, setShowExtHistory] = useState(false)
+  const [expandedExtAnalysis, setExpandedExtAnalysis] = useState<string | null>(null)
+
   useEffect(() => {
     loadTasks()
     loadTrainedModels()
@@ -228,16 +181,52 @@ export default function ResultsViewerPage() {
     }
   }, [selectedTaskId])
 
-  // Auto-expand the most recent analysis when navigating via URL param or state
   useEffect(() => {
-    if (initialSelectedTaskId && analyses.length > 0 && !expandedAnalysis) {
+    // Check for task_id in URL params first
+    if (taskIdFromUrl && taskIdFromUrl !== selectedTaskId) {
+      setSelectedTaskId(taskIdFromUrl)
+      // Switch back to internal analysis if we were elsewhere
+      if (pageMode !== 'internal-analysis') {
+        setPageMode('internal-analysis')
+      }
+    }
+
+    // Check navigation state for mode switching or pre-selection
+    const state = location.state as { pageMode?: PageMode, selectedModelId?: string, selectedTaskId?: string } | null
+    if (state?.pageMode && state.pageMode !== pageMode) {
+      setPageMode(state.pageMode)
+    }
+    if (state?.selectedModelId) {
+      // We need to wait for trainedModels to load, but we can set the intent
+      setSelectedModelId(state.selectedModelId)
+    }
+    // Handle task_id from state
+    if (state?.selectedTaskId && !taskIdFromUrl && state.selectedTaskId !== selectedTaskId) {
+      if (state?.pageMode === 'external-validation') {
+        // For external validation, load analyses directly instead of setting internal selectedTaskId
+        loadExtAnalyses(state.selectedTaskId)
+        loadCompletedExtValTasks()
+      } else {
+        setSelectedTaskId(state.selectedTaskId)
+      }
+    }
+  }, [location.state, taskIdFromUrl]) // removed dependency loop risks
+
+  // Track whether we've already done the initial auto-expand (one-shot, don't re-expand after user collapses)
+  const autoExpandedRef = useRef(false)
+
+  // Auto-expand the most recent analysis when navigating via URL param or state — fires once per mount
+  useEffect(() => {
+    if (autoExpandedRef.current) return  // already done, user is in control now
+    if (initialSelectedTaskId && analyses.length > 0) {
       // Sort by timestamp descending and expand the most recent
       const sortedAnalyses = [...analyses].sort((a, b) =>
         new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
       )
       setExpandedAnalysis(sortedAnalyses[0].analysis_id)
+      autoExpandedRef.current = true
     }
-  }, [analyses, initialSelectedTaskId, expandedAnalysis])
+  }, [analyses, initialSelectedTaskId])
 
   // Reset metrics/charts selection when task type changes
   useEffect(() => {
@@ -246,12 +235,47 @@ export default function ResultsViewerPage() {
       if (isSurvivalTask(task.task_type)) {
         setSelectedMetrics(['c_index', 'integrated_brier_score'])
         setSelectedCharts(['km_curve', 'loss_curve'])
+      } else if (isSegmentationTask(task.task_type)) {
+        setSelectedMetrics([...DEFAULT_SEGMENTATION_METRICS])
+        setSelectedCharts([...DEFAULT_SEGMENTATION_CHARTS])
       } else {
         setSelectedMetrics(['accuracy', 'precision', 'sensitivity', 'f1', 'auc', 'specificity'])
         setSelectedCharts(['confusion_matrix', 'roc_curve', 'loss_curve'])
       }
     }
   }, [selectedTaskId, tasks])
+
+  // Reset metrics/charts selection when external model changes
+  useEffect(() => {
+    if (pageMode !== 'external-validation' || !selectedModelId) return
+    const model = trainedModels.find(m => m.model_id === selectedModelId)
+    const task = model ? tasks.find(t => t.task_id === model.task_id) : null
+    if (task) {
+      if (isSurvivalTask(task.task_type)) {
+        setSelectedMetrics([...DEFAULT_SURVIVAL_METRICS])
+        setSelectedCharts([...DEFAULT_EXTERNAL_SURVIVAL_CHARTS])
+      } else if (isSegmentationTask(task.task_type)) {
+        setSelectedMetrics([...DEFAULT_SEGMENTATION_METRICS])
+        setSelectedCharts([...DEFAULT_EXTERNAL_SEGMENTATION_CHARTS])
+      } else {
+        setSelectedMetrics([...DEFAULT_CLASSIFICATION_METRICS])
+        setSelectedCharts([...DEFAULT_EXTERNAL_CLASSIFICATION_CHARTS])
+      }
+      setBootstrapCIMetrics([])
+    }
+  }, [pageMode, selectedModelId, trainedModels, tasks])
+
+  // Auto-select most recent completed external validation task's model+dataset
+  // when entering external validation mode with nothing selected
+  useEffect(() => {
+    if (pageMode !== 'external-validation') return
+    if (selectedModelId || datasetId) return // Already have a selection
+    if (completedExtValTasks.length === 0) return
+
+    const latestTask = completedExtValTasks[0] // Sorted by created_at desc from backend
+    if (latestTask.model_id) setSelectedModelId(latestTask.model_id)
+    if (latestTask.dataset_id) setDatasetId(latestTask.dataset_id)
+  }, [pageMode, completedExtValTasks])
 
   // Auto-restore external validation results when model+dataset selection matches a completed task
   useEffect(() => {
@@ -277,36 +301,13 @@ export default function ResultsViewerPage() {
         error: null,
         results_count: matchingTask.results_count,
       })
-      // Load analysis results for this task
-      ;(async () => {
-        try {
-          const response = await fetch(
-            `${API_BASE}/results/tasks/${matchingTask.task_id}/analysis`,
-            authFetchOptions()
-          )
-          if (response.ok) {
-            const data = await response.json()
-            const analysesList: AnalysisSummary[] = data.analyses || []
-            if (analysesList.length > 0) {
-              // Use the most recent analysis
-              setCurrentResult({
-                task_id: matchingTask.task_id,
-                analysis_id: analysesList[0].analysis_id,
-                analysis_dir: '',
-                summary: analysesList[0],
-                chart_paths: analysesList[0].chart_paths || {},
-                metrics: analysesList[0].metrics || {},
-              })
-            }
-          }
-        } catch (error) {
-          console.error('Failed to load external validation analysis:', error)
-        }
-      })()
+      // Load analysis history for this task
+      loadExtAnalyses(matchingTask.task_id)
     } else if (!validationProgress || validationProgress.model_id !== selectedModelId || validationProgress.dataset_id !== datasetId) {
       // No matching completed task and selection changed — clear stale results
       setValidationProgress(null)
       setCurrentResult(null)
+      setExtAnalyses([])
     }
   }, [pageMode, selectedModelId, datasetId, completedExtValTasks])
 
@@ -327,32 +328,8 @@ export default function ResultsViewerPage() {
 
         // Check if this is an external validation analysis
         if (task.analysisType === 'external' && task.trainingTaskId) {
-          // Load analysis results for the external validation task
-          const extTaskId = task.trainingTaskId
-          ;(async () => {
-            try {
-              const response = await fetch(
-                `${API_BASE}/results/tasks/${extTaskId}/analysis`,
-                authFetchOptions()
-              )
-              if (response.ok) {
-                const data = await response.json()
-                const analysesList: AnalysisSummary[] = data.analyses || []
-                if (analysesList.length > 0) {
-                  setCurrentResult({
-                    task_id: extTaskId,
-                    analysis_id: analysesList[0].analysis_id,
-                    analysis_dir: '',
-                    summary: analysesList[0],
-                    chart_paths: analysesList[0].chart_paths || {},
-                    metrics: analysesList[0].metrics || {},
-                  })
-                }
-              }
-            } catch (error) {
-              console.error('Failed to load external validation analysis:', error)
-            }
-          })()
+          // Load analysis history for the external validation task
+          loadExtAnalyses(task.trainingTaskId)
           // Also refresh the completed extval tasks list for future visits
           loadCompletedExtValTasks()
         } else {
@@ -368,6 +345,11 @@ export default function ResultsViewerPage() {
     }
   }, [analysisTasks, selectedTaskId, currentResult])
 
+  // Keep ref in sync with state
+  useEffect(() => {
+    selectedTaskIdRef.current = selectedTaskId
+  }, [selectedTaskId])
+
   const loadTasks = async () => {
     setLoading(true)
     try {
@@ -376,7 +358,9 @@ export default function ResultsViewerPage() {
         const data = await response.json()
         const taskList = data.items || []
         setTasks(taskList)
-        if (taskList.length > 0 && !selectedTaskId) {
+        // Use ref to get the current selectedTaskId — avoids stale closure when called from
+        // the empty-deps useEffect that captured an earlier render's selectedTaskId value
+        if (taskList.length > 0 && !selectedTaskIdRef.current) {
           setSelectedTaskId(taskList[0].task_id)
         }
       }
@@ -435,38 +419,94 @@ export default function ResultsViewerPage() {
     }
   }
 
+  const loadExtAnalyses = async (taskId: string) => {
+    try {
+      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`, authFetchOptions())
+      if (response.ok) {
+        const data = await response.json()
+        setExtAnalyses(data.analyses || [])
+      }
+    } catch (error) {
+      console.error('Failed to load external validation analyses:', error)
+    }
+  }
+
   const startExternalValidation = async () => {
-    if (!selectedModelId || !datasetId) return
+    if (!selectedModelId || !datasetId || selectedMetrics.length === 0) return
 
     const selectedModel = trainedModels.find(m => m.model_id === selectedModelId)
     if (!selectedModel) return
 
+    setRunning(true)
     setValidationError(null)
     try {
-      // Use the API function which supports all parameters including bootstrap CI
-      const result = await apiStartExternalValidation(selectedModelId, datasetId)
-      // Task submitted successfully - show pending status
-      // Progress will be tracked via SSE in the Background Task Panel
-      setValidationProgress({
-        validation_id: result.task_id,
-        status: 'pending',
-        progress: 0,
-        total_wsi: result.total_wsi || 0,
-        processed_wsi: 0,
-        model_id: selectedModelId,
-        model_task_id: selectedModel.task_id,
-        dataset_id: datasetId,
-        error: null,
-      })
-      // Start polling to track this specific task's progress
-      startPolling(result.task_id)
+      // Pass metrics/charts/bootstrapCI so backend auto-triggers analysis after inference
+      const result = await apiStartExternalValidation(
+        selectedModelId,
+        datasetId,
+        selectedMetrics,
+        selectedCharts,
+        bootstrapCIMetrics.length > 0
+      )
+
+      // Handle different response statuses from backend:
+      // 1. status === 'completed' — both inference and analysis already exist
+      // 2. status === 'analysis_started' — inference exists, analysis auto-triggered
+      // 3. status === 'pending' — new task queued for GPU inference
+      const responseStatus = (result as unknown as Record<string, unknown>).status as string
+
+      if (responseStatus === 'completed') {
+        // Both inference and analysis already exist — load results directly
+        setValidationProgress({
+          validation_id: result.task_id,
+          status: 'completed',
+          progress: 100,
+          total_wsi: result.total_wsi || 0,
+          processed_wsi: result.total_wsi || 0,
+          model_id: selectedModelId,
+          model_task_id: selectedModel.task_id,
+          dataset_id: datasetId,
+          error: null,
+        })
+        await loadExtAnalyses(result.task_id)
+      } else if (responseStatus === 'analysis_started') {
+        // Inference results exist, analysis auto-triggered — wait for SSE
+        setValidationProgress({
+          validation_id: result.task_id,
+          status: 'completed',
+          progress: 100,
+          total_wsi: result.total_wsi || 0,
+          processed_wsi: result.total_wsi || 0,
+          model_id: selectedModelId,
+          model_task_id: selectedModel.task_id,
+          dataset_id: datasetId,
+          error: null,
+        })
+        // Analysis is running — SSE handler will pick it up
+      } else {
+        // New task submitted — show pending status and start polling
+        setValidationProgress({
+          validation_id: result.task_id,
+          status: 'pending',
+          progress: 0,
+          total_wsi: result.total_wsi || 0,
+          processed_wsi: 0,
+          model_id: selectedModelId,
+          model_task_id: selectedModel.task_id,
+          dataset_id: datasetId,
+          error: null,
+        })
+        startPolling(result.task_id)
+      }
     } catch (error) {
       console.error('Failed to start external validation:', error)
       if (error instanceof Error) {
         setValidationError(error.message)
       } else {
-        setValidationError('Failed to connect to the server. Please try again.')
+        setValidationError(t('resultsPage.failedToConnect'))
       }
+    } finally {
+      setRunning(false)
     }
   }
 
@@ -551,7 +591,7 @@ export default function ResultsViewerPage() {
           setAnalysisError(null)
           setCurrentResult({
             ...result,
-            message: 'Analysis submitted! Track progress in the Background Tasks panel.',
+            message: t('resultsPage.analysisSubmittedTrack'),
             _pending: true
           })
         } else {
@@ -562,11 +602,11 @@ export default function ResultsViewerPage() {
         }
       } else {
         const error = await response.json()
-        setAnalysisError(error.detail || 'Unknown error occurred')
+        setAnalysisError(error.detail || t('resultsPage.unknownError'))
       }
     } catch (error) {
       console.error('Failed to run analysis:', error)
-      setAnalysisError('Failed to connect to the server. Please try again.')
+      setAnalysisError(t('resultsPage.failedToConnect'))
     } finally {
       setRunning(false)
     }
@@ -621,33 +661,46 @@ export default function ResultsViewerPage() {
   }
 
   const confirmDeleteAnalysis = async () => {
-    if (!deleteConfirmId || !selectedTaskId) return
+    if (!deleteConfirmId) return
+
+    // Determine the task ID based on current page mode
+    const taskId = pageMode === 'external-validation'
+      ? validationProgress?.validation_id
+      : selectedTaskId
+    if (!taskId) return
 
     setDeleting(true)
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/analysis/${deleteConfirmId}`, authFetchOptions({
+      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis/${deleteConfirmId}`, authFetchOptions({
         method: 'DELETE'
       }))
 
       if (response.ok) {
-        // Remove from local state
-        setAnalyses(prev => prev.filter(a => a.analysis_id !== deleteConfirmId))
+        if (pageMode === 'external-validation') {
+          // Remove from external analyses state
+          setExtAnalyses(prev => prev.filter(a => a.analysis_id !== deleteConfirmId))
+          if (expandedExtAnalysis === deleteConfirmId) {
+            setExpandedExtAnalysis(null)
+          }
+        } else {
+          // Remove from internal analyses state
+          setAnalyses(prev => prev.filter(a => a.analysis_id !== deleteConfirmId))
+          if (expandedAnalysis === deleteConfirmId) {
+            setExpandedAnalysis(null)
+          }
+        }
         // If it was the current result, clear it
         if (currentResult?.analysis_id === deleteConfirmId) {
           setCurrentResult(null)
         }
-        // If it was expanded, collapse it
-        if (expandedAnalysis === deleteConfirmId) {
-          setExpandedAnalysis(null)
-        }
         setDeleteConfirmId(null)
       } else {
         const error = await response.json()
-        setAnalysisError(`Failed to delete analysis: ${error.detail || 'Unknown error'}`)
+        setAnalysisError(t('resultsPage.failedToDeleteDetail', { detail: error.detail || t('resultsPage.unknownError') }))
       }
     } catch (error) {
       console.error('Failed to delete analysis:', error)
-      setAnalysisError('Failed to delete analysis. Please try again.')
+      setAnalysisError(t('resultsPage.failedToDeleteRetry'))
     } finally {
       setDeleting(false)
     }
@@ -664,7 +717,7 @@ export default function ResultsViewerPage() {
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="text-center">
           <Loader2 className="w-12 h-12 animate-spin text-indigo-600 mx-auto mb-4" />
-          <p className="text-gray-600">Loading tasks...</p>
+          <p className="text-gray-600">{t('resultsPage.loadingTasks')}</p>
         </div>
       </div>
     )
@@ -673,16 +726,16 @@ export default function ResultsViewerPage() {
   return (
     <div className="max-w-[1600px] mx-auto px-4 sm:px-6">
       <PageHeader
-        title="Results Analysis"
-        description="Analyze training task results with customizable metrics and visualizations"
+        title={t('resultsPage.title')}
+        description={t('resultsPage.description')}
       >
         <Button
           variant="outline"
-          onClick={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
+          onClick={() => navigate('/dashboard')}
           className="gap-2"
         >
           <ArrowLeft className="w-4 h-4" />
-          {fromAIChat ? 'Back to Chat' : 'Back to Dashboard'}
+          {t('resultsPage.backToDashboard')}
         </Button>
       </PageHeader>
 
@@ -697,7 +750,7 @@ export default function ResultsViewerPage() {
           }`}
         >
           <BarChart3 className="w-4 h-4" />
-          Internal Analysis
+          {t('resultsPage.internalAnalysis')}
         </button>
         <button
           onClick={() => setPageMode('external-validation')}
@@ -708,45 +761,39 @@ export default function ResultsViewerPage() {
           }`}
         >
           <FlaskConical className="w-4 h-4" />
-          External Validation
+          {t('resultsPage.externalValidation')}
         </button>
       </div>
 
       {tasks.length === 0 ? (
         <Card className="p-12 text-center">
           <BarChart3 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">No Completed Tasks</h3>
-          <p className="text-gray-500">Complete a training task to analyze its results.</p>
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('resultsPage.noCompletedTasks')}</h3>
+          <p className="text-gray-500">{t('resultsPage.completeTaskHint')}</p>
         </Card>
       ) : pageMode === 'external-validation' ? (
-        /* External Validation Mode */
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-          {/* Left Panel - Task Selection */}
-          <div className="lg:col-span-1 space-y-6">
+        /* External Validation Mode — 4-col layout matching Internal Analysis */
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 items-stretch">
+          {/* Left Panel - Configuration */}
+          <div className="lg:col-span-1 flex flex-col">
+            <div className="space-y-6 flex-1">
             {/* Model Selection */}
-            <Card className="p-6 overflow-visible">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">Select Model</h3>
-                <Badge variant="secondary" className="bg-gray-100 text-gray-700">Step 1</Badge>
-              </div>
-              <p className="text-base md:text-lg text-gray-600 mb-6 leading-relaxed">
-                Select a trained model for inference. Manage models in Settings.
-              </p>
-
+            <Card className="p-4 sm:p-6 overflow-visible">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.selectModel')}</h3>
               <div className="relative">
                 <button
                   onClick={() => { setIsModelDropdownOpen(!isModelDropdownOpen); setIsDataDropdownOpen(false); }}
                   className={`w-full flex items-center justify-between px-4 py-3 bg-white border rounded-xl shadow-sm transition-all duration-200 ${
-                    isModelDropdownOpen ? 'border-gray-400 ring-4 ring-gray-200' : 'border-gray-200 hover:border-gray-300'
+                    isModelDropdownOpen ? 'border-orange-500 ring-4 ring-orange-500/10' : 'border-gray-200 hover:border-orange-300'
                   }`}
                 >
                   <div className="flex flex-col items-start">
                     <span className={selectedModel ? 'text-gray-900 font-medium' : 'text-gray-400'}>
-                      {selectedModel ? selectedModel.model_name : 'Select model...'}
+                      {selectedModel ? selectedModel.model_name : t('resultsPage.selectModelPlaceholder')}
                     </span>
                     {selectedModel && (
                       <span className="text-xs text-gray-500">
-                        Trained on: {tasks.find(t => t.task_id === selectedModel.task_id)?.name || 'Unknown'}
+                        {t('resultsPage.trainedOn', { name: tasks.find(tt => tt.task_id === selectedModel.task_id)?.name || t('resultsPage.unknown') })}
                       </span>
                     )}
                   </div>
@@ -754,457 +801,423 @@ export default function ResultsViewerPage() {
                 </button>
 
                 {isModelDropdownOpen && (
-                  <div className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-80 overflow-y-auto">
-                    {trainedModels.map(model => {
-                      const trainTask = tasks.find(t => t.task_id === model.task_id)
-                      const isSurvival = isSurvivalTask(trainTask?.task_type) || model.aggregator === 'survival'
-                      const metrics = model.val_metrics as Record<string, number> | undefined
-                      const metricValue = isSurvival
-                        ? metrics?.c_index
-                        : (metrics?.macro_auc || metrics?.auc)
-                      const metricLabel = isSurvival ? 'C-Index' : 'AUC'
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setIsModelDropdownOpen(false)} />
+                    <div className="absolute z-20 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-80 overflow-y-auto">
+                      {trainedModels.map(model => {
+                        const trainTask = tasks.find(t => t.task_id === model.task_id)
+                        const isSurvival = isSurvivalTask(trainTask?.task_type) || model.aggregator === 'survival'
+                        const isSegmentation = isSegmentationTask(trainTask?.task_type)
+                        const metrics = model.val_metrics as Record<string, number> | undefined
+                        const metricValue = isSurvival
+                          ? metrics?.c_index
+                          : isSegmentation
+                            ? (metrics?.iou || metrics?.dice)
+                            : (metrics?.macro_auc || metrics?.auc)
+                        const metricLabel = isSurvival ? t('resultsPage.cIndex') : isSegmentation ? 'IoU' : t('resultsPage.auc')
 
-                      return (
-                        <button
-                          key={model.model_id}
-                          onClick={() => { setSelectedModelId(model.model_id); setIsModelDropdownOpen(false); }}
-                          className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
-                            selectedModelId === model.model_id ? 'bg-gray-100' : ''
-                          }`}
-                        >
-                          <div className="flex-1 min-w-0">
-                            <div className="font-medium text-gray-900 flex items-center gap-2">
-                              {model.model_name}
-                              {model.is_default && <Star className="w-3 h-3 text-gray-500 flex-shrink-0" />}
+                        return (
+                          <button
+                            key={model.model_id}
+                            onClick={() => { setSelectedModelId(model.model_id); setIsModelDropdownOpen(false); }}
+                            className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
+                              selectedModelId === model.model_id ? 'bg-orange-50' : ''
+                            }`}
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-gray-900 flex items-center gap-2">
+                                {model.model_name}
+                                {model.is_default && <Star className="w-3 h-3 text-gray-500 flex-shrink-0" />}
+                              </div>
+                              <div className="text-xs text-gray-500 truncate">
+                                {t('resultsPage.trainedOn', { name: trainTask?.name || t('resultsPage.unknown') })}
+                              </div>
                             </div>
-                            <div className="text-xs text-gray-500 truncate">
-                              Trained on: {trainTask?.name || 'Unknown'}
+                            <div className="flex items-center gap-3 ml-2">
+                              {metricValue !== undefined && (
+                                <span className="text-xs font-mono bg-gray-100 px-2 py-1 rounded">
+                                  {metricLabel}: {(metricValue * 100).toFixed(1)}%
+                                </span>
+                              )}
+                              {selectedModelId === model.model_id && <CheckCircle2 className="w-4 h-4 text-orange-600 flex-shrink-0" />}
                             </div>
-                          </div>
-                          <div className="flex items-center gap-3 ml-2">
-                            {metricValue !== undefined && (
-                              <span className="text-xs font-mono bg-gray-100 px-2 py-1 rounded">
-                                {metricLabel}: {(metricValue * 100).toFixed(1)}%
-                              </span>
-                            )}
-                            {selectedModelId === model.model_id && <CheckCircle2 className="w-4 h-4 text-gray-600 flex-shrink-0" />}
-                          </div>
-                        </button>
-                      )
-                    })}
-                    {trainedModels.length === 0 && (
-                      <div className="px-4 py-8 text-center text-gray-500">No active models. Train a model first.</div>
-                    )}
-                  </div>
+                          </button>
+                        )
+                      })}
+                      {trainedModels.length === 0 && (
+                        <div className="px-4 py-8 text-center text-gray-500">{t('resultsPage.noActiveModels')}</div>
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
             </Card>
 
             {/* Target Dataset Selection */}
-            <Card className="p-6 overflow-visible">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">Target Dataset</h3>
-                <Badge variant="secondary" className="bg-gray-100 text-gray-700">Step 2</Badge>
-              </div>
-              <p className="text-base md:text-lg text-gray-600 mb-6 leading-relaxed">
-                Select a dataset to run inference on. Features will be extracted automatically if needed.
-              </p>
-
+            <Card className="p-4 sm:p-6 overflow-visible">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.targetDataset')}</h3>
               <div className="relative">
                 <button
                   onClick={() => { setIsDataDropdownOpen(!isDataDropdownOpen); setIsModelDropdownOpen(false); }}
                   disabled={!selectedModelId}
                   className={`w-full flex items-center justify-between px-4 py-3 bg-white border rounded-xl shadow-sm transition-all duration-200 ${
                     !selectedModelId ? 'opacity-50 cursor-not-allowed' :
-                    isDataDropdownOpen ? 'border-gray-400 ring-4 ring-gray-200' : 'border-gray-200 hover:border-gray-300'
+                    isDataDropdownOpen ? 'border-orange-500 ring-4 ring-orange-500/10' : 'border-gray-200 hover:border-orange-300'
                   }`}
                 >
                   <div className="flex flex-col items-start">
                     <span className={selectedDataset ? 'text-gray-900 font-medium' : 'text-gray-400'}>
-                      {selectedDataset ? selectedDataset.name : (selectedModelId ? 'Select dataset...' : 'Select model first')}
+                      {selectedDataset ? selectedDataset.name : (selectedModelId ? t('resultsPage.selectDatasetPlaceholder') : t('resultsPage.selectModelFirst'))}
                     </span>
                   </div>
                   <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${isDataDropdownOpen ? 'rotate-180' : ''}`} />
                 </button>
 
-                {isDataDropdownOpen && selectedModel && modelTask && (
-                  <div className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-64 overflow-y-auto">
-                    {/* Filter datasets by: 1. Same data_type 2. Matching task type 3. Class count match (classification) 4. No WSI overlap */}
-                    {validationDatasets.filter(ds => {
-                      // Must match data_type (WSI <-> WSI, Patch <-> Patch)
-                      const modelDataType = modelTask.data_type || 'wsi'
-                      if (ds.data_type !== modelDataType) return false
-                      // Must match task type (Classification <-> Classification, Survival <-> Survival)
-                      const modelIsSurvival = isSurvivalTask(modelTask.task_type)
-                      const datasetIsSurvival = ds.task_type === 'survival'
-                      if (modelIsSurvival !== datasetIsSurvival) return false
-                      // For classification: must match class count (not class names)
-                      if (!modelIsSurvival) {
-                        const modelClassCount = selectedModel.classes?.length || 0
-                        if (modelClassCount !== ds.distinct_label_count) return false
-                      }
-                      // Exclude datasets with WSI overlap (prevent data leakage)
-                      const modelWsiIds = new Set(modelTask.wsi_ids || [])
-                      if (modelWsiIds.size > 0 && ds.wsi_ids?.some(id => modelWsiIds.has(id))) return false
-                      return true
-                    }).map(dataset => (
-                      <button
-                        key={dataset.dataset_id}
-                        onClick={() => { setDatasetId(dataset.dataset_id); setIsDataDropdownOpen(false); }}
-                        className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
-                          datasetId === dataset.dataset_id ? 'bg-gray-100' : ''
-                        }`}
-                      >
-                        <div>
-                          <div className="font-medium text-gray-900">{dataset.name}</div>
-                          <div className="text-xs text-gray-500">
-                            {dataset.display_count || 0} {dataset.aggregation_level === 'case' ? 'cases' : 'slides'} • {dataset.data_type?.toUpperCase() || 'WSI'}
+                {isDataDropdownOpen && selectedModel && modelTask && (() => {
+                  // Use shared filtering logic from externalValidationUtils
+                  const compatibleDatasets = filterCompatibleDatasets(
+                    selectedModel,
+                    modelTask,
+                    validationDatasets
+                  )
+                  return (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setIsDataDropdownOpen(false)} />
+                    <div className="absolute z-20 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-64 overflow-y-auto">
+                      {compatibleDatasets.map(dataset => (
+                        <button
+                          key={dataset.dataset_id}
+                          onClick={() => { setDatasetId(dataset.dataset_id); setIsDataDropdownOpen(false); }}
+                          className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
+                            datasetId === dataset.dataset_id ? 'bg-orange-50' : ''
+                          }`}
+                        >
+                          <div>
+                            <div className="font-medium text-gray-900">{dataset.name}</div>
+                            <div className="text-xs text-gray-500">
+                              {dataset.display_count || 0} {dataset.aggregation_level === 'case' ? t('resultsPage.cases') : t('resultsPage.slides')} • {dataset.data_type?.toUpperCase() || 'WSI'}
+                            </div>
                           </div>
+                          {datasetId === dataset.dataset_id && <CheckCircle2 className="w-4 h-4 text-orange-600" />}
+                        </button>
+                      ))}
+                      {compatibleDatasets.length === 0 && (
+                        <div className="px-4 py-8 text-center text-gray-500">
+                          <p className="font-medium">{t('resultsPage.noCompatibleDatasets')}</p>
+                          <p className="text-xs mt-1">
+                            {t('resultsPage.checkDatasetLabels')}
+                          </p>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); navigate('/wsi-list') }}
+                            className="text-xs text-orange-600 hover:text-orange-700 underline mt-2 inline-block"
+                          >
+                            {t('resultsPage.goToDataRepository')}
+                          </button>
                         </div>
-                        {datasetId === dataset.dataset_id && <CheckCircle2 className="w-4 h-4 text-gray-600" />}
-                      </button>
-                    ))}
-                    {validationDatasets.filter(ds => {
-                      const modelDataType = modelTask.data_type || 'wsi'
-                      if (ds.data_type !== modelDataType) return false
-                      const modelIsSurvival = isSurvivalTask(modelTask.task_type)
-                      const datasetIsSurvival = ds.task_type === 'survival'
-                      if (modelIsSurvival !== datasetIsSurvival) return false
-                      if (!modelIsSurvival) {
-                        const modelClassCount = selectedModel.classes?.length || 0
-                        if (modelClassCount !== ds.distinct_label_count) return false
-                      }
-                      const modelWsiIds = new Set(modelTask.wsi_ids || [])
-                      if (modelWsiIds.size > 0 && ds.wsi_ids?.some(id => modelWsiIds.has(id))) return false
-                      return true
-                    }).length === 0 && (
-                      <div className="px-4 py-8 text-center text-gray-500">
-                        <p className="font-medium">No compatible datasets</p>
-                        <p className="text-xs mt-1">
-                          Looking for: {modelTask.data_type?.toUpperCase() || 'WSI'} level, {isSurvivalTask(modelTask.task_type) ? 'Survival' : 'Classification'} type, matching class count, no WSI overlap
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
+                      )}
+                    </div>
+                  </>
+                  )
+                })()}
               </div>
             </Card>
 
-            {/* Run Validation Button */}
-            <Button
-              onClick={startExternalValidation}
-              disabled={!selectedModelId || !datasetId || (validationProgress?.status === 'running')}
-              className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 gap-2 shadow-lg shadow-orange-600/20"
-            >
-              {validationProgress?.status === 'running' ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Running Validation...
-                </>
-              ) : (
-                <>
-                  <FlaskConical className="w-5 h-5" />
-                  Run External Validation
-                </>
-              )}
-            </Button>
-
-            {validationError && (
-              <Card className="p-4 bg-red-50 border-red-200">
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
-                  <div className="flex-1">
-                    <p className="text-sm text-red-600">{validationError}</p>
+            {/* Metrics Selection — shown when model is selected */}
+            {selectedModel && (
+              <Card className="p-4 sm:p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.metrics')}</h3>
+                <div className="space-y-3">
+                  {(isSurvivalTask(modelTask?.task_type) ? SURVIVAL_METRICS : isSegmentationTask(modelTask?.task_type) ? SEGMENTATION_METRICS : CLASSIFICATION_METRICS).map(metric => (
+                    <div key={metric.id} className="flex items-start gap-3 group">
+                      <input
+                        type="checkbox"
+                        checked={selectedMetrics.includes(metric.id)}
+                        onChange={() => toggleMetric(metric.id)}
+                        className="mt-1 w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500 cursor-pointer"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          <span
+                            className="text-sm font-medium text-gray-900 group-hover:text-orange-600 cursor-pointer"
+                            onClick={() => toggleMetric(metric.id)}
+                          >
+                            {t(metric.labelKey, { defaultValue: metric.label })}
+                          </span>
+                          {/* 95% CI button — always available for external validation (no K-Fold concept) */}
+                          {selectedMetrics.includes(metric.id) && (
+                            <button
+                              type="button"
+                              onClick={() => toggleBootstrapCI(metric.id)}
+                              className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-tight transition-all duration-200 focus:outline-none border ${
+                                bootstrapCIMetrics.includes(metric.id)
+                                  ? 'bg-orange-500 text-white shadow-sm border-orange-500 ring-2 ring-orange-500/20'
+                                  : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-orange-200 hover:bg-orange-50 hover:text-orange-600'
+                              }`}
+                            >
+                              {bootstrapCIMetrics.includes(metric.id) ? (
+                                <Check className="w-2.5 h-2.5 stroke-[3]" />
+                              ) : (
+                                <Plus className="w-2.5 h-2.5 stroke-[3]" />
+                              )}
+                              95% CI
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-500">{t(metric.descriptionKey, { defaultValue: metric.description })}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {bootstrapCIMetrics.length > 0 && (
+                  <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <p className="text-xs text-amber-700">
+                      <span className="font-semibold">{t('resultsPage.note')}</span> {t('resultsPage.bootstrapCINote')}
+                    </p>
                   </div>
-                  <button onClick={() => setValidationError(null)} className="text-red-400 hover:text-red-600">
-                    <X className="w-4 h-4" />
-                  </button>
+                )}
+              </Card>
+            )}
+
+            {/* Charts Selection — shown when model is selected */}
+            {selectedModel && (
+              <Card className="p-4 sm:p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.charts')}</h3>
+                <div className="space-y-3">
+                  {(isSurvivalTask(modelTask?.task_type) ? EXTERNAL_VALIDATION_SURVIVAL_CHARTS : isSegmentationTask(modelTask?.task_type) ? EXTERNAL_VALIDATION_SEGMENTATION_CHARTS : EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS).map(chart => (
+                    <label key={chart.id} className="flex items-start gap-3 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={selectedCharts.includes(chart.id)}
+                        onChange={() => toggleChart(chart.id)}
+                        className="mt-1 w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500"
+                      />
+                      <div>
+                        <span className="text-sm font-medium text-gray-900 group-hover:text-orange-600">
+                          {t(chart.labelKey, { defaultValue: chart.label })}
+                        </span>
+                        <p className="text-xs text-gray-500">{t(chart.descriptionKey, { defaultValue: chart.description })}</p>
+                      </div>
+                    </label>
+                  ))}
                 </div>
               </Card>
             )}
+
+            {/* Description */}
+            {selectedModel && (
+              <Card className="p-4 sm:p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.descriptionOptional')}</h3>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder={t('resultsPage.addNotesExternal')}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 resize-none"
+                  rows={3}
+                />
+              </Card>
+            )}
+
+            </div>
+
+            <div className="mt-auto pt-6 space-y-4">
+              {/* Submit Button */}
+              <Button
+                onClick={startExternalValidation}
+                disabled={running || !selectedModelId || !datasetId || selectedMetrics.length === 0 || (validationProgress?.status === 'running') || (validationProgress?.status === 'pending')}
+                className="w-full bg-orange-600 hover:bg-orange-700 text-white py-4 gap-2 text-base font-bold shadow-lg shadow-orange-500/20 rounded-xl"
+              >
+                {running ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    {t('resultsPage.submitting')}
+                  </>
+                ) : validationProgress?.status === 'running' || validationProgress?.status === 'pending' ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    {t('resultsPage.validationInProgressBtn')}
+                  </>
+                ) : (
+                  <>
+                    <FlaskConical className="w-5 h-5" />
+                    {t('resultsPage.runExternalValidation')}
+                  </>
+                )}
+              </Button>
+
+              {validationError && (
+                <Card className="p-4 bg-red-50 border-red-200">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-sm text-red-600">{validationError}</p>
+                    </div>
+                    <button onClick={() => setValidationError(null)} className="text-red-400 hover:text-red-600">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </Card>
+              )}
+            </div>
           </div>
 
-          {/* Right Panel - Progress & Results */}
-          <div className="lg:col-span-2 space-y-6">
-            {validationProgress ? (
-              <>
-                {/* Progress Card */}
-                <Card className="p-4 sm:p-6">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Validation Progress</h3>
+          {/* Right Panel — Results (mirrors internal analysis layout) */}
+          <div className="lg:col-span-3 flex flex-col gap-6">
+            {/* History Toggle */}
+            <div className="flex-none flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900">
+                {showExtHistory ? t('resultsPage.analysisHistory') : t('resultsPage.latestResult')}
+              </h3>
+              <button
+                onClick={() => setShowExtHistory(!showExtHistory)}
+                className="flex items-center gap-2 text-sm text-orange-600 hover:text-orange-800"
+              >
+                <History className="w-4 h-4" />
+                {showExtHistory ? t('resultsPage.showLatest') : t('resultsPage.viewHistory')}
+              </button>
+            </div>
 
+            <div className="flex-1 min-h-0">
+              {/* Progress — shown while validation is running/pending */}
+              {validationProgress && (validationProgress.status === 'running' || validationProgress.status === 'pending') ? (
+                <Card className="p-6">
+                  <h4 className="font-semibold text-gray-900 mb-4">{t('resultsPage.validationInProgress')}</h4>
                   <div className="space-y-4">
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-gray-600">Status</span>
+                      <span className="text-gray-600">{t('resultsPage.status')}</span>
                       <Badge variant="secondary" className={
-                        validationProgress.status === 'completed' ? 'bg-green-100 text-green-700' :
-                        validationProgress.status === 'failed' ? 'bg-red-100 text-red-700' :
-                        validationProgress.status === 'running' ? 'bg-blue-100 text-blue-700' :
-                        'bg-gray-100 text-gray-700'
+                        validationProgress.status === 'running' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'
                       }>
                         {validationProgress.status}
                       </Badge>
                     </div>
-
                     <div>
                       <div className="flex items-center justify-between text-sm mb-2">
-                        <span className="text-gray-600">Progress</span>
-                        <span className="font-medium">{validationProgress.processed_wsi} / {validationProgress.total_wsi} WSIs</span>
+                        <span className="text-gray-600">{t('resultsPage.progress')}</span>
+                        <span className="font-medium">{validationProgress.processed_wsi} / {validationProgress.total_wsi} {t('resultsPage.wsis')}</span>
                       </div>
                       <div className="w-full bg-gray-200 rounded-full h-3">
-                        <div
-                          className={`h-3 rounded-full transition-all duration-300 ${
-                            validationProgress.status === 'completed' ? 'bg-green-500' :
-                            validationProgress.status === 'failed' ? 'bg-red-500' :
-                            'bg-orange-500'
-                          }`}
-                          style={{ width: `${validationProgress.progress}%` }}
-                        />
+                        <div className="h-3 rounded-full transition-all duration-300 bg-orange-500" style={{ width: `${validationProgress.progress}%` }} />
                       </div>
                     </div>
+                  </div>
+                </Card>
 
-                    {validationProgress.status === 'completed' && (
-                      <div className="p-4 bg-green-50 rounded-lg border border-green-200">
-                        <div className="flex items-center gap-2 text-green-700">
-                          <CheckCircle2 className="w-5 h-5" />
-                          <span className="font-medium">Validation completed!</span>
-                        </div>
-                        <p className="text-sm text-green-600 mt-2">
-                          Generated {validationProgress.results_count || validationProgress.processed_wsi} inference results.
-                          Configure metrics and charts below, then run analysis.
-                        </p>
-                      </div>
-                    )}
-
-                    {validationProgress.status === 'failed' && validationProgress.error && (
-                      <div className="p-4 bg-red-50 rounded-lg border border-red-200">
-                        <div className="flex items-center gap-2 text-red-700">
-                          <AlertCircle className="w-5 h-5" />
-                          <span className="font-medium">Validation failed</span>
-                        </div>
-                        <p className="text-sm text-red-600 mt-2">{validationProgress.error}</p>
-                      </div>
+              ) : validationProgress?.status === 'failed' ? (
+                <Card className="p-6">
+                  <div className="p-4 bg-red-50 rounded-lg border border-red-200">
+                    <div className="flex items-center gap-2 text-red-700">
+                      <AlertCircle className="w-5 h-5" />
+                      <span className="font-medium">{t('resultsPage.validationFailed')}</span>
+                    </div>
+                    {validationProgress.error && (
+                      <p className="text-sm text-red-600 mt-2">{validationProgress.error}</p>
                     )}
                   </div>
                 </Card>
 
-                {/* Analysis Configuration - Show when validation completed */}
-                {validationProgress.status === 'completed' && (
-                  <>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {/* Metrics Selection */}
-                      <Card className="p-6">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                          Metrics
-                          {modelTask && isSurvivalTask(modelTask.task_type) && (
-                            <span className="ml-2 text-xs font-normal text-emerald-600"></span>
-                          )}
-                        </h3>
-                        <div className="space-y-3">
-                          {(isSurvivalTask(modelTask?.task_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
-                            <div key={metric.id} className="flex items-start gap-3 group">
-                              <input
-                                type="checkbox"
-                                checked={selectedMetrics.includes(metric.id)}
-                                onChange={() => toggleMetric(metric.id)}
-                                className="mt-1 w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500 cursor-pointer"
-                              />
-                              <div className="flex-1">
-                                <div className="flex items-center justify-between">
-                                  <span
-                                    className="text-sm font-medium text-gray-900 group-hover:text-orange-600 cursor-pointer"
-                                    onClick={() => toggleMetric(metric.id)}
-                                  >
-                                    {metric.label}
-                                  </span>
-                                  {/* 95% CI button only for non-K-Fold models (K-Fold uses mean ± std) */}
-                                  {selectedMetrics.includes(metric.id) && !modelTask?.is_kfold && (
-                                    <button
-                                      type="button"
-                                      onClick={() => toggleBootstrapCI(metric.id)}
-                                      className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-tight transition-all duration-200 focus:outline-none border ${
-                                        bootstrapCIMetrics.includes(metric.id)
-                                          ? 'bg-orange-500 text-white shadow-sm border-orange-500 ring-2 ring-orange-500/20'
-                                          : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-orange-200 hover:bg-orange-50 hover:text-orange-600'
-                                      }`}
-                                    >
-                                      {bootstrapCIMetrics.includes(metric.id) ? (
-                                        <Check className="w-2.5 h-2.5 stroke-[3]" />
-                                      ) : (
-                                        <Plus className="w-2.5 h-2.5 stroke-[3]" />
-                                      )}
-                                      95% CI
-                                    </button>
-                                  )}
-                                </div>
-                                <p className="text-xs text-gray-500">{metric.description}</p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                        {/* 95% CI computation time note */}
-                        {bootstrapCIMetrics.length > 0 && (
-                          <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                            <p className="text-xs text-amber-700">
-                              <span className="font-semibold">Note:</span> Computing 95% CI with 1000 bootstrap samples would take longer time.
+              ) : showExtHistory ? (
+                /* History List */
+                <div className="space-y-4">
+                  {extAnalyses.length === 0 ? (
+                    <Card className="p-8 text-center">
+                      <History className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                      <p className="text-gray-500">{t('resultsPage.noAnalysisHistory')}</p>
+                    </Card>
+                  ) : (
+                    extAnalyses.map(analysis => (
+                      <Card key={analysis.analysis_id} className="overflow-hidden">
+                        <div className="p-4 flex items-center justify-between hover:bg-gray-50">
+                          <button
+                            onClick={() => setExpandedExtAnalysis(
+                              expandedExtAnalysis === analysis.analysis_id ? null : analysis.analysis_id
+                            )}
+                            className="flex-1 text-left"
+                          >
+                            <p className="font-medium text-gray-900">
+                              {formatDate(analysis.timestamp)}
                             </p>
+                            <p className="text-sm text-gray-500">
+                              {t('resultsPage.samples', { count: analysis.num_samples })}{analysis.classes && ` • ${t('resultsPage.classesCount', { count: analysis.classes.length })}`}
+                              {isAdmin && analysis.submitted_by && (
+                                <span className="ml-2 text-orange-600">• {analysis.submitted_by}</span>
+                              )}
+                            </p>
+                            {analysis.description && (
+                              <p className="text-sm text-gray-600 mt-1">{analysis.description}</p>
+                            )}
+                          </button>
+                          <div className="flex items-center gap-2 ml-3">
+                            <button
+                              onClick={(e) => handleDeleteAnalysis(analysis.analysis_id, e)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title={t('resultsPage.deleteThisAnalysis')}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => setExpandedExtAnalysis(
+                                expandedExtAnalysis === analysis.analysis_id ? null : analysis.analysis_id
+                              )}
+                              className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                              {expandedExtAnalysis === analysis.analysis_id ? (
+                                <ChevronUp className="w-5 h-5" />
+                              ) : (
+                                <ChevronDown className="w-5 h-5" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+
+                        {expandedExtAnalysis === analysis.analysis_id && (
+                          <div className="border-t border-gray-100 p-4 bg-gray-50">
+                            <AnalysisDetails analysis={analysis} taskId={validationProgress?.validation_id} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
                           </div>
                         )}
                       </Card>
-
-                      {/* Charts Selection */}
-                      <Card className="p-6">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                          Charts
-                          {modelTask && isSurvivalTask(modelTask.task_type) && (
-                            <span className="ml-2 text-xs font-normal text-emerald-600"></span>
-                          )}
-                        </h3>
-                        <div className="space-y-3">
-                          {(isSurvivalTask(modelTask?.task_type) ? EXTERNAL_VALIDATION_SURVIVAL_CHARTS : EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS).map(chart => (
-                            <label key={chart.id} className="flex items-start gap-3 cursor-pointer group">
-                              <input
-                                type="checkbox"
-                                checked={selectedCharts.includes(chart.id)}
-                                onChange={() => toggleChart(chart.id)}
-                                className="mt-1 w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500"
-                              />
-                              <div>
-                                <span className="text-sm font-medium text-gray-900 group-hover:text-orange-600">
-                                  {chart.label}
-                                </span>
-                                <p className="text-xs text-gray-500">{chart.description}</p>
-                              </div>
-                            </label>
-                          ))}
-                        </div>
-                      </Card>
+                    ))
+                  )}
+                </div>
+              ) : (
+                /* Latest Result */
+                currentResult && currentResult.summary && !currentResult._pending ? (
+                  <Card className="h-full flex flex-col p-4 sm:p-6 overflow-hidden">
+                    <div className="flex-none flex items-center justify-between mb-6">
+                      <div>
+                        <h4 className="font-semibold text-gray-900">{t('resultsPage.analysisComplete')}</h4>
+                        <p className="text-sm text-gray-500">
+                          {formatDate(currentResult.summary.timestamp)}
+                        </p>
+                      </div>
+                      <CheckCircle2 className="w-6 h-6 text-green-500" />
                     </div>
-
-                    {/* Description */}
-                    <Card className="p-6">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Description (Optional)</h3>
-                      <textarea
-                        value={description}
-                        onChange={(e) => setDescription(e.target.value)}
-                        placeholder="Add notes about this external validation analysis..."
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 resize-none"
-                        rows={2}
-                      />
-                    </Card>
-
-                    {/* Run Analysis Button */}
-                    <Button
-                      onClick={async () => {
-                        // Use the external validation task ID for analysis
-                        const taskIdToAnalyze = validationProgress.validation_id
-                        setRunning(true)
-                        setAnalysisError(null)
-                        try {
-                          const response = await fetch(`${API_BASE}/results/tasks/${taskIdToAnalyze}/analysis`, authFetchOptions({
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              metrics: selectedMetrics,
-                              charts: selectedCharts,
-                              description: description || null,
-                              bootstrap_ci_metrics: bootstrapCIMetrics.length > 0 ? bootstrapCIMetrics : undefined
-                            })
-                          }))
-                          if (response.ok) {
-                            const result = await response.json()
-                            // Analysis is now async - result contains status, not full analysis
-                            if (result.status === 'pending' || result.status === 'running') {
-                              // Show submitted message - user can track in Background Tasks panel
-                              setAnalysisError(null)
-                              // Store the analysis_id for later
-                              setCurrentResult({
-                                ...result,
-                                message: 'Analysis submitted! Track progress in the Background Tasks panel.',
-                                _pending: true
-                              })
-                            } else {
-                              setCurrentResult(result)
-                              setExpandedAnalysis(result.analysis_id)
-                            }
-                          } else {
-                            const error = await response.json()
-                            setAnalysisError(error.detail || 'Unknown error occurred')
-                          }
-                        } catch (error) {
-                          console.error('Failed to run analysis:', error)
-                          setAnalysisError('Failed to connect to the server. Please try again.')
-                        } finally {
-                          setRunning(false)
-                        }
-                      }}
-                      disabled={running || selectedMetrics.length === 0}
-                      className="w-full bg-gray-800 hover:bg-gray-900 text-white py-3 gap-2"
-                    >
-                      {running ? (
-                        <>
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                          Submitting...
-                        </>
-                      ) : (
-                        <>
-                          <BarChart3 className="w-5 h-5" />
-                          Run Analysis on Validation Results
-                        </>
-                      )}
-                    </Button>
-
-                    {/* Analysis Submitted Message */}
-                    {currentResult?._pending && (
-                      <Card className="p-4 bg-blue-50 border-blue-200">
-                        <div className="flex items-center gap-3">
-                          <CheckCircle className="w-5 h-5 text-blue-500 flex-shrink-0" />
-                          <p className="text-sm text-blue-700">
-                            Analysis submitted! Track progress in the Background Tasks panel.
-                          </p>
-                        </div>
-                      </Card>
-                    )}
-
-                    {/* Analysis Error */}
-                    {analysisError && (
-                      <Card className="p-4 bg-red-50 border-red-200">
-                        <div className="flex items-start gap-3">
-                          <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
-                          <div className="flex-1">
-                            <p className="text-sm text-red-600">{analysisError}</p>
-                          </div>
-                          <button onClick={() => setAnalysisError(null)} className="text-red-400 hover:text-red-600">
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </Card>
-                    )}
-
-                    {/* Show current result if available - reuse AnalysisDetails for full feature parity */}
-                    {currentResult && currentResult.summary && !currentResult._pending && (
-                      <Card className="p-4 sm:p-6">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">External Validation Results</h3>
-                        <AnalysisDetails
-                          analysis={currentResult.summary}
-                          taskId={currentResult.task_id}
-                          selectedMetrics={selectedMetrics}
-                          selectedCharts={selectedCharts}
-                          isExternal
-                        />
-                      </Card>
-                    )}
-                  </>
-                )}
-              </>
-            ) : (
-              <Card className="p-12 text-center">
-                <FlaskConical className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">External Validation</h3>
-                <p className="text-gray-500 max-w-md mx-auto">
-                  Test a trained model on data from a different task. Select a model source and feature source, then run validation to generate inference results.
-                </p>
-              </Card>
-            )}
+                    <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
+                      <AnalysisDetails analysis={currentResult.summary} taskId={validationProgress?.validation_id} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
+                    </div>
+                  </Card>
+                ) : extAnalyses.length > 0 ? (
+                  <Card className="h-full flex flex-col p-4 sm:p-6 overflow-hidden">
+                    <div className="flex-none flex items-center justify-between mb-6">
+                      <div>
+                        <h4 className="font-semibold text-gray-900">{t('resultsPage.latestAnalysis')}</h4>
+                        <p className="text-sm text-gray-500">
+                          {formatDate(extAnalyses[0].timestamp)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
+                      <AnalysisDetails analysis={extAnalyses[0]} taskId={validationProgress?.validation_id} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
+                    </div>
+                  </Card>
+                ) : (
+                  <Card className="p-12 text-center h-full flex flex-col items-center justify-center">
+                    <FlaskConical className="w-16 h-16 text-gray-300 mb-4" />
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('resultsPage.externalValidation')}</h3>
+                    <p className="text-gray-500">{t('resultsPage.externalValidationEmptyHint')}</p>
+                  </Card>
+                )
+              )}
+            </div>
           </div>
         </div>
       ) : (
@@ -1217,10 +1230,10 @@ export default function ResultsViewerPage() {
               <Card className="p-4 sm:p-6 overflow-visible">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
-                  <h3 className="text-lg font-semibold text-gray-900">Select Task</h3>
+                  <h3 className="text-lg font-semibold text-gray-900">{t('resultsPage.selectTask')}</h3>
                 </div>
                 <span className="bg-gray-100 text-gray-600 text-xs px-2.5 py-0.5 rounded-full font-medium">
-                  {tasks.length} available
+                  {t('resultsPage.available', { count: tasks.length })}
                 </span>
               </div>
               
@@ -1233,7 +1246,7 @@ export default function ResultsViewerPage() {
                 >
                   <div className="flex flex-col items-start gap-1.5">
                     <span className="text-gray-900 font-semibold text-[15px] tracking-tight">
-                      {selectedTask ? selectedTask.name : 'Select a task...'}
+                      {selectedTask ? selectedTask.name : t('resultsPage.selectTaskPlaceholder')}
                     </span>
                     {selectedTask && (
                       <div className="flex items-center gap-2 flex-wrap">
@@ -1316,11 +1329,17 @@ export default function ResultsViewerPage() {
                                   <span className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full transition-colors duration-200 ${
                                     selectedTaskId === task.task_id
                                       ? 'bg-white/20 text-white'
-                                      : task.has_ai_results
+                                      : task.ai_results_count > 0
                                         ? 'bg-green-50 text-green-700'
-                                        : 'bg-amber-50 text-amber-700'
+                                        : task.has_analysis
+                                          ? 'bg-blue-50 text-blue-700'
+                                          : 'bg-amber-50 text-amber-700'
                                   }`}>
-                                    {task.has_ai_results ? `${task.ai_results_count} results` : 'no results'}
+                                    {task.ai_results_count > 0
+                                      ? t('resultsPage.resultsCount', { count: task.ai_results_count })
+                                      : task.has_analysis
+                                        ? t('resultsPage.analysisAvailable')
+                                        : t('resultsPage.noResults')}
                                   </span>
                                 </div>
                               </div>
@@ -1338,7 +1357,7 @@ export default function ResultsViewerPage() {
                              <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center">
                                <History className="w-5 h-5 text-gray-400" />
                              </div>
-                             <p>No tasks available</p>
+                             <p>{t('resultsPage.noTasksAvailable')}</p>
                           </div>
                         )}
                       </div>
@@ -1351,13 +1370,13 @@ export default function ResultsViewerPage() {
             {/* Metrics Selection */}
             <Card className="p-4 sm:p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                Metrics
+                {t('resultsPage.metrics')}
                 {selectedTask && isSurvivalTask(selectedTask.task_type) && (
                   <span className="ml-2 text-xs font-normal text-emerald-600"></span>
                 )}
               </h3>
               <div className="space-y-3">
-                {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_METRICS : CLASSIFICATION_METRICS).map(metric => (
+                {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_METRICS : isSegmentationTask(selectedTask?.task_type) ? SEGMENTATION_METRICS : CLASSIFICATION_METRICS).map(metric => (
                   <div key={metric.id} className="flex items-start gap-3 group">
                     <input
                       type="checkbox"
@@ -1371,7 +1390,7 @@ export default function ResultsViewerPage() {
                           className="text-sm font-medium text-gray-900 group-hover:text-indigo-600 cursor-pointer"
                           onClick={() => toggleMetric(metric.id)}
                         >
-                          {metric.label}
+                          {t(metric.labelKey, { defaultValue: metric.label })}
                         </span>
                         {/* 95% CI button only for non-K-Fold tasks (K-Fold uses mean ± std) */}
                         {selectedMetrics.includes(metric.id) && !selectedTask?.is_kfold && (
@@ -1393,7 +1412,7 @@ export default function ResultsViewerPage() {
                           </button>
                         )}
                       </div>
-                      <p className="text-xs text-gray-500">{metric.description}</p>
+                      <p className="text-xs text-gray-500">{t(metric.descriptionKey, { defaultValue: metric.description })}</p>
                     </div>
                   </div>
                 ))}
@@ -1402,7 +1421,7 @@ export default function ResultsViewerPage() {
               {bootstrapCIMetrics.length > 0 && (
                 <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                   <p className="text-xs text-amber-700">
-                    <span className="font-semibold">Note:</span> Computing 95% CI with 1000 bootstrap samples would take longer time.
+                    <span className="font-semibold">{t('resultsPage.note')}</span> {t('resultsPage.bootstrapCINote')}
                   </p>
                 </div>
               )}
@@ -1411,10 +1430,10 @@ export default function ResultsViewerPage() {
             {/* Charts Selection */}
             <Card className="p-4 sm:p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                Charts
+                {t('resultsPage.charts')}
               </h3>
               <div className="space-y-3">
-                {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_CHARTS : CLASSIFICATION_CHARTS).map(chart => (
+                {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_CHARTS : isSegmentationTask(selectedTask?.task_type) ? SEGMENTATION_CHARTS : CLASSIFICATION_CHARTS).map(chart => (
                   <label key={chart.id} className="flex items-start gap-3 cursor-pointer group">
                     <input
                       type="checkbox"
@@ -1424,9 +1443,9 @@ export default function ResultsViewerPage() {
                     />
                     <div>
                       <span className="text-sm font-medium text-gray-900 group-hover:text-indigo-600">
-                        {chart.label}
+                        {t(chart.labelKey, { defaultValue: chart.label })}
                       </span>
-                      <p className="text-xs text-gray-500">{chart.description}</p>
+                      <p className="text-xs text-gray-500">{t(chart.descriptionKey, { defaultValue: chart.description })}</p>
                     </div>
                   </label>
                 ))}
@@ -1435,11 +1454,11 @@ export default function ResultsViewerPage() {
 
             {/* Description */}
             <Card className="p-4 sm:p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Description (Optional)</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.descriptionOptional')}</h3>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Add notes about this analysis..."
+                placeholder={t('resultsPage.addNotesInternal')}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 resize-none"
                 rows={3}
               />
@@ -1457,17 +1476,17 @@ export default function ResultsViewerPage() {
                 {running ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    Submitting...
+                    {t('resultsPage.submitting')}
                   </>
                 ) : currentResult?._pending ? (
                   <>
                     <CheckCircle className="w-5 h-5" />
-                    Analysis Submitted
+                    {t('resultsPage.analysisSubmitted')}
                   </>
                 ) : (
                   <>
                     <Play className="w-5 h-5" />
-                    Run Analysis
+                    {t('resultsPage.runAnalysis')}
                   </>
                 )}
               </Button>
@@ -1478,7 +1497,7 @@ export default function ResultsViewerPage() {
                   <div className="flex items-center gap-3">
                     <CheckCircle className="w-5 h-5 text-blue-500 flex-shrink-0" />
                     <p className="text-sm text-blue-700">
-                      Analysis submitted! Track progress in the Background Tasks panel.
+                      {t('resultsPage.analysisSubmittedTrack')}
                     </p>
                   </div>
                 </Card>
@@ -1490,7 +1509,7 @@ export default function ResultsViewerPage() {
                   <div className="flex items-start gap-3">
                     <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
-                      <h4 className="text-sm font-medium text-red-800">Analysis Failed</h4>
+                      <h4 className="text-sm font-medium text-red-800">{t('resultsPage.analysisFailed')}</h4>
                       <p className="text-sm text-red-600 mt-1">{analysisError}</p>
                     </div>
                     <button
@@ -1510,14 +1529,14 @@ export default function ResultsViewerPage() {
             {/* History Toggle */}
             <div className="flex-none flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900">
-                {showHistory ? 'Analysis History' : 'Latest Result'}
+                {showHistory ? t('resultsPage.analysisHistory') : t('resultsPage.latestResult')}
               </h3>
               <button
                 onClick={() => setShowHistory(!showHistory)}
                 className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-800"
               >
                 <History className="w-4 h-4" />
-                {showHistory ? 'Show Latest' : 'View History'}
+                {showHistory ? t('resultsPage.showLatest') : t('resultsPage.viewHistory')}
               </button>
             </div>
 
@@ -1528,7 +1547,7 @@ export default function ResultsViewerPage() {
                   {analyses.length === 0 ? (
                     <Card className="p-8 text-center">
                       <History className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                      <p className="text-gray-500">No analysis history for this task</p>
+                      <p className="text-gray-500">{t('resultsPage.noAnalysisHistoryTask')}</p>
                     </Card>
                   ) : (
                     analyses.map(analysis => (
@@ -1544,7 +1563,10 @@ export default function ResultsViewerPage() {
                               {formatDate(analysis.timestamp)}
                             </p>
                             <p className="text-sm text-gray-500">
-                              {analysis.num_samples} samples{analysis.classes && ` • ${analysis.classes.length} classes`}
+                              {t('resultsPage.samples', { count: analysis.num_samples })}{analysis.classes && ` • ${t('resultsPage.classesCount', { count: analysis.classes.length })}`}
+                              {isAdmin && analysis.submitted_by && (
+                                <span className="ml-2 text-indigo-600">• {analysis.submitted_by}</span>
+                              )}
                             </p>
                             {analysis.description && (
                               <p className="text-sm text-gray-600 mt-1">{analysis.description}</p>
@@ -1554,7 +1576,7 @@ export default function ResultsViewerPage() {
                             <button
                               onClick={(e) => handleDeleteAnalysis(analysis.analysis_id, e)}
                               className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                              title="Delete this analysis"
+                              title={t('resultsPage.deleteThisAnalysis')}
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -1588,7 +1610,7 @@ export default function ResultsViewerPage() {
                   <Card className="h-full flex flex-col p-4 sm:p-6 overflow-hidden">
                     <div className="flex-none flex items-center justify-between mb-6">
                       <div>
-                        <h4 className="font-semibold text-gray-900">Analysis Complete</h4>
+                        <h4 className="font-semibold text-gray-900">{t('resultsPage.analysisComplete')}</h4>
                         <p className="text-sm text-gray-500">
                           {formatDate(currentResult.summary.timestamp)}
                         </p>
@@ -1603,7 +1625,7 @@ export default function ResultsViewerPage() {
                   <Card className="h-full flex flex-col p-4 sm:p-6 overflow-hidden">
                     <div className="flex-none flex items-center justify-between mb-6">
                       <div>
-                        <h4 className="font-semibold text-gray-900">Latest Analysis</h4>
+                        <h4 className="font-semibold text-gray-900">{t('resultsPage.latestAnalysis')}</h4>
                         <p className="text-sm text-gray-500">
                           {formatDate(analyses[0].timestamp)}
                         </p>
@@ -1616,8 +1638,8 @@ export default function ResultsViewerPage() {
                 ) : (
                   <Card className="p-12 text-center h-full flex flex-col items-center justify-center">
                     <BarChart3 className="w-16 h-16 text-gray-300 mb-4" />
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">No Analysis Yet</h3>
-                    <p className="text-gray-500">Configure metrics and charts, then run analysis.</p>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('resultsPage.noAnalysisYet')}</h3>
+                    <p className="text-gray-500">{t('resultsPage.configureAndRun')}</p>
                   </Card>
                 )
               )}
@@ -1634,10 +1656,10 @@ export default function ResultsViewerPage() {
               <div className="p-2 bg-red-100 rounded-full">
                 <Trash2 className="w-6 h-6 text-red-600" />
               </div>
-              <h3 className="text-lg font-semibold text-gray-900">Delete Analysis</h3>
+              <h3 className="text-lg font-semibold text-gray-900">{t('resultsPage.deleteAnalysis')}</h3>
             </div>
             <p className="text-gray-600 mb-6">
-              Are you sure you want to delete this analysis? This action cannot be undone.
+              {t('resultsPage.deleteConfirmMessage')}
             </p>
             <div className="flex justify-end gap-3">
               <Button
@@ -1645,7 +1667,7 @@ export default function ResultsViewerPage() {
                 onClick={cancelDelete}
                 disabled={deleting}
               >
-                Cancel
+                {t('resultsPage.cancel')}
               </Button>
               <Button
                 onClick={confirmDeleteAnalysis}
@@ -1655,408 +1677,16 @@ export default function ResultsViewerPage() {
                 {deleting ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    Deleting...
+                    {t('resultsPage.deleting')}
                   </>
                 ) : (
-                  'Delete'
+                  t('resultsPage.delete')
                 )}
               </Button>
             </div>
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-interface AnalysisDetailsProps {
-  analysis: AnalysisSummary
-  taskId?: string
-  selectedMetrics?: string[]
-  selectedCharts?: string[]
-  isExternal?: boolean
-}
-
-function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts, isExternal = false }: AnalysisDetailsProps) {
-  // Use task_id from analysis object if available, fallback to prop
-  const effectiveTaskId = analysis.task_id || taskId
-  const isSurvival = analysis.task_type === 'wsi_survival' || analysis.task_type === 'survival'
-  // Color scheme helpers: orange for external, indigo for internal (survival always emerald)
-  const accentBg = isExternal ? 'bg-orange-600' : 'bg-indigo-600'
-  const accentText = isExternal ? 'text-orange-600' : 'text-indigo-600'
-  const accentTextHover = isExternal ? 'hover:text-orange-800' : 'hover:text-indigo-800'
-  const accentHoverBorder = isExternal ? 'hover:border-orange-100' : 'hover:border-indigo-100'
-  const accentCIBadge = isExternal ? 'bg-orange-100 text-orange-700' : 'bg-indigo-100 text-indigo-700'
-  const accentRowHover = isExternal ? 'hover:bg-orange-50/30' : 'hover:bg-indigo-50/30'
-  const accentDlBtn = isExternal ? 'bg-white hover:bg-orange-50 text-orange-700 border-orange-100 hover:border-orange-200' : 'bg-white hover:bg-indigo-50 text-indigo-700 border-indigo-100 hover:border-indigo-200'
-  const accentDlIcon = isExternal ? 'bg-orange-50' : 'bg-indigo-50'
-
-  // Define metric key mappings (backend key -> metric id)
-  const metricKeyToId: Record<string, string> = {
-    'accuracy': 'accuracy',
-    'macro_precision': 'precision',
-    'precision': 'precision',
-    'macro_sensitivity': 'sensitivity',
-    'sensitivity': 'sensitivity',
-    'macro_specificity': 'specificity',
-    'specificity': 'specificity',
-    'macro_f1': 'f1',
-    'f1': 'f1',
-    'macro_auc': 'auc',
-    'auc': 'auc',
-    'c_index': 'c_index',
-    'integrated_brier_score': 'integrated_brier_score',
-    'ibs': 'integrated_brier_score'
-  }
-
-  // Check if a metric key should be displayed based on selectedMetrics
-  const shouldShowMetric = (key: string): boolean => {
-    if (!selectedMetrics || selectedMetrics.length === 0) return true
-    const metricId = metricKeyToId[key]
-    return metricId ? selectedMetrics.includes(metricId) : false
-  }
-
-  // Check if a chart should be displayed based on selectedCharts
-  const shouldShowChart = (chartId: string): boolean => {
-    if (!selectedCharts || selectedCharts.length === 0) return true
-    return selectedCharts.includes(chartId)
-  }
-
-  // Helper for direct file download
-  const handleDownload = async (e: React.MouseEvent, url: string, filename: string) => {
-    e.preventDefault()
-    try {
-      const response = await fetch(url, authFetchOptions())
-      if (!response.ok) throw new Error('Download failed')
-      const blob = await response.blob()
-      const blobUrl = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = blobUrl
-      link.download = filename
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      window.URL.revokeObjectURL(blobUrl)
-    } catch (error) {
-      console.error('Download failed:', error)
-      window.open(url, '_blank')
-    }
-  }
-
-  // Format metric value based on metric type
-  const formatMetricValue = (key: string, value: number) => {
-    // These metrics are shown as decimal (0.xxx format)
-    if (key === 'c_index' || key === 'integrated_brier_score' || key === 'ibs') {
-      return value.toFixed(4)
-    }
-    // Other metrics shown as percentage
-    return `${(value * 100).toFixed(1)}%`
-  }
-
-  // Get display name for metric
-  const getMetricDisplayName = (key: string) => {
-    if (key === 'c_index') return 'C-Index'
-    return key.replace('macro_', '').replace(/_/g, ' ')
-  }
-
-  return (
-    <div className="h-full flex flex-col space-y-6">
-      <div className="flex-1 space-y-6">
-        {/* K-Fold Training Results - if available */}
-      {analysis.kfold_training && (
-        <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-          <h5 className="text-sm font-semibold text-purple-800 mb-3 flex items-center gap-2">
-            <FlaskConical className="w-4 h-4" />
-            K-Fold Cross-Validation Results ({analysis.kfold_training.num_folds} folds)
-          </h5>
-
-          {/* Aggregated Statistics */}
-          {Object.entries(analysis.kfold_training.aggregated)
-            .filter(([key]) => key !== 'loss' && shouldShowMetric(key)).length > 0 && (
-          <div className="mb-4">
-            <p className="text-xs text-purple-600 font-medium mb-2">Aggregated Statistics (mean ± std)</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {Object.entries(analysis.kfold_training.aggregated)
-                .filter(([key]) => key !== 'loss' && shouldShowMetric(key))
-                .map(([key, stats]) => (
-                <div key={key} className="bg-white p-3 rounded-lg border border-purple-200">
-                  <p className="text-xs text-gray-500 uppercase">{getMetricDisplayName(key)}</p>
-                  <p className="text-lg font-bold text-purple-600">
-                    {key === 'c_index'
-                      ? `${stats.mean.toFixed(4)} ± ${stats.std.toFixed(4)}`
-                      : `${(stats.mean * 100).toFixed(1)}% ± ${(stats.std * 100).toFixed(1)}%`
-                    }
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-          )}
-
-          {/* Per-Fold Results */}
-          {Object.keys(analysis.kfold_training.aggregated)
-            .filter(key => key !== 'loss' && shouldShowMetric(key)).length > 0 && (
-          <details className="group">
-            <summary className="text-xs text-purple-600 font-medium cursor-pointer hover:text-purple-800">
-              Show per-fold details
-            </summary>
-            <div className="mt-3 overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-purple-200">
-                    <th className="py-2 text-left text-gray-500">Fold</th>
-                    {Object.keys(analysis.kfold_training.aggregated)
-                      .filter(key => key !== 'loss' && shouldShowMetric(key))
-                      .map(key => (
-                      <th key={key} className="py-2 text-center text-gray-500">{getMetricDisplayName(key)}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(analysis.kfold_training.folds)
-                    .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
-                    .map(([foldName, foldData]) => (
-                    <tr key={foldName} className="border-b border-purple-100">
-                      <td className="py-2 font-medium text-purple-700">
-                        {foldName.replace('fold_', 'Fold ')}
-                      </td>
-                      {Object.keys(analysis.kfold_training!.aggregated)
-                        .filter(key => key !== 'loss' && shouldShowMetric(key))
-                        .map(key => {
-                        const val = foldData.val_metrics[key] ?? foldData.val_metrics[`val_${key}`]
-                        return (
-                          <td key={key} className="py-2 text-center">
-                            {val !== undefined
-                              ? (key === 'c_index' ? val.toFixed(4) : `${(val * 100).toFixed(1)}%`)
-                              : '-'
-                            }
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </details>
-          )}
-        </div>
-      )}
-
-      {/* Metrics Grid */}
-      {Object.entries(analysis.metrics).filter(([key]) => !key.includes('recall') && shouldShowMetric(key)).length > 0 && (
-      <div className="pt-4">
-        <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-          <div className={`w-1.5 h-6 ${accentBg} rounded-full`} />
-          Metrics
-        </h5>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {Object.entries(analysis.metrics)
-            .filter(([key]) => !key.includes('recall') && shouldShowMetric(key))
-            .map(([key, value]) => {
-              // Check if CI is available for this metric
-              const ci = analysis.bootstrap_ci?.metrics_ci?.[key] || analysis.bootstrap_ci?.metrics_ci?.[`macro_${key}`]
-              return (
-                <div key={key} className={`p-4 sm:p-6 rounded-2xl border-2 transition-all hover:shadow-md ${isSurvival ? 'bg-emerald-50/50 border-emerald-100 hover:border-emerald-200' : `bg-white border-gray-100 ${accentHoverBorder}`}`}>
-                  <p className="text-xs text-gray-400 uppercase font-bold tracking-wider mb-2">{getMetricDisplayName(key)}</p>
-                  <p className={`text-2xl sm:text-3xl font-black ${isSurvival ? 'text-emerald-600' : accentText}`}>
-                    {formatMetricValue(key, value)}
-                  </p>
-                  {ci && (
-                    <div className="mt-3 flex items-center gap-2">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${isSurvival ? 'bg-emerald-100 text-emerald-700' : accentCIBadge}`}>95% CI</span>
-                      <span className="text-sm font-medium text-gray-500">
-                        {formatMetricValue(key, ci.lower)} – {formatMetricValue(key, ci.upper)}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-        </div>
-      </div>
-      )}
-
-      {/* Per-Class Metrics - Only for classification tasks */}
-      {!isSurvival && analysis.class_metrics && Object.keys(analysis.class_metrics).length > 0 && (() => {
-        // Define per-class columns with their metric IDs
-        const perClassColumns = [
-          { id: 'precision', label: 'Precision', getValue: (m: any) => m.precision || 0, getCIKey: 'precision' },
-          { id: 'sensitivity', label: 'Sensitivity', getValue: (m: any) => m.sensitivity || m.recall || 0, getCIKey: 'sensitivity' },
-          { id: 'specificity', label: 'Specificity', getValue: (m: any) => m.specificity || 0, getCIKey: 'specificity' },
-          { id: 'f1', label: 'F1 Score', getValue: (m: any) => m.f1 || 0, getCIKey: 'f1' },
-          { id: 'auc', label: 'AUC', getValue: (m: any) => m.auc || 0, getCIKey: 'auc' }
-        ]
-        // Filter columns based on selectedMetrics
-        const visibleColumns = perClassColumns.filter(col =>
-          !selectedMetrics || selectedMetrics.length === 0 || selectedMetrics.includes(col.id)
-        )
-        // Only show table if there are visible columns
-        if (visibleColumns.length === 0) return null
-        return (
-        <div className="pt-8">
-          <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-            <div className={`w-1.5 h-6 ${accentBg} rounded-full`} />
-            Per-Class Performance
-          </h5>
-          <div className="overflow-x-auto rounded-2xl border border-gray-100 shadow-sm bg-white">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50/50 border-b border-gray-100">
-                  <th className="px-4 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Class</th>
-                  {visibleColumns.map(col => (
-                    <th key={col.id} className="px-4 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">{col.label}</th>
-                  ))}
-                  <th className="px-4 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">Support</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {Object.entries(analysis.class_metrics).map(([cls, metrics]) => {
-                  const classCI = analysis.bootstrap_ci?.class_metrics_ci?.[cls]
-                  return (
-                    <tr key={cls} className={`${accentRowHover} transition-colors`}>
-                      <td className="px-4 py-4 font-bold text-gray-900">{cls}</td>
-                      {visibleColumns.map(col => {
-                        const value = col.getValue(metrics)
-                        const ci = classCI?.[col.getCIKey as keyof typeof classCI] as { lower: number; upper: number } | undefined
-                        return (
-                          <td key={col.id} className="px-4 py-4 text-center">
-                            <span className={`font-medium ${accentText}`}>{(value * 100).toFixed(1)}%</span>
-                            {ci && (
-                              <span className="block text-xs text-gray-400">({(ci.lower * 100).toFixed(1)}-{(ci.upper * 100).toFixed(1)})</span>
-                            )}
-                          </td>
-                        )
-                      })}
-                      <td className="px-4 py-4 text-center text-gray-500 font-mono">{metrics.support || 0}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-        )
-      })()}
-
-      {/* Charts - Use ECharts if chart_data available, fallback to static images */}
-      {/* Only render section if there's actual chart data and selected charts */}
-      {((analysis.chart_data && Object.keys(analysis.chart_data).length > 0) ||
-        (analysis.chart_paths && Object.keys(analysis.chart_paths).length > 0)) && (
-        <div className="pt-8 mb-8">
-          <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-            <div className={`w-1.5 h-6 ${accentBg} rounded-full`} />
-            Analysis Charts
-          </h5>
-          <div className={`grid grid-cols-1 ${isSurvival ? 'xl:grid-cols-2 lg:max-w-5xl' : 'xl:grid-cols-2 2xl:grid-cols-3'} gap-8`}>
-            {/* Confusion Matrix */}
-            {shouldShowChart('confusion_matrix') && (analysis.chart_data?.confusion_matrix ? (
-              <ConfusionMatrixChart data={analysis.chart_data.confusion_matrix} title="Confusion Matrix" />
-            ) : analysis.chart_paths?.confusion_matrix && (
-              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-                <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">Confusion Matrix</span>
-                  <button
-                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`, 'confusion_matrix.png')}
-                    className={`${accentText} ${accentTextHover}`}
-                  >
-                    <Download className="w-4 h-4" />
-                  </button>
-                </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`)} alt="Confusion Matrix" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
-              </div>
-            ))}
-
-            {/* ROC Curve */}
-            {shouldShowChart('roc_curve') && (analysis.chart_data?.roc_curve ? (
-              <RocCurveChart data={analysis.chart_data.roc_curve} title="ROC Curve" />
-            ) : analysis.chart_paths?.roc_curve && (
-              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-                <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">ROC Curve</span>
-                  <button
-                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`, 'roc_curve.png')}
-                    className={`${accentText} ${accentTextHover}`}
-                  >
-                    <Download className="w-4 h-4" />
-                  </button>
-                </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`)} alt="ROC Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
-              </div>
-            ))}
-
-            {/* Loss Curve */}
-            {shouldShowChart('loss_curve') && (analysis.chart_data?.loss_curve ? (
-              // Check if it's K-Fold loss data
-              'is_kfold' in analysis.chart_data.loss_curve && analysis.chart_data.loss_curve.is_kfold ? (
-                <KFoldLossCurveChart data={analysis.chart_data.loss_curve as KFoldLossCurveData} title="K-Fold Training Loss Curve" />
-              ) : (
-                <LossCurveChart data={analysis.chart_data.loss_curve as LossCurveData} title="Training Loss Curve" />
-              )
-            ) : analysis.chart_paths?.loss_curve && (
-              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-                <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">Loss Curve</span>
-                  <button
-                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`, 'loss_curve.png')}
-                    className={`${accentText} ${accentTextHover}`}
-                  >
-                    <Download className="w-4 h-4" />
-                  </button>
-                </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`)} alt="Loss Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
-              </div>
-            ))}
-
-            {/* KM Curve - Survival Analysis */}
-            {shouldShowChart('km_curve') && (analysis.chart_data?.km_curve ? (
-              <KMCurveChart data={analysis.chart_data.km_curve} title="Kaplan-Meier Survival Curve" />
-            ) : analysis.chart_paths?.km_curve && (
-              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-                <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">KM Curve</span>
-                  <button
-                    onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/km_curve.png`, 'km_curve.png')}
-                    className="text-emerald-600 hover:text-emerald-800"
-                  >
-                    <Download className="w-4 h-4" />
-                  </button>
-                </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/km_curve.png`)} alt="KM Curve" className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      </div>
-
-      {/* Download All */}
-      <div className="flex flex-col sm:flex-row gap-4 pt-4 border-t border-gray-100">
-        <button
-          onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/summary.json`, `analysis_summary_${analysis.analysis_id}.json`)}
-          className={`flex-1 flex items-center justify-center gap-3 px-6 py-4 ${accentDlBtn} rounded-xl text-sm font-bold shadow-sm transition-all active:scale-[0.98]`}
-        >
-          <div className={`p-2 ${accentDlIcon} rounded-lg group-hover:bg-white transition-colors`}>
-            <Download className="w-5 h-5" />
-          </div>
-          <div className="text-left">
-            <div className="text-[10px] uppercase tracking-wider opacity-60">Metadata</div>
-            Download Summary (JSON)
-          </div>
-        </button>
-        <button
-          onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/results.json`, `full_results_${analysis.analysis_id}.json`)}
-          className="flex-1 flex items-center justify-center gap-3 px-6 py-4 bg-white hover:bg-emerald-50 text-emerald-700 rounded-xl text-sm font-bold border border-emerald-100 shadow-sm transition-all hover:border-emerald-200 active:scale-[0.98]"
-        >
-          <div className="p-2 bg-emerald-50 rounded-lg group-hover:bg-white transition-colors">
-            <Download className="w-5 h-5" />
-          </div>
-          <div className="text-left">
-            <div className="text-[10px] uppercase tracking-wider opacity-60">Raw Data</div>
-            Download Full Results (JSON)
-          </div>
-        </button>
-      </div>
     </div>
   )
 }

@@ -6,9 +6,16 @@ from __future__ import annotations
 from typing import Dict, Type, List, Optional, Any
 
 from .base import BaseClassifier
+from .linear import LinearProbeClassifier
+from .mlp import MLPClassifier
+from .attention import AttentionClassifier
 
 
-_CLASSIFIER_REGISTRY: Dict[str, Type[BaseClassifier]] = {}
+_CLASSIFIER_REGISTRY: Dict[str, Type[BaseClassifier]] = {
+    "linear": LinearProbeClassifier,
+    "mlp": MLPClassifier,
+    "attention": AttentionClassifier,
+}
 
 
 def register_classifier(name: str, cls: Type[BaseClassifier]) -> None:

@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { HardDrive, RefreshCw, Trash2, Search, CheckCircle, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react'
 import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, OrphanedFile } from '../api'
 import { PageHeader, Card, Button } from '../components/common'
+import { formatBytes } from '../lib/utils'
 
 export default function StorageManagementPage() {
+  const { t } = useTranslation()
   const [stats, setStats] = useState<StorageStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -14,6 +17,27 @@ export default function StorageManagementPage() {
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null)
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
+
+  const categoryLabels: { [key: string]: string } = {
+    coordinates: t('storagePage.categories.coordinates'),
+    masks: t('storagePage.categories.masks'),
+    ai_results: t('storagePage.categories.aiResults'),
+    features_cache: t('storagePage.categories.featuresCache'),
+    training: t('storagePage.categories.training'),
+    models: t('storagePage.categories.models'),
+    logs: t('storagePage.categories.logs'),
+    wsi_files: t('storagePage.categories.wsiFiles')
+  }
+
+  const orphanedCategoryItems = [
+    { key: 'wsi_files', label: t('storagePage.orphanedCategories.wsiFiles'), data: orphanedFiles?.orphaned_wsi_files },
+    { key: 'coordinates', label: t('storagePage.orphanedCategories.coordinates'), data: orphanedFiles?.orphaned_coordinates },
+    { key: 'masks', label: t('storagePage.orphanedCategories.masks'), data: orphanedFiles?.orphaned_masks },
+    { key: 'features_cache', label: t('storagePage.orphanedCategories.featuresCache'), data: orphanedFiles?.orphaned_features_cache },
+    { key: 'ai_results', label: t('storagePage.orphanedCategories.aiResults'), data: orphanedFiles?.orphaned_ai_results },
+    { key: 'training_dirs', label: t('storagePage.orphanedCategories.trainingDirs'), data: orphanedFiles?.orphaned_training_dirs },
+    { key: 'logs', label: t('storagePage.orphanedCategories.logs'), data: orphanedFiles?.orphaned_logs }
+  ]
 
   useEffect(() => {
     loadStats(false)
@@ -27,7 +51,7 @@ export default function StorageManagementPage() {
       setStats(data)
     } catch (err) {
       console.error('Failed to load storage stats:', err)
-      setError(err instanceof Error ? err.message : 'Failed to load storage stats')
+      setError(err instanceof Error ? err.message : t('storagePage.errors.loadStatsFailed'))
     } finally {
       setLoading(false)
     }
@@ -46,7 +70,7 @@ export default function StorageManagementPage() {
       setOrphanedFiles(data)
     } catch (err) {
       console.error('Failed to detect orphaned files:', err)
-      setError(err instanceof Error ? err.message : 'Failed to detect orphaned files')
+      setError(err instanceof Error ? err.message : t('storagePage.errors.detectOrphanedFailed'))
     } finally {
       setLoadingOrphaned(false)
     }
@@ -69,7 +93,7 @@ export default function StorageManagementPage() {
       await detectOrphaned()
     } catch (err) {
       console.error('Failed to cleanup orphaned files:', err)
-      setError(err instanceof Error ? err.message : 'Failed to cleanup orphaned files')
+      setError(err instanceof Error ? err.message : t('storagePage.errors.cleanupFailed'))
     } finally {
       setLoadingOrphaned(false)
     }
@@ -95,26 +119,8 @@ export default function StorageManagementPage() {
     setExpandedCategories(newExpanded)
   }
 
-  const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
-  }
-
   const getCategoryLabel = (category: string): string => {
-    const labels: { [key: string]: string } = {
-      coordinates: 'Coordinates Cache',
-      masks: 'Tissue Masks',
-      ai_results: 'AI Results',
-      features_cache: 'Feature',
-      training: 'Training Features',
-      models: 'Trained Models',
-      logs: 'Training Logs',
-      wsi_files: 'Original Files'
-    }
-    return labels[category] || category
+    return categoryLabels[category] || category
   }
 
   const getCategoryColor = (category: string): string => {
@@ -136,7 +142,7 @@ export default function StorageManagementPage() {
       <div className="flex items-center justify-center h-full">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading storage statistics...</p>
+          <p className="text-gray-600">{t('storagePage.loadingStats')}</p>
         </div>
       </div>
     )
@@ -146,13 +152,13 @@ export default function StorageManagementPage() {
     return (
       <div className="w-full h-full p-6">
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <h3 className="text-red-800 font-semibold mb-2">Error</h3>
+          <h3 className="text-red-800 font-semibold mb-2">{t('common.error')}</h3>
           <p className="text-red-600">{error}</p>
           <button
             onClick={handleRefresh}
             className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
           >
-            Retry
+            {t('storagePage.retry')}
           </button>
         </div>
       </div>
@@ -171,8 +177,8 @@ export default function StorageManagementPage() {
   return (
     <div className="w-full h-full p-6">
       <PageHeader
-        title="Storage Management"
-        description="Monitor and manage system storage usage"
+        title={t('storagePage.title')}
+        description={t('storagePage.description')}
         actions={
           <Button
             onClick={handleRefresh}
@@ -180,7 +186,7 @@ export default function StorageManagementPage() {
             variant="primary"
             icon={RefreshCw}
           >
-            Refresh
+            {t('common.refresh')}
           </Button>
         }
       />
@@ -189,7 +195,7 @@ export default function StorageManagementPage() {
       <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg p-8 mb-6 text-white">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-semibold mb-2 opacity-90">Total Storage Usage</h2>
+            <h2 className="text-xl font-semibold mb-2 opacity-90">{t('storagePage.totalStorageUsage')}</h2>
             <div className="text-5xl font-bold mb-2">
               {stats.total_size_gb.toFixed(2)} GB
             </div>
@@ -198,23 +204,25 @@ export default function StorageManagementPage() {
             </div>
           </div>
           <div className="text-right">
-            <div className="text-sm opacity-90 mb-1">Storage Location</div>
+            <div className="text-sm opacity-90 mb-1">{t('storagePage.storageLocation')}</div>
             <div className="text-xs font-mono bg-blue-700 bg-opacity-50 px-3 py-2 rounded">
               {stats.uploads_dir}
             </div>
             <div className="text-xs opacity-75 mt-2">
-              Last updated: {(() => {
-                const d = stats.timestamp;
-                const normalized = (!d.endsWith('Z') && !d.includes('+')) ? `${d}Z` : d;
-                return new Date(normalized).toLocaleString();
-              })()}
+              {t('storagePage.lastUpdated', {
+                time: (() => {
+                  const d = stats.timestamp;
+                  const normalized = (!d.endsWith('Z') && !d.includes('+')) ? `${d}Z` : d;
+                  return new Date(normalized).toLocaleString();
+                })()
+              })}
             </div>
           </div>
         </div>
       </div>
 
       {/* Storage Breakdown */}
-      <Card title="Storage Breakdown" className="mb-6">
+      <Card title={t('storagePage.storageBreakdown')} className="mb-6">
         <div className="p-6">
           <div className="space-y-4">
             {sortedCategories.map(([category, info]) => {
@@ -228,7 +236,9 @@ export default function StorageManagementPage() {
                         {getCategoryLabel(category)}
                       </span>
                       <span className="text-sm text-gray-600">
-                        {info.file_count} {info.file_count === 1 ? 'file' : 'files'}
+                        {info.file_count === 1
+                          ? t('storagePage.fileCount.singular')
+                          : t('storagePage.fileCount.plural', { count: info.file_count })}
                       </span>
                     </div>
                     <div className="text-right">
@@ -260,13 +270,13 @@ export default function StorageManagementPage() {
                 <div className="text-2xl font-bold text-gray-900">
                   {Object.values(stats.breakdown).reduce((sum, info) => sum + info.file_count, 0)}
                 </div>
-                <div className="text-sm text-gray-600">Total Files</div>
+                <div className="text-sm text-gray-600">{t('storagePage.summary.totalFiles')}</div>
               </div>
               <div className="text-center">
                 <div className="text-2xl font-bold text-gray-900">
                   {Object.keys(stats.breakdown).length}
                 </div>
-                <div className="text-sm text-gray-600">Categories</div>
+                <div className="text-sm text-gray-600">{t('storagePage.summary.categories')}</div>
               </div>
               <div className="text-center">
                 <div className="text-2xl font-bold text-gray-900">
@@ -275,7 +285,7 @@ export default function StorageManagementPage() {
                     Object.values(stats.breakdown).filter(info => info.file_count > 0).length
                   )}
                 </div>
-                <div className="text-sm text-gray-600">Avg per Category</div>
+                <div className="text-sm text-gray-600">{t('storagePage.summary.avgPerCategory')}</div>
               </div>
             </div>
           </div>
@@ -284,7 +294,7 @@ export default function StorageManagementPage() {
 
       {/* Orphaned Files Management */}
       <Card 
-        title="Orphaned Files Detection" 
+        title={t('storagePage.orphanedFiles.title')} 
         icon={AlertCircle}
         iconColor="text-orange-600"
         className="mb-6"
@@ -296,7 +306,7 @@ export default function StorageManagementPage() {
             size="sm"
             icon={Search}
           >
-            {loadingOrphaned ? 'Scanning...' : 'Scan for Orphaned Files'}
+            {loadingOrphaned ? t('storagePage.orphanedFiles.scanning') : t('storagePage.orphanedFiles.scanButton')}
           </Button>
         }
       >
@@ -308,7 +318,7 @@ export default function StorageManagementPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-2xl font-bold text-orange-900 flex items-center gap-2">
-                      {orphanedFiles.total_orphaned_count} files
+                      {t('storagePage.orphanedFiles.filesCount', { count: orphanedFiles.total_orphaned_count })}
                       {orphanedFiles.cached && (
                         <span className={`text-xs font-normal px-2 py-0.5 rounded-full ${
                           orphanedFiles.stale
@@ -318,14 +328,14 @@ export default function StorageManagementPage() {
                           {orphanedFiles.stale ? (
                             <span className="flex items-center gap-1">
                               <RefreshCw className="w-3 h-3 animate-spin" />
-                              Updating...
+                              {t('storagePage.orphanedFiles.updating')}
                             </span>
-                          ) : 'cached'}
+                          ) : t('storagePage.orphanedFiles.cached')}
                         </span>
                       )}
                     </div>
                     <div className="text-sm text-orange-700">
-                      {formatBytes(orphanedFiles.total_orphaned_size)} orphaned
+                      {t('storagePage.orphanedFiles.orphanedSize', { size: formatBytes(orphanedFiles.total_orphaned_size) })}
                     </div>
                   </div>
                   {orphanedFiles.total_orphaned_count > 0 && (
@@ -336,8 +346,8 @@ export default function StorageManagementPage() {
                       icon={Trash2}
                     >
                       {selectedCategories.size > 0
-                        ? `Clean Selected (${selectedCategories.size})`
-                        : 'Clean All'}
+                        ? t('storagePage.orphanedFiles.cleanSelected', { count: selectedCategories.size })
+                        : t('storagePage.orphanedFiles.cleanAll')}
                     </Button>
                   )}
                 </div>
@@ -352,13 +362,13 @@ export default function StorageManagementPage() {
                       <p className="font-semibold text-green-900 mb-2">{cleanupResult.summary}</p>
                       {cleanupResult.failed.length > 0 && (
                         <div className="text-sm text-red-700">
-                          <p className="font-semibold">Failed to delete:</p>
+                          <p className="font-semibold">{t('storagePage.orphanedFiles.failedToDelete')}</p>
                           <ul className="list-disc list-inside">
                             {cleanupResult.failed.slice(0, 5).map(([path, error], idx) => (
                               <li key={idx}>{path}: {error}</li>
                             ))}
                             {cleanupResult.failed.length > 5 && (
-                              <li>... and {cleanupResult.failed.length - 5} more</li>
+                              <li>{t('storagePage.orphanedFiles.andMore', { count: cleanupResult.failed.length - 5 })}</li>
                             )}
                           </ul>
                         </div>
@@ -371,16 +381,9 @@ export default function StorageManagementPage() {
               {/* Categories */}
               {orphanedFiles.total_orphaned_count > 0 && (
                 <div className="space-y-2">
-                  {[
-                    { key: 'wsi_files', label: 'Original Files', data: orphanedFiles.orphaned_wsi_files },
-                    { key: 'coordinates', label: 'Coordinates', data: orphanedFiles.orphaned_coordinates },
-                    { key: 'masks', label: 'Masks', data: orphanedFiles.orphaned_masks },
-                    { key: 'features_cache', label: 'Feature', data: orphanedFiles.orphaned_features_cache },
-                    { key: 'ai_results', label: 'AI Results', data: orphanedFiles.orphaned_ai_results },
-                    { key: 'training_dirs', label: 'Training Directories', data: orphanedFiles.orphaned_training_dirs },
-                    { key: 'logs', label: 'Logs', data: orphanedFiles.orphaned_logs }
-                  ].filter(cat => cat.data.length > 0).map(category => {
-                    const totalSize = category.data.reduce((sum: number, file: OrphanedFile) => sum + file.size, 0)
+                  {orphanedCategoryItems.filter(cat => cat.data && cat.data.length > 0).map(category => {
+                    const categoryData = category.data!
+                    const totalSize = categoryData.reduce((sum: number, file: OrphanedFile) => sum + file.size, 0)
                     const isExpanded = expandedCategories.has(category.key)
                     const isSelected = selectedCategories.has(category.key)
 
@@ -401,7 +404,7 @@ export default function StorageManagementPage() {
                               {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                               <span className="font-medium">{category.label}</span>
                               <span className="text-sm text-gray-600">
-                                ({category.data.length} files, {formatBytes(totalSize)})
+                                ({t('storagePage.orphanedFiles.categoryInfo', { count: categoryData.length, size: formatBytes(totalSize) })})
                               </span>
                             </button>
                           </div>
@@ -410,7 +413,7 @@ export default function StorageManagementPage() {
                         {isExpanded && (
                           <div className="p-4 bg-gray-50/50 max-h-80 overflow-y-auto rounded-b-lg border-t border-gray-100">
                             <div className="space-y-0 relative text-sm">
-                              {category.data.map((file: OrphanedFile, idx: number) => (
+                              {categoryData.map((file: OrphanedFile, idx: number) => (
                                 <div key={idx} className="flex justify-between items-center py-3 border-b border-gray-200/60 last:border-0 hover:bg-white transition-colors px-2 rounded-md">
                                   <span className="text-gray-700 font-medium truncate flex-1 mr-4" title={file.path}>
                                     {file.path.split('/').pop()}
@@ -435,4 +438,3 @@ export default function StorageManagementPage() {
     </div>
   )
 }
-

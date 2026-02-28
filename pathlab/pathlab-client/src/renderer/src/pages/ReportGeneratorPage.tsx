@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Download, Settings, FileSpreadsheet, FileDown, FileText, ArrowLeft } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
@@ -37,6 +38,7 @@ interface Stats {
 
 export default function ReportGeneratorPage() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const [config, setConfig] = useState<ReportConfig>({
     title: `PathLab Analysis Report - ${new Date().toLocaleDateString()}`,
     includeStats: true,
@@ -129,19 +131,19 @@ export default function ReportGeneratorPage() {
     // Title
     if (config.includeMetadata) {
       csv += `# ${config.title}\n`
-      csv += `# Generated: ${new Date().toISOString()}\n`
-      csv += `# Total Slides: ${filteredData.length}\n\n`
+      csv += `# ${t('reportPage.csvGenerated')}: ${new Date().toISOString()}\n`
+      csv += `# ${t('reportPage.totalSlides')}: ${filteredData.length}\n\n`
     }
 
     // Stats
     if (config.includeStats && stats) {
-      csv += '# Summary Statistics\n'
-      csv += `Total Slides,${stats.total}\n`
-      csv += `Analyzed,${stats.analyzed}\n`
-      csv += `Accuracy,${stats.accuracy.toFixed(2)}%\n\n`
+      csv += `# ${t('reportPage.summaryStatistics')}\n`
+      csv += `${t('reportPage.totalSlides')},${stats.total}\n`
+      csv += `${t('reportPage.analyzed')},${stats.analyzed}\n`
+      csv += `${t('reportPage.accuracy')},${stats.accuracy.toFixed(2)}%\n\n`
       
-      csv += '# Label Distribution\n'
-      csv += 'Label,Count\n'
+      csv += `# ${t('reportPage.labelDistribution')}\n`
+      csv += `${t('reportPage.label')},${t('reportPage.count')}\n`
       Object.entries(stats.label_distribution).forEach(([label, count]) => {
         csv += `${label},${count}\n`
       })
@@ -150,12 +152,12 @@ export default function ReportGeneratorPage() {
 
     // Results
     if (config.includeResults) {
-      csv += '# Analysis Results\n'
-      csv += 'WSI ID,Case ID,True Label,Prediction,Confidence,Correct\n'
+      csv += `# ${t('reportPage.analysisResults')}\n`
+      csv += `${t('reportPage.colWsiId')},${t('reportPage.colCaseId')},${t('reportPage.colTrueLabel')},${t('reportPage.colPrediction')},${t('reportPage.colConfidence')},${t('reportPage.colCorrect')}\n`
       filteredData.forEach(r => {
-        csv += `${r.wsi_id},${r.case_id},${r.label},${r.pred || 'N/A'},${
-          r.confidence ? r.confidence.toFixed(4) : 'N/A'
-        },${r.is_correct === null ? 'Pending' : (r.is_correct ? 'Yes' : 'No')}\n`
+        csv += `${r.wsi_id},${r.case_id},${r.label},${r.pred || t('reportPage.na')},${
+          r.confidence ? r.confidence.toFixed(4) : t('reportPage.na')
+        },${r.is_correct === null ? t('reportPage.pending') : (r.is_correct ? t('reportPage.yes') : t('reportPage.no'))}\n`
       })
     }
 
@@ -209,29 +211,29 @@ export default function ReportGeneratorPage() {
     let md = `# ${config.title}\n\n`
 
     if (config.includeMetadata) {
-      md += `**Generated:** ${new Date().toLocaleString()}\n\n`
-      md += `**Total Slides:** ${filteredData.length}\n\n`
+      md += `**${t('reportPage.csvGenerated')}:** ${new Date().toLocaleString()}\n\n`
+      md += `**${t('reportPage.totalSlides')}:** ${filteredData.length}\n\n`
     }
 
     if (config.includeStats && stats) {
-      md += `## Summary Statistics\n\n`
-      md += `| Metric | Value |\n`
+      md += `## ${t('reportPage.summaryStatistics')}\n\n`
+      md += `| ${t('reportPage.metric')} | ${t('reportPage.value')} |\n`
       md += `|--------|-------|\n`
-      md += `| Total Slides | ${stats.total} |\n`
-      md += `| Analyzed | ${stats.analyzed} |\n`
-      md += `| Accuracy | ${stats.accuracy.toFixed(2)}% |\n\n`
+      md += `| ${t('reportPage.totalSlides')} | ${stats.total} |\n`
+      md += `| ${t('reportPage.analyzed')} | ${stats.analyzed} |\n`
+      md += `| ${t('reportPage.accuracy')} | ${stats.accuracy.toFixed(2)}% |\n\n`
 
-      md += `### Label Distribution\n\n`
-      md += `| Label | Count |\n`
+      md += `### ${t('reportPage.labelDistribution')}\n\n`
+      md += `| ${t('reportPage.label')} | ${t('reportPage.count')} |\n`
       md += `|-------|-------|\n`
       Object.entries(stats.label_distribution).forEach(([label, count]) => {
         md += `| ${label} | ${count} |\n`
       })
       md += `\n`
 
-      md += `### Confusion Matrix\n\n`
+      md += `### ${t('reportPage.confusionMatrix')}\n\n`
       const labels = Object.keys(stats.label_distribution)
-      md += `| True \\ Pred | ${labels.join(' | ')} |\n`
+      md += `| ${t('reportPage.truePred')} | ${labels.join(' | ')} |\n`
       md += `|${labels.map(() => '---').join('|')}|\n`
       labels.forEach(trueLabel => {
         const row = labels.map(predLabel => 
@@ -243,13 +245,13 @@ export default function ReportGeneratorPage() {
     }
 
     if (config.includeResults) {
-      md += `## Analysis Results\n\n`
-      md += `| WSI ID | Case ID | True Label | Prediction | Confidence | Correct |\n`
+      md += `## ${t('reportPage.analysisResults')}\n\n`
+      md += `| ${t('reportPage.colWsiId')} | ${t('reportPage.colCaseId')} | ${t('reportPage.colTrueLabel')} | ${t('reportPage.colPrediction')} | ${t('reportPage.colConfidence')} | ${t('reportPage.colCorrect')} |\n`
       md += `|--------|---------|------------|------------|------------|----------|\n`
       filteredData.forEach(r => {
-        md += `| ${r.wsi_id} | ${r.case_id} | ${r.label} | ${r.pred || 'N/A'} | ${
-          r.confidence ? (r.confidence * 100).toFixed(1) + '%' : 'N/A'
-        } | ${r.is_correct === null ? 'Pending' : (r.is_correct ? 'Yes' : 'No')} |\n`
+        md += `| ${r.wsi_id} | ${r.case_id} | ${r.label} | ${r.pred || t('reportPage.na')} | ${
+          r.confidence ? (r.confidence * 100).toFixed(1) + '%' : t('reportPage.na')
+        } | ${r.is_correct === null ? t('reportPage.pending') : (r.is_correct ? t('reportPage.yes') : t('reportPage.no'))} |\n`
       })
     }
 
@@ -297,7 +299,7 @@ export default function ReportGeneratorPage() {
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading data...</p>
+          <p className="text-gray-600">{t('reportPage.loadingData')}</p>
         </div>
       </div>
     )
@@ -307,8 +309,8 @@ export default function ReportGeneratorPage() {
     <div className="max-w-7xl mx-auto">
       {/* Header */}
       <PageHeader
-        title="Report Generator"
-        description="Generate and export analysis reports"
+        title={t('reportPage.title')}
+        description={t('reportPage.description')}
       >
         <Button
           variant="outline"
@@ -316,7 +318,7 @@ export default function ReportGeneratorPage() {
           className="gap-2"
         >
           <ArrowLeft className="w-4 h-4" />
-          Back to Dashboard
+          {t('reportPage.backToDashboard')}
         </Button>
       </PageHeader>
 
@@ -324,14 +326,14 @@ export default function ReportGeneratorPage() {
       <Card className="p-6 mb-6">
         <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
           <Settings className="w-5 h-5 mr-2" />
-          Report Configuration
+          {t('reportPage.reportConfiguration')}
         </h2>
 
         <div className="space-y-4">
           {/* Title */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Report Title
+              {t('reportPage.reportTitle')}
             </label>
             <input
               type="text"
@@ -344,7 +346,7 @@ export default function ReportGeneratorPage() {
           {/* Format */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Export Format
+              {t('reportPage.exportFormat')}
             </label>
             <div className="grid grid-cols-3 gap-3">
               <button
@@ -386,14 +388,14 @@ export default function ReportGeneratorPage() {
           {/* Filter */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Filter by Label
+              {t('reportPage.filterByLabel')}
             </label>
             <select
               value={config.filterLabel}
               onChange={(e) => setConfig({ ...config, filterLabel: e.target.value })}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             >
-              <option value="all">All Labels</option>
+              <option value="all">{t('reportPage.allLabels')}</option>
               {uniqueLabels.map(label => (
                 <option key={label} value={label}>{label}</option>
               ))}
@@ -403,7 +405,7 @@ export default function ReportGeneratorPage() {
           {/* Include Options */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Include in Report
+              {t('reportPage.includeInReport')}
             </label>
             <div className="space-y-2">
               <label className="flex items-center">
@@ -413,7 +415,7 @@ export default function ReportGeneratorPage() {
                   onChange={(e) => setConfig({ ...config, includeMetadata: e.target.checked })}
                   className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
                 />
-                <span className="ml-2 text-sm text-gray-700">Metadata (title, date, counts)</span>
+                <span className="ml-2 text-sm text-gray-700">{t('reportPage.includeMetadata')}</span>
               </label>
               <label className="flex items-center">
                 <input
@@ -422,7 +424,7 @@ export default function ReportGeneratorPage() {
                   onChange={(e) => setConfig({ ...config, includeStats: e.target.checked })}
                   className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
                 />
-                <span className="ml-2 text-sm text-gray-700">Summary Statistics</span>
+                <span className="ml-2 text-sm text-gray-700">{t('reportPage.includeSummaryStats')}</span>
               </label>
               <label className="flex items-center">
                 <input
@@ -431,7 +433,7 @@ export default function ReportGeneratorPage() {
                   onChange={(e) => setConfig({ ...config, includeResults: e.target.checked })}
                   className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
                 />
-                <span className="ml-2 text-sm text-gray-700">Detailed Results Table</span>
+                <span className="ml-2 text-sm text-gray-700">{t('reportPage.includeDetailedResults')}</span>
               </label>
             </div>
           </div>
@@ -441,18 +443,18 @@ export default function ReportGeneratorPage() {
       {/* Preview */}
       {stats && (
         <Card className="p-6 mb-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">Preview</h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">{t('reportPage.preview')}</h2>
           <div className="grid grid-cols-3 gap-4">
             <div className="text-center p-4 bg-gray-50 rounded-lg">
-              <p className="text-sm text-gray-600 mb-1">Total Slides</p>
+              <p className="text-sm text-gray-600 mb-1">{t('reportPage.totalSlides')}</p>
               <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
             </div>
             <div className="text-center p-4 bg-gray-50 rounded-lg">
-              <p className="text-sm text-gray-600 mb-1">Analyzed</p>
+              <p className="text-sm text-gray-600 mb-1">{t('reportPage.analyzed')}</p>
               <p className="text-2xl font-bold text-green-600">{stats.analyzed}</p>
             </div>
             <div className="text-center p-4 bg-gray-50 rounded-lg">
-              <p className="text-sm text-gray-600 mb-1">Accuracy</p>
+              <p className="text-sm text-gray-600 mb-1">{t('reportPage.accuracy')}</p>
               <p className="text-2xl font-bold text-blue-600">{stats.accuracy.toFixed(1)}%</p>
             </div>
           </div>
@@ -469,12 +471,12 @@ export default function ReportGeneratorPage() {
           {generating ? (
             <>
               <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-              Generating...
+              {t('reportPage.generating')}
             </>
           ) : (
             <>
               <Download className="w-5 h-5" />
-              Generate & Download Report
+              {t('reportPage.generateAndDownload')}
             </>
           )}
         </Button>
@@ -482,4 +484,3 @@ export default function ReportGeneratorPage() {
     </div>
   )
 }
-

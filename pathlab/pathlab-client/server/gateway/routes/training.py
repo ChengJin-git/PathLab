@@ -26,7 +26,7 @@ from backend.auth.dependencies import require_can_use_gpu, require_pathologist_o
 from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
 from ..dependencies import logger, storage_manager
-from ..models import TrainingTaskRequest, DeletionMode
+from ..models import TrainingTaskRequest, TrainingTaskUpdateRequest, DeletionMode
 from ..pipeline import run_training_pipeline
 from ..task_queue import get_task_queue, TaskType
 from ..utils import cancel_ai_service_training
@@ -48,17 +48,23 @@ async def create_training_task(
     training tasks are running.
     """
     try:
-        # Validate WSI IDs exist
-        if not req.wsi_ids or len(req.wsi_ids) == 0:
+        # Resolve WSI IDs: prefer dataset_id (server-side resolution) over client-provided wsi_ids
+        wsi_ids = req.wsi_ids or []
+        if not wsi_ids and req.dataset_id:
+            async with safe_session() as db:
+                wsi_ids = await DatasetRepository.get_wsi_ids(db, req.dataset_id)
+            if not wsi_ids:
+                raise HTTPException(status_code=400, detail="No WSI files found in the specified dataset")
+        if not wsi_ids:
             raise HTTPException(status_code=400, detail="At least one WSI must be selected")
 
         # --- Session 1: Read-only validations (fetch WSIs, check permissions, check storage tasks) ---
         async with safe_session() as db:
             # Batch fetch all WSIs in a single query to avoid N+1 problem
-            wsi_map = await WSIRepository.get_by_ids_with_dataset(db, req.wsi_ids)
+            wsi_map = await WSIRepository.get_by_ids_with_dataset(db, wsi_ids)
 
             # Check for missing WSIs
-            missing_wsi_ids = [wsi_id for wsi_id in req.wsi_ids if wsi_id not in wsi_map]
+            missing_wsi_ids = [wsi_id for wsi_id in wsi_ids if wsi_id not in wsi_map]
             if missing_wsi_ids:
                 raise HTTPException(status_code=404, detail=f"WSI not found: {missing_wsi_ids[0]}")
 
@@ -68,7 +74,7 @@ async def create_training_task(
 
             if user.is_admin():
                 # Admin can access everything - skip per-WSI permission check
-                for wsi_id in req.wsi_ids:
+                for wsi_id in wsi_ids:
                     wsi = wsi_map[wsi_id]
                     dataset_ids_involved.add(wsi.dataset_id)
                     if wsi.wsi_path:
@@ -79,7 +85,7 @@ async def create_training_task(
                 user_permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
                 elevated_dataset_ids = {p.dataset_id for p in user_permissions if p.is_valid()}
 
-                for wsi_id in req.wsi_ids:
+                for wsi_id in wsi_ids:
                     wsi = wsi_map[wsi_id]
                     # In-memory permission check (no DB query per WSI)
                     has_access = (
@@ -115,19 +121,45 @@ async def create_training_task(
             )
 
         # Check file accessibility concurrently using asyncio.to_thread
+        # Use timeout to prevent hanging when external storage is unreachable
+        FILE_CHECK_TIMEOUT = 15  # seconds for the entire batch check
         inaccessible_files = []
         if paths_to_check:
             async def check_file_exists(wsi_id: str, path: str, filename: str) -> tuple:
                 exists = await asyncio.to_thread(os.path.exists, path)
                 return (wsi_id, path, filename, exists)
 
-            results = await asyncio.gather(*[
-                check_file_exists(wsi_id, path, filename)
-                for wsi_id, path, filename in paths_to_check
-            ])
-            for wsi_id, path, filename, exists in results:
-                if not exists:
-                    inaccessible_files.append(filename or wsi_id)
+            try:
+                results = await asyncio.wait_for(
+                    asyncio.gather(*[
+                        check_file_exists(wsi_id, path, filename)
+                        for wsi_id, path, filename in paths_to_check
+                    ]),
+                    timeout=FILE_CHECK_TIMEOUT
+                )
+                for wsi_id, path, filename, exists in results:
+                    if not exists:
+                        inaccessible_files.append(filename or wsi_id)
+            except asyncio.TimeoutError:
+                # Determine which paths are external vs local
+                uploads_dir = str(Config.get_uploads_dir())
+                external_paths = [p for _, p, _ in paths_to_check if not p.startswith(uploads_dir)]
+                if external_paths:
+                    # Extract common root directory from external paths for user hint
+                    sample_path = external_paths[0]
+                    path_root = "/".join(sample_path.split("/")[:3])  # e.g. /jhcnas7/Pathology
+                    raise HTTPException(
+                        status_code=408,
+                        detail=f"External storage not responding (timed out after {FILE_CHECK_TIMEOUT}s). "
+                               f"Cannot verify accessibility of {len(external_paths)} file(s) on {path_root}. "
+                               f"Please check your network storage connection and try again."
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=408,
+                        detail=f"File accessibility check timed out after {FILE_CHECK_TIMEOUT}s. "
+                               f"Please check your storage connection and try again."
+                    )
 
         if inaccessible_files:
             if len(inaccessible_files) <= 5:
@@ -139,14 +171,14 @@ async def create_training_task(
                 detail=f"The following files are not accessible: {files_str}"
             )
 
-        # Generate task ID
-        task_id = f"train_{uuid.uuid4().hex[:16]}"
+        # Use client-provided task_id (for fire-and-forget submission) or generate one
+        task_id = req.task_id or f"train_{uuid.uuid4().hex[:16]}"
 
         # --- Session 2: Write - create task and WSI associations ---
         async with safe_session() as db:
             # Determine aggregation_level from the first WSI's dataset's DataGroup
             aggregation_level = "file"
-            first_wsi = wsi_map.get(req.wsi_ids[0])
+            first_wsi = wsi_map.get(wsi_ids[0])
             if first_wsi and first_wsi.dataset_id:
                 first_dataset = await DatasetRepository.get_by_id(db, first_wsi.dataset_id)
                 if first_dataset and first_dataset.data_group:
@@ -177,7 +209,7 @@ async def create_training_task(
             prefetched_wsis = list(wsi_map.values())
             try:
                 task = await TrainingTaskRepository.create(
-                    db, task_data, req.wsi_ids,
+                    db, task_data, wsi_ids,
                     split_config=split_config_dict,
                     prefetched_wsis=prefetched_wsis
                 )
@@ -190,7 +222,7 @@ async def create_training_task(
         logger.info(f"  - Task name: {req.task_name}")
         logger.info(f"  - Task type: {req.task_type} (from DataGroup: {data_group.task_type})")
         logger.info(f"  - Data type: {req.data_type}, Aggregation level: {aggregation_level}")
-        logger.info(f"  - WSI count: {len(req.wsi_ids)}")
+        logger.info(f"  - WSI count: {len(wsi_ids)}")
         logger.info(f"  - Classes: {task.classes}")
 
         # Submit task to queue for execution
@@ -204,7 +236,7 @@ async def create_training_task(
         pipeline_kwargs = {
             # Note: task_id is automatically added by task_queue.submit()
             "data_type": req.data_type,
-            "wsi_ids": req.wsi_ids,
+            "wsi_ids": wsi_ids,
             "preprocessing_config": req.preprocessing,
             "model_config": req.model,
             "huggingface_token": huggingface_token,
@@ -220,7 +252,7 @@ async def create_training_task(
 
         # Return task info
         result = task.to_dict()
-        result["wsi_count"] = len(req.wsi_ids)
+        result["wsi_count"] = len(wsi_ids)
 
         return result
 
@@ -310,7 +342,7 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
 
                         # Read real-time progress from shared files (no HTTP, no DB lock)
                         from backend.common.progress_store import get_all_progress
-                        file_progress = get_all_progress()
+                        file_progress = await get_all_progress()
 
                         # Add WSI count and overlay file-based progress
                         result_tasks = []
@@ -416,11 +448,55 @@ async def get_training_task(
     from backend.common.progress_store import get_progress
     # Get task_id from dict or object depending on include_username
     task_id_for_progress = task["task_id"] if include_username else task.task_id
-    file_prog = get_progress(task_id_for_progress)
+    file_prog = await get_progress(task_id_for_progress)
     if file_prog is not None:
         result["progress"] = file_prog
 
     return result
+
+
+@router.patch("/{task_id}")
+async def update_training_task(
+    task_id: str,
+    req: TrainingTaskUpdateRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update a training task's name.
+    Only the task creator or admin can update the task.
+
+    This endpoint allows renaming tasks without affecting running services.
+    The change is persisted to the database and immediately visible to all services.
+    """
+    # Get task from database
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Training task not found")
+
+    # Check ownership - only task creator or admin can update
+    if not check_data_ownership(task.user_id, user):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the task creator or admin can update this task"
+        )
+
+    # Validate task name
+    if not req.task_name or not req.task_name.strip():
+        raise HTTPException(status_code=400, detail="Task name cannot be empty")
+
+    # Update task name
+    updated_task = await TrainingTaskRepository.update_task_name(
+        db, task_id, req.task_name.strip()
+    )
+    await db.commit()
+
+    if not updated_task:
+        raise HTTPException(status_code=500, detail="Failed to update task")
+
+    logger.info(f"Training task {task_id} renamed to '{req.task_name}' by user {user.id}")
+
+    return updated_task.to_dict()
 
 
 @router.delete("/{task_id}")
@@ -461,7 +537,7 @@ async def delete_training_task(
             raise HTTPException(status_code=403, detail="You don't have permission to delete this task")
 
         # If task is still running or queued, cancel it first to release GPU
-        if task.status in [TaskStatus.PENDING, TaskStatus.RESUMING, TaskStatus.RUNNING, TaskStatus.PREPROCESSING, TaskStatus.EXTRACTING, TaskStatus.TRAINING]:
+        if task.status in [TaskStatus.PENDING, TaskStatus.RESUMING, TaskStatus.PATCHING, TaskStatus.EXTRACTING, TaskStatus.TRAINING]:
             await cancel_ai_service_training(task_id)
 
         # Get all trained models for this task
@@ -478,7 +554,7 @@ async def delete_training_task(
 
         # Clean up progress file (ephemeral, may still exist if AI Service didn't finish cleanup)
         from backend.common.progress_store import clear_progress
-        clear_progress(task_id)
+        await clear_progress(task_id)
 
         return {
             "message": "Training task deleted successfully",
@@ -601,7 +677,7 @@ async def stream_training_logs(
                             task_dict["wsi_count"] = len(wsi_ids)
                         # Overlay real-time progress from shared file
                         from backend.common.progress_store import get_progress
-                        file_prog = get_progress(task.task_id)
+                        file_prog = await get_progress(task.task_id)
                         if file_prog is not None:
                             task_dict["progress"] = file_prog
 
@@ -654,7 +730,7 @@ async def stream_training_logs(
                                 task_dict["wsi_count"] = len(wsi_ids)
                             # Overlay real-time progress from shared file
                             from backend.common.progress_store import get_progress
-                            file_prog = get_progress(task.task_id)
+                            file_prog = await get_progress(task.task_id)
                             if file_prog is not None:
                                 task_dict["progress"] = file_prog
 

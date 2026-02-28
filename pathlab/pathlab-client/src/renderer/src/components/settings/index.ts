@@ -1,6 +1,6 @@
 // Settings components barrel export
 export { ConfirmDialog } from './ConfirmDialog'
-export type { ConfirmDialogProps, ConfirmDialogState } from './ConfirmDialog'
+export type { ConfirmDialogProps, ConfirmDialogState, ShowConfirmDialog } from './ConfirmDialog'
 
 export { EditUserModal } from './EditUserModal'
 export type { EditUserModalProps } from './EditUserModal'

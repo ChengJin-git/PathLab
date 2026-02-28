@@ -70,6 +70,14 @@ openai>=2.5.0
 # Voice Recognition (DashScope)
 dashscope>=1.25.9
 
+# Redis (in-memory data store for caching, progress tracking, task state)
+redis>=6.0.0
+
+# PDF Vector Search (semantic RAG for AI chat)
+lancedb>=0.20.0
+sentence-transformers>=3.4.0
+llama-index-core>=0.12.0
+
 # Logging
 loguru>=0.7.3
 coloredlogs>=15.0.1

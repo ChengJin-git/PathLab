@@ -13,19 +13,20 @@ src/
 │   ├── WSIViewer.tsx        # OpenSeadragon wrapper
 │   ├── PageHeader.tsx       # Page header component
 │   └── ...
-├── pages/               # Page components (13 pages)
-│   ├── LoginPage.tsx             # Login welcome page (default)
-│   ├── DashboardPage.tsx         # Dashboard overview
-│   ├── AIChatPage.tsx            # AI assistant (SSE streaming)
+├── pages/               # Page components (14 pages)
+│   ├── IntroductionPage.tsx      # Product introduction (/)
+│   ├── LoginPage.tsx             # Login welcome page (/login)
+│   ├── AIChatPage.tsx            # AI assistant (/dashboard)
 │   ├── ToolsPage.tsx             # Utility tools
 │   ├── ListPage.tsx              # Slide browser (/wsi-list)
-│   ├── DetailPage.tsx            # WSI viewer (/wsi/:wsi_id, fullscreen)
+│   ├── WSIViewerPage.tsx         # WSI viewer (/wsi/:wsi_id, fullscreen)
 │   ├── UploadPage.tsx            # Upload/register slide
 │   ├── NewTaskPage.tsx           # Task configuration (/task-setup)
 │   ├── TaskListPage.tsx          # Task list (/task-list)
 │   ├── TaskDetailPage.tsx        # Task details (/task/:task_id)
 │   ├── ResultsViewerPage.tsx     # Results viewer (/results)
 │   ├── ReportGeneratorPage.tsx   # Report generator (/reports)
+│   ├── StorageManagementPage.tsx  # Storage management (in Settings tab)
 │   └── SettingsPage.tsx          # System settings (/settings)
 ├── contexts/            # React Context
 │   ├── AuthContext.tsx           # Authentication state management
@@ -46,21 +47,21 @@ src/
 - **WSI Viewer**: OpenSeadragon
 - **State Management**: React Hooks + Context
 
-## Page Routes (13 pages)
+## Page Routes (14 pages)
 
 | Route | Page | Description |
 |-------|------|-------------|
-| `/` `/login` | LoginPage | Login welcome page (public) |
-| `/dashboard` | DashboardPage | Dashboard overview |
-| `/ai-chat` | AIChatPage | AI assistant (SSE streaming) |
+| `/` | IntroductionPage | Product introduction page (public) |
+| `/login` | LoginPage | Login welcome page (public) |
+| `/dashboard` | AIChatPage | AI assistant (SSE streaming) |
 | `/tools` | ToolsPage | Utility tools |
-| `/settings` | SettingsPage | System settings |
+| `/settings` | SettingsPage | System settings (with Storage tab) |
 | `/task-setup` | NewTaskPage | Task configuration |
 | `/task-list` | TaskListPage | Task list |
 | `/task/:task_id` | TaskDetailPage | Task details |
 | `/wsi-list` | ListPage | Slide browser |
-| `/wsi/:wsi_id` | DetailPage | WSI viewer (fullscreen) |
-| `/register` | RegisterPage | Register/upload slide |
+| `/wsi/:wsi_id` | WSIViewerPage | WSI viewer (fullscreen) |
+| `/register` | UploadPage | Register/upload slide |
 | `/results` | ResultsViewerPage | Results viewer |
 | `/reports` | ReportGeneratorPage | Report generator |
 

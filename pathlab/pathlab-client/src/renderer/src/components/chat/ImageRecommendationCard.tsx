@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Loader2, Image as ImageIcon, ExternalLink, AlertCircle, ImageOff, Layers } from 'lucide-react'
 import {
   fetchWSIList,
@@ -21,6 +22,7 @@ export interface ImageRecommendation {
     has_predictions?: boolean
     dataset_id?: string
     data_type?: 'wsi' | 'patch' | 'all'
+    event_status?: number  // Filter by survival event status: 1 = event occurred, 0 = censored
   }
   max_count?: number  // Maximum number of images to display (default: 3)
   show_heatmap?: boolean  // Whether to show heatmaps alongside images
@@ -68,6 +70,7 @@ const imageCache = new Map<string, { images: ImageWithHeatmap[]; error: string |
 
 export function ImageRecommendationCard({ recommendation }: ImageRecommendationCardProps) {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const [imagesWithHeatmaps, setImagesWithHeatmaps] = useState<ImageWithHeatmap[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -86,6 +89,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         has_predictions: recommendation.filters?.has_predictions,
         dataset_id: recommendation.filters?.dataset_id,
         data_type: recommendation.filters?.data_type,
+        event_status: recommendation.filters?.event_status,
         max_count: maxCount,
         show_heatmap: recommendation.show_heatmap
       }),
@@ -105,6 +109,39 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
     loadImages()
   }, [filterKey])
 
+  /**
+   * Fetch WSI list by dataset and apply label/event_status/data_type filters.
+   * Extracted to avoid duplication between the normal path and the fallback path.
+   */
+  const fetchAndFilterWSIList = async (rec: ImageRecommendation): Promise<WSISummary[]> => {
+    const result = await fetchWSIList(rec.filters?.dataset_id)
+    let filtered = result.items
+
+    // Apply label filter - use exact match to avoid substring issues
+    if (rec.filters?.label) {
+      filtered = filtered.filter(s =>
+        s.label?.toLowerCase() === rec.filters!.label!.toLowerCase()
+      )
+    }
+
+    // Apply event_status filter (for survival datasets: 0=censored, 1=event)
+    if (rec.filters?.event_status !== undefined && rec.filters?.event_status !== null) {
+      filtered = filtered.filter(s => s.event_status === rec.filters!.event_status)
+    }
+
+    // Apply data_type filter
+    if (rec.filters?.data_type && rec.filters.data_type !== 'all') {
+      filtered = filtered.filter(s => {
+        const fileType = getFileType(s.file_extension, s.file_size)
+        return rec.filters!.data_type === 'wsi'
+          ? fileType === 'WSI'
+          : fileType === 'Patch'
+      })
+    }
+
+    return filtered
+  }
+
   const loadImages = async () => {
     setIsLoading(true)
     setError(null)
@@ -117,25 +154,33 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         // Convert ResultWithWSI to WSISummary-like objects
         let resultsWithWsi = resultsData.items
 
-        // Apply pred filter (filter by AI prediction result)
+        // Apply pred filter (filter by AI prediction result) - use exact match to avoid substring issues
+        // e.g., "MSIH" should NOT match "nonMSIH"
         if (recommendation.filters?.pred) {
           resultsWithWsi = resultsWithWsi.filter(r =>
-            r.pred?.toLowerCase().includes(recommendation.filters!.pred!.toLowerCase())
+            r.pred?.toLowerCase() === recommendation.filters!.pred!.toLowerCase()
+          )
+        }
+
+        // Apply label filter (ground truth label) on results BEFORE creating the wsi_id set
+        // This is critical: we must filter by label here, not later on the WSI list
+        // Use exact match to avoid substring issues (e.g., "MSIH" matching "nonMSIH")
+        if (recommendation.filters?.label) {
+          resultsWithWsi = resultsWithWsi.filter(r =>
+            r.label?.toLowerCase() === recommendation.filters!.label!.toLowerCase()
           )
         }
 
         // We need to get full WSI info, so fetch WSI list and merge
         const wsiResult = await fetchWSIList(recommendation.filters?.dataset_id)
 
-        // Filter to only WSIs that have predictions (and match pred filter if specified)
+        // Filter to only WSIs that have predictions (and match both pred and label filters if specified)
         const wsiIdsWithPredictions = new Set(resultsWithWsi.map(r => r.wsi_id))
         let filtered = wsiResult.items.filter(w => wsiIdsWithPredictions.has(w.wsi_id))
 
-        // Apply label filter (ground truth label)
-        if (recommendation.filters?.label) {
-          filtered = filtered.filter(s =>
-            s.label?.toLowerCase().includes(recommendation.filters!.label!.toLowerCase())
-          )
+        // Apply event_status filter (for survival datasets: 0=censored, 1=event)
+        if (recommendation.filters?.event_status !== undefined && recommendation.filters?.event_status !== null) {
+          filtered = filtered.filter(s => s.event_status === recommendation.filters!.event_status)
         }
 
         // Apply data_type filter
@@ -151,27 +196,15 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         displayImages = filtered
       } else {
         // Normal fetch without predictions filter
-        const result = await fetchWSIList(recommendation.filters?.dataset_id)
-        let filtered = result.items
+        displayImages = await fetchAndFilterWSIList(recommendation)
+      }
 
-        // Apply label filter
-        if (recommendation.filters?.label) {
-          filtered = filtered.filter(s =>
-            s.label?.toLowerCase().includes(recommendation.filters!.label!.toLowerCase())
-          )
-        }
-
-        // Apply data_type filter
-        if (recommendation.filters?.data_type && recommendation.filters.data_type !== 'all') {
-          filtered = filtered.filter(s => {
-            const fileType = getFileType(s.file_extension, s.file_size)
-            return recommendation.filters!.data_type === 'wsi'
-              ? fileType === 'WSI'
-              : fileType === 'Patch'
-          })
-        }
-
-        displayImages = filtered
+      // Fallback: if show_heatmap is true but no images found with has_predictions filter,
+      // retry without the predictions constraint. This handles the case where heatmaps exist
+      // on disk (from training) but no AIResult records exist in the database.
+      if (recommendation.show_heatmap && displayImages.length === 0 && recommendation.filters?.has_predictions) {
+        console.warn('[ImageRecommendation] No images found with has_predictions filter, falling back to dataset images for heatmap display')
+        displayImages = await fetchAndFilterWSIList(recommendation)
       }
 
       // Shuffle the images randomly before limiting
@@ -244,10 +277,10 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
       // Cache the result
       imageCache.set(filterKey, { images: imagesWithHeatmapInfo, error: null })
     } catch (err) {
-      setError('Failed to load images')
+      setError(t('chatComponents.imageRecommendation.failedToLoad'))
       console.error('Failed to load images:', err)
       // Cache the error state too
-      imageCache.set(filterKey, { images: [], error: 'Failed to load images' })
+      imageCache.set(filterKey, { images: [], error: t('chatComponents.imageRecommendation.failedToLoad') })
     } finally {
       setIsLoading(false)
     }
@@ -263,7 +296,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
     if (conversationId) {
       sessionStorage.setItem('ai-chat-conversation-id', conversationId)
     }
-    navigate(`/wsi/${wsiId}`, { state: { fromAIChat: true } })
+    navigate(`/wsi/${wsiId}`, { state: { fromAIChat: true, conversationId: conversationId || undefined } })
   }
 
   // Count images with heatmaps for summary
@@ -275,10 +308,10 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
       <div className="px-5 py-4 bg-gradient-to-r from-orange-50 to-amber-50 border-b border-gray-100">
         <h3 className="font-semibold text-gray-900 flex items-center gap-2">
           <ImageIcon className="w-4 h-4 text-orange-600" />
-          Recommended Images
+          {t('chatComponents.imageRecommendation.recommendedImages')}
           {imagesWithHeatmaps.length > 0 && (
             <span className="text-xs font-normal text-gray-500">
-              ({imagesWithHeatmaps.length} image{imagesWithHeatmaps.length > 1 ? 's' : ''})
+              ({t('chatComponents.imageRecommendation.imageCount', { count: imagesWithHeatmaps.length })})
             </span>
           )}
         </h3>
@@ -291,7 +324,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
             {imagesWithHeatmapCount > 0 && (
               <span className="flex items-center gap-1 text-green-600">
                 <Layers className="w-3 h-3" />
-                {imagesWithHeatmapCount} with heatmap
+                {t('chatComponents.imageRecommendation.withHeatmap', { count: imagesWithHeatmapCount })}
               </span>
             )}
           </div>
@@ -301,7 +334,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
           <div className="flex items-center gap-2 mt-2 text-xs text-amber-600 bg-amber-50 px-2 py-1.5 rounded-lg">
             <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
             <span>
-              No heatmaps found for the specified model
+              {t('chatComponents.imageRecommendation.noHeatmapsFound')}
               {recommendation.heatmap_filter.feature_extractor && ` (${recommendation.heatmap_filter.feature_extractor})`}
               {recommendation.heatmap_filter.aggregator && ` + ${recommendation.heatmap_filter.aggregator.toUpperCase()}`}
             </span>
@@ -314,7 +347,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         {isLoading ? (
           <div className="flex items-center justify-center py-8 text-gray-500">
             <Loader2 className="w-5 h-5 animate-spin mr-2" />
-            Loading images...
+            {t('chatComponents.imageRecommendation.loadingImages')}
           </div>
         ) : error ? (
           <div className="flex items-center gap-2 text-red-600 py-4">
@@ -323,7 +356,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
           </div>
         ) : imagesWithHeatmaps.length === 0 ? (
           <p className="text-sm text-gray-500 py-4 text-center">
-            No images found matching your criteria. Try adjusting your search.
+            {t('chatComponents.imageRecommendation.noImagesFound')}
           </p>
         ) : (
           <div className="space-y-4">
@@ -366,7 +399,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                         {fileType}
                       </span>
                       <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-medium rounded bg-white/80 text-gray-600">
-                        Original
+                        {t('chatComponents.imageRecommendation.original')}
                       </span>
                     </button>
 
@@ -396,7 +429,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                           </div>
                         </div>
                         <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-medium rounded bg-green-100 text-green-700 border border-green-200">
-                          Heatmap
+                          {t('chatComponents.imageRecommendation.heatmap')}
                         </span>
                       </button>
                     )}
@@ -412,18 +445,32 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                         <div className="flex flex-wrap gap-1 mt-2">
                           {image.label && (
                             <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded-full">
-                              Label: {image.label}
+                              {t('chatComponents.imageRecommendation.label')}: {image.label}
+                            </span>
+                          )}
+                          {image.event_status !== null && image.event_status !== undefined && (
+                            <span className={`px-2 py-0.5 text-xs rounded-full ${
+                              image.event_status === 1
+                                ? 'bg-red-100 text-red-700'
+                                : 'bg-teal-100 text-teal-700'
+                            }`}>
+                              {image.event_status === 1 ? t('chatComponents.imageRecommendation.event') : t('chatComponents.imageRecommendation.censored')}
+                            </span>
+                          )}
+                          {image.event_time !== null && image.event_time !== undefined && (
+                            <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full">
+                              {t('chatComponents.imageRecommendation.time')}: {image.event_time}
                             </span>
                           )}
                           {hasHeatmap && latestHeatmap?.prediction && (
                             <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">
-                              Pred: {latestHeatmap.prediction}
+                              {t('chatComponents.imageRecommendation.pred')}: {latestHeatmap.prediction}
                             </span>
                           )}
                         </div>
                         {image.dataset_name && (
                           <p className="text-xs text-gray-500 mt-2 truncate">
-                            Dataset: {image.dataset_name}
+                            {t('chatComponents.imageRecommendation.dataset')}: {image.dataset_name}
                           </p>
                         )}
                       </div>
@@ -431,7 +478,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                         onClick={() => handleImageClick(image.wsi_id)}
                         className="self-start mt-2 text-xs text-orange-600 hover:text-orange-700 font-medium flex items-center gap-1"
                       >
-                        View details <ExternalLink className="w-3 h-3" />
+                        {t('chatComponents.imageRecommendation.viewDetails')} <ExternalLink className="w-3 h-3" />
                       </button>
                     </div>
                   </div>
@@ -466,11 +513,10 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
             }}
             className="text-sm text-orange-600 hover:text-orange-700 font-medium"
           >
-            View all images →
+            {t('chatComponents.imageRecommendation.viewAllImages')}
           </button>
         </div>
       )}
     </div>
   )
 }
-

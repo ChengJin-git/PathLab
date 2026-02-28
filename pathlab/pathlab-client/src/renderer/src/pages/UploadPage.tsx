@@ -1,28 +1,29 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import * as XLSX from 'xlsx'
 import {
   Download,
   X,
   AlertCircle,
   UploadCloud,
-  Settings2,
   Trash2,
   Edit2,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
   ChevronUp,
-  Database,
-  ArrowRight,
   Plus,
   Tags,
   Activity,
+  Layers,
   ArrowLeft,
   FileSpreadsheet,
   CheckCircle2,
-  Users,
-  FileImage
+  FolderOpen,
+  Image,
+  FileJson,
+  Folder,
 } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -30,64 +31,24 @@ import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
 import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate } from '../api'
-import { useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { ALL_EXTENSIONS, isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../constants/fileTypes'
-
-interface LocalItem {
-  key: string
-  name: string
-  path?: string
-  file?: File
-  associatedFiles?: File[]
-  associatedPaths?: string[]
-  type?: 'mrxs' | 'tmap' | 'standard'
-  missingAssociated?: boolean  // True if MRXS/TMAP is missing associated data
-}
-
-interface ElectronFilesApi {
-  selectFiles?: (options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => Promise<string[] | null>
-}
-
-interface ElectronApi {
-  files?: ElectronFilesApi
-}
+import { ALL_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../constants/fileTypes'
+import { parseCsvMetadata } from '../lib/csvImporter'
+import {
+  type LocalItem, type FileMetadata, type UploadMode, type DataLevel, type DataType,
+  type ElectronApi, type MrxsDataFolder, type CollectionResult,
+  defaultMetadata, organSources, generateCaseId,
+  collectItemsFromDataTransfer, buildFileKey,
+  BulkEditModal, DatasetConfigStep, SuccessStep
+} from '../components/upload'
 
 declare const window: Window & { api?: ElectronApi }
 
-// Upload mode type: classification (label) or survival (event_time, event_status)
-type UploadMode = 'classification' | 'survival'
-// Aggregation level type: case (case-level grouping) or file (file-level, each file independent)
-type DataLevel = 'case' | 'file'
-// Data type: wsi (whole slide images) or patch (image patches/tiles)
-type DataType = 'wsi' | 'patch'
-
-// Metadata type with all possible fields
-interface FileMetadata {
-  label: string
-  case_id: string
-  age: string
-  gender: string
-  source: string
-  // Survival analysis fields
-  event_time: string
-  event_status: string
-}
-
-const defaultMetadata: FileMetadata = {
-  label: '',
-  case_id: '',
-  age: '',
-  gender: '',
-  source: '',
-  event_time: '',
-  event_status: ''
-}
-
 export default function RegisterPage() {
-  const { error: toastError, warning: toastWarning } = useToast()
+  const { error: toastError, warning: toastWarning, info: toastInfo } = useToast()
   const navigate = useNavigate()
   const { addUploadTask } = useBackgroundTask()
+  const { t } = useTranslation()
 
   // Upload mode state (classification or survival)
   const [uploadMode, setUploadMode] = useState<UploadMode>('classification')
@@ -222,6 +183,9 @@ export default function RegisterPage() {
   const [pendingMrxsFolders, setPendingMrxsFolders] = useState<Map<string, File[]>>(new Map()) // folderName -> files
   const [pendingTmapDtFiles, setPendingTmapDtFiles] = useState<Map<string, File[]>>(new Map()) // baseName -> dt files
 
+  // Segmentation: track which images have matched JSON mask files (key = item key)
+  const [matchedMasks, setMatchedMasks] = useState<Set<string>>(new Set())
+
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 10
@@ -245,254 +209,12 @@ export default function RegisterPage() {
     }
   }, [totalPages, currentPage])
 
-  // --- Logic Helpers ---
-
-  const generateCaseId = () => {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-    let result = ''
-    for (let i = 0; i < 5; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length))
-    }
-    return result
-  }
-
-  const organSources = [
-    'Adrenal Gland', 'Aorta', 'Bladder', 'Blood Vessel', 'Bone', 'Bone Marrow',
-    'Brain', 'Breast', 'Bronchus', 'Cartilage', 'Cervix', 'Colon',
-    'Endometrium', 'Esophagus', 'Eye', 'Fallopian Tube', 'Gallbladder',
-    'Heart', 'Joint', 'Kidney', 'Larynx', 'Liver', 'Lung', 'Lymph Node',
-    'Mesentery', 'Muscle', 'Oral Cavity', 'Ovary', 'Pancreas', 'Parathyroid',
-    'Penis', 'Peripheral Nerve', 'Peritoneum', 'Pharynx', 'Pituitary Gland',
-    'Pleura', 'Prostate', 'Rectum', 'Retina', 'Salivary Gland', 'Skin',
-    'Small Intestine', 'Soft Tissue', 'Spinal Cord', 'Spleen', 'Stomach',
-    'Testis', 'Thymus', 'Thyroid', 'Tongue', 'Tonsil', 'Trachea',
-    'Ureter', 'Urethra', 'Uterus', 'Vagina', 'Vulva', 'Other'
-  ]
-
   const supportsNativePicker = typeof window !== 'undefined' && !!window.api?.files?.selectFiles
-
-  const buildFileKey = (file: File) => `${file.name}-${file.size}-${file.lastModified}`
-
-  // --- File Collection Logic ---
-  // Design: User drags a single folder containing WSI files.
-  // Sub-folders are ONLY for MRXS associated data (same name as .mrxs file).
-  // Files in sub-folders should NOT be treated as independent WSI files.
-
-  const readAllEntries = async (directoryEntry: any): Promise<any[]> => {
-    const reader = directoryEntry.createReader()
-    const entries: any[] = []
-    while (true) {
-      const batch: any[] = await new Promise(resolve => reader.readEntries(resolve, () => resolve([])))
-      if (!batch.length) break
-      entries.push(...batch)
-    }
-    return entries
-  }
-
-  // Recursively collect all files from a directory (for MRXS data folders)
-  const collectAllFilesFromDirectory = async (directoryEntry: any): Promise<File[]> => {
-    const entries = await readAllEntries(directoryEntry)
-    const files: File[] = []
-    for (const entry of entries) {
-      if (entry.isFile) {
-        const file = await new Promise<File | null>(resolve => {
-          entry.file((f: File) => resolve(f), () => resolve(null))
-        })
-        if (file) files.push(file)
-      } else if (entry.isDirectory) {
-        const subFiles = await collectAllFilesFromDirectory(entry)
-        files.push(...subFiles)
-      }
-    }
-    return files
-  }
-
-  interface MrxsDataFolder {
-    folderName: string
-    folderFiles: File[]
-  }
-
-  interface CollectionResult {
-    items: LocalItem[]
-    orphanFolders: MrxsDataFolder[]  // Folders without matching .mrxs
-    orphanDtFiles: Map<string, File[]>  // baseName -> dt files without matching .tmap
-    unsupportedFileNames: string[]
-  }
-
-  const collectItemsFromDataTransfer = async (dataTransfer: DataTransfer): Promise<CollectionResult> => {
-    const dataItems = Array.from(dataTransfer.items || [])
-    const hasEntries = dataItems.some(item => (item as any).webkitGetAsEntry)
-
-    // First-level files (WSI candidates) and sub-folders (MRXS data only)
-    const firstLevelFiles: File[] = []
-    const mrxsDataFolders: MrxsDataFolder[] = []
-    // Track directly dragged folders (potential MRXS data folders dragged separately)
-    const directlyDraggedFolders: MrxsDataFolder[] = []
-
-    if (hasEntries) {
-      const topEntries = dataItems.map(item => (item as any).webkitGetAsEntry?.()).filter(Boolean)
-
-      for (const entry of topEntries) {
-        if (entry.isFile) {
-          // Directly dragged file -> WSI candidate
-          const file = await new Promise<File | null>(resolve => {
-            entry.file((f: File) => resolve(f), () => resolve(null))
-          })
-          if (file) firstLevelFiles.push(file)
-        } else if (entry.isDirectory) {
-          // Check if this folder contains WSI files (then it's a container)
-          // or only data files (then it might be an MRXS data folder)
-          const folderEntries = await readAllEntries(entry)
-          const hasWsiFiles = folderEntries.some(e => e.isFile && isSupportedName(e.name))
-
-          if (hasWsiFiles) {
-            // This is a container folder with WSI files
-            for (const subEntry of folderEntries) {
-              if (subEntry.isFile) {
-                const file = await new Promise<File | null>(resolve => {
-                  subEntry.file((f: File) => resolve(f), () => resolve(null))
-                })
-                if (file) firstLevelFiles.push(file)
-              } else if (subEntry.isDirectory) {
-                // Sub-folder -> ONLY for MRXS associated data
-                const subFolderFiles = await collectAllFilesFromDirectory(subEntry)
-                mrxsDataFolders.push({
-                  folderName: subEntry.name,
-                  folderFiles: subFolderFiles
-                })
-              }
-            }
-          } else {
-            // This might be a directly dragged MRXS data folder
-            const folderFiles = await collectAllFilesFromDirectory(entry)
-            directlyDraggedFolders.push({
-              folderName: entry.name,
-              folderFiles
-            })
-          }
-        }
-      }
-    } else {
-      // Fallback: no webkitGetAsEntry support
-      const files = Array.from(dataTransfer.files || [])
-      firstLevelFiles.push(...files)
-    }
-
-    const files = firstLevelFiles
-    const folders = [...mrxsDataFolders, ...directlyDraggedFolders]
-
-    const mrxsFiles = files.filter(f => f.name.toLowerCase().endsWith('.mrxs'))
-    const tmapFiles = files.filter(f => f.name.toLowerCase().endsWith('.tmap'))
-    const dtFiles = files.filter(f => isTmapDataFile(f.name))
-
-    const result: LocalItem[] = []
-    const usedFiles = new Set<File>()
-    const usedFolders = new Set<string>()
-    const unsupportedFileNames: string[] = []
-
-    // Electron Mode Check
-    const isElectron = files.length > 0 && files.some(f => getFilePath(f))
-
-    // MRXS
-    for (const mrxsFile of mrxsFiles) {
-      const baseName = getBaseName(mrxsFile.name)
-      // Case-insensitive matching for folder name
-      const matchingFolder = folders.find(f => f.folderName.toLowerCase() === baseName.toLowerCase())
-      usedFiles.add(mrxsFile)
-      if (matchingFolder) usedFolders.add(matchingFolder.folderName)
-
-      const hasAssociated = !!matchingFolder && matchingFolder.folderFiles.length > 0
-
-      if (isElectron) {
-        const path = getFilePath(mrxsFile)!
-        result.push({
-          key: path,
-          name: mrxsFile.name,
-          path,
-          type: 'mrxs',
-          associatedPaths: matchingFolder ? [] : undefined,
-          missingAssociated: !hasAssociated
-        })
-      } else {
-        result.push({
-          key: buildFileKey(mrxsFile),
-          name: mrxsFile.name,
-          file: mrxsFile,
-          type: 'mrxs',
-          associatedFiles: matchingFolder?.folderFiles || [],
-          missingAssociated: !hasAssociated
-        })
-      }
-    }
-
-    // TMAP
-    for (const tmapFile of tmapFiles) {
-      const baseName = getBaseName(tmapFile.name)
-      const matchingDtFiles = dtFiles.filter(f => getBaseName(f.name) === baseName)
-      usedFiles.add(tmapFile)
-      matchingDtFiles.forEach(f => usedFiles.add(f))
-
-      // TMAP dt files are optional, so no missingAssociated warning
-      if (isElectron) {
-        const path = getFilePath(tmapFile)!
-        result.push({
-          key: path,
-          name: tmapFile.name,
-          path,
-          type: 'tmap',
-          associatedPaths: matchingDtFiles.map(f => getFilePath(f)!).filter(Boolean)
-        })
-      } else {
-        result.push({
-          key: buildFileKey(tmapFile),
-          name: tmapFile.name,
-          file: tmapFile,
-          type: 'tmap',
-          associatedFiles: matchingDtFiles
-        })
-      }
-    }
-
-    // Standard
-    for (const file of files) {
-      if (usedFiles.has(file)) continue
-
-      // Skip known auxiliary files that are handled elsewhere (like TMAP data files)
-      if (isTmapDataFile(file.name)) continue
-
-      if (!isSupportedName(file.name)) {
-        unsupportedFileNames.push(file.name)
-        continue
-      }
-      if (isElectron) {
-        const path = getFilePath(file)!
-        result.push({ key: path, name: file.name, path, type: 'standard' })
-      } else {
-        result.push({ key: buildFileKey(file), name: file.name, file, type: 'standard' })
-      }
-    }
-
-    // Collect orphan folders (MRXS data folders without matching .mrxs)
-    const orphanFolders = folders.filter(f => !usedFolders.has(f.folderName))
-
-    // Collect orphan dt files (without matching .tmap)
-    const orphanDtFiles = new Map<string, File[]>()
-    for (const dtFile of dtFiles) {
-      if (usedFiles.has(dtFile)) continue
-      const baseName = getBaseName(dtFile.name)
-      if (!orphanDtFiles.has(baseName)) {
-        orphanDtFiles.set(baseName, [])
-      }
-      orphanDtFiles.get(baseName)!.push(dtFile)
-    }
-
-    return { items: result, orphanFolders, orphanDtFiles, unsupportedFileNames }
-  }
 
   // --- Interaction Logic ---
 
   const processCollectionResult = async (result: CollectionResult) => {
-    const { items, orphanFolders, orphanDtFiles } = result
+    const { items, orphanFolders, orphanDtFiles, jsonFiles } = result
 
     // First, try to match orphan data with existing items
     setLocalItems(prev => {
@@ -662,6 +384,29 @@ export default function RegisterPage() {
         }
       }
     }
+
+    // Segmentation mode: match JSON mask files to image items by filename stem
+    if (uploadMode === 'segmentation' && jsonFiles && jsonFiles.length > 0) {
+      // Build a set of JSON stems for quick lookup
+      const jsonStems = new Set(
+        jsonFiles.map(f => f.name.replace(/\.json$/i, '').toLowerCase())
+      )
+
+      setMatchedMasks(prev => {
+        const next = new Set(prev)
+        // Match against all current items (existing + newly added)
+        setLocalItems(currentItems => {
+          for (const item of currentItems) {
+            const imageStem = item.name.replace(/\.[^/.]+$/, '').toLowerCase()
+            if (jsonStems.has(imageStem)) {
+              next.add(item.key)
+            }
+          }
+          return currentItems // no mutation
+        })
+        return next
+      })
+    }
   }
 
   // Legacy function for simple item arrays (used by handleLocalPathSelect)
@@ -690,7 +435,10 @@ export default function RegisterPage() {
 
   const handleLocalPathSelect = async () => {
     if (!window.api?.files?.selectFiles) return
-    const filters = [{ name: 'Supported Formats (WSI & Patch)', extensions: ALL_EXTENSIONS.map(ext => ext.replace(/^\./, '')) }]
+    const patchOnlyExtensions = [...PATCH_EXTENSIONS, ...TIF_EXTENSIONS]
+    const activeExtensions = uploadMode === 'segmentation' ? patchOnlyExtensions : ALL_EXTENSIONS
+    const filterName = uploadMode === 'segmentation' ? 'Patch Images' : 'Supported Formats (WSI & Patch)'
+    const filters = [{ name: filterName, extensions: activeExtensions.map(ext => ext.replace(/^\./, '')) }]
     const paths = await window.api.files.selectFiles({ title: 'Select local files', filters })
 
     if (paths && paths.length > 0) {
@@ -767,24 +515,24 @@ export default function RegisterPage() {
 
     // Validate dataset name is required
     if (!datasetName.trim()) {
-      setSubmitError('Dataset name is required')
+      setSubmitError(t('uploadPage.datasetNameRequired'))
       return
     }
 
     // --- CSV BINDING STRATEGY ---
     // 1. Existing Dataset: Use handleUploadSplit (Client uploads raw CSV, Backend binds)
     // 2. New Dataset: Parse CSV on Client, bind to files, create dataset with metadata
-    
+
     let csvMetadataMap = new Map<string, any>()
 
     // Case 1: Existing Dataset - Upload CSV separately
     if (splitFile && datasetId) {
       const success = await handleUploadSplit()
       if (!success) {
-         setSubmitError('Failed to upload CSV')
-         return 
+        setSubmitError(t('uploadPage.failedUploadCsv'))
+        return
       }
-      
+
       // If we only had a CSV and no files, we are done
       if (localItems.length === 0) {
         setStep(3)
@@ -795,32 +543,11 @@ export default function RegisterPage() {
     // Case 2: New Dataset - Parse CSV to bind to files
     if (splitFile && !datasetId) {
       try {
-        const arrayBuffer = await splitFile.arrayBuffer()
-        const workbook = XLSX.read(arrayBuffer, { type: 'array' })
-        const sheet = workbook.Sheets[workbook.SheetNames[0]]
-        const jsonData = XLSX.utils.sheet_to_json(sheet) // Array of objects
-        
-        jsonData.forEach((row: any) => {
-          // Normalize keys
-          const normRow: any = {}
-          Object.keys(row).forEach(k => normRow[k.toLowerCase().trim()] = row[k])
-          
-          if (normRow.filename) {
-            const name = String(normRow.filename).trim()
-            // Map full name (e.g. "slide1.svs")
-            csvMetadataMap.set(name.toLowerCase(), normRow)
-            // Map name without extension (e.g. "slide1" -> match "slide1.svs")
-            // This handles cases where CSV lists "slide1" but file is "slide1.svs"
-            const nameNoExt = name.replace(/\.[^/.]+$/, "")
-            if (nameNoExt !== name) {
-              csvMetadataMap.set(nameNoExt.toLowerCase(), normRow)
-            }
-          }
-        })
+        csvMetadataMap = await parseCsvMetadata(splitFile)
         console.log(`[Upload] Parsed ${csvMetadataMap.size} entries from CSV for binding`)
       } catch (err) {
         console.error("Failed to parse split file for binding", err)
-        setSubmitError(`Failed to parse CSV: ${err}`)
+        setSubmitError(t('uploadPage.failedParseCsv', { error: String(err) }))
         return
       }
     }
@@ -864,18 +591,18 @@ export default function RegisterPage() {
         // If NO CSV, we obviously block.
         // We set error message to help user
         if (csvMetadataMap.size > 0) {
-           setSubmitError(`Validation failed: ${missingLabels.length} files are missing labels (checked CSV and UI). Check filename matching.`)
+          setSubmitError(t('uploadPage.validationMissingLabels', { count: missingLabels.length }))
         }
         return
       }
-    } else {
+    } else if (uploadMode === 'survival') {
       // Survival mode: require event_time and event_status
       const missingSurvival = itemsWithMeta.filter(({ finalMeta }) => {
         return !finalMeta.event_time?.toString().trim() || !finalMeta.event_status?.toString().trim()
       })
       if (missingSurvival.length > 0) {
         if (csvMetadataMap.size > 0) {
-           setSubmitError(`Validation failed: ${missingSurvival.length} files are missing event info (checked CSV and UI). Check filename matching.`)
+          setSubmitError(t('uploadPage.validationMissingSurvival', { count: missingSurvival.length }))
         }
         return
       }
@@ -886,7 +613,7 @@ export default function RegisterPage() {
       const age = finalMeta.age ? parseInt(String(finalMeta.age)) : undefined
       const eventTime = finalMeta.event_time ? parseFloat(String(finalMeta.event_time)) : undefined
       const eventStatus = finalMeta.event_status ? parseInt(String(finalMeta.event_status)) : undefined
-      
+
       return {
         key: item.key,
         name: item.name,
@@ -919,11 +646,19 @@ export default function RegisterPage() {
       })
 
       // Show warning about not refreshing during upload
-      toastWarning('File Uploading... Do not refresh or close this page. You can track progress in the notification panel.', 8000)
+      toastWarning(t('uploadPage.uploadingWarning'), 8000)
+
+      // For segmentation: warn about missing annotations
+      if (uploadMode === 'segmentation') {
+        const missingCount = localItems.filter(item => !matchedMasks.has(item.key)).length
+        if (missingCount > 0) {
+          toastInfo(t('uploadPage.missingAnnotationWarning', { count: missingCount }), 10000)
+        }
+      }
 
       // Clear the form
       resetUpload()
-      navigate(fromAIChat ? '/ai-chat' : '/dashboard')
+      navigate('/dashboard')
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : String(error))
     }
@@ -940,6 +675,7 @@ export default function RegisterPage() {
     setSkippedDuplicateCount(0)
     setSelectedItems(new Set())
     setSubmitError(null)
+    setMatchedMasks(new Set())
   }
 
   // --- Selection Logic ---
@@ -984,7 +720,7 @@ export default function RegisterPage() {
           const workbook = XLSX.read(arrayBuffer, { type: 'array' })
 
           if (workbook.SheetNames.length > 1) {
-            setSplitFileError('Excel file has multiple sheets. Please use a file with only one sheet.')
+            setSplitFileError(t('uploadPage.excelMultipleSheets'))
             return
           }
 
@@ -1002,7 +738,7 @@ export default function RegisterPage() {
         const lines = csvContent.split('\n').filter(line => line.trim() !== '')
 
         if (lines.length < 2) {
-          setSplitFileError('File is empty or has no data rows')
+          setSplitFileError(t('uploadPage.fileEmptyOrNoData'))
           return
         }
 
@@ -1010,30 +746,30 @@ export default function RegisterPage() {
 
         // Validate required columns based on upload mode
         if (!headers.includes('filename')) {
-          setSplitFileError('File must contain "filename" column')
+          setSplitFileError(t('uploadPage.missingFilenameColumn'))
           return
         }
 
         if (uploadMode === 'classification') {
           if (!headers.includes('label')) {
-            setSplitFileError('File must contain "label" column for classification')
+            setSplitFileError(t('uploadPage.missingLabelColumn'))
             return
           }
-        } else {
+        } else if (uploadMode === 'survival') {
           // survival mode
           if (!headers.includes('event_time')) {
-            setSplitFileError('File must contain "event_time" column for survival')
+            setSplitFileError(t('uploadPage.missingEventTimeColumn'))
             return
           }
           if (!headers.includes('event_status')) {
-            setSplitFileError('File must contain "event_status" column for survival')
+            setSplitFileError(t('uploadPage.missingEventStatusColumn'))
             return
           }
         }
 
         setSplitFile(finalFile)
       } catch (err) {
-        setSplitFileError('Failed to read file: ' + String(err))
+        setSplitFileError(t('uploadPage.failedReadFile', { error: String(err) }))
       }
     }
   }
@@ -1043,7 +779,7 @@ export default function RegisterPage() {
       await downloadCSVTemplate(uploadMode)
     } catch (e) {
       console.error("Failed to download template", e)
-      toastError(e instanceof Error ? e.message : "Failed to download template")
+      toastError(e instanceof Error ? e.message : t('uploadPage.failedDownloadTemplate'))
     }
   }
 
@@ -1054,7 +790,7 @@ export default function RegisterPage() {
 
     // uploadDatasetSplits requires dataset_id - only works for existing datasets
     if (!datasetId) {
-      setSplitFileError('Cannot upload splits for a new dataset. Please upload files first to create the dataset, then upload splits from the Dataset page.')
+      setSplitFileError(t('uploadPage.cannotUploadSplitsNewDataset'))
       return false
     }
 
@@ -1064,12 +800,12 @@ export default function RegisterPage() {
     try {
       const result = await uploadDatasetSplits(datasetId, splitFile)
       // Build detailed success message
-      let successMsg = `Updated ${result.updated_count} slides`
+      let successMsg = t('uploadPage.splitUpdatedSlides', { count: result.updated_count })
       if (result.auto_val_count > 0) {
-        successMsg += `. Auto-assigned ${result.auto_val_count} samples to val (10% from train)`
+        successMsg += `. ${t('uploadPage.splitAutoAssignedVal', { count: result.auto_val_count })}`
       }
       if (result.not_found_count > 0) {
-        successMsg += `. Warning: ${result.not_found_count} files not found`
+        successMsg += `. ${t('uploadPage.splitFilesNotFound', { count: result.not_found_count })}`
       }
       setSplitUploadSuccess(successMsg)
       setSplitFile(null)
@@ -1089,364 +825,55 @@ export default function RegisterPage() {
     <div className="flex flex-col h-full w-full">
       {/* Bulk Edit Modal */}
       {showBulkEdit && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-[1.5rem] sm:rounded-3xl shadow-2xl w-full max-w-lg p-5 sm:p-8 animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h3 className="text-lg sm:text-xl font-bold text-slate-900 flex items-center gap-2">
-                  <Settings2 className="w-5 h-5 text-blue-600" />
-                  Batch Edit
-                </h3>
-                <p className="text-xs sm:text-sm text-slate-500 mt-1">{selectedItems.size} items selected</p>
-              </div>
-              <button onClick={() => setShowBulkEdit(false)} className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4 sm:space-y-6">
-              {/* Classification: Label | Survival: Event Time & Status */}
-              {uploadMode === 'classification' ? (
-                <div className="space-y-1.5">
-                  <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">Label</label>
-                  <input
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all"
-                    placeholder="Apply label to all..."
-                    value={batchMetadata.label}
-                    onChange={e => setBatchMetadata(p => ({ ...p, label: e.target.value }))}
-                  />
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] sm:text-xs font-semibold text-emerald-600 uppercase tracking-wider">Event Time</label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none"
-                      placeholder="Months..."
-                      value={batchMetadata.event_time}
-                      onChange={e => setBatchMetadata(p => ({ ...p, event_time: e.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] sm:text-xs font-semibold text-emerald-600 uppercase tracking-wider">Status</label>
-                    <select
-                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none"
-                      value={batchMetadata.event_status}
-                      onChange={e => setBatchMetadata(p => ({ ...p, event_status: e.target.value }))}
-                    >
-                      <option value="">No Change</option>
-                      <option value="1">Event (1)</option>
-                      <option value="0">Censored (0)</option>
-                    </select>
-                  </div>
-                </div>
-              )}
-              <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">Case ID</label>
-                  <input
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none"
-                    placeholder="Batch ID"
-                    value={batchMetadata.case_id}
-                    onChange={e => setBatchMetadata(p => ({ ...p, case_id: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">Age</label>
-                  <input
-                    type="number"
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none"
-                    placeholder="Age"
-                    value={batchMetadata.age}
-                    onChange={e => setBatchMetadata(p => ({ ...p, age: e.target.value }))}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">Source</label>
-                  <select
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none"
-                    value={batchMetadata.source}
-                    onChange={e => setBatchMetadata(p => ({ ...p, source: e.target.value }))}
-                  >
-                    <option value="">No Change</option>
-                    {organSources.map(o => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">Gender</label>
-                  <select
-                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none"
-                    value={batchMetadata.gender}
-                    onChange={e => setBatchMetadata(p => ({ ...p, gender: e.target.value }))}
-                  >
-                    <option value="">No Change</option>
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                    <option value="Unspecified">Any</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-8 flex flex-col sm:flex-row justify-end gap-3">
-              <Button variant="ghost" className="h-11 sm:h-10 order-2 sm:order-1 font-semibold" onClick={() => setShowBulkEdit(false)}>Cancel</Button>
-              <Button onClick={handleApplyBulkEdit} className="bg-blue-600 hover:bg-blue-700 text-white h-11 sm:h-10 shadow-lg shadow-blue-500/20 order-1 sm:order-2 font-semibold">Apply Changes</Button>
-            </div>
-          </div>
-        </div>
+        <BulkEditModal
+          uploadMode={uploadMode}
+          selectedCount={selectedItems.size}
+          batchMetadata={batchMetadata}
+          onBatchMetadataChange={setBatchMetadata}
+          onApply={handleApplyBulkEdit}
+          onClose={() => setShowBulkEdit(false)}
+        />
       )}
 
-      {/* Header */}
+      {/* Steps */}
       {step === 1 ? (
-        <>
-          <div className="flex-none mb-6">
-            <PageHeader
-              title="Register Files"
-              description="Prepare and register local files."
-            >
-              <Button
-                variant="outline"
-                onClick={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
-                className="gap-2"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                {fromAIChat ? 'Back to Chat' : 'Back to Dashboard'}
-              </Button>
-            </PageHeader>
-          </div>
-          <div className="flex-1 flex flex-col items-center p-4">
-            <div className="w-full max-w-4xl">
-              <div className="text-center mb-6 sm:mb-8">
-                <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-2 sm:mb-3">Create Dataset</h1>
-                <p className="text-base sm:text-lg text-slate-500 px-4">Define a dataset name and analysis type to get started.</p>
-              </div>
-
-              <Card className="p-5 sm:p-8 shadow-xl border-slate-100 rounded-[1.5rem] sm:rounded-[2rem] overflow-hidden">
-                <div className="flex flex-col gap-6 sm:gap-8">
-                  <div>
-                    <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Dataset Name</label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        className={`w-full px-4 sm:px-5 py-3 sm:py-4 text-base sm:text-lg border rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all ${showValidation && !datasetName.trim()
-                          ? 'border-red-500 bg-red-50'
-                          : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
-                          }`}
-                        placeholder="e.g., Lung Cancer Trial 2024"
-                        value={datasetName}
-                        onChange={e => setDatasetName(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && datasetName.trim() && setStep(2)}
-                        autoFocus
-                      />
-                      {isExistingDataset && (
-                        <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-600 rounded-full text-xs font-bold border border-amber-100">
-                          <Plus className="w-3 h-3" />
-                          EXISTING DATASET
-                        </div>
-                      )}
-                    </div>
-                    {existingDatasets.length > 0 && !datasetName.trim() && (
-                      <div className="mt-4">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Or select existing</p>
-                        <div className="flex flex-wrap gap-2">
-                          {existingDatasets.slice(0, 8).map(name => (
-                            <button
-                              key={name}
-                              type="button"
-                              onClick={() => setDatasetName(name)}
-                              className="px-3 py-1.5 text-xs bg-white border border-slate-200 text-slate-600 rounded-lg hover:border-blue-500 hover:text-blue-600 transition-all shadow-sm"
-                            >
-                              {name}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    <p className="mt-3 text-sm text-slate-400">
-                      {isExistingDataset
-                        ? 'This dataset already exists. New files will be appended to it.'
-                        : 'Choose a unique name to identify this collection of slides.'}
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8">
-                  <div>
-                    <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Analysis Type</label>
-                    <div className="grid grid-cols-1 gap-3 sm:gap-4">
-                      <button
-                        onClick={() => !isExistingDataset && setUploadMode('classification')}
-                        disabled={isExistingDataset}
-                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'classification'
-                          ? 'border-blue-500 bg-blue-50/50'
-                          : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                          } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'classification' ? 'opacity-40' : ''}`}
-                      >
-                        <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'classification' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                          <Tags className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <span className={`font-bold block ${uploadMode === 'classification' ? 'text-blue-900' : 'text-slate-900'}`}>Classification</span>
-                          <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Diagnostic labels & categories</span>
-                        </div>
-                      </button>
-
-                      <button
-                        onClick={() => !isExistingDataset && setUploadMode('survival')}
-                        disabled={isExistingDataset}
-                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'survival'
-                          ? 'border-emerald-500 bg-emerald-50/50'
-                          : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                          } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'survival' ? 'opacity-40' : ''}`}
-                      >
-                        <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'survival' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                          <Activity className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <span className={`font-bold block ${uploadMode === 'survival' ? 'text-emerald-900' : 'text-slate-900'}`}>Survival Analysis</span>
-                          <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Event time & status tracking</span>
-                        </div>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">Data Level</label>
-                    <div className="grid grid-cols-1 gap-3 sm:gap-4">
-                      <button
-                        onClick={() => !isExistingDataset && setDataLevel('case')}
-                        disabled={isExistingDataset}
-                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'case'
-                          ? 'border-purple-500 bg-purple-50/50'
-                          : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                          } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && dataLevel !== 'case' ? 'opacity-40' : ''}`}
-                      >
-                        <div className={`p-2 rounded-lg mr-4 ${dataLevel === 'case' ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                          <Users className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <span className={`font-bold block ${dataLevel === 'case' ? 'text-purple-900' : 'text-slate-900'}`}>Case-Level</span>
-                          <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Files grouped by case ID</span>
-                        </div>
-                      </button>
-
-                      <button
-                        onClick={() => !isExistingDataset && setDataLevel('file')}
-                        disabled={isExistingDataset}
-                        className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'file'
-                          ? 'border-orange-500 bg-orange-50/50'
-                          : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                          } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && dataLevel !== 'file' ? 'opacity-40' : ''}`}
-                      >
-                        <div className={`p-2 rounded-lg mr-4 ${dataLevel === 'file' ? 'bg-orange-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                          <FileImage className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <span className={`font-bold block ${dataLevel === 'file' ? 'text-orange-900' : 'text-slate-900'}`}>File-Level</span>
-                          <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">Each file is independent</span>
-                        </div>
-                      </button>
-                    </div>
-                  </div>
-                  </div>
-
-                  <Button
-                    size="lg"
-                    className="w-full h-14 sm:h-16 text-base sm:text-lg rounded-xl sm:rounded-2xl bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/20 mt-2 sm:mt-4"
-                    disabled={!datasetName.trim()}
-                    onClick={() => setStep(2)}
-                  >
-                    Next: Choose Files <ArrowRight className="ml-2 w-4 h-4 sm:w-5 sm:h-5" />
-                  </Button>
-                </div>
-              </Card>
-            </div>
-          </div>
-        </>
+        <DatasetConfigStep
+          datasetName={datasetName}
+          onDatasetNameChange={setDatasetName}
+          uploadMode={uploadMode}
+          onUploadModeChange={setUploadMode}
+          dataLevel={dataLevel}
+          onDataLevelChange={setDataLevel}
+          isExistingDataset={isExistingDataset}
+          existingDatasets={existingDatasets}
+          showValidation={showValidation}
+          fromAIChat={fromAIChat}
+          onNext={() => setStep(2)}
+          onBack={() => navigate('/dashboard')}
+        />
       ) : step === 3 ? (
-        <div className="flex-1 flex flex-col items-center lg:justify-center p-4 sm:p-8 lg:-mt-12">
-          <Card className="w-full max-w-4xl overflow-hidden shadow-2xl border-slate-100 rounded-[1.5rem] sm:rounded-[2rem] bg-white ring-1 ring-slate-900/5 animate-in zoom-in-95 duration-300">
-            <div className="grid grid-cols-1 md:grid-cols-2 min-h-[300px] md:min-h-[420px]">
-              {/* Left Column: Success State & Actions */}
-              <div className="bg-slate-50/80 p-6 sm:p-10 flex flex-col justify-center items-center text-center border-b md:border-b-0 md:border-r border-slate-100">
-                <div className="w-16 h-16 sm:w-20 sm:h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4 sm:mb-6 ring-8 ring-green-50 shadow-sm">
-                  <CheckCircle2 className="w-8 h-8 sm:w-10 sm:h-10" />
-                </div>
-                
-                <h2 className="text-xl sm:text-2xl font-bold text-slate-900 mb-2 sm:mb-3 tracking-tight">Import Successful</h2>
-                <p className="text-sm sm:text-slate-500 mb-6 sm:mb-8 max-w-[240px] leading-relaxed">
-                  Dataset information has been updated successfully.
-                </p>
-
-                <div className="flex flex-col gap-3 w-full max-w-xs">
-                  <Button
-                    size="lg"
-                    className="w-full h-11 text-base font-semibold bg-slate-900 hover:bg-black text-white shadow-lg shadow-slate-200"
-                    onClick={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
-                  >
-                    {fromAIChat ? 'Go to Chat' : 'Go to Dashboard'}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="w-full h-11 text-base border-slate-200 text-slate-600 hover:bg-white hover:border-slate-300"
-                    onClick={resetUpload}
-                  >
-                    Upload More
-                  </Button>
-                </div>
-              </div>
-
-              {/* Right Column: Summary Details */}
-              <div className="p-6 sm:p-10 flex flex-col justify-center bg-white relative">
-                 <h3 className="text-[10px] sm:text-xs font-bold text-slate-900 uppercase tracking-widest mb-4 sm:mb-6 border-b border-slate-100 pb-3">Dataset Summary</h3>
-                 
-                 <div className="space-y-4 sm:space-y-6">
-                    <div>
-                      <div className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Target Dataset</div>
-                      <div className="text-base sm:text-lg font-bold text-slate-900 truncate flex items-center gap-2">
-                        <Database className="w-4 h-4 text-blue-500" />
-                        {datasetName}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Action</div>
-                      <div className="text-xs sm:text-sm font-medium text-slate-700 bg-slate-50 inline-block px-3 py-1 rounded-md border border-slate-200">
-                        Metadata / Split Update (CSV)
-                      </div>
-                    </div>
-
-                    {splitUploadSuccess && (
-                      <div>
-                        <div className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Import Result</div>
-                        <div className="text-xs sm:text-sm text-slate-600 bg-green-50/50 p-3 sm:p-4 rounded-xl border border-green-100 leading-relaxed text-wrap break-words">
-                           {splitUploadSuccess}
-                        </div>
-                      </div>
-                    )}
-                 </div>
-              </div>
-            </div>
-          </Card>
-        </div>
+        <SuccessStep
+          datasetName={datasetName}
+          splitUploadSuccess={splitUploadSuccess}
+          fromAIChat={fromAIChat}
+          onNavigate={() => navigate('/dashboard')}
+          onReset={resetUpload}
+        />
       ) : (
         <>
           <div className="flex-none mb-2 px-2 sm:px-0">
             <PageHeader
-              title="Register Files"
-              description={<span className="text-xs sm:text-base">Prepare and register local files.</span>}
+              title={t('uploadPage.title')}
+              description={<span className="text-xs sm:text-base">{t('uploadPage.description')}</span>}
             >
               <Button
                 variant="outline"
-                onClick={() => navigate(fromAIChat ? '/ai-chat' : '/dashboard')}
+                onClick={() => navigate('/dashboard')}
                 className="gap-2 h-9 sm:h-10 text-xs sm:text-sm"
               >
                 <ArrowLeft className="w-4 h-4" />
-                <span className="hidden sm:inline">{fromAIChat ? 'Back to Chat' : 'Back to Dashboard'}</span>
-                <span className="sm:hidden">Back</span>
+                <span className="hidden sm:inline">{t('uploadPage.backToDashboard')}</span>
+                <span className="sm:hidden">{t('uploadPage.back')}</span>
               </Button>
             </PageHeader>
           </div>
@@ -1456,6 +883,8 @@ export default function RegisterPage() {
                 <div className="p-2 sm:p-3 bg-white rounded-lg sm:rounded-xl shadow-sm border border-slate-100 flex-shrink-0">
                   {uploadMode === 'classification' ? (
                     <Tags className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" />
+                  ) : uploadMode === 'segmentation' ? (
+                    <Layers className="w-5 h-5 sm:w-6 sm:h-6 text-violet-600" />
                   ) : (
                     <Activity className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600" />
                   )}
@@ -1465,19 +894,19 @@ export default function RegisterPage() {
                     <h2 className="text-lg sm:text-xl font-bold text-slate-900 truncate max-w-[150px] sm:max-w-none">{datasetName}</h2>
                     {isExistingDataset && (
                       <span className="px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full text-[9px] sm:text-[10px] font-bold border border-amber-100 whitespace-nowrap">
-                        APPENDING DATA
+                        {t('uploadPage.appendingData')}
                       </span>
                     )}
                   </div>
                   <p className="text-xs sm:text-sm text-slate-500">
-                    {currentDataType === 'patch' ? 'Patch Collection' : currentDataType === 'wsi' ? 'WSI Collection' : 'Dataset'}
+                    {currentDataType === 'patch' ? t('uploadPage.patchCollection') : currentDataType === 'wsi' ? t('uploadPage.wsiCollection') : t('uploadPage.dataset')}
                     {' · '}
-                    <span className="capitalize">{uploadMode}</span>
+                    <span className="capitalize">{uploadMode === 'classification' ? t('uploadPage.classification') : uploadMode === 'survival' ? t('uploadPage.survival') : t('uploadPage.segmentation')}</span>
                   </p>
                 </div>
               </div>
               <Button variant="outline" size="sm" className="rounded-xl px-4 h-9 sm:h-10 w-full sm:w-auto shrink-0 justify-center" onClick={() => setStep(1)}>
-                <Edit2 className="w-4 h-4 mr-2" /> Change Info
+                <Edit2 className="w-4 h-4 mr-2" /> {t('uploadPage.changeInfo')}
               </Button>
             </div>
           </div>
@@ -1493,12 +922,12 @@ export default function RegisterPage() {
                       <FileSpreadsheet className="w-5 h-5 text-green-600" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h4 className="font-semibold text-green-800">Label File Ready</h4>
+                      <h4 className="font-semibold text-green-800">{t('uploadPage.labelFileReady')}</h4>
                       <p className="text-sm text-green-700 mt-1">
-                        <span className="font-medium">{splitFile.name}</span> has been loaded with your labels and splits.
+                        <span className="font-medium">{splitFile.name}</span> {t('uploadPage.labelFileLoaded')}
                       </p>
                       <p className="text-xs text-green-600 mt-2">
-                        Now drop your image files below to match them with the CSV data.
+                        {t('uploadPage.dropImageFilesBelow')}
                       </p>
                     </div>
                   </div>
@@ -1514,7 +943,7 @@ export default function RegisterPage() {
                   setIsDragging(false)
                   const result = await collectItemsFromDataTransfer(e.dataTransfer)
                   if (result.unsupportedFileNames && result.unsupportedFileNames.length > 0) {
-                    toastError(`Skipped ${result.unsupportedFileNames.length} unsupported files: ${result.unsupportedFileNames.slice(0, 3).join(', ')}${result.unsupportedFileNames.length > 3 ? '...' : ''}. Only supports: ${ALL_EXTENSIONS.join(', ')}`)
+                    toastError(t('uploadPage.skippedUnsupportedFiles', { count: result.unsupportedFileNames.length, files: result.unsupportedFileNames.slice(0, 3).join(', '), more: result.unsupportedFileNames.length > 3 ? '...' : '', extensions: ALL_EXTENSIONS.join(', ') }))
                   }
                   await processCollectionResult(result)
                 }}
@@ -1523,13 +952,97 @@ export default function RegisterPage() {
                 <div className="w-16 h-16 sm:w-24 sm:h-24 bg-blue-50 rounded-full flex items-center justify-center mb-4 sm:mb-8">
                   <UploadCloud className="w-8 h-8 sm:w-12 sm:h-12 text-blue-600" />
                 </div>
-                <h3 className="text-xl sm:text-3xl font-bold text-slate-900 mb-2 sm:mb-4">Drop files here to begin</h3>
-                <p className="text-sm sm:text-lg text-slate-500 mb-6 sm:mb-10 max-w-xl leading-relaxed px-4">
-                  Support for common WSI formats and image files. <br className="hidden sm:block" />
+                <h3 className="text-xl sm:text-3xl font-bold text-slate-900 mb-2 sm:mb-4">{t('uploadPage.dropFilesHere')}</h3>
+                <p className="text-sm sm:text-lg text-slate-500 mb-2 sm:mb-4 max-w-xl leading-relaxed px-4">
+                  {uploadMode === 'segmentation' ? t('uploadPage.supportedFormatsPatch') : t('uploadPage.supportedFormats')}
                 </p>
+                <p className="text-xs sm:text-sm text-slate-400 mb-4 sm:mb-6 max-w-xl leading-relaxed px-4">
+                  {uploadMode === 'classification' ? t('uploadPage.dropHintClassification') : uploadMode === 'survival' ? t('uploadPage.dropHintSurvival') : t('uploadPage.dropHintSegmentation')}
+                </p>
+                {uploadMode === 'segmentation' && (
+                  <div className="mb-6 sm:mb-10 text-left w-full max-w-sm transition-all">
+                    <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-800">
+                      <FolderOpen className="w-4 h-4 text-amber-500" />
+                      {t('uploadPage.folderStructureTitle')}
+                    </div>
+                    <div className="space-y-2 text-xs text-slate-600 font-medium">
+
+                      {/* Folder Item */}
+                      <div className="flex items-center gap-2 px-2 py-1.5 rounded-md cursor-default">
+                        <Folder className="w-4 h-4 text-blue-400 shrink-0" />
+                        <span className="truncate">{t('uploadPage.folderExampleFolder')}</span>
+                      </div>
+
+                      {/* Inside Folder */}
+                      <div className="pl-6 space-y-1.5 border-l-2 border-slate-100 ml-3">
+                        <div className="flex items-center gap-2 px-2 py-1 rounded-md cursor-default">
+                          <Image className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                          <span className="truncate">{t('uploadPage.folderExampleImg1')}</span>
+                        </div>
+                        <div className="flex items-center gap-2 px-2 py-1 rounded-md cursor-default">
+                          <FileJson className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                          <span className="truncate">{t('uploadPage.folderExampleJson1')}</span>
+                        </div>
+                        <div className="flex items-center gap-2 px-2 py-1 rounded-md cursor-default">
+                          <Image className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                          <span className="truncate">{t('uploadPage.folderExampleImg2')}</span>
+                        </div>
+                        <div className="flex items-center gap-2 px-2 py-1 rounded-md cursor-default">
+                          <FileJson className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                          <span className="truncate">{t('uploadPage.folderExampleJson2')}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-3 pt-2 text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded-lg flex flex-row items-center gap-2.5">
+                      <div className="flex items-center justify-center bg-blue-100 w-4 h-4 rounded-full shrink-0">
+                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                      </div>
+                      <p className="leading-none m-0 p-0 text-slate-500">{t('uploadPage.folderStructureNote')}</p>
+                    </div>
+                  </div>
+                )}
+
+                {(uploadMode === 'classification' || uploadMode === 'survival') && (
+                  <div className="mb-6 sm:mb-10 text-left w-full max-w-sm transition-all">
+                    <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-800">
+                      <FolderOpen className="w-4 h-4 text-amber-500" />
+                      {t('uploadPage.folderStructureTitle')}
+                    </div>
+                    <div className="space-y-2 text-xs text-slate-600 font-medium">
+
+                      {/* Folder Item */}
+                      <div className="flex items-center gap-2 px-2 py-1.5 rounded-md cursor-default">
+                        <Folder className="w-4 h-4 text-blue-400 shrink-0" />
+                        <span className="truncate">{t('uploadPage.folderExampleFolder')}</span>
+                      </div>
+
+                      {/* Inside Folder */}
+                      <div className="pl-6 space-y-1.5 border-l-2 border-slate-100 ml-3 mb-2">
+                        <div className="flex items-center gap-2 px-2 py-1 rounded-md cursor-default">
+                          <Image className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                          <span className="truncate">{t('uploadPage.folderExampleImg1')}</span>
+                        </div>
+                        <div className="flex items-center gap-2 px-2 py-1 rounded-md cursor-default">
+                          <Image className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                          <span className="truncate">{t('uploadPage.folderExampleImg2')}</span>
+                        </div>
+                      </div>
+
+                      {/* Excel File outside folder */}
+                      <div className="flex items-center gap-2 px-2 py-1.5 rounded-md cursor-default mt-2">
+                        <FileSpreadsheet className="w-4 h-4 text-emerald-500 shrink-0" />
+                        <span className="truncate">
+                          {uploadMode === 'classification'
+                            ? t('uploadPage.folderExampleExcelClassification')
+                            : t('uploadPage.folderExampleExcelSurvival')}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {supportsNativePicker && (
                   <Button size="lg" className="px-6 sm:px-10 h-12 sm:h-14 text-base sm:text-lg rounded-full shadow-lg shadow-blue-500/20">
-                    Browse Files
+                    {t('uploadPage.browseFiles')}
                   </Button>
                 )}
               </div>
@@ -1544,12 +1057,12 @@ export default function RegisterPage() {
                       checked={selectedItems.size === localItems.length && localItems.length > 0}
                       onCheckedChange={() => toggleSelectAll()}
                     />
-                    <span className="hidden sm:inline">Select All ({localItems.length})</span>
-                    <span className="sm:hidden">{localItems.length} Files</span>
+                    <span className="hidden sm:inline">{t('uploadPage.selectAll', { count: localItems.length })}</span>
+                    <span className="sm:hidden">{t('uploadPage.fileCount', { count: localItems.length })}</span>
                   </label>
                   {skippedDuplicateCount > 0 && (
                     <span className="text-[10px] sm:text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full border border-amber-200 whitespace-nowrap">
-                      {skippedDuplicateCount} duplicate{skippedDuplicateCount > 1 ? 's' : ''}
+                      {t('uploadPage.duplicateCount', { count: skippedDuplicateCount })}
                     </span>
                   )}
                   {selectedItems.size > 0 && (
@@ -1557,18 +1070,18 @@ export default function RegisterPage() {
                       <div className="h-4 w-px bg-slate-300 mx-1 hidden sm:block" />
                       <Button size="sm" variant="secondary" onClick={() => setShowBulkEdit(true)} className="h-7 sm:h-8 text-[10px] sm:text-xs font-medium px-2 sm:px-3">
                         <Edit2 className="w-3 h-3 mr-1 sm:mr-1.5" />
-                        Edit
+                        {t('uploadPage.edit')}
                       </Button>
                       <Button size="sm" variant="destructive" onClick={removeSelectedItems} className="h-7 sm:h-8 text-[10px] sm:text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-2 sm:px-3">
                         <Trash2 className="w-3 h-3 mr-1 sm:mr-1.5" />
-                        Delete
+                        {t('uploadPage.delete')}
                       </Button>
                     </div>
                   )}
                 </div>
                 <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-blue-50 text-blue-700 rounded-full text-[10px] sm:text-sm font-semibold border border-blue-100 shadow-sm justify-center sm:justify-start">
                   <UploadCloud className="w-3 h-3 sm:w-4 sm:h-4" />
-                  Drop more files to add to list
+                  {t('uploadPage.dropMoreFiles')}
                 </div>
               </div>
 
@@ -1584,7 +1097,7 @@ export default function RegisterPage() {
                     setIsDragging(false)
                     const result = await collectItemsFromDataTransfer(e.dataTransfer)
                     if (result.unsupportedFileNames && result.unsupportedFileNames.length > 0) {
-                      toastError(`Skipped ${result.unsupportedFileNames.length} unsupported files: ${result.unsupportedFileNames.slice(0, 3).join(', ')}${result.unsupportedFileNames.length > 3 ? '...' : ''}`)
+                      toastError(t('uploadPage.skippedUnsupportedFilesShort', { count: result.unsupportedFileNames.length, files: result.unsupportedFileNames.slice(0, 3).join(', '), more: result.unsupportedFileNames.length > 3 ? '...' : '' }))
                     }
                     await processCollectionResult(result)
                   }}
@@ -1593,7 +1106,7 @@ export default function RegisterPage() {
                     <div className="absolute inset-0 z-40 bg-blue-500/10 backdrop-blur-[1px] flex items-center justify-center border-4 border-blue-500 border-dashed m-4 rounded-xl pointer-events-none">
                       <div className="bg-white px-8 py-4 rounded-full shadow-xl font-bold text-blue-600 flex items-center gap-3">
                         <UploadCloud className="w-6 h-6" />
-                        Drop to add files
+                        {t('uploadPage.dropToAddFiles')}
                       </div>
                     </div>
                   )}
@@ -1604,19 +1117,21 @@ export default function RegisterPage() {
                         <th className="w-10 px-3 sm:px-4 py-2 bg-slate-50">
                           <div className="sr-only">Select</div>
                         </th>
-                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[180px] sm:min-w-[200px]">File Name</th>
+                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[180px] sm:min-w-[200px]">{t('uploadPage.fileName')}</th>
                         {uploadMode === 'classification' ? (
-                          <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[120px] sm:min-w-[150px]">Label <span className="text-red-500">*</span></th>
-                        ) : (
+                          <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[120px] sm:min-w-[150px]">{t('uploadPage.label')} <span className="text-red-500">*</span></th>
+                        ) : uploadMode === 'survival' ? (
                           <>
-                            <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">Event Time <span className="text-red-500">*</span></th>
-                            <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[80px] sm:min-w-[90px]">Status <span className="text-red-500">*</span></th>
+                            <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">{t('uploadPage.eventTime')} <span className="text-red-500">*</span></th>
+                            <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[80px] sm:min-w-[90px]">{t('uploadPage.status')} <span className="text-red-500">*</span></th>
                           </>
-                        )}
-                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[100px] sm:min-w-[120px]">Case ID</th>
-                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[70px] sm:min-w-[80px]">Age</th>
-                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">Gender</th>
-                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[120px] sm:min-w-[140px]">Source</th>
+                        ) : uploadMode === 'segmentation' ? (
+                          <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[80px] sm:min-w-[100px]">{t('uploadPage.maskStatus')}</th>
+                        ) : null}
+                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[100px] sm:min-w-[120px]">{t('uploadPage.caseId')}</th>
+                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[70px] sm:min-w-[80px]">{t('uploadPage.age')}</th>
+                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">{t('uploadPage.gender')}</th>
+                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[120px] sm:min-w-[140px]">{t('uploadPage.source')}</th>
                         <th className="w-10 px-3 py-2 bg-slate-50"></th>
                       </tr>
                     </thead>
@@ -1628,7 +1143,9 @@ export default function RegisterPage() {
                         const hasError = showValidation && (
                           uploadMode === 'classification'
                             ? !meta.label.trim()
-                            : (!meta.event_time.trim() || !meta.event_status.trim())
+                            : uploadMode === 'survival'
+                              ? (!meta.event_time.trim() || !meta.event_status.trim())
+                              : false
                         )
 
                         return (
@@ -1650,32 +1167,32 @@ export default function RegisterPage() {
                                   {item.type === 'mrxs' && item.missingAssociated && (
                                     <span
                                       className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold flex items-center gap-1"
-                                      title={`Missing data folder: Please drag the "${getBaseName(item.name)}" folder`}
+                                      title={t('uploadPage.missingDataFolder', { folder: getBaseName(item.name) })}
                                     >
-                                      ⚠ DATA MISSING
+                                      {t('uploadPage.dataMissing')}
                                     </span>
                                   )}
                                 </div>
                               </div>
                             </td>
-                            {/* Classification: Label input | Survival: Event Time & Status inputs */}
+                            {/* Classification: Label input | Survival: Event Time & Status inputs | Segmentation: no extra required fields */}
                             {uploadMode === 'classification' ? (
                               <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                                 <input
                                   className={`w-full px-2 py-1.5 text-sm border rounded-lg hover:border-blue-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all ${hasError ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-slate-50/50 hover:bg-white focus:bg-white'}`}
-                                  placeholder="Enter label"
+                                  placeholder={t('uploadPage.enterLabel')}
                                   value={meta.label}
                                   onChange={e => handleMetadataChange(item.key, 'label', e.target.value)}
                                 />
                               </td>
-                            ) : (
+                            ) : uploadMode === 'survival' ? (
                               <>
                                 <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                                   <input
                                     type="number"
                                     step="0.1"
                                     className={`w-full px-2 py-1.5 text-sm border rounded-lg hover:border-emerald-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all ${hasError && !meta.event_time.trim() ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-slate-50/50 hover:bg-white focus:bg-white'}`}
-                                    placeholder="Months"
+                                    placeholder={t('uploadPage.months')}
                                     value={meta.event_time}
                                     onChange={e => handleMetadataChange(item.key, 'event_time', e.target.value)}
                                   />
@@ -1686,17 +1203,29 @@ export default function RegisterPage() {
                                     value={meta.event_status}
                                     onChange={e => handleMetadataChange(item.key, 'event_status', e.target.value)}
                                   >
-                                    <option value="">Status</option>
-                                    <option value="1">Event (1)</option>
-                                    <option value="0">Censored (0)</option>
+                                    <option value="">{t('uploadPage.statusDefault')}</option>
+                                    <option value="1">{t('uploadPage.eventOption')}</option>
+                                    <option value="0">{t('uploadPage.censoredOption')}</option>
                                   </select>
                                 </td>
                               </>
-                            )}
+                            ) : uploadMode === 'segmentation' ? (
+                              <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
+                                {matchedMasks.has(item.key) ? (
+                                  <span className="text-sm text-green-700">
+                                    {t('uploadPage.maskFound')}
+                                  </span>
+                                ) : (
+                                  <span className="text-sm text-slate-400">
+                                    {t('uploadPage.maskNotFound')}
+                                  </span>
+                                )}
+                              </td>
+                            ) : null}
                             <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                               <input
                                 className="w-full px-2 py-1.5 text-sm border border-slate-100 rounded-lg bg-slate-50/50 hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
-                                placeholder="Case ID"
+                                placeholder={t('uploadPage.caseIdPlaceholder')}
                                 value={meta.case_id}
                                 onChange={e => handleMetadataChange(item.key, 'case_id', e.target.value)}
                               />
@@ -1705,7 +1234,7 @@ export default function RegisterPage() {
                               <input
                                 type="number"
                                 className="w-full px-2 py-1.5 text-sm border border-slate-100 rounded-lg bg-slate-50/50 hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
-                                placeholder="Age"
+                                placeholder={t('uploadPage.agePlaceholder')}
                                 value={meta.age}
                                 onChange={e => handleMetadataChange(item.key, 'age', e.target.value)}
                               />
@@ -1717,8 +1246,8 @@ export default function RegisterPage() {
                                 onChange={e => handleMetadataChange(item.key, 'gender', e.target.value)}
                               >
                                 <option value="">-</option>
-                                <option value="Male">M</option>
-                                <option value="Female">F</option>
+                                <option value="Male">{t('uploadPage.genderM')}</option>
+                                <option value="Female">{t('uploadPage.genderF')}</option>
                                 <option value="Unspecified">?</option>
                               </select>
                             </td>
@@ -1728,7 +1257,7 @@ export default function RegisterPage() {
                                 value={meta.source}
                                 onChange={e => handleMetadataChange(item.key, 'source', e.target.value)}
                               >
-                                <option value="">Source</option>
+                                <option value="">{t('uploadPage.sourceDefault')}</option>
                                 {organSources.map(o => <option key={o} value={o}>{o}</option>)}
                               </select>
                             </td>
@@ -1758,11 +1287,11 @@ export default function RegisterPage() {
                     <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 shrink-0" />
                     <div className="min-w-0">
                       <h2 className="text-sm sm:text-base font-semibold text-slate-900 truncate">
-                        Dataset Metadata Configuration
+                        {t('uploadPage.datasetMetadataConfig')}
                       </h2>
                       {!showSplitConfig && (
                         <p className="text-[10px] sm:text-xs text-slate-500 truncate">
-                          Optional: Metadata File Upload
+                          {t('uploadPage.optionalMetadataUpload')}
                         </p>
                       )}
                     </div>
@@ -1779,9 +1308,10 @@ export default function RegisterPage() {
                         className="text-[10px] sm:text-xs h-7 gap-1 px-2"
                       >
                         <Download className="w-3 h-3" />
-                        Template
+                        {t('uploadPage.csvTemplate')}
                       </Button>
                     )}
+
                     {showSplitConfig ? (
                       <ChevronUp className="w-4 h-4 text-slate-400" />
                     ) : (
@@ -1793,72 +1323,80 @@ export default function RegisterPage() {
                 {showSplitConfig && (
                   <div className="mt-4 animate-in slide-in-from-top-2 duration-200">
                     <p className="text-xs sm:text-sm text-gray-500 mb-3 leading-relaxed">
-                      Upload a file to update metadata in batch. Supports CSV and Excel (.xlsx) formats.
+                      {t('uploadPage.uploadMetadataDescription')}
                     </p>
 
-                {/* Help text - different for classification vs survival */}
-                <div className="mb-4 p-2 sm:p-3 bg-blue-50 rounded-lg text-[10px] sm:text-sm text-blue-800">
-                  <p className="font-bold mb-1">File Format ({uploadMode === 'classification' ? 'Classification' : 'Survival'}):</p>
-                  <ul className="list-disc list-inside space-y-0.5 text-blue-700">
-                    <li><code className="bg-blue-100 px-1 rounded">filename</code>{uploadMode === 'classification' ? ', ' : ''}{uploadMode === 'classification' && <code className="bg-blue-100 px-1 rounded">label</code>}</li>
-                    {uploadMode === 'survival' && (
-                      <li><code className="bg-blue-100 px-1 rounded">event_time</code>, <code className="bg-blue-100 px-1 rounded">event_status</code></li>
-                    )}
-                    <li className="hidden sm:list-item">Optional: <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
-                  </ul>
-                </div>
+                    {/* Help text - different for classification vs survival vs segmentation */}
+                    <div className="mb-4 p-2 sm:p-3 bg-blue-50 rounded-lg text-[10px] sm:text-sm text-blue-800">
+                      <p className="font-bold mb-1">{t('uploadPage.fileFormatTitle', { mode: uploadMode === 'classification' ? t('uploadPage.classification') : uploadMode === 'survival' ? t('uploadPage.survival') : t('uploadPage.segmentation') })}</p>
+                      <ul className="list-disc list-inside space-y-0.5 text-blue-700">
+                        {uploadMode === 'classification' && (
+                          <li><code className="bg-blue-100 px-1 rounded">filename</code>, <code className="bg-blue-100 px-1 rounded">label</code></li>
+                        )}
+                        {uploadMode === 'survival' && (
+                          <li><code className="bg-blue-100 px-1 rounded">filename</code></li>
+                        )}
+                        {uploadMode === 'survival' && (
+                          <li><code className="bg-blue-100 px-1 rounded">event_time</code>, <code className="bg-blue-100 px-1 rounded">event_status</code></li>
+                        )}
+                        {uploadMode === 'segmentation' && (
+                          <li><code className="bg-blue-100 px-1 rounded">filename</code></li>
+                        )}
+                        <li className="hidden sm:list-item">{t('uploadPage.optionalFields')} <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
+                      </ul>
+                    </div>
 
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 bg-gray-50 p-3 sm:p-4 rounded-lg border border-dashed border-gray-300">
-                  {splitFile ? (
-                    // Show selected file info when we have a splitFile
-                    <div className="flex-1 flex items-center gap-3">
-                      <div className="flex items-center gap-2 px-3 py-2 bg-white rounded-lg border border-green-200 flex-1 min-w-0">
-                        <FileSpreadsheet className="w-4 h-4 text-green-600 flex-shrink-0" />
-                        <span className="text-sm text-gray-700 truncate">{splitFile.name}</span>
-                        <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full flex-shrink-0">
-                          {(splitFile.size / 1024).toFixed(1)} KB
-                        </span>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 bg-gray-50 p-3 sm:p-4 rounded-lg border border-dashed border-gray-300">
+                      {splitFile ? (
+                        // Show selected file info when we have a splitFile
+                        <div className="flex-1 flex items-center gap-3">
+                          <div className="flex items-center gap-2 px-3 py-2 bg-white rounded-lg border border-green-200 flex-1 min-w-0">
+                            <FileSpreadsheet className="w-4 h-4 text-green-600 flex-shrink-0" />
+                            <span className="text-sm text-gray-700 truncate">{splitFile.name}</span>
+                            <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full flex-shrink-0">
+                              {(splitFile.size / 1024).toFixed(1)} KB
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => setSplitFile(null)}
+                            className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                            title={t('uploadPage.removeFile')}
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        // Show file input when no file is selected
+                        <div className="flex-1 overflow-hidden">
+                          <input
+                            type="file"
+                            accept=".csv,.xlsx,.xls"
+                            className="block w-full text-[10px] sm:text-sm text-gray-500 file:mr-2 sm:file:mr-4 file:py-1.5 sm:file:py-2 file:px-3 sm:file:px-4 file:rounded-full file:border-0 file:text-[10px] sm:file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+                            onChange={handleSplitFileSelect}
+                          />
+                        </div>
+                      )}
+                      {splitFile && (
+                        <div className="flex items-center gap-2 text-[10px] sm:text-sm text-green-600 font-medium bg-green-50 px-3 py-1.5 rounded-lg border border-green-100 justify-center">
+                          <CheckCircle2 className="w-3 h-3 sm:w-4 sm:h-4" />
+                          {t('uploadPage.ready')}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Error message */}
+                    {splitFileError && (
+                      <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                        <span className="font-medium">{t('uploadPage.errorPrefix')} </span>{splitFileError}
                       </div>
-                      <button
-                        onClick={() => setSplitFile(null)}
-                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
-                        title="Remove file"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    // Show file input when no file is selected
-                    <div className="flex-1 overflow-hidden">
-                      <input
-                        type="file"
-                        accept=".csv,.xlsx,.xls"
-                        className="block w-full text-[10px] sm:text-sm text-gray-500 file:mr-2 sm:file:mr-4 file:py-1.5 sm:file:py-2 file:px-3 sm:file:px-4 file:rounded-full file:border-0 file:text-[10px] sm:file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
-                        onChange={handleSplitFileSelect}
-                      />
-                    </div>
-                  )}
-                  {splitFile && (
-                     <div className="flex items-center gap-2 text-[10px] sm:text-sm text-green-600 font-medium bg-green-50 px-3 py-1.5 rounded-lg border border-green-100 justify-center">
-                        <CheckCircle2 className="w-3 h-3 sm:w-4 sm:h-4" />
-                        Ready
-                     </div>
-                  )}
-                </div>
+                    )}
 
-                {/* Error message */}
-                {splitFileError && (
-                  <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-                    <span className="font-medium">Error: </span>{splitFileError}
-                  </div>
-                )}
-
-                {/* Success message */}
-                {splitUploadSuccess && (
-                  <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
-                    <span className="font-medium">Success: </span>{splitUploadSuccess}
-                  </div>
-                )}
+                    {/* Success message */}
+                    {splitUploadSuccess && (
+                      <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+                        <span className="font-medium">{t('uploadPage.successPrefix')} </span>{splitUploadSuccess}
+                      </div>
+                    )}
                   </div>
                 )}
               </Card>
@@ -1867,7 +1405,7 @@ export default function RegisterPage() {
               <div className="flex-none bg-white border border-slate-200 rounded-xl px-4 sm:px-8 py-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between shadow-sm z-30 gap-4 sm:gap-0 mt-2">
                 <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-8">
                   <div className="text-xs sm:text-sm text-slate-500 whitespace-nowrap">
-                    Ready to register <strong className="text-slate-900">{localItems.length}</strong> file(s).
+                    {t('uploadPage.readyToRegister', { count: localItems.length })}
                   </div>
                   {totalPages > 1 && (
                     <div className="flex items-center gap-3">
@@ -1883,7 +1421,7 @@ export default function RegisterPage() {
                           <ChevronLeft className="h-4 w-4 text-slate-600" />
                         </Button>
                         <span className="text-[10px] sm:text-xs font-semibold text-slate-600 min-w-[70px] sm:min-w-[80px] text-center whitespace-nowrap">
-                          PAGE {currentPage} / {totalPages}
+                          {t('uploadPage.pageIndicator', { current: currentPage, total: totalPages })}
                         </span>
                         <Button
                           variant="outline"
@@ -1907,7 +1445,7 @@ export default function RegisterPage() {
                   )}
                   <div className="flex gap-2">
                     <Button variant="ghost" className="h-10 flex-1 sm:flex-none" onClick={resetUpload}>
-                      Cancel
+                      {t('uploadPage.cancel')}
                     </Button>
                     <Button
                       onClick={handleUpload}
@@ -1917,12 +1455,12 @@ export default function RegisterPage() {
                       {isExistingDataset ? (
                         <>
                           <Plus className="w-4 h-4 mr-2 shrink-0" />
-                          <span className="truncate">{localItems.length === 0 && splitFile ? 'Upload CSV' : 'Add to Dataset'}</span>
+                          <span className="truncate">{localItems.length === 0 && splitFile ? t('uploadPage.uploadCsv') : t('uploadPage.addToDataset')}</span>
                         </>
                       ) : (
                         <>
                           <Download className="w-4 h-4 mr-2 shrink-0" />
-                          <span className="truncate">{localItems.length === 0 && splitFile ? 'Upload CSV' : 'Register All'}</span>
+                          <span className="truncate">{localItems.length === 0 && splitFile ? t('uploadPage.uploadCsv') : t('uploadPage.registerAll')}</span>
                         </>
                       )}
                     </Button>

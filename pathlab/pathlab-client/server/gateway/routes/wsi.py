@@ -8,39 +8,34 @@ Authentication & Authorization:
 - Admin users can see all data
 - Upload operations require pathologist or admin role
 """
-import os
-import uuid
-import shutil
 import csv
 import io
 import httpx
-from pathlib import Path
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import delete as sql_delete, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import delete as sql_delete
 
 from backend.database import get_db
 from backend.database.repositories import (
     WSIRepository,
     DatasetRepository,
     DataGroupRepository,
-    AITaskRepository,
     AIResultRepository,
     DatasetPermissionRepository,
-    TrainingTaskRepository,
 )
-from backend.database.models import AIResult, AITask, TrainingTaskWSI, TrainingTask, WSISlide
+from backend.database.models import AIResult, AITask, TrainingTaskWSI
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import require_pathologist_or_admin, require_admin, check_data_ownership, get_user_id_filter, check_wsi_access_permission
-from ..dependencies import logger, storage_manager, UPLOADS_DIR, PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
-from ..models import UploadByPathRequest, DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest
-from ..utils import extract_wsi_properties
-from backend.common.file_types import is_patch_file
+from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, get_user_id_filter, check_wsi_access_permission
+from ..dependencies import logger, storage_manager, PREPROCESSING_SERVICE_URL
+from ..models import DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest
 
 router = APIRouter(prefix="/wsi", tags=["WSI Management"])
+
+# Include permissions sub-router FIRST — routes like /my-permissions must be
+# registered before /{wsi_id} to avoid path parameter conflicts.
+from .wsi_permissions import router as wsi_permissions_router
+router.include_router(wsi_permissions_router)
 
 
 @router.get("")
@@ -217,10 +212,28 @@ async def list_datasets(
     # User can delete if: admin OR owns the dataset
     user_id_str = str(user.id)
     is_admin = user.is_admin()
+
+    # For admin users, batch-lookup usernames for all dataset owners
+    username_map: dict = {}
+    if is_admin:
+        from sqlalchemy import select as sql_select, cast, String
+        from backend.auth.models import User as AuthUser
+        owner_ids = list({d.get("user_id") for d in datasets if d.get("user_id")})
+        if owner_ids:
+            result = await db.execute(
+                sql_select(cast(AuthUser.id, String), AuthUser.email, AuthUser.nickname)
+                .where(cast(AuthUser.id, String).in_(owner_ids))
+            )
+            for uid, email, nickname in result.all():
+                username_map[uid] = nickname or email or None
+
     items = []
     for dataset in datasets:
         # can_delete: True if admin or user owns the dataset
         dataset["can_delete"] = is_admin or (dataset.get("user_id") == user_id_str)
+        # Add username for admin users
+        if is_admin:
+            dataset["username"] = username_map.get(dataset.get("user_id")) if dataset.get("user_id") else None
         items.append(dataset)
 
     return {"items": items, "total": len(items)}
@@ -467,42 +480,6 @@ async def check_duplicate_filenames(
     return {"duplicates": duplicates, "new": new_files}
 
 
-# NOTE: These routes must be defined BEFORE /{wsi_id} to avoid path parameter conflicts
-@router.get("/my-permissions")
-async def get_my_dataset_permissions(
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get all valid (non-expired) dataset permissions for the current user.
-    This allows the frontend to know which datasets the user has elevated access to.
-    """
-    permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
-    return {
-        "user_id": str(user.id),
-        "permissions": [p.to_dict() for p in permissions],
-        "elevated_dataset_ids": [p.dataset_id for p in permissions if p.is_valid()]
-    }
-
-
-@router.get("/user-permissions/{target_user_id}")
-async def get_user_dataset_permissions(
-    target_user_id: str,
-    user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get all dataset permissions for a specific user.
-    Admin only. Used for user management UI.
-    """
-    permissions = await DatasetPermissionRepository.get_by_user(db, target_user_id)
-    return {
-        "user_id": target_user_id,
-        "permissions": [p.to_dict() for p in permissions],
-        "valid_permissions": [p.to_dict() for p in permissions if p.is_valid()]
-    }
-
-
 @router.get("/{wsi_id}")
 async def get_wsi(
     wsi_id: str,
@@ -693,473 +670,6 @@ async def update_wsi_metadata(
         raise HTTPException(status_code=500, detail=f"Failed to update WSI metadata: {str(e)}")
 
 
-@router.post("/upload/file")
-async def upload_wsi_file(
-    file: UploadFile = File(...),
-    associated_files: List[UploadFile] = File(default=[]),
-    dataset_id: Optional[str] = Form(None),  # Existing dataset UUID
-    dataset_name: Optional[str] = Form(None),  # Display name for new dataset
-    aggregation_level: Optional[str] = Form(None),  # Aggregation level for new dataset: "case" or "file"
-    label: Optional[str] = Form(None),
-    case_id: Optional[str] = Form(None),
-    age: Optional[int] = Form(None),
-    gender: Optional[str] = Form(None),
-    source: Optional[str] = Form(None),
-    wsi_id: Optional[str] = Form(None),
-    # Survival analysis fields
-    event_time: Optional[float] = Form(None),
-    event_status: Optional[int] = Form(None),
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Upload a WSI file with optional associated files.
-    All authenticated users can upload WSI files.
-
-    For special formats:
-    - MRXS: Upload .mrxs file + data folder contents as associated_files
-    - TMAP: Upload .TMAP file + .DT1, .DT2, etc. as associated_files
-
-    The files will be saved to uploads directory and metadata will be created in database.
-
-    Args:
-        file: Main WSI file to upload
-        associated_files: Associated data files (MRXS folder contents or TMAP DT files)
-        label: Diagnosis label (optional)
-        case_id: Case identifier (optional)
-        age: Patient age (optional)
-        gender: Patient gender (optional)
-        source: Tissue source/organ (optional)
-        wsi_id: Custom WSI ID (optional, UUID auto-generated if not provided)
-
-    Returns:
-        {
-            "message": "WSI uploaded successfully",
-            "wsi_id": str (UUID),
-            "wsi_path": str,
-            "file_size": int,
-            "associated_files_count": int
-        }
-
-    Note: For privacy protection, wsi_id is now a UUID instead of the original filename.
-    The original filename is stored internally but not exposed to the frontend.
-    """
-    try:
-        # Store original filename for internal reference (including extension)
-        original_filename = Path(file.filename).name
-        file_extension = Path(file.filename).suffix.lower()
-
-        # Generate UUID-based wsi_id if not provided (for privacy protection)
-        if not wsi_id:
-            wsi_id = str(uuid.uuid4())
-
-        # Check if wsi_id already exists
-        existing = await WSIRepository.get_by_id(db, wsi_id)
-        if existing:
-            raise HTTPException(status_code=400, detail=f"WSI ID already exists: {wsi_id}")
-
-        # Save file to uploads directory using UUID-based filename
-        wsi_files_dir = Path(UPLOADS_DIR) / "wsi_files"
-        wsi_files_dir.mkdir(exist_ok=True, parents=True)
-
-        wsi_path = wsi_files_dir / f"{wsi_id}{file_extension}"
-
-        # Save main WSI file
-        with open(wsi_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        file_size = wsi_path.stat().st_size
-        logger.info(f"Saved WSI file: {wsi_path} ({file_size / (1024**2):.2f} MB)")
-        logger.info(f"Original filename: {original_filename} -> UUID: {wsi_id}")
-
-        # Handle associated files for special formats (MRXS, TMAP)
-        associated_count = 0
-        if associated_files:
-            if file_extension == '.mrxs':
-                # MRXS: Create data folder with same name as UUID
-                data_folder = wsi_files_dir / wsi_id
-                data_folder.mkdir(exist_ok=True, parents=True)
-
-                for assoc_file in associated_files:
-                    if assoc_file.filename:
-                        # Preserve relative path structure from original folder
-                        assoc_path = data_folder / Path(assoc_file.filename).name
-                        with open(assoc_path, "wb") as buffer:
-                            shutil.copyfileobj(assoc_file.file, buffer)
-                        associated_count += 1
-
-                logger.info(f"Saved MRXS data folder with {associated_count} files: {data_folder}")
-
-            elif file_extension == '.tmap':
-                # TMAP: Save DT files with same UUID base name
-                for assoc_file in associated_files:
-                    if assoc_file.filename:
-                        # Get the DT extension (e.g., .DT1, .DT2)
-                        dt_ext = Path(assoc_file.filename).suffix
-                        dt_path = wsi_files_dir / f"{wsi_id}{dt_ext}"
-                        with open(dt_path, "wb") as buffer:
-                            shutil.copyfileobj(assoc_file.file, buffer)
-                        associated_count += 1
-
-                logger.info(f"Saved {associated_count} TMAP DT files for: {wsi_id}")
-
-        # Extract WSI properties
-        props = extract_wsi_properties(str(wsi_path))
-
-        # Resolve dataset_id: use provided dataset_id, or create new dataset from dataset_name
-        resolved_dataset_id = None
-        if dataset_id:
-            # Validate provided dataset_id exists
-            existing_dataset = await DatasetRepository.get_by_id(db, dataset_id)
-            if not existing_dataset:
-                raise HTTPException(status_code=400, detail=f"Dataset not found: {dataset_id}")
-            resolved_dataset_id = dataset_id
-        elif dataset_name:
-            resolved_aggregation_level = aggregation_level or "file"
-
-            # Determine data_type from file extension
-            file_data_type = 'patch' if is_patch_file(str(wsi_path)) else 'wsi'
-
-            # Get or create DataGroup first
-            data_group = await DataGroupRepository.get_or_create(
-                db,
-                data_type=file_data_type,
-                aggregation_level=resolved_aggregation_level,
-                task_type='classification'  # Default task type for uploads
-            )
-
-            # Create or get dataset by name with group_id
-            dataset = await DatasetRepository.get_or_create(
-                db, dataset_name, group_id=data_group.group_id, user_id=str(user.id)
-            )
-            resolved_dataset_id = dataset.dataset_id
-
-        # Create database record with original_filename for internal reference
-        wsi_data = {
-            "wsi_id": wsi_id,
-            "original_filename": original_filename,
-            "dataset_id": resolved_dataset_id,
-            "case_id": case_id,
-            "label": label,
-            "wsi_path": str(wsi_path),
-            "age": age,
-            "gender": gender,
-            "source": source,
-            "event_time": event_time,
-            "event_status": event_status,
-            "mpp": props.get("mpp"),
-            "vendor": props.get("vendor"),
-            "width": props.get("width"),
-            "height": props.get("height"),
-            "magnification": props.get("magnification"),
-            "file_size": file_size,
-            "user_id": str(user.id),  # Associate with current user
-        }
-
-        # Race-condition safe: catch IntegrityError if concurrent upload
-        # with same wsi_id passes the existence check above (PostgreSQL READ COMMITTED)
-        try:
-            await WSIRepository.create(db, wsi_data)
-            await db.commit()
-        except IntegrityError:
-            await db.rollback()
-            raise HTTPException(status_code=400, detail=f"WSI ID already exists: {wsi_id}")
-
-        logger.info(f"Created WSI record in database: {wsi_id}")
-
-        # Save metadata to JSON file for persistence
-        try:
-            storage_manager.save_wsi_metadata(wsi_id, wsi_data)
-        except Exception as e:
-            logger.warning(f"Failed to save metadata file for {wsi_id}: {e}")
-
-        return {
-            "message": "WSI uploaded successfully",
-            "wsi_id": wsi_id,
-            "wsi_path": str(wsi_path),
-            "file_size": file_size,
-            "associated_files_count": associated_count
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to upload WSI file: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to upload WSI file: {str(e)}")
-
-
-def _validate_mrxs_data_folder(wsi_path: str) -> Optional[str]:
-    """
-    Validate that MRXS file has its required data folder.
-    MRXS format requires: <name>.mrxs + <name>/ folder (same name, no extension)
-
-    Returns the data folder path if valid, None if missing.
-    """
-    wsi_file = Path(wsi_path)
-    if wsi_file.suffix.lower() != '.mrxs':
-        return None
-
-    # Data folder should be same name without extension
-    data_folder = wsi_file.parent / wsi_file.stem
-    if data_folder.exists() and data_folder.is_dir():
-        return str(data_folder)
-    return None
-
-
-def _find_tmap_data_files(wsi_path: str) -> List[str]:
-    """
-    Find associated DT files for TMAP format.
-    TMAP format may have: <name>.TMAP + <name>.DT1 + <name>.DT2 + ... (optional)
-
-    Returns list of DT file paths.
-    """
-    wsi_file = Path(wsi_path)
-    if wsi_file.suffix.lower() != '.tmap':
-        return []
-
-    base_name = wsi_file.stem
-    parent_dir = wsi_file.parent
-    dt_files = []
-
-    # Look for .DT1, .DT2, ... files with same base name
-    for file in parent_dir.iterdir():
-        if file.stem == base_name and file.suffix.lower().startswith('.dt'):
-            # Verify it's a DT file (e.g., .DT1, .DT2, etc.)
-            suffix_num = file.suffix[3:]  # Remove '.DT' or '.dt'
-            if suffix_num.isdigit():
-                dt_files.append(str(file))
-
-    return sorted(dt_files)
-
-
-@router.post("/upload/path")
-async def upload_wsi_by_path(
-    req: UploadByPathRequest,
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Register a WSI by file path (without copying the file).
-    This is useful when WSI files are already on the server.
-    All authenticated users can register WSI files.
-
-    For special formats:
-    - MRXS: Automatically validates that the data folder exists
-    - TMAP: Automatically detects associated DT files
-
-    Args:
-        req: UploadByPathRequest containing wsi_path and optional metadata
-
-    Returns:
-        {
-            "wsi_id": str (UUID),
-            "wsi_path": str,
-            "label": str,
-            "case_id": str,
-            "message": str,
-            "associated_data": dict (for MRXS/TMAP)
-        }
-
-    Note: For privacy protection, wsi_id is now a UUID instead of the original filename.
-    The original filename is stored internally but not exposed to the frontend.
-    """
-    try:
-        # Validate file exists
-        if not os.path.exists(req.wsi_path):
-            raise HTTPException(status_code=404, detail=f"WSI file not found: {req.wsi_path}")
-
-        wsi_file = Path(req.wsi_path)
-        file_extension = wsi_file.suffix.lower()
-
-        # Validate and detect associated files for special formats
-        associated_data = {}
-
-        if file_extension == '.mrxs':
-            data_folder = _validate_mrxs_data_folder(req.wsi_path)
-            if not data_folder:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"MRXS file requires a data folder with the same name. Expected: {wsi_file.stem}/"
-                )
-            associated_data['mrxs_data_folder'] = data_folder
-            logger.info(f"Found MRXS data folder: {data_folder}")
-
-        elif file_extension == '.tmap':
-            dt_files = _find_tmap_data_files(req.wsi_path)
-            if dt_files:
-                associated_data['tmap_dt_files'] = dt_files
-                logger.info(f"Found {len(dt_files)} TMAP DT files: {dt_files}")
-
-        # Store original filename for internal reference (including extension)
-        original_filename = wsi_file.name
-
-        # Generate UUID-based wsi_id if not provided (for privacy protection)
-        if not req.wsi_id:
-            wsi_id = str(uuid.uuid4())
-        else:
-            wsi_id = req.wsi_id
-
-        # Check if WSI already exists in database
-        existing = await WSIRepository.get_by_id(db, wsi_id)
-        if existing:
-            raise HTTPException(status_code=400, detail=f"WSI already exists: {wsi_id}")
-
-        # Get file size
-        file_size = os.path.getsize(req.wsi_path)
-
-        # Extract WSI properties
-        wsi_props = extract_wsi_properties(req.wsi_path)
-
-        # Generate case_id if not provided
-        case_id = req.case_id or f"case_{wsi_id[:8]}"
-
-        logger.info(f"Registering WSI: {original_filename} -> UUID: {wsi_id}")
-
-        # Resolve dataset_id: use provided dataset_id, or create new dataset from dataset_name
-        resolved_dataset_id = None
-        if req.dataset_id:
-            existing_dataset = await DatasetRepository.get_by_id(db, req.dataset_id)
-            if not existing_dataset:
-                raise HTTPException(status_code=400, detail=f"Dataset not found: {req.dataset_id}")
-            resolved_dataset_id = req.dataset_id
-        elif req.dataset_name:
-            resolved_aggregation_level = req.aggregation_level or "file"
-
-            # Determine data_type from file path
-            file_data_type = 'patch' if is_patch_file(req.wsi_path) else 'wsi'
-
-            # Get or create DataGroup first
-            data_group = await DataGroupRepository.get_or_create(
-                db,
-                data_type=file_data_type,
-                aggregation_level=resolved_aggregation_level,
-                task_type='classification'  # Default task type for uploads
-            )
-
-            # Create or get dataset by name with group_id
-            dataset = await DatasetRepository.get_or_create(
-                db, req.dataset_name, group_id=data_group.group_id, user_id=str(user.id)
-            )
-            resolved_dataset_id = dataset.dataset_id
-
-        # Create WSI in database with original_filename for internal reference
-        wsi_data = {
-            "wsi_id": wsi_id,
-            "original_filename": original_filename,
-            "dataset_id": resolved_dataset_id,
-            "label": req.label or "Unknown",
-            "case_id": case_id,
-            "wsi_path": req.wsi_path,
-            "file_size": file_size,
-            "age": req.age,
-            "gender": req.gender,
-            "source": req.source,
-            "event_time": req.event_time,
-            "event_status": req.event_status,
-            "mpp": wsi_props["mpp"],
-            "vendor": wsi_props["vendor"],
-            "width": wsi_props["width"],
-            "height": wsi_props["height"],
-            "magnification": wsi_props["magnification"],
-            "user_id": str(user.id),  # Associate with current user
-        }
-
-        # Race-condition safe: catch IntegrityError if concurrent register
-        # with same wsi_id passes the existence check above (PostgreSQL READ COMMITTED)
-        try:
-            wsi = await WSIRepository.create(db, wsi_data)
-            await db.commit()
-        except IntegrityError:
-            await db.rollback()
-            raise HTTPException(status_code=400, detail=f"WSI already exists: {wsi_id}")
-
-        logger.info(f"Registered WSI by path in database: {wsi_id}")
-
-        # Save metadata to JSON file for persistence
-        try:
-            storage_manager.save_wsi_metadata(wsi_id, wsi_data)
-        except Exception as e:
-            logger.warning(f"Failed to save metadata file for {wsi_id}: {e}")
-
-        response = {
-            "wsi_id": wsi_id,
-            "wsi_path": req.wsi_path,
-            "label": wsi.label,
-            "case_id": case_id,
-            "message": "WSI registered successfully"
-        }
-
-        # Check association but don't return full object to keep response clean
-        if associated_data:
-            response["associated_data_count"] = len(associated_data)
-
-        return response
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to register WSI by path: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to register WSI by path: {str(e)}")
-
-
-@router.get("/upload/csv/template")
-async def get_csv_template(
-    task_type: str = Query("classification", description="Task type: 'classification' or 'survival'"),
-    user: User = Depends(current_active_user)
-):
-    """
-    Download a CSV template for batch WSI metadata configuration.
-    Requires authentication.
-
-    Required columns:
-    - filename: The original filename of the WSI slide
-    - For classification: label (required)
-    - For survival: event_time, event_status (required)
-
-    Optional columns:
-    - split (train, val, test), case_id, age, gender, source
-
-    Note: If no 'val' split is provided, 10% of 'train' samples will be
-    automatically assigned to 'val' during upload.
-    """
-    if task_type == "survival":
-        # Survival analysis template
-        headers = ["filename", "split", "event_time", "event_status", "case_id", "age", "gender", "source"]
-        examples = [
-            {"filename": "slide1.svs", "split": "train", "event_time": "24.5", "event_status": "1",
-             "case_id": "CASE001", "age": "65", "gender": "Male", "source": "Lung"},
-            {"filename": "slide2.svs", "split": "val", "event_time": "36.0", "event_status": "0",
-             "case_id": "CASE002", "age": "50", "gender": "Female", "source": "Lung"},
-            {"filename": "slide3.svs", "split": "test", "event_time": "48.0", "event_status": "1",
-             "case_id": "CASE003", "age": "70", "gender": "Male", "source": "Lung"}
-        ]
-        filename = "wsi_survival_metadata_template.csv"
-    else:
-        # Classification template (default)
-        headers = ["filename", "split", "label", "case_id", "age", "gender", "source"]
-        examples = [
-            {"filename": "slide1.svs", "split": "train", "label": "Tumor",
-             "case_id": "CASE001", "age": "65", "gender": "Male", "source": "Lung"},
-            {"filename": "slide2.svs", "split": "val", "label": "Normal",
-             "case_id": "CASE002", "age": "50", "gender": "Female", "source": "Lung"},
-            {"filename": "slide3.svs", "split": "test", "label": "Tumor",
-             "case_id": "CASE003", "age": "70", "gender": "Male", "source": "Lung"}
-        ]
-        filename = "wsi_classification_metadata_template.csv"
-
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=headers)
-    writer.writeheader()
-    writer.writerows(examples)
-
-    output.seek(0)
-
-    return StreamingResponse(
-        io.BytesIO(output.getvalue().encode('utf-8')),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
-
 @router.post("/{wsi_id}/compute_patches")
 async def compute_patches(
     wsi_id: str,
@@ -1210,7 +720,7 @@ async def compute_patches(
 
     # Forward request to preprocessing service
     try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(timeout=600.0) as client:
             response = await client.post(
                 f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
                 params=params
@@ -1302,9 +812,6 @@ async def upload_dataset_splits(
         # Check columns exist
         if not reader.fieldnames:
             raise HTTPException(status_code=400, detail="CSV is empty or has no header row")
-
-        # Normalize headers
-        headers = [h.strip().lower() for h in reader.fieldnames]
 
         # Identify filename column (required)
         filename_key = next((h for h in reader.fieldnames if h.strip().lower() in ['filename', 'file_name', 'original_filename']), None)
@@ -1498,183 +1005,5 @@ async def upload_dataset_splits(
     }
 
 
-# ============================================================================
-# Dataset Permission Endpoints (Temporary Elevated Access for Demo)
-# ============================================================================
-
-@router.get("/datasets/{dataset_id}/permissions")
-async def list_dataset_permissions(
-    dataset_id: str,
-    user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    List all permissions granted for a dataset.
-    Admin only.
-    """
-    # Verify dataset exists
-    dataset = await DatasetRepository.get_by_id(db, dataset_id)
-    if not dataset:
-        raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
-
-    permissions = await DatasetPermissionRepository.get_by_dataset(db, dataset_id)
-    return {
-        "dataset_id": dataset_id,
-        "permissions": [p.to_dict() for p in permissions]
-    }
-
-
-@router.post("/datasets/{dataset_id}/permissions")
-async def grant_dataset_permission(
-    dataset_id: str,
-    user_id: str = Form(..., description="User UUID to grant permission to"),
-    expires_in_hours: Optional[int] = Form(None, description="Hours until permission expires (null = no expiration)"),
-    user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Grant temporary elevated permission (pathologist-level) to a user for a specific dataset.
-    This allows Guest users to run AI analysis and training on the dataset during demos.
-    Admin only.
-
-    Args:
-        dataset_id: Dataset UUID
-        user_id: User UUID to grant permission to
-        expires_in_hours: Optional expiration time in hours (null = no expiration)
-    """
-    from datetime import timedelta
-
-    from datetime import datetime, timezone
-
-    # Verify dataset exists
-    dataset = await DatasetRepository.get_by_id(db, dataset_id)
-    if not dataset:
-        raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
-
-    # Calculate expiration time
-    # Use naive UTC datetime for PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility
-    expires_at = None
-    if expires_in_hours is not None and expires_in_hours > 0:
-        expires_at = (datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)).replace(tzinfo=None)
-
-    # Check if permission already exists
-    existing = await DatasetPermissionRepository.get_by_dataset_and_user(db, dataset_id, user_id)
-    if existing:
-        # If permission exists but is expired, update it instead of returning error
-        if existing.is_expired():
-            existing.expires_at = expires_at
-            existing.granted_by = str(user.id)
-            existing.created_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            await db.commit()
-            await db.refresh(existing)
-            return {
-                "message": "Permission renewed successfully",
-                "permission": existing.to_dict()
-            }
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail="Valid permission already exists for this user on this dataset"
-            )
-
-    # Create permission
-    # Race-condition safe: catch IntegrityError if concurrent grant
-    # with same (user_id, dataset_id) passes the existence check above (PostgreSQL READ COMMITTED)
-    try:
-        permission = await DatasetPermissionRepository.create(
-            db=db,
-            dataset_id=dataset_id,
-            user_id=user_id,
-            granted_by=str(user.id),
-            permission_level="pathologist",
-            expires_at=expires_at
-        )
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail="Valid permission already exists for this user on this dataset"
-        )
-
-    return {
-        "message": "Permission granted successfully",
-        "permission": permission.to_dict()
-    }
-
-
-@router.delete("/datasets/{dataset_id}/permissions/{target_user_id}")
-async def revoke_dataset_permission(
-    dataset_id: str,
-    target_user_id: str,
-    user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Revoke a user's permission for a dataset.
-    Admin only.
-
-    Also notifies AI Service to stop any running training tasks that:
-    1. Belong to the target user
-    2. Use WSIs from this dataset
-    """
-    # Verify dataset exists
-    dataset = await DatasetRepository.get_by_id(db, dataset_id)
-    if not dataset:
-        raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
-
-    # Find running training tasks that belong to target_user_id and use this dataset's WSIs
-    # Step 1: Get all WSI IDs in this dataset
-    wsi_ids_result = await db.execute(
-        select(WSISlide.wsi_id).where(WSISlide.dataset_id == dataset_id)
-    )
-    dataset_wsi_ids = set(row[0] for row in wsi_ids_result.all())
-
-    # Step 2: Find running tasks belonging to target user that use any of these WSIs
-    affected_task_ids = []
-    if dataset_wsi_ids:
-        # Get running tasks for target user
-        running_statuses = ['pending', 'running', 'extracting', 'training', 'resuming']
-        running_tasks_result = await db.execute(
-            select(TrainingTask.task_id)
-            .where(TrainingTask.user_id == target_user_id)
-            .where(TrainingTask.status.in_(running_statuses))
-        )
-        candidate_task_ids = [row[0] for row in running_tasks_result.all()]
-
-        # Check which tasks use WSIs from this dataset
-        for task_id in candidate_task_ids:
-            task_wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
-            if any(wsi_id in dataset_wsi_ids for wsi_id in task_wsi_ids):
-                affected_task_ids.append(task_id)
-
-    # Step 3: Notify AI Service to revoke permissions for affected tasks
-    revoked_tasks = []
-    for task_id in affected_task_ids:
-        try:
-            async with httpx.AsyncClient(timeout=1.0) as client:
-                await client.post(f"{AI_SERVICE_URL}/api/ai/training/{task_id}/revoke-permission")
-                revoked_tasks.append(task_id)
-                logger.info(f"Permission revocation sent to AI service for task {task_id}")
-        except httpx.TimeoutException:
-            # Expected - AI service may be busy, but the flag is set
-            revoked_tasks.append(task_id)
-            logger.debug(f"Permission revocation sent to AI service for task {task_id} (fire-and-forget)")
-        except Exception as e:
-            logger.warning(f"Failed to send permission revocation to AI service for task {task_id}: {e}")
-
-    # Delete permission from database
-    deleted = await DatasetPermissionRepository.delete_by_dataset_and_user(db, dataset_id, target_user_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Permission not found")
-
-    await db.commit()
-
-    result = {"message": "Permission revoked successfully"}
-    if revoked_tasks:
-        result["affected_tasks"] = revoked_tasks
-        result["message"] = f"Permission revoked. {len(revoked_tasks)} running task(s) will be stopped."
-
-    return result
 
 

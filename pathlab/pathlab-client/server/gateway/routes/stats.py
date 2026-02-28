@@ -6,18 +6,21 @@ Provides system-wide statistics including WSI counts, task counts, and label dis
 import asyncio
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, or_
+from sqlalchemy import select, desc, func, or_, case
 from sqlalchemy.orm import selectinload
 
 from backend.database import get_db, async_session
-from backend.database.models import WSISlide, AITask, TrainingTask
+from backend.database.models import (
+    WSISlide, AITask, TrainingTask,
+    ChatConversation, ChatMessage, AnnotationDraft, MessageFeedback,
+)
 from backend.database.repositories import (
     WSIRepository,
     AITaskRepository,
     AIResultRepository,
     DatasetPermissionRepository,
 )
-from backend.auth import current_active_user, User
+from backend.auth import current_active_user, require_admin, User
 
 router = APIRouter(prefix="/stats", tags=["Statistics"])
 
@@ -174,3 +177,120 @@ async def get_recent_activity(
         "recent_uploads": [wsi.to_dict() for wsi in recent_uploads],
         "recent_tasks": recent_tasks
     }
+
+
+@router.get("/user-usage")
+async def get_user_usage_stats(
+    user: User = Depends(require_admin),
+):
+    """
+    Get per-user usage statistics for all non-admin users (admin only).
+
+    Returns a list of users with their usage counts across all features:
+    WSI uploads, AI tasks, training tasks, chat conversations/messages,
+    annotation drafts, and feedback submissions.
+    """
+    from backend.auth.models import User as UserModel
+
+    async with async_session() as db:
+        # Sub-queries for each metric, grouped by user_id
+        wsi_sq = (
+            select(WSISlide.user_id, func.count(WSISlide.id).label("wsi_count"))
+            .group_by(WSISlide.user_id)
+            .subquery()
+        )
+        ai_task_sq = (
+            select(AITask.user_id, func.count(AITask.id).label("ai_task_count"))
+            .group_by(AITask.user_id)
+            .subquery()
+        )
+        training_sq = (
+            select(TrainingTask.user_id, func.count(TrainingTask.id).label("training_count"))
+            .group_by(TrainingTask.user_id)
+            .subquery()
+        )
+        conv_sq = (
+            select(ChatConversation.user_id, func.count(ChatConversation.id).label("conversation_count"))
+            .group_by(ChatConversation.user_id)
+            .subquery()
+        )
+        msg_sq = (
+            select(
+                ChatConversation.user_id,
+                func.count(ChatMessage.id).label("message_count"),
+            )
+            .join(ChatMessage, ChatMessage.conversation_id == ChatConversation.conversation_id)
+            .where(ChatMessage.role == "user")
+            .group_by(ChatConversation.user_id)
+            .subquery()
+        )
+        annotation_sq = (
+            select(AnnotationDraft.user_id, func.count(AnnotationDraft.id).label("annotation_count"))
+            .group_by(AnnotationDraft.user_id)
+            .subquery()
+        )
+        feedback_sq = (
+            select(
+                MessageFeedback.user_id,
+                func.count(MessageFeedback.id).label("feedback_count"),
+                func.sum(case((MessageFeedback.feedback_type == "thumbs_up", 1), else_=0)).label("thumbs_up"),
+                func.sum(case((MessageFeedback.feedback_type == "thumbs_down", 1), else_=0)).label("thumbs_down"),
+            )
+            .group_by(MessageFeedback.user_id)
+            .subquery()
+        )
+
+        # Cast user id to string for joining
+        from sqlalchemy import cast, String
+        user_id_str = func.cast(UserModel.id, String)
+
+        query = (
+            select(
+                user_id_str.label("user_id"),
+                UserModel.email,
+                UserModel.nickname,
+                UserModel.role,
+                func.coalesce(wsi_sq.c.wsi_count, 0).label("wsi_count"),
+                func.coalesce(ai_task_sq.c.ai_task_count, 0).label("ai_task_count"),
+                func.coalesce(training_sq.c.training_count, 0).label("training_count"),
+                func.coalesce(conv_sq.c.conversation_count, 0).label("conversation_count"),
+                func.coalesce(msg_sq.c.message_count, 0).label("message_count"),
+                func.coalesce(annotation_sq.c.annotation_count, 0).label("annotation_count"),
+                func.coalesce(feedback_sq.c.feedback_count, 0).label("feedback_count"),
+                func.coalesce(feedback_sq.c.thumbs_up, 0).label("thumbs_up"),
+                func.coalesce(feedback_sq.c.thumbs_down, 0).label("thumbs_down"),
+            )
+            .outerjoin(wsi_sq, wsi_sq.c.user_id == user_id_str)
+            .outerjoin(ai_task_sq, ai_task_sq.c.user_id == user_id_str)
+            .outerjoin(training_sq, training_sq.c.user_id == user_id_str)
+            .outerjoin(conv_sq, conv_sq.c.user_id == user_id_str)
+            .outerjoin(msg_sq, msg_sq.c.user_id == user_id_str)
+            .outerjoin(annotation_sq, annotation_sq.c.user_id == user_id_str)
+            .outerjoin(feedback_sq, feedback_sq.c.user_id == user_id_str)
+            .where(UserModel.role != UserModel.ROLE_ADMIN)
+            .where(UserModel.is_active == True)
+            .order_by(UserModel.email)
+        )
+
+        result = await db.execute(query)
+        rows = result.all()
+
+    users = []
+    for row in rows:
+        users.append({
+            "user_id": row.user_id,
+            "email": row.email,
+            "nickname": row.nickname,
+            "role": row.role,
+            "wsi_count": row.wsi_count,
+            "ai_task_count": row.ai_task_count,
+            "training_count": row.training_count,
+            "conversation_count": row.conversation_count,
+            "message_count": row.message_count,
+            "annotation_count": row.annotation_count,
+            "feedback_count": row.feedback_count,
+            "thumbs_up": row.thumbs_up,
+            "thumbs_down": row.thumbs_down,
+        })
+
+    return {"users": users}

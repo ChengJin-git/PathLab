@@ -189,6 +189,54 @@ async def check_wsi_access_permission(
     return False
 
 
+async def check_task_access_permission(
+    user: User,
+    task_user_id: Optional[str],
+    task_dataset_id: Optional[str],
+    db: AsyncSession
+) -> bool:
+    """
+    Check if a user can access a specific training task (READ operations).
+
+    Returns True if:
+    - User is admin (can access all)
+    - Task has no owner (legacy data)
+    - User owns the task (task_user_id matches)
+    - User has valid temporary elevated permission for the task's dataset
+
+    Args:
+        user: Current user
+        task_user_id: User ID of the task owner (can be None for legacy data)
+        task_dataset_id: Dataset UUID associated with the task (from model_config, can be None)
+        db: Database session
+
+    Returns:
+        True if user can access the task
+    """
+    # Admin can access everything
+    if user.is_admin():
+        return True
+
+    # If task has no owner (legacy data), allow access
+    if task_user_id is None:
+        return True
+
+    # Check if user owns the task
+    if task_user_id == str(user.id):
+        return True
+
+    # Check for temporary elevated permission on the task's dataset
+    if task_dataset_id:
+        from backend.database.repositories import DatasetPermissionRepository
+        has_permission = await DatasetPermissionRepository.has_valid_permission(
+            db, task_dataset_id, str(user.id), "pathologist"
+        )
+        if has_permission:
+            return True
+
+    return False
+
+
 async def check_dataset_gpu_permission(
     user: User,
     dataset_id: str,

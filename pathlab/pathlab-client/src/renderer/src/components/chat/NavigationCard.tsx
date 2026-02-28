@@ -1,4 +1,5 @@
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { ArrowRight, Upload, PlayCircle } from 'lucide-react'
 import { Button } from '../ui/button'
@@ -7,13 +8,17 @@ export interface NavigationConfig {
   target: string
   state?: {
     datasetName?: string
-    uploadMode?: 'classification' | 'survival'
+    uploadMode?: 'classification' | 'survival' | 'segmentation'
     dataLevel?: 'case' | 'file'
     csvContent?: string
     csvFileName?: string
   }
-  buttonText: string
+  buttonText?: string
+  /** i18n key for buttonText — takes priority over buttonText when present */
+  buttonTextKey?: string
   description?: string
+  /** i18n key for description — takes priority over description when present */
+  descriptionKey?: string
   /** Navigation type: 'register' for upload page, 'task' for task detail page */
   type?: 'register' | 'task'
   /** Task ID for task navigation */
@@ -40,8 +45,8 @@ export function parseNavigateBlock(content: string): NavigationConfig | null {
     const config = JSON.parse(jsonStr) as NavigationConfig
     
     // Validate required fields
-    if (!config.target || !config.buttonText) {
-      console.error('NavigationCard: Missing required fields (target, buttonText)')
+    if (!config.target || (!config.buttonText && !config.buttonTextKey)) {
+      console.error('NavigationCard: Missing required fields (target, and one of buttonText/buttonTextKey)')
       return null
     }
     
@@ -64,7 +69,11 @@ export function removeNavigateBlock(content: string): string {
  * Used by AI Chat to guide users to Registration Page or Task Detail Page
  */
 export function NavigationCard({ config, csvContent, csvFileName }: NavigationCardProps) {
+  const { t } = useTranslation()
   const navigate = useNavigate()
+
+  const resolvedButtonText = config.buttonTextKey ? t(config.buttonTextKey) : config.buttonText
+  const resolvedDescription = config.descriptionKey ? t(config.descriptionKey) : config.description
 
   const handleNavigate = () => {
     // Save scroll position and conversation ID before navigating
@@ -94,8 +103,8 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
   if (config.type === 'task') {
     return (
       <div className="my-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl shadow-sm">
-        {config.description && (
-          <p className="text-sm text-slate-600 mb-3">{config.description}</p>
+        {resolvedDescription && (
+          <p className="text-sm text-slate-600 mb-3">{resolvedDescription}</p>
         )}
 
         <Button
@@ -103,7 +112,7 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
           className="w-full bg-green-600 hover:bg-green-700 text-white font-medium py-3 rounded-lg flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all"
         >
           <PlayCircle className="w-4 h-4" />
-          {config.buttonText}
+          {resolvedButtonText}
           <ArrowRight className="w-4 h-4" />
         </Button>
 
@@ -111,16 +120,16 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
           <div className="mt-3 flex flex-wrap gap-2 text-xs">
             {config.taskName && (
               <span className="px-2 py-1 bg-white rounded-md border border-slate-200 text-slate-600">
-                Task: <strong className="text-slate-800">{config.taskName}</strong>
+                {t('chatComponents.navigationCard.task')}{' '}<strong className="text-slate-800">{config.taskName}</strong>
               </span>
             )}
             {config.taskId && (
               <span className="px-2 py-1 bg-white rounded-md border border-slate-200 text-slate-600">
-                ID: <strong className="text-slate-800 font-mono text-[10px]">{config.taskId}</strong>
+                {t('chatComponents.navigationCard.id')}{' '}<strong className="text-slate-800 font-mono text-[10px]">{config.taskId}</strong>
               </span>
             )}
             <span className="px-2 py-1 bg-green-50 rounded-md border border-green-200 text-green-700">
-              ✓ Training Started
+              ✓ {t('chatComponents.navigationCard.trainingStarted')}
             </span>
           </div>
         )}
@@ -131,8 +140,8 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
   // Default: Registration navigation card (blue theme)
   return (
     <div className="my-4 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl shadow-sm">
-      {config.description && (
-        <p className="text-sm text-slate-600 mb-3">{config.description}</p>
+      {resolvedDescription && (
+        <p className="text-sm text-slate-600 mb-3">{resolvedDescription}</p>
       )}
 
       <Button
@@ -140,23 +149,23 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
         className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all"
       >
         <Upload className="w-4 h-4" />
-        {config.buttonText}
+        {resolvedButtonText}
         <ArrowRight className="w-4 h-4" />
       </Button>
 
       {config.state?.datasetName && (
         <div className="mt-3 flex flex-wrap gap-2 text-xs">
           <span className="px-2 py-1 bg-white rounded-md border border-slate-200 text-slate-600">
-            Dataset: <strong className="text-slate-800">{config.state.datasetName}</strong>
+            {t('chatComponents.navigationCard.dataset')}{' '}<strong className="text-slate-800">{config.state.datasetName}</strong>
           </span>
           {config.state.uploadMode && (
             <span className="px-2 py-1 bg-white rounded-md border border-slate-200 text-slate-600">
-              Type: <strong className="text-slate-800 capitalize">{config.state.uploadMode}</strong>
+              {t('chatComponents.navigationCard.type')}{' '}<strong className="text-slate-800 capitalize">{config.state.uploadMode}</strong>
             </span>
           )}
           {(csvContent || config.state.csvContent) && (
             <span className="px-2 py-1 bg-green-50 rounded-md border border-green-200 text-green-700">
-              ✓ CSV Ready
+              ✓ {t('chatComponents.navigationCard.csvReady')}
             </span>
           )}
         </div>

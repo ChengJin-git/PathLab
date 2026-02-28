@@ -28,6 +28,7 @@ class UserRead(BaseModel):
     avatar_url: Optional[str] = Field(default=None, description="URL to user's avatar image")
     agreement_accepted_at: Optional[datetime] = Field(default=None, description="When user accepted the terms of service")
     agreement_ip: Optional[str] = Field(default=None, description="IP address when user accepted the terms of service")
+    notice_acknowledged_at: Optional[datetime] = Field(default=None, description="When user last acknowledged a maintenance notice")
     created_at: Optional[datetime] = Field(default=None, description="Account creation time")
     updated_at: Optional[datetime] = Field(default=None, description="Last update time")
 

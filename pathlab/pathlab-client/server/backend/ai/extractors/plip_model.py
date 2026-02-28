@@ -15,7 +15,7 @@ class PLIPExtractor(BaseExtractor):
         self.local_model_dir = get_ckpt_path("PLIP", hf_token)
         self.backbone = CLIPModel.from_pretrained(self.local_model_dir)
         self.backbone.eval()
-        
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Extract features from input images.
@@ -51,9 +51,24 @@ class PLIPExtractor(BaseExtractor):
     def default_image_size(self) -> int:
         return 224
 
+    # -- spatial override: HuggingFace CLIPModel wraps a CLIPVisionTransformer --
+    @property
+    def supports_spatial(self) -> bool:
+        return True
+
+    def forward_spatial(self, x: torch.Tensor) -> torch.Tensor:
+        import math
+        # vision_model returns last_hidden_state with CLS as first token
+        outputs = self.backbone.vision_model(pixel_values=x)
+        patch_tokens = outputs.last_hidden_state[:, 1:]  # strip CLS
+        B, N, D = patch_tokens.shape
+        H = W = int(math.isqrt(N))
+        assert H * W == N
+        return patch_tokens.permute(0, 2, 1).reshape(B, D, H, W)
+
     @classmethod
     def build(cls, hf_token: str = "", **kwargs) -> BaseExtractor:
-        """Build a CONCHExtractor instance."""
+        """Build a PLIPExtractor instance."""
         return cls(hf_token=hf_token)
 
 

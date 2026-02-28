@@ -21,6 +21,7 @@ from backend.ai.extractors import get_extractor
 from backend.ai.aggregators import get_aggregator
 from backend.ai.utils.dataset import build_dataloader
 from backend.ai.utils.feature_dataset import WSIFeatureDataset, CaseFeatureDataset
+from backend.common.config import Config
 from backend.ai.utils.vram_guard import (
     check_vram_before_model_load,
     check_vram_before_batch_processing,
@@ -43,57 +44,19 @@ from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 from backend.ai.permission_revocation import is_permission_revoked, PermissionRevokedException
-from backend.common.config import Config
-from contextlib import asynccontextmanager
-import anyio
+from backend.ai.tasks.training_utils import (
+    safe_update_progress as _safe_update_progress,
+    scoped_db,
+    is_kfold_splits,
+    get_num_folds,
+    calculate_kfold_classification_metrics,
+)
 import logging
 
-_scoped_db_logger = logging.getLogger("ai.scoped_db")
-
-
-async def _safe_update_progress(session_maker, task_id: str, status: str, progress: int):
-    """Write progress to shared file. Gateway reads the file directly — no DB, no HTTP.
-
-    File: {uploads_dir}/progress/{task_id}  (atomic write via tmpfile + rename)
-    Crash recovery: file persists on disk, Gateway reads last written value.
-    Non-fatal: if file write fails, training continues.
-    """
-    from backend.common.progress_store import set_progress
-
-    set_progress(task_id, progress)
-
-
-@asynccontextmanager
-async def scoped_db(session_maker):
-    """Create a short-lived database session for a single operation.
-
-    Follows the same pattern as safe_session() in database.py:
-    - The main operation is NOT shielded (allows timeout/cancellation to work)
-    - Only cleanup (rollback/close) is shielded to ensure proper resource release
-
-    Includes timeout protection to prevent indefinite blocking on
-    long-running database operations.
-    """
-    timeout = Config.DB_OPERATION_TIMEOUT
-    session = session_maker()
-    try:
-        async with asyncio.timeout(timeout):
-            yield session
-            await session.commit()
-    except TimeoutError:
-        with anyio.CancelScope(shield=True):
-            await session.rollback()
-        _scoped_db_logger.error(
-            f"Database operation timed out after {timeout}s."
-        )
-        raise
-    except Exception:
-        with anyio.CancelScope(shield=True):
-            await session.rollback()
-        raise
-    finally:
-        with anyio.CancelScope(shield=True):
-            await session.close()
+# Minimum number of patches required for a WSI to be considered valid.
+# WSIs with fewer patches are skipped during feature extraction and training
+# to avoid low-quality inputs that would degrade model performance.
+MIN_PATCHES_THRESHOLD = 100
 
 
 class WSIClassificationTrainer(BaseTrainer):
@@ -153,6 +116,7 @@ class WSIClassificationTrainer(BaseTrainer):
         extractor = await asyncio.to_thread(_load_extractor)
 
         results = []
+        skipped_wsi_ids = []
         total = len(wsi_ids)
         task_features_dir = self.uploads_root / "training" / self.task_id / "features"
         task_features_dir.mkdir(parents=True, exist_ok=True)
@@ -308,6 +272,19 @@ class WSIClassificationTrainer(BaseTrainer):
                         batch_size=batch_size,
                     )
 
+                    num_patches = feats.shape[0]
+                    if num_patches < MIN_PATCHES_THRESHOLD:
+                        await logger.warning(
+                            f"[{i}/{total}] Skipping {wsi_id}: only {num_patches} patches "
+                            f"(minimum {MIN_PATCHES_THRESHOLD}). WSI may lack detectable tissue.",
+                            metadata={"wsi_id": wsi_id, "num_patches": num_patches,
+                                      "threshold": MIN_PATCHES_THRESHOLD}
+                        )
+                        skipped_wsi_ids.append(wsi_id)
+                        progress = 33 + int(i / total * 33)
+                        await _safe_update_progress(session_maker, self.task_id, TaskStatus.EXTRACTING, progress)
+                        continue
+
                     # Save to global cache (blocking disk I/O → thread)
                     cache_feat_path = get_cache_save_path(
                         self.uploads_root, extractor_name, params_hash, wsi_id
@@ -369,7 +346,18 @@ class WSIClassificationTrainer(BaseTrainer):
                     metadata={"count": len(processed_wsi_ids)}
                 )
 
-        return self._build_feature_response(results)
+        if skipped_wsi_ids:
+            await logger.warning(
+                f"[Fallback] {len(skipped_wsi_ids)}/{total} WSIs skipped due to insufficient patches "
+                f"(< {MIN_PATCHES_THRESHOLD}): {skipped_wsi_ids[:20]}",
+                metadata={"skipped_count": len(skipped_wsi_ids), "total": total,
+                          "threshold": MIN_PATCHES_THRESHOLD,
+                          "skipped_wsi_ids": skipped_wsi_ids}
+            )
+
+        response = self._build_feature_response(results)
+        response.skipped_wsi_ids = skipped_wsi_ids
+        return response
 
     def _extract_wsi_features(
         self,
@@ -505,14 +493,14 @@ class WSIClassificationTrainer(BaseTrainer):
         _log.info(f"[FeatureExtract] DONE, result shape={result.shape}")
         return result
 
+    # _is_kfold_splits and _get_num_folds moved to training_utils module.
+    # Kept as thin wrappers for backward compatibility (used by WSISurvivalTrainer via inheritance).
+
     def _is_kfold_splits(self, splits_map: Dict[str, List[str]]) -> bool:
-        """Check if splits_map represents k-fold configuration."""
-        return any(key.startswith("fold_") for key in splits_map.keys())
+        return is_kfold_splits(splits_map)
 
     def _get_num_folds(self, splits_map: Dict[str, List[str]]) -> int:
-        """Get number of folds from k-fold splits_map."""
-        fold_keys = [k for k in splits_map.keys() if k.startswith("fold_")]
-        return len(fold_keys)
+        return get_num_folds(splits_map)
 
     # ==========================================================================
     # Case-Level Support Methods
@@ -692,163 +680,10 @@ class WSIClassificationTrainer(BaseTrainer):
         classes: List[str],
         splits_map: Optional[Dict[str, List[str]]] = None,
     ) -> tuple:
-        """
-        Calculate comprehensive metrics for K-Fold training by reading saved JSON files.
-
-        This reads the per-WSI result JSON files saved during K-Fold training and
-        calculates metrics using sklearn, similar to how non-K-Fold analysis does it.
-
-        Args:
-            task_id: Training task ID
-            fold_keys: List of fold keys (e.g., ["fold_0", "fold_1"])
-            classes: List of class names
-            splits_map: Optional dict mapping fold_key to list of WSI IDs.
-                       If provided, directly reads files for known WSI IDs (fast).
-                       If None, falls back to scanning directory (slow, for backward compatibility).
-
-        Returns:
-            Tuple of:
-            - Dict with metric names as keys and {"mean": float, "std": float} as values (aggregated)
-            - Dict with fold_key as keys and {metric_name: value} as values (per-fold)
-            Metrics include: precision, sensitivity (recall), specificity, f1, auc
-        """
-        ai_results_root = self.uploads_root / "ai_results"
-        n_classes = len(classes)
-
-        # Per-fold metrics (for aggregated calculation)
-        fold_metrics = {
-            "precision": [],
-            "sensitivity": [],
-            "specificity": [],
-            "f1": [],
-            "auc": [],
-        }
-        # Per-fold detailed values
-        per_fold_metrics = {}
-
-        for fold_idx, fold_key in enumerate(fold_keys):
-            # Collect predictions for this fold from saved JSON files
-            all_preds = []
-            all_labels = []
-            all_probs = []  # For AUC calculation
-
-            # Fast path: directly read files for known WSI IDs
-            if splits_map and fold_key in splits_map:
-                wsi_ids = splits_map[fold_key]
-                for wsi_id in wsi_ids:
-                    result_file = ai_results_root / wsi_id / f"train_{task_id}_{fold_key}_result.json"
-                    if result_file.exists():
-                        try:
-                            with open(result_file, 'r') as f:
-                                data = json.load(f)
-                                pred = data.get("pred")
-                                gt = data.get("ground_truth")
-                                probs = data.get("probs", {})
-                                if pred and gt:
-                                    pred_idx = classes.index(pred) if pred in classes else -1
-                                    gt_idx = classes.index(gt) if gt in classes else -1
-                                    if pred_idx >= 0 and gt_idx >= 0:
-                                        all_preds.append(pred_idx)
-                                        all_labels.append(gt_idx)
-                                        probs_arr = [probs.get(cls, 0.0) for cls in classes]
-                                        all_probs.append(probs_arr)
-                        except Exception:
-                            continue
-            # Slow path: scan directory (fallback for backward compatibility)
-            elif ai_results_root.exists():
-                for wsi_dir in ai_results_root.iterdir():
-                    if wsi_dir.is_dir():
-                        result_file = wsi_dir / f"train_{task_id}_{fold_key}_result.json"
-                        if result_file.exists():
-                            try:
-                                with open(result_file, 'r') as f:
-                                    data = json.load(f)
-                                    if data.get("task_id") == task_id and data.get("fold_key") == fold_key:
-                                        pred = data.get("pred")
-                                        gt = data.get("ground_truth")
-                                        probs = data.get("probs", {})
-                                        if pred and gt:
-                                            pred_idx = classes.index(pred) if pred in classes else -1
-                                            gt_idx = classes.index(gt) if gt in classes else -1
-                                            if pred_idx >= 0 and gt_idx >= 0:
-                                                all_preds.append(pred_idx)
-                                                all_labels.append(gt_idx)
-                                                probs_arr = [probs.get(cls, 0.0) for cls in classes]
-                                                all_probs.append(probs_arr)
-                            except Exception:
-                                continue
-
-            if not all_preds:
-                continue
-
-            all_preds = np.array(all_preds)
-            all_labels = np.array(all_labels)
-            all_probs = np.array(all_probs)
-
-            # Calculate metrics using sklearn
-            precision = precision_score(all_labels, all_preds, average='macro', zero_division=0)
-            recall = recall_score(all_labels, all_preds, average='macro', zero_division=0)
-            f1 = f1_score(all_labels, all_preds, average='macro', zero_division=0)
-
-            # Specificity calculation (macro average)
-            cm = sklearn_confusion_matrix(all_labels, all_preds, labels=list(range(n_classes)))
-            specificities = []
-            for i in range(n_classes):
-                tp = cm[i, i]
-                fp = cm[:, i].sum() - tp
-                fn = cm[i, :].sum() - tp
-                tn = cm.sum() - tp - fp - fn
-                spec = tn / (tn + fp) if (tn + fp) > 0 else 0
-                specificities.append(spec)
-            specificity = np.mean(specificities) if specificities else 0.0
-
-            # AUC calculation
-            try:
-                if n_classes == 2:
-                    auc_val = roc_auc_score(all_labels, all_probs[:, 1])
-                else:
-                    auc_val = roc_auc_score(all_labels, all_probs, multi_class='ovr', average='macro')
-            except ValueError:
-                auc_val = None
-
-            # Filter out nan values before appending
-            if not np.isnan(precision):
-                fold_metrics["precision"].append(precision)
-            if not np.isnan(recall):
-                fold_metrics["sensitivity"].append(recall)
-            if not np.isnan(specificity):
-                fold_metrics["specificity"].append(specificity)
-            if not np.isnan(f1):
-                fold_metrics["f1"].append(f1)
-            if auc_val is not None and not np.isnan(auc_val):
-                fold_metrics["auc"].append(auc_val)
-
-            # Store per-fold values (rounded to 4 decimal places), skip nan values
-            per_fold_metrics[fold_key] = {}
-            if not np.isnan(precision):
-                per_fold_metrics[fold_key]["precision"] = round(float(precision), 4)
-            if not np.isnan(recall):
-                per_fold_metrics[fold_key]["sensitivity"] = round(float(recall), 4)
-            if not np.isnan(specificity):
-                per_fold_metrics[fold_key]["specificity"] = round(float(specificity), 4)
-            if not np.isnan(f1):
-                per_fold_metrics[fold_key]["f1"] = round(float(f1), 4)
-            if auc_val is not None and not np.isnan(auc_val):
-                per_fold_metrics[fold_key]["auc"] = round(float(auc_val), 4)
-
-        # Calculate mean and std for each metric (rounded to 4 decimal places)
-        aggregated = {}
-        for metric_name, values in fold_metrics.items():
-            if values:
-                mean_val = float(np.mean(values))
-                std_val = float(np.std(values))
-                if not np.isnan(mean_val) and not np.isnan(std_val):
-                    aggregated[metric_name] = {
-                        "mean": round(mean_val, 4),
-                        "std": round(std_val, 4),
-                    }
-
-        return aggregated, per_fold_metrics
+        """Delegate to shared classification metrics calculator."""
+        return calculate_kfold_classification_metrics(
+            self.uploads_root, task_id, fold_keys, classes, splits_map
+        )
 
     def _run_one_epoch(
         self,
@@ -913,6 +748,7 @@ class WSIClassificationTrainer(BaseTrainer):
         optimizer_type: str = "adam",
         auto_balance: bool = False,
         early_stopping_patience: int = 10,
+        fold_idx: Optional[int] = None,  # Optional fold index for kfold training
     ) -> Dict[str, Any]:
         """
         Train a single model run (used for both regular training and k-fold).
@@ -1081,13 +917,15 @@ class WSIClassificationTrainer(BaseTrainer):
 
             # Prepare metadata with val_ prefix for validation metrics
             metadata = {"epoch": epoch, "train_loss": epoch_loss}
+            if fold_idx is not None:
+                metadata["fold"] = fold_idx
             if val_dataset is not None and len(val_dataset) > 0:
                 metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
             await logger.info(log_msg, metadata=metadata)
 
-            # Calculate progress using (epoch-1) to ensure we never reach progress_base + progress_range
-            # This keeps training progress smoothly increasing but always < 90%
-            progress = progress_base + int((epoch - 1) / epochs * progress_range)
+            # Calculate progress using epoch (not epoch-1) to ensure progress updates immediately from first epoch
+            # For patch tasks, frontend maps 66-100 to 0-100, so we need immediate updates
+            progress = progress_base + int(epoch / epochs * progress_range)
             await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
 
             # Update learning rate
@@ -1115,47 +953,73 @@ class WSIClassificationTrainer(BaseTrainer):
         feature_extractor: str,
         logger: Any,
         session_maker: Any,
-    ) -> None:
+    ) -> List[str]:
         """
-        Validate all feature files and re-extract any corrupted or missing ones.
+        Validate all feature files and re-extract any corrupted, empty, or low-quality ones.
 
-        This prevents training from crashing due to corrupted .pt files
-        (e.g., from incomplete writes before the atomic .partial mechanism was added).
+        Detects:
+        - Missing feature files
+        - Corrupted/unloadable .pt files
+        - Legacy empty features with shape [0, feat_dim] (from before fallback was added)
+        - Features with fewer than MIN_PATCHES_THRESHOLD patches
+
+        All detected WSIs are re-extracted with force_recompute=True, which triggers
+        full re-patching (with seg_level adaptive fallback) and re-extraction.
+
+        Returns list of WSI IDs that could not be repaired (still missing/invalid after re-extraction).
         """
-        corrupted_ids = []
-        for wsi_id in all_wsi_ids:
-            feat_path = features_dir / f"{wsi_id}.pt"
-            if not feat_path.exists():
-                corrupted_ids.append(wsi_id)
-                continue
-            loaded_feats, load_error = safe_load_features(
-                feat_path, delete_if_corrupted=True
-            )
-            if loaded_feats is None:
-                await logger.warning(
-                    f"Corrupted feature file detected for {wsi_id}: {load_error}"
+        def _scan_features_sync() -> tuple:
+            needs_reextract = []
+            reasons = {}
+            for wsi_id in all_wsi_ids:
+                feat_path = features_dir / f"{wsi_id}.pt"
+                if not feat_path.exists():
+                    needs_reextract.append(wsi_id)
+                    reasons[wsi_id] = "missing"
+                    continue
+                loaded_feats, load_error = safe_load_features(
+                    feat_path, delete_if_corrupted=True
                 )
-                corrupted_ids.append(wsi_id)
+                if loaded_feats is None:
+                    needs_reextract.append(wsi_id)
+                    reasons[wsi_id] = f"corrupted: {load_error}"
+                elif loaded_feats.shape[0] == 0:
+                    feat_path.unlink(missing_ok=True)
+                    needs_reextract.append(wsi_id)
+                    reasons[wsi_id] = "empty [0, feat_dim] (legacy)"
+                elif loaded_feats.shape[0] < MIN_PATCHES_THRESHOLD:
+                    feat_path.unlink(missing_ok=True)
+                    needs_reextract.append(wsi_id)
+                    reasons[wsi_id] = f"low patches ({loaded_feats.shape[0]} < {MIN_PATCHES_THRESHOLD})"
+            return needs_reextract, reasons
 
-        if not corrupted_ids:
-            return
+        needs_reextract, reasons = await asyncio.to_thread(_scan_features_sync)
+
+        for wsi_id in needs_reextract:
+            await logger.warning(
+                f"Feature repair needed for {wsi_id}: {reasons[wsi_id]}"
+            )
+
+        if not needs_reextract:
+            return []
 
         await logger.info(
-            f"Re-extracting features for {len(corrupted_ids)} corrupted/missing WSIs",
-            metadata={"count": len(corrupted_ids), "wsi_ids": corrupted_ids[:10]}
+            f"Re-extracting features for {len(needs_reextract)} invalid WSIs (with seg_level fallback)",
+            metadata={
+                "count": len(needs_reextract),
+                "wsi_ids": needs_reextract[:10],
+                "reasons": {k: reasons[k] for k in needs_reextract[:10]},
+            }
         )
 
-        # Get hf_token from global settings
         hf_token = Config.get_global_settings().get("huggingface_token", "")
 
-        # Get preprocessing_config from task
         async with scoped_db(session_maker) as db:
             task = await TrainingTaskRepository.get_by_id(db, self.task_id)
         preprocessing_config = task.preprocessing_config if task else None
 
-        # Re-extract features for corrupted WSIs
         await self.extract_features(
-            wsi_ids=corrupted_ids,
+            wsi_ids=needs_reextract,
             extractor_name=feature_extractor,
             batch_size=32,
             force_recompute=True,
@@ -1164,6 +1028,26 @@ class WSIClassificationTrainer(BaseTrainer):
             hf_token=hf_token,
             preprocessing_config=preprocessing_config,
         )
+
+        def _post_repair_check_sync() -> list:
+            still_bad = []
+            for wsi_id in needs_reextract:
+                feat_path = features_dir / f"{wsi_id}.pt"
+                if not feat_path.exists():
+                    still_bad.append(wsi_id)
+                    continue
+                loaded_feats, _ = safe_load_features(feat_path, delete_if_corrupted=False)
+                if loaded_feats is None or loaded_feats.shape[0] == 0:
+                    still_bad.append(wsi_id)
+            return still_bad
+
+        still_bad = await asyncio.to_thread(_post_repair_check_sync)
+        if still_bad:
+            await logger.warning(
+                f"{len(still_bad)} WSIs still invalid after re-extraction (likely empty/low-quality slides with no tissue at any seg_level)",
+                metadata={"count": len(still_bad), "wsi_ids": still_bad[:10]}
+            )
+        return still_bad
 
     async def train_model(
         self,
@@ -1213,10 +1097,65 @@ class WSIClassificationTrainer(BaseTrainer):
         features_dir = self.uploads_root / "training" / self.task_id / "features"
 
         # Validate feature files and re-extract any corrupted ones
+        unrepaired_ids: List[str] = []
         if feature_extractor:
-            await self._validate_and_repair_features(
+            unrepaired_ids = await self._validate_and_repair_features(
                 features_dir, all_wsi_ids, feature_extractor, logger, session_maker
             )
+
+        # Layer 5: Final pre-training filter — runs in thread to avoid blocking event loop
+        def _final_feature_filter_sync(wsi_ids, already_invalid, feat_dir):
+            invalid = set(already_invalid)
+            low_quality_details = []
+            for wsi_id in wsi_ids:
+                if wsi_id in invalid:
+                    continue
+                feat_path = feat_dir / f"{wsi_id}.pt"
+                if not feat_path.exists():
+                    invalid.add(wsi_id)
+                    continue
+                loaded_feats, _ = safe_load_features(feat_path, delete_if_corrupted=False)
+                if loaded_feats is None:
+                    invalid.add(wsi_id)
+                elif loaded_feats.shape[0] < MIN_PATCHES_THRESHOLD:
+                    low_quality_details.append((wsi_id, loaded_feats.shape[0]))
+                    invalid.add(wsi_id)
+            return invalid, low_quality_details
+
+        invalid_wsi_ids, low_quality_details = await asyncio.to_thread(
+            _final_feature_filter_sync, all_wsi_ids, unrepaired_ids, features_dir
+        )
+
+        for wsi_id, patch_count in low_quality_details:
+            await logger.warning(
+                f"Low-quality WSI {wsi_id}: {patch_count} patches < {MIN_PATCHES_THRESHOLD}",
+            )
+
+        if invalid_wsi_ids:
+            original_count = len(all_wsi_ids)
+            all_wsi_ids = [wid for wid in all_wsi_ids if wid not in invalid_wsi_ids]
+            valid_ratio = len(all_wsi_ids) / original_count if original_count > 0 else 0
+
+            await logger.warning(
+                f"Filtered {len(invalid_wsi_ids)} invalid WSIs: {len(all_wsi_ids)}/{original_count} remaining ({valid_ratio:.1%})",
+                metadata={
+                    "filtered_count": len(invalid_wsi_ids),
+                    "remaining_count": len(all_wsi_ids),
+                    "valid_ratio": round(valid_ratio, 4),
+                    "filtered_ids": sorted(invalid_wsi_ids)[:20],
+                }
+            )
+
+            if valid_ratio < 0.30:
+                raise ValueError(
+                    f"有效 WSI 不足 30%（当前 {valid_ratio:.1%}，{len(all_wsi_ids)}/{original_count}），"
+                    f"请检查数据质量。被过滤的 WSI: {sorted(invalid_wsi_ids)[:10]}"
+                )
+
+            splits_map = {
+                split_name: [wid for wid in ids if wid not in invalid_wsi_ids]
+                for split_name, ids in splits_map.items()
+            }
 
         # Get labels from database using batch query (avoid N+1 problem)
         async with scoped_db(session_maker) as db:
@@ -1642,6 +1581,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 optimizer_type=optimizer,
                 auto_balance=auto_balance,
                 early_stopping_patience=early_stopping_patience,
+                fold_idx=fold_idx + 1,  # Pass fold index for logging
             )
 
             model = result["model"]
@@ -2185,8 +2125,6 @@ class WSIClassificationTrainer(BaseTrainer):
                 f"[Saving] Complete - Inference results saved for {len(all_sample_ids)} samples",
                 metadata={"task_id": task_id, "num_samples": len(all_sample_ids)}
             )
-
-        await db.commit()
 
         model.train()
 

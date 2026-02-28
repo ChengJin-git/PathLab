@@ -25,6 +25,37 @@ function SkeletonContainer({ children, className }: { children: React.ReactNode;
     )
 }
 
+export function ModelListSkeleton() {
+    return (
+        <div className="w-full max-w-2xl space-y-3">
+            <div className="flex items-center gap-2 px-1">
+                <div className="w-4 h-4 rounded-full bg-gray-200 animate-pulse" />
+                <div className="w-24 h-4 rounded bg-gray-200 animate-pulse" />
+            </div>
+
+            <div className="flex flex-col gap-4">
+                {[1, 2].map((i) => (
+                    <div key={i} className="bg-white border-l-4 border-gray-100 rounded-lg p-4 shadow-sm">
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 space-y-2">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-32 h-5 rounded bg-gray-200 animate-pulse" />
+                                    <div className="w-16 h-5 rounded-full bg-gray-100 animate-pulse" />
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <div className="w-12 h-3 rounded bg-gray-100 animate-pulse" />
+                                    <div className="w-16 h-3 rounded bg-gray-100 animate-pulse" />
+                                </div>
+                            </div>
+                            <div className="w-8 h-8 rounded bg-gray-50 animate-pulse" />
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    )
+}
+
 export function GenericCardSkeleton({ className }: SkeletonProps) {
     return (
         <SkeletonContainer className={className}>
@@ -93,7 +124,7 @@ export function TaskConfigSkeleton() {
     )
 }
 
-export function InferenceConfigSkeleton() {
+export function AnalysisConfigSkeleton() {
     return (
         <SkeletonContainer>
             {/* Header */}
@@ -121,10 +152,6 @@ export function InferenceConfigSkeleton() {
             </div>
         </SkeletonContainer>
     )
-}
-
-export function AnalysisConfigSkeleton() {
-    return <InferenceConfigSkeleton />
 }
 
 export function ChartSkeleton() {

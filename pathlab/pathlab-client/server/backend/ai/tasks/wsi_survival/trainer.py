@@ -31,105 +31,14 @@ from backend.ai.tasks.feature_cache import (
     get_cache_save_path,
     create_symlink_to_cache,
     read_params_from_coords_h5,
+    safe_load_features,
 )
-from backend.ai.tasks.wsi_classification.trainer import WSIClassificationTrainer, scoped_db, _safe_update_progress
+from backend.ai.tasks.wsi_classification.trainer import WSIClassificationTrainer, MIN_PATCHES_THRESHOLD
+from backend.ai.tasks.training_utils import scoped_db, safe_update_progress as _safe_update_progress
 from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 from backend.ai.permission_revocation import is_permission_revoked, PermissionRevokedException
-
-# -----------------------------------------------------------------------------
-# Discrete Survival Loss
-# -----------------------------------------------------------------------------
-class NLLSurvivalLoss(nn.Module):
-    """
-    Negative Log Likelihood Loss for Discrete-Time Survival Analysis.
-
-    Model outputs: Logits for K bins (hazards).
-    """
-    def __init__(self, eps=1e-7):
-        super().__init__()
-        self.eps = eps
-
-    def forward(self, logits, y_bin, event):
-        """
-        logits: (batch, num_bins) - raw output from model
-        y_bin: (batch,) - bin index where event/censoring occurred
-        event: (batch,) - 1 if event occurred, 0 if censored
-        """
-        # Sigmoid to get hazard probabilities h(t|T>=t)
-        hazards = torch.sigmoid(logits)
-
-        # Survival term: log(1 - h)
-        # We want to sum log(1-h) for all bins BEFORE y_bin
-        # Create a mask for bins < y_bin
-        batch_size, num_bins = logits.shape
-
-        # Mask of shape (batch, num_bins) where mask[i, j] = 1 if j < y_bin[i]
-        # This represents all the bins the patient SURVIVED through
-        # range_tensor: [0, 1, ..., num_bins-1]
-        range_tensor = torch.arange(num_bins, device=logits.device).unsqueeze(0)
-        y_bin = y_bin.unsqueeze(1)
-
-        survived_mask = (range_tensor < y_bin).float()
-
-        # Event mask: mask[i, j] = 1 if j == y_bin[i] AND event[i] == 1
-        event_mask = (range_tensor == y_bin).float() * event.unsqueeze(1)
-
-        # Loss calculation
-        # 1. Uncensored: log(h_bin) + Sum_{j<bin} log(1 - h_j)
-        # 2. Censored: Sum_{j<bin} log(1 - h_j)  (assuming censored at start of bin)
-
-        # Survival loss term (for all samples)
-        # log(1 - h)
-        surv_loss = survived_mask * torch.log(1 - hazards + self.eps)
-
-        # Event loss term (only for uncensored samples)
-        # log(h)
-        event_loss = event_mask * torch.log(hazards + self.eps)
-
-        # Total log likelihood
-        log_likelihood = surv_loss + event_loss
-
-        # Minimize negative log likelihood
-        loss = -torch.sum(log_likelihood) / batch_size
-        return loss
-
-# -----------------------------------------------------------------------------
-# Metrics Utils
-# -----------------------------------------------------------------------------
-def calculate_c_index(y_true, y_pred, event):
-    """
-    Calculate Harrell's C-Index using scikit-survival.
-
-    y_true: True times (array-like)
-    y_pred: Predicted risk scores (higher = higher risk = shorter survival)
-    event: Event status (1=event, 0=censored)
-
-    Returns: C-Index (float between 0 and 1)
-    """
-    from sksurv.metrics import concordance_index_censored
-
-    n = len(y_true)
-    if n < 2:
-        return 0.5
-
-    # Convert to numpy arrays
-    times = np.asarray(y_true)
-    risks = np.asarray(y_pred)
-    events = np.asarray(event, dtype=bool)  # scikit-survival expects boolean
-
-    try:
-        # concordance_index_censored expects:
-        # - event_indicator: boolean array (True = event occurred)
-        # - event_time: float array of times
-        # - estimate: float array of risk scores (higher = higher risk)
-        c_index, concordant, discordant, tied_risk, tied_time = concordance_index_censored(
-            events, times, risks
-        )
-        return c_index
-    except Exception:
-        # Fallback if calculation fails (e.g., no comparable pairs)
-        return 0.5
+from backend.ai.tasks.wsi_survival.losses import NLLSurvivalLoss, calculate_c_index
 
 
 class WSISurvivalTrainer(WSIClassificationTrainer):
@@ -323,10 +232,65 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         features_dir = self.uploads_root / "training" / self.task_id / "features"
 
         # Validate feature files and re-extract any corrupted ones
+        unrepaired_ids: List[str] = []
         if feature_extractor:
-            await self._validate_and_repair_features(
+            unrepaired_ids = await self._validate_and_repair_features(
                 features_dir, all_wsi_ids, feature_extractor, logger, session_maker
             )
+
+        # Layer 6: Final pre-training filter — runs in thread to avoid blocking event loop
+        def _final_feature_filter_sync(wsi_ids, already_invalid, feat_dir):
+            invalid = set(already_invalid)
+            low_quality_details = []
+            for wsi_id in wsi_ids:
+                if wsi_id in invalid:
+                    continue
+                feat_path = feat_dir / f"{wsi_id}.pt"
+                if not feat_path.exists():
+                    invalid.add(wsi_id)
+                    continue
+                loaded_feats, _ = safe_load_features(feat_path, delete_if_corrupted=False)
+                if loaded_feats is None:
+                    invalid.add(wsi_id)
+                elif loaded_feats.shape[0] < MIN_PATCHES_THRESHOLD:
+                    low_quality_details.append((wsi_id, loaded_feats.shape[0]))
+                    invalid.add(wsi_id)
+            return invalid, low_quality_details
+
+        invalid_wsi_ids, low_quality_details = await asyncio.to_thread(
+            _final_feature_filter_sync, all_wsi_ids, unrepaired_ids, features_dir
+        )
+
+        for wsi_id, patch_count in low_quality_details:
+            await logger.warning(
+                f"Low-quality WSI {wsi_id}: {patch_count} patches < {MIN_PATCHES_THRESHOLD}",
+            )
+
+        if invalid_wsi_ids:
+            original_count = len(all_wsi_ids)
+            all_wsi_ids = [wid for wid in all_wsi_ids if wid not in invalid_wsi_ids]
+            valid_ratio = len(all_wsi_ids) / original_count if original_count > 0 else 0
+
+            await logger.warning(
+                f"Filtered {len(invalid_wsi_ids)} invalid WSIs: {len(all_wsi_ids)}/{original_count} remaining ({valid_ratio:.1%})",
+                metadata={
+                    "filtered_count": len(invalid_wsi_ids),
+                    "remaining_count": len(all_wsi_ids),
+                    "valid_ratio": round(valid_ratio, 4),
+                    "filtered_ids": sorted(invalid_wsi_ids)[:20],
+                }
+            )
+
+            if valid_ratio < 0.30:
+                raise ValueError(
+                    f"有效 WSI 不足 30%（当前 {valid_ratio:.1%}，{len(all_wsi_ids)}/{original_count}），"
+                    f"请检查数据质量。被过滤的 WSI: {sorted(invalid_wsi_ids)[:10]}"
+                )
+
+            splits_map = {
+                split_name: [wid for wid in ids if wid not in invalid_wsi_ids]
+                for split_name, ids in splits_map.items()
+            }
 
         # Load survival data using batch query (avoid N+1 problem) - short-lived session
         async with scoped_db(session_maker) as db:
@@ -1328,6 +1292,22 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 else:
                     epochs_without_improvement += 1
 
+                # Log epoch progress - format consistent with non-kfold training
+                log_msg = f"[Fold {fold_idx + 1}] Epoch {epoch}/{epochs} - train_loss: {epoch_loss:.4f}, train_c_index: {train_c_index:.4f}"
+                log_msg += f", val_loss: {val_loss:.4f}, val_c_index: {val_c_index:.4f}"
+
+                # Prepare metadata with train_ and val_ prefixes
+                metadata = {
+                    "fold": fold_idx + 1,
+                    "epoch": epoch,
+                    "train_loss": epoch_loss,
+                    "train_c_index": train_c_index,
+                    "val_loss": val_loss,
+                    "val_c_index": val_c_index
+                }
+
+                await logger.info(log_msg, metadata=metadata)
+
                 # Progress (66-100% for all folds including saving)
                 # Each fold gets 34/num_folds percent; 70% for training, 30% for saving
                 fold_total_range = 34 / num_folds
@@ -1599,7 +1579,6 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         ai_results_root = self.uploads_root / "ai_results"
         has_raw_attention = hasattr(model, 'forward_with_raw_attention')
 
-        all_risks = []
         file_save_items = []  # For parallel file saving
         db_records = []  # For batch database insert
 
@@ -1613,37 +1592,44 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             num_workers=0,
         )
 
-        # Phase 1: Run inference and collect results (GPU-bound, sequential)
-        with torch.inference_mode():
-            for batch in inference_loader:
-                # Unpack batch based on data level
-                # Features are already on GPU if Dataset was created with device parameter
-                if is_case_level:
-                    features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
-                    sample_id = sample_id[0]
-                    # Convert from batch format
-                    slide_wsi_ids = [wid[0] for wid in slide_wsi_ids]
-                    patch_counts = [int(pc) for pc in patch_counts]
-                else:
-                    features, sample_time, sample_status, sample_id = batch
-                    sample_id = sample_id[0]
-                    slide_wsi_ids = None
-                    patch_counts = None
+        # Phase 1: Run inference and collect results in thread pool.
+        # DataLoader triggers torch.load() in __getitem__(), and GPU inference is blocking.
+        def _run_inference():
+            """Synchronous inference loop - runs in thread pool to avoid blocking event loop."""
+            _all_risks = []
+            with torch.inference_mode():
+                for batch in inference_loader:
+                    # Unpack batch based on data level
+                    # Features are already on GPU if Dataset was created with device parameter
+                    if is_case_level:
+                        features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
+                        sample_id = sample_id[0]
+                        # Convert from batch format
+                        slide_wsi_ids = [wid[0] for wid in slide_wsi_ids]
+                        patch_counts = [int(pc) for pc in patch_counts]
+                    else:
+                        features, sample_time, sample_status, sample_id = batch
+                        sample_id = sample_id[0]
+                        slide_wsi_ids = None
+                        patch_counts = None
 
-                H = features.squeeze(0)  # Already on GPU
+                    H = features.squeeze(0)  # Already on GPU
 
-                if has_raw_attention:
-                    logits, attention, raw_attention = model.forward_with_raw_attention(H)
-                else:
-                    logits, attention = model(H)
-                    raw_attention = None
+                    if has_raw_attention:
+                        logits, attention, raw_attention = model.forward_with_raw_attention(H)
+                    else:
+                        logits, attention = model(H)
+                        raw_attention = None
 
-                # Compute hazards
-                hazards = torch.sigmoid(logits).cpu().numpy().flatten()
-                surv = np.cumprod(1 - hazards)
-                risk_score = np.sum(hazards)
-                all_risks.append((sample_id, risk_score, hazards, surv, attention, raw_attention,
-                                  float(sample_time), int(sample_status), slide_wsi_ids, patch_counts))
+                    # Compute hazards
+                    hazards = torch.sigmoid(logits).cpu().numpy().flatten()
+                    surv = np.cumprod(1 - hazards)
+                    risk_score = np.sum(hazards)
+                    _all_risks.append((sample_id, risk_score, hazards, surv, attention, raw_attention,
+                                      float(sample_time), int(sample_status), slide_wsi_ids, patch_counts))
+            return _all_risks
+
+        all_risks = await asyncio.to_thread(_run_inference)
 
         # Calculate median risk score for risk stratification
         median_risk_score = float(np.median([r[1] for r in all_risks]))

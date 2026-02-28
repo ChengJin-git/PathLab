@@ -1,28 +1,27 @@
-import { useState, useMemo, useEffect } from 'react'
-import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, Key, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, AlertTriangle, Construction, Search, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
+import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, Key, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, AlertTriangle, Construction, Search, ChevronLeft, ChevronRight, Megaphone, Send, X } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Select } from '../ui/select'
-import { UserListItem } from '../../api'
+import {
+  UserListItem, UserUpdateRequest, RegisterRequest, DatasetPermission,
+  listUsers, updateUser, deleteUser, registerUser, revokeUserAgreement,
+  batchActivateUsers, batchDeactivateUsers, batchDeleteUsers,
+  getMaintenanceMode, setMaintenanceMode as setMaintenanceModeApi,
+  getMaintenanceNotice, setMaintenanceNotice as setMaintenanceNoticeApi,
+  getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, fetchDatasets
+} from '../../api'
+import { ShowConfirmDialog } from './ConfirmDialog'
+import { EditUserModal } from './EditUserModal'
+import { CreateUserModal } from './CreateUserModal'
+import { PermissionModal } from './PermissionModal'
 
 export interface UsersTabProps {
-  users: UserListItem[]
-  loadingUsers: boolean
-  usersError: string | null
+  showConfirmDialog: ShowConfirmDialog
+  closeConfirmDialog: () => void
   currentUserId: string | undefined
-  maintenanceMode: boolean
-  onShowCreateUser: () => void
-  onLoadUsers: () => void
-  onEditUser: (user: UserListItem) => void
-  onOpenPermissionModal: (user: UserListItem) => void
-  onToggleUserActive: (user: UserListItem) => void
-  onRevokeAgreement: (userId: string) => void
-  onDeleteUser: (userId: string) => void
-  onBatchActivate: (userIds: string[]) => void
-  onBatchDeactivate: (userIds: string[]) => void
-  onBatchDelete: (userIds: string[]) => void
-  onToggleMaintenanceMode: () => void
 }
 
 function getRoleBadgeColor(role: string) {
@@ -34,24 +33,33 @@ function getRoleBadgeColor(role: string) {
   }
 }
 
-export function UsersTab({
-  users,
-  loadingUsers,
-  usersError,
-  currentUserId,
-  maintenanceMode,
-  onShowCreateUser,
-  onLoadUsers,
-  onEditUser,
-  onOpenPermissionModal,
-  onToggleUserActive,
-  onRevokeAgreement,
-  onDeleteUser,
-  onBatchActivate,
-  onBatchDeactivate,
-  onBatchDelete,
-  onToggleMaintenanceMode
-}: UsersTabProps) {
+export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId }: UsersTabProps) {
+  const { t } = useTranslation()
+
+  // User management state
+  const [users, setUsers] = useState<UserListItem[]>([])
+  const [loadingUsers, setLoadingUsers] = useState(false)
+  const [usersError, setUsersError] = useState<string | null>(null)
+  const [editingUser, setEditingUser] = useState<UserListItem | null>(null)
+  const [editForm, setEditForm] = useState<{ nickname: string; role: string; password: string }>({ nickname: '', role: '', password: '' })
+  const [showCreateUser, setShowCreateUser] = useState(false)
+  const [createForm, setCreateForm] = useState<{ username: string; password: string; nickname: string; role: string }>({ username: '', password: '', nickname: '', role: 'pathologist' })
+  const [creatingUser, setCreatingUser] = useState(false)
+  const [maintenanceMode, setMaintenanceMode] = useState(false)
+  const [noticeMessage, setNoticeMessage] = useState('')
+  const [currentNotice, setCurrentNotice] = useState<string | null>(null)
+  const [showNoticeInput, setShowNoticeInput] = useState(false)
+  const [sendingNotice, setSendingNotice] = useState(false)
+
+  // Dataset Permission Management State
+  const [permissionUser, setPermissionUser] = useState<UserListItem | null>(null)
+  const [userPermissions, setUserPermissions] = useState<DatasetPermission[]>([])
+  const [loadingPermissions, setLoadingPermissions] = useState(false)
+  const [datasets, setDatasets] = useState<{ dataset_id: string; dataset_name: string }[]>([])
+  const [selectedDatasetIds, setSelectedDatasetIds] = useState<string[]>([])
+  const [expiresInHours, setExpiresInHours] = useState<string>('')
+  const [grantingPermission, setGrantingPermission] = useState(false)
+
   // Batch selection state
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set())
 
@@ -59,6 +67,118 @@ export function UsersTab({
   const [searchQuery, setSearchQuery] = useState('')
   const [itemsPerPage, setItemsPerPage] = useState(10)
   const [currentPage, setCurrentPage] = useState(1)
+
+  // --- Data loading ---
+  const loadUsers = useCallback(async () => {
+    setLoadingUsers(true)
+    setUsersError(null)
+    try {
+      const userList = await listUsers()
+      setUsers(userList)
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToLoadUsers'))
+    } finally {
+      setLoadingUsers(false)
+    }
+  }, [t])
+
+  const loadMaintenanceMode = useCallback(async () => {
+    try {
+      const result = await getMaintenanceMode()
+      setMaintenanceMode(result.enabled)
+    } catch (err) {
+      console.error('Failed to load maintenance mode:', err)
+    }
+  }, [])
+
+  const loadMaintenanceNotice = useCallback(async () => {
+    try {
+      const result = await getMaintenanceNotice()
+      setCurrentNotice(result.active ? result.message : null)
+    } catch (err) {
+      console.error('Failed to load maintenance notice:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadUsers()
+    loadMaintenanceMode()
+    loadMaintenanceNotice()
+  }, [loadUsers, loadMaintenanceMode, loadMaintenanceNotice])
+
+  // --- User CRUD handlers ---
+  const handleSaveUser = async () => {
+    if (!editingUser) return
+    if (editForm.password && editForm.password.length < 6) {
+      setUsersError(t('settings.usersTab.passwordMinLength'))
+      return
+    }
+    try {
+      const updateData: UserUpdateRequest = {}
+      if (editForm.nickname !== (editingUser.nickname || '')) updateData.nickname = editForm.nickname
+      if (editForm.role !== editingUser.role) updateData.role = editForm.role as 'admin' | 'pathologist' | 'guest'
+      if (editForm.password) updateData.password = editForm.password
+      await updateUser(editingUser.id, updateData)
+      setEditingUser(null)
+      setUsersError(null)
+      loadUsers()
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToUpdateUser'))
+    }
+  }
+
+  const handleCreateUser = async () => {
+    if (!createForm.username || !createForm.password) { setUsersError(t('settings.usersTab.usernamePasswordRequired')); return }
+    if (createForm.password.length < 6) { setUsersError(t('settings.usersTab.passwordMinLength')); return }
+    try {
+      setCreatingUser(true)
+      setUsersError(null)
+      const data: RegisterRequest = {
+        email: createForm.username,
+        password: createForm.password,
+        nickname: createForm.nickname || undefined,
+        role: createForm.role as 'pathologist' | 'guest'
+      }
+      await registerUser(data)
+      setShowCreateUser(false)
+      setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist' })
+      loadUsers()
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToCreateUser'))
+    } finally {
+      setCreatingUser(false)
+    }
+  }
+
+  const handleToggleUserActive = async (user: UserListItem) => {
+    try {
+      await updateUser(user.id, { is_active: !user.is_active })
+      loadUsers()
+    } catch { /* Error handled */ }
+  }
+
+  const handleRevokeAgreement = async (userId: string) => {
+    try {
+      await revokeUserAgreement(userId)
+      loadUsers()
+    } catch { /* Error handled */ }
+  }
+
+  const handleDeleteUser = (userId: string) => {
+    showConfirmDialog({
+      title: t('settings.usersTab.deleteUser'),
+      message: t('settings.usersTab.deleteUserConfirm'),
+      confirmVariant: 'danger',
+      confirmText: t('settings.usersTab.delete'),
+      onConfirm: async () => {
+        try {
+          await deleteUser(userId)
+          loadUsers()
+        } catch { /* Error handled */ }
+        closeConfirmDialog()
+      }
+    })
+  }
 
   // Reset page when search or items per page changes
   useEffect(() => {
@@ -120,66 +240,276 @@ export function UsersTab({
     setSelectedUserIds(newSet)
   }
 
-  const handleBatchActivate = () => {
-    onBatchActivate(Array.from(selectedUserIds))
+  const handleBatchActivate = async () => {
+    const ids = Array.from(selectedUserIds)
+    if (ids.length === 0) return
+    try { await batchActivateUsers(ids); loadUsers() }
+    catch (err) { setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToBatchActivate')) }
     setSelectedUserIds(new Set())
   }
 
-  const handleBatchDeactivate = () => {
-    onBatchDeactivate(Array.from(selectedUserIds))
+  const handleBatchDeactivate = async () => {
+    const ids = Array.from(selectedUserIds)
+    if (ids.length === 0) return
+    try { await batchDeactivateUsers(ids); loadUsers() }
+    catch (err) { setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToBatchDeactivate')) }
     setSelectedUserIds(new Set())
   }
 
   const handleBatchDelete = () => {
-    onBatchDelete(Array.from(selectedUserIds))
+    const ids = Array.from(selectedUserIds)
+    if (ids.length === 0) return
+    showConfirmDialog({
+      title: t('settings.usersTab.deleteUsers'),
+      message: t('settings.usersTab.deleteUsersConfirm', { count: ids.length }),
+      confirmVariant: 'danger',
+      confirmText: t('settings.usersTab.delete'),
+      onConfirm: async () => {
+        try { await batchDeleteUsers(ids); loadUsers() }
+        catch (err) { setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToBatchDelete')) }
+        closeConfirmDialog()
+      }
+    })
     setSelectedUserIds(new Set())
   }
 
+  const handleToggleMaintenanceMode = () => {
+    const newMode = !maintenanceMode
+    const title = newMode ? t('settings.usersTab.enableMaintenanceMode') : t('settings.usersTab.disableMaintenanceMode')
+    const message = newMode
+      ? t('settings.usersTab.enableMaintenanceConfirm')
+      : t('settings.usersTab.disableMaintenanceConfirm')
+    showConfirmDialog({
+      title, message,
+      confirmVariant: newMode ? 'danger' : 'info',
+      confirmText: newMode ? t('settings.usersTab.enable') : t('settings.usersTab.disable'),
+      onConfirm: async () => {
+        try {
+          const result = await setMaintenanceModeApi(newMode)
+          setMaintenanceMode(result.enabled)
+          loadUsers()
+        } catch (err) {
+          setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToToggleMaintenance'))
+        }
+        closeConfirmDialog()
+      }
+    })
+  }
+
+  // --- Dataset Permission Management ---
+  const openPermissionModal = async (user: UserListItem) => {
+    setPermissionUser(user)
+    setLoadingPermissions(true)
+    setSelectedDatasetIds([])
+    setExpiresInHours('')
+    try {
+      const permResponse = await getUserDatasetPermissions(user.id)
+      setUserPermissions(permResponse.permissions)
+      const datasetResponse = await fetchDatasets()
+      setDatasets(datasetResponse.items.filter(d => d.dataset_id !== null).map(d => ({
+        dataset_id: d.dataset_id!,
+        dataset_name: d.dataset_name
+      })))
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToLoadPermissions'))
+    } finally {
+      setLoadingPermissions(false)
+    }
+  }
+
+  const handleGrantPermission = async () => {
+    if (!permissionUser || selectedDatasetIds.length === 0) return
+    try {
+      setGrantingPermission(true)
+      const hours = expiresInHours ? parseInt(expiresInHours, 10) : undefined
+      for (const dsId of selectedDatasetIds) {
+        if (dsId) await grantDatasetPermission(dsId, permissionUser.id, hours)
+      }
+      const permResponse = await getUserDatasetPermissions(permissionUser.id)
+      setUserPermissions(permResponse.permissions)
+      setSelectedDatasetIds([])
+      setExpiresInHours('')
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToGrantPermission'))
+    } finally {
+      setGrantingPermission(false)
+    }
+  }
+
+  const handleRevokePermission = (datasetId: string) => {
+    if (!permissionUser) return
+    const datasetName = datasets.find(d => d.dataset_id === datasetId)?.dataset_name || datasetId
+    showConfirmDialog({
+      title: t('settings.usersTab.revokePermission'),
+      message: t('settings.usersTab.revokePermissionConfirm', { datasetName }),
+      confirmText: t('settings.usersTab.revoke'),
+      confirmVariant: 'warning',
+      onConfirm: async () => {
+        closeConfirmDialog()
+        try {
+          await revokeDatasetPermission(datasetId, permissionUser.id)
+          const permResponse = await getUserDatasetPermissions(permissionUser.id)
+          setUserPermissions(permResponse.permissions)
+        } catch (err) {
+          setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToRevokePermission'))
+        }
+      }
+    })
+  }
+
+  const handleRevokeAllPermissions = () => {
+    if (!permissionUser || userPermissions.length === 0) return
+    showConfirmDialog({
+      title: t('settings.usersTab.revokeAllPermissions'),
+      message: t('settings.usersTab.revokeAllPermissionsConfirm', { userName: permissionUser.nickname || permissionUser.email }),
+      confirmText: t('settings.usersTab.revokeAll'),
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        closeConfirmDialog()
+        try {
+          await Promise.allSettled(userPermissions.map(perm => revokeDatasetPermission(perm.dataset_id, permissionUser.id)))
+          const permResponse = await getUserDatasetPermissions(permissionUser.id)
+          setUserPermissions(permResponse.permissions)
+        } catch (err) {
+          setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToRevokePermissions'))
+        }
+      }
+    })
+  }
+
+  const closePermissionModal = () => {
+    setPermissionUser(null)
+    setUserPermissions([])
+    setSelectedDatasetIds([])
+    setExpiresInHours('')
+  }
+
   return (
+    <>
     <Card className="p-4 sm:p-6">
       {/* Maintenance Mode Banner */}
       {maintenanceMode && (
         <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-3">
           <Construction className="w-5 h-5 text-amber-600 flex-shrink-0" />
           <div className="flex-1">
-            <p className="text-amber-800 font-medium">Maintenance Mode Active</p>
-            <p className="text-amber-600 text-sm">Non-admin users cannot log in. All non-admin users are temporarily deactivated.</p>
+            <p className="text-amber-800 font-medium">{t('settings.usersTab.maintenanceModeActive')}</p>
+            <p className="text-amber-600 text-sm">{t('settings.usersTab.maintenanceModeDescription')}</p>
           </div>
+        </div>
+      )}
+
+      {/* Maintenance Notice Section */}
+      {(currentNotice || showNoticeInput) && (
+        <div className="mb-4 p-3 sm:p-4 bg-white-50 border border-white-200 rounded-lg">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Megaphone className="w-4 h-4 sm:w-5 sm:h-5 text-primary-600 flex-shrink-0" />
+              <span className="font-medium text-sm sm:text-base text-primary-800 truncate">{t('settings.usersTab.maintenanceNotice')}</span>
+            </div>
+            {currentNotice && !showNoticeInput && (
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <Button variant="outline" size="sm" onClick={() => { setShowNoticeInput(true); setNoticeMessage(currentNotice || '') }} className="gap-1 h-7 text-xs border-primary-300 text-primary-700 hover:bg-primary-100">
+                  <Send className="w-3 h-3" />
+                  <span className="hidden sm:inline">{t('settings.usersTab.editNotice')}</span>
+                </Button>
+                <Button variant="ghost" size="sm" onClick={async () => {
+                  setSendingNotice(true)
+                  try {
+                    await setMaintenanceNoticeApi(null)
+                    setCurrentNotice(null)
+                  } catch (err) {
+                    setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToSendNotice'))
+                  } finally {
+                    setSendingNotice(false)
+                  }
+                }} className="h-7 w-7 p-0 text-amber-400 hover:text-red-500" title={t('settings.usersTab.clearNotice')}>
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            )}
+          </div>
+          {currentNotice && !showNoticeInput && (
+            <p className="mt-2 text-xs sm:text-sm text-primary-900 whitespace-pre-wrap">{currentNotice}</p>
+          )}
+          {showNoticeInput && (
+            <div className="mt-2 sm:mt-3 space-y-2">
+              <textarea
+                value={noticeMessage}
+                onChange={(e) => setNoticeMessage(e.target.value)}
+                placeholder={t('settings.usersTab.noticePlaceholder')}
+                className="w-full border border-amber-300 rounded-lg p-2 sm:p-3 text-xs sm:text-sm resize-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 bg-white"
+                rows={3}
+              />
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" size="sm" onClick={() => { setShowNoticeInput(false); setNoticeMessage('') }} disabled={sendingNotice} className="text-xs sm:text-sm h-7 sm:h-8">
+                  {t('settings.usersTab.cancelNotice')}
+                </Button>
+                <Button size="sm" className="bg-amber-600 hover:bg-amber-700 text-white gap-1 text-xs sm:text-sm h-7 sm:h-8" disabled={sendingNotice || !noticeMessage.trim()} onClick={async () => {
+                  setSendingNotice(true)
+                  try {
+                    const result = await setMaintenanceNoticeApi(noticeMessage.trim())
+                    setCurrentNotice(result.active ? result.message : null)
+                    setShowNoticeInput(false)
+                    setNoticeMessage('')
+                  } catch (err) {
+                    setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToSendNotice'))
+                  } finally {
+                    setSendingNotice(false)
+                  }
+                }}>
+                  <Send className="w-3 h-3" />
+                  {t('settings.usersTab.publishNotice')}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
         <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
           <Users className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700 flex-shrink-0" />
-          User Management
+          {t('settings.usersTab.title')}
         </h2>
         <div className="flex flex-wrap gap-2 self-end sm:self-auto items-center">
           <div className="relative w-full sm:w-64 mr-2">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
             <Input 
-              placeholder="Search user..." 
+              placeholder={t('settings.usersTab.searchPlaceholder')} 
               className="pl-9 h-9"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
+          {/* Maintenance Notice Button - only show when no active notice and input not open */}
+          {!currentNotice && !showNoticeInput && (
+            <Button
+              variant="outline"
+              onClick={() => { setShowNoticeInput(true); setNoticeMessage('') }}
+              className="gap-2"
+              title={t('settings.usersTab.sendNotice')}
+            >
+              <Megaphone className="w-4 h-4" />
+              <span className="hidden sm:inline">{t('settings.usersTab.sendNotice')}</span>
+            </Button>
+          )}
           {/* Maintenance Mode Toggle */}
           <Button
             variant={maintenanceMode ? "destructive" : "outline"}
-            onClick={onToggleMaintenanceMode}
+            onClick={handleToggleMaintenanceMode}
             className="gap-2"
-            title={maintenanceMode ? "Disable maintenance mode" : "Enable maintenance mode"}
+            title={maintenanceMode ? t('settings.usersTab.disableMaintenanceModeTitle') : t('settings.usersTab.enableMaintenanceModeTitle')}
           >
             <Construction className="w-4 h-4" />
-            {maintenanceMode ? "End Maintenance Mode" : "Maintenance Mode"}
+            <span className="hidden sm:inline">{maintenanceMode ? t('settings.usersTab.endMaintenanceMode') : t('settings.usersTab.maintenanceMode')}</span>
           </Button>
-          <Button onClick={onShowCreateUser} className="gap-2">
+          <Button onClick={() => setShowCreateUser(true)} className="gap-2">
             <UserPlus className="w-4 h-4" />
-            Create User
+            <span className="hidden sm:inline">{t('settings.usersTab.createUser')}</span>
           </Button>
-          <Button variant="outline" onClick={onLoadUsers} disabled={loadingUsers} className="gap-2">
+          <Button variant="outline" onClick={loadUsers} disabled={loadingUsers} className="gap-2">
             <RefreshCw className={`w-4 h-4 ${loadingUsers ? 'animate-spin' : ''}`} />
-            Refresh
+            <span className="hidden sm:inline">{t('settings.usersTab.refresh')}</span>
           </Button>
         </div>
       </div>
@@ -188,7 +518,7 @@ export function UsersTab({
       {someSelected && (
         <div className="mb-4 p-3 bg-primary-50 border border-primary-200 rounded-lg flex flex-wrap items-center gap-3">
           <span className="text-primary-800 font-medium text-sm">
-            {selectedUserIds.size} user{selectedUserIds.size > 1 ? 's' : ''} selected
+            {t('settings.usersTab.usersSelected', { count: selectedUserIds.size })}
           </span>
           <div className="flex gap-2 ml-auto">
             <Button
@@ -198,7 +528,7 @@ export function UsersTab({
               className="gap-1 text-emerald-600 border-emerald-300 hover:bg-emerald-50"
             >
               <ToggleRight className="w-4 h-4" />
-              Activate
+              {t('settings.usersTab.activate')}
             </Button>
             <Button
               variant="outline"
@@ -207,7 +537,7 @@ export function UsersTab({
               className="gap-1 text-gray-600 border-gray-300 hover:bg-gray-100"
             >
               <ToggleLeft className="w-4 h-4" />
-              Deactivate
+              {t('settings.usersTab.deactivate')}
             </Button>
             <Button
               variant="outline"
@@ -216,7 +546,7 @@ export function UsersTab({
               className="gap-1 text-red-600 border-red-300 hover:bg-red-50"
             >
               <Trash2 className="w-4 h-4" />
-              Delete
+              {t('settings.usersTab.delete')}
             </Button>
             <Button
               variant="ghost"
@@ -224,7 +554,7 @@ export function UsersTab({
               onClick={() => setSelectedUserIds(new Set())}
               className="text-gray-500"
             >
-              Clear
+              {t('settings.usersTab.clear')}
             </Button>
           </div>
         </div>
@@ -250,7 +580,7 @@ export function UsersTab({
                   <button
                     onClick={toggleSelectAll}
                     className="p-1 rounded hover:bg-gray-100 transition-colors"
-                    title={allSelectableSelected ? "Deselect all" : "Select all"}
+                    title={allSelectableSelected ? t('settings.usersTab.deselectAll') : t('settings.usersTab.selectAll')}
                     disabled={selectableUsers.length === 0}
                   >
                     {allSelectableSelected && selectableUsers.length > 0 ? (
@@ -260,13 +590,13 @@ export function UsersTab({
                     )}
                   </button>
                 </th>
-                <th className="text-left py-3 px-4 font-medium text-gray-600">Username</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-600">Nickname</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-600">Role</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-600">Status</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-600">Agreement</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-600">Consent IP</th>
-                <th className="text-right py-3 px-4 font-medium text-gray-600">Actions</th>
+                <th className="text-left py-3 px-2 sm:px-4 font-medium text-gray-600">{t('settings.usersTab.columnUsername')}</th>
+                <th className="text-left py-3 px-2 sm:px-4 font-medium text-gray-600 hidden xs:table-cell sm:table-cell">{t('settings.usersTab.columnNickname')}</th>
+                <th className="text-left py-3 px-2 sm:px-4 font-medium text-gray-600">{t('settings.usersTab.columnRole')}</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-600 hidden sm:table-cell">{t('settings.usersTab.columnStatus')}</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-600 hidden md:table-cell">{t('settings.usersTab.columnAgreement')}</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-600 hidden lg:table-cell">{t('settings.usersTab.columnConsentIP')}</th>
+                <th className="text-right py-3 px-2 sm:px-4 font-medium text-gray-600">{t('settings.usersTab.columnActions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -288,38 +618,38 @@ export function UsersTab({
                           )}
                         </button>
                       ) : (
-                        <div className="p-1 opacity-30" title="Admin and current user cannot be batch selected">
+                        <div className="p-1 opacity-30" title={t('settings.usersTab.cannotBatchSelect')}>
                           <Square className="w-4 h-4 text-gray-300" />
                         </div>
                       )}
                     </td>
-                    <td className="py-3 px-4 text-gray-900">{user.email}</td>
-                    <td className="py-3 px-4 text-gray-600">{user.nickname || '-'}</td>
-                    <td className="py-3 px-4">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getRoleBadgeColor(user.role)}`}>
-                        {user.role === 'admin' && <Shield className="w-3 h-3 mr-1" />}
-                        {user.role === 'pathologist' && <UserCog className="w-3 h-3 mr-1" />}
-                        {user.role === 'guest' && <User className="w-3 h-3 mr-1" />}
-                        {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
+                    <td className="py-3 px-2 sm:px-4 text-gray-900 text-xs sm:text-sm">{user.email}</td>
+                    <td className="py-3 px-2 sm:px-4 text-gray-600 text-xs sm:text-sm hidden xs:table-cell sm:table-cell">{user.nickname || '-'}</td>
+                    <td className="py-3 px-2 sm:px-4">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap ${getRoleBadgeColor(user.role)}`}>
+                        {user.role === 'admin' && <Shield className="w-3 h-3 mr-1 flex-shrink-0" />}
+                        {user.role === 'pathologist' && <UserCog className="w-3 h-3 mr-1 flex-shrink-0" />}
+                        {user.role === 'guest' && <User className="w-3 h-3 mr-1 flex-shrink-0" />}
+                        {t(`settings.usersTab.role_${user.role}`)}
                       </span>
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4 hidden sm:table-cell">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${user.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
-                        {user.is_active ? 'Active' : 'Inactive'}
+                        {user.is_active ? t('settings.usersTab.active') : t('settings.usersTab.inactive')}
                       </span>
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4 hidden md:table-cell">
                       {user.role === 'admin' ? (
-                        <span className="text-xs text-gray-500 italic">Auto accepted</span>
+                        <span className="text-xs text-gray-500 italic">{t('settings.usersTab.autoAccepted')}</span>
                       ) : user.agreement_accepted_at ? (
                         <span className="text-xs text-green-600">
                           {new Date(user.agreement_accepted_at).toLocaleDateString()}
                         </span>
                       ) : (
-                        <span className="text-xs text-gray-400">Not accepted</span>
+                        <span className="text-xs text-gray-400">{t('settings.usersTab.notAccepted')}</span>
                       )}
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4 hidden lg:table-cell">
                       {user.role === 'admin' ? (
                         <span className="text-xs text-gray-500 italic">-</span>
                       ) : user.agreement_ip ? (
@@ -328,13 +658,13 @@ export function UsersTab({
                         <span className="text-xs text-gray-400">-</span>
                       )}
                     </td>
-                    <td className="py-3 px-4 text-right">
+                    <td className="py-3 px-2 sm:px-4 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => onEditUser(user)} className="h-8 w-8 p-0" title="Edit user">
+                        <Button variant="ghost" size="sm" onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '' }) }} className="h-8 w-8 p-0" title={t('settings.usersTab.editUser')}>
                           <Edit className="w-4 h-4" />
                         </Button>
                         {user.role !== 'admin' && (
-                          <Button variant="ghost" size="sm" onClick={() => onOpenPermissionModal(user)} className="h-8 w-8 p-0 text-purple-600 hover:text-purple-700 hover:bg-purple-50" title="Manage dataset permissions">
+                          <Button variant="ghost" size="sm" onClick={() => openPermissionModal(user)} className="h-8 w-8 p-0 text-purple-600 hover:text-purple-700 hover:bg-purple-50" title={t('settings.usersTab.managePermissions')}>
                             <Key className="w-4 h-4" />
                           </Button>
                         )}
@@ -342,19 +672,19 @@ export function UsersTab({
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => onToggleUserActive(user)}
+                            onClick={() => handleToggleUserActive(user)}
                             className={`h-8 w-8 p-0 ${user.is_active ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}
-                            title={user.is_active ? 'Deactivate user' : 'Activate user'}
+                            title={user.is_active ? t('settings.usersTab.deactivateUser') : t('settings.usersTab.activateUser')}
                           >
                             {user.is_active ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
                           </Button>
                         )}
                         {user.agreement_accepted_at && (
-                          <Button variant="ghost" size="sm" onClick={() => onRevokeAgreement(user.id)} className="h-8 w-8 p-0 text-orange-600 hover:text-orange-700 hover:bg-orange-50" title="Revoke agreement">
+                          <Button variant="ghost" size="sm" onClick={() => handleRevokeAgreement(user.id)} className="h-8 w-8 p-0 text-orange-600 hover:text-orange-700 hover:bg-orange-50" title={t('settings.usersTab.revokeAgreement')}>
                             <RotateCcw className="w-4 h-4" />
                           </Button>
                         )}
-                        <Button variant="ghost" size="sm" onClick={() => onDeleteUser(user.id)} className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50" title="Delete user">
+                        <Button variant="ghost" size="sm" onClick={() => handleDeleteUser(user.id)} className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50" title={t('settings.usersTab.deleteUserAction')}>
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
@@ -365,7 +695,7 @@ export function UsersTab({
               {filteredUsers.length === 0 && (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-gray-500">
-                    {searchQuery ? 'No users matching search' : 'No users found'}
+                    {searchQuery ? t('settings.usersTab.noUsersMatchingSearch') : t('settings.usersTab.noUsersFound')}
                   </td>
                 </tr>
               )}
@@ -376,7 +706,7 @@ export function UsersTab({
         {!loadingUsers && filteredUsers.length > 0 && (
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-4 px-2">
             <div className="flex items-center gap-2 text-sm text-gray-600">
-              <span className="whitespace-nowrap">Rows per page:</span>
+              <span className="whitespace-nowrap">{t('settings.usersTab.rowsPerPage')}</span>
               <div className="w-[70px]">
                 <Select
                   value={itemsPerPage.toString()}
@@ -391,9 +721,9 @@ export function UsersTab({
               </div>
               <span className="hidden sm:inline text-gray-300">|</span>
               <span className="whitespace-nowrap">
-                Page {currentPage} of {totalPages || 1}
+                {t('settings.usersTab.pageOf', { current: currentPage, total: totalPages || 1 })}
               </span>
-              <span className="text-gray-400 whitespace-nowrap hidden sm:inline">({filteredUsers.length} total)</span>
+              <span className="text-gray-400 whitespace-nowrap hidden sm:inline">({t('settings.usersTab.totalCount', { count: filteredUsers.length })})</span>
             </div>
             
             <div className="flex items-center gap-2">
@@ -421,6 +751,51 @@ export function UsersTab({
         </>
       )}
     </Card>
+
+      {/* Edit User Modal */}
+      {editingUser && (
+        <EditUserModal
+          user={editingUser}
+          editForm={editForm}
+          onEditFormChange={setEditForm}
+          onSave={handleSaveUser}
+          onClose={() => setEditingUser(null)}
+        />
+      )}
+
+      {/* Create User Modal */}
+      {showCreateUser && (
+        <CreateUserModal
+          createForm={createForm}
+          onCreateFormChange={setCreateForm}
+          onSubmit={handleCreateUser}
+          onClose={() => {
+            setShowCreateUser(false)
+            setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist' })
+            setUsersError(null)
+          }}
+          isCreating={creatingUser}
+        />
+      )}
+
+      {/* Dataset Permission Management Modal */}
+      {permissionUser && (
+        <PermissionModal
+          user={permissionUser}
+          permissions={userPermissions}
+          datasets={datasets}
+          selectedDatasetIds={selectedDatasetIds}
+          expiresInHours={expiresInHours}
+          loadingPermissions={loadingPermissions}
+          grantingPermission={grantingPermission}
+          onSelectedDatasetIdsChange={setSelectedDatasetIds}
+          onExpiresInHoursChange={setExpiresInHours}
+          onGrantPermission={handleGrantPermission}
+          onRevokePermission={handleRevokePermission}
+          onRevokeAllPermissions={handleRevokeAllPermissions}
+          onClose={closePermissionModal}
+        />
+      )}
+    </>
   )
 }
-

@@ -13,9 +13,15 @@ import {
   SEGMENTATION_DEFAULTS,
   FILTER_DEFAULTS,
   TRAINING_DEFAULTS,
+  SEG_TRAINING_DEFAULTS,
   SPLIT_DEFAULTS,
   DEFAULT_AGGREGATOR,
   DEFAULT_EXTRACTOR,
+  DEFAULT_PATCH_CLASSIFIER,
+  DEFAULT_SEG_ARCHITECTURE,
+  DEFAULT_SEG_BACKBONE,
+  DEFAULT_SEG_LOSS_NAMES,
+  DEFAULT_SEG_LOSS_WEIGHTS,
   SplitStrategy,
 } from '../constants/training'
 
@@ -47,6 +53,10 @@ export interface UseTrainingConfigReturn {
   setFilterMaxHoles: (val: number) => void
 
   // Model config (Step 4)
+  // Classifier head (Patch-level classification)
+  classifier: string
+  setClassifier: (cls: string) => void
+
   aggregator: string
   setAggregator: (agg: string) => void
   learningRate: number
@@ -61,6 +71,16 @@ export interface UseTrainingConfigReturn {
   setEarlyStoppingPatience: (patience: number) => void
   autoBalance: boolean
   setAutoBalance: (balance: boolean) => void
+
+  // Segmentation training config (Step 4 for segmentation tasks)
+  segArchitecture: string
+  setSegArchitecture: (arch: string) => void
+  segBackbone: string
+  setSegBackbone: (backbone: string) => void
+  segLossNames: string[]
+  setSegLossNames: (names: string[]) => void
+  segLossWeights: number[]
+  setSegLossWeights: (weights: number[]) => void
 
   // Split config
   splitStrategy: SplitStrategy
@@ -103,6 +123,7 @@ export function useTrainingConfig(): UseTrainingConfigReturn {
   )
 
   // Model config (Step 4)
+  const [classifier, setClassifier] = useState(DEFAULT_PATCH_CLASSIFIER)
   const [aggregator, setAggregator] = useState(DEFAULT_AGGREGATOR)
   const [learningRate, setLearningRate] = useState(TRAINING_DEFAULTS.learningRate)
   const [epochs, setEpochs] = useState(TRAINING_DEFAULTS.epochs)
@@ -110,6 +131,12 @@ export function useTrainingConfig(): UseTrainingConfigReturn {
   const [optimizer, setOptimizer] = useState(TRAINING_DEFAULTS.optimizer)
   const [earlyStoppingPatience, setEarlyStoppingPatience] = useState(TRAINING_DEFAULTS.earlyStoppingPatience)
   const [autoBalance, setAutoBalance] = useState(TRAINING_DEFAULTS.autoBalance)
+
+  // Segmentation training config (architecture, backbone, loss)
+  const [segArchitecture, setSegArchitecture] = useState(DEFAULT_SEG_ARCHITECTURE)
+  const [segBackbone, setSegBackbone] = useState(DEFAULT_SEG_BACKBONE)
+  const [segLossNames, setSegLossNames] = useState<string[]>(DEFAULT_SEG_LOSS_NAMES)
+  const [segLossWeights, setSegLossWeights] = useState<number[]>(DEFAULT_SEG_LOSS_WEIGHTS)
 
   // Split config
   const [splitStrategy, setSplitStrategy] = useState<SplitStrategy>(SPLIT_DEFAULTS.strategy)
@@ -144,6 +171,8 @@ export function useTrainingConfig(): UseTrainingConfigReturn {
     setFilterMaxHoles,
 
     // Model config
+    classifier,
+    setClassifier,
     aggregator,
     setAggregator,
     learningRate,
@@ -158,6 +187,16 @@ export function useTrainingConfig(): UseTrainingConfigReturn {
     setEarlyStoppingPatience,
     autoBalance,
     setAutoBalance,
+
+    // Segmentation training config
+    segArchitecture,
+    setSegArchitecture,
+    segBackbone,
+    setSegBackbone,
+    segLossNames,
+    setSegLossNames,
+    segLossWeights,
+    setSegLossWeights,
 
     // Split config
     splitStrategy,

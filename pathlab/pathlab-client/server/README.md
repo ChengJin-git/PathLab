@@ -11,7 +11,8 @@ PathLab 的 Python 后端服务，提供 WSI 处理、AI 推理和 API 网关功
 
 ## 核心特性
 
-- **零配置**: SQLite 数据库 (17 表)，无需安装 PostgreSQL
+- **零配置**: PostgreSQL 数据库 (18 表)，asyncpg 异步驱动
+- **Redis 缓存**: 训练日志 (Streams)、任务进度 (KV)、分析状态 (Hash)，异步非阻塞
 - **动态端口**: 自动寻找可用端口，避免端口冲突
 - **单进程架构**: 统一入口 `main.py`，简化部署
 - **特征缓存**: 全局特征缓存，跨任务复用
@@ -26,22 +27,24 @@ server/
 │   ├── main.py           # Gateway FastAPI 应用
 │   ├── task_queue.py     # GPU 任务队列管理器
 │   ├── models.py         # Pydantic 请求/响应模型
-│   ├── routes/           # 模块化路由 (15 个模块)
+│   ├── routes/           # 模块化路由 (30 个模块)
 │   │   ├── auth.py           # 认证 (FastAPI-Users)
 │   │   ├── wsi.py            # WSI CRUD + 数据集
 │   │   ├── wsi_upload.py     # WSI 上传 (文件/路径/CSV)
 │   │   ├── ai_tasks.py       # AI 推理任务 + 提取器列表
 │   │   ├── training.py       # 训练任务 (SSE 日志流)
-│   │   ├── results.py        # 结果查询 + 外部验证
+    │   │   ├── results.py        # 结果查询 + 外部验证 + 分割分析
 │   │   ├── models.py         # 模型管理
 │   │   ├── chat.py           # AI Chat (SSE 流式)
+│   │   ├── chat_pdf.py       # PDF 文档对话 (RAG)
+│   │   ├── chat_pdf_vectorstore.py # PDF 向量存储管理
 │   │   ├── queue.py          # GPU 队列管理
 │   │   ├── storage.py        # 存储管理 + 迁移
 │   │   ├── heatmap.py        # 热图数据 + Patch 图像
 │   │   ├── asr.py            # 语音识别 (DashScope)
 │   │   ├── stats.py          # 系统统计
 │   │   ├── settings.py       # 全局设置
-│   │   └── gpu.py            # GPU 信息
+    │   │   ├── annotation.py     # 标注管理
 │   └── dependencies.py   # 依赖注入
 │
 └── backend/              # 核心后端服务
@@ -50,28 +53,31 @@ server/
     │   ├── routes/           # 训练/推理路由
     │   ├── tasks/            # 任务类型
     │   │   ├── wsi_classification/   # WSI 分类 (MIL)
-    │   │   └── patch_classification/ # Patch 分类
-    │   ├── extractors/       # 17 种特征提取器
-    │   ├── aggregators/      # 8 种聚合器 (ABMIL, MeanMIL, MaxMIL, DSMIL, DTFDMIL, CLAM, TransMIL)
+    │   │   ├── patch_classification/ # Patch 分类
+    │   │   ├── patch_segmentation/  # Patch 分割
+    │   │   └── wsi_survival/        # 生存分析
+    │   ├── extractors/       # 19 种特征提取器
+    │   │   ├── aggregators/      # 8 种聚合器 (ABMIL, MeanMIL, MaxMIL, DSMIL, DTFDMIL, CLAM-SB, CLAM-MB, TransMIL)
     │   ├── classifiers/      # 分类器
-    │   └── utils/            # CAM 工具 (Grad-CAM, Attention)
     ├── preprocessing/    # 预处理服务 (内部端口)
     │   ├── main.py           # 预处理 FastAPI 应用
     │   └── tiling.py         # WSI 切片、坐标提取
-    ├── database/         # SQLite ORM (零配置)
-    │   ├── database.py       # 异步连接管理
-    │   ├── models.py         # 数据模型 (17 个表)
-    │   └── repositories.py   # 数据访问层 (Repository 模式)
+    ├── database/         # PostgreSQL ORM
+    │   ├── database.py       # 异步连接管理 (asyncpg)
+    │   ├── models.py         # 数据模型 (18 个表)
+    │   └── repositories/     # 数据访问层 (Repository 模式，模块化目录)
     ├── storage/          # 文件存储管理
     │   └── manager.py        # 存储管理器 (级联删除)
     └── common/           # 公共模块
+        ├── redis_client.py   # Redis 异步连接池
+        ├── progress_store.py # 任务进度存储 (Redis)
         ├── port_utils.py     # 端口发现工具
         ├── auth.py           # 认证工具
         ├── config.py         # 配置管理
         └── logger.py         # 日志工具
 ```
 
-## 数据库模型 (17 个表)
+## 数据库模型 (18 个表)
 
 | 表名 | 用途 |
 |------|------|
@@ -90,8 +96,9 @@ server/
 | `training_tasks` | 训练任务配置和状态 (classification/survival) |
 | `training_task_wsi` | 训练任务与 WSI 多对多关联 |
 | `trained_models` | 训练生成的模型信息 |
-| `training_logs` | 训练日志（实时流式） |
+| `training_logs` | 训练日志（运行时通过 Redis Streams 读写，SSE 流式） |
 | `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
+| `annotation_drafts` | 标注草稿 |
 
 ## GPU 任务队列
 
@@ -113,21 +120,22 @@ cd server && python main.py
 # PORT=48427              ← Electron 通过此解析端口
 # [Gateway] Starting on port 48427
 # [Services] Gateway: 48427, Preprocessing: 47001, AI: 53633
-# [Database] Using SQLite: sqlite+aiosqlite:///~/.local/share/PathLab/pathlab.db
+# [Database] Using PostgreSQL: postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab
 
 # 方式二：Electron 开发模式自动启动
 npm run dev  # 在父目录执行
 ```
 
-**注意**: 数据自动存储在平台特定目录。
+**注意**: 需确保 PostgreSQL 和 Redis 服务已运行，PostgreSQL 默认连接 `postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab`，Redis 默认连接 `redis://localhost:6379/0`。
 
-## 数据库存储位置
+## 数据库配置
 
-| 平台 | 数据库路径 |
-|------|-----------|
-| Linux | `~/.local/share/PathLab/pathlab.db` |
-| macOS | `~/Library/Application Support/PathLab/pathlab.db` |
-| Windows | `%APPDATA%/PathLab/pathlab.db` |
+通过 `DATABASE_URL` 环境变量配置：
+
+```bash
+# 默认 (本地开发)
+DATABASE_URL=postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab
+```
 
 ## 动态端口发现
 

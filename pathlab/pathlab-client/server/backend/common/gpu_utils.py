@@ -18,13 +18,13 @@ import torch
 
 logger = logging.getLogger(__name__)
 
-# Try to import pynvml for system-level GPU memory info
-_pynvml_available = False
+# Try to import pynvml (from nvidia-ml-py package) for system-level GPU memory info
+_nvml_available = False
 try:
     import pynvml
     pynvml.nvmlInit()
-    _pynvml_available = True
-    logger.info("pynvml initialized successfully - using system-level GPU memory detection")
+    _nvml_available = True
+    logger.info("pynvml (nvidia-ml-py) initialized successfully - using system-level GPU memory detection")
 except Exception as e:
     logger.warning(f"pynvml not available ({e}), falling back to PyTorch memory detection")
 
@@ -38,7 +38,7 @@ def get_gpu_memory_info(device_index: int) -> Tuple[float, float, float]:
     """
     Get memory information for a specific GPU.
 
-    Uses pynvml (NVIDIA Management Library) if available to get system-level
+    Uses pynvml (from nvidia-ml-py, NVIDIA Management Library) if available to get system-level
     memory usage (includes all processes). Falls back to PyTorch APIs which
     only track the current process.
 
@@ -49,7 +49,7 @@ def get_gpu_memory_info(device_index: int) -> Tuple[float, float, float]:
         Tuple of (used_mb, free_mb, total_mb)
         Note: First element is 'used_mb' when using pynvml, 'allocated_mb' when using PyTorch
     """
-    if _pynvml_available:
+    if _nvml_available:
         try:
             handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
             info = pynvml.nvmlDeviceGetMemoryInfo(handle)
@@ -404,4 +404,3 @@ def select_optimal_gpu_for_task(min_vram_mb: float = 0) -> Tuple[int, float]:
             best_gpu_idx = i
 
     return (best_gpu_idx, best_free_mb)
-

@@ -18,8 +18,8 @@ router = APIRouter(prefix="/settings", tags=["Global Settings"])
 
 class PublicSettingsResponse(BaseModel):
     """Response model for public settings (no authentication required)"""
-    recaptcha_enabled: bool
-    recaptcha_site_key: str
+    turnstile_enabled: bool
+    turnstile_site_key: str
 
 
 class GlobalSettingsResponse(BaseModel):
@@ -29,6 +29,8 @@ class GlobalSettingsResponse(BaseModel):
     openrouter_model: str
     huggingface_token: str
     dashscope_api_key: str
+    # Exa Search API key for web search functionality
+    exa_api_key: str
     # Local vLLM settings (OpenAI-compatible server for LLM)
     local_vllm_enabled: bool
     local_vllm_base_url: str
@@ -39,10 +41,10 @@ class GlobalSettingsResponse(BaseModel):
     local_asr_base_url: str
     local_asr_model: str
     local_asr_api_key: str
-    # reCAPTCHA settings
-    recaptcha_enabled: bool
-    recaptcha_site_key: str
-    recaptcha_secret_key: str
+    # Cloudflare Turnstile settings
+    turnstile_enabled: bool
+    turnstile_site_key: str
+    turnstile_secret_key: str
 
 
 class GlobalSettingsUpdateRequest(BaseModel):
@@ -52,6 +54,8 @@ class GlobalSettingsUpdateRequest(BaseModel):
     openrouter_model: Optional[str] = None
     huggingface_token: Optional[str] = None
     dashscope_api_key: Optional[str] = None
+    # Exa Search API key
+    exa_api_key: Optional[str] = None
     # Local vLLM settings
     local_vllm_enabled: Optional[bool] = None
     local_vllm_base_url: Optional[str] = None
@@ -62,25 +66,25 @@ class GlobalSettingsUpdateRequest(BaseModel):
     local_asr_base_url: Optional[str] = None
     local_asr_model: Optional[str] = None
     local_asr_api_key: Optional[str] = None
-    # reCAPTCHA settings
-    recaptcha_enabled: Optional[bool] = None
-    recaptcha_site_key: Optional[str] = None
-    recaptcha_secret_key: Optional[str] = None
+    # Cloudflare Turnstile settings
+    turnstile_enabled: Optional[bool] = None
+    turnstile_site_key: Optional[str] = None
+    turnstile_secret_key: Optional[str] = None
 
 
 @router.get("/public")
 async def get_public_settings() -> PublicSettingsResponse:
     """
     Get public settings that don't require authentication.
-    This includes reCAPTCHA site key for login page.
+    This includes Cloudflare Turnstile site key for login page.
 
     Returns:
-        Public settings (reCAPTCHA configuration)
+        Public settings (Turnstile configuration)
     """
     settings = Config.get_global_settings()
     return PublicSettingsResponse(
-        recaptcha_enabled=settings.get("recaptcha_enabled", False),
-        recaptcha_site_key=settings.get("recaptcha_site_key", ""),
+        turnstile_enabled=settings.get("turnstile_enabled", False),
+        turnstile_site_key=settings.get("turnstile_site_key", ""),
     )
 
 

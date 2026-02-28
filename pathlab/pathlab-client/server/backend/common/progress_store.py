@@ -1,132 +1,81 @@
 """
-Shared File-Based Training Progress Store
+Redis-backed Training Progress Store
 
-Trainers (AI Service) write progress to files under {uploads_dir}/progress/{task_id}.
-Gateway SSE reads these files directly — no HTTP call, no DB lock.
+Trainers (AI Service) write progress to Redis keys.
+Gateway SSE reads these keys directly — no HTTP call, no DB lock.
 
-Write: atomic (tmpfile + os.rename) to avoid partial reads.
-Read: plain file read, returns None if file missing.
-Crash recovery: files persist on disk, so last written progress survives process restart.
-Cleanup: file deleted when task completes/fails.
+Keys: pathlab:progress:{task_id} = integer string (e.g. "75")
+TTL: 24h auto-expiry (stale keys self-clean after crash/restart).
+Cleanup: key deleted when task completes/fails.
 
 Both AI Service and Gateway import this module (lives in backend.common).
 """
 import logging
-import os
-import tempfile
-from pathlib import Path
 from typing import Dict, Optional
 
-from backend.common.config import Config
+from backend.common.redis_client import get_redis, make_key
 
 logger = logging.getLogger("progress_store")
 
-
-def _get_progress_dir() -> Path:
-    """Return the shared progress directory: {uploads_dir}/progress/"""
-    return Config.get_uploads_dir() / "progress"
+PROGRESS_TTL = 86400  # 24 hours
 
 
-def set_progress(task_id: str, progress: int) -> None:
-    """Write progress to file (atomic: tmpfile + rename).
-
-    Called by trainers in AI Service process.
-    File content is a plain integer string, e.g. "75".
-    """
-    progress_dir = _get_progress_dir()
-    progress_file = progress_dir / task_id
-    tmp_fd = None
-    tmp_path = None
+async def set_progress(task_id: str, progress: int) -> None:
     try:
-        tmp_fd, tmp_path = tempfile.mkstemp(dir=str(progress_dir), prefix=f".{task_id}.")
-        os.write(tmp_fd, str(progress).encode())
-        os.close(tmp_fd)
-        tmp_fd = None  # Mark as closed
-        os.rename(tmp_path, str(progress_file))
+        r = get_redis()
+        await r.set(make_key("progress", task_id), str(progress), ex=PROGRESS_TTL)
     except Exception as e:
-        logger.warning(f"Failed to write progress file (task={task_id}): {e}")
-        if tmp_fd is not None:
-            try:
-                os.close(tmp_fd)
-            except OSError:
-                pass
-        if tmp_path is not None:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+        logger.warning(f"Failed to write progress to Redis (task={task_id}): {e}")
 
 
-def get_progress(task_id: str) -> Optional[int]:
-    """Read progress from file.
-
-    Called by Gateway SSE to overlay real-time progress onto DB task data.
-    Returns None if file doesn't exist (task not running, or no progress yet).
-    """
+async def get_progress(task_id: str) -> Optional[int]:
     try:
-        progress_file = _get_progress_dir() / task_id
-        content = progress_file.read_text().strip()
-        return int(content)
-    except (FileNotFoundError, ValueError, OSError):
+        r = get_redis()
+        val = await r.get(make_key("progress", task_id))
+        return int(val) if val is not None else None
+    except (ValueError, Exception):
         return None
 
 
-def get_all_progress() -> Dict[str, int]:
-    """Read progress for all active tasks.
-
-    Scans the progress directory. Called by Gateway SSE /stream endpoint.
-    Returns dict mapping task_id -> progress (0-100).
-    """
+async def get_all_progress() -> Dict[str, int]:
     result: Dict[str, int] = {}
-    progress_dir = _get_progress_dir()
-    if not progress_dir.exists():
-        return result
     try:
-        for entry in progress_dir.iterdir():
-            if entry.is_file() and not entry.name.startswith("."):
+        r = get_redis()
+        prefix = make_key("progress", "")
+        async for key in r.scan_iter(match=prefix + "*", count=100):
+            task_id = key[len(prefix):]
+            val = await r.get(key)
+            if val is not None:
                 try:
-                    result[entry.name] = int(entry.read_text().strip())
-                except (ValueError, OSError):
+                    result[task_id] = int(val)
+                except ValueError:
                     pass
-    except OSError:
+    except Exception:
         pass
     return result
 
 
-def clear_progress(task_id: str) -> None:
-    """Delete progress file when task completes/fails/cancelled.
-
-    Called in cleanup to avoid stale files.
-    """
+async def clear_progress(task_id: str) -> None:
     try:
-        (_get_progress_dir() / task_id).unlink(missing_ok=True)
-    except OSError:
+        r = get_redis()
+        await r.delete(make_key("progress", task_id))
+    except Exception:
         pass
 
 
-def cleanup_all_progress() -> int:
-    """Delete ALL progress files. Called on Gateway startup.
-
-    On startup no training is running yet (interrupted tasks are about to be resumed),
-    so every file in the progress directory is stale from the previous process lifetime.
-
-    Returns:
-        Number of files deleted.
-    """
+async def cleanup_all_progress() -> int:
     count = 0
-    progress_dir = _get_progress_dir()
-    if not progress_dir.exists():
-        return count
     try:
-        for entry in progress_dir.iterdir():
-            try:
-                entry.unlink()
-                count += 1
-            except OSError:
-                pass
-    except OSError:
+        r = get_redis()
+        prefix = make_key("progress", "")
+        keys = []
+        async for key in r.scan_iter(match=prefix + "*", count=100):
+            keys.append(key)
+        if keys:
+            count = await r.delete(*keys)
+    except Exception:
         pass
     if count > 0:
-        logger.info(f"Cleaned up {count} stale progress file(s)")
+        logger.info(f"Cleaned up {count} stale progress key(s) from Redis")
     return count
 

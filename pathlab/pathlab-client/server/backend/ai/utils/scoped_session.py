@@ -13,15 +13,17 @@ Solution:
 - Create short-lived sessions only when needed for specific DB operations
 - Release sessions immediately after each operation
 - Pass session_maker to trainers instead of long-lived sessions
-- Use batched async log writes to reduce database write frequency
+- Use batched async log writes to reduce write frequency
+- Training logs now go to Redis Streams instead of PostgreSQL
 """
 
 import asyncio
+import json
 import logging
 from collections import deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional, Dict, List
 
@@ -29,6 +31,7 @@ import anyio
 
 from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
+from backend.common.redis_client import get_redis, make_key
 from backend.database import async_session_maker
 from backend.database.utils.training_logger import TrainingLogger
 from backend.database.utils.json_utils import sanitize_for_json
@@ -63,7 +66,7 @@ class ScopedSession:
         
         # For simple DB operations:
         async with scoped.session() as (training_logger, db):
-            await TrainingTaskRepository.update_status(db, task_id, TaskStatus.RUNNING)
+            await TrainingTaskRepository.update_status(db, task_id, TaskStatus.PATCHING)
         # Session is automatically closed after the block
         
         # For trainers that need to create their own sessions:
@@ -160,9 +163,8 @@ class ScopedTrainingLogger:
         """
         self.task_id = task_id
         self.log_dir = log_dir
-        self._session_maker = async_session_maker
 
-        # Log queue for batched database writes
+        # Log queue for batched Redis writes
         self._queue: deque[LogEntry] = deque()
         self._sequence = 0
         self._sequence_initialized = False
@@ -208,35 +210,20 @@ class ScopedTrainingLogger:
         self._file_logger.addHandler(console_handler)
 
     async def _init_sequence(self):
-        """Initialize sequence number from database (one-time).
-
-        Follows the same pattern as safe_session() in database.py:
-        - The main operation is NOT shielded (allows timeout/cancellation to work)
-        - Only cleanup (rollback/close) is shielded to ensure proper resource release
-        """
+        """Initialize sequence number from Redis (one-time)."""
         if self._sequence_initialized:
             return
 
-        from sqlalchemy import select, func
-        from backend.database.models import TrainingLog
-
-        session = self._session_maker()
         try:
-            result = await session.execute(
-                select(func.max(TrainingLog.sequence)).where(
-                    TrainingLog.task_id == self.task_id
-                )
-            )
-            max_seq = result.scalar()
-            self._sequence = int(max_seq) if max_seq is not None else 0
+            r = get_redis()
+            seq_key = make_key("training_logs", self.task_id, "seq")
+            stored = await r.get(seq_key)
+            self._sequence = int(stored) if stored is not None else 0
             self._sequence_initialized = True
         except Exception as e:
-            logger.warning(f"[{self.task_id}] Failed to init sequence from DB: {type(e).__name__}: {e}")
+            logger.warning(f"[{self.task_id}] Failed to init sequence from Redis: {type(e).__name__}: {e}")
             self._sequence = 0
             self._sequence_initialized = True
-        finally:
-            with anyio.CancelScope(shield=True):
-                await session.close()
 
     def _start_flush_task(self):
         """Start the background flush task if not already running."""
@@ -272,19 +259,10 @@ class ScopedTrainingLogger:
                 logger.error(f"[{self.task_id}] Error in flush loop: {e}")
 
     async def _flush_to_db(self):
-        """Flush queued log entries to database in a single transaction.
-
-        Includes timeout protection to prevent indefinite blocking on database operations.
-        Tracks consecutive failures for exponential backoff in _flush_loop().
-
-        Follows the same pattern as safe_session() in database.py:
-        - The main operation is NOT shielded (allows timeout/cancellation to work)
-        - Only cleanup (rollback/close) is shielded to ensure proper resource release
-        """
+        """Flush queued log entries to Redis Stream in a pipeline."""
         if not self._queue:
             return
 
-        # Take up to MAX_BATCH_SIZE entries
         batch: List[LogEntry] = []
         while self._queue and len(batch) < self.MAX_BATCH_SIZE:
             batch.append(self._queue.popleft())
@@ -292,53 +270,37 @@ class ScopedTrainingLogger:
         if not batch:
             return
 
-        from backend.database.models import TrainingLog
+        r = get_redis()
+        stream_key = make_key("training_logs", self.task_id)
+        seq_key = make_key("training_logs", self.task_id, "seq")
 
-        timeout = Config.DB_OPERATION_TIMEOUT
-        session = self._session_maker()
         try:
-            async with asyncio.timeout(timeout):
-                for entry in batch:
-                    log_record = TrainingLog(
-                        task_id=self.task_id,
-                        level=entry.level,
-                        message=entry.message,
-                        sequence=entry.sequence,
-                        extra_data=entry.metadata
-                    )
-                    session.add(log_record)
-                await session.commit()
-            logger.debug(f"[{self.task_id}] Flushed {len(batch)} logs to database")
-            # Reset backoff counter on success
+            pipe = r.pipeline()
+            last_seq = 0
+            for entry in batch:
+                fields: Dict[str, str] = {
+                    "task_id": self.task_id,
+                    "level": entry.level,
+                    "message": entry.message,
+                    "sequence": str(entry.sequence),
+                    "extra_data": json.dumps(entry.metadata) if entry.metadata else "",
+                    "created_at": entry.timestamp.isoformat() if entry.timestamp else "",
+                }
+                pipe.xadd(stream_key, fields)
+                last_seq = entry.sequence
+            pipe.set(seq_key, str(last_seq))
+            await pipe.execute()
+            logger.debug(f"[{self.task_id}] Flushed {len(batch)} logs to Redis")
             self._consecutive_failures = 0
-        except TimeoutError:
-            with anyio.CancelScope(shield=True):
-                await session.rollback()
-            self._consecutive_failures += 1
-            logger.error(
-                f"[{self.task_id}] Log flush timed out after {timeout}s "
-                f"(consecutive failures: {self._consecutive_failures})."
-            )
-            # Re-queue entries on failure
-            for entry in reversed(batch):
-                self._queue.appendleft(entry)
         except Exception as e:
-            # Shield rollback to ensure it completes even if cancelled
-            with anyio.CancelScope(shield=True):
-                await session.rollback()
             self._consecutive_failures += 1
             error_msg = f"{type(e).__name__}: {e}"
             logger.error(
-                f"[{self.task_id}] Failed to flush logs to DB: {error_msg} "
+                f"[{self.task_id}] Failed to flush logs to Redis: {error_msg} "
                 f"(consecutive failures: {self._consecutive_failures})"
             )
-            # Re-queue entries on failure
             for entry in reversed(batch):
                 self._queue.appendleft(entry)
-        finally:
-            # Shield close to ensure connection is returned to pool
-            with anyio.CancelScope(shield=True):
-                await session.close()
 
     async def _log(self, level: str, message: str, metadata: Optional[Dict[str, Any]] = None):
         """Queue a log entry for batched database write."""
@@ -365,7 +327,7 @@ class ScopedTrainingLogger:
             level=level,
             message=message,
             metadata=safe_metadata,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             sequence=self._sequence
         )
         self._queue.append(entry)

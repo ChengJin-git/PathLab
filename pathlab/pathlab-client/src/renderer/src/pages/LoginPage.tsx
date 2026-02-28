@@ -7,26 +7,32 @@
 
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { GoogleReCaptchaProvider, useGoogleReCaptcha } from 'react-google-recaptcha-v3'
+import { useTranslation } from 'react-i18next'
 import { useAuth } from '../contexts/AuthContext'
-import { Microscope, Brain, Shield, Zap, LogIn, Loader2, User, Lock, Heart, ExternalLink } from 'lucide-react'
+import { Microscope, Brain, Shield, Zap, LogIn, Loader2, User, Lock, Heart, ExternalLink, AlertTriangle } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
-import { getPublicSettings } from '../api'
+import { LanguageSwitcher } from '../components/common/LanguageSwitcher'
+import { getPublicSettings, ApiError } from '../api'
 
 /**
- * Inner login page component that uses the reCAPTCHA hook.
- * Must be rendered inside GoogleReCaptchaProvider.
+ * Inner login page component.
+ * When turnstileSiteKey is provided, renders a Cloudflare Turnstile widget.
  */
-function LoginPageInner() {
+function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { backendUnavailable?: boolean; turnstileSiteKey?: string }) {
   const navigate = useNavigate()
   const { login, isLoading, error, isLoggedIn } = useAuth()
-  const { executeRecaptcha } = useGoogleReCaptcha()
+  const { t } = useTranslation()
 
   // Form state
   const [username, setUsername] = React.useState('')
   const [password, setPassword] = React.useState('')
   const [formError, setFormError] = React.useState<string | null>(null)
+
+  // Turnstile state
+  const [turnstileToken, setTurnstileToken] = React.useState<string | undefined>(undefined)
+  const turnstileRef = React.useRef<HTMLDivElement>(null)
+  const turnstileWidgetId = React.useRef<string | null>(null)
 
   // If already logged in, redirect to dashboard
   React.useEffect(() => {
@@ -35,66 +41,100 @@ function LoginPageInner() {
     }
   }, [isLoggedIn, navigate])
 
-  // Hide reCAPTCHA badge on unmount (when navigating away from login page)
+  // Load and render Cloudflare Turnstile widget
   React.useEffect(() => {
+    if (!turnstileSiteKey || !turnstileRef.current) return
+
+    const renderWidget = () => {
+      if (!turnstileRef.current || turnstileWidgetId.current !== null) return
+      const widgetId = (window as any).turnstile.render(turnstileRef.current, {
+        sitekey: turnstileSiteKey,
+        callback: (token: string) => setTurnstileToken(token),
+        'expired-callback': () => setTurnstileToken(undefined),
+        'error-callback': () => setTurnstileToken(undefined),
+        theme: 'light',
+        size: 'flexible',
+      })
+      turnstileWidgetId.current = widgetId
+    }
+
+    // If Turnstile script is already loaded
+    if ((window as any).turnstile) {
+      renderWidget()
+      return
+    }
+
+    // Load Turnstile script
+    const script = document.createElement('script')
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
+    script.async = true
+    script.onload = renderWidget
+    document.head.appendChild(script)
+
     return () => {
-      const badge = document.querySelector('.grecaptcha-badge') as HTMLElement | null
-      if (badge) {
-        badge.style.visibility = 'hidden'
+      // Cleanup widget on unmount
+      if (turnstileWidgetId.current !== null && (window as any).turnstile) {
+        try {
+          (window as any).turnstile.remove(turnstileWidgetId.current)
+        } catch { /* ignore */ }
+        turnstileWidgetId.current = null
       }
     }
-  }, [])
+  }, [turnstileSiteKey])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setFormError(null)
 
     if (!username || !password) {
-      setFormError('Please enter username and password')
+      setFormError(t('common.pleaseEnterUsernameAndPassword'))
       return
     }
 
-    // Get reCAPTCHA token if available
-    let recaptchaToken: string | undefined
-    if (executeRecaptcha) {
-      try {
-        recaptchaToken = await executeRecaptcha('login')
-      } catch (err) {
-        console.error('reCAPTCHA error:', err)
-      }
-    }
-
-    const success = await login(username, password, recaptchaToken)
+    const success = await login(username, password, turnstileToken)
     if (success) {
       navigate('/dashboard')
+    } else {
+      // Reset Turnstile widget after failed login (token is single-use)
+      if (turnstileWidgetId.current !== null && (window as any).turnstile) {
+        try {
+          (window as any).turnstile.reset(turnstileWidgetId.current)
+          setTurnstileToken(undefined)
+        } catch { /* ignore */ }
+      }
     }
   }
 
   const features = [
     {
       icon: Microscope,
-      title: 'WSI Visualization',
-      description: 'View and navigate multi-gigapixel whole slide images with smooth pan and zoom',
+      title: t('loginPage.features.wsiVisualization'),
+      description: t('loginPage.features.wsiVisualizationDesc'),
     },
     {
       icon: Brain,
-      title: 'AI-Powered Analysis',
-      description: 'Train and deploy deep learning models for pathology classification',
+      title: t('loginPage.features.aiAnalysis'),
+      description: t('loginPage.features.aiAnalysisDesc'),
     },
     {
       icon: Shield,
-      title: 'Privacy First',
-      description: 'Fully compliant with data privacy regulations ensuring your research remains secure.',
+      title: t('loginPage.features.privacyFirst'),
+      description: t('loginPage.features.privacyFirstDesc'),
     },
     {
       icon: Zap,
-      title: 'Smart Assistant',
-      description: 'Describe your research in natural language, let AI set up the task',
+      title: t('loginPage.features.smartAssistant'),
+      description: t('loginPage.features.smartAssistantDesc'),
     },
   ]
 
   return (
-    <div className="h-screen flex flex-col lg:flex-row bg-slate-50 overflow-hidden">
+    <div className="h-screen flex flex-col lg:flex-row bg-slate-50 overflow-hidden relative">
+
+      {/* Language Switcher */}
+      <div className="absolute top-3 right-3 z-50">
+        <LanguageSwitcher />
+      </div>
 
       {/* Left: Login Section */}
       <div className="flex-1 flex flex-col justify-center px-6 py-12 lg:px-12 relative bg-white lg:max-w-[480px] xl:max-w-[560px] border-r border-slate-100 z-10 shadow-xl overflow-hidden">
@@ -112,19 +152,19 @@ function LoginPageInner() {
                 className="h-12 w-auto"
               />
             </div>
-            <h2 className="text-3xl font-bold text-slate-900 mb-2">Welcome back</h2>
+            <h2 className="text-3xl font-bold text-slate-900 mb-2">{t('auth.welcomeBack')}</h2>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-6">
             <div className="space-y-4">
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500 ml-1">Username</label>
+                <label className="text-xs font-semibold text-slate-500 ml-1">{t('auth.username')}</label>
                 <div className="relative group">
                   <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
                   <Input
                     id="username"
                     type="text"
-                    placeholder="Enter your username"
+                    placeholder={t('loginPage.enterUsername')}
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     className="pl-10 h-11 bg-slate-50 border-slate-200 focus:bg-white focus:ring-2 focus:ring-blue-100 focus:border-blue-500 rounded-lg transition-all"
@@ -136,14 +176,14 @@ function LoginPageInner() {
 
               <div className="space-y-1">
                 <div className="flex items-center justify-between ml-1">
-                  <label className="text-xs font-semibold text-slate-500">Password</label>
+                  <label className="text-xs font-semibold text-slate-500">{t('auth.password')}</label>
                 </div>
                 <div className="relative group">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
                   <Input
                     id="password"
                     type="password"
-                    placeholder="Enter your password"
+                    placeholder={t('loginPage.enterPassword')}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="pl-10 h-11 bg-slate-50 border-slate-200 focus:bg-white focus:ring-2 focus:ring-blue-100 focus:border-blue-500 rounded-lg transition-all"
@@ -154,6 +194,14 @@ function LoginPageInner() {
               </div>
             </div>
 
+            {/* Backend Unavailable / Maintenance Banner */}
+            {backendUnavailable && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm font-medium flex items-start gap-2 animate-in fade-in slide-in-from-top-2">
+                <AlertTriangle className="w-4 h-4 mt-0.5 text-amber-500 flex-shrink-0" />
+                <p>{t('auth.systemMaintenance')}</p>
+              </div>
+            )}
+
             {/* Error Message */}
             {(error || formError) && (
               <div className="p-3 bg-red-50 border border-red-100 rounded-lg text-red-600 text-sm font-medium flex items-start gap-2 animate-in fade-in slide-in-from-top-2">
@@ -162,17 +210,22 @@ function LoginPageInner() {
               </div>
             )}
 
+            {/* Cloudflare Turnstile Widget */}
+            {turnstileSiteKey && (
+              <div ref={turnstileRef} className="flex justify-center" />
+            )}
+
             <Button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || (!!turnstileSiteKey && !turnstileToken)}
               className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2"
             >
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
-              Sign In
+              {t('common.signIn')}
             </Button>
 
             <p className="text-center text-xs text-slate-400 mt-6">
-              © 2026 <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer">SmartLab</a> · protected by reCAPTCHA
+              © 2026 <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer">SmartLab</a>{turnstileSiteKey ? ` · ${t('common.protectedByTurnstile')}` : ''}
             </p>
           </form>
         </div>
@@ -193,16 +246,17 @@ function LoginPageInner() {
           <div className="mb-12">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-600 text-white shadow-lg shadow-blue-200 text-sm font-bold uppercase tracking-wider mb-6 transform hover:scale-105 transition-transform cursor-default">
               <Zap className="w-4 h-4 fill-current" />
-              <span>Agentic AI Powered</span>
+              <span>{t('loginPage.agenticAI')}</span>
             </div>
             <h2 className="text-4xl xl:text-5xl font-bold text-slate-900 mb-6 leading-tight">
-              Digital Pathology <br />
+              {t('loginPage.title')}{t('loginPage.title') ? <><br /></> : null}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500">
-                Reimagined
+                {t('loginPage.reimagined')}
               </span>
+              {t('loginPage.titleSuffix') ? <><br /></> : null}{t('loginPage.titleSuffix')}
             </h2>
-            <p className="text-slate-600 text-lg leading-relaxed max-w-lg">
-              Train, analyze, and gain insights while keeping your data private. Experience the future of medical research today.
+            <p className="text-slate-600 text-lg leading-relaxed max-w-lg break-keep">
+              {t('loginPage.subtitle')}
             </p>
           </div>
 
@@ -229,13 +283,13 @@ function LoginPageInner() {
               <div className="flex-1 relative z-10">
                 <div className="flex items-center gap-2 mb-2">
                   <Heart className="w-4 h-4 text-rose-500 fill-rose-500 animate-pulse" />
-                  <span className="text-[10px] font-black uppercase tracking-wider text-rose-500">Support Our Mission</span>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-rose-500">{t('loginPage.supportMission')}</span>
                 </div>
                 <p className="text-slate-800 font-bold text-sm mb-1">
-                  Help us keep PathLab free for everyone.
+                  {t('loginPage.keepFree')}
                 </p>
                 <p className="text-slate-500 text-xs italic font-medium">
-                  "Without your support our project cannot last."
+                  {t('loginPage.quote')}
                 </p>
               </div>
               <a
@@ -245,7 +299,7 @@ function LoginPageInner() {
                 className="flex-shrink-0 relative z-10"
               >
                 <Button className="bg-slate-900 hover:bg-slate-800 text-white font-bold shadow-lg shadow-slate-300 px-6 h-11 rounded-xl transition-all flex items-center gap-2">
-                  Donate
+                  {t('loginPage.donate')}
                   <ExternalLink className="w-3 h-3 opacity-70" />
                 </Button>
               </a>
@@ -256,7 +310,7 @@ function LoginPageInner() {
 
         {/* Footer Text */}
         <div className="relative z-10 mt-8 text-center lg:text-left">
-          <p className="text-slate-400 text-xs font-mono font-medium">Build v1.0.0-stable</p>
+          <p className="text-slate-400 text-xs font-mono font-medium">{t('loginPage.buildVersion')}</p>
         </div>
       </div>
 
@@ -265,53 +319,37 @@ function LoginPageInner() {
 }
 
 /**
- * LoginPage wrapper that conditionally provides GoogleReCaptchaProvider.
- * reCAPTCHA is only loaded on the login page, not globally.
+ * LoginPage wrapper that fetches Turnstile settings and passes them down.
+ * Turnstile script is only loaded on the login page, not globally.
  */
 export default function LoginPage() {
-  const [recaptchaSiteKey, setRecaptchaSiteKey] = React.useState<string>('')
-  const [recaptchaEnabled, setRecaptchaEnabled] = React.useState<boolean>(false)
+  const [turnstileSiteKey, setTurnstileSiteKey] = React.useState<string>('')
   const [settingsLoaded, setSettingsLoaded] = React.useState(false)
+  const [backendUnavailable, setBackendUnavailable] = React.useState(false)
 
   React.useEffect(() => {
     getPublicSettings()
       .then((settings) => {
-        setRecaptchaEnabled(settings.recaptcha_enabled)
-        setRecaptchaSiteKey(settings.recaptcha_site_key)
+        if (settings.turnstile_enabled && settings.turnstile_site_key) {
+          setTurnstileSiteKey(settings.turnstile_site_key)
+        }
+        setBackendUnavailable(false)
       })
-      .catch(() => {
-        // If fetching settings fails, continue without reCAPTCHA
+      .catch((err) => {
+        // If backend is unreachable (network error or nginx 502/503), show maintenance banner
+        if (err instanceof ApiError && (err.isNetworkError() || err.isServerError())) {
+          setBackendUnavailable(true)
+        }
+        // Continue without Turnstile either way
       })
       .finally(() => {
         setSettingsLoaded(true)
       })
   }, [])
 
-  // Show reCAPTCHA badge when on login page, hide on unmount
-  React.useEffect(() => {
-    const badge = document.querySelector('.grecaptcha-badge') as HTMLElement | null
-    if (badge) {
-      badge.style.visibility = 'visible'
-    }
-    return () => {
-      const badge = document.querySelector('.grecaptcha-badge') as HTMLElement | null
-      if (badge) {
-        badge.style.visibility = 'hidden'
-      }
-    }
-  })
-
   if (!settingsLoaded) {
     return null
   }
 
-  if (recaptchaEnabled && recaptchaSiteKey) {
-    return (
-      <GoogleReCaptchaProvider reCaptchaKey={recaptchaSiteKey}>
-        <LoginPageInner />
-      </GoogleReCaptchaProvider>
-    )
-  }
-
-  return <LoginPageInner />
+  return <LoginPageInner backendUnavailable={backendUnavailable} turnstileSiteKey={turnstileSiteKey || undefined} />
 }

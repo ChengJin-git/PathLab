@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { UserPlus } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -12,69 +13,70 @@ export interface CreateUserModalProps {
 }
 
 export function CreateUserModal({ createForm, onCreateFormChange, onSubmit, onClose, isCreating }: CreateUserModalProps) {
+  const { t } = useTranslation()
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
           <UserPlus className="w-5 h-5 mr-2 text-primary-600" />
-          Create New User
+          {t('settings.createUserModal.title')}
         </h3>
         <div className="space-y-4">
           <div>
-            <Label className="text-sm text-gray-600">Username *</Label>
+            <Label className="text-sm text-gray-600">{t('settings.createUserModal.usernameRequired')}</Label>
             <Input
               value={createForm.username}
               onChange={(e) => onCreateFormChange({ ...createForm, username: e.target.value })}
               className="mt-1"
-              placeholder="Enter username"
+              placeholder={t('settings.createUserModal.enterUsername')}
               disabled={isCreating}
             />
           </div>
           <div>
-            <Label className="text-sm text-gray-600">Password *</Label>
+            <Label className="text-sm text-gray-600">{t('settings.createUserModal.passwordRequired')}</Label>
             <Input
               type="password"
               value={createForm.password}
               onChange={(e) => onCreateFormChange({ ...createForm, password: e.target.value })}
               className="mt-1"
-              placeholder="Minimum 6 characters"
+              placeholder={t('settings.createUserModal.minSixChars')}
               disabled={isCreating}
             />
           </div>
           <div>
-            <Label className="text-sm text-gray-600">Nickname</Label>
+            <Label className="text-sm text-gray-600">{t('settings.createUserModal.nickname')}</Label>
             <Input
               value={createForm.nickname}
               onChange={(e) => onCreateFormChange({ ...createForm, nickname: e.target.value })}
               className="mt-1"
-              placeholder="Display name (optional)"
+              placeholder={t('settings.createUserModal.displayNameOptional')}
               disabled={isCreating}
             />
           </div>
           <div>
-            <Label className="text-sm text-gray-600">Role</Label>
+            <Label className="text-sm text-gray-600">{t('settings.createUserModal.role')}</Label>
             <select
               value={createForm.role}
               onChange={(e) => onCreateFormChange({ ...createForm, role: e.target.value })}
               className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               disabled={isCreating}
             >
-              <option value="admin">Admin</option>
-              <option value="pathologist">Pathologist</option>
-              <option value="guest">Guest</option>
+              <option value="admin">{t('settings.createUserModal.roleAdmin')}</option>
+              <option value="pathologist">{t('settings.createUserModal.rolePathologist')}</option>
+              <option value="guest">{t('settings.createUserModal.roleGuest')}</option>
             </select>
           </div>
         </div>
         <div className="flex justify-end gap-3 mt-6">
           <Button variant="outline" onClick={onClose} disabled={isCreating}>
-            Cancel
+            {t('settings.createUserModal.cancel')}
           </Button>
           <Button onClick={onSubmit} disabled={isCreating}>
-            {isCreating ? 'Creating...' : 'Create User'}
+            {isCreating ? t('settings.createUserModal.creating') : t('settings.createUserModal.createUser')}
           </Button>
         </div>
       </div>
     </div>
   )
 }
-

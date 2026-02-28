@@ -66,8 +66,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     verification_token_secret = JWT_SECRET
     
     async def on_after_register(self, user: User, request: Optional[Request] = None):
-        """Called after a user successfully registers."""
-        print(f"[Auth] User {user.email} (id={user.id}) has registered with role={user.role}")
+        logger.info(f"User {user.email} (id={user.id}) has registered with role={user.role}")
 
         # Auto-verify user (no email verification required)
         # This is done in the database directly since we don't have session here
@@ -77,22 +76,17 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     async def on_after_forgot_password(
         self, user: User, token: str, request: Optional[Request] = None
     ):
-        """Called after password reset is requested."""
-        # In production, send email with reset link
-        print(f"[Auth] User {user.email} requested password reset. Token: {token[:8]}...")
+        logger.info(f"User {user.email} requested password reset. Token: {token[:8]}...")
     
     async def on_after_request_verify(
         self, user: User, token: str, request: Optional[Request] = None
     ):
-        """Called after email verification is requested."""
-        # In production, send verification email
-        print(f"[Auth] User {user.email} requested verification. Token: {token[:8]}...")
+        logger.info(f"User {user.email} requested verification. Token: {token[:8]}...")
     
     async def on_after_login(
         self, user: User, request: Optional[Request] = None, response = None
     ):
-        """Called after successful login."""
-        print(f"[Auth] User {user.email} (role={user.role}) logged in")
+        logger.info(f"User {user.email} (role={user.role}) logged in")
 
 
 async def get_user_manager(user_db: SQLAlchemyUserDatabase = Depends(get_user_db)):
@@ -101,7 +95,8 @@ async def get_user_manager(user_db: SQLAlchemyUserDatabase = Depends(get_user_db
 
 
 # JWT Transport - Bearer token in Authorization header
-bearer_transport = BearerTransport(tokenUrl="auth/jwt/login")
+# tokenUrl points to the secure login endpoint (the legacy /auth/jwt/login is disabled)
+bearer_transport = BearerTransport(tokenUrl="auth/secure-login")
 
 
 class SingleSessionJWTStrategy(JWTStrategy):

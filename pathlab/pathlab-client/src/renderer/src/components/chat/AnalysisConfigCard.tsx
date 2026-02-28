@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Play, AlertCircle, CheckCircle, Loader2, BarChart3, FileText, ThumbsUp, ThumbsDown, ArrowRight, FlaskConical } from 'lucide-react'
-import { runTaskAnalysis, getTrainingTasks, startExternalValidation } from '../../api'
+import { runTaskAnalysis, getTrainingTasks, startExternalValidation, getTrainedModels, fetchDatasetsForValidation } from '../../api'
+import { isDatasetCompatible } from '../../lib/externalValidationUtils'
 
 // Config from Agent - supports both internal and external analysis
 export interface AgentAnalysisConfig {
@@ -73,6 +75,7 @@ export function AnalysisConfigCard({
   onHelpfulnessFeedback,
   savedHelpfulnessFeedback
 }: AnalysisConfigCardProps) {
+  const { t } = useTranslation()
   const [config, setConfig] = useState<AgentAnalysisConfig>(initialConfig)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitStatus, setSubmitStatus] = useState<'idle' | 'success' | 'error'>(
@@ -105,6 +108,7 @@ export function AnalysisConfigCard({
   // Task/model validation
   const [isLoadingTask, setIsLoadingTask] = useState(true)
   const [taskExists, setTaskExists] = useState(true)
+  const [validationError, setValidationError] = useState<string>('')
 
   const isExternal = config.analysis_type === 'external'
 
@@ -112,20 +116,68 @@ export function AnalysisConfigCard({
   useEffect(() => {
     const checkTask = async () => {
       setIsLoadingTask(true)
+      setValidationError('')
       try {
         const tasks = await getTrainingTasks()
         if (isExternal) {
-          // For external: check if model_id and data_task_id are valid
-          // We just check if the config has the required fields
-          setTaskExists(!!(config.model_id && config.data_task_id))
+          // For external: validate model and dataset compatibility using same logic as ResultsViewerPage
+          if (!config.model_id || !config.data_task_id) {
+            setTaskExists(false)
+            setValidationError('Missing model or dataset configuration')
+            return
+          }
+
+          // Fetch model and dataset details
+          const [models, datasets] = await Promise.all([
+            getTrainedModels(),
+            fetchDatasetsForValidation()
+          ])
+
+          const model = models.items.find(m => m.model_id === config.model_id)
+          if (!model) {
+            setTaskExists(false)
+            setValidationError(`Model not found: ${config.model_id}`)
+            return
+          }
+
+          const modelTask = tasks.find(task => task.task_id === model.task_id)
+          if (!modelTask) {
+            setTaskExists(false)
+            setValidationError(`Training task not found for model: ${model.model_name}`)
+            return
+          }
+
+          const dataset = datasets.items.find(ds => ds.dataset_id === config.data_task_id)
+          if (!dataset) {
+            setTaskExists(false)
+            setValidationError(`Dataset not found: ${config.data_task_id}`)
+            return
+          }
+
+          // Check compatibility using shared validation logic
+          const compatible = isDatasetCompatible(model, modelTask, dataset)
+          if (!compatible) {
+            setTaskExists(false)
+            setValidationError(
+              `Dataset "${dataset.name}" is not compatible with model "${model.model_name}". ` +
+              `Please check that task types, data types, and label sets match.`
+            )
+            return
+          }
+
+          setTaskExists(true)
         } else {
           // For internal: check if task exists and is completed
-          const found = tasks.some(t => t.task_id === config.task_id && t.status === 'completed')
+          const found = tasks.some(task => task.task_id === config.task_id && task.status === 'completed')
           setTaskExists(found)
+          if (!found) {
+            setValidationError(`Task not found or not completed: ${config.task_id}`)
+          }
         }
       } catch (error) {
         console.error('Failed to check task:', error)
         setTaskExists(false)
+        setValidationError(error instanceof Error ? error.message : 'Failed to validate configuration')
       } finally {
         setIsLoadingTask(false)
       }
@@ -198,7 +250,7 @@ export function AnalysisConfigCard({
         onSubmitSuccess?.(result.task_id, result.analysis_id)
       }
     } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Failed to run analysis'
+      const msg = error instanceof Error ? error.message : t('chatComponents.analysisConfig.failedToRunAnalysis')
       setSubmitStatus('error')
       setErrorMessage(msg)
       onSubmitError?.(msg)
@@ -245,7 +297,7 @@ export function AnalysisConfigCard({
         onSubmitSuccess?.(result.task_id, result.analysis_id)
       }
     } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Failed to run analysis'
+      const msg = error instanceof Error ? error.message : t('chatComponents.analysisConfig.failedToRunAnalysis')
       setSubmitStatus('error')
       setErrorMessage(msg)
       onSubmitError?.(msg)
@@ -258,7 +310,7 @@ export function AnalysisConfigCard({
     return (
       <div className="mt-4 bg-white border border-gray-200 rounded-2xl shadow-sm p-6 flex items-center justify-center gap-2">
         <Loader2 className="w-5 h-5 animate-spin text-primary-600" />
-        <span className="text-gray-600">Loading analysis configuration...</span>
+        <span className="text-gray-600">{t('chatComponents.analysisConfig.loadingConfig')}</span>
       </div>
     )
   }
@@ -273,14 +325,14 @@ export function AnalysisConfigCard({
           ) : (
             <BarChart3 className="w-4 h-4 text-indigo-600" />
           )}
-          {isExternal ? 'External Validation' : 'Internal Analysis'}
+          {isExternal ? t('chatComponents.analysisConfig.externalValidation') : t('chatComponents.analysisConfig.internalAnalysis')}
         </h3>
         <p className="text-sm text-gray-500 mt-1">
           {submitStatus === 'success'
-            ? 'Analysis submitted - track progress in the Background Tasks panel'
+            ? t('chatComponents.analysisConfig.analysisSubmittedTrack')
             : isExternal
-              ? 'Validate model on external dataset'
-              : 'Analyze model performance on the held-out test set'}
+              ? t('chatComponents.analysisConfig.validateOnExternalDataset')
+              : t('chatComponents.analysisConfig.analyzeOnTestSet')}
         </p>
       </div>
 
@@ -290,19 +342,14 @@ export function AnalysisConfigCard({
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1.5">
             <FileText className="w-4 h-4 text-gray-500" />
-            {isExternal ? 'Validation Setup' : 'Training Task'}
+            {isExternal ? t('chatComponents.analysisConfig.validationSetup') : t('chatComponents.analysisConfig.trainingTask')}
           </label>
           {!taskExists ? (
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
               <p className="text-sm text-red-700">
-                {isExternal
+                {validationError || (isExternal
                   ? `Missing model or target dataset configuration`
-                  : `Task not found: ${config.task_name || config.task_id}`}
-              </p>
-              <p className="text-xs text-red-600 mt-1">
-                {isExternal
-                  ? 'Please ensure model_id and data_task_id are provided.'
-                  : 'The task may have been deleted or not completed.'}
+                  : `Task not found: ${config.task_name || config.task_id}`)}
               </p>
             </div>
           ) : isExternal ? (
@@ -327,7 +374,7 @@ export function AnalysisConfigCard({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {/* Metrics */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Metrics to Calculate</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.analysisConfig.metricsToCalculate')}</label>
             <div className="flex flex-wrap gap-2">
               {config.metrics.map(metric => (
                 <span key={metric} className={`px-2 py-1 text-xs rounded-full ${isExternal ? 'bg-orange-100 text-orange-700' : 'bg-indigo-100 text-indigo-700'}`}>
@@ -339,7 +386,7 @@ export function AnalysisConfigCard({
 
           {/* Charts */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Charts to Generate</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.analysisConfig.chartsToGenerate')}</label>
             <div className="flex flex-wrap gap-2">
               {config.charts.map(chart => (
                 <span key={chart} className={`px-2 py-1 text-xs rounded-full ${isExternal ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
@@ -361,11 +408,11 @@ export function AnalysisConfigCard({
               className={`w-4 h-4 border-gray-300 rounded disabled:opacity-50 ${isExternal ? 'text-orange-600 focus:ring-orange-500' : 'text-indigo-600 focus:ring-indigo-500'}`}
             />
             <span className="text-sm text-gray-700">
-              Compute 95% Confidence Intervals (1000 bootstrap samples)
+              {t('chatComponents.analysisConfig.computeBootstrapCI')}
             </span>
           </label>
           <p className="text-xs text-gray-500 mt-1 ml-6">
-            This may take longer but provides statistical confidence bounds for all metrics.
+            {t('chatComponents.analysisConfig.bootstrapCIDescription')}
           </p>
         </div>
       </div>
@@ -375,7 +422,7 @@ export function AnalysisConfigCard({
         <div className="mx-5 mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
           <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
           <div>
-            <p className="text-sm font-medium text-red-700">Failed to run analysis</p>
+            <p className="text-sm font-medium text-red-700">{t('chatComponents.analysisConfig.failedToRunAnalysis')}</p>
             <p className="text-xs text-red-600 mt-0.5">{errorMessage}</p>
           </div>
         </div>
@@ -385,14 +432,14 @@ export function AnalysisConfigCard({
       {submitStatus === 'success' && (
         <div className="mx-5 mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
           <CheckCircle className="w-4 h-4 text-green-500" />
-          <p className="text-sm font-medium text-green-700">Analysis completed successfully!</p>
+          <p className="text-sm font-medium text-green-700">{t('chatComponents.analysisConfig.analysisCompletedSuccess')}</p>
         </div>
       )}
 
       {/* Helpfulness Feedback */}
       {submitStatus === 'success' && !helpfulnessFeedback && (
         <div className="mx-5 mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <p className="text-sm font-medium text-blue-800 mb-3">Do you find AI helpful for setting up this analysis task?</p>
+          <p className="text-sm font-medium text-blue-800 mb-3">{t('chatComponents.analysisConfig.helpfulnessFeedbackQuestion')}</p>
           <div className="flex gap-2">
             <button
               onClick={() => {
@@ -405,7 +452,7 @@ export function AnalysisConfigCard({
               className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-blue-200 hover:bg-green-50 hover:border-green-300 hover:text-green-700 text-blue-700 rounded-md text-sm font-medium transition-all shadow-sm"
             >
               <ThumbsUp className="w-3.5 h-3.5" />
-              Yes
+              {t('common.yes')}
             </button>
             <button
               onClick={() => {
@@ -418,7 +465,7 @@ export function AnalysisConfigCard({
               className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-blue-200 hover:bg-red-50 hover:border-red-300 hover:text-red-700 text-blue-700 rounded-md text-sm font-medium transition-all shadow-sm"
             >
               <ThumbsDown className="w-3.5 h-3.5" />
-              No
+              {t('common.no')}
             </button>
           </div>
         </div>
@@ -433,7 +480,7 @@ export function AnalysisConfigCard({
             <ThumbsDown className="w-4 h-4 text-red-500" />
           )}
           <p className="text-sm text-gray-600">
-            Thank you for your feedback!
+            {t('chatComponents.analysisConfig.thankYouFeedback')}
           </p>
         </div>
       )}
@@ -454,17 +501,17 @@ export function AnalysisConfigCard({
           {isSubmitting ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              Submitting...
+              {t('chatComponents.analysisConfig.submitting')}
             </>
           ) : submitStatus === 'success' ? (
             <>
               <CheckCircle className="w-4 h-4" />
-              {isExternal ? 'Validation Started' : 'Analysis Submitted'}
+              {isExternal ? t('chatComponents.analysisConfig.validationStarted') : t('chatComponents.analysisConfig.analysisSubmitted')}
             </>
           ) : (
             <>
               <Play className="w-4 h-4" />
-              {isExternal ? 'Start External Validation' : 'Run Analysis'}
+              {isExternal ? t('chatComponents.analysisConfig.startExternalValidation') : t('chatComponents.analysisConfig.runAnalysis')}
             </>
           )}
         </button>

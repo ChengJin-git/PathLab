@@ -10,6 +10,7 @@ Synchronous HTTP Architecture:
 """
 import asyncio
 import httpx
+import traceback
 from typing import List, Dict
 from contextlib import asynccontextmanager
 
@@ -76,7 +77,7 @@ async def run_training_pipeline(
     preprocessing_config: Dict,
     model_config: Dict,
     huggingface_token: str = None,
-    training_task_type: str = "classification",  # "classification" or "survival"
+    training_task_type: str = "classification",  # "classification", "survival", or "segmentation"
     assigned_device: str = None,  # GPU device assigned by task queue (e.g., "cuda:0")
 ):
     """
@@ -98,17 +99,95 @@ async def run_training_pipeline(
     try:
         # Initialize training and log start
         async with logger_manager.session() as (logger, db):
-            # Update task status to running
-            await TrainingTaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=0)
             await logger.info(f"Starting training pipeline for task: {task_id} (data_type: {data_type})")
 
-        # For patch-level tasks, use Feature Extractor + Linear Probe training
+        # For patch-level tasks, route based on training_task_type
         if data_type == 'patch':
+            if training_task_type == "segmentation":
+                # Patch Segmentation: uses architecture + backbone (not feature extractor)
+                async with logger_manager.session() as (logger, db):
+                    await logger.info("Patch-level segmentation task detected")
+
+                    # Get segmentation-specific training parameters
+                    architecture = model_config.get('architecture', 'unet')
+                    backbone = model_config.get('backbone', 'resnet50')
+                    loss_names = model_config.get('loss_names', ['DiceLoss', 'JaccardLoss'])
+                    loss_weights = model_config.get('loss_weights', [0.5, 0.5])
+                    epochs = int(model_config.get('epochs', 100))
+                    lr = float(model_config.get('learning_rate', 0.0001))
+                    batch_size = int(model_config.get('batch_size', 16))
+                    optimizer = model_config.get('optimizer', 'adamw')
+                    early_stopping_patience = int(model_config.get('early_stopping_patience', 15))
+                    seed = preprocessing_config.get('split_config', {}).get('seed', 42)
+
+                    await logger.info(
+                        f"Training {architecture} with {backbone} backbone",
+                        metadata={"architecture": architecture, "backbone": backbone,
+                                  "loss_names": loss_names, "epochs": epochs, "lr": lr}
+                    )
+
+                    # Update status to training
+                    await TrainingTaskRepository.update_status(db, task_id, TaskStatus.TRAINING, progress=50)
+
+                # Call AI service for patch segmentation training
+                timeout = get_training_timeout()
+                try:
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        resp = await client.post(
+                            f"{AI_SERVICE_URL}/api/ai/training/patch_segmentation",
+                            json={
+                                "task_id": task_id,
+                                "architecture": architecture,
+                                "backbone": backbone,
+                                "loss_names": loss_names,
+                                "loss_weights": loss_weights,
+                                "epochs": epochs,
+                                "lr": lr,
+                                "batch_size": batch_size,
+                                "optimizer": optimizer,
+                                "early_stopping_patience": early_stopping_patience,
+                                "device": assigned_device,
+                                "seed": seed,
+                            },
+                        )
+                        resp.raise_for_status()
+                        _ = resp.json()
+                except httpx.HTTPStatusError as e:
+                    body = e.response.text if e.response is not None else str(e)
+                    async with logger_manager.session() as (logger, db):
+                        await logger.error(
+                            f"AI service patch segmentation training failed: {e}",
+                            metadata={"status_code": e.response.status_code if e.response else None, "body": body}
+                        )
+                    raise
+                except httpx.TimeoutException as e:
+                    async with logger_manager.session() as (logger, db):
+                        await logger.error(
+                            f"Training timeout after {timeout} seconds. Requesting AI service to cancel and release GPU.",
+                            metadata={"timeout_seconds": timeout, "error": str(e)}
+                        )
+                    await cancel_ai_service_training(task_id)
+                    raise Exception(f"Training timeout after {timeout // 3600} hours. Task cancelled.") from e
+                except httpx.RequestError as e:
+                    async with logger_manager.session() as (logger, db):
+                        await logger.error(
+                            f"Failed to connect to AI service for patch segmentation training: {e}",
+                            metadata={"ai_service_url": AI_SERVICE_URL, "error": str(e)}
+                        )
+                    raise Exception(f"AI service unavailable at {AI_SERVICE_URL}. Please ensure the AI service is running.") from e
+
+                async with logger_manager.session() as (logger, db):
+                    await logger.info("Patch segmentation training completed successfully")
+                    await TrainingTaskRepository.update_status(db, task_id, TaskStatus.COMPLETED, progress=100)
+                return
+
+            # Patch Classification: use Feature Extractor + Linear Probe training
             async with logger_manager.session() as (logger, db):
-                await logger.info("Patch-level task detected - using Feature Extractor + Linear Probe")
-                
+                await logger.info("Patch-level task detected - using Feature Extractor + Classifier Head")
+
                 # Get training parameters
                 feature_extractor = preprocessing_config.get('feature_extractor', 'resnet50')
+                classifier = model_config.get('classifier', 'linear')
                 epochs = int(model_config.get('epochs', 50))
                 lr = float(model_config.get('learning_rate', 0.0002))
                 batch_size = int(model_config.get('batch_size', 64))
@@ -118,10 +197,10 @@ async def run_training_pipeline(
                 seed = preprocessing_config.get('split_config', {}).get('seed', 42)
 
                 await logger.info(
-                    f"Training Linear Probe with {feature_extractor} backbone",
-                    metadata={"feature_extractor": feature_extractor, "epochs": epochs, "lr": lr, "optimizer": optimizer, "auto_balance": auto_balance}
+                    f"Training {classifier} classifier with {feature_extractor} backbone",
+                    metadata={"feature_extractor": feature_extractor, "classifier": classifier, "epochs": epochs, "lr": lr, "optimizer": optimizer, "auto_balance": auto_balance}
                 )
-                
+
                 # Update status to training
                 await TrainingTaskRepository.update_status(db, task_id, TaskStatus.TRAINING, progress=50)
 
@@ -136,6 +215,7 @@ async def run_training_pipeline(
                             "epochs": epochs,
                             "lr": lr,
                             "feature_extractor": feature_extractor,
+                            "classifier": classifier,
                             "batch_size": batch_size,
                             "huggingface_token": huggingface_token or "",
                             "optimizer": optimizer,
@@ -197,6 +277,7 @@ async def run_training_pipeline(
         max_n_holes = preprocessing_config.get('max_n_holes', 100)
 
         async with logger_manager.session() as (logger, db):
+            await TrainingTaskRepository.update_status(db, task_id, TaskStatus.PATCHING, progress=0)
             await logger.info(f"Extracting patches from {total_wsi} WSI slides")
             await logger.info(
                 f"Level: {level}",
@@ -219,30 +300,53 @@ async def run_training_pipeline(
                 # Note: patch_size and stride are auto-determined by backend based on WSI MPP
                 # force_recompute=False allows reusing cached coordinates
                 # if ALL parameters match (including seg_params and filter_params)
-                async with httpx.AsyncClient(timeout=300.0) as client:
-                    response = await client.post(
-                        f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
-                        params={
-                            "level": level,
-                            "force_recompute": False,  # Allow cache reuse
-                            "sthresh": sthresh,
-                            "mthresh": mthresh,
-                            "close": close,
-                            "use_otsu": use_otsu,
-                            "contour_fn": contour_fn,
-                            "use_padding": use_padding,
-                            "a_t": a_t,
-                            "a_h": a_h,
-                            "max_n_holes": max_n_holes,
-                            "save_mask": True,
-                        },
-                    )
-                    response.raise_for_status()
-                    result = response.json()
+                #
+                # Retry logic: If the preprocessing worker crashes (e.g., C library segfault
+                # during mask visualization), the HTTP connection is severed, causing
+                # RemoteProtocolError. On retry, cached coordinates are returned instantly.
+                max_retries = 3
+                result = None
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        async with httpx.AsyncClient(timeout=600.0) as client:
+                            response = await client.post(
+                                f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
+                                params={
+                                    "level": level,
+                                    "force_recompute": False,  # Allow cache reuse
+                                    "sthresh": sthresh,
+                                    "mthresh": mthresh,
+                                    "close": close,
+                                    "use_otsu": use_otsu,
+                                    "contour_fn": contour_fn,
+                                    "use_padding": use_padding,
+                                    "a_t": a_t,
+                                    "a_h": a_h,
+                                    "max_n_holes": max_n_holes,
+                                    "save_mask": True,
+                                },
+                            )
+                            response.raise_for_status()
+                            result = response.json()
+                        break  # Success, exit retry loop
+                    except (httpx.RemoteProtocolError, httpx.ConnectError) as retry_err:
+                        # Worker crash (segfault) or connection refused (worker restarting)
+                        if attempt < max_retries:
+                            wait_secs = attempt * 3  # 3s, 6s backoff
+                            async with logger_manager.session() as (logger, db):
+                                await logger.warning(
+                                    f"[{idx}/{total_wsi}] compute_patches attempt {attempt}/{max_retries} "
+                                    f"failed for {wsi_id}: {type(retry_err).__name__}. "
+                                    f"Retrying in {wait_secs}s (cached coords will be used on retry)...",
+                                    metadata={"wsi_id": wsi_id, "attempt": attempt, "error": str(retry_err)}
+                                )
+                            await asyncio.sleep(wait_secs)
+                        else:
+                            raise  # Final attempt failed, propagate to outer except
 
                 num_patches = result.get('num_patches', 0)
                 cached = result.get('cached', False)
-                
+
                 async with logger_manager.session() as (logger, db):
                     if cached:
                         await logger.info(
@@ -257,13 +361,29 @@ async def run_training_pipeline(
 
                     # Update progress (0-33%)
                     progress = int((idx / total_wsi) * 33)
-                    await TrainingTaskRepository.update_status(db, task_id, TaskStatus.RUNNING, progress=progress)
+                    await TrainingTaskRepository.update_status(db, task_id, TaskStatus.PATCHING, progress=progress)
 
             except Exception as e:
+                err_type = type(e).__name__
+                err_msg = str(e) or repr(e)
+                err_tb = traceback.format_exc()
+                # For HTTP errors, include the response body for debugging
+                resp_body = ""
+                if isinstance(e, httpx.HTTPStatusError):
+                    try:
+                        resp_body = e.response.text[:1000]
+                    except Exception:
+                        resp_body = "(unable to read response body)"
                 async with logger_manager.session() as (logger, db):
                     await logger.error(
-                        f"Failed to extract patches from {wsi_id}: {e}",
-                        metadata={"wsi_id": wsi_id, "error": str(e)}
+                        f"Failed to extract patches from {wsi_id}: [{err_type}] {err_msg}",
+                        metadata={
+                            "wsi_id": wsi_id,
+                            "error": err_msg,
+                            "error_type": err_type,
+                            "response_body": resp_body,
+                            "traceback": err_tb,
+                        }
                     )
                 raise
 
@@ -416,11 +536,33 @@ async def run_training_pipeline(
     except Exception as e:
         # Don't reset progress on failure - keep the progress at the point of failure
         # Only update to 'failed' if not already cancelled
+        err_type = type(e).__name__
+        err_msg = str(e) or repr(e)
+        err_tb = traceback.format_exc()
+
+        # For HTTPStatusError, extract the actual error detail from the response body
+        # instead of the generic "Server error '500 Internal Server Error' for url ..." message
+        if isinstance(e, httpx.HTTPStatusError) and e.response is not None:
+            try:
+                import json
+                body = json.loads(e.response.text)
+                if isinstance(body, dict) and "detail" in body:
+                    err_msg = body["detail"]
+            except Exception:
+                # Fallback: use raw response text if JSON parsing fails
+                try:
+                    err_msg = e.response.text[:2000] or err_msg
+                except Exception:
+                    pass
+
         async with logger_manager.session() as (logger, db):
-            await logger.error(f"Training pipeline failed: {e}", metadata={"error": str(e)})
+            await logger.error(
+                f"Training pipeline failed: [{err_type}] {err_msg}",
+                metadata={"error": err_msg, "error_type": err_type, "traceback": err_tb}
+            )
             task = await TrainingTaskRepository.get_by_id(db, task_id)
             if task and task.status != TaskStatus.CANCELLED:
                 await TrainingTaskRepository.update_status(
-                    db, task_id, TaskStatus.FAILED, error_message=str(e)
+                    db, task_id, TaskStatus.FAILED, error_message=f"[{err_type}] {err_msg}"
                 )
 

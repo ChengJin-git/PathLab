@@ -9,7 +9,7 @@ Security Features:
 - Server stores bcrypt hash of the password
 
 Endpoints:
-- POST /auth/jwt/login - Login with email/password, returns JWT token
+- POST /auth/jwt/login - DISABLED (blocked to prevent Turnstile bypass)
 - POST /auth/jwt/logout - Logout (client-side token removal)
 - POST /auth/secure-login - Secure login with client-side hashed password
 - POST /auth/register - Register new user
@@ -26,8 +26,7 @@ import time
 import os
 import shutil
 import httpx
-from pathlib import Path
-from fastapi import APIRouter, Depends, Form, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -46,7 +45,7 @@ from backend.auth import (
     require_admin,
 )
 from backend.auth.schemas import UserReadAdmin
-from backend.auth.users import get_jwt_strategy, JWT_SECRET
+from backend.auth.users import get_jwt_strategy
 from backend.common.config import Config
 from ..dependencies import logger
 
@@ -55,13 +54,13 @@ from ..dependencies import logger
 APP_SALT = "PathLab2024SecureSalt"
 
 
-async def verify_recaptcha(token: str, secret_key: str) -> bool:
+async def verify_turnstile(token: str, secret_key: str) -> bool:
     """
-    Verify reCAPTCHA v3 token with Google API.
+    Verify Cloudflare Turnstile token with Cloudflare API.
 
     Args:
-        token: reCAPTCHA token from client
-        secret_key: reCAPTCHA secret key
+        token: Turnstile token from client
+        secret_key: Turnstile secret key
 
     Returns:
         True if verification successful, False otherwise
@@ -72,7 +71,7 @@ async def verify_recaptcha(token: str, secret_key: str) -> bool:
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                "https://www.google.com/recaptcha/api/siteverify",
+                "https://challenges.cloudflare.com/turnstile/v0/siteverify",
                 data={
                     "secret": secret_key,
                     "response": token,
@@ -81,7 +80,7 @@ async def verify_recaptcha(token: str, secret_key: str) -> bool:
             )
 
             if response.status_code != 200:
-                logger.warning(f"reCAPTCHA verification failed with status {response.status_code}")
+                logger.warning(f"Turnstile verification failed with status {response.status_code}")
                 return False
 
             result = response.json()
@@ -89,12 +88,12 @@ async def verify_recaptcha(token: str, secret_key: str) -> bool:
 
             if not success:
                 error_codes = result.get("error-codes", [])
-                logger.warning(f"reCAPTCHA verification failed: {error_codes}")
+                logger.warning(f"Turnstile verification failed: {error_codes}")
 
             return success
 
     except Exception as e:
-        logger.error(f"reCAPTCHA verification error: {e}")
+        logger.error(f"Turnstile verification error: {e}")
         return False
 
 
@@ -103,14 +102,14 @@ class SecureLoginRequest(BaseModel):
     username: str
     hashed_password: str  # SHA256(SHA256(password) + timestamp + APP_SALT)
     timestamp: int  # Unix timestamp in milliseconds
-    recaptcha_token: Optional[str] = None  # reCAPTCHA v3 token (optional)
+    turnstile_token: Optional[str] = None  # Cloudflare Turnstile token (optional)
 
 # Create main auth router
 router = APIRouter(tags=["Authentication"])
 
-# Include FastAPI-Users auth routes
-# POST /auth/jwt/login - Login
-# POST /auth/jwt/logout - Logout
+
+
+# Include FastAPI-Users auth routes (/auth/jwt/login disabled via config, /auth/jwt/logout active)
 router.include_router(
     fastapi_users.get_auth_router(auth_backend),
     prefix="/auth/jwt",
@@ -200,28 +199,26 @@ async def secure_login(
     - access_token: JWT token for authentication
     - token_type: "bearer"
     """
-    from fastapi_users.password import PasswordHelper
-
-    # Verify reCAPTCHA if enabled
+    # Verify Cloudflare Turnstile if enabled
     settings = Config.get_global_settings()
-    recaptcha_enabled = settings.get("recaptcha_enabled", False)
-    recaptcha_secret_key = settings.get("recaptcha_secret_key", "")
+    turnstile_enabled = settings.get("turnstile_enabled", False)
+    turnstile_secret_key = settings.get("turnstile_secret_key", "")
 
-    if recaptcha_enabled and recaptcha_secret_key:
-        if not request.recaptcha_token:
-            logger.warning(f"Login attempt without reCAPTCHA token for user {request.username}")
+    if turnstile_enabled and turnstile_secret_key:
+        if not request.turnstile_token:
+            logger.warning(f"Login attempt without Turnstile token for user {request.username}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="RECAPTCHA_TOKEN_REQUIRED"
+                detail="TURNSTILE_TOKEN_REQUIRED"
             )
 
-        # Verify reCAPTCHA token
-        recaptcha_valid = await verify_recaptcha(request.recaptcha_token, recaptcha_secret_key)
-        if not recaptcha_valid:
-            logger.warning(f"Login attempt with invalid reCAPTCHA token for user {request.username}")
+        # Verify Turnstile token
+        turnstile_valid = await verify_turnstile(request.turnstile_token, turnstile_secret_key)
+        if not turnstile_valid:
+            logger.warning(f"Login attempt with invalid Turnstile token for user {request.username}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="RECAPTCHA_VERIFICATION_FAILED"
+                detail="TURNSTILE_VERIFICATION_FAILED"
             )
 
     # Validate timestamp (prevent replay attacks)
@@ -282,8 +279,6 @@ async def secure_login(
 
     # For backward compatibility, check if user has password_sha256 field
     # If not, fall back to requiring password update
-
-    password_helper = PasswordHelper()
 
     # Verify password hash
     if not user.password_sha256:
@@ -666,6 +661,91 @@ async def set_maintenance_mode(
         logger.info(f"Admin {admin.email} disabled maintenance mode")
 
     return {"enabled": request.enabled, "affected_users": affected_users}
+
+
+# ============================================================================
+# Maintenance Notice (Announcement for non-admin users)
+# ============================================================================
+
+class MaintenanceNoticeRequest(BaseModel):
+    """Request model for setting maintenance notice."""
+    message: Optional[str] = Field(default=None, description="Notice message. Empty or null to clear.")
+
+
+@router.get("/auth/maintenance-notice", tags=["User Management"])
+async def get_maintenance_notice(
+    user: User = Depends(current_active_user),
+):
+    """
+    Get current maintenance notice and whether current user needs to acknowledge it.
+    Admin users never need to acknowledge.
+    """
+    notice = Config.get_maintenance_notice()
+    if not notice:
+        return {"active": False, "message": None, "needs_acknowledgment": False}
+
+    # Admin users never need to acknowledge
+    needs_ack = False
+    if user.role != "admin":
+        notice_time = notice.get("updated_at")
+        if notice_time:
+            from datetime import datetime, timezone
+            notice_dt = datetime.fromisoformat(notice_time)
+            if notice_dt.tzinfo is None:
+                notice_dt = notice_dt.replace(tzinfo=timezone.utc)
+            # Compare with user's last acknowledgment
+            if user.notice_acknowledged_at is None:
+                needs_ack = True
+            else:
+                user_ack = user.notice_acknowledged_at
+                if user_ack.tzinfo is None:
+                    user_ack = user_ack.replace(tzinfo=timezone.utc)
+                needs_ack = notice_dt > user_ack
+
+    return {
+        "active": True,
+        "message": notice.get("message"),
+        "updated_at": notice.get("updated_at"),
+        "needs_acknowledgment": needs_ack,
+    }
+
+
+@router.post("/auth/maintenance-notice", tags=["User Management"])
+async def set_maintenance_notice(
+    request: MaintenanceNoticeRequest,
+    admin: User = Depends(require_admin),
+):
+    """
+    Set or clear maintenance notice (admin only).
+    When set, non-admin users will see a modal they must acknowledge.
+    Send null/empty message to clear the notice.
+    """
+    result = Config.set_maintenance_notice(request.message)
+    if result:
+        logger.info(f"Admin {admin.email} set maintenance notice: {request.message[:50]}...")
+        return {"active": True, "message": result["message"], "updated_at": result["updated_at"]}
+    else:
+        logger.info(f"Admin {admin.email} cleared maintenance notice")
+        return {"active": False, "message": None}
+
+
+@router.post("/auth/acknowledge-notice", response_model=UserRead, tags=["Authentication"])
+async def acknowledge_notice(
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Acknowledge the current maintenance notice.
+    Records the current timestamp so the user won't see the same notice again.
+    """
+    from datetime import datetime, timezone
+    user.notice_acknowledged_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    await db.commit()
+    await db.refresh(user)
+    logger.info(f"User {user.email} acknowledged maintenance notice")
+    if user.avatar_path:
+        user.avatar_url = f"/avatars/{user.avatar_path}?t={int(user.updated_at.timestamp())}"
+    return user
 
 
 # Avatar management routes

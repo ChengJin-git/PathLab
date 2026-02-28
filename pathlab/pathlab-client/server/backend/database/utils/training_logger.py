@@ -2,7 +2,7 @@
 Training Logger - Hybrid logging system for training tasks
 
 Design:
-- Dual output: Database (for querying) + File (for completeness)
+- Dual output: Redis Streams (for querying/SSE) + File (for completeness)
 - Real-time streaming support via SSE
 - Structured logging with metadata
 - Thread-safe for concurrent logging
@@ -16,35 +16,35 @@ Usage:
     logger.error("Training failed", metadata={"error": str(e)})
 """
 
-import os
+import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from backend.database.models import TrainingLog
 from backend.database.utils.json_utils import sanitize_for_json
 
 
 class TrainingLogger:
     """
     Hybrid logger for training tasks.
-    Logs to both database (for querying/streaming) and file (for completeness).
+    Logs to both Redis Streams (for querying/SSE streaming) and file (for completeness).
+
+    Note: The db_session parameter is kept for backward compatibility but is no longer
+    used — all structured log storage goes through Redis Streams.
     """
     
-    def __init__(self, task_id: str, db_session: AsyncSession, log_dir: Optional[str] = None):
+    def __init__(self, task_id: str, db_session=None, log_dir: Optional[str] = None):
         """
         Initialize training logger.
 
         Args:
             task_id: Training task ID
-            db_session: Database session for storing logs
+            db_session: DEPRECATED — kept for API compatibility, not used
             log_dir: Directory for log files (default: uploads/logs/training/{task_id})
         """
         self.task_id = task_id
-        self.db_session = db_session
-        self.sequence: Optional[int] = None  # Monotonic per-task sequence, lazy-initialized from DB
+        self.db_session = db_session  # Kept for API compat (ScopedSession yields it)
+        self.sequence: Optional[int] = None  # Monotonic per-task sequence, lazy-initialized from Redis
 
         # Setup file logging - new structure: logs/training/{task_id}/
         if log_dir is None:
@@ -78,27 +78,29 @@ class TrainingLogger:
     
     async def _log(self, level: str, message: str, metadata: Optional[Dict[str, Any]] = None):
         """
-        Internal method to log to both database and file.
+        Internal method to log to both Redis Streams and file.
 
         Args:
             level: Log level (INFO, WARNING, ERROR, DEBUG)
             message: Log message
             metadata: Optional structured metadata (will be sanitized for JSON safety)
         """
+        from backend.common.redis_client import get_redis, make_key
+
         # Sanitize metadata to handle nan/inf values that would break JSON serialization
         # This is critical for training metrics like loss which may contain nan/inf
         safe_metadata = sanitize_for_json(metadata) if metadata else None
 
-        # Lazy-initialize sequence from DB to keep it monotonic across services
+        r = get_redis()
+
+        # Lazy-initialize sequence from Redis to keep it monotonic across services
         if self.sequence is None:
             try:
-                result = await self.db_session.execute(
-                    select(func.max(TrainingLog.sequence)).where(TrainingLog.task_id == self.task_id)
-                )
-                max_seq = result.scalar()
-                self.sequence = int(max_seq) if max_seq is not None else 0
+                seq_key = make_key("training_logs", self.task_id, "seq")
+                stored = await r.get(seq_key)
+                self.sequence = int(stored) if stored is not None else 0
             except Exception:
-                # Fallback to 0 if DB is not available; file logs will still work
+                # Fallback to 0 if Redis is not available; file logs will still work
                 self.sequence = 0
 
         self.sequence += 1
@@ -114,20 +116,26 @@ class TrainingLogger:
         for handler in self.file_logger.handlers:
             handler.flush()
 
-        # Log to database (use sanitized metadata for JSON safety)
+        # Log to Redis Stream (use sanitized metadata for JSON safety)
         try:
-            log_entry = TrainingLog(
-                task_id=self.task_id,
-                level=level,
-                message=message,
-                sequence=self.sequence,
-                extra_data=safe_metadata  # Use sanitized metadata for JSON safety
-            )
-            self.db_session.add(log_entry)
-            await self.db_session.flush()  # Flush but don't commit (let caller control transaction)
+            stream_key = make_key("training_logs", self.task_id)
+            seq_key = make_key("training_logs", self.task_id, "seq")
+            now = datetime.now(timezone.utc).isoformat()
+
+            fields: Dict[str, str] = {
+                "task_id": self.task_id,
+                "level": level,
+                "message": message,
+                "sequence": str(self.sequence),
+                "extra_data": json.dumps(safe_metadata) if safe_metadata else "",
+                "created_at": now,
+            }
+            await r.xadd(stream_key, fields)
+            # Persist latest sequence counter so other logger instances stay monotonic
+            await r.set(seq_key, str(self.sequence))
         except Exception as e:
-            # If database logging fails, at least we have file logs
-            self.file_logger.error(f"Failed to write log to database: {e}")
+            # If Redis logging fails, at least we have file logs
+            self.file_logger.error(f"Failed to write log to Redis: {e}")
     
     async def info(self, message: str, metadata: Optional[Dict[str, Any]] = None):
         """Log INFO level message"""
@@ -160,73 +168,9 @@ class TrainingLogger:
 class TrainingLogReader:
     """
     Reader for training logs with support for streaming and historical queries.
+    Now reads from Redis Streams instead of PostgreSQL.
     """
-    
-    @staticmethod
-    async def get_logs(
-        db_session: AsyncSession,
-        task_id: str,
-        level: Optional[str] = None,
-        limit: int = 1000,
-        offset: int = 0
-    ) -> list:
-        """
-        Get logs for a training task.
-        
-        Args:
-            db_session: Database session
-            task_id: Training task ID
-            level: Optional log level filter (INFO, WARNING, ERROR, DEBUG)
-            limit: Maximum number of logs to return
-            offset: Offset for pagination
-            
-        Returns:
-            List of log entries as dictionaries
-        """
-        from sqlalchemy import select, and_
-        
-        query = select(TrainingLog).where(TrainingLog.task_id == task_id)
-        
-        if level:
-            query = query.where(TrainingLog.level == level)
-        
-        query = query.order_by(TrainingLog.created_at, TrainingLog.sequence)
-        query = query.limit(limit).offset(offset)
-        
-        result = await db_session.execute(query)
-        logs = result.scalars().all()
-        
-        return [log.to_dict() for log in logs]
-    
-    @staticmethod
-    async def get_recent_logs(
-        db_session: AsyncSession,
-        task_id: str,
-        count: int = 100
-    ) -> list:
-        """
-        Get the most recent N logs for a training task.
-        
-        Args:
-            db_session: Database session
-            task_id: Training task ID
-            count: Number of recent logs to return
-            
-        Returns:
-            List of recent log entries as dictionaries
-        """
-        from sqlalchemy import select, desc
-        
-        query = select(TrainingLog).where(TrainingLog.task_id == task_id)
-        query = query.order_by(desc(TrainingLog.created_at), desc(TrainingLog.sequence))
-        query = query.limit(count)
-        
-        result = await db_session.execute(query)
-        logs = result.scalars().all()
-        
-        # Reverse to get chronological order
-        return [log.to_dict() for log in reversed(logs)]
-    
+
     @staticmethod
     def read_log_file(task_id: str, log_dir: Optional[str] = None, tail_lines: Optional[int] = None) -> list:
         """

@@ -9,6 +9,7 @@
  */
 
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Settings, Search, CheckCircle2 } from 'lucide-react'
@@ -62,6 +63,8 @@ export function PreprocessingStep({
   onBack,
   onNext,
 }: PreprocessingStepProps) {
+  const { t } = useTranslation()
+
   return (
     <>
       <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 mb-6">
@@ -72,28 +75,28 @@ export function PreprocessingStep({
               <Settings className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600" />
             </div>
             <div>
-              <h4 className="text-xs sm:text-base font-bold text-gray-900">Tiling Parameters</h4>
-              <p className="text-[10px] sm:text-xs text-gray-400 mt-0.5">Configure patch extraction and filtering</p>
+              <h4 className="text-xs sm:text-base font-bold text-gray-900">{t('training.preprocessing.tilingParams')}</h4>
+              <p className="text-[10px] sm:text-xs text-gray-400 mt-0.5">{t('training.preprocessing.tilingParamsDesc')}</p>
             </div>
           </div>
 
           <div className="space-y-4 sm:space-y-5">
             {/* Pyramid Level */}
             <div>
-              <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Pyramid Level</label>
+              <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{t('training.preprocessing.pyramidLevel')}</label>
               <select
                 value={pyramidLevel}
                 onChange={(e) => setPyramidLevel(Number(e.target.value))}
                 className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm bg-gray-50 border-gray-100 rounded-xl focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all font-bold outline-none"
               >
-                <option value={0}>L0 (Max Resolution)</option>
-                <option value={1}>L1 (1/4 Resolution)</option>
-                <option value={2}>L2 (1/16 Resolution)</option>
+                <option value={0}>{t('training.preprocessing.levelL0')}</option>
+                <option value={1}>{t('training.preprocessing.levelL1')}</option>
+                <option value={2}>{t('training.preprocessing.levelL2')}</option>
               </select>
             </div>
 
             <div className="pt-2 border-t border-gray-50">
-              <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 mt-3">Feature Batch Size</label>
+              <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 mt-3">{t('training.preprocessing.featureBatchSize')}</label>
               <div className="flex items-center gap-3">
                 <input
                   type="number"
@@ -102,15 +105,15 @@ export function PreprocessingStep({
                   onChange={(e) => setFeatureBatchSize(Number(e.target.value))}
                   min={1}
                 />
-                <span className="text-[9px] sm:text-xs text-gray-400 font-medium whitespace-nowrap">GPU patches</span>
+                <span className="text-[9px] sm:text-xs text-gray-400 font-medium whitespace-nowrap">{t('training.preprocessing.gpuPatches')}</span>
               </div>
             </div>
 
             <div className="pt-4 border-t border-gray-50">
-              <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Tissue Segmentation</label>
+              <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">{t('training.preprocessing.tissueSegmentation')}</label>
               <div className="grid grid-cols-2 gap-x-3 gap-y-2">
                 <div className="flex flex-col gap-1">
-                  <label className="text-[9px] sm:text-xs text-gray-500 font-medium">Saturation Threshold</label>
+                  <label className="text-[9px] sm:text-xs text-gray-500 font-medium">{t('training.preprocessing.saturationThreshold')}</label>
                   <input
                     type="number"
                     className="px-3 py-1.5 text-[11px] bg-gray-50 border-gray-100 rounded-lg focus:border-primary-400 transition-all font-bold"
@@ -119,7 +122,7 @@ export function PreprocessingStep({
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-[9px] sm:text-xs text-gray-500 font-medium">Mask Threshold</label>
+                  <label className="text-[9px] sm:text-xs text-gray-500 font-medium">{t('training.preprocessing.maskThreshold')}</label>
                   <input
                     type="number"
                     className="px-3 py-1.5 text-[11px] bg-gray-50 border-gray-100 rounded-lg focus:border-primary-400 transition-all font-bold"
@@ -137,7 +140,7 @@ export function PreprocessingStep({
                   className="w-3.5 h-3.5 text-primary-600 rounded border-gray-300 focus:ring-primary-500 cursor-pointer"
                 />
                 <label htmlFor="use_otsu" className="text-[10px] sm:text-xs text-gray-600 font-bold cursor-pointer select-none">
-                  Use Otsu Thresholding
+                  {t('training.preprocessing.useOtsu')}
                 </label>
               </div>
             </div>
@@ -149,14 +152,14 @@ export function PreprocessingStep({
           <div className="p-3 sm:p-4 border-b border-gray-100 bg-white flex-shrink-0 z-10">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
               <div>
-                <h4 className="text-sm sm:text-base font-bold text-gray-900">Feature Extractor</h4>
-                <p className="text-[10px] sm:text-xs text-gray-500">Select model architecture</p>
+                <h4 className="text-sm sm:text-base font-bold text-gray-900">{t('training.preprocessing.featureExtractor')}</h4>
+                <p className="text-[10px] sm:text-xs text-gray-500">{t('training.preprocessing.selectModelArch')}</p>
               </div>
               <div className="relative w-full sm:w-48">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Search..."
+                  placeholder={t('training.preprocessing.search')}
                   className="w-full pl-8 pr-3 py-1.5 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all font-light"
                   value={extractorSearch}
                   onChange={(e) => setExtractorSearch(e.target.value)}
@@ -186,7 +189,7 @@ export function PreprocessingStep({
                   </div>
                 ))
               ) : (
-                <div className="col-span-full py-12 text-center text-[10px] sm:text-xs text-gray-400 font-medium">No models found</div>
+                <div className="col-span-full py-12 text-center text-[10px] sm:text-xs text-gray-400 font-medium">{t('training.preprocessing.noModelsFound')}</div>
               )}
             </div>
           </div>
@@ -196,13 +199,12 @@ export function PreprocessingStep({
       {/* Navigation */}
       <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
         <Button variant="outline" onClick={onBack} className="w-full sm:w-auto px-6 py-2 sm:py-2.5 text-xs sm:text-sm order-2 sm:order-1">
-          ← Back to Data
+          {t('training.preprocessing.backToData')}
         </Button>
         <Button onClick={onNext} disabled={!canProceed} className="w-full sm:w-auto px-6 py-2 sm:py-2.5 text-xs sm:text-sm order-1 sm:order-2">
-          Next: Model Config →
+          {t('training.preprocessing.nextModelConfig')}
         </Button>
       </div>
     </>
   )
 }
-
