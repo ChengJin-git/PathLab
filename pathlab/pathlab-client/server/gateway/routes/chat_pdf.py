@@ -676,6 +676,51 @@ def get_pmc_pdf_url(url: str) -> str:
     return url
 
 
+async def _resolve_pubmed_to_pdf_url(url: str) -> str:
+    """Resolve a PubMed abstract URL to a downloadable PDF URL.
+
+    Uses the NCBI ID converter API to map PMID → PMCID / DOI.
+    Priority: PMC PDF (free full text) > DOI redirect.
+
+    Returns the best resolved URL, or the original URL unchanged on failure.
+    """
+    pmid_match = re.search(r'pubmed\.ncbi\.nlm\.nih\.gov/(\d+)', url)
+    if not pmid_match:
+        return url
+    pmid = pmid_match.group(1)
+    try:
+        api_url = (
+            f"https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/"
+            f"?ids={pmid}&format=json&tool=pathlab&email=cjinag@connect.ust.hk"
+        )
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(api_url)
+            if resp.status_code != 200:
+                logger.warning(f"NCBI ID converter returned {resp.status_code} for PMID {pmid}")
+                return url
+            data = resp.json()
+            records = data.get("records", [])
+            if not records:
+                logger.info(f"NCBI ID converter: no records for PMID {pmid}")
+                return url
+            record = records[0]
+            # Prefer PMC (free full-text PDF)
+            pmcid = record.get("pmcid")
+            if pmcid:
+                pdf_url = f"https://pmc.ncbi.nlm.nih.gov/articles/{pmcid}/pdf/"
+                logger.info(f"PubMed {pmid} → PMC PDF: {pdf_url}")
+                return pdf_url
+            # Fall back to DOI (will be resolved by Unpaywall/Semantic Scholar later)
+            doi = record.get("doi")
+            if doi:
+                doi_url = f"https://doi.org/{doi}"
+                logger.info(f"PubMed {pmid} → DOI: {doi_url}")
+                return doi_url
+    except Exception as e:
+        logger.warning(f"NCBI ID converter error for PMID {pmid}: {e}")
+    return url
+
+
 def get_acl_pdf_url(url: str) -> str:
     """Append .pdf to ACL Anthology article URL for direct PDF download.
 
@@ -1017,6 +1062,8 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
             url = get_wiley_pdf_url(url)
         elif 'biorxiv.org' in url or 'medrxiv.org' in url:
             url = get_biorxiv_pdf_url(url)
+        elif 'pubmed.ncbi.nlm.nih.gov' in url:
+            url = await _resolve_pubmed_to_pdf_url(url)
         elif 'pmc.ncbi.nlm.nih.gov' in url or 'ncbi.nlm.nih.gov/pmc' in url:
             url = get_pmc_pdf_url(url)
         elif 'aclanthology.org' in url:
@@ -1103,38 +1150,76 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
         return None
 
 
-def _parse_pdf_with_pymupdf(pdf_bytes: bytes, max_pages: int = 10) -> str | None:
-    """Fast PDF text extraction using PyMuPDF (fitz). No GPU required, <1 second.
+def _parse_pdf_with_pymupdf(
+    pdf_bytes: bytes,
+    max_pages: int = 10,
+    images_output_dir: Path | None = None,
+    images_url_prefix: str | None = None,
+) -> str | None:
+    """Fast PDF extraction using pymupdf4llm. No GPU required, typically <5 seconds.
+
+    Uses pymupdf4llm.to_markdown() for high-quality Markdown output including:
+    - Structured text with headers, bold/italic, code blocks
+    - Table detection and formatting
+    - Image extraction (when images_output_dir is provided)
 
     Returns markdown-formatted text with page markers, or None if:
-    - PyMuPDF is not installed
+    - pymupdf4llm / PyMuPDF is not installed
     - Extraction quality is poor (too few characters, too much garbage)
+
+    Args:
+        pdf_bytes: Raw PDF bytes.
+        max_pages: Maximum pages to parse (0 = unlimited).
+        images_output_dir: If provided, extracted images are saved here.
+        images_url_prefix: If provided, image references in markdown are
+            rewritten to use this URL prefix.
     """
     try:
-        import fitz  # PyMuPDF
+        import pymupdf4llm
+        import pymupdf
     except ImportError:
-        logger.info("PyMuPDF (fitz) not installed, skipping fast extraction")
+        logger.info("pymupdf4llm not installed, skipping fast extraction")
         return None
 
     try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        pages_to_process = min(len(doc), max_pages) if max_pages > 0 else len(doc)
+        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+        total_pages = len(doc)
+        pages_to_process = min(total_pages, max_pages) if max_pages > 0 else total_pages
+        page_list = list(range(pages_to_process))
 
+        # Determine whether to extract images
+        write_images = images_output_dir is not None
+        image_path = str(images_output_dir) if write_images else ""
+        if write_images:
+            images_output_dir.mkdir(parents=True, exist_ok=True)
+
+        md_text = pymupdf4llm.to_markdown(
+            doc,
+            pages=page_list,
+            write_images=write_images,
+            image_path=image_path,
+            image_format="png",
+            dpi=150,
+            page_chunks=True,
+            show_progress=False,
+        )
+
+        doc.close()
+
+        # md_text is a list of dicts when page_chunks=True
+        # Each dict has "text", "metadata", "images", "tables", etc.
         page_sections = []
         total_chars = 0
         garbage_chars = 0
 
-        for page_idx in range(pages_to_process):
-            page = doc[page_idx]
-            text = page.get_text("text").strip()
+        for chunk in md_text:
+            page_num = chunk["metadata"].get("page", chunk["metadata"].get("page_number", 0))
+            text = chunk["text"].strip()
             if text:
                 total_chars += len(text)
-                # Count non-printable / garbage characters (excluding normal whitespace)
                 garbage = sum(1 for c in text if ord(c) > 0xFFFF or (ord(c) < 32 and c not in '\n\r\t'))
                 garbage_chars += garbage
-                page_sections.append(f"--- Page {page_idx + 1} ---\n\n{text}")
-
-        doc.close()
+                page_sections.append(f"--- Page {page_num} ---\n\n{text}")
 
         # Quality checks
         if total_chars < 200:
@@ -1147,7 +1232,23 @@ def _parse_pdf_with_pymupdf(pdf_bytes: bytes, max_pages: int = 10) -> str | None
             return None
 
         md_content = "\n\n".join(page_sections)
-        logger.info(f"PyMuPDF fast extraction OK: {total_chars} chars from {len(page_sections)} pages")
+
+        # Rewrite local image paths to HTTP URLs if prefix is provided
+        if images_url_prefix and image_path:
+            # pymupdf4llm writes image refs like ![desc](image_path/filename.png)
+            md_content = md_content.replace(
+                f"]({image_path}/", f"]({images_url_prefix}/"
+            )
+            # Also handle backslash paths on Windows (just in case)
+            md_content = md_content.replace(
+                f"]({image_path}\\", f"]({images_url_prefix}/"
+            )
+
+        img_count = md_content.count("![")
+        logger.info(
+            f"PyMuPDF fast extraction OK: {total_chars} chars, "
+            f"{len(page_sections)} pages, {img_count} images"
+        )
         return md_content
 
     except Exception as e:
@@ -1402,8 +1503,12 @@ async def parse_pdf(
     The executor has max_workers=1, so multiple requests queue automatically.
     GPU selection happens inside the subprocess at execution time.
     """
-    # --- Tier 1: Fast PyMuPDF extraction (no GPU, <1s) ---
-    pymupdf_result = _parse_pdf_with_pymupdf(pdf_bytes, max_pages)
+    # --- Tier 1: Fast PyMuPDF extraction (no GPU, <5s) ---
+    pymupdf_result = _parse_pdf_with_pymupdf(
+        pdf_bytes, max_pages,
+        images_output_dir=images_output_dir,
+        images_url_prefix=images_url_prefix,
+    )
     if pymupdf_result is not None:
         return pymupdf_result
 
@@ -1775,15 +1880,18 @@ async def process_pdf_url(
                 logger.info(f"[BG MinerU] Re-scheduled upgrade on cache hit for {url}")
         else:
             # ── Two-tier parsing ──────────────────────────────────────────────
-            # Tier 1: Fast pymupdf (CPU, <1 s).  Returns immediately.
-            # max_pages=0 means unlimited: PyMuPDF is pure text extraction and
-            # processes 50 pages just as fast as 10 pages (no OCR / GPU needed).
-            pymupdf_result = _parse_pdf_with_pymupdf(pdf_bytes, max_pages=0)
-
-            # Pre-compute image storage paths for the sync MinerU fallback path.
+            # Pre-compute image storage paths (shared by both tiers).
             url_hash = _get_url_hash(url)
             sync_images_output_dir = _get_pdf_cache_dir() / "images" / url_hash
             sync_images_url_prefix = f"{Config.GATEWAY_SERVICE_URL}/pdf-images/{url_hash}"
+
+            # Tier 1: Fast pymupdf4llm (CPU, <5 s).  Extracts text + images.
+            # max_pages=0 means unlimited.
+            pymupdf_result = _parse_pdf_with_pymupdf(
+                pdf_bytes, max_pages=0,
+                images_output_dir=sync_images_output_dir,
+                images_url_prefix=sync_images_url_prefix,
+            )
 
             if pymupdf_result is not None:
                 pdf_content = pymupdf_result
@@ -1845,28 +1953,26 @@ async def process_pdf_url(
         if use_cache:
             _update_meta_academic_flag(url, academic)
 
-        # Determine whether MinerU images are already available.
-        # Check both the .mineru.md cache AND the actual images directory on disk.
-        # Images may exist on disk even if .mineru.md wasn't saved (e.g. MinerU
-        # crashed after extracting images but before writing markdown).
+        # Determine whether extracted images are already available.
+        # Images can come from either pymupdf4llm (Tier 1) or MinerU (Tier 2).
+        # Both tiers write images to the same directory: pdf_cache/images/{url_hash}/
+        # MinerU upgrade overwrites pymupdf images with higher-quality versions.
         url_hash_for_images = _get_url_hash(url)
         images_dir_for_check = _get_pdf_cache_dir() / "images" / url_hash_for_images
         has_images_on_disk = (
             images_dir_for_check.is_dir()
             and any(images_dir_for_check.iterdir())
         ) if images_dir_for_check.exists() else False
-        images_ready = _has_mineru_cache(url) or has_images_on_disk
+        images_ready = has_images_on_disk
 
-        # Build the content blob for the AI.  Append a [PDF_IMAGES_STATUS] marker when
-        # images are still being extracted (background MinerU upgrade not yet complete).
-        # The supplement prompt tells the AI how to handle this marker.
+        # Build the content blob for the AI.
         if images_ready:
             ai_pdf_content = pdf_content
         else:
             ai_pdf_content = (
                 pdf_content
-                + "\n\n[PDF_IMAGES_STATUS: pending — High-precision figure/image extraction "
-                "is running in the background (MinerU upgrade). If the user asks about specific "
+                + "\n\n[PDF_IMAGES_STATUS: pending — Figure/image extraction "
+                "is running in the background. If the user asks about specific "
                 "figures, tables, or images in this paper, inform them that image extraction is "
                 "not yet complete and they can ask again after refreshing the page.]"
             )

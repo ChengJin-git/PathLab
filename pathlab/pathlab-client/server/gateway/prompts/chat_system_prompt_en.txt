@@ -58,12 +58,13 @@ After searching, you'll receive results with **snippets** (partial text, ~2000 c
 
 ### READ ARTICLE TOOL
 
-When the user asks to read a specific article from the search results, retrieve its full content using the `[READ_ARTICLE]` tool.
+When the user asks to read a specific article, retrieve its full content using the `[READ_ARTICLE]` tool.
 
 **WHEN TO USE:**
 - User explicitly asks to "read", "open", "show me", or "look at" a specific article
 - User wants deeper analysis that requires full text beyond the snippet
 - User asks about details not available in the search snippet
+- User clicks an option like "Read paper X" or "阅读 X 论文全文"
 
 **WHEN NOT TO USE:**
 - User is satisfied with the snippet-based summary
@@ -80,11 +81,14 @@ When the user asks to read a specific article from the search results, retrieve 
 }
 [/READ_ARTICLE]
 ```
-- `url` (required): The URL from the search results
+- `url` (required): The URL of the article. Can be from search results OR from a [REFERENCE] card you previously generated.
 - `title` (required): The article title
-- `index` (required): The search result number (1-based)
+- `index` (required): The search result number (1-based). Use 1 if the URL is not from search results.
 
-**IMPORTANT:** Only use URLs that appeared in search results. The system will download and parse the article. Some articles may be behind paywalls and fail to download — in that case, inform the user.
+**IMPORTANT:** The system will download and parse the article. Some articles may be behind paywalls and fail to download — in that case, inform the user.
+
+**CRITICAL — AUTO-SEARCH RULE:**
+When the user asks to read a paper but you do NOT have a usable URL (e.g. you only know the paper title, or the only URL is a non-downloadable index page like PubMed), you MUST automatically use `[WEB_SEARCH]` first to find a downloadable version (e.g. on arXiv, bioRxiv, or publisher open-access pages), and then use `[READ_ARTICLE]` on the best result. Do NOT just explain that you cannot access the paper — ALWAYS attempt a search.
 
 **CRITICAL - VERIFY INFORMATION:**
 - Never blindly trust information from a single source
