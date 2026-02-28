@@ -71,17 +71,34 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ---
 
-### 4. AI 任务 API (`/tasks/*`)
+### 4. WSI 权限 API (`/wsi/permissions/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/wsi/permissions` | 获取 WSI 权限列表 | 已登录 |
+| POST | `/wsi/permissions` | 创建 WSI 权限 | 已登录 |
+| DELETE | `/wsi/permissions/{id}` | 删除 WSI 权限 | 已登录 |
+| GET | `/wsi/permissions/my-permissions` | 获取当前用户权限列表 | 已登录 |
+| GET | `/wsi/permissions/user-permissions/{target_user_id}` | 获取指定用户的权限 | 已登录 |
+| GET | `/wsi/permissions/datasets/{dataset_id}/permissions` | 获取数据集的权限列表 | 已登录 |
+| POST | `/wsi/permissions/datasets/{dataset_id}/permissions` | 创建数据集权限 | 已登录 |
+| DELETE | `/wsi/permissions/datasets/{dataset_id}/permissions/{target_user_id}` | 删除数据集权限 | 已登录 |
+
+---
+
+### 5. AI 任务 API (`/tasks/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
 | GET | `/tasks/extractors` | 列出可用特征提取器（19种） | 已登录 |
 | POST | `/tasks/wsi_classification` | 创建 WSI 分类任务 | 已登录 |
+| POST | `/tasks/patch_classification` | 创建 Patch 分类任务 | 已登录 |
+| POST | `/tasks/patch_segmentation` | 创建 Patch 分割任务 | 已登录 |
 | GET | `/tasks/{task_id}` | 获取任务状态 | 已登录 |
 
 ---
 
-### 5. 训练 API (`/training/*`)
+### 6. 训练 API (`/training/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -95,10 +112,11 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 | GET | `/training/models` | 列出已训练模型 | 已登录 |
 | GET | `/training/models/{model_id}` | 获取模型详情 | 已登录 |
 | DELETE | `/training/models/{model_id}` | 删除模型 | 已登录 |
+| POST | `/training/models/{model_id}/set-default` | 设置默认模型 | 已登录 |
 
 ---
 
-### 6. 结果 API (`/results/*`)
+### 7. 结果 API (`/results/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -118,22 +136,9 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 | DELETE | `/results/tasks/{task_id}/analysis/{analysis_id}` | 删除分析 | 已登录 |
 | POST | `/results/tasks/{task_id}/regenerate` | 重新生成 AI 结果 | 已登录 |
 
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/results` | 获取所有 AI 结果 | 已登录 |
-| GET | `/results/analysis/stats` | 获取分析统计 | 已登录 |
-| GET | `/results/tasks` | 获取可分析任务列表 | 已登录 |
-| POST | `/results/tasks/{task_id}/regenerate` | 重新生成 AI 结果 | 已登录 |
-| POST | `/results/external-validation` | 开始外部验证 | 已登录 |
-| GET | `/results/external-validation/{task_id}` | 获取验证进度 | 已登录 |
-| GET | `/results/tasks/{task_id}/analysis` | 获取任务分析结果 | 已登录 |
-| POST | `/results/tasks/{task_id}/analysis` | 运行任务分析 | 已登录 |
-| GET | `/results/tasks/{task_id}/analysis/{analysis_id}/file/{filename}` | 获取分析文件 | 已登录 |
-| DELETE | `/results/tasks/{task_id}/analysis/{analysis_id}` | 删除分析 | 已登录 |
-
 ---
 
-### 7. 热力图 API (`/heatmap/*`)
+### 8. 热力图 API (`/heatmap/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -146,7 +151,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ---
 
-### 8. GPU 队列 API (`/queue/*`)
+### 9. GPU 队列 API (`/queue/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -158,7 +163,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ---
 
-### 9. 聊天 API (`/chat`, `/conversations/*`)
+### 10. 聊天 API (`/chat`, `/conversations/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -173,7 +178,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ---
 
-### 10. PDF 聊天 API (`/chat/pdf/*`)
+### 11. PDF 聊天 API (`/chat/pdf/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -181,7 +186,17 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ---
 
-### 11. 语音识别 API (`/asr/*`)
+### 12. PDF 向量存储 API (`/chat/pdf/vectorstore/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| POST | `/chat/pdf/vectorstore/add` | 添加 PDF 到向量存储 | 已登录 |
+| DELETE | `/chat/pdf/vectorstore/{id}` | 删除向量存储 | 已登录 |
+| GET | `/chat/pdf/vectorstore` | 列出所有向量存储 | 已登录 |
+
+---
+
+### 13. 语音识别 API (`/asr/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -189,7 +204,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ---
 
-### 12. GPU 信息 API (`/gpu/*`)
+### 14. GPU 信息 API (`/gpu/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -197,7 +212,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ---
 
-### 13. 存储管理 API (`/storage/*`)
+### 15. 存储管理 API (`/storage/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -215,7 +230,35 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ---
 
-### 14. 系统设置 API (`/settings/*`)
+### 16. 存储任务 API (`/storage/tasks/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/storage/tasks` | 获取存储任务列表 | 已登录 |
+| GET | `/storage/tasks/{task_id}` | 获取存储任务详情 | 已登录 |
+| DELETE | `/storage/tasks/{task_id}` | 删除存储任务 | 已登录 |
+| GET | `/storage/tasks/tasks/stream` | 获取任务流 | 已登录 |
+| POST | `/storage/tasks/reset-derived-data` | 重置派生数据 | 管理员 |
+| POST | `/storage/tasks/tasks/batch-import` | 批量导入 | 管理员 |
+| POST | `/storage/tasks/tasks/delete-external` | 删除外部数据 | 管理员 |
+| POST | `/storage/tasks/batch-update-metadata` | 批量更新元数据 | 管理员 |
+
+---
+
+### 17. 存储扫描 API (`/storage/scan/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| POST | `/storage/scan/scan-directory` | 启动存储扫描 | 管理员 |
+| GET | `/storage/scan/status` | 获取扫描状态 | 已登录 |
+| GET | `/storage/scan/external-datasets-summary` | 获取外部数据集摘要 | 已登录 |
+| POST | `/storage/scan/tasks/unbind-dataset` | 解绑数据集 | 管理员 |
+| POST | `/storage/scan/check-external-files` | 检查外部文件 | 管理员 |
+| POST | `/storage/scan/delete-unavailable-files` | 删除不可用文件 | 管理员 |
+
+---
+
+### 18. 系统设置 API (`/settings/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -224,7 +267,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ---
 
-### 15. 统计 API (`/stats/*`)
+### 19. 统计 API (`/stats/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -233,33 +276,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ---
 
-### 16. 健康检查
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/health` | 健康检查 | 公开 |
-
----
-
-### 17. WSI 权限 API (`/wsi/permissions/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/wsi/permissions/my-permissions` | 获取当前用户权限列表 | 已登录 |
-| GET | `/wsi/permissions/user-permissions/{target_user_id}` | 获取指定用户的权限 | 已登录 |
-| GET | `/wsi/permissions/datasets/{dataset_id}/permissions` | 获取数据集的权限列表 | 已登录 |
-| POST | `/wsi/permissions/datasets/{dataset_id}/permissions` | 创建数据集权限 | 已登录 |
-| DELETE | `/wsi/permissions/datasets/{dataset_id}/permissions/{target_user_id}` | 删除数据集权限 | 已登录 |
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/wsi/permissions` | 获取 WSI 权限列表 | 已登录 |
-| POST | `/wsi/permissions` | 创建 WSI 权限 | 已登录 |
-| DELETE | `/wsi/permissions/{id}` | 删除 WSI 权限 | 已登录 |
-
----
-
-### 18. 消息反馈 API (`/feedback/*`)
+### 20. 消息反馈 API (`/feedback/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -275,53 +292,21 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 | GET | `/feedback/admin/feedbacks/export-async/{task_id}/download` | 下载导出文件 | 管理员 |
 | DELETE | `/feedback/admin/feedbacks/reset` | 重置反馈数据 | 管理员 |
 
+---
+
+### 21. 标注 API (`/annotation/*`)
+
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
-| POST | `/feedback` | 提交消息反馈 | 已登录 |
-| GET | `/feedback` | 获取反馈列表 | 已登录 |
-| GET | `/feedback/{id}` | 获取反馈详情 | 已登录 |
+| GET | `/annotation/drafts` | 获取标注草稿列表 | 已登录 |
+| POST | `/annotation/drafts` | 创建标注草稿 | 已登录 |
+| GET | `/annotation/drafts/{id}` | 获取标注草稿详情 | 已登录 |
+| PATCH | `/annotation/drafts/{id}` | 更新标注草稿 | 已登录 |
+| DELETE | `/annotation/drafts/{id}` | 删除标注草稿 | 已登录 |
 
 ---
 
-### 19. 存储任务 API (`/storage/tasks/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/storage/tasks` | 获取存储任务列表 | 已登录 |
-| GET | `/storage/tasks/{task_id}` | 获取存储任务详情 | 已登录 |
-| DELETE | `/storage/tasks/{task_id}` | 删除存储任务 | 已登录 |
-| GET | `/storage/tasks/tasks/stream` | 获取任务流 | 已登录 |
-| POST | `/storage/tasks/reset-derived-data` | 重置派生数据 | 管理员 |
-| POST | `/storage/tasks/tasks/batch-import` | 批量导入 | 管理员 |
-| POST | `/storage/tasks/tasks/delete-external` | 删除外部数据 | 管理员 |
-| POST | `/storage/tasks/batch-update-metadata` | 批量更新元数据 | 管理员 |
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/storage/tasks` | 获取存储任务列表 | 已登录 |
-| GET | `/storage/tasks/{id}` | 获取存储任务详情 | 已登录 |
-
----
-
-### 20. 存储扫描 API (`/storage/scan/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| POST | `/storage/scan/scan-directory` | 启动存储扫描 | 管理员 |
-| GET | `/storage/scan/status` | 获取扫描状态 | 已登录 |
-| GET | `/storage/scan/external-datasets-summary` | 获取外部数据集摘要 | 已登录 |
-| POST | `/storage/scan/tasks/unbind-dataset` | 解绑数据集 | 管理员 |
-| POST | `/storage/scan/check-external-files` | 检查外部文件 | 管理员 |
-| POST | `/storage/scan/delete-unavailable-files` | 删除不可用文件 | 管理员 |
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| POST | `/storage/scan` | 启动存储扫描 | 管理员 |
-| GET | `/storage/scan/status` | 获取扫描状态 | 已登录 |
-
----
-
-### 21. 分类分析 API (`/analysis/classification/*`)
+### 22. 分类分析 API (`/analysis/classification/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -330,7 +315,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ---
 
-### 22. 生存分析 API (`/analysis/survival/*`)
+### 23. 生存分析 API (`/analysis/survival/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -339,7 +324,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ---
 
-### 23. 外部验证分析 API (`/analysis/external-validation/*`)
+### 24. 外部验证分析 API (`/analysis/external-validation/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -348,7 +333,16 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ---
 
-### 24. 分析指标 API (`/analysis/metrics/*`)
+### 25. 分割分析 API (`/analysis/segmentation/*`)
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| POST | `/analysis/segmentation` | 运行分割分析 | 已登录 |
+| GET | `/analysis/segmentation/{id}` | 获取分割结果 | 已登录 |
+
+---
+
+### 26. 分析指标 API (`/analysis/metrics/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -357,7 +351,7 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ---
 
-### 25. 分析状态 API (`/analysis/state/*`)
+### 27. 分析状态 API (`/analysis/state/*`)
 
 | 方法 | 端点 | 说明 | 权限 |
 |------|------|------|------|
@@ -366,6 +360,13 @@ API 网关服务，PathLab 数字病理平台的统一入口。
 
 ---
 
+### 28. 健康检查
+
+| 方法 | 端点 | 说明 | 权限 |
+|------|------|------|------|
+| GET | `/health` | 健康检查 | 公开 |
+
+---
 
 ## 数据库架构
 
@@ -391,7 +392,6 @@ PostgreSQL 数据库包含 18 个表（自动创建）：
 | `training_logs` | 训练日志条目（运行时通过 Redis Streams 读写，SSE 流式） |
 | `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
 | `annotation_drafts` | 标注草稿 |
-| `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
 
 ---
 

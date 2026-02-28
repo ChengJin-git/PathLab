@@ -97,23 +97,23 @@
 |------|-----|---------|------|
 | ResNet50 | `resnet50` | 2048 | ImageNet |
 | ViT-Large | `vit_l_16` | 1024 | ImageNet |
-| CONCH | `conch` | 512 | Mahmood Lab |
-| CONCH 1.5 | `conch15` | 512 | Mahmood Lab |
 | UNI | `uni` | 1024 | Mahmood Lab |
 | UNI2 | `uni2` | 1536 | Mahmood Lab |
+| CONCH | `conch` | 512 | Mahmood Lab |
+| CONCH 1.5 | `conch15` | 512 | Mahmood Lab |
 | Virchow | `virchow` | 1280 | Paige AI |
 | Virchow2 | `virchow2` | 1280 | Paige AI |
 | H-Optimus-0 | `H-Optimus-0` | 1536 | Bioptimus |
 | H-Optimus-1 | `H-Optimus-1` | 1536 | Bioptimus |
 | Phikon | `phikon` | 768 | Owkin |
 | Phikon2 | `phikon2` | 1024 | Owkin |
-| PLIP | `plip` | 512 | PathLAIA |
+| PLIP | `plip` | 512 | James Zou Lab |
+| PathoCLIP | `patho_clip` | 512 | Hong Bu Lab |
 | OpenMidnight | `openmidnight` | 1536 | SophontAI |
-| mSTAR | `mSTAR` | 1024 | Smartlab |
-| GPFM | `GPFM` | 1024 | Smartlab |
-| PathoCLIP | `patho_clip` | 512 | PathLAIA |
-| SmartCCS | `smartccs` | 1024 | Smartlab |
-| SmartCyto | `smartcyto` | 768 | Smartlab |
+| mSTAR | `mSTAR` | 1024 | HKUST Smart Lab |
+| GPFM | `GPFM` | 1024 | HKUST Smart Lab |
+| SmartCCS | `smartccs` | 1024 | HKUST Smart Lab |
+| SmartCyto | `smartcyto` | 768 | HKUST Smart Lab |
 
 ### 支持的聚合器（8 种）
 
@@ -190,13 +190,14 @@ uploads/
 │   └── {task_id}/
 │       ├── features/   # 特征文件（软链接）
 │       └── checkpoints/
-├── models/             # 用户训练的模型
+ # 用户训练的模型
 │   └── {model_id}/
 │       ├── checkpoint.pth
-│       └── config.json
+├── models/            │       └── config.json
 └── ai_results/         # AI 推理结果
     └── {wsi_id}/
         └── {task_id}_attention.npy
+```
 
 ---
 

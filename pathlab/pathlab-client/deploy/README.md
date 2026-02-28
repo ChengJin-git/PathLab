@@ -3,6 +3,15 @@
 ## 前置要求
 
 - Ubuntu 20.04+ / Debian 11+
+- Python 3.12+ (推荐使用 Conda)
+- Node.js 18+
+- Redis 6+
+- PostgreSQL 14+
+- Nginx
+- 开放端口: 80 (HTTP), 443 (HTTPS)
+- 可选: CrowdSec (安全防护)
+
+- Ubuntu 20.04+ / Debian 11+
 - Python 3.10+ (推荐使用 Conda)
 - Node.js 18+
 - Redis 6+

@@ -23,28 +23,43 @@ PathLab 的 Python 后端服务，提供 WSI 处理、AI 推理和 API 网关功
 server/
 ├── main.py               # 统一入口 (动态端口发现)
 ├── requirements.txt      # Python 依赖
+├── pipeline.py           # AI Pipeline 编排
 ├── gateway/              # API 网关服务 (对外唯一入口)
 │   ├── main.py           # Gateway FastAPI 应用
 │   ├── task_queue.py     # GPU 任务队列管理器
 │   ├── models.py         # Pydantic 请求/响应模型
+│   ├── pipeline.py       # AI Pipeline 编排
 │   ├── routes/           # 模块化路由 (30 个模块)
 │   │   ├── auth.py           # 认证 (FastAPI-Users)
 │   │   ├── wsi.py            # WSI CRUD + 数据集
 │   │   ├── wsi_upload.py     # WSI 上传 (文件/路径/CSV)
+│   │   ├── wsi_permissions.py # WSI 权限管理
 │   │   ├── ai_tasks.py       # AI 推理任务 + 提取器列表
 │   │   ├── training.py       # 训练任务 (SSE 日志流)
-    │   │   ├── results.py        # 结果查询 + 外部验证 + 分割分析
+│   │   ├── results.py        # 结果查询 + 外部验证 + 分割分析
 │   │   ├── models.py         # 模型管理
 │   │   ├── chat.py           # AI Chat (SSE 流式)
 │   │   ├── chat_pdf.py       # PDF 文档对话 (RAG)
 │   │   ├── chat_pdf_vectorstore.py # PDF 向量存储管理
+│   │   ├── chat_feedback.py  # 消息反馈
 │   │   ├── queue.py          # GPU 队列管理
 │   │   ├── storage.py        # 存储管理 + 迁移
+│   │   ├── storage_tasks.py  # 存储任务
+│   │   ├── storage_scan.py   # 存储扫描
 │   │   ├── heatmap.py        # 热图数据 + Patch 图像
 │   │   ├── asr.py            # 语音识别 (DashScope)
 │   │   ├── stats.py          # 系统统计
 │   │   ├── settings.py       # 全局设置
-    │   │   ├── annotation.py     # 标注管理
+│   │   ├── gpu.py            # GPU 信息
+│   │   ├── annotation.py     # 标注管理
+│   │   ├── classification_analysis.py  # 分类分析
+│   │   ├── survival_analysis.py       # 生存分析
+│   │   ├── external_validation_analysis.py # 外部验证
+│   │   ├── segmentation_analysis.py   # 分割分析
+│   │   ├── analysis_metrics.py        # 分析指标
+│   │   ├── analysis_state.py          # 分析状态
+│   │   ├── analysis_helpers.py        # 分析辅助
+│   ├── utils.py            # 工具函数
 │   └── dependencies.py   # 依赖注入
 │
 └── backend/              # 核心后端服务
@@ -57,8 +72,11 @@ server/
     │   │   ├── patch_segmentation/  # Patch 分割
     │   │   └── wsi_survival/        # 生存分析
     │   ├── extractors/       # 19 种特征提取器
-    │   │   ├── aggregators/      # 8 种聚合器 (ABMIL, MeanMIL, MaxMIL, DSMIL, DTFDMIL, CLAM-SB, CLAM-MB, TransMIL)
+    │   ├── aggregators/      # 8 种聚合器 (ABMIL, MeanMIL, MaxMIL, DSMIL, DTFDMIL, CLAM-SB, CLAM-MB, TransMIL)
     │   ├── classifiers/      # 分类器
+    │   ├── segmentors/       # 分割器
+    │   ├── permission_revocation.py # 权限撤销
+    │   └── utils/            # CAM 工具 (Grad-CAM, Attention)
     ├── preprocessing/    # 预处理服务 (内部端口)
     │   ├── main.py           # 预处理 FastAPI 应用
     │   └── tiling.py         # WSI 切片、坐标提取
@@ -68,6 +86,7 @@ server/
     │   └── repositories/     # 数据访问层 (Repository 模式，模块化目录)
     ├── storage/          # 文件存储管理
     │   └── manager.py        # 存储管理器 (级联删除)
+    ├── auth/             # 认证模块
     └── common/           # 公共模块
         ├── redis_client.py   # Redis 异步连接池
         ├── progress_store.py # 任务进度存储 (Redis)
@@ -173,6 +192,43 @@ python main.py
 # PORT=48427
 # 访问: http://127.0.0.1:48427/docs
 ```
+
+## 特征提取器 (19 种)
+
+| 模型 | ID | 维度 | 来源 |
+|------|-----|------|------|
+| ResNet50 | resnet50 | 2048 | ImageNet |
+| ViT-Large | vit_l_16 | 1024 | ImageNet |
+| UNI | uni | 1024 | Mahmood Lab |
+| UNI2 | uni2 | 1536 | Mahmood Lab |
+| CONCH | conch | 512 | Mahmood Lab |
+| CONCH 1.5 | conch15 | 512 | Mahmood Lab |
+| Virchow | virchow | 1280 | Paige AI |
+| Virchow2 | virchow2 | 1280 | Paige AI |
+| H-Optimus-0 | H-Optimus-0 | 1536 | Bioptimus |
+| H-Optimus-1 | H-Optimus-1 | 1536 | Bioptimus |
+| Phikon | phikon | 768 | Owkin |
+| Phikon2 | phikon2 | 1024 | Owkin |
+| PLIP | plip | 512 | James Zou Lab |
+| PathoCLIP | patho_clip | 512 | Hong Bu Lab |
+| OpenMidnight | openmidnight | 1536 | SophontAI |
+| mSTAR | mSTAR | 1024 | HKUST Smart Lab |
+| GPFM | GPFM | 1024 | HKUST Smart Lab |
+| SmartCCS | smartccs | 1024 | HKUST Smart Lab |
+| SmartCyto | smartcyto | 768 | HKUST Smart Lab |
+
+## 聚合器 (8 种)
+
+| 聚合器 | ID | 说明 |
+|--------|-----|------|
+| ABMIL | abmil | Attention-based MIL |
+| MeanMIL | meanmil | 均值池化 |
+| MaxMIL | maxmil | 最大值池化 |
+| DSMIL | dsmil | 双流 MIL |
+| DTFDMIL | dtfdmil | DTF-MIL |
+| CLAM-SB | clam_sb | CLAM 单分支 |
+| CLAM-MB | clam_mb | CLAM 多分支 |
+| TransMIL | transmil | Transformer MIL |
 
 ## 相关文档
 

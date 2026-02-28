@@ -28,6 +28,48 @@
    - Tile-based rendering for performance
    - Navigation controls and mini-map
    - Full-screen support
+   - Heatmap overlay support
+
+2. **AI Chat Assistant** - Natural language interface for research tasks
+   - Streaming LLM responses (OpenRouter)
+   - Task description parsing
+   - Automatic parameter extraction (PathLab Agent)
+   - Conversation history (database-persisted)
+   - PDF document Q&A (RAG)
+
+3. **Dashboard** - System overview and statistics
+   - WSI count and label distribution
+   - Task status monitoring
+   - Quick access to recent analyses
+
+4. **File Browser** - WSI library management
+   - Grid/list view of all slides
+   - Metadata display (case ID, label, dimensions)
+   - Quick navigation to viewer
+   - Dataset organization
+
+5. **Analysis Setup** - Configure AI analysis tasks
+   - Parameter customization (tile size, stride, model selection)
+   - Device selection (CPU/GPU)
+   - Real-time task submission
+   - 19 feature extractors + 8 MIL aggregators
+
+6. **Results Viewer** - View analysis results
+   - WSI classification predictions
+   - Attention heatmap visualization
+   - Patch-level predictions
+   - Survival analysis curves
+
+7. **Storage Management** - File lifecycle management
+   - Storage statistics
+   - Orphaned file detection
+   - Storage migration support
+
+1. **WSI Viewer** - Interactive multi-gigapixel image viewer
+   - Deep Zoom Image (DZI) protocol
+   - Tile-based rendering for performance
+   - Navigation controls and mini-map
+   - Full-screen support
 
 2. **AI Chat Assistant** - Natural language interface for research tasks
    - Streaming LLM responses
