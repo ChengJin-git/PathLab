@@ -1431,6 +1431,54 @@ def _run_mineru_in_process(
     _os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
     _logger.info(f"[MinerU subprocess] Using cuda:{gpu_idx} ({free_mb:.0f} MB free)")
 
+    # ── Monkey-patch vLLM memory profiling assertion ────────────────────
+    # On shared-GPU machines, other processes may release VRAM while vLLM
+    # is profiling, causing free memory to *increase* — which triggers a
+    # hard AssertionError in vllm.v1.worker.gpu_worker.Worker.
+    # We replace the assertion with a warning so the engine can still start
+    # using a conservative memory estimate.
+    try:
+        import vllm.v1.worker.gpu_worker as _vllm_gw
+        import torch as _torch
+
+        _orig_determine = _vllm_gw.Worker.determine_available_memory
+
+        @_torch.inference_mode()
+        def _patched_determine_available_memory(self):
+            """Wrapper that converts the memory-profiling assertion into a
+            warning + retry instead of a hard crash."""
+            import time as _time
+            _MAX_RETRIES = 3
+            for _attempt in range(1, _MAX_RETRIES + 1):
+                try:
+                    return _orig_determine(self)
+                except AssertionError as _ae:
+                    if "memory profiling" not in str(_ae):
+                        raise  # unrelated assertion — propagate
+                    if _attempt < _MAX_RETRIES:
+                        _logger.warning(
+                            f"[MinerU] vLLM memory profiling assertion "
+                            f"(attempt {_attempt}/{_MAX_RETRIES}), "
+                            f"retrying in 2s: {_ae}"
+                        )
+                        _time.sleep(2)
+                        # Re-take the init snapshot so the next attempt
+                        # starts from a fresh baseline.
+                        _torch.cuda.empty_cache()
+                        from vllm.utils import MemorySnapshot as _MemSnap
+                        self.init_snapshot = _MemSnap()
+                    else:
+                        _logger.warning(
+                            f"[MinerU] vLLM memory profiling assertion "
+                            f"persisted after {_MAX_RETRIES} retries: {_ae}"
+                        )
+                        raise
+
+        _vllm_gw.Worker.determine_available_memory = _patched_determine_available_memory
+        _logger.info("[MinerU] Patched vLLM memory profiling for shared-GPU tolerance")
+    except Exception as _patch_err:
+        _logger.debug(f"[MinerU] Could not patch vLLM memory profiling: {_patch_err}")
+
     images_output_dir = Path(images_output_dir_str) if images_output_dir_str else None
     try:
         return _parse_pdf_sync_inner(
@@ -1475,7 +1523,11 @@ def _parse_pdf_sync_inner(
                 output_dir = temp_path / "output"
                 local_image_dir, local_md_dir = prepare_env(output_dir, "input", "hybrid_auto")
 
-                backend = get_vlm_engine(inference_engine='auto', is_async=False)
+                # Use 'transformers' instead of 'auto' to avoid vLLM's
+                # memory-profiling assertion that crashes on shared-GPU
+                # machines when other processes release VRAM during init.
+                # transformers is stable and sufficient for one-PDF-at-a-time.
+                backend = get_vlm_engine(inference_engine='transformers', is_async=False)
 
                 start_page_id = 0
                 end_page_id = max_pages - 1 if max_pages > 0 else None

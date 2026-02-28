@@ -575,7 +575,7 @@ export default function TaskListPage() {
                         <Brain className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
                         <span className="text-sm sm:text-base font-bold truncate text-gray-900">
                           {task.data_type === 'patch'
-                            ? t('taskList.linearProbe')
+                            ? t(`taskList.classifiers.${(task.model_config as Record<string, unknown>)?.classifier || 'linear'}`, t('taskList.linearProbe'))
                             : (task.model_config?.aggregator?.toUpperCase() || t('taskList.na'))}
                         </span>
                       </div>

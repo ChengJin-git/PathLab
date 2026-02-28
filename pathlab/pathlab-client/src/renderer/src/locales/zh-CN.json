@@ -818,6 +818,8 @@
     "no": "否"
   },
   "taskDetail": {
+    "creatingTask": "正在创建任务...",
+    "creatingTaskDescription": "正在设置您的任务，大型数据集可能需要一些时间。",
     "taskNotFound": "未找到任务",
     "taskNotFoundDescription": "您查找的任务不存在或无法加载。",
     "backToChat": "返回对话",
@@ -890,6 +892,7 @@
       "extractor": "提取器",
       "featureBatchSize": "特征批量大小",
       "modelAndTraining": "模型与训练",
+      "classifierHead": "分类头",
       "learningRate": "学习率",
       "epochs": "训练轮次",
       "optimizer": "优化器",
@@ -1015,6 +1018,11 @@
     "patches": "图像",
     "slides": "切片",
     "linearProbe": "线性探测器",
+    "classifiers": {
+      "linear": "线性探测器",
+      "mlp": "多层感知器",
+      "attention": "注意力分类器"
+    },
     "editTaskNameTitle": "编辑任务名称",
     "cancelTask": "取消任务",
     "deleteTask": "删除任务",

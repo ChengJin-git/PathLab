@@ -150,6 +150,11 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                   </span>
                 </div>
               )}
+              {task.data_type === 'patch' && (
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">{t(`taskList.classifiers.${task.model_config.classifier || 'linear'}`, t('taskList.linearProbe'))}</span>
+                </div>
+              )}
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
                 <span className="text-gray-500 font-medium">{t('taskDetail.configuration.learningRate')}</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">

@@ -818,6 +818,8 @@
     "no": "否"
   },
   "taskDetail": {
+    "creatingTask": "正在建立任務...",
+    "creatingTaskDescription": "正在設定您的任務，大型資料集可能需要一些時間。",
     "taskNotFound": "未找到任務",
     "taskNotFoundDescription": "您查找的任務不存在或無法載入。",
     "backToChat": "返回對話",
@@ -890,6 +892,7 @@
       "extractor": "提取器",
       "featureBatchSize": "特徵批次大小",
       "modelAndTraining": "模型與訓練",
+      "classifierHead": "分類頭",
       "learningRate": "學習率",
       "epochs": "訓練輪次",
       "optimizer": "優化器",
@@ -1015,6 +1018,11 @@
     "patches": "切片塊",
     "slides": "切片",
     "linearProbe": "線性探測器",
+    "classifiers": {
+      "linear": "線性探測器",
+      "mlp": "多層感知器",
+      "attention": "注意力分類器"
+    },
     "editTaskNameTitle": "編輯任務名稱",
     "cancelTask": "取消任務",
     "deleteTask": "刪除任務",

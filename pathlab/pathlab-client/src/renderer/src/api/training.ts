@@ -267,6 +267,7 @@ export interface TrainingTaskConfig {
   }
   model: {
     aggregator: string
+    classifier?: string  // Classifier head for patch-level: linear, mlp, attention
     backbone?: string  // For patch-level tasks
     learning_rate: number
     epochs: number

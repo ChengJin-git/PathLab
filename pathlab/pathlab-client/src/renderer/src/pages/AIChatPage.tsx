@@ -1542,12 +1542,12 @@ export default function AIChatPage() {
     }
     setMessages(prev => [...prev, successMessage])
 
-    // Navigate immediately to task detail page (optimistic update)
-    navigate(`/task/${taskId}`)
+    // Don't navigate — stay on the chat page (fire-and-forget).
+    // The success message already contains a NAVIGATE card for the user to click if they want.
 
-    // Persist success message in background - don't block navigation
+    // Persist success message in background
     persistNewAssistantMessage(successMessage.id, successContent).catch(console.error)
-  }, [persistMessageUpdate, persistNewAssistantMessage, t, navigate])
+  }, [persistMessageUpdate, persistNewAssistantMessage, t])
 
   // Handle registration success (persist to message history)
   const handleRegistrationSuccess = useCallback(async (

@@ -818,6 +818,8 @@
     "no": "No"
   },
   "taskDetail": {
+    "creatingTask": "Creating Task...",
+    "creatingTaskDescription": "Your task is being set up. This may take a moment for large datasets.",
     "taskNotFound": "Task Not Found",
     "taskNotFoundDescription": "The task you are looking for does not exist or could not be loaded.",
     "backToChat": "Back to Chat",
@@ -890,6 +892,7 @@
       "extractor": "Extractor",
       "featureBatchSize": "Feature Batch Size",
       "modelAndTraining": "Model & Training",
+      "classifierHead": "Classifier Head",
       "learningRate": "Learning Rate",
       "epochs": "Epochs",
       "optimizer": "Optimizer",
@@ -1015,6 +1018,11 @@
     "patches": "patches",
     "slides": "slides",
     "linearProbe": "Linear Probe",
+    "classifiers": {
+      "linear": "Linear Probe",
+      "mlp": "Multi-Layer Perceptron",
+      "attention": "Attention"
+    },
     "editTaskNameTitle": "Edit Task Name",
     "cancelTask": "Cancel Task",
     "deleteTask": "Delete Task",
