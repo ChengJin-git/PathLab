@@ -38,6 +38,7 @@ import SearchingStatus, {
   removeSearchStatusBlock,
   SearchCompletedCard,
   SummarizingSearchStatus,
+  SummarizingPdfStatus,
   parseWebSearchResult,
   removeWebSearchResultBlock,
   parseAllPdfParseStatus,
@@ -617,6 +618,12 @@ const AssistantMessage = React.memo(function AssistantMessage({
     // or alongside "Summarizing search results…" (jarring when PDF is cached).
     const showPdfParsingCompleted = !!pdfParseStatusItems && !hasPdfParsingInProgress && !isWebSearchStreaming
 
+    // Show "summarizing PDF" indicator after PDF parsing completes but before
+    // the AI starts streaming the actual summary. Fills the visual gap between
+    // the "已解析 N 篇 PDF 论文" card and the streamed markdown content.
+    const hasCompletedPdf = pdfParseStatusItems?.some(i => i.status === 'completed') ?? false
+    const showSummarizingPdf = showPdfParsingCompleted && hasCompletedPdf && isStreaming && !displayContent.trim()
+
 	  return (
     <div className="w-full min-w-0">
       {/* Searching Status indicator */}
@@ -646,6 +653,11 @@ const AssistantMessage = React.memo(function AssistantMessage({
       {/* PDF Parsing Completed Card */}
       {showPdfParsingCompleted && pdfParseStatusItems && (
         <PdfParsingCompletedCard items={pdfParseStatusItems} />
+      )}
+
+      {/* Summarizing PDF indicator */}
+      {showSummarizingPdf && (
+        <SummarizingPdfStatus />
       )}
 
 	      {/* Markdown content — no skeleton; stream starts directly */}

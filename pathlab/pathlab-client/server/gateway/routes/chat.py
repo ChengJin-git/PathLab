@@ -1094,6 +1094,18 @@ After saving, return here and start chatting!"""
                 yield "data: [DONE]\n\n"
                 return
 
+            # If the streamed response is empty, emit a fallback so the user
+            # isn't left staring at a blank message.
+            if not full_response.strip():
+                _EMPTY_STREAM_FALLBACK = {
+                    "zh-CN": "抱歉，生成回复时出现了问题。请再发一条消息让我重试 😊",
+                    "zh-HK": "抱歉，生成回覆時出現了問題。請再發一條訊息讓我重試 😊",
+                    "en": "Sorry, something went wrong while generating the response. Please send another message so I can try again 😊",
+                }
+                fb = _EMPTY_STREAM_FALLBACK.get(detected_lang, _EMPTY_STREAM_FALLBACK["en"])
+                logger.warning(f"Streaming path produced empty response — emitting fallback")
+                yield f"data: {json.dumps({'content': fb})}\n\n"
+
             # Streaming path always breaks after emitting — no tool detection needed
             # because the AI was given article content and asked to summarize.
             # Inject CITATION_CONTEXTS before [DONE] if article was read
@@ -1436,7 +1448,18 @@ After saving, return here and start chatting!"""
         "[READ_ARTICLE]" in final_response_text
         or "[WEB_SEARCH]" in final_response_text
     )
-    if not _response_already_streamed and (not final_response_text or _has_dangling_tool_block):
+    # Trigger fallback when:
+    # - Response was NOT streamed and is empty/has dangling tool blocks, OR
+    # - Response WAS "streamed" but contained only whitespace (nothing visible)
+    _response_effectively_empty = (
+        not final_response_text.strip()
+        or _has_dangling_tool_block
+    )
+    _needs_fallback = (
+        (not _response_already_streamed and _response_effectively_empty)
+        or (_response_already_streamed and not final_response_text.strip())
+    )
+    if _needs_fallback:
         _FALLBACK_MSGS = {
             "zh-CN": (
                 "抱歉，我在获取论文全文时遇到了一些问题，处理流程未能完成。"

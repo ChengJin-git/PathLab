@@ -7,7 +7,7 @@
 import React, { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Search, Globe, FileText, Download, ChevronDown, ExternalLink } from 'lucide-react'
+import { Search, Globe, FileText, Download, ChevronDown, ExternalLink, AlertCircle } from 'lucide-react'
 
 export interface SearchingStatusProps {
   query?: string
@@ -84,43 +84,43 @@ const SearchingStatus = React.memo(function SearchingStatus({ query, reason }: S
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -10 }}
-      className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-xl my-2"
+      className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-xl my-2"
     >
       {/* Animated search icon */}
       <div className="relative">
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-          className="absolute inset-0 w-5 h-5 border-2 border-blue-200 border-t-blue-500 rounded-full"
+          className="absolute inset-0 w-4 sm:w-5 h-4 sm:h-5 border-2 border-blue-200 border-t-blue-500 rounded-full"
         />
-        <Search className="w-5 h-5 text-blue-500 relative z-10" />
+        <Search className="w-4 sm:w-5 h-4 sm:h-5 text-blue-500 relative z-10" />
       </div>
-      
+
       {/* Status text */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-blue-700">
+        <div className="flex items-center gap-1 sm:gap-2">
+          <span className="text-xs sm:text-sm font-medium text-blue-700">
             {t('settings.general.searching')}
           </span>
           {query && (
-            <span className="text-xs text-blue-500 truncate">
+            <span className="text-[10px] sm:text-xs text-blue-500 truncate">
               "{query}"
             </span>
           )}
         </div>
         {reason && (
-          <p className="text-xs text-blue-600/70 mt-0.5 truncate">
+          <p className="text-[10px] sm:text-xs text-blue-600/70 mt-0.5 truncate">
             {reason}
           </p>
           )}
       </div>
-      
+
       {/* Animated dots */}
       <div className="flex gap-1">
         {[0, 1, 2].map((i) => (
           <motion.div
             key={i}
-            className="w-1.5 h-1.5 bg-blue-400 rounded-full"
+            className="w-1 sm:w-1.5 h-1 sm:h-1.5 bg-blue-400 rounded-full"
             animate={{ y: [0, -4, 0] }}
             transition={{
               duration: 0.6,
@@ -163,13 +163,13 @@ export const SearchCompletedCard = React.memo(function SearchCompletedCard({
       <button
         type="button"
         onClick={() => results && results.length > 0 && setExpanded(!expanded)}
-        className="flex items-center gap-3 px-4 py-3 w-full text-left hover:bg-green-50/50 transition-colors"
+        className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-3 w-full text-left hover:bg-green-50/50 transition-colors"
       >
         {/* Check icon */}
         <div className="flex-shrink-0">
-          <div className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
+          <div className="w-4 sm:w-5 h-4 sm:h-5 bg-green-500 rounded-full flex items-center justify-center">
             <svg
-              className="w-3 h-3 text-white"
+              className="w-2.5 sm:w-3 h-2.5 sm:h-3 text-white"
               xmlns="http://www.w3.org/2000/svg"
               fill="none"
               viewBox="0 0 24 24"
@@ -187,18 +187,18 @@ export const SearchCompletedCard = React.memo(function SearchCompletedCard({
 
         {/* Search completion info */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-green-700">
+          <div className="flex items-center gap-1 sm:gap-2">
+            <span className="text-xs sm:text-sm font-medium text-green-700">
               {t('settings.general.searchedPages', { count: resultCount })}
             </span>
           </div>
-          <p className="text-xs text-green-600/70 mt-0.5 truncate">&quot;{query}&quot;</p>
+          <p className="text-[10px] sm:text-xs text-green-600/70 mt-0.5 truncate">&quot;{query}&quot;</p>
         </div>
 
         {/* Expand/collapse chevron */}
         {results && results.length > 0 && (
           <ChevronDown
-            className={`w-4 h-4 text-green-500 flex-shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+            className={`w-3.5 sm:w-4 h-3.5 sm:h-4 text-green-500 flex-shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
           />
         )}
       </button>
@@ -213,7 +213,7 @@ export const SearchCompletedCard = React.memo(function SearchCompletedCard({
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="px-4 pb-3 space-y-1.5 border-t border-green-100/60 pt-2">
+            <div className="px-3 sm:px-4 pb-2 sm:pb-3 space-y-1 sm:space-y-1.5 border-t border-green-100/60 pt-2">
               {results.map((result, idx) => {
                 let source = ''
                 try { source = new URL(result.url).hostname.replace(/^www\./, '') } catch { /* ignore */ }
@@ -223,20 +223,20 @@ export const SearchCompletedCard = React.memo(function SearchCompletedCard({
                     href={result.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-start gap-2 px-2.5 py-1.5 rounded-lg hover:bg-green-100/50 transition-colors group"
+                    className="flex items-start gap-1.5 sm:gap-2 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg hover:bg-green-100/50 transition-colors group"
                   >
-                    <span className="text-xs font-medium text-green-600 mt-0.5 flex-shrink-0 w-4 text-right">
+                    <span className="text-[10px] sm:text-xs font-medium text-green-600 mt-0.5 flex-shrink-0 w-4 text-right">
                       {idx + 1}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-gray-800 truncate group-hover:text-green-700">
+                      <p className="text-[10px] sm:text-xs font-medium text-gray-800 truncate group-hover:text-green-700">
                         {result.title || source || result.url}
                       </p>
                       {result.title && (
-                        <p className="text-[10px] text-gray-400 truncate">{source}</p>
+                        <p className="text-[9px] sm:text-[10px] text-gray-400 truncate">{source}</p>
                       )}
                     </div>
-                    <ExternalLink className="w-3 h-3 text-gray-300 group-hover:text-green-500 flex-shrink-0 mt-0.5" />
+                    <ExternalLink className="w-2.5 sm:w-3 h-2.5 sm:h-3 text-gray-300 group-hover:text-green-500 flex-shrink-0 mt-0.5" />
                   </a>
                 )
               })}
@@ -266,21 +266,21 @@ export const SummarizingSearchStatus = React.memo(function SummarizingSearchStat
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -10 }}
-      className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-xl my-2"
+      className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-xl my-2"
     >
       {/* Animated globe icon */}
       <div className="relative">
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-          className="absolute inset-0 w-5 h-5 border-2 border-blue-200 border-t-blue-500 rounded-full"
+          className="absolute inset-0 w-4 sm:w-5 h-4 sm:h-5 border-2 border-blue-200 border-t-blue-500 rounded-full"
         />
-        <Globe className="w-5 h-5 text-blue-500 relative z-10" />
+        <Globe className="w-4 sm:w-5 h-4 sm:h-5 text-blue-500 relative z-10" />
       </div>
 
       {/* Status text */}
       <div className="flex-1 min-w-0">
-        <span className="text-sm font-medium text-blue-700">
+        <span className="text-xs sm:text-sm font-medium text-blue-700">
           {t('settings.general.summarizingSearch')}
         </span>
       </div>
@@ -290,7 +290,63 @@ export const SummarizingSearchStatus = React.memo(function SummarizingSearchStat
         {[0, 1, 2].map((i) => (
           <motion.div
             key={i}
-            className="w-1.5 h-1.5 bg-blue-400 rounded-full"
+            className="w-1 sm:w-1.5 h-1 sm:h-1.5 bg-blue-400 rounded-full"
+            animate={{ y: [0, -4, 0] }}
+            transition={{
+              duration: 0.6,
+              repeat: Infinity,
+              delay: i * 0.15,
+            }}
+          />
+        ))}
+      </div>
+    </motion.div>
+  )
+})
+
+// ============================================================================
+// Summarizing PDF Status
+// ============================================================================
+
+/**
+ * SummarizingPdfStatus — animated indicator while AI is generating the PDF summary.
+ *
+ * Shown after PDF parsing completes (PdfParsingCompletedCard visible) but before
+ * the AI starts streaming the actual summary text.
+ */
+export const SummarizingPdfStatus = React.memo(function SummarizingPdfStatus() {
+  const { t } = useTranslation()
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-3 bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-100 rounded-xl my-2"
+    >
+      {/* Animated FileText icon */}
+      <div className="relative">
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+          className="absolute inset-0 w-4 sm:w-5 h-4 sm:h-5 border-2 border-emerald-200 border-t-emerald-500 rounded-full"
+        />
+        <FileText className="w-4 sm:w-5 h-4 sm:h-5 text-emerald-500 relative z-10" />
+      </div>
+
+      {/* Status text */}
+      <div className="flex-1 min-w-0">
+        <span className="text-xs sm:text-sm font-medium text-emerald-700">
+          {t('settings.general.summarizingPdf')}
+        </span>
+      </div>
+
+      {/* Animated dots */}
+      <div className="flex gap-1">
+        {[0, 1, 2].map((i) => (
+          <motion.div
+            key={i}
+            className="w-1 sm:w-1.5 h-1 sm:h-1.5 bg-emerald-400 rounded-full"
             animate={{ y: [0, -4, 0] }}
             transition={{
               duration: 0.6,
@@ -370,30 +426,30 @@ export const PdfParsingStatus = React.memo(function PdfParsingStatus({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -10 }}
-      className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-100 rounded-xl my-2"
+      className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-3 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-100 rounded-xl my-2"
     >
       {/* Animated icon — Download for downloading, FileText for parsing */}
       <div className="relative">
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-          className="absolute inset-0 w-5 h-5 border-2 border-amber-200 border-t-amber-500 rounded-full"
+          className="absolute inset-0 w-4 sm:w-5 h-4 sm:h-5 border-2 border-amber-200 border-t-amber-500 rounded-full"
         />
         {isDownloading
-          ? <Download className="w-5 h-5 text-amber-500 relative z-10" />
-          : <FileText className="w-5 h-5 text-amber-500 relative z-10" />
+          ? <Download className="w-4 sm:w-5 h-4 sm:h-5 text-amber-500 relative z-10" />
+          : <FileText className="w-4 sm:w-5 h-4 sm:h-5 text-amber-500 relative z-10" />
         }
       </div>
 
       {/* Status text */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-amber-700">
+        <div className="flex items-center gap-1 sm:gap-2">
+          <span className="text-xs sm:text-sm font-medium text-amber-700">
             {statusText}
           </span>
         </div>
         {currentTitle && (
-          <p className="text-xs text-amber-600/70 mt-0.5 truncate">{currentTitle}</p>
+          <p className="text-[10px] sm:text-xs text-amber-600/70 mt-0.5 truncate">{currentTitle}</p>
         )}
       </div>
 
@@ -402,7 +458,7 @@ export const PdfParsingStatus = React.memo(function PdfParsingStatus({
         {[0, 1, 2].map((i) => (
           <motion.div
             key={i}
-            className="w-1.5 h-1.5 bg-amber-400 rounded-full"
+            className="w-1 sm:w-1.5 h-1 sm:h-1.5 bg-amber-400 rounded-full"
             animate={{ y: [0, -4, 0] }}
             transition={{
               duration: 0.6,
@@ -418,7 +474,8 @@ export const PdfParsingStatus = React.memo(function PdfParsingStatus({
 
 /**
  * PdfParsingCompletedCard — shows summary after PDF parsing is done.
- * Only displays if at least one PDF was successfully parsed.
+ * Displays success card if any PDFs were parsed, and/or failure card
+ * if any PDFs failed to download or parse.
  */
 export const PdfParsingCompletedCard = React.memo(function PdfParsingCompletedCard({
   items
@@ -427,44 +484,79 @@ export const PdfParsingCompletedCard = React.memo(function PdfParsingCompletedCa
 }) {
   const { t } = useTranslation()
   const completedCount = items.filter(i => i.status === 'completed').length
+  const failedItems = items.filter(i => i.status === 'download_failed' || i.status === 'parse_failed')
 
-  // Don't show if no PDFs were successfully parsed
-  if (completedCount === 0) return null
+  // Don't show if nothing completed and nothing failed
+  if (completedCount === 0 && failedItems.length === 0) return null
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -10 }}
-      className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-100 rounded-xl my-2"
-    >
-      {/* Check icon */}
-      <div className="flex-shrink-0">
-        <div className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
-          <svg
-            className="w-3 h-3 text-white"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={3}
-              d="M5 13l4 4L19 7"
-            />
-          </svg>
-        </div>
-      </div>
+    <>
+      {/* Success card */}
+      {completedCount > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-3 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-100 rounded-xl my-2"
+        >
+          {/* Check icon */}
+          <div className="flex-shrink-0">
+            <div className="w-4 sm:w-5 h-4 sm:h-5 bg-green-500 rounded-full flex items-center justify-center">
+              <svg
+                className="w-2.5 sm:w-3 h-2.5 sm:h-3 text-white"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={3}
+                  d="M5 13l4 4L19 7"
+                />
+              </svg>
+            </div>
+          </div>
 
-      {/* Completion info */}
-      <div className="flex-1 min-w-0">
-        <span className="text-sm font-medium text-green-700">
-          {t('settings.general.pdfParsedCount', { count: completedCount })}
-        </span>
-      </div>
-    </motion.div>
+          {/* Completion info */}
+          <div className="flex-1 min-w-0">
+            <span className="text-xs sm:text-sm font-medium text-green-700">
+              {t('settings.general.pdfParsedCount', { count: completedCount })}
+            </span>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Failure card */}
+      {failedItems.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-3 bg-gradient-to-r from-red-50 to-rose-50 border border-red-100 rounded-xl my-2"
+        >
+          {/* Error icon */}
+          <div className="flex-shrink-0">
+            <AlertCircle className="w-4 sm:w-5 h-4 sm:h-5 text-red-500" />
+          </div>
+
+          {/* Failure info */}
+          <div className="flex-1 min-w-0">
+            <span className="text-xs sm:text-sm font-medium text-red-700">
+              {failedItems.length === 1
+                ? (failedItems[0].status === 'download_failed'
+                  ? t('settings.general.pdfDownloadFailed')
+                  : t('settings.general.pdfParseFailed'))
+                : t('settings.general.pdfFailedCount', { count: failedItems.length })}
+            </span>
+            {failedItems.length === 1 && failedItems[0].title && (
+              <p className="text-[10px] sm:text-xs text-red-600/70 mt-0.5 truncate">{failedItems[0].title}</p>
+            )}
+          </div>
+        </motion.div>
+      )}
+    </>
   )
 })
 

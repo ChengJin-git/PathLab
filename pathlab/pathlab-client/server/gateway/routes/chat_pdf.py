@@ -35,7 +35,7 @@ _mineru_process_executor = ProcessPoolExecutor(
 )
 
 # Minimum free VRAM (MB) required to run MinerU hybrid_auto with VLM backend
-MIN_VRAM_MB_FOR_MINERU = 8000
+MIN_VRAM_MB_FOR_MINERU = 14000
 
 
 _pdf_cache_dir: Path | None = None
@@ -1411,6 +1411,13 @@ def _run_mineru_in_process(
     import os as _os
     import logging as _logging
     _logger = _logging.getLogger(__name__)
+
+    # Ensure all GPUs are visible before selection.  An empty
+    # CUDA_VISIBLE_DEVICES string (inherited from the parent env) makes
+    # PyTorch report zero devices, so remove it if empty/whitespace-only.
+    _cvd = _os.environ.get("CUDA_VISIBLE_DEVICES")
+    if _cvd is not None and _cvd.strip() == "":
+        del _os.environ["CUDA_VISIBLE_DEVICES"]
 
     # Select GPU at execution time for accurate VRAM readings
     from backend.common.gpu_utils import select_optimal_gpu_for_task as _select_gpu

@@ -640,7 +640,11 @@
       "webSearchCard": "網頁搜尋",
       "downloadingPdf": "正在下載 PDF 論文...",
       "parsingPdf": "正在解析 PDF 論文...",
-      "pdfParsedCount": "已解析 {{count}} 篇 PDF 論文"
+      "pdfParsedCount": "已解析 {{count}} 篇 PDF 論文",
+      "pdfDownloadFailed": "PDF 下載失敗",
+      "pdfParseFailed": "PDF 解析失敗",
+      "pdfFailedCount": "{{count}} 篇 PDF 失敗",
+      "summarizingPdf": "正在生成論文解讀..."
     }
   },
   "layout": {
