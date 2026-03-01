@@ -313,7 +313,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const articleCitationRenumber = useMemo(() => {
     // General pattern: [N, p.ANY_PAGE_DESCRIPTION] — matches p.2, p.2-3, p.2, p.4, etc.
     // Works independently of citationContexts so renumbering is correct during streaming.
-    const renumber = new Map<string, number>() // "N-p.X" → sequential index
+    const renumber = new Map<string, number>() // "N-p.X" or "N-bare" → sequential index
     const pattern = /\[(\d{1,2}),\s*(p\.[^\]]+)\]/g
     let m: RegExpExecArray | null
     let seq = 1
@@ -332,8 +332,23 @@ const AssistantMessage = React.memo(function AssistantMessage({
         renumber.set(key, seq++)
       }
     }
+    // Also scan for bare [N] citations when in a paper context (referenceCards
+    // exist or we already found page-level citations).  Bare citations are
+    // keyed "N-bare" so they get sequential indices that don't collide with
+    // page-level renumbered indices — critical for multi-paper conversations
+    // where [1, p.5] (paper 1) might get seq 2 and bare [2] (paper 2) would
+    // collide if we used the raw number.
+    if (renumber.size > 0 || referenceCards?.length) {
+      const barePattern = /\[(\d{1,2})\](?!\()/g
+      while ((m = barePattern.exec(content)) !== null) {
+        const key = `${m[1]}-bare`
+        if (!renumber.has(key)) {
+          renumber.set(key, seq++)
+        }
+      }
+    }
     return renumber.size > 0 ? renumber : null
-  }, [content])
+  }, [content, referenceCards])
 
   // Build citation lookup map from web search results + article citation contexts.
   // Maps citation display index (1-based) to { title, url, snippet, source, pageInfo? }
@@ -392,19 +407,27 @@ const AssistantMessage = React.memo(function AssistantMessage({
         })
       }
     }
-    // 4) Fallback for bare [N] article citations with no CITATION_CONTEXTS data:
-    //    When referenceCards exist but citationMap has no entries (e.g., AI uses bare [1]
-    //    for figure/general references), ensure index 1 has reference card data so the
-    //    badge tooltip shows the paper title instead of being empty.
+    // 4) Fallback for bare [N] article citations with no CITATION_CONTEXTS data
+    //    and no articleCitationRenumber (e.g., cache miss or AI only uses bare [N]).
+    //    Scan content for all bare [N] and map each to referenceCards[N-1].
     if (referenceCards?.length && map.size === 0) {
-      const refCard = referenceCards[0]
-      const refSource = refCard?.url ? (() => { try { return new URL(refCard.url).hostname.replace(/^www\./, '') } catch { return '' } })() : ''
-      map.set(1, {
-        title: refCard.title,
-        url: refCard.url,
-        snippet: '',
-        source: refSource,
-      })
+      const barePattern = /\[(\d{1,2})\](?!\()/g
+      let bm: RegExpExecArray | null
+      const seenBare = new Set<number>()
+      while ((bm = barePattern.exec(content)) !== null) {
+        const idx = parseInt(bm[1])
+        if (seenBare.has(idx)) continue
+        seenBare.add(idx)
+        const refCard = referenceCards[idx - 1] ?? referenceCards[0]
+        if (!refCard) continue
+        const refSource = refCard.url ? (() => { try { return new URL(refCard.url).hostname.replace(/^www\./, '') } catch { return '' } })() : ''
+        map.set(idx, {
+          title: refCard.title,
+          url: refCard.url,
+          snippet: '',
+          source: refSource,
+        })
+      }
     }
     return map
   }, [webSearchResult, citationContexts, articleCitationRenumber, referenceCards])
@@ -424,12 +447,24 @@ const AssistantMessage = React.memo(function AssistantMessage({
           finalSrc = `${finalSrc}${sep}token=${encodeURIComponent(token)}`
         }
       }
+      // Safety net: prevent 404 flood from hallucinated image URLs.
+      // On error, clear src to stop browser retries and show a placeholder
+      // for pdf-images (which may load after MinerU upgrade).
+      const isPdfImage = (src || '').includes('/pdf-images/')
       return (
         <img
           src={finalSrc}
           alt={alt || ''}
           loading="lazy"
-          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+          onError={(e) => {
+            const img = e.target as HTMLImageElement
+            img.removeAttribute('src')          // stop browser retry loop
+            if (isPdfImage) {
+              img.style.display = 'none'        // hide broken pdf figure
+            } else {
+              img.style.display = 'none'
+            }
+          }}
           {...rest}
         />
       )
@@ -584,13 +619,26 @@ const AssistantMessage = React.memo(function AssistantMessage({
       }
     )
   }
-  // 5. [N] (simple citation) — only match when citationMap has data to avoid
-  //    false positives with markdown footnotes/list references
+  // 5. [N] (simple citation) — when articleCitationRenumber exists (paper context),
+  //    use renumbered seq index to avoid citationMap key mismatch; otherwise use raw N.
   if (citationMap.size > 0) {
-    displayContent = displayContent.replace(
-      /\[(\d{1,2})\](?!\()/g,
-      '[$1](#cite-$1)'
-    )
+    if (articleCitationRenumber) {
+      displayContent = displayContent.replace(
+        /\[(\d{1,2})\](?!\()/g,
+        (_match, n: string) => {
+          const key = `${n}-bare`
+          const seq = articleCitationRenumber.get(key)
+          if (seq) return `[${seq}](#cite-${seq})`
+          // Not in renumber map — leave as-is to avoid false positives
+          return _match
+        }
+      )
+    } else {
+      displayContent = displayContent.replace(
+        /\[(\d{1,2})\](?!\()/g,
+        '[$1](#cite-$1)'
+      )
+    }
   }
 
   // Remove any incomplete blocks that are still streaming
