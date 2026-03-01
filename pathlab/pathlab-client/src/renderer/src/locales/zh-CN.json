@@ -1661,7 +1661,24 @@
       "val": "验证集",
       "test": "测试集",
       "noSplitConfig": "未找到该数据集的拆分配置。请通过注册页面上传拆分分配。",
-      "goToRegistration": "前往注册页面"
+      "goToRegistration": "前往注册页面",
+      "wholeDatasetSplitNote": "使用整个数据集 — 拆分将由服务器自动处理。",
+      "validation": {
+        "noSurvivalData": "未找到包含生存数据的样本。请设置 event_time 和 event_status。",
+        "noSurvivalDataShort": "未找到包含生存数据的样本。",
+        "eventStatus1": "事件 (status=1)",
+        "censoredStatus0": "删失 (status=0)",
+        "eventStatusMin2": "每种 event_status 至少需要 2 个样本。{{missingType}} 仅有 {{count}} 个。",
+        "eventStatusMin2Current": "每种 event_status 至少需要 2 个样本。当前最小值：{{count}}。",
+        "noLabeledSamples": "未找到已标注的样本。请为切片分配标签。",
+        "noLabeledSamplesShort": "未找到已标注的样本。",
+        "min2Classes": "分类训练至少需要 2 个类别。",
+        "min2ClassesShort": "至少需要 2 个类别。",
+        "classMin2Samples": "每个类别至少需要 2 个样本。当前最小值：{{count}}。",
+        "bothEventCensoredRequired": "需要同时包含事件和删失样本。{{missingType}} 有 0 个样本。",
+        "randomMinPerEventStatus": "随机拆分每种 event_status 至少需要 {{count}} 个样本。",
+        "randomMinPerClass": "随机拆分每个类别至少需要 {{count}} 个样本。"
+      }
     },
     "modelConfig": {
       "aggregationMethod": "聚合方法",

@@ -5,6 +5,7 @@
  */
 
 import { useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { TaskType, DataLevel } from '../constants/training'
 import { KFoldValidation, RandomSplitValidation, WSIItem } from '../types/training'
 
@@ -27,6 +28,7 @@ export function useSplitValidation({
   taskType,
   dataLevel,
 }: UseSplitValidationProps): UseSplitValidationReturn {
+  const { t } = useTranslation()
   // Calculate class distribution for k-fold validation (classification) or event status distribution (survival)
   const classDistribution = useMemo(() => {
     const selectedItems = items.filter((item) => selectedIds.has(item.wsi_id))
@@ -106,13 +108,13 @@ export function useSplitValidation({
           totalLabeled: totalWithSurvival,
           eventCount,
           censoredCount,
-          message: 'No samples with survival data found. Please set event_time and event_status.',
+          message: t('training.dataSplit.validation.noSurvivalData'),
         }
       }
 
       if (eventCount < 2 || censoredCount < 2) {
         const minCount = Math.min(eventCount, censoredCount)
-        const missingType = eventCount < 2 ? 'Event (status=1)' : 'Censored (status=0)'
+        const missingType = eventCount < 2 ? t('training.dataSplit.validation.eventStatus1') : t('training.dataSplit.validation.censoredStatus0')
         return {
           isValid: false,
           maxK: 0,
@@ -122,7 +124,7 @@ export function useSplitValidation({
           totalLabeled: totalWithSurvival,
           eventCount,
           censoredCount,
-          message: `Each event_status needs at least 2 samples. ${missingType} has only ${minCount}.`,
+          message: t('training.dataSplit.validation.eventStatusMin2', { missingType, count: minCount }),
         }
       }
 
@@ -137,7 +139,7 @@ export function useSplitValidation({
         eventCount,
         censoredCount,
         message: minSamplesPerStatus < 2
-          ? `Each event_status needs at least 2 samples. Current minimum: ${minSamplesPerStatus}.`
+          ? t('training.dataSplit.validation.eventStatusMin2Current', { count: minSamplesPerStatus })
           : undefined,
       }
     }
@@ -159,8 +161,8 @@ export function useSplitValidation({
         unlabeledCount,
         totalLabeled,
         message: numClasses === 0
-          ? 'No labeled samples found. Please assign labels to your slides.'
-          : 'At least 2 classes are required for classification training.',
+          ? t('training.dataSplit.validation.noLabeledSamples')
+          : t('training.dataSplit.validation.min2Classes'),
       }
     }
 
@@ -173,10 +175,10 @@ export function useSplitValidation({
       unlabeledCount,
       totalLabeled,
       message: minSamplesPerClass < 2
-        ? `Each class needs at least 2 samples. Current minimum: ${minSamplesPerClass}.`
+        ? t('training.dataSplit.validation.classMin2Samples', { count: minSamplesPerClass })
         : undefined,
     }
-  }, [classDistribution, taskType])
+  }, [classDistribution, taskType, t])
 
   // Calculate validation for random 7:1:2 split
   const randomSplitValidation = useMemo((): RandomSplitValidation => {
@@ -200,12 +202,12 @@ export function useSplitValidation({
           totalLabeled: totalWithSurvival,
           eventCount,
           censoredCount,
-          message: 'No samples with survival data found.',
+          message: t('training.dataSplit.validation.noSurvivalDataShort'),
         }
       }
 
       if (eventCount === 0 || censoredCount === 0) {
-        const missingType = eventCount === 0 ? 'Event (status=1)' : 'Censored (status=0)'
+        const missingType = eventCount === 0 ? t('training.dataSplit.validation.eventStatus1') : t('training.dataSplit.validation.censoredStatus0')
         return {
           isValid: false,
           minRequired: minRequiredPerClass * 2,
@@ -215,7 +217,7 @@ export function useSplitValidation({
           totalLabeled: totalWithSurvival,
           eventCount,
           censoredCount,
-          message: `Both Event and Censored samples are required. ${missingType} has 0 samples.`,
+          message: t('training.dataSplit.validation.bothEventCensoredRequired', { missingType }),
         }
       }
 
@@ -229,7 +231,7 @@ export function useSplitValidation({
         eventCount,
         censoredCount,
         message: minSamplesPerStatus < minRequiredPerClass
-          ? `Random split requires at least ${minRequiredPerClass} samples per event_status.`
+          ? t('training.dataSplit.validation.randomMinPerEventStatus', { count: minRequiredPerClass })
           : undefined,
       }
     }
@@ -250,8 +252,8 @@ export function useSplitValidation({
         unlabeledCount,
         totalLabeled,
         message: numClasses === 0
-          ? 'No labeled samples found.'
-          : 'At least 2 classes are required.',
+          ? t('training.dataSplit.validation.noLabeledSamplesShort')
+          : t('training.dataSplit.validation.min2ClassesShort'),
       }
     }
 
@@ -264,10 +266,10 @@ export function useSplitValidation({
       unlabeledCount,
       totalLabeled,
       message: minSamplesPerClass < minRequiredPerClass
-        ? `Random split requires at least ${minRequiredPerClass} samples per class.`
+        ? t('training.dataSplit.validation.randomMinPerClass', { count: minRequiredPerClass })
         : undefined,
     }
-  }, [classDistribution, taskType])
+  }, [classDistribution, taskType, t])
 
   return {
     classDistribution,

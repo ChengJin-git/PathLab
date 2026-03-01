@@ -247,6 +247,7 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
           predefinedSplitCounts={predefinedSplitCounts}
           selectedDatasetId={selectedDatasetId}
           selectedDatasetName={selectedDatasetName}
+          isWholeDatasetSelected={isWholeDatasetSelected}
         />
       )}
 

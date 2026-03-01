@@ -1661,7 +1661,24 @@
       "val": "Val",
       "test": "Test",
       "noSplitConfig": "No split configuration found for this dataset. Upload split assignments via the registration page.",
-      "goToRegistration": "Go to Registration"
+      "goToRegistration": "Go to Registration",
+      "wholeDatasetSplitNote": "Using entire dataset — split will be handled automatically by the server.",
+      "validation": {
+        "noSurvivalData": "No samples with survival data found. Please set event_time and event_status.",
+        "noSurvivalDataShort": "No samples with survival data found.",
+        "eventStatus1": "Event (status=1)",
+        "censoredStatus0": "Censored (status=0)",
+        "eventStatusMin2": "Each event_status needs at least 2 samples. {{missingType}} has only {{count}}.",
+        "eventStatusMin2Current": "Each event_status needs at least 2 samples. Current minimum: {{count}}.",
+        "noLabeledSamples": "No labeled samples found. Please assign labels to your slides.",
+        "noLabeledSamplesShort": "No labeled samples found.",
+        "min2Classes": "At least 2 classes are required for classification training.",
+        "min2ClassesShort": "At least 2 classes are required.",
+        "classMin2Samples": "Each class needs at least 2 samples. Current minimum: {{count}}.",
+        "bothEventCensoredRequired": "Both Event and Censored samples are required. {{missingType}} has 0 samples.",
+        "randomMinPerEventStatus": "Random split requires at least {{count}} samples per event_status.",
+        "randomMinPerClass": "Random split requires at least {{count}} samples per class."
+      }
     },
     "modelConfig": {
       "aggregationMethod": "Aggregation Method",

@@ -1649,8 +1649,25 @@
       "train": "訓練集",
       "val": "驗證集",
       "test": "測試集",
-      "noSplitConfig": "未找到該數據集的拆分配置。請透過註冊頁面上傳拆分分配。",
-      "goToRegistration": "前往註冊頁面"
+      "noSplitConfig": "未找到該資料集的拆分配置。請透過註冊頁面上傳拆分分配。",
+      "goToRegistration": "前往註冊頁面",
+      "wholeDatasetSplitNote": "使用整個資料集 — 拆分將由伺服器自動處理。",
+      "validation": {
+        "noSurvivalData": "未找到包含生存數據的樣本。請設定 event_time 和 event_status。",
+        "noSurvivalDataShort": "未找到包含生存數據的樣本。",
+        "eventStatus1": "事件 (status=1)",
+        "censoredStatus0": "刪失 (status=0)",
+        "eventStatusMin2": "每種 event_status 至少需要 2 筆資料。{{missingType}} 僅有 {{count}} 個。",
+        "eventStatusMin2Current": "每種 event_status 至少需要 2 筆資料。當前最小值：{{count}}。",
+        "noLabeledSamples": "未找到已標註的資料。請為切片分配標籤。",
+        "noLabeledSamplesShort": "未找到已標註的樣本。",
+        "min2Classes": "分類訓練至少需要 2 個類別。",
+        "min2ClassesShort": "至少需要 2 個類別。",
+        "classMin2Samples": "每個類別至少需要 2 個樣本。當前最小值：{{count}}。",
+        "bothEventCensoredRequired": "需要同時包含事件和刪失樣本。{{missingType}} 有 0 個樣本。",
+        "randomMinPerEventStatus": "隨機拆分每種 event_status 至少需要 {{count}} 個樣本。",
+        "randomMinPerClass": "隨機拆分每個類別至少需要 {{count}} 個樣本。"
+      }
     },
     "modelConfig": {
       "aggregationMethod": "聚合方法",
