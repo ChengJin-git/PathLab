@@ -89,13 +89,12 @@ export default function AIChatPage() {
   const [input, setInput] = useState('')
 
   // Generation lifecycle: single enum replaces 3 independent booleans
-  // idle → thinking (waiting for first chunk) → streaming (receiving chunks) → pdf_waiting (post-stream PDF parse) → idle
-  type GenerationPhase = 'idle' | 'thinking' | 'streaming' | 'pdf_waiting'
+  // idle → thinking (waiting for first chunk) → streaming (receiving chunks) → idle
+  type GenerationPhase = 'idle' | 'thinking' | 'streaming'
   const [generationPhase, setGenerationPhase] = useState<GenerationPhase>('idle')
   // Derived booleans for backward compatibility with existing read sites
   const isLoading = generationPhase === 'thinking'
   const isGenerating = generationPhase !== 'idle'
-  const isPdfWaiting = generationPhase === 'pdf_waiting'
 
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([])
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([])
@@ -923,10 +922,6 @@ export default function AIChatPage() {
         )
         trackingId = newId
       }, abortController.signal, () => {
-        if (generationIdRef.current === currentGenerationId) {
-          setGenerationPhase('pdf_waiting')
-        }
-      }, () => {
         // Context limit reached — append [CONTEXT_LIMIT] block to the AI message
         const contextLimitBlock = '\n\n[CONTEXT_LIMIT][/CONTEXT_LIMIT]'
         const currentTrackingId = trackingId
@@ -2141,8 +2136,7 @@ export default function AIChatPage() {
                         // "Streaming" 表示当前这条助手消息还在生成中（不管是否已经收到首个 chunk），
                         // 用 isGenerating 而不是 isLoading，这样在 Exa 搜索阶段（只收到 SEARCH_STATUS/WEB_SEARCH_RESULT）
                         // 也会触发搜索状态卡片和 skeleton，避免出现中间一大块空白。
-                        // isPdfWaiting: PDF 等待阶段，流仍在活跃中，需要保持 isStreaming 以显示 PDF 解析状态卡片。
-                        isStreaming={(isGenerating || isPdfWaiting) && index === messages.length - 1}
+                        isStreaming={isGenerating && index === messages.length - 1}
                         isLoading={isGenerating}
                         csvContent={csvContentMap.get(message.id)?.content}
                         csvFileName={csvContentMap.get(message.id)?.fileName}

@@ -2448,65 +2448,109 @@ async def chat_with_ai(
         return content.strip()
 
     async def stream_with_persistence():
-        """Stream AI response and save to database if conversation_id is provided"""
-        full_response = ""
-        async for chunk in stream_ai_response(messages, api_key, base_url, model, detected_lang, request):
-            # Intercept pdf_context event - save to DB as hidden user message but don't
-            # yield to frontend. This lets follow-up questions reference the PDF content.
-            if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":
-                try:
-                    data = json.loads(chunk[6:])
-                    if "pdf_context" in data:
-                        if req.conversation_id:
-                            async for db_session in get_db():
-                                try:
-                                    message_data = {
-                                        "conversation_id": req.conversation_id,
-                                        "role": "user",
-                                        "content": f"[PDF_CONTEXT]\n{data['pdf_context']}\n[/PDF_CONTEXT]",
-                                    }
-                                    await ChatRepository.add_message(db_session, message_data)
-                                    await db_session.commit()
-                                finally:
-                                    await db_session.close()
-                        continue  # Don't yield this to frontend
-                except (json.JSONDecodeError, KeyError):
-                    pass
+        """Stream AI response and save to database if conversation_id is provided.
 
-            # Don't yield [DONE] yet - we need to send message_id first
-            if chunk == "data: [DONE]\n\n":
-                # Save assistant response to database and return message_id BEFORE [DONE]
-                if req.conversation_id and full_response:
+        Uses try/finally to ensure partial responses are saved even when the
+        client disconnects mid-stream (e.g. user navigates away during PDF
+        parsing).  Without this, the assistant message is lost and the UI shows
+        a broken state when the user returns.
+        """
+        full_response = ""
+        saved_to_db = False  # Track whether we already persisted via [DONE]
+        try:
+            async for chunk in stream_ai_response(messages, api_key, base_url, model, detected_lang, request):
+                # Intercept pdf_context event - save to DB as hidden user message but don't
+                # yield to frontend. This lets follow-up questions reference the PDF content.
+                if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":
+                    try:
+                        data = json.loads(chunk[6:])
+                        if "pdf_context" in data:
+                            if req.conversation_id:
+                                async for db_session in get_db():
+                                    try:
+                                        message_data = {
+                                            "conversation_id": req.conversation_id,
+                                            "role": "user",
+                                            "content": f"[PDF_CONTEXT]\n{data['pdf_context']}\n[/PDF_CONTEXT]",
+                                        }
+                                        await ChatRepository.add_message(db_session, message_data)
+                                        await db_session.commit()
+                                    finally:
+                                        await db_session.close()
+                            continue  # Don't yield this to frontend
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+
+                # Don't yield [DONE] yet - we need to send message_id first
+                if chunk == "data: [DONE]\n\n":
+                    # Save assistant response to database and return message_id BEFORE [DONE]
+                    if req.conversation_id and full_response:
+                        async for db_session in get_db():
+                            try:
+                                # Strip internal-only status blocks before persisting so that
+                                # on the next turn the AI won't mistake them for existing search results.
+                                save_content = _strip_internal_status_blocks(full_response)
+                                message_data = {
+                                    "conversation_id": req.conversation_id,
+                                    "role": "assistant",
+                                    "content": save_content,
+                                }
+                                saved_message = await ChatRepository.add_message(db_session, message_data)
+                                await db_session.commit()
+                                saved_to_db = True
+                                # Send message_id back to frontend so it can update the message ID
+                                # This enables proper persistence of task submission status
+                                if saved_message:
+                                    yield f"data: {json.dumps({'message_id': saved_message.id})}\n\n"
+                            finally:
+                                await db_session.close()
+                    else:
+                        saved_to_db = True  # Nothing to save
+                    # Now yield [DONE] after message_id has been sent
+                    yield chunk
+                else:
+                    yield chunk
+                    # Extract content from SSE chunk
+                    if chunk.startswith("data: "):
+                        try:
+                            data = json.loads(chunk[6:])
+                            if "content" in data and data["content"] is not None:
+                                full_response += data["content"]
+                        except:
+                            pass
+        finally:
+            # Save a "cancelled" assistant message on abnormal exit (client disconnect,
+            # error, etc.) so the conversation isn't left with a dangling user message
+            # and no reply.  When the user returns, they see a clean cancel notice
+            # instead of a broken UI state.
+            if not saved_to_db and req.conversation_id:
+                _CANCEL_MSGS = {
+                    "zh-CN": "*用户取消了回答。*",
+                    "zh-HK": "*用戶取消了回答。*",
+                    "en": "*Response cancelled by user.*",
+                }
+                cancel_text = _CANCEL_MSGS.get(detected_lang, _CANCEL_MSGS["en"])
+                # If there was partial content, append cancel notice after it
+                if full_response.strip():
+                    save_content = _strip_internal_status_blocks(full_response)
+                    save_content = f"{save_content}\n\n---\n\n{cancel_text}"
+                else:
+                    save_content = cancel_text
+                try:
                     async for db_session in get_db():
                         try:
-                            # Strip internal-only status blocks before persisting so that
-                            # on the next turn the AI won't mistake them for existing search results.
-                            save_content = _strip_internal_status_blocks(full_response)
                             message_data = {
                                 "conversation_id": req.conversation_id,
                                 "role": "assistant",
                                 "content": save_content,
                             }
-                            saved_message = await ChatRepository.add_message(db_session, message_data)
+                            await ChatRepository.add_message(db_session, message_data)
                             await db_session.commit()
-                            # Send message_id back to frontend so it can update the message ID
-                            # This enables proper persistence of task submission status
-                            if saved_message:
-                                yield f"data: {json.dumps({'message_id': saved_message.id})}\n\n"
+                            logger.info(f"Saved cancelled assistant response on stream interruption")
                         finally:
                             await db_session.close()
-                # Now yield [DONE] after message_id has been sent
-                yield chunk
-            else:
-                yield chunk
-                # Extract content from SSE chunk
-                if chunk.startswith("data: "):
-                    try:
-                        data = json.loads(chunk[6:])
-                        if "content" in data and data["content"] is not None:
-                            full_response += data["content"]
-                    except:
-                        pass
+                except Exception as e:
+                    logger.warning(f"Failed to save cancelled response on disconnect: {e}")
 
     return StreamingResponse(
         stream_with_persistence(),
