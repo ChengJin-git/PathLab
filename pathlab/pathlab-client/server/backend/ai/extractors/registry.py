@@ -49,7 +49,7 @@ _EXTRACTOR_METADATA: Dict[str, Dict[str, str]] = {
     "uni2": {"name": "UNI2", "description": "ViT-G/14, 1536-dim (Mahmood Lab), recommended for histopathology"},
     "virchow": {"name": "Virchow", "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI), recommended for histopathology"},
     "virchow2": {"name": "Virchow2", "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI), recommended for histopathology"},
-    "plip": {"name": "PLIP", "description": "CLIP ViT-B/16, 512-dim (Zou Group), recommended for histopathology"},
+    "plip": {"name": "PLIP", "description": "CLIP ViT-B/16, 512-dim (James Zou Group), recommended for histopathology"},
     "phikon": {"name": "Phikon", "description": "iBOT ViT-L/16, 1024-dim (Owkin), recommended for histopathology"},
     "phikon2": {"name": "Phikon2", "description": "DINOv2 ViT-L/16, 1024-dim (Owkin), recommended for histopathology"},
     "patho_clip": {"name": "PathoCLIP", "description": "CLIP fine-tuned, 512-dim (Hong Bu Lab), recommended for histopathology"},

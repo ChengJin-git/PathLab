@@ -54,7 +54,7 @@ async def list_available_extractors(
             {"id": "virchow", "name": "Virchow", "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI)"},
             {"id": "virchow2", "name": "Virchow2", "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI)"},
             {"id": "H-Optimus-1", "name": "H-Optimus-1", "description": "ViT 1.1B, 1536-dim (Bioptimus)"},
-            {"id": "plip", "name": "PLIP", "description": "CLIP ViT-B/16, 512-dim (Zou Group)"},
+            {"id": "plip", "name": "PLIP", "description": "CLIP ViT-B/16, 512-dim (James Zou Lab)"},
             {"id": "phikon2", "name": "Phikon2", "description": "DINOv2 ViT-L/16, 1024-dim (Owkin)"},
             {"id": "mSTAR", "name": "mSTAR", "description": "ViT-L/16, 1024-dim (Smartlab)"},
             {"id": "GPFM", "name": "GPFM", "description": "DINOv2 ViT-L/14, 1024-dim (Smartlab)"},
