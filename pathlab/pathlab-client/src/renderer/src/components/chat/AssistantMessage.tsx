@@ -500,6 +500,32 @@ const AssistantMessage = React.memo(function AssistantMessage({
           />
         )
       }
+      // Fallback: render links to /pdf-images/ as inline images.
+      // The AI sometimes uses [text](url) link syntax instead of ![text](url) image syntax
+      // for PDF figure references, causing them to appear as clickable links instead of images.
+      if (href && href.includes('/pdf-images/')) {
+        let finalSrc = href
+        const token = getAuthToken()
+        if (token) {
+          const sep = finalSrc.includes('?') ? '&' : '?'
+          finalSrc = `${finalSrc}${sep}token=${encodeURIComponent(token)}`
+        }
+        const altText = typeof children === 'string' ? children
+          : Array.isArray(children) ? children.map(c => typeof c === 'string' ? c : '').join('')
+          : ''
+        return (
+          <img
+            src={finalSrc}
+            alt={altText || 'Figure'}
+            loading="lazy"
+            onError={(e) => {
+              const img = e.target as HTMLImageElement
+              img.removeAttribute('src')
+              img.style.display = 'none'
+            }}
+          />
+        )
+      }
       // External links: show underline + arrow indicator so users know it's clickable
       const isExternal = href?.startsWith('http')
       return (
@@ -552,6 +578,15 @@ const AssistantMessage = React.memo(function AssistantMessage({
   // Remove CITATION_CONTEXTS block - data consumed by citationMap, not for display
   // Always strip (even if parsing failed) to prevent raw JSON from showing
   displayContent = removeCitationContextsBlock(displayContent)
+
+  // Convert pdf-image links to images: [text](…/pdf-images/…) → ![text](…/pdf-images/…)
+  // The AI sometimes uses markdown link syntax instead of image syntax for figure references,
+  // causing them to render as clickable links instead of inline images.
+  // Only converts when NOT already preceded by '!' (i.e. not already an image).
+  displayContent = displayContent.replace(
+    /(^|[^!])\[([^\]]*)\]\((https?:\/\/[^)]*\/pdf-images\/[^)]+)\)/gm,
+    '$1![$2]($3)'
+  )
 
   // Convert inline citation patterns to markdown links with #cite- hash
   // Hash links are not sanitized by ReactMarkdown (unlike custom protocols like cite://)
