@@ -6,6 +6,7 @@ import { ToastProvider } from './contexts/ToastContext'
 import { BackgroundTaskPanel } from './components/BackgroundTaskPanel'
 import App from './App'
 import './index.css'
+import './i18n'
 import { initializeApiConfig, updateApiBase } from './config'
 import './i18n'
 
@@ -79,4 +80,3 @@ createRoot(rootElement).render(
     </ToastProvider>
   </Router>
 )
-

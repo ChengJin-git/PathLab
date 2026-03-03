@@ -5,6 +5,25 @@ import enUS from './locales/en-US.json'
 import zhCN from './locales/zh-CN.json'
 import zhHK from './locales/zh-HK.json'
 
+import drEnUS from './lib/deep-research/i18n-en.json'
+import drZhCN from './lib/deep-research/i18n-zh.json'
+import drZhHK from './lib/deep-research/i18n-zh-HK.json'
+
+function deepMerge(target: any, source: any): any {
+  if (typeof target !== 'object' || target === null || Array.isArray(target)) return source;
+  if (typeof source !== 'object' || source === null || Array.isArray(source)) return source;
+
+  const result = { ...target };
+  for (const key of Object.keys(source)) {
+    if (key in target) {
+      result[key] = deepMerge(target[key], source[key]);
+    } else {
+      result[key] = source[key];
+    }
+  }
+  return result;
+}
+
 export const supportedLanguages = [
   { code: 'en-US', name: 'English', nativeName: 'English' },
   { code: 'zh-CN', name: 'Chinese (Simplified)', nativeName: '简体中文' },
@@ -34,9 +53,9 @@ i18n
   .use(initReactI18next)
   .init({
     resources: {
-      'en-US': { translation: enUS },
-      'zh-CN': { translation: zhCN },
-      'zh-HK': { translation: zhHK }
+      'en-US': { translation: deepMerge(enUS, drEnUS) },
+      'zh-CN': { translation: deepMerge(zhCN, drZhCN) },
+      'zh-HK': { translation: deepMerge(zhHK, drZhHK) }
     },
     lng: getInitialLanguage(),
     fallbackLng: 'en-US',

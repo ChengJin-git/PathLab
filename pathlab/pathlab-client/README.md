@@ -15,6 +15,7 @@ PathLab 采用统一代码库，支持两种运行模式：
 
 - **WSI 阅片器**: 基于 OpenSeadragon 的多层级全切片图像可视化
 - **AI Chat 智能助手**: 流式 LLM 对话 (OpenRouter API)，支持会话持久化
+- **🆕 DeepResearch Agent**: 多智能体病理学研究助手 (agentv2 + LangGraph)，支持研究计划制定、执行、报告生成
 - **训练系统**: 19 种特征提取器 + 8 种 MIL 聚合器，全局特征缓存复用
 - **任务类型**: WSI 分类、Patch 分类、Patch 分割、生存预测 (Survival Prediction)
 - **推理分析**: WSI 分类预测、注意力热图可视化、Patch CAM 可视化、分割分析

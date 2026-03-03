@@ -8,6 +8,13 @@ set -e
 # Ensure we are in the pathlab-client directory
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# Avoid proxying localhost WebSocket/HTTP checks (ASR/vLLM health checks).
+# A SOCKS ALL_PROXY can break local ws://127.0.0.1 connections in gateway checks.
+unset ALL_PROXY
+unset all_proxy
+export NO_PROXY="${NO_PROXY:+$NO_PROXY,}127.0.0.1,localhost"
+export no_proxy="${no_proxy:+$no_proxy,}127.0.0.1,localhost"
+
 # 本地开发模式：使用 VLLM_URL/LLM_BASE_URL 等本地 LLM
 export PATHLAB_ENV="${PATHLAB_ENV:-development}"
 
@@ -71,6 +78,7 @@ if ! "$VENV_PYTHON" -c "import fastapi" 2>/dev/null; then MISSING_DEPS+=("fastap
 if ! "$VENV_PYTHON" -c "import uvicorn" 2>/dev/null; then MISSING_DEPS+=("uvicorn"); fi
 if ! "$VENV_PYTHON" -c "import PIL" 2>/dev/null; then MISSING_DEPS+=("pillow"); fi
 if ! "$VENV_PYTHON" -c "import aiosqlite" 2>/dev/null; then MISSING_DEPS+=("aiosqlite"); fi
+if ! "$VENV_PYTHON" -c "import asyncpg" 2>/dev/null; then MISSING_DEPS+=("asyncpg"); fi
 if ! "$VENV_PYTHON" -c "import sqlalchemy" 2>/dev/null; then MISSING_DEPS+=("sqlalchemy"); fi
 if ! "$VENV_PYTHON" -c "import torch" 2>/dev/null; then MISSING_DEPS+=("torch"); fi
 if ! "$VENV_PYTHON" -c "import cv2" 2>/dev/null; then MISSING_DEPS+=("opencv-python"); fi
@@ -79,7 +87,7 @@ if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
     echo "  ⚠️  缺少 Python 依赖: ${MISSING_DEPS[*]}"
     echo "  正在安装 Python 依赖..."
     cd server
-    uv pip install fastapi "uvicorn[standard]" sqlalchemy aiosqlite pillow numpy opencv-python torch torchvision einops einops-exts httpx python-multipart openai || {
+    uv pip install fastapi "uvicorn[standard]" sqlalchemy aiosqlite asyncpg pillow numpy opencv-python torch torchvision einops einops-exts httpx python-multipart openai || {
         echo "  ❌ Python 依赖安装失败"
         exit 1
     }
@@ -121,7 +129,15 @@ echo ""
 # 4. 配置 X Server (DISPLAY)
 # ============================================
 echo "[4/5] 配置 X Server..."
-if [ -z "$DISPLAY" ]; then
+
+# 检测操作系统
+OS_TYPE="$(uname -s)"
+
+if [ "$OS_TYPE" = "Darwin" ]; then
+    # macOS 不需要 X Server，Electron 直接使用 Quartz
+    echo "  ✓ macOS 检测到，不需要 X Server"
+    USE_XVFB=false
+elif [ -z "$DISPLAY" ]; then
     echo "  ⚠️  DISPLAY 环境变量未设置"
     
     if command -v xvfb-run >/dev/null 2>&1; then

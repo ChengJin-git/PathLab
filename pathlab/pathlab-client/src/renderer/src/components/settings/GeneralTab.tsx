@@ -86,6 +86,8 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [dashscopeApiKey, setDashscopeApiKey] = useState('')
   // Exa Search API key for web search
   const [exaApiKey, setExaApiKey] = useState('')
+  // Tavily API URL for deep research web search
+  const [tavilyApiUrl, setTavilyApiUrl] = useState('https://api.tavily.com')
   const [aiSaved, setAiSaved] = useState(false)
   const [aiSaving, setAiSaving] = useState(false)
 
@@ -154,6 +156,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       setApiKey(s.openrouter_api_key); setBaseUrl(s.openrouter_base_url); setModel(s.openrouter_model)
       setHuggingfaceToken(s.huggingface_token); setDashscopeApiKey(s.dashscope_api_key)
       setExaApiKey(s.exa_api_key || '')
+      setTavilyApiUrl(s.tavily_api_url || 'https://api.tavily.com')
       setLocalVllmEnabled(s.local_vllm_enabled); setLocalVllmBaseUrl(s.local_vllm_base_url)
       setLocalVllmModel(s.local_vllm_model); setLocalVllmApiKey(s.local_vllm_api_key)
       setLocalAsrEnabled(s.local_asr_enabled); setLocalAsrBaseUrl(s.local_asr_base_url)
@@ -184,6 +187,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         openrouter_api_key: apiKey, openrouter_base_url: baseUrl, openrouter_model: model,
         huggingface_token: huggingfaceToken, dashscope_api_key: dashscopeApiKey,
         exa_api_key: exaApiKey,
+        tavily_api_url: tavilyApiUrl,
         local_vllm_enabled: localVllmEnabled, local_vllm_base_url: localVllmBaseUrl,
         local_vllm_model: localVllmModel, local_vllm_api_key: localVllmApiKey,
         local_asr_enabled: localAsrEnabled, local_asr_base_url: localAsrBaseUrl,
@@ -347,18 +351,36 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
 	                  <div className="p-1 bg-slate-100 rounded">
 	                    <Globe className="w-3.5 h-3.5 text-slate-700" />
 	                  </div>
-	                  {t('settings.general.exaApiKey')}
+                    Web Search Providers
 	                </CardTitle>
-	                <CardDescription className="text-xs text-slate-500">
-	                  {t('settings.general.forWebSearch')}
+	                <CardDescription className="text-xs text-slate-500 space-y-1">
+                    <div>{t('settings.general.forWebSearch')}</div>
+                    <div className="flex items-center gap-3">
+                      <a
+                        href="https://exa.ai"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:text-blue-700 font-medium"
+                      >
+                        Exa {t('common.getKey')}
+                      </a>
+                      <a
+                        href="https://app.tavily.com/home"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:text-blue-700 font-medium"
+                      >
+                        Tavily {t('common.getKey')}
+                      </a>
+                    </div>
 	                </CardDescription>
 	              </CardHeader>
 	              <CardContent className="space-y-2.5 p-3 pt-0">
-	                <div className="space-y-1">
-	                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">
-	                    {t('settings.general.exaApiKey')}
-	                  </Label>
-	                  <Input
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">
+                    {t('settings.general.exaApiKey')}
+                  </Label>
+                  <Input
 	                    type="password"
 	                    value={exaApiKey}
 	                    onChange={(e) => setExaApiKey(e.target.value)}
@@ -366,15 +388,37 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
 	                    className="h-8 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
 	                  />
 	                  <p className="text-xs text-slate-500">
-	                    <a href="https://exa.ai" target="_blank" className="text-blue-600 hover:text-blue-700 font-medium">
+	                    <a href="https://exa.ai" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-700 font-medium">
 	                      {t('common.getKey')}
 	                    </a>
 	                  </p>
-	                </div>
-	              </CardContent>
-	            </Card>
-	          </div>
-	        </section>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">
+                    TAVILY API URL
+                  </Label>
+                  <Input
+                    value={tavilyApiUrl}
+                    onChange={(e) => setTavilyApiUrl(e.target.value)}
+                    placeholder="https://api.tavily.com"
+                    className="h-8 font-mono text-xs border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                  />
+                  <p className="text-xs text-slate-500">
+                    Deep Research web search base URL.{' '}
+                    <a
+                      href="https://app.tavily.com/home"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                      {t('common.getKey')}
+                    </a>
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </section>
 
         {/* Local Services Section */}
         <section className="space-y-3">

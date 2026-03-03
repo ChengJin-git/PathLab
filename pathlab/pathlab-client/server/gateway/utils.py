@@ -3,8 +3,16 @@ Utility functions for Gateway service
 """
 import os
 import httpx
-from Aslide import Slide
 from .dependencies import logger, AI_SERVICE_URL
+
+# Optional Aslide import - not needed for basic testing
+try:
+    from Aslide import Slide
+    ASLIDE_AVAILABLE = True
+except ImportError:
+    Slide = None
+    ASLIDE_AVAILABLE = False
+    logger.warning("Aslide not available - WSI property extraction will use defaults")
 
 
 async def cancel_ai_service_training(task_id: str) -> None:
@@ -20,7 +28,9 @@ async def cancel_ai_service_training(task_id: str) -> None:
             await client.delete(f"{AI_SERVICE_URL}/api/ai/training/{task_id}")
             logger.info(f"Sent cancellation request to AI service for task {task_id}")
     except httpx.TimeoutException:
-        logger.info(f"Cancellation request sent to AI service for task {task_id} (fire-and-forget)")
+        logger.info(
+            f"Cancellation request sent to AI service for task {task_id} (fire-and-forget)"
+        )
     except Exception as e:
         logger.warning(f"Failed to send cancellation to AI service for task {task_id}: {e}")
 
@@ -49,6 +59,12 @@ def extract_wsi_properties(wsi_path: str) -> dict:
         file_size = os.path.getsize(wsi_path)
     except Exception:
         file_size = 0
+
+    # If Aslide is not available, return defaults with file size
+    if not ASLIDE_AVAILABLE:
+        default_props["file_size"] = file_size
+        logger.info(f"Aslide not available, using default props for {os.path.basename(wsi_path)}")
+        return default_props
 
     try:
         with Slide(wsi_path) as slide:
@@ -108,4 +124,3 @@ def extract_wsi_properties(wsi_path: str) -> dict:
         # Still return file_size even if slide reading failed
         default_props["file_size"] = file_size
         return default_props
-

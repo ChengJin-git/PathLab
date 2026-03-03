@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, session } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, session, type OpenDialogOptions } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { startPythonSidecar, stopPythonSidecar, getGatewayPort } from './sidecar-manager'
@@ -147,21 +147,27 @@ ipcMain.handle('get-gateway-port', () => {
 
 // IPC handler for file selection
 ipcMain.handle('select-files', async (_event, options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => {
-  const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+  const dialogOptions: OpenDialogOptions = {
     title: options?.title || 'Select files',
     properties: ['openFile', 'multiSelections'],
     filters: options?.filters
-  })
+  }
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions)
   if (result.canceled) return []
   return result.filePaths
 })
 
 // IPC handler for directory selection
 ipcMain.handle('select-directory', async (_event, options?: { title?: string }) => {
-  const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+  const dialogOptions: OpenDialogOptions = {
     title: options?.title || 'Select directory',
     properties: ['openDirectory']
-  })
+  }
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions)
   if (result.canceled || result.filePaths.length === 0) return null
   return result.filePaths[0]
 })

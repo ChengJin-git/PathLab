@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw, AlertCircle, Activity, ClipboardList, Layers, Brain, StopCircle, User } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { CheckCircle2, Circle, Loader2, Clock, XCircle, RotateCcw, AlertCircle, Activity, ClipboardList, Layers, Brain, StopCircle } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { getApiBase } from '../config'
 import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask } from '../api'
 import { TASK_DETAIL_STATUS_BADGES, isActiveStatus } from '../constants/status'
-import { useAuth } from '../contexts/AuthContext'
 
 interface LogEntry {
   id: number
@@ -22,8 +22,8 @@ interface LogEntry {
 interface TaskDetail {
   task_id: string
   task_name: string
-  task_type: 'classification' | 'survival' | 'segmentation' | 'external_validation'
-  data_type: 'wsi' | 'patch'
+  task_type: 'classification' | 'survival_prediction' | 'segmentation'
+  data_level: 'wsi' | 'patch'
   task_description: string
   status: 'pending' | 'running' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
   progress: number
@@ -31,7 +31,6 @@ interface TaskDetail {
   updated_at: string
   wsi_count: number
   wsi_ids?: string[]
-  username?: string | null  // Username of task creator (only for admin users)
   preprocessing_config: {
     // Note: tile_size and stride removed - auto-determined by PrePATH-style tiling
     feature_extractor?: string
@@ -63,11 +62,6 @@ interface TaskDetail {
     epochs?: number
     optimizer?: string
     batch_size?: number
-    // External validation specific fields
-    model_id?: string
-    model_task_id?: string
-    dataset_id?: string
-    total_wsi?: number
   }
   classes?: string[]
   error_message?: string
@@ -120,7 +114,7 @@ export default function TaskDetailPage() {
   const { task_id } = useParams<{ task_id: string }>()
   const navigate = useNavigate()
   const location = useLocation()
-  const { isAdmin } = useAuth()
+  const { t } = useTranslation()
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
   const [task, setTask] = useState<TaskDetail | null>(null)
   const [logs, setLogs] = useState<LogEntry[]>([])
@@ -176,12 +170,11 @@ export default function TaskDetailPage() {
         }
 
         // Update task status (always present in SSE data)
-        // Preserve wsi_ids and username from initial load since SSE doesn't include them
+        // Preserve wsi_ids from initial load since SSE doesn't include them
         if (data.task) {
           setTask(prev => ({
             ...data.task,
-            wsi_ids: data.task.wsi_ids || prev?.wsi_ids,
-            username: data.task.username || prev?.username
+            wsi_ids: data.task.wsi_ids || prev?.wsi_ids
           }))
         }
 
@@ -283,12 +276,12 @@ export default function TaskDetailPage() {
   const handleRerun = async () => {
     setRerunError(null)
     if (!task || !task.wsi_ids || task.wsi_ids.length === 0) {
-      setRerunError('Cannot rerun: missing WSI IDs')
+      setRerunError(t('app.taskDetail.error.cannotRerunMissingWSI'))
       return
     }
 
     if (!task.preprocessing_config || !task.model_config) {
-      setRerunError('Cannot rerun: missing configuration')
+      setRerunError(t('app.taskDetail.error.cannotRerunMissingConfig'))
       return
     }
 
@@ -297,7 +290,7 @@ export default function TaskDetailPage() {
       const result = await createTrainingTask({
         task_name: `${task.task_name} (rerun)`,
         task_type: task.task_type,
-        data_type: task.data_type,
+        data_level: task.data_level,
         task_description: task.task_description,
         wsi_ids: task.wsi_ids,
         preprocessing: {
@@ -332,7 +325,7 @@ export default function TaskDetailPage() {
       navigate(`/task/${result.task_id}`)
     } catch (error) {
       console.error('Failed to rerun task:', error)
-      setRerunError('Failed to rerun task. Please try again.')
+      setRerunError(t('app.taskDetail.error.failedToRerun'))
     } finally {
       setRerunning(false)
     }
@@ -365,24 +358,22 @@ export default function TaskDetailPage() {
     return (
       <div className="flex flex-col items-center justify-center h-64 space-y-4">
         <AlertCircle className="w-12 h-12 text-red-500" />
-        <div className="text-xl font-semibold text-gray-900">Task Not Found</div>
-        <p className="text-gray-500">The task you are looking for does not exist or could not be loaded.</p>
+        <div className="text-xl font-semibold text-gray-900">{t('app.taskDetail.notFound.title')}</div>
+        <p className="text-gray-500">{t('app.taskDetail.notFound.description')}</p>
         <Button onClick={() => navigate(fromAIChat ? '/ai-chat' : '/task-list')} variant="outline">
-          {fromAIChat ? 'Back to Chat' : 'Back to Task List'}
+          {fromAIChat ? t('app.taskDetail.notFound.backToChat') : t('app.taskDetail.notFound.backToTaskList')}
         </Button>
       </div>
     )
   }
 
-  const isPatchLevel = task.data_type === 'patch'
-  const isExternalValidation = task.task_type === 'external_validation'
+  const isPatchLevel = task.data_level === 'patch'
 
   // Calculate display progress for patch-level tasks
   // (map 66% - 100% backend progress to 0% - 100% UI progress)
   // For completed tasks, always show 100%
   // For cancelled/failed tasks, show the mapped progress at the time of cancellation/failure
-  // External validation tasks use 0-100 directly regardless of data_type
-  const displayProgress = isPatchLevel && !isExternalValidation && task.status !== 'completed'
+  const displayProgress = isPatchLevel && task.status !== 'completed'
     ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
     : Math.min(task.progress, 100)  // Cap at 100% for safety
 
@@ -398,7 +389,7 @@ export default function TaskDetailPage() {
           <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-          {fromAIChat ? 'Back to Chat' : 'Tasks'}
+          {fromAIChat ? t('app.taskDetail.nav.backToChat') : t('app.taskDetail.nav.tasks')}
         </Button>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex-1 min-w-0">
@@ -419,7 +410,7 @@ export default function TaskDetailPage() {
                 ) : (
                   <RotateCcw className="w-4 h-4 text-gray-500" />
                 )}
-                Rerun
+                {t('app.taskDetail.actions.rerun')}
               </Button>
             )}
             {['pending', 'running', 'preprocessing', 'extracting', 'training'].includes(task.status) && (
@@ -434,7 +425,7 @@ export default function TaskDetailPage() {
                 ) : (
                   <StopCircle className="w-4 h-4" />
                 )}
-                Cancel
+                {t('app.taskDetail.actions.cancel')}
               </Button>
             )}
           </div>
@@ -454,9 +445,9 @@ export default function TaskDetailPage() {
 
       {/* Task Info Grid */}
       <Card className="p-4 sm:p-6 overflow-hidden border-gray-100 shadow-sm">
-        <div className={`grid grid-cols-2 ${isAdmin && task.username ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-4 sm:gap-6`}>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
           <div className="min-w-0">
-            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Task ID</div>
+            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('app.taskDetail.info.taskId')}</div>
             <div className="flex items-center gap-1.5 overflow-hidden">
               <div className="font-mono text-[11px] sm:text-sm font-bold text-gray-700 truncate">{task.task_id}</div>
               <button
@@ -485,35 +476,26 @@ export default function TaskDetailPage() {
               </button>
             </div>
             {copySuccess && (
-              <div className="text-[9px] text-green-600 font-bold mt-1">Copied!</div>
+              <div className="text-[9px] text-green-600 font-bold mt-1">{t('app.taskDetail.info.copied')}</div>
             )}
           </div>
           <div>
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">
-              {task.data_type === 'patch' ? 'Data' : 'Data'}
+              {t('app.taskDetail.info.data')}
             </div>
             <div className="flex items-end gap-1.5">
               <span className="text-lg sm:text-2xl font-bold text-gray-900 leading-none">{task.wsi_count}</span>
-              <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{task.data_type === 'patch' ? 'patches' : 'slides'}</span>
+              <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{task.data_level === 'patch' ? t('app.taskDetail.info.patches') : t('app.taskDetail.info.slides')}</span>
             </div>
           </div>
           <div>
-            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Created</div>
+            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('app.taskDetail.info.created')}</div>
             <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDate(task.created_at)}</div>
           </div>
           <div>
-            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Updated</div>
+            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('app.taskDetail.info.updated')}</div>
             <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDate(task.updated_at)}</div>
           </div>
-          {isAdmin && task.username && (
-            <div>
-              <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">Creator</div>
-              <div className="flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5 text-gray-400" />
-                <div className="text-xs sm:text-sm font-bold text-gray-700 truncate" title={task.username}>{task.username}</div>
-              </div>
-            </div>
-          )}
         </div>
       </Card>
 
@@ -521,13 +503,13 @@ export default function TaskDetailPage() {
       <Card className="p-4 sm:p-6 border-gray-100 shadow-sm overflow-hidden">
         <h3 className="text-sm sm:text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
           <Activity className="w-4 h-4 sm:w-5 sm:h-5 text-primary-600" />
-          Execution Progress
+          {t('app.taskDetail.progress.title')}
         </h3>
 
         {/* Overall Progress */}
         <div className="mb-6 bg-gray-50/50 p-3 sm:p-4 rounded-xl border border-gray-100">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs sm:text-sm font-bold text-gray-600 uppercase tracking-wide">Overall Completion</span>
+            <span className="text-xs sm:text-sm font-bold text-gray-600 uppercase tracking-wide">{t('app.taskDetail.progress.overallCompletion')}</span>
             <span className="text-sm sm:text-lg font-black text-primary-600">{displayProgress}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-2 sm:h-3 overflow-hidden">
@@ -540,25 +522,7 @@ export default function TaskDetailPage() {
 
         {/* Stage Progress */}
         <div className="space-y-3">
-          {isExternalValidation ? (
-            /* External validation: single "Testing" stage */
-            <div className="flex items-center justify-between text-sm">
-              <div className="flex items-center space-x-2">
-                <span className={
-                  (task.status === 'completed') ? 'text-green-600' :
-                  (task.status === 'running' || task.status === 'training') ? 'text-blue-600' :
-                  (task.status === 'failed') ? 'text-red-600' : 'text-gray-400'
-                }>
-                  { (task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
-                    (task.status === 'running' || task.status === 'training') ? <Loader2 className="w-4 h-4 animate-spin" /> :
-                    (task.status === 'failed') ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
-                </span>
-                <span className={(task.status === 'completed' || task.status === 'running' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
-                  Testing on Target Dataset
-                </span>
-              </div>
-            </div>
-          ) : !isPatchLevel ? (
+          {!isPatchLevel ? (
             <>
               <div className="flex items-center justify-between text-sm">
                 <div className="flex items-center space-x-2">
@@ -572,11 +536,11 @@ export default function TaskDetailPage() {
                       (task.status === 'failed' && task.progress < 30) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
                   </span>
                   <span className={task.status !== 'pending' ? 'text-gray-900' : 'text-gray-500'}>
-                    Patch Extraction
+                    {t('app.taskDetail.progress.patchExtraction')}
                   </span>
                 </div>
                 {task.patch_count && task.patch_count > 0 && (
-                  <span className="text-gray-600">{task.patch_count.toLocaleString()} patches</span>
+                  <span className="text-gray-600">{t('app.taskDetail.progress.patchCount', { count: task.patch_count })}</span>
                 )}
               </div>
 
@@ -592,7 +556,7 @@ export default function TaskDetailPage() {
                       (task.status === 'failed' && task.progress >= 30 && task.progress < 70) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
                   </span>
                   <span className={(task.status === 'training' || task.status === 'completed' || task.status === 'extracting') ? 'text-gray-900' : 'text-gray-500'}>
-                    Feature Extraction
+                    {t('app.taskDetail.progress.featureExtraction')}
                   </span>
                 </div>
                 {task.processed_patches && task.patch_count && (
@@ -607,34 +571,31 @@ export default function TaskDetailPage() {
                   <CheckCircle2 className="w-4 h-4" />
                 </span>
                 <span className="text-gray-900">
-                  Data Loading
+                  {t('app.taskDetail.progress.dataLoading')}
                 </span>
               </div>
             </div>
           )}
 
-          {/* Model Training / Testing stage - skip for external validation (already shown above) */}
-          {!isExternalValidation && (
-            <div className="flex items-center justify-between text-sm">
-              <div className="flex items-center space-x-2">
-                <span className={
-                  (task.status === 'completed') ? 'text-green-600' :
-                  (task.status === 'training') ? 'text-purple-600' :
-                  (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? 'text-red-600' : 'text-gray-400'
-                }>
-                  { (task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
-                    (task.status === 'training') ? <Loader2 className="w-4 h-4 animate-spin" /> :
-                    (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
-                </span>
-                <span className={(task.status === 'completed' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
-                  Model Training
-                </span>
-              </div>
-              {task.status === 'training' && task.current_epoch && (
-                <span className="text-gray-600">Epoch {task.current_epoch}/{task.model_config.epochs}</span>
-              )}
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center space-x-2">
+              <span className={
+                (task.status === 'completed') ? 'text-green-600' :
+                (task.status === 'training') ? 'text-purple-600' :
+                (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? 'text-red-600' : 'text-gray-400'
+              }>
+                { (task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
+                  (task.status === 'training') ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                  (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
+              </span>
+              <span className={(task.status === 'completed' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
+                {t('app.taskDetail.progress.modelTraining')}
+              </span>
             </div>
-          )}
+            {task.status === 'training' && task.current_epoch && (
+              <span className="text-gray-600">{t('app.taskDetail.progress.epoch', { current: task.current_epoch, total: task.model_config.epochs })}</span>
+            )}
+          </div>
         </div>
       </Card>
 
@@ -646,19 +607,25 @@ export default function TaskDetailPage() {
             <div className="flex items-start gap-3">
               <XCircle className="w-6 h-6 text-red-500 flex-shrink-0 mt-0.5" />
               <div className="flex-1">
-                <h3 className="text-lg font-semibold text-red-800 mb-2">Task Failed</h3>
-                <p className="text-red-700 mb-3">{errorInfo.userFriendlyMessage}</p>
+                <h3 className="text-lg font-semibold text-red-800 mb-2">{t('app.taskDetail.error.taskFailed')}</h3>
+                <p className="text-red-700 mb-3">
+                  {errorInfo.isVRAMError
+                    ? (errorInfo.suggestedBatchSize
+                      ? t('app.taskDetail.error.gpuMemoryWithSuggestion', { batchSize: errorInfo.suggestedBatchSize })
+                      : t('app.taskDetail.error.gpuMemory'))
+                    : errorInfo.originalMessage}
+                </p>
                 {errorInfo.isVRAMError && errorInfo.suggestedBatchSize && (
                   <div className="bg-red-100 border border-red-200 rounded-lg p-3 mb-3">
                     <p className="text-sm text-red-800">
-                      <strong>Suggestion:</strong> When creating a new task, set the Feature Batch Size to{' '}
-                      <span className="font-mono font-bold">{errorInfo.suggestedBatchSize}</span> or lower.
+                      <strong>{t('app.taskDetail.error.suggestion')}</strong>{' '}
+                      {t('app.taskDetail.error.vramSuggestion', { batchSize: errorInfo.suggestedBatchSize })}
                     </p>
                   </div>
                 )}
                 <details className="text-sm">
                   <summary className="text-red-600 cursor-pointer hover:text-red-800">
-                    Show technical details
+                    {t('app.taskDetail.error.showTechnicalDetails')}
                   </summary>
                   <pre className="mt-2 p-3 bg-red-100 rounded text-xs text-red-800 overflow-x-auto whitespace-pre-wrap">
                     {task.error_message}
@@ -675,17 +642,17 @@ export default function TaskDetailPage() {
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm sm:text-lg font-bold text-gray-900 flex items-center gap-2">
             <ClipboardList className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
-            Live Logs
+            {t('app.taskDetail.logs.title')}
           </h3>
           <div className="flex items-center space-x-1.5 sm:space-x-2 text-[10px] sm:text-xs text-gray-400 font-medium">
             <span className="inline-block w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-            <span>Live Stream</span>
+            <span>{t('app.taskDetail.logs.liveStream')}</span>
           </div>
         </div>
         <div ref={logsContainerRef} className="bg-gray-950 rounded-xl p-3 sm:p-4 h-[300px] sm:h-[450px] overflow-y-auto font-mono text-[10px] sm:text-xs leading-relaxed border border-gray-800 shadow-inner scrollbar-thin scrollbar-track-gray-900 scrollbar-thumb-gray-700">
           {logs.length === 0 ? (
             <div className="flex items-center justify-center h-full text-gray-600 italic">
-              Connecting to task stream...
+              {t('app.taskDetail.logs.connecting')}
             </div>
           ) : (
             logs.map((log) => (
@@ -749,168 +716,92 @@ export default function TaskDetailPage() {
       <Card className="p-4 sm:p-6 border-gray-100 shadow-sm overflow-hidden">
         <h3 className="text-sm sm:text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
           <Layers className="w-4 h-4 sm:w-5 sm:h-5 text-gray-700" />
-          Configuration
+          {t('app.taskDetail.config.title')}
         </h3>
 
-        {isExternalValidation ? (
-          /* External validation: show source model & target dataset info */
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
-              <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-                <Brain className="w-3.5 h-3.5 text-purple-600" />
-                Source Model
-              </h4>
-              <div className="space-y-3">
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Model ID</span>
-                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm font-mono text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.model_id}>
-                    {task.model_config.model_id || 'N/A'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Training Task</span>
-                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm font-mono text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.model_task_id}>
-                    {task.model_config.model_task_id || 'N/A'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Feature Extractor</span>
-                  <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
-                    {task.preprocessing_config.feature_extractor || 'N/A'}
-                  </span>
-                </div>
-                {task.data_type === 'wsi' && (
-                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                    <span className="text-gray-500 font-medium">Aggregator</span>
-                    <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
-                      {task.model_config.aggregator?.toUpperCase() || 'N/A'}
-                    </span>
-                  </div>
-                )}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
+            <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+              <Activity className="w-3.5 h-3.5 text-blue-600" />
+              {t('app.taskDetail.config.preprocessing')}
+            </h4>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">{t('app.taskDetail.config.saturationThreshold')}</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {task.preprocessing_config.sthresh ?? 'N/A'}
+                </span>
               </div>
-            </div>
-
-            <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
-              <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-                <Activity className="w-3.5 h-3.5 text-blue-600" />
-                Target Dataset
-              </h4>
-              <div className="space-y-3">
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Dataset ID</span>
-                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm font-mono text-[10px] sm:text-xs truncate max-w-[180px]" title={task.model_config.dataset_id}>
-                    {task.model_config.dataset_id || 'N/A'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Total WSIs</span>
-                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                    {task.model_config.total_wsi ?? task.wsi_count ?? 'N/A'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Data Level</span>
-                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm uppercase">
-                    {task.data_type || 'N/A'}
-                  </span>
-                </div>
-                {task.classes && task.classes.length > 0 && (
-                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                    <span className="text-gray-500 font-medium">Classes</span>
-                    <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                      {task.classes.length}
-                    </span>
-                  </div>
-                )}
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">{t('app.taskDetail.config.maskThreshold')}</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {task.preprocessing_config.mthresh ?? 'N/A'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">{t('app.taskDetail.config.useOtsu')}</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {task.preprocessing_config.use_otsu !== undefined
+                    ? (task.preprocessing_config.use_otsu ? t('app.common.yes') : t('app.common.no'))
+                    : 'N/A'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">{t('app.taskDetail.config.extractor')}</span>
+                <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
+                  {task.preprocessing_config.feature_extractor || 'N/A'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">{t('app.taskDetail.config.featureBatchSize')}</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {task.preprocessing_config.feature_batch_size ?? 'N/A'}
+                </span>
               </div>
             </div>
           </div>
-        ) : (
-          /* Regular training task: show preprocessing & training config */
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
-              <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-                <Activity className="w-3.5 h-3.5 text-blue-600" />
-                Preprocessing
-              </h4>
-              <div className="space-y-3">
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Saturation Threshold</span>
-                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                    {task.preprocessing_config.sthresh ?? 'N/A'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Mask Threshold</span>
-                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                    {task.preprocessing_config.mthresh ?? 'N/A'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Use Otsu</span>
-                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                    {task.preprocessing_config.use_otsu !== undefined
-                      ? (task.preprocessing_config.use_otsu ? 'Yes' : 'No')
-                      : 'N/A'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Extractor</span>
-                  <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
-                    {task.preprocessing_config.feature_extractor || 'N/A'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Feature Batch Size</span>
-                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                    {task.preprocessing_config.feature_batch_size ?? 'N/A'}
-                  </span>
-                </div>
-              </div>
-            </div>
 
-            <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
-              <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-                <Brain className="w-3.5 h-3.5 text-purple-600" />
-                Model & Training
-              </h4>
-              <div className="space-y-3">
-                {task.data_type === 'wsi' && (
-                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                    <span className="text-gray-500 font-medium">Aggregator</span>
-                    <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
-                      {task.model_config.aggregator?.toUpperCase() || 'N/A'}
-                    </span>
-                  </div>
-                )}
+          <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
+            <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+              <Brain className="w-3.5 h-3.5 text-purple-600" />
+              {t('app.taskDetail.config.modelTraining')}
+            </h4>
+            <div className="space-y-3">
+              {task.data_level === 'wsi' && (
                 <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Learning Rate</span>
-                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                    {task.model_config.learning_rate ?? 'N/A'}
+                  <span className="text-gray-500 font-medium">{t('app.taskDetail.config.aggregator')}</span>
+                  <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
+                    {task.model_config.aggregator?.toUpperCase() || 'N/A'}
                   </span>
                 </div>
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Epochs</span>
-                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                    {task.model_config.epochs ?? 'N/A'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Optimizer</span>
-                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm uppercase">
-                    {task.model_config.optimizer || 'N/A'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">Training Batch Size</span>
-                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                    {task.model_config.batch_size ?? 'N/A'}
-                  </span>
-                </div>
+              )}
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">{t('app.taskDetail.config.learningRate')}</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {task.model_config.learning_rate ?? 'N/A'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">{t('app.taskDetail.config.epochs')}</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {task.model_config.epochs ?? 'N/A'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">{t('app.taskDetail.config.optimizer')}</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm uppercase">
+                  {task.model_config.optimizer || 'N/A'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">{t('app.taskDetail.config.trainingBatchSize')}</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {task.model_config.batch_size ?? 'N/A'}
+                </span>
               </div>
             </div>
           </div>
-        )}
+        </div>
       </Card>
 
       {/* Cancel Confirmation Modal */}
@@ -923,18 +814,17 @@ export default function TaskDetailPage() {
                 <AlertCircle className="w-7 h-7 sm:w-10 sm:h-10 text-red-600" />
               </div>
               <h2 className="text-lg sm:text-2xl font-bold text-gray-900 leading-tight">
-                Cancel Training Task?
+                {t('app.taskDetail.cancelModal.title')}
               </h2>
               <p className="text-sm text-gray-500 mt-2">
-                This action cannot be undone
+                {t('app.taskDetail.cancelModal.subtitle')}
               </p>
             </div>
 
             {/* Warning Message */}
             <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6">
               <p className="text-sm text-red-800">
-                Cancelling this training task will stop the current training process and release GPU resources.
-                Any progress that has not been saved will be lost.
+                {t('app.taskDetail.cancelModal.warning')}
               </p>
             </div>
 
@@ -945,13 +835,13 @@ export default function TaskDetailPage() {
                 onClick={() => setShowCancelConfirm(false)}
                 className="flex-1 h-11"
               >
-                Keep Running
+                {t('app.taskDetail.cancelModal.keepRunning')}
               </Button>
               <Button
                 onClick={handleCancelTask}
                 className="flex-1 h-11 bg-red-600 hover:bg-red-700 text-white"
               >
-                Cancel Task
+                {t('app.taskDetail.cancelModal.cancelTask')}
               </Button>
             </div>
           </div>
@@ -960,4 +850,3 @@ export default function TaskDetailPage() {
     </div>
   )
 }
-

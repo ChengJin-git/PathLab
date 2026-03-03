@@ -38,8 +38,8 @@ export default function Layout({ children }: LayoutProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // Check if current page is Dashboard (ChatGPT-style home page)
-  const isAIChatPage = location.pathname.startsWith('/dashboard')
+  // Check if current page is Dashboard (ChatGPT-style home page) or Deep Research
+  const isAIChatPage = location.pathname.startsWith('/dashboard') || location.pathname.startsWith('/ai-chat') || location.pathname.startsWith('/deep-research')
   const isRegisterPage = location.pathname === '/register'
 
   const handleLogout = async () => {
@@ -79,8 +79,8 @@ export default function Layout({ children }: LayoutProps) {
         const errorMessage = err instanceof ApiError
           ? err.message
           : err instanceof Error
-          ? err.message
-          : 'Failed to upload avatar'
+            ? err.message
+            : 'Failed to upload avatar'
         toastError(errorMessage)
       }
     }
@@ -102,8 +102,8 @@ export default function Layout({ children }: LayoutProps) {
       const errorMessage = err instanceof ApiError
         ? err.message
         : err instanceof Error
-        ? err.message
-        : t('layout.avatarUploadFailed')
+          ? err.message
+          : t('layout.avatarUploadFailed')
       toastError(errorMessage)
     }
   }

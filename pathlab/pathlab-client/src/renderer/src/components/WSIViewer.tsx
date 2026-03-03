@@ -3,6 +3,8 @@ import { getPreprocessingBase } from '../config'
 import { HeatmapData } from '../api'
 import { Plus, Minus, RotateCcw, Maximize, Minimize, Loader2 } from 'lucide-react'
 
+const PREPROCESSING_BASE = getPreprocessingBase()
+
 interface WSIViewerProps {
   wsi_id: string
   showHeatmap?: boolean
@@ -628,4 +630,3 @@ export default function WSIViewer({
 }
 
 // Remove old styles object as we use Tailwind classes now
-

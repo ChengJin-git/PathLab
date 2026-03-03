@@ -1133,8 +1133,8 @@
     "deleteConversation": "刪除對話",
     "closeChatHistory": "關閉聊天歷史",
     "openChatHistory": "開啟聊天歷史",
+    "newChat": "新對話",
     "chat": "聊天",
-    "back": "返回",
     "welcomeTitle": "你好，我是 PathLab 智能助手",
     "welcomeDescription": "我們今天要做什麼？",
     "attachmentAlt": "附件 {{index}}",
@@ -1200,6 +1200,12 @@
         "title": "瀏覽圖像",
         "description": "瀏覽和分析病理圖像",
         "prompt": "我想瀏覽和分析一些病理圖像，你能幫我根據需求找到合適的圖像嗎？"
+      },
+      "deepResearch": {
+        "title": "深度研究",
+        "description": "AI 驅動的文獻综述與規劃報告",
+        "welcomeTitle": "歡迎使用深度研究",
+        "welcomeDescription": "描述您的研究問題，我將協助您制定計劃、開展調查並總結證據。"
       }
     },
     "taskSuccess": {

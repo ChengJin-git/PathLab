@@ -10,6 +10,10 @@ from pathlib import Path
 class Config:
     """Configuration for PathLab services"""
 
+    # ========== Default URLs ==========
+    DATABASE_URL_DEFAULT = "postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab"
+    REDIS_URL_DEFAULT = "redis://localhost:6379/0"
+
     # Root directory
     ROOT_DIR = Path(__file__).resolve().parents[3]  # pathlab-client/
 
@@ -210,16 +214,26 @@ class Config:
                 return value
             return value.lower() in ("true", "1", "yes")
 
-        # reCAPTCHA settings: prioritize environment variables over config file
-        # This allows deployment-time configuration via .env file
-        recaptcha_enabled_env = os.getenv("RECAPTCHA_ENABLED")
-        recaptcha_enabled = (
-            str_to_bool(recaptcha_enabled_env) if recaptcha_enabled_env is not None
-            else data.get("recaptcha_enabled", False)
+        # Turnstile settings (with reCAPTCHA key fallback for backward compatibility)
+        turnstile_enabled_env = os.getenv("TURNSTILE_ENABLED")
+        if turnstile_enabled_env is None:
+            turnstile_enabled_env = os.getenv("RECAPTCHA_ENABLED")
+        turnstile_enabled = (
+            str_to_bool(turnstile_enabled_env)
+            if turnstile_enabled_env is not None
+            else data.get("turnstile_enabled", data.get("recaptcha_enabled", False))
         )
 
-        recaptcha_site_key = os.getenv("RECAPTCHA_SITE_KEY") or data.get("recaptcha_site_key", "")
-        recaptcha_secret_key = os.getenv("RECAPTCHA_SECRET_KEY") or data.get("recaptcha_secret_key", "")
+        turnstile_site_key = (
+            os.getenv("TURNSTILE_SITE_KEY")
+            or os.getenv("RECAPTCHA_SITE_KEY")
+            or data.get("turnstile_site_key", data.get("recaptcha_site_key", ""))
+        )
+        turnstile_secret_key = (
+            os.getenv("TURNSTILE_SECRET_KEY")
+            or os.getenv("RECAPTCHA_SECRET_KEY")
+            or data.get("turnstile_secret_key", data.get("recaptcha_secret_key", ""))
+        )
 
         return {
             "openrouter_api_key": data.get("openrouter_api_key", ""),
@@ -227,6 +241,8 @@ class Config:
             "openrouter_model": data.get("openrouter_model", "qwen/qwen3-vl-235b-a22b-instruct"),
             "huggingface_token": data.get("huggingface_token", ""),
             "dashscope_api_key": data.get("dashscope_api_key", ""),
+            "exa_api_key": data.get("exa_api_key", ""),
+            "tavily_api_url": data.get("tavily_api_url", "https://api.tavily.com"),
             # Local vLLM settings (OpenAI-compatible server for LLM)
             "local_vllm_enabled": data.get("local_vllm_enabled", False),
             "local_vllm_base_url": data.get("local_vllm_base_url", "http://127.0.0.1:8000/v1"),
@@ -237,10 +253,14 @@ class Config:
             "local_asr_base_url": data.get("local_asr_base_url", "ws://127.0.0.1:8001/api-ws/v1/realtime"),
             "local_asr_model": data.get("local_asr_model", ""),
             "local_asr_api_key": data.get("local_asr_api_key", ""),
-            # reCAPTCHA settings (from environment variables or config file)
-            "recaptcha_enabled": recaptcha_enabled,
-            "recaptcha_site_key": recaptcha_site_key,
-            "recaptcha_secret_key": recaptcha_secret_key,
+            # Cloudflare Turnstile settings
+            "turnstile_enabled": turnstile_enabled,
+            "turnstile_site_key": turnstile_site_key,
+            "turnstile_secret_key": turnstile_secret_key,
+            # Keep legacy keys for backward compatibility with older callers
+            "recaptcha_enabled": turnstile_enabled,
+            "recaptcha_site_key": turnstile_site_key,
+            "recaptcha_secret_key": turnstile_secret_key,
         }
 
     @classmethod
@@ -252,6 +272,8 @@ class Config:
             "openrouter_model",
             "huggingface_token",
             "dashscope_api_key",
+            "exa_api_key",
+            "tavily_api_url",
             # Local vLLM settings
             "local_vllm_enabled",
             "local_vllm_base_url",
@@ -262,7 +284,11 @@ class Config:
             "local_asr_base_url",
             "local_asr_model",
             "local_asr_api_key",
-            # reCAPTCHA settings
+            # Cloudflare Turnstile settings
+            "turnstile_enabled",
+            "turnstile_site_key",
+            "turnstile_secret_key",
+            # Legacy reCAPTCHA settings (still accepted)
             "recaptcha_enabled",
             "recaptcha_site_key",
             "recaptcha_secret_key",
@@ -305,4 +331,3 @@ class Config:
 
 # Create singleton instance
 config = Config()
-

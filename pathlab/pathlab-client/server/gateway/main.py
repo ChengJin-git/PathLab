@@ -43,19 +43,20 @@ from .routes import (
 )
 from backend.common.config import Config
 
-# Import agent chat router
-# Import after other routes to ensure dependencies are loaded
-agent_chat_router = None
+# Import agent chat router (removed - replaced by research_chat)
+
+# Import research chat router (deep-research proxy)
+research_chat_router = None
 try:
-    from gateway.routes.agent_chat import router as agent_chat_router
-    logger.info("✅ Agent chat router loaded successfully")
-    print("✅ Agent chat router loaded successfully")
+    from gateway.routes.research_chat import router as research_chat_router
+    logger.info("✅ Research chat router loaded successfully")
+    print("✅ Research chat router loaded successfully")
 except Exception as e:
-    logger.error(f"❌ Failed to load agent chat router: {e}")
-    print(f"❌ Failed to load agent chat router: {e}")
+    logger.error(f"❌ Failed to load research chat router: {e}")
+    print(f"❌ Failed to load research chat router: {e}")
     import traceback
     traceback.print_exc()
-    agent_chat_router = None
+    research_chat_router = None
 
 
 @asynccontextmanager
@@ -383,19 +384,19 @@ app.include_router(ai_tasks_router)
 app.include_router(results_router)
 app.include_router(models_router)
 app.include_router(chat_router)
-if agent_chat_router is not None:
+if research_chat_router is not None:
     try:
-        app.include_router(agent_chat_router)  # Agent test page - no prefix needed
-        logger.info("✅ Agent chat router registered at /agent/chat")
-        print("✅ Agent chat router registered at /agent/chat")
+        app.include_router(research_chat_router)
+        logger.info("✅ Research chat router registered at /agent/research/*")
+        print("✅ Research chat router registered at /agent/research/*")
     except Exception as e:
-        logger.error(f"❌ Failed to register agent chat router: {e}")
-        print(f"❌ Failed to register agent chat router: {e}")
+        logger.error(f"❌ Failed to register research chat router: {e}")
+        print(f"❌ Failed to register research chat router: {e}")
         import traceback
         traceback.print_exc()
 else:
-    logger.warning("⚠️ Agent chat router is None, skipping registration")
-    print("⚠️ Agent chat router is None, skipping registration")
+    logger.warning("⚠️ Research chat router is None, skipping registration")
+    print("⚠️ Research chat router is None, skipping registration")
 app.include_router(storage_router)
 app.include_router(queue_router)
 app.include_router(asr_router)
