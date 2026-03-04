@@ -364,7 +364,7 @@ export async function exportDatasetLabels(
   const url = `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/export-labels?${params.toString()}`
 
   // Fetch with authentication
-  const token = localStorage.getItem('token')
+  const token = getAuthToken()
   const response = await fetch(url, {
     headers: {
       'Authorization': token ? `Bearer ${token}` : ''
