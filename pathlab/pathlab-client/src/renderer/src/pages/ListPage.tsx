@@ -2,8 +2,8 @@ import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, invalidateWSIListCache, getFileType } from '../api'
-import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User } from 'lucide-react'
+import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, invalidateWSIListCache, getFileType, exportDatasetLabels } from '../api'
+import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -11,7 +11,7 @@ import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { ALL_ACCEPT_STRING } from '../constants/fileTypes'
 import { formatBytes } from '../lib/utils'
 import { useAuth } from '../contexts/AuthContext'
-import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal } from '../components/list'
+import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, type ExportLabelsOptions } from '../components/list'
 
 export default function ListPage() {
   const { t } = useTranslation()
@@ -114,6 +114,11 @@ export default function ListPage() {
   const [deleting, setDeleting] = useState(false)
   // Optimistically hide datasets that are being deleted in background
   const [optimisticallyDeletedDatasetIds, setOptimisticallyDeletedDatasetIds] = useState<Set<string>>(new Set())
+
+  // Export labels - stores dataset for export modal
+  const [exportingDataset, setExportingDataset] = useState<DatasetSummary | null>(null)
+  const [showExportModal, setShowExportModal] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   const visibleDatasets = useMemo(() => {
     return datasets.filter(d => !d.dataset_id || !optimisticallyDeletedDatasetIds.has(d.dataset_id))
@@ -600,6 +605,52 @@ export default function ListPage() {
     }
   }
 
+  // Export labels handlers
+  const handleExportLabelsClick = async (e: React.MouseEvent, dataset: DatasetSummary) => {
+    e.stopPropagation()
+
+    // Check if dataset has predefined splits
+    if (dataset.has_predefined_splits) {
+      // Direct export without modal
+      setExporting(true)
+      try {
+        await exportDatasetLabels(dataset.dataset_id!)
+        toastSuccess(t('listPage.exportSuccess'))
+      } catch (error) {
+        console.error('Failed to export labels:', error)
+        toastError(t('listPage.exportFailed'))
+      } finally {
+        setExporting(false)
+      }
+    } else {
+      // Show modal for split configuration
+      setExportingDataset(dataset)
+      setShowExportModal(true)
+    }
+  }
+
+  const handleExportConfirm = async (options: ExportLabelsOptions) => {
+    if (!exportingDataset) return
+
+    setExporting(true)
+    try {
+      await exportDatasetLabels(exportingDataset.dataset_id!, options)
+      toastSuccess(t('listPage.exportSuccess'))
+    } catch (error) {
+      console.error('Failed to export labels:', error)
+      toastError(t('listPage.exportFailed'))
+    } finally {
+      setExporting(false)
+      setShowExportModal(false)
+      setExportingDataset(null)
+    }
+  }
+
+  const handleExportCancel = () => {
+    setShowExportModal(false)
+    setExportingDataset(null)
+  }
+
   // Legacy inline rename functions (kept for compatibility)
   const handleRenameClick = (e: React.MouseEvent, datasetId: string | null, datasetName: string) => {
     e.stopPropagation()
@@ -951,6 +1002,22 @@ export default function ListPage() {
                             </h3>
                             {dataset.can_delete && (
                               <div className="flex items-center sm:opacity-0 group-hover/title:opacity-100 transition-all -ml-0.5 sm:-ml-1">
+                                {isAdmin && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-green-600"
+                                    onClick={(e) => handleExportLabelsClick(e, dataset)}
+                                    title={t('listPage.exportLabels')}
+                                    disabled={exporting}
+                                  >
+                                    {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <Download className="w-3.5 h-3.5" />
+                                    )}
+                                  </Button>
+                                )}
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -1953,6 +2020,15 @@ export default function ListPage() {
           onDataLevelChange={setEditingDatasetDataLevel}
           onCancel={handleEditDatasetCancel}
           onSave={handleEditDatasetSave}
+        />
+      )}
+
+      {/* Export Labels Modal */}
+      {showExportModal && exportingDataset && (
+        <ExportLabelsModal
+          dataset={exportingDataset}
+          onConfirm={handleExportConfirm}
+          onCancel={handleExportCancel}
         />
       )}
     </div>

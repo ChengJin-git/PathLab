@@ -325,6 +325,82 @@ export async function updateDatasetDataLevel(
 }
 
 /**
+ * Options for exporting dataset labels
+ */
+export interface ExportLabelsOptions {
+  generateSplit?: boolean
+  seed?: number
+  stratified?: boolean
+  trainRatio?: number
+  valRatio?: number
+  testRatio?: number
+}
+
+/**
+ * Export dataset labels as CSV file
+ *
+ * If dataset has predefined splits, exports them directly.
+ * If generateSplit=true and no predefined splits, generates splits using training logic.
+ *
+ * @param datasetId - Dataset UUID
+ * @param options - Export options (split generation parameters)
+ * @throws {ApiError} If the request fails
+ */
+export async function exportDatasetLabels(
+  datasetId: string,
+  options: ExportLabelsOptions = {}
+): Promise<void> {
+  const params = new URLSearchParams()
+
+  if (options.generateSplit) {
+    params.append('generate_split', 'true')
+    params.append('seed', String(options.seed ?? 42))
+    params.append('stratified', String(options.stratified !== false))
+    params.append('train_ratio', String(options.trainRatio ?? 0.7))
+    params.append('val_ratio', String(options.valRatio ?? 0.1))
+    params.append('test_ratio', String(options.testRatio ?? 0.2))
+  }
+
+  const url = `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/export-labels?${params.toString()}`
+
+  // Fetch with authentication
+  const token = localStorage.getItem('token')
+  const response = await fetch(url, {
+    headers: {
+      'Authorization': token ? `Bearer ${token}` : ''
+    }
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(errorText || 'Failed to export labels')
+  }
+
+  // Trigger browser download
+  const blob = await response.blob()
+  const downloadUrl = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = downloadUrl
+
+  // Extract filename from Content-Disposition header
+  const contentDisposition = response.headers.get('Content-Disposition')
+  const filenameMatch = contentDisposition?.match(/filename="(.+)"/)
+  a.download = filenameMatch ? filenameMatch[1] : 'dataset_labels.csv'
+
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  window.URL.revokeObjectURL(downloadUrl)
+}
+
+/**
+      body: JSON.stringify({ aggregation_level: dataLevel })
+    },
+    'Failed to update dataset data level'
+  )
+}
+
+/**
  * Fetch WSI detail from database via Gateway API
  * @throws {ApiError} If the request fails (use .isNotFound() to check for 404)
  */

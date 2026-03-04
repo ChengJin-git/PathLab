@@ -7,3 +7,6 @@ export type { DeleteConfirmModalProps, BatchDeleteModalProps } from './DeleteMod
 export { EditMetadataModal, BatchEditModal, EditDatasetModal } from './EditModals'
 export type { EditMetadataModalProps, BatchEditModalProps, EditDatasetModalProps } from './EditModals'
 
+export { ExportLabelsModal } from './ExportLabelsModal'
+export type { ExportLabelsOptions } from './ExportLabelsModal'
+
