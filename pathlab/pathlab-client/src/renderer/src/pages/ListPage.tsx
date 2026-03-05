@@ -75,12 +75,23 @@ export default function ListPage() {
 
   // Edit metadata modal
   const [showEditModal, setShowEditModal] = useState(false)
-  const [editingWSI, setEditingWSI] = useState<{ wsi_id: string; label: string; case_id: string; age?: number; gender?: string; source?: string } | null>(null)
+  const [editingWSI, setEditingWSI] = useState<{
+    wsi_id: string
+    label?: string
+    case_id: string
+    age?: number
+    gender?: string
+    source?: string
+    event_time?: number
+    event_status?: number
+  } | null>(null)
   const [editLabel, setEditLabel] = useState('')
   const [editCaseId, setEditCaseId] = useState('')
   const [editAge, setEditAge] = useState('')
   const [editGender, setEditGender] = useState('')
   const [editSource, setEditSource] = useState('')
+  const [editEventTime, setEditEventTime] = useState('')
+  const [editEventStatus, setEditEventStatus] = useState('')
   const [updating, setUpdating] = useState(false)
 
   // Batch edit metadata
@@ -90,6 +101,8 @@ export default function ListPage() {
   const [batchEditAge, setBatchEditAge] = useState('')
   const [batchEditGender, setBatchEditGender] = useState('')
   const [batchEditSource, setBatchEditSource] = useState('')
+  const [batchEditEventTime, setBatchEditEventTime] = useState('')
+  const [batchEditEventStatus, setBatchEditEventStatus] = useState('')
   const [batchUpdating, setBatchUpdating] = useState(false)
 
   // Case grouping - tracks which case_ids are expanded
@@ -453,13 +466,17 @@ export default function ListPage() {
       case_id: wsi.case_id,
       age: wsi.age,
       gender: wsi.gender,
-      source: wsi.source
+      source: wsi.source,
+      event_time: wsi.event_time,
+      event_status: wsi.event_status
     })
     setEditLabel(wsi.label || '')
     setEditCaseId(wsi.case_id || '')
     setEditAge(wsi.age?.toString() || '')
     setEditGender(wsi.gender || '')
     setEditSource(wsi.source || '')
+    setEditEventTime(wsi.event_time?.toString() || '')
+    setEditEventStatus(wsi.event_status?.toString() || '')
     setShowEditModal(true)
   }
 
@@ -469,12 +486,17 @@ export default function ListPage() {
     setUpdating(true)
     try {
       const age = editAge ? parseInt(editAge) : undefined
+      const event_time = editEventTime ? parseFloat(editEventTime) : undefined
+      const event_status = editEventStatus ? parseInt(editEventStatus) : undefined
+
       await updateWSIMetadata(editingWSI.wsi_id, {
-        label: editLabel,
-        case_id: editCaseId,
+        label: editLabel || undefined,
+        case_id: editCaseId || undefined,
         age: age,
-        gender: editGender,
-        source: editSource
+        gender: editGender || undefined,
+        source: editSource || undefined,
+        event_time: event_time,
+        event_status: event_status
       })
       setShowEditModal(false)
       setEditingWSI(null)
@@ -497,6 +519,8 @@ export default function ListPage() {
     setBatchEditAge('')
     setBatchEditGender('')
     setBatchEditSource('')
+    setBatchEditEventTime('')
+    setBatchEditEventStatus('')
     setShowBatchEditModal(true)
   }
 
@@ -504,7 +528,7 @@ export default function ListPage() {
     if (selectedIds.size === 0) return
 
     // Check if at least one field is provided
-    const hasUpdates = batchEditLabel || batchEditCaseId || batchEditAge || batchEditGender || batchEditSource
+    const hasUpdates = batchEditLabel || batchEditCaseId || batchEditAge || batchEditGender || batchEditSource || batchEditEventTime || batchEditEventStatus
     if (!hasUpdates) {
       setShowBatchEditModal(false)
       return
@@ -514,13 +538,18 @@ export default function ListPage() {
     try {
       // Prepare the request
       const age = batchEditAge ? parseInt(batchEditAge) : undefined
+      const event_time = batchEditEventTime ? parseFloat(batchEditEventTime) : undefined
+      const event_status = batchEditEventStatus ? parseInt(batchEditEventStatus) : undefined
+
       const request = {
         wsi_ids: Array.from(selectedIds),
         label: batchEditLabel || undefined,
         case_id: batchEditCaseId || undefined,
         age: age,
         gender: batchEditGender || undefined,
-        source: batchEditSource || undefined
+        source: batchEditSource || undefined,
+        event_time: event_time,
+        event_status: event_status
       }
 
       // Start background task
@@ -1968,11 +1997,16 @@ export default function ListPage() {
           editAge={editAge}
           editGender={editGender}
           editSource={editSource}
+          editEventTime={editEventTime}
+          editEventStatus={editEventStatus}
+          datasetType={selectedDatasetType}
           onEditLabelChange={setEditLabel}
           onEditCaseIdChange={setEditCaseId}
           onEditAgeChange={setEditAge}
           onEditGenderChange={setEditGender}
           onEditSourceChange={setEditSource}
+          onEditEventTimeChange={setEditEventTime}
+          onEditEventStatusChange={setEditEventStatus}
           updating={updating}
           onCancel={() => {
             setShowEditModal(false)
@@ -1991,11 +2025,16 @@ export default function ListPage() {
           batchEditAge={batchEditAge}
           batchEditGender={batchEditGender}
           batchEditSource={batchEditSource}
+          batchEditEventTime={batchEditEventTime}
+          batchEditEventStatus={batchEditEventStatus}
+          datasetType={selectedDatasetType}
           onBatchEditLabelChange={setBatchEditLabel}
           onBatchEditCaseIdChange={setBatchEditCaseId}
           onBatchEditAgeChange={setBatchEditAge}
           onBatchEditGenderChange={setBatchEditGender}
           onBatchEditSourceChange={setBatchEditSource}
+          onBatchEditEventTimeChange={setBatchEditEventTime}
+          onBatchEditEventStatusChange={setBatchEditEventStatus}
           batchUpdating={batchUpdating}
           onCancel={() => setShowBatchEditModal(false)}
           onConfirm={handleConfirmBatchEdit}

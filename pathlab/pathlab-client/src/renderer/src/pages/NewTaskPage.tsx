@@ -56,11 +56,17 @@ export default function NewTaskPage() {
     taskType: wizard.taskType,
   })
   const trainingConfig = useTrainingConfig()
+
+  // Get COCO category count for segmentation datasets
+  const selectedDataset = dataSelection.datasets.find(d => d.dataset_id === dataSelection.selectedDatasetId)
+  const numCocoCategories = selectedDataset?.num_coco_categories
+
   const splitValidation = useSplitValidation({
     items: dataSelection.filteredItems,
     selectedIds: dataSelection.selectedIds,
     taskType: wizard.taskType,
     dataLevel: wizard.dataLevel,
+    numCocoCategories,
   })
 
   // ========== Additional Local State ==========

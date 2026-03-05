@@ -14,6 +14,7 @@ export interface UseSplitValidationProps {
   selectedIds: Set<string>
   taskType: TaskType
   dataLevel: DataLevel
+  numCocoCategories?: number  // Number of COCO categories for segmentation datasets
 }
 
 export interface UseSplitValidationReturn {
@@ -27,6 +28,7 @@ export function useSplitValidation({
   selectedIds,
   taskType,
   dataLevel,
+  numCocoCategories,
 }: UseSplitValidationProps): UseSplitValidationReturn {
   const { t } = useTranslation()
   // Calculate class distribution for k-fold validation (classification) or event status distribution (survival)
@@ -93,14 +95,29 @@ export function useSplitValidation({
     const isSurvival = taskType === 'survival'
     const isSegmentation = taskType === 'segmentation'
 
-    // Segmentation tasks use COCO annotations, not WSI labels — skip label-based validation
+    // Segmentation tasks use COCO annotations, not WSI labels
     if (isSegmentation) {
       const totalSelected = selectedIds.size > 0 ? selectedIds.size : items.length
+      const numClasses = numCocoCategories || 0
+
+      // If no COCO categories are found, show a warning
+      if (numClasses === 0) {
+        return {
+          isValid: false,
+          maxK: 0,
+          minSamplesPerClass: 0,
+          numClasses: 0,
+          unlabeledCount: 0,
+          totalLabeled: totalSelected,
+          message: t('training.dataSplit.validation.noCocoCategories'),
+        }
+      }
+
       return {
         isValid: totalSelected >= 2,
         maxK: totalSelected,
         minSamplesPerClass: totalSelected,
-        numClasses: 0,
+        numClasses,
         unlabeledCount: 0,
         totalLabeled: totalSelected,
         message: totalSelected < 2 ? t('training.dataSplit.validation.noLabeledSamples') : undefined,

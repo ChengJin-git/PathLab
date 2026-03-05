@@ -804,7 +804,7 @@ class WSIRepository:
             test_count = row.split_test_count or 0
             has_predefined_splits = train_count > 0  # At least train split must exist
 
-            datasets.append({
+            dataset_dict = {
                 "dataset_id": row.dataset_id,  # UUID for API calls
                 "dataset_name": row.dataset_name or "Uncategorized",  # Display name
                 "user_id": row.dataset_user_id,  # Dataset owner
@@ -820,8 +820,80 @@ class WSIRepository:
                     "val": val_count,
                     "test": test_count
                 }
-            })
+            }
+
+            # For segmentation datasets, fetch COCO categories from annotation files
+            if row.task_type == "segmentation" and row.dataset_id:
+                coco_categories = await WSIRepository._get_coco_categories_for_dataset(db, row.dataset_id)
+                if coco_categories:
+                    dataset_dict["coco_categories"] = coco_categories
+                    dataset_dict["num_coco_categories"] = len(coco_categories)
+                else:
+                    dataset_dict["num_coco_categories"] = 0
+
+            datasets.append(dataset_dict)
         return datasets
+
+    @staticmethod
+    async def _get_coco_categories_for_dataset(db: AsyncSession, dataset_id: str) -> List[Dict]:
+        """
+        Extract COCO categories from annotation JSON files for a segmentation dataset.
+
+        Args:
+            db: Database session
+            dataset_id: Dataset UUID
+
+        Returns:
+            List of category dicts with id, name, and optionally supercategory
+        """
+        import json
+        import os
+        from pathlib import Path
+
+        # Query one WSI from this dataset that has an annotation file
+        query = select(WSISlide).where(
+            and_(
+                WSISlide.dataset_id == dataset_id,
+                WSISlide.wsi_path.like('%.json')
+            )
+        ).limit(1)
+
+        result = await db.execute(query)
+        wsi = result.scalar_one_or_none()
+
+        if not wsi or not wsi.wsi_path:
+            return []
+
+        # Read the JSON file to extract categories
+        try:
+            json_path = Path(wsi.wsi_path)
+            if not json_path.exists():
+                return []
+
+            with open(json_path, 'r') as f:
+                coco_data = json.load(f)
+
+            # Extract categories from COCO format
+            categories = coco_data.get('categories', [])
+            if not categories:
+                return []
+
+            # Return simplified category info
+            return [
+                {
+                    "id": cat.get("id"),
+                    "name": cat.get("name"),
+                    "supercategory": cat.get("supercategory")
+                }
+                for cat in categories
+                if cat.get("id") is not None and cat.get("name")
+            ]
+        except Exception as e:
+            # Log error but don't fail the entire request
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to extract COCO categories from {wsi.wsi_path}: {e}")
+            return []
 
     @staticmethod
     async def get_by_dataset(

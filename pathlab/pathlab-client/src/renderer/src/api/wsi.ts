@@ -217,6 +217,9 @@ export interface DatasetSummary {
   // Pre-defined split information (from CSV upload)
   has_predefined_splits?: boolean
   predefined_split_counts?: { train: number; val: number; test: number }
+  // COCO categories for segmentation datasets
+  coco_categories?: Array<{ id: number; name: string; supercategory?: string }>
+  num_coco_categories?: number
 }
 
 /**
