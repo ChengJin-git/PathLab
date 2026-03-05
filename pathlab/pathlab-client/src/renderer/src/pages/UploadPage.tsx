@@ -1137,7 +1137,7 @@ export default function RegisterPage() {
               </div>
 
               {/* Table Area */}
-              <Card className="flex-1 min-h-0 flex flex-col overflow-hidden mb-2 sm:mb-4 mx-2 sm:mx-0">
+              <Card className="flex-1 min-h-0 flex flex-col overflow-hidden mb-2 sm:mb-4 mx-2 sm:mx-0 max-h-[600px]">
                 <div
                   className="flex-1 overflow-x-auto overflow-y-auto bg-white"
                   ref={tableContainerRef}
