@@ -1441,11 +1441,19 @@ export async function loadConversationFromBackend(conversationId: string): Promi
       const cachedRestartPlanShownResearchIds = (cached.restartPlanShownResearchIds ?? []).filter(
         (rid) => cachedRootSet.has(rid),
       );
+      // Clear isStreaming on all cached messages — the stream is no longer
+      // active, and stale isStreaming=true prevents tool calls from rendering.
+      const cachedMessages = new Map<string, Message>(cached.messages ?? []);
+      for (const [id, msg] of cachedMessages) {
+        if (msg.isStreaming) {
+          cachedMessages.set(id, { ...msg, isStreaming: false });
+        }
+      }
       useStore.setState({
         conversationId,
         threadId: resolvedConversationThreadId,
         messageIds: cached.messageIds ?? [],
-        messages: new Map<string, Message>(cached.messages ?? []),
+        messages: cachedMessages,
         messageBackendIds: new Map<string, number>(cached.messageBackendIds ?? []),
         researchIds: cachedResearchIds,
         researchPlanIds: new Map<string, string>(cachedPlanIds),
