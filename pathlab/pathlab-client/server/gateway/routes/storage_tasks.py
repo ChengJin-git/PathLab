@@ -197,7 +197,7 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
 
                 # Create dataset with group_id
                 dataset = await DatasetRepository.get_or_create(db, dataset_name, group_id=data_group.group_id, user_id=user_id)
-                if not dataset.user_id:
+                if dataset.user_id != user_id:
                     dataset.user_id = user_id
                     await db.flush()
                 resolved_dataset_id = dataset.dataset_id
@@ -286,6 +286,7 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                         "vendor": props.get("vendor"),
                         "user_id": user_id,
                         "associated_files": associated_files_json,
+                        "case_id": uuid.uuid4().hex[:12],  # Random unique case_id; users override via CSV registration later
                     }
 
                     # Set label or survival data based on task type
@@ -458,6 +459,7 @@ async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
             results = []
             deleted_count = 0
             failed_count = 0
+            affected_dataset_ids = set()  # Track datasets that may become empty
 
             for i, wsi_id in enumerate(wsi_ids):
                 # Check for cancellation at the start of each iteration
@@ -480,6 +482,7 @@ async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
                         continue
 
                     wsi_path = wsi.wsi_path
+                    affected_dataset_id = wsi.dataset_id  # Track for post-delete cleanup
 
                     # Delete all associated data before deleting the WSI record
                     # This mirrors the behavior of delete_wsi API in wsi.py
@@ -524,6 +527,8 @@ async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
                             "message": "Record and cache files deleted successfully"
                         })
                         deleted_count += 1
+                        if affected_dataset_id:
+                            affected_dataset_ids.add(affected_dataset_id)
                     else:
                         results.append({
                             "wsi_id": wsi_id,
@@ -552,6 +557,17 @@ async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
                 )
                 await db.commit()
 
+            # Clean up empty datasets after all deletions
+            if affected_dataset_ids and deleted_count > 0:
+                for ds_id in affected_dataset_ids:
+                    try:
+                        remaining = await WSIRepository.count_by_dataset(db, ds_id)
+                        if remaining == 0:
+                            await DatasetRepository.delete(db, ds_id)
+                            await db.commit()
+                            logger.info(f"Cleaned up empty dataset {ds_id} after external delete")
+                    except Exception as ds_err:
+                        logger.warning(f"Failed to cleanup empty dataset {ds_id}: {ds_err}")
             # Update task with final results
             await StorageTaskRepository.update_status(
                 db, task_id, 'completed',

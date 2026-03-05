@@ -56,7 +56,7 @@ async def list_wsi(
 
     When dataset_id is provided, pagination is case-level:
     - Each distinct case_id is one page unit
-    - All files without case_id form one __no_case__ group (always last)
+    - Files without case_id are individually paginated (one file = one page unit)
     - Response includes total_cases, has_multi_slide_cases metadata
 
     When dataset_id is NOT provided, falls back to file-level pagination
