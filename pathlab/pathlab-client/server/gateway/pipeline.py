@@ -15,7 +15,7 @@ from typing import List, Dict
 from contextlib import asynccontextmanager
 
 from backend.ai.schemas.base import TaskStatus
-from backend.database.repositories import TrainingTaskRepository
+from backend.database.repositories import TrainingTaskRepository, AnnotationDraftRepository
 from backend.database.utils.training_logger import TrainingLogger
 from backend.common.config import Config
 from .dependencies import logger, PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
@@ -177,6 +177,20 @@ async def run_training_pipeline(
                     early_stopping_patience = int(model_config.get('early_stopping_patience', 15))
                     seed = preprocessing_config.get('split_config', {}).get('seed', 42)
 
+                    # Determine num_classes from COCO annotations stored in annotation_drafts
+                    num_classes = 1  # default
+                    for wsi_id in wsi_ids:
+                        draft = await AnnotationDraftRepository.get_draft_by_draft_id(db, f"draft_{wsi_id}")
+                        if draft and draft.annotations:
+                            coco_categories = draft.annotations.get("categories", [])
+                            if coco_categories:
+                                num_classes = len(coco_categories)
+                                break
+                    await logger.info(
+                        f"Detected {num_classes} segmentation class(es) from COCO annotations",
+                        metadata={"num_classes": num_classes}
+                    )
+
                     await logger.info(
                         f"Training {architecture} with {backbone} backbone",
                         metadata={"architecture": architecture, "backbone": backbone,
@@ -204,6 +218,7 @@ async def run_training_pipeline(
                         "early_stopping_patience": early_stopping_patience,
                         "device": assigned_device,
                         "seed": seed,
+                        "num_classes": num_classes,
                     },
                     operation_name="patch segmentation training"
                 )

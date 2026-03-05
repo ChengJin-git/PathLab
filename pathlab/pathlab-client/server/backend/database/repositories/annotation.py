@@ -94,3 +94,14 @@ class AnnotationDraftRepository:
         await db.flush()
         return result.rowcount > 0
 
+    @staticmethod
+    async def get_draft_by_draft_id(
+        db: AsyncSession,
+        draft_id: str,
+    ) -> Optional[AnnotationDraft]:
+        """Get a draft by draft_id without user_id filter (for internal pipeline use)."""
+        result = await db.execute(
+            select(AnnotationDraft)
+            .where(AnnotationDraft.draft_id == draft_id)
+        )
+        return result.scalar_one_or_none()

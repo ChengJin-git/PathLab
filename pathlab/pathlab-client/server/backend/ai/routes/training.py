@@ -851,6 +851,7 @@ class PatchSegmentationTrainRequest(BaseModel):
     early_stopping_patience: int = 15
     device: Optional[str] = None
     seed: Optional[int] = 42
+    num_classes: int = 1
 
 
 @router.post("/patch_segmentation")
@@ -905,6 +906,8 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         # Merge dataset paths from preprocessing_config (set by gateway pipeline)
         if preprocessing_config.get("segmentation_dataset"):
             config["dataset"] = preprocessing_config["segmentation_dataset"]
+        # Always apply num_classes from request (overrides default of 1)
+        config.setdefault("dataset", {})["classes"] = req.num_classes
 
         trainer = SegmentationTrainer(
             task_id=req.task_id,
