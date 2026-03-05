@@ -106,22 +106,17 @@ export function MessageListItem({
     const researchReportIds = useStore((state) => state.researchReportIds);
     const researchActivityIds = useStore((state) => state.researchActivityIds);
     const researchRunStatus = useStore((state) => state.researchRunStatus);
-    const latestPlannerMessage = useStore((state) => {
-        const reversed = [...state.messageIds].reverse();
-        for (const id of reversed) {
-            const msg = state.messages.get(id);
-            if (!msg || msg.role !== "assistant") continue;
-            const payload = parsePlannerPayload(msg.content ?? "");
-            if (msg.agent === "planner" || payload !== null) {
-                return msg;
-            }
-        }
-        return undefined;
-    });
+    const hasPlannerMessage = useStore((state) => state.researchPlanIds.size > 0);
     const startOfResearch = useMemo(() => {
         return researchIds.includes(messageId);
     }, [researchIds, messageId]);
-    const trimmedContent = (message?.content ?? "").trim();
+    const trimmedContent = (message?.content ?? "").replace(
+        /\[PATHLAB_RESEARCH_META\][\s\S]*?(?:\[\/PATHLAB_RESEARCH_META\]|$)/g,
+        "",
+    ).replace(
+        /\[TRAINING_CHAT_LINK\][\s\S]*?\[\/TRAINING_CHAT_LINK\]/g,
+        "",
+    ).trim();
     const isLocaleOnly =
         !!trimmedContent && /^[a-z]{2}(-[A-Z]{2})?$/.test(trimmedContent);
     const isEmptyContent =
@@ -162,27 +157,32 @@ export function MessageListItem({
     ]);
 
     if (message) {
-        const plannerPayload = parsePlannerPayload(message.content ?? "");
+        const strippedContent = (message.content ?? "").replace(
+            /\[PATHLAB_RESEARCH_META\][\s\S]*?(?:\[\/PATHLAB_RESEARCH_META\]|$)/g,
+            "",
+        ).trim();
+        const plannerPayload = parsePlannerPayload(strippedContent);
         const isPlannerLikeMessage =
             message.role === "assistant" &&
             (message.agent === "planner" || plannerPayload !== null);
+        // Render as ResearchCard only when there is actual execution
+        // evidence (report, non-planner activity, or run status).
+        // A planner message may land in researchIds after backend
+        // reconstruction normalises the research anchor, but if no
+        // research execution ever happened (user refreshed mid-plan)
+        // it should still render as PlanCard.
         const shouldRenderResearchCard = (() => {
-            if (!startOfResearch) {
-                return false;
-            }
-            if (!isPlannerLikeMessage) {
-                return true;
-            }
-            // When research root normalizes to a planner message after reload,
-            // only show ResearchCard if there is evidence execution has started.
-            const reportId = researchReportIds.get(messageId);
+            if (!startOfResearch) return false;
+            if (!isPlannerLikeMessage) return true;
             const activities = researchActivityIds.get(messageId) ?? [];
             const hasNonPlannerActivity = activities.some((id) => id !== messageId);
+            const hasReport = researchReportIds.has(messageId);
             const status = researchRunStatus.get(messageId);
             return (
-                !!reportId ||
+                hasReport ||
                 hasNonPlannerActivity ||
                 status === "running" ||
+                status === "success" ||
                 status === "error" ||
                 status === "cancelled"
             );
@@ -193,7 +193,7 @@ export function MessageListItem({
             }
             const status = researchRunStatus.get(messageId);
             const hasReport = researchReportIds.has(messageId);
-            return !hasReport && status !== "running" && latestPlannerMessage != null;
+            return !hasReport && status !== "running" && hasPlannerMessage;
         })();
 
         if (

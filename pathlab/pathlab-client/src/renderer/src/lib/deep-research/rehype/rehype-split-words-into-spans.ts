@@ -27,7 +27,7 @@ export function rehypeSplitWordsIntoSpans() {
                 type: "element",
                 tagName: "span",
                 properties: {
-                  className: "animate-fade-in",
+                  className: "animate-fadeIn",
                 },
                 children: [{ type: "text", value: word }],
               });

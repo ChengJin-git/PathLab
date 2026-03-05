@@ -145,9 +145,11 @@ export function Markdown({
           );
         }
         // Otherwise fall back to regular Link
+        const isExternal = href?.startsWith("http");
         return (
           <Link href={href} checkLinkCredibility={checkLinkCredibility}>
             {children}
+            {isExternal && <span className="inline-block ml-0.5 opacity-70 text-[0.7em] no-underline">↗</span>}
           </Link>
         );
       },
@@ -155,6 +157,18 @@ export function Markdown({
         <a href={src as string} target="_blank" rel="noopener noreferrer">
           <Image className="rounded" src={src as string} alt={alt ?? ""} />
         </a>
+      ),
+      hr: () => (
+        <div className="my-6 flex items-center gap-3">
+          <div className="flex-1 h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent" />
+          <div className="w-1 h-1 rounded-full bg-gray-300" />
+          <div className="flex-1 h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent" />
+        </div>
+      ),
+      table: ({ children }) => (
+        <div className="overflow-x-auto my-3 rounded-lg border border-gray-200 shadow-sm">
+          <table className="min-w-full">{children}</table>
+        </div>
       ),
       ...(props.components || {}),
     };

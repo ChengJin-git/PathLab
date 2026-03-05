@@ -11,6 +11,19 @@ import type { Message } from "../../../../lib/deep-research/messages";
 import { useStore } from "../../../../lib/deep-research/store";
 import { cn } from "../../../../lib/utils";
 
+function parseTrainingChatLink(content: string): { conversationId: string; title?: string } | null {
+    const match = content.match(/\[TRAINING_CHAT_LINK\]([\s\S]*?)\[\/TRAINING_CHAT_LINK\]/i);
+    if (!match) return null;
+    try {
+        const parsed = JSON.parse(match[1].trim());
+        return parsed?.conversation_id ? { conversationId: parsed.conversation_id, title: parsed.title } : null;
+    } catch { return null; }
+}
+
+function removeTrainingChatLinkBlock(content: string): string {
+    return content.replace(/\[TRAINING_CHAT_LINK\][\s\S]*?\[\/TRAINING_CHAT_LINK\]/gi, "").trim();
+}
+
 function injectSubmittedTaskId(content: string, taskId: string): string {
     return content.replace(
         /\[TASK_CONFIG\]([\s\S]*?)\[\/TASK_CONFIG\]/,
@@ -71,9 +84,19 @@ export function AssistantStructuredContent({
         () => parseDatasetRegistrationConfig(message.content ?? ""),
         [message.content],
     );
+    const trainingChatLink = useMemo(
+        () => parseTrainingChatLink(message.content ?? ""),
+        [message.content],
+    );
     const responding = useStore((state) => state.responding);
 
     let displayContent = message.content ?? "";
+    // Strip persisted research meta blocks that may leak into display content
+    // after backend reload or cache restoration.
+    displayContent = displayContent.replace(
+        /\[PATHLAB_RESEARCH_META\][\s\S]*?(?:\[\/PATHLAB_RESEARCH_META\]|$)/g,
+        "",
+    ).trim();
     if (options) {
         displayContent = removeOptionsBlock(displayContent);
     }
@@ -82,6 +105,15 @@ export function AssistantStructuredContent({
     }
     if (datasetRegistrationConfig) {
         displayContent = removeDatasetRegistrationBlock(displayContent);
+    }
+    if (trainingChatLink) {
+        displayContent = removeTrainingChatLinkBlock(displayContent);
+    }
+
+    // If the message only contained a training chat link (no other content or cards), render nothing.
+    const hasVisibleContent = displayContent.trim() || options || taskConfig || datasetRegistrationConfig;
+    if (!hasVisibleContent && trainingChatLink) {
+        return null;
     }
 
     const handleTaskSubmitSuccess = useCallback(
@@ -159,7 +191,21 @@ export function AssistantStructuredContent({
     return (
         <div className="flex w-full flex-col break-words">
             {displayContent.trim() && (
-                <Markdown>{displayContent}</Markdown>
+                <Markdown
+                    className="prose-slate max-w-none prose-sm
+                        prose-p:my-2 prose-p:leading-relaxed
+                        prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-headings:text-gray-900
+                        prose-ul:my-3 prose-ul:list-disc prose-ul:pl-6
+                        prose-ol:my-3 prose-ol:list-decimal prose-ol:pl-6
+                        prose-li:my-1.5 prose-li:leading-relaxed
+                        prose-code:bg-gray-100 prose-code:text-gray-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
+                        prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:p-4 prose-pre:my-3
+                        prose-strong:text-gray-900 prose-strong:font-semibold
+                        prose-a:text-blue-600 prose-a:underline prose-a:decoration-blue-300 prose-a:underline-offset-2 hover:prose-a:text-blue-700 hover:prose-a:decoration-blue-500
+                        prose-hr:border-gray-200 prose-hr:my-4
+                        prose-table:text-sm
+                        prose-img:rounded-lg prose-img:shadow-md prose-img:my-3 prose-img:max-w-full prose-img:h-auto prose-img:border prose-img:border-gray-200"
+                >{displayContent}</Markdown>
             )}
             {options && (
                 <OptionButtons
@@ -186,6 +232,7 @@ export function AssistantStructuredContent({
                     messageId={message.id}
                 />
             )}
+            {/* Training chat link UI moved to ResearchCard's TrainingCard — content stripping above still applies */}
         </div>
     );
 }

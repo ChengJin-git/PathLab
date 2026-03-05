@@ -1,7 +1,7 @@
 // Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 // SPDX-License-Identifier: MIT
 
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { nanoid } from "nanoid";
 import i18n from "../../../../i18n";
 import { createConversation as apiCreateChatConversation, addMessage as apiAddChatMessage, getConversation as apiGetConversation } from "../../../../api";
@@ -72,10 +72,73 @@ function buildTrainingPromptWithReportContext(
 import { RainbowText } from "../../../../components/deep-research/rainbow-text";
 import { RollingText } from "../../../../components/deep-research/rolling-text";
 import { Button } from "../../../../components/ui/button";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "../../../../components/ui/card";
+import { Card, CardFooter, CardHeader, CardTitle } from "../../../../components/ui/card";
 import { closeResearch, flushDeepResearchPersistNow, openResearch, useResearchMessage, useStore } from "../../../../lib/deep-research/store";
 import { cn } from "../../../../lib/utils";
 import { parsePlannerPayload } from "../utils";
+
+function TrainingCard({
+    existingTrainingLink,
+    onStartTraining,
+    t,
+}: {
+    existingTrainingLink: { conversation_id: string; title?: string } | null;
+    onStartTraining: () => void;
+    t: (key: string) => string;
+}) {
+    const navigate = useNavigate();
+    const [deleted, setDeleted] = useState(false);
+
+    const handleGo = useCallback(
+        async (e: React.MouseEvent) => {
+            e.stopPropagation();
+            if (!existingTrainingLink) return;
+            try {
+                await apiGetConversation(existingTrainingLink.conversation_id);
+                navigate(`/dashboard/${existingTrainingLink.conversation_id}`);
+            } catch {
+                setDeleted(true);
+            }
+        },
+        [existingTrainingLink, navigate],
+    );
+
+    if (existingTrainingLink) {
+        return (
+            <Card className="w-full">
+                <CardHeader>
+                    <CardTitle>
+                        {existingTrainingLink.title || t("startTraining")}
+                    </CardTitle>
+                </CardHeader>
+                <CardFooter>
+                    <div className="flex w-full items-center gap-2">
+                        <span className="text-muted-foreground flex-grow text-sm">
+                            {deleted ? t("trainingDeleted") : t("trainingStarted")}
+                        </span>
+                        <Button variant={deleted ? "secondary" : "default"} disabled={deleted} onClick={handleGo}>
+                            Go
+                        </Button>
+                    </div>
+                </CardFooter>
+            </Card>
+        );
+    }
+
+    return (
+        <Card
+            className="w-full cursor-pointer hover:bg-accent transition-colors"
+            onClick={onStartTraining}
+        >
+            <CardHeader>
+                <CardTitle>{t("startTraining")}</CardTitle>
+            </CardHeader>
+            <CardFooter>
+                <span className="text-muted-foreground text-sm">{t("trainingDescription")}</span>
+            </CardFooter>
+        </Card>
+    );
+}
 
 export function ResearchCard({
     className,
@@ -300,30 +363,11 @@ export function ResearchCard({
                 </CardFooter>
             </Card>
             {hasReport && !reportGenerating && (
-                <Card
-                    className={cn(
-                        "w-full transition-colors",
-                        existingTrainingLink
-                            ? "opacity-60 cursor-default"
-                            : "cursor-pointer hover:bg-accent",
-                    )}
-                    onClick={existingTrainingLink ? undefined : handleStartTraining}
-                >
-                    <CardHeader className="pb-0">
-                        <CardTitle className="text-base">
-                            {existingTrainingLink
-                                ? (existingTrainingLink.title || t("startTraining"))
-                                : t("startTraining")}
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="pt-2">
-                        <p className="text-muted-foreground text-sm">
-                            {existingTrainingLink
-                                ? t("trainingStarted")
-                                : t("trainingDescription")}
-                        </p>
-                    </CardContent>
-                </Card>
+                <TrainingCard
+                    existingTrainingLink={existingTrainingLink}
+                    onStartTraining={handleStartTraining}
+                    t={t}
+                />
             )}
         </div>
     );

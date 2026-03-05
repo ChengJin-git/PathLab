@@ -101,7 +101,6 @@ body {
   padding: 0.5rem 0.875rem;
   color: #334155;
   border-top: 1px solid #f1f5f9;
-  white-space: nowrap;
 }
 
 .prose tbody tr:nth-child(even) {

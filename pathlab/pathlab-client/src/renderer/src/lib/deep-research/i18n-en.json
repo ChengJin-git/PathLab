@@ -181,6 +181,7 @@
       "startTraining": "Start Training",
       "continueTraining": "Continue Training",
       "trainingStarted": "Training conversation has been created.",
+      "trainingDeleted": "Training conversation has been deleted.",
       "trainingDescription": "Start a training conversation based on this research report.",
       "uploadData": "Upload Data",
       "trainingTaskSuffix": "Training",
