@@ -119,6 +119,7 @@ class CreateConversationRequest(BaseModel):
     """Request model for creating a conversation"""
     user_id: Optional[str] = "default_user"
     title: Optional[str] = None
+    conversation_type: Optional[str] = "ai_chat"  # "ai_chat" or "deep_research"
 
 
 class UpdateMessageRequest(BaseModel):

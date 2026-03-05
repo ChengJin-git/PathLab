@@ -18,32 +18,27 @@ function extractValidJSON(content: string): string {
   let braceCount = 0;
   let bracketCount = 0;
   let inString = false;
-  let escapeNext = false;
   let lastValidEnd = -1;
 
   for (let i = 0; i < content.length; i++) {
     const char = content[i];
-    
-    if (escapeNext) {
-      escapeNext = false;
-      continue;
-    }
-    
-    if (char === "\\") {
-      escapeNext = true;
-      continue;
-    }
-    
-    if (char === '"') {
-      inString = !inString;
-      continue;
-    }
-    
+
     if (inString) {
+      // Inside a JSON string: only react to escape sequences and closing quote.
+      if (char === "\\" && i + 1 < content.length) {
+        i++; // skip the escaped character
+        continue;
+      }
+      if (char === '"') {
+        inString = false;
+      }
       continue;
     }
-    
-    if (char === "{") {
+
+    // Outside of strings
+    if (char === '"') {
+      inString = true;
+    } else if (char === "{") {
       braceCount++;
     } else if (char === "}") {
       if (braceCount > 0) {
@@ -63,11 +58,11 @@ function extractValidJSON(content: string): string {
       }
     }
   }
-  
+
   if (lastValidEnd > 0) {
     return content.substring(0, lastValidEnd + 1);
   }
-  
+
   return content;
 }
 
@@ -84,12 +79,22 @@ export function parseJSON<T>(json: string | null | undefined, fallback: T) {
       .replace(/^```plaintext\s*/, "")
       .replace(/^```\s*/, "")
       .replace(/\s*```$/, "");
-    
-    // First attempt: try to extract valid JSON to remove extra tokens
+
+    // Fast path: try native JSON.parse first.  This is the most reliable
+    // parser and avoids extractValidJSON which can corrupt content when the
+    // LLM produces unescaped double-quotes inside string values.
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      // Not valid JSON — fall through to lenient parsers.
+    }
+
+    // Second attempt: extract valid JSON to remove extra tokens, then
+    // use best-effort parser for incomplete/malformed content.
     if (raw.startsWith("{") || raw.startsWith("[")) {
       raw = extractValidJSON(raw);
     }
-    
+
     // Parse the cleaned content
     return bestEffortParseSilently(raw) as T;
   } catch {

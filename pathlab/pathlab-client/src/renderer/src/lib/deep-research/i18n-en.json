@@ -183,6 +183,7 @@
       "trainingStarted": "Training conversation has been created.",
       "trainingDeleted": "Training conversation has been deleted.",
       "trainingDescription": "Start a training conversation based on this research report.",
+      "start": "Start",
       "uploadData": "Upload Data",
       "trainingTaskSuffix": "Training",
       "trainingFromResearchDesc": "Task generated from deep research: {title}.",

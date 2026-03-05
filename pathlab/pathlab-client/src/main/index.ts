@@ -1,4 +1,5 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, session, type OpenDialogOptions } from 'electron'
+import { appendFileSync, mkdirSync, existsSync } from 'fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { startPythonSidecar, stopPythonSidecar, getGatewayPort } from './sidecar-manager'
@@ -157,6 +158,22 @@ ipcMain.handle('select-files', async (_event, options?: { title?: string; filter
     : await dialog.showOpenDialog(dialogOptions)
   if (result.canceled) return []
   return result.filePaths
+})
+
+// IPC handler for appending Deep Research frontend logs to a local file
+ipcMain.handle('append-dr-logs', (_event, text: string) => {
+  try {
+    const logDir = join(process.cwd(), 'server', 'backend', 'logs')
+    if (!existsSync(logDir)) {
+      mkdirSync(logDir, { recursive: true })
+    }
+    const logFile = join(logDir, 'deep-research-frontend.log')
+    appendFileSync(logFile, text, 'utf-8')
+    return true
+  } catch (err) {
+    console.error('[Main] Failed to write DR frontend logs:', err)
+    return false
+  }
 })
 
 // IPC handler for directory selection

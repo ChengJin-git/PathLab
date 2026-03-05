@@ -199,6 +199,7 @@ else
     
     # 在后台启动 Python 后端（在项目根目录运行，日志输出到根目录）
     PATHLAB_DEBUG=1 \
+    DEBUG=true \
     GATEWAY_PORT=${GATEWAY_PORT} \
     PREPROCESSING_PORT=${PREPROCESSING_PORT} \
     AI_PORT=${AI_PORT} \

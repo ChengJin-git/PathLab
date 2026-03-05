@@ -242,7 +242,7 @@ class Config:
             "huggingface_token": data.get("huggingface_token", ""),
             "dashscope_api_key": data.get("dashscope_api_key", ""),
             "exa_api_key": data.get("exa_api_key", ""),
-            "tavily_api_url": data.get("tavily_api_url", "https://api.tavily.com"),
+            "tavily_api_key": data.get("tavily_api_key", ""),
             # Local vLLM settings (OpenAI-compatible server for LLM)
             "local_vllm_enabled": data.get("local_vllm_enabled", False),
             "local_vllm_base_url": data.get("local_vllm_base_url", "http://127.0.0.1:8000/v1"),
@@ -273,7 +273,7 @@ class Config:
             "huggingface_token",
             "dashscope_api_key",
             "exa_api_key",
-            "tavily_api_url",
+            "tavily_api_key",
             # Local vLLM settings
             "local_vllm_enabled",
             "local_vllm_base_url",

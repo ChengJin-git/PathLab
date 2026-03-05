@@ -5,14 +5,15 @@ import os
 import httpx
 from .dependencies import logger, AI_SERVICE_URL
 
-# Optional Aslide import - not needed for basic testing
+# Optional Aslide import - gateway must stay bootable even when native
+# slide libs are unavailable on the current OS/architecture (e.g. macOS).
 try:
     from Aslide import Slide
     ASLIDE_AVAILABLE = True
-except ImportError:
+except Exception as e:
     Slide = None
     ASLIDE_AVAILABLE = False
-    logger.warning("Aslide not available - WSI property extraction will use defaults")
+    logger.warning(f"Aslide unavailable ({e}) - WSI property extraction will use defaults")
 
 
 async def cancel_ai_service_training(task_id: str) -> None:

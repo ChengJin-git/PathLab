@@ -6,12 +6,14 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "langgraph>=0.2.0",
+    "langgraph-checkpoint-postgres>=3.0.0",
     "langchain>=0.3.0",
     "langchain-openai>=0.2.0",
     "langchain-core>=0.3.0",
     "tavily-python>=0.5.0",
     "aiohttp",
     "langchain-mcp-adapters",
+    "redis>=6.0.0",
 ]
 
 [tool.uv]

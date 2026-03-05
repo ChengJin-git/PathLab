@@ -1395,6 +1395,7 @@ export async function loadConversationFromBackend(conversationId: string): Promi
     loadSeq,
   });
 
+  let _eagerReconnectFired = false;
   const currentStore = useStore.getState();
   const isContextSwitch = currentStore.conversationId !== conversationId;
 
@@ -1515,6 +1516,45 @@ export async function loadConversationFromBackend(conversationId: string): Promi
             }
           }
         }
+      }
+
+      // Eagerly reconnect to background job right after cache restore.
+      // When the user navigated away mid-research, some activity messages
+      // were cached without tool calls (stream events hadn't arrived yet).
+      // The background job's event history (research_job_events table) has
+      // ALL events.  Replaying from cursor=0 rebuilds those incomplete
+      // messages.  We remove them first so mergeTextMessage's content-append
+      // logic doesn't duplicate text.
+      //
+      // This runs BEFORE the backend rebuild so the user sees activities
+      // immediately instead of waiting for backendLooksIncomplete retries.
+      const cachedJobId = cached.backgroundJobId;
+      const cachedOngoingResearch = cached.ongoingResearchId;
+      if (cachedOngoingResearch && cachedJobId && !isStaleLoad()) {
+        const stNow = useStore.getState();
+        const aIds = stNow.researchActivityIds.get(cachedOngoingResearch) ?? [];
+        const pId = stNow.researchPlanIds.get(cachedOngoingResearch);
+        const rId = stNow.researchReportIds.get(cachedOngoingResearch);
+        const toRemove = aIds.filter((id) => id !== pId && id !== rId);
+        if (toRemove.length > 0) {
+          const rmSet = new Set(toRemove);
+          const newMsgs = new Map(stNow.messages);
+          const newMsgIds = stNow.messageIds.filter((id) => !rmSet.has(id));
+          for (const id of toRemove) newMsgs.delete(id);
+          const keptActs = aIds.filter((id) => !rmSet.has(id));
+          const newRA = new Map(stNow.researchActivityIds);
+          newRA.set(cachedOngoingResearch, keptActs);
+          useStore.setState({ messages: newMsgs, messageIds: newMsgIds, researchActivityIds: newRA });
+          deepResearchDebugLog("loadConversation", "cleared activity messages for full event replay", {
+            conversationId, removedCount: toRemove.length,
+          });
+        }
+        deepResearchDebugLog("loadConversation", "eager background job reconnect (cursor=0)", {
+          conversationId, jobId: cachedJobId, cachedCursor: cached.backgroundJobCursor ?? 0,
+        });
+        // Fire-and-forget — resumeBackgroundResearch has its own stale guard
+        _eagerReconnectFired = true;
+        void reconnectToBackgroundJob(cachedJobId, 0);
       }
     } else if (isContextSwitch && !isStaleLoad()) {
       // Force-persist the outgoing conversation's state to cache BEFORE clearing
@@ -2061,7 +2101,13 @@ export async function loadConversationFromBackend(conversationId: string): Promi
         return derived;
       })(),
       ongoingResearchId: normalizedOngoingResearchId,
-      openResearchId: normalizedOpenResearchId,
+      // If normalization lost the open research ID but the user had a panel open,
+      // fall back to the last research in the rebuilt state so the panel stays open.
+      openResearchId:
+        normalizedOpenResearchId ??
+        (currentOpenResearchId && normalizedResearchIds.length > 0
+          ? normalizedResearchIds[normalizedResearchIds.length - 1]!
+          : null),
       tokenUsage: cached?.tokenUsage ?? null,
       sessionTokenUsage: cached?.sessionTokenUsage ?? DEFAULT_SESSION_TOKEN_USAGE,
       responseTiming: cached?.responseTiming ?? null,
@@ -2076,12 +2122,27 @@ export async function loadConversationFromBackend(conversationId: string): Promi
       backendReportCount: normalizedResearchReportIds.size,
     });
 
-    const cachedMessageCount = cached?.messageIds?.length ?? 0;
+    // Count only non-empty cached messages/activities.  Empty stubs (mid-stream
+    // messages with no text and no tool calls) are never persisted to backend by
+    // persistMessage(), so including them inflates cachedCount and causes
+    // backendLooksIncomplete to be permanently true — preventing the backend
+    // rebuild from ever being applied.
+    const cachedMsgMap = new Map<string, Message>(cached?.messages ?? []);
+    const isNonEmptyCachedMsg = (id: string): boolean => {
+      const msg = cachedMsgMap.get(id);
+      if (!msg) return false;
+      if ((msg.content ?? "").replace(/\[PATHLAB_RESEARCH_META\][\s\S]*?(?:\[\/PATHLAB_RESEARCH_META\]|$)/g, "").trim()) return true;
+      if (msg.toolCalls?.length) return true;
+      // User messages are always meaningful
+      if (msg.role === "user") return true;
+      return false;
+    };
+    const cachedMessageCount = (cached?.messageIds ?? []).filter(isNonEmptyCachedMsg).length;
     const cachedResearchCount = cached?.researchIds?.length ?? 0;
     const cachedPlanCount = cached?.researchPlanIds?.length ?? 0;
     const cachedReportCount = cached?.researchReportIds?.length ?? 0;
     const cachedActivityCount = (cached?.researchActivityIds ?? []).reduce(
-      (sum, [, ids]) => sum + (Array.isArray(ids) ? ids.length : 0),
+      (sum, [, ids]) => sum + (Array.isArray(ids) ? ids.filter(isNonEmptyCachedMsg).length : 0),
       0,
     );
     const backendMessageCount = messageIds.length;
@@ -2126,6 +2187,18 @@ export async function loadConversationFromBackend(conversationId: string): Promi
         backendReportCoverageDropped ||
         (cachedReportCount > 0 && backendReportCount === 0)
       );
+
+    // When eager event-replay reconnect is in progress, skip the entire
+    // backend rebuild comparison and apply — the reconnect is rebuilding
+    // messages from the complete event history and applying the rebuilt state
+    // would overwrite that in-progress reconstruction.
+    if (_eagerReconnectFired) {
+      deepResearchDebugLog("loadConversation", "skipping backend rebuild apply — eager reconnect in progress", {
+        conversationId,
+      });
+      backendRebuildRetryCounts.delete(conversationId);
+      return;
+    }
 
     if (backendLooksIncomplete) {
       const attempt = backendRebuildRetryCounts.get(conversationId) ?? 0;
@@ -2175,18 +2248,44 @@ export async function loadConversationFromBackend(conversationId: string): Promi
 
     // Check if there is an unfinished background job that needs reconnection.
     // Use cached values because rebuiltState does not carry backgroundJobId.
+    // Skip if eager reconnect already fired from the cache-restore path above.
     const restoredJobId = cached?.backgroundJobId;
-    const restoredJobCursor = cached?.backgroundJobCursor ?? 0;
     const restoredOngoingResearch = rebuiltState.ongoingResearchId;
-    if (restoredOngoingResearch && restoredJobId) {
-      deepResearchDebugLog("loadConversation", "triggering background job reconnection", {
+    if (restoredOngoingResearch && restoredJobId && !_eagerReconnectFired) {
+      const storeNow = useStore.getState();
+      const activityIds = storeNow.researchActivityIds.get(restoredOngoingResearch) ?? [];
+      const planId = storeNow.researchPlanIds.get(restoredOngoingResearch);
+      const reportId = storeNow.researchReportIds.get(restoredOngoingResearch);
+      // Keep plan and report; remove all other activity messages
+      const idsToRemove = activityIds.filter((id) => id !== planId && id !== reportId);
+      if (idsToRemove.length > 0) {
+        const removeSet = new Set(idsToRemove);
+        const newMessages = new Map(storeNow.messages);
+        const newMessageIds = storeNow.messageIds.filter((id) => !removeSet.has(id));
+        for (const id of idsToRemove) newMessages.delete(id);
+        // Clear activity IDs (keep only plan); replay will re-add via appendResearchActivity
+        const keptActivities = activityIds.filter((id) => !removeSet.has(id));
+        const newResearchActivityIds = new Map(storeNow.researchActivityIds);
+        newResearchActivityIds.set(restoredOngoingResearch, keptActivities);
+        useStore.setState({
+          messages: newMessages,
+          messageIds: newMessageIds,
+          researchActivityIds: newResearchActivityIds,
+        });
+        deepResearchDebugLog("loadConversation", "cleared activity messages for full replay", {
+          conversationId,
+          removedCount: idsToRemove.length,
+        });
+      }
+
+      deepResearchDebugLog("loadConversation", "triggering background job reconnection (full replay from cursor=0)", {
         conversationId,
         jobId: restoredJobId,
-        cursor: restoredJobCursor,
+        cachedCursor: cached?.backgroundJobCursor ?? 0,
         ongoingResearchId: restoredOngoingResearch,
       });
-      // Async reconnect — do not block the load
-      void reconnectToBackgroundJob(restoredJobId, restoredJobCursor);
+      // Async reconnect from cursor=0 — do not block the load
+      void reconnectToBackgroundJob(restoredJobId, 0);
     }
   } catch (error) {
     console.warn("[DeepResearch] Failed to load conversation:", error);

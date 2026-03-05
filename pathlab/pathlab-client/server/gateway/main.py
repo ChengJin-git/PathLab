@@ -20,6 +20,7 @@ from backend.database.repositories import (
     TrainingTaskRepository,
     ExportTaskRepository,
     StorageTaskRepository,
+    ResearchJobRepository,
 )
 from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 from .pipeline import run_training_pipeline
@@ -102,6 +103,17 @@ async def lifespan(app: FastAPI):
     # If cleanup ran after resume, it could delete freshly-written progress files.
     from backend.common.progress_store import cleanup_all_progress
     cleanup_all_progress()
+
+    # Mark research jobs that were running when gateway died as "interrupted"
+    async for db in get_db():
+        try:
+            interrupted = await ResearchJobRepository.mark_interrupted_jobs(db)
+            await db.commit()
+            if interrupted:
+                logger.info(f"Marked {interrupted} research job(s) as interrupted")
+        except Exception as e:
+            logger.error(f"Failed to mark interrupted research jobs: {e}")
+        break
 
     # Resume interrupted training tasks
     # Tasks with status 'pending', 'running', 'extracting', or 'training' were interrupted

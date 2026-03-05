@@ -86,8 +86,8 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [dashscopeApiKey, setDashscopeApiKey] = useState('')
   // Exa Search API key for web search
   const [exaApiKey, setExaApiKey] = useState('')
-  // Tavily API URL for deep research web search
-  const [tavilyApiUrl, setTavilyApiUrl] = useState('https://api.tavily.com')
+  // Tavily API Key for deep research web search
+  const [tavilyApiKey, setTavilyApiKey] = useState('')
   const [aiSaved, setAiSaved] = useState(false)
   const [aiSaving, setAiSaving] = useState(false)
 
@@ -156,7 +156,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       setApiKey(s.openrouter_api_key); setBaseUrl(s.openrouter_base_url); setModel(s.openrouter_model)
       setHuggingfaceToken(s.huggingface_token); setDashscopeApiKey(s.dashscope_api_key)
       setExaApiKey(s.exa_api_key || '')
-      setTavilyApiUrl(s.tavily_api_url || 'https://api.tavily.com')
+      setTavilyApiKey(s.tavily_api_key || '')
       setLocalVllmEnabled(s.local_vllm_enabled); setLocalVllmBaseUrl(s.local_vllm_base_url)
       setLocalVllmModel(s.local_vllm_model); setLocalVllmApiKey(s.local_vllm_api_key)
       setLocalAsrEnabled(s.local_asr_enabled); setLocalAsrBaseUrl(s.local_asr_base_url)
@@ -187,7 +187,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         openrouter_api_key: apiKey, openrouter_base_url: baseUrl, openrouter_model: model,
         huggingface_token: huggingfaceToken, dashscope_api_key: dashscopeApiKey,
         exa_api_key: exaApiKey,
-        tavily_api_url: tavilyApiUrl,
+        tavily_api_key: tavilyApiKey,
         local_vllm_enabled: localVllmEnabled, local_vllm_base_url: localVllmBaseUrl,
         local_vllm_model: localVllmModel, local_vllm_api_key: localVllmApiKey,
         local_asr_enabled: localAsrEnabled, local_asr_base_url: localAsrBaseUrl,
@@ -395,22 +395,17 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">
-                    TAVILY API URL
+                    TAVILY API KEY
                   </Label>
                   <Input
-                    value={tavilyApiUrl}
-                    onChange={(e) => setTavilyApiUrl(e.target.value)}
-                    placeholder="https://api.tavily.com"
-                    className="h-8 font-mono text-xs border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                    type="password"
+                    value={tavilyApiKey}
+                    onChange={(e) => setTavilyApiKey(e.target.value)}
+                    placeholder="tvly-..."
+                    className="h-8 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
                   />
                   <p className="text-xs text-slate-500">
-                    Deep Research web search base URL.{' '}
-                    <a
-                      href="https://app.tavily.com/home"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-600 hover:text-blue-700 font-medium"
-                    >
+                    <a href="https://app.tavily.com/home" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-700 font-medium">
                       {t('common.getKey')}
                     </a>
                   </p>

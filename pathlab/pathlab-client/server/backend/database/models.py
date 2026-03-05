@@ -354,6 +354,7 @@ class ChatConversation(Base):
     conversation_id = Column(String(255), unique=True, nullable=False, index=True)
     user_id = Column(String(255), index=True)  # For future multi-user support
     title = Column(String(500))  # Auto-generated from first message
+    conversation_type = Column(String(50), default="ai_chat")  # "ai_chat" or "deep_research"
 
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
@@ -373,6 +374,7 @@ class ChatConversation(Base):
             "conversation_id": self.conversation_id,
             "user_id": self.user_id,
             "title": self.title,
+            "conversation_type": self.conversation_type or "ai_chat",
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
             "message_count": message_count,
@@ -895,3 +897,68 @@ class AnnotationDraft(Base):
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
         }
+
+
+class ResearchJob(Base):
+    """
+    Research Job table.
+    Tracks deep research background jobs with persistent state.
+    Status flow: pending → running → completed | failed | cancelled | interrupted
+    """
+    __tablename__ = "research_jobs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(String(255), unique=True, nullable=False, index=True)
+    user_email = Column(String(255), nullable=False, index=True)
+    conversation_id = Column(String(255), index=True)
+    thread_id = Column(String(255), nullable=False)
+    status = Column(String(20), nullable=False, default="pending")
+    error = Column(Text, nullable=True)
+    cancel_requested = Column(Boolean, default=False)
+    current_stage = Column(String(50), nullable=True)
+    next_seq = Column(Integer, default=0)
+    request_body = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    events = relationship("ResearchJobEvent", back_populates="job",
+                          cascade="all, delete-orphan")
+    __table_args__ = (
+        Index("idx_rj_user_status", "user_email", "status"),
+    )
+
+    def to_dict(self):
+        return {
+            "job_id": self.job_id,
+            "user_email": self.user_email,
+            "conversation_id": self.conversation_id,
+            "thread_id": self.thread_id,
+            "status": self.status,
+            "error": self.error,
+            "cancel_requested": self.cancel_requested,
+            "current_stage": self.current_stage,
+            "next_seq": self.next_seq,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
+        }
+
+
+class ResearchJobEvent(Base):
+    """
+    Research Job Event table.
+    Stores SSE events for research jobs, supporting cursor-based replay.
+    """
+    __tablename__ = "research_job_events"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    job_id = Column(String(255), ForeignKey("research_jobs.job_id", ondelete="CASCADE"),
+                    nullable=False, index=True)
+    seq = Column(Integer, nullable=False)
+    event_type = Column(String(50), nullable=False)
+    data = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+
+    job = relationship("ResearchJob", back_populates="events")
+    __table_args__ = (
+        Index("idx_rje_job_seq", "job_id", "seq"),
+    )

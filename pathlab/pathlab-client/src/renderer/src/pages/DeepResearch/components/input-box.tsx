@@ -1,8 +1,8 @@
 // Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 // SPDX-License-Identifier: MIT
 
-import { Loader2, Mic, MicOff, Paperclip, Send } from "lucide-react";
-import { type ChangeEvent, useCallback, useRef, useState } from "react";
+import { Loader2, Mic, MicOff, Paperclip, Pencil, Send, X } from "lucide-react";
+import { type ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import MessageInput, {
   type MessageInputRef,
@@ -40,6 +40,13 @@ export function InputBox({
   const [currentPrompt, setCurrentPrompt] = useState("");
   const [isVoiceSessionActive, setIsVoiceSessionActive] = useState(false);
   const [realtimePartialText, setRealtimePartialText] = useState("");
+
+  // Auto-focus when feedback is set (e.g. user clicked "Edit plan")
+  useEffect(() => {
+    if (feedback) {
+      inputRef.current?.focus();
+    }
+  }, [feedback]);
 
   const appendToInput = useCallback((text: string) => {
     const next = currentPrompt.trim().length
@@ -153,15 +160,30 @@ export function InputBox({
 
   return (
     <div className={cn("relative group", className)}>
+      {feedback && (
+        <div className="mb-2 flex items-center gap-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800 animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <Pencil className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">{feedback.option.text}</span>
+          <button
+            type="button"
+            className="shrink-0 rounded-full p-0.5 hover:bg-amber-200/60 transition-colors"
+            onClick={() => onRemoveFeedback?.()}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
       <div
         className={cn(
           "relative flex min-h-[56px] items-center border bg-white/80 py-1.5 pl-4 pr-[104px] sm:pr-[120px] backdrop-blur-xl transition-all duration-300 rounded-[28px]",
-          "border-gray-200/50 hover:border-gray-300/80 hover:shadow-[0_8px_40px_rgba(0,0,0,0.15)] shadow-[0_8px_32px_rgba(0,0,0,0.12)]",
+          feedback
+            ? "border-amber-300 shadow-[0_8px_32px_rgba(0,0,0,0.12)]"
+            : "border-gray-200/50 hover:border-gray-300/80 hover:shadow-[0_8px_40px_rgba(0,0,0,0.15)] shadow-[0_8px_32px_rgba(0,0,0,0.12)]",
         )}
       >
         <MessageInput
           className="h-[44px] w-full px-0 pt-0"
-          placeholder="Describe your research task..."
+          placeholder={feedback ? "Describe how you'd like to modify the plan..." : "Describe your research task..."}
           ref={inputRef}
           loading={loading}
           config={config}

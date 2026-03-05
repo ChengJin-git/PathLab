@@ -127,6 +127,16 @@ export interface CancelledEvent {
   };
 }
 
+export interface JobCreatedEvent {
+  type: "job_created";
+  data: { job_id: string };
+}
+
+export interface CursorUpdateEvent {
+  type: "cursor_update";
+  data: { cursor: number };
+}
+
 export type ChatEvent =
   | MessageChunkEvent
   | ToolCallsEvent
@@ -136,4 +146,6 @@ export type ChatEvent =
   | CitationsEvent
   | TokenUsageEvent
   | ErrorEvent
-  | CancelledEvent;
+  | CancelledEvent
+  | JobCreatedEvent
+  | CursorUpdateEvent;

@@ -14,8 +14,8 @@ export interface GlobalSettings {
   dashscope_api_key: string
   // Exa Search API key for web search functionality
   exa_api_key: string
-  // Tavily API base URL for deep research web search
-  tavily_api_url: string
+  // Tavily API key for deep research web search
+  tavily_api_key: string
   // Local vLLM settings (OpenAI-compatible server for LLM)
   local_vllm_enabled: boolean
   local_vllm_base_url: string

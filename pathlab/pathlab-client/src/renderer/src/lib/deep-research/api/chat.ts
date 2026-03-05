@@ -148,6 +148,8 @@ export async function* chatStream(
         throw new Error("Background job did not return job_id");
       }
 
+      yield { type: "job_created", data: { job_id: jobId } } as ChatEvent;
+
       let cursor = 0;
       while (true) {
         if (options.abortSignal?.aborted) {
@@ -197,6 +199,7 @@ export async function* chatStream(
           } as ChatEvent;
         }
         cursor = payload.next_cursor ?? cursor;
+        yield { type: "cursor_update", data: { cursor } } as ChatEvent;
         if (payload.done) {
           if (payload.status === "failed") {
             const err =
@@ -251,6 +254,101 @@ export async function* chatStream(
     }
     console.error("[DeepResearch] Chat stream error:", e);
     throw e;
+  }
+}
+
+// Background job status check
+export async function getBackgroundJobStatus(jobId: string): Promise<{
+  job_id: string;
+  status: string;
+  error?: string | null;
+  event_count: number;
+  done?: boolean;
+}> {
+  const resp = await fetch(resolveServiceURL(`jobs/${jobId}`), {
+    headers: { ...getAuthHeaders() },
+  });
+  if (!resp.ok) throw new Error(`Job status check failed: ${resp.status}`);
+  return resp.json();
+}
+
+// Resume polling a background job from a given cursor, yielding ChatEvents
+export async function* resumeBackgroundJobStream(
+  jobId: string,
+  startCursor: number,
+  options: { abortSignal?: AbortSignal } = {},
+): AsyncGenerator<ChatEvent> {
+  let cursor = startCursor;
+  while (true) {
+    if (options.abortSignal?.aborted) {
+      await cancelBackgroundJob(jobId);
+      return;
+    }
+    const eventsResp = await fetch(
+      resolveServiceURL(`jobs/${jobId}/events?cursor=${cursor}&wait_ms=15000`),
+      {
+        method: "GET",
+        headers: {
+          ...getAuthHeaders(),
+        },
+        signal: options.abortSignal,
+      },
+    );
+    if (!eventsResp.ok) {
+      const detail = await readErrorDetail(eventsResp);
+      console.error("[DeepResearch] Failed to poll background job events (resume)", {
+        jobId,
+        status: eventsResp.status,
+        detail,
+        cursor,
+      });
+      throw new Error(mapHttpStatusToMessage(eventsResp.status, detail));
+    }
+    const payload = (await eventsResp.json()) as {
+      events: Array<{ event: string; data: unknown }>;
+      next_cursor: number;
+      status?: string;
+      error?: string | null;
+      done: boolean;
+    };
+    let sawErrorEvent = false;
+    let lastErrorFromEvent: string | null = null;
+    for (const item of payload.events || []) {
+      if (item.event === "error" && item.data && typeof item.data === "object") {
+        const err = (item.data as { error?: unknown }).error;
+        if (typeof err === "string" && err.trim()) {
+          sawErrorEvent = true;
+          lastErrorFromEvent = err.trim();
+        }
+      }
+      yield {
+        type: item.event === "message" ? "message_chunk" : item.event,
+        data: item.data,
+      } as ChatEvent;
+    }
+    cursor = payload.next_cursor ?? cursor;
+    yield { type: "cursor_update", data: { cursor } } as ChatEvent;
+    if (payload.done) {
+      if (payload.status === "failed") {
+        const err =
+          lastErrorFromEvent ||
+          (typeof payload.error === "string" && payload.error.trim()
+            ? payload.error.trim()
+            : tr("deepResearchFailed", "Deep research failed."));
+        console.error("[DeepResearch] Background job failed (resume)", {
+          jobId,
+          cursor,
+          sawErrorEvent,
+          error: err,
+          payloadError: payload.error,
+        });
+        if (!sawErrorEvent) {
+          throw new Error(err);
+        }
+      }
+      return;
+    }
+    await sleep(80);
   }
 }
 
@@ -517,4 +615,33 @@ export async function generateFixedReplyWithLLM(
     return { reply: normalized, raw, usedLLM: true };
   }
   return { reply: normalized, raw: trimmedRaw, usedLLM: false };
+}
+
+/**
+ * List active (running/pending) research jobs for the current user.
+ * Used by the sidebar to show which conversations have ongoing research.
+ */
+export async function listActiveResearchJobs(): Promise<
+  {
+    jobId: string;
+    conversationId: string;
+    status: string;
+    currentStage?: string;
+  }[]
+> {
+  try {
+    const resp = await fetch(resolveServiceURL("jobs?status=running,pending"), {
+      headers: { ...getAuthHeaders() },
+    });
+    if (!resp.ok) return [];
+    const payload = await resp.json();
+    return (payload.jobs ?? []).map((j: any) => ({
+      jobId: j.job_id,
+      conversationId: j.conversation_id,
+      status: j.status,
+      currentStage: j.current_stage,
+    }));
+  } catch {
+    return [];
+  }
 }

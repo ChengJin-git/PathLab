@@ -183,6 +183,7 @@
       "trainingStarted": "訓練對話已建立。",
       "trainingDeleted": "訓練對話已刪除。",
       "trainingDescription": "基於本次研究報告，開始一個訓練對話。",
+      "start": "開始",
       "uploadData": "上傳數據",
       "trainingTaskSuffix": "訓練任務",
       "trainingFromResearchDesc": "此任務由深度研究生成：{title}。",

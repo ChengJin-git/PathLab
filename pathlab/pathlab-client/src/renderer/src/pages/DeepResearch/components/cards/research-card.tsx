@@ -126,15 +126,17 @@ function TrainingCard({
     }
 
     return (
-        <Card
-            className="w-full cursor-pointer hover:bg-accent transition-colors"
-            onClick={onStartTraining}
-        >
+        <Card className="w-full">
             <CardHeader>
                 <CardTitle>{t("startTraining")}</CardTitle>
             </CardHeader>
             <CardFooter>
-                <span className="text-muted-foreground text-sm">{t("trainingDescription")}</span>
+                <div className="flex w-full items-center gap-2">
+                    <span className="text-muted-foreground flex-grow text-sm">{t("trainingDescription")}</span>
+                    <Button onClick={onStartTraining}>
+                        {t("start")}
+                    </Button>
+                </div>
             </CardFooter>
         </Card>
     );

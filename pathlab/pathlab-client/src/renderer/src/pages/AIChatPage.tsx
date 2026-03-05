@@ -312,6 +312,14 @@ export default function AIChatPage() {
         skipConversationLoadRef.current = false
         return
       }
+      // If this is a forceNewChat handoff with a pre-created conversation that
+      // matches the URL, set the ID synchronously instead of loading async.
+      // This prevents a race where submitFormProgrammatically fires before the
+      // async handleLoadConversation resolves, causing a duplicate conversation.
+      if (state?.forceNewChat && state?.preCreatedConversationId === urlConversationId) {
+        setCurrentConversationId(urlConversationId)
+        return
+      }
       handleLoadConversation(urlConversationId)
       return
     }

@@ -19,7 +19,11 @@ export function PodcastCard({
     message: Message;
 }) {
     const data = useMemo(() => {
-        return JSON.parse(message.content ?? "");
+        try {
+            return JSON.parse(message.content ?? "{}");
+        } catch {
+            return { error: "Invalid podcast data" };
+        }
     }, [message.content]);
     const title = useMemo<string | undefined>(() => data?.title, [data]);
     const audioUrl = useMemo<string | undefined>(() => data?.audioUrl, [data]);

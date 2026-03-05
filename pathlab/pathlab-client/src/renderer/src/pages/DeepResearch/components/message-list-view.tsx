@@ -248,6 +248,25 @@ export function MessageListView({
             onToggleResearch={handleToggleResearch}
           />
         ))}
+        {/* Thinking indicator — show bouncing dots when AI is responding but hasn't streamed content yet */}
+        {responding && (() => {
+          const lastId = messageIds[messageIds.length - 1];
+          const lastMsg = lastId ? messages.get(lastId) : undefined;
+          const showDots = !lastMsg || lastMsg.role === "user" || (lastMsg.role === "assistant" && !(lastMsg.content ?? "").trim());
+          if (!showDots) return null;
+          return (
+            <li className="flex justify-start py-2 pl-12">
+              <div className="flex items-center gap-2.5 py-2" aria-busy="true">
+                <div className="flex items-center gap-1" aria-hidden="true">
+                  <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '0ms', animationDuration: '1.2s' }} />
+                  <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '200ms', animationDuration: '1.2s' }} />
+                  <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '400ms', animationDuration: '1.2s' }} />
+                </div>
+                <span className="text-sm font-medium text-gray-400">{t("thinking")}</span>
+              </div>
+            </li>
+          );
+        })()}
       </ul>
 
     </ScrollContainer>

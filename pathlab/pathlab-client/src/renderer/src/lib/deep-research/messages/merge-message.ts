@@ -137,9 +137,18 @@ function mergeToolCallMessage(
   const directResponseToolCall = message.toolCalls.find(
     (toolCall) => toolCall.name === "direct_response",
   );
-  if (directResponseToolCall?.argsChunks?.length) {
-    const parsedArgs = safeParseToolArgs(directResponseToolCall.argsChunks.join(""));
-    const streamedMessage = parsedArgs.message;
+  if (directResponseToolCall) {
+    let streamedMessage: string | undefined;
+    if (directResponseToolCall.argsChunks?.length) {
+      // Streaming path: parse accumulated argument chunks
+      const parsedArgs = safeParseToolArgs(directResponseToolCall.argsChunks.join(""));
+      streamedMessage = typeof parsedArgs.message === "string" ? parsedArgs.message : undefined;
+    } else if (directResponseToolCall.args?.message) {
+      // Non-streaming path: tool call arrived complete with full args
+      streamedMessage = typeof directResponseToolCall.args.message === "string"
+        ? directResponseToolCall.args.message
+        : undefined;
+    }
     if (typeof streamedMessage === "string" && streamedMessage !== message.content) {
       const prevContent = message.content ?? "";
       if (streamedMessage.startsWith(prevContent)) {

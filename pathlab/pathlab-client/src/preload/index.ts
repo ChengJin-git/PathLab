@@ -70,6 +70,16 @@ const api = {
     selectDirectory: (options?: { title?: string }): Promise<string | null> => {
       return ipcRenderer.invoke('select-directory', options)
     }
+  },
+
+  // Deep Research log persistence
+  drLogs: {
+    /**
+     * Append log text to server/backend/logs/deep-research-frontend.log
+     */
+    append: (text: string): Promise<boolean> => {
+      return ipcRenderer.invoke('append-dr-logs', text)
+    }
   }
 }
 

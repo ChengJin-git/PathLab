@@ -81,5 +81,41 @@ export function parsePlannerPayload(content: string): {
             steps: [],
         };
     }
+
+    // Extra fallback: native JSON.parse for content with special characters
+    // (Chinese text, markdown symbols, etc.) that may trip up extractValidJSON
+    // but are still valid JSON.
+    if (looksLikeJsonEnvelope && (
+        candidate.includes("\"steps\"") &&
+        (candidate.includes("\"thought\"") || candidate.includes("\"title\""))
+    )) {
+        try {
+            const nativeParsed = JSON.parse(candidate) as any;
+            if (nativeParsed && typeof nativeParsed === "object" && (
+                Array.isArray(nativeParsed.steps) ||
+                typeof nativeParsed.thought === "string" ||
+                typeof nativeParsed.title === "string"
+            )) {
+                return {
+                    title: nativeParsed.title ?? "",
+                    thought: nativeParsed.thought ?? "",
+                    steps: Array.isArray(nativeParsed.steps) ? nativeParsed.steps : [],
+                };
+            }
+        } catch {
+            // ignore – content may be incomplete during streaming
+        }
+    }
+
+    // Lenient fallback for early streaming: if the candidate starts with `{`
+    // and contains at least one recognisable planner key (even partially), treat
+    // it as an in-progress plan so PlanCard renders instead of raw JSON.
+    if (looksLikeJsonEnvelope && (
+        candidate.includes("\"has_enough_context\"") ||
+        candidate.includes("\"locale\"") ||
+        candidate.includes("\"step_type\"")
+    )) {
+        return { title: "", thought: "", steps: [] };
+    }
     return null;
 }

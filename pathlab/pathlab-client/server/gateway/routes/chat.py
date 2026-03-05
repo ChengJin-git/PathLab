@@ -1525,10 +1525,12 @@ async def create_conversation(
 ):
     """Create a new conversation for the current user"""
     conversation_id = f"conv_{uuid.uuid4().hex[:16]}"
+    conv_type = req.conversation_type if req.conversation_type in ("ai_chat", "deep_research") else "ai_chat"
     conversation_data = {
         "conversation_id": conversation_id,
         "user_id": str(user.id),  # Use authenticated user's ID
         "title": req.title or "New Conversation",
+        "conversation_type": conv_type,
     }
     conversation = await ChatRepository.create_conversation(db, conversation_data)
     await db.commit()
