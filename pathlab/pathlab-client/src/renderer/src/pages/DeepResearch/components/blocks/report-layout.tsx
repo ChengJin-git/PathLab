@@ -75,17 +75,17 @@ export function ReportLayout({
         };
 
         return {
-            h1: ({ children, ...props }: any) => (
-                <h1 id={nextId()} className="scroll-mt-20 group relative" {...props}>{children}</h1>
+            h1: ({ children, node, ...props }: any) => (
+                <h1 {...props} id={nextId()} className="scroll-mt-20 group relative text-3xl font-bold leading-tight mb-6">{children}</h1>
             ),
-            h2: ({ children, ...props }: any) => (
-                <h2 id={nextId()} className="scroll-mt-20 group relative border-b pb-2 mt-10 mb-5" {...props}>{children}</h2>
+            h2: ({ children, node, ...props }: any) => (
+                <h2 {...props} id={nextId()} className="scroll-mt-20 group relative text-2xl font-semibold border-b pb-2 mt-10 mb-5">{children}</h2>
             ),
-            h3: ({ children, ...props }: any) => (
-                <h3 id={nextId()} className="scroll-mt-20 group relative mt-8 mb-4" {...props}>{children}</h3>
+            h3: ({ children, node, ...props }: any) => (
+                <h3 {...props} id={nextId()} className="scroll-mt-20 group relative text-xl font-semibold mt-8 mb-4">{children}</h3>
             ),
-            h4: ({ children, ...props }: any) => (
-                <h4 id={nextId()} className="scroll-mt-20 group relative mt-6 mb-3" {...props}>{children}</h4>
+            h4: ({ children, node, ...props }: any) => (
+                <h4 {...props} id={nextId()} className="scroll-mt-20 group relative text-lg font-medium mt-6 mb-3">{children}</h4>
             ),
         };
     }, [headings]);

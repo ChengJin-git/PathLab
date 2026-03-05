@@ -21,6 +21,22 @@ import {
 
 const EMPTY_ACTIVITY_IDS: string[] = [];
 
+/** Strip PATHLAB_RESEARCH_META blocks so empty stub messages are detected. */
+const META_RE = /\[PATHLAB_RESEARCH_META\][\s\S]*?(?:\[\/PATHLAB_RESEARCH_META\]|$)/g;
+function stripMeta(s: string | undefined | null): string {
+  return (s ?? "").replace(META_RE, "").trim();
+}
+
+/** Check if a message has visible content (text after META strip, or tool calls). */
+function hasVisibleContent(msg: Message | undefined): boolean {
+  if (!msg) return false;
+  const agent = msg.agent ?? "";
+  if (agent === "reporter" || agent === "planner") return false;
+  if (stripMeta(msg.content)) return true;
+  if (!msg.isStreaming && msg.toolCalls?.length) return true;
+  return false;
+}
+
 // --- Grouping logic ---
 
 interface ActivityGroup {
@@ -41,8 +57,9 @@ function groupActivitiesByAgent(
     const msg = messages.get(id);
     const agent = msg?.agent ?? "researcher";
 
-    // Skip reporter — report is shown separately
+    // Skip reporter/planner — shown separately; skip empty stubs
     if (agent === "reporter" || agent === "planner") continue;
+    if (!hasVisibleContent(msg)) continue;
 
     if (!current || current.agent !== agent) {
       current = { agent, activityIds: [id] };
@@ -89,9 +106,12 @@ function useGroupSummary(
     let mcpCalls = 0;
     let retrieves = 0;
 
+    let visibleCount = 0;
     for (const id of activityIds) {
       const msg = messages.get(id);
-      if (!msg?.toolCalls) continue;
+      if (!msg) continue;
+      if (hasVisibleContent(msg)) visibleCount++;
+      if (!msg.toolCalls) continue;
       for (const tc of msg.toolCalls) {
         if (tc.name === "web_search") searches++;
         else if (tc.name === "crawl_tool") crawls++;
@@ -108,7 +128,10 @@ function useGroupSummary(
     if (pyRuns > 0) parts.push(`${pyRuns} code run${pyRuns > 1 ? "s" : ""}`);
     if (mcpCalls > 0) parts.push(`${mcpCalls} tool call${mcpCalls > 1 ? "s" : ""}`);
 
-    return parts.length > 0 ? parts.join(", ") : `${activityIds.length} activit${activityIds.length > 1 ? "ies" : "y"}`;
+    if (parts.length > 0) return parts.join(", ");
+    return visibleCount > 0
+      ? `${visibleCount} activit${visibleCount > 1 ? "ies" : "y"}`
+      : "";
   }, [activityIds, messages]);
 }
 
@@ -235,13 +258,7 @@ ActivityGroupSection.displayName = "ActivityGroupSection";
 
 const ActivityItem = React.memo(({ messageId }: { messageId: string }) => {
   const message = useMessage(messageId);
-  if (!message) return null;
-
-  const agent = message.agent ?? "";
-  const hasContent = message.content && agent !== "reporter" && agent !== "planner";
-  const hasToolCalls = !message.isStreaming && message.toolCalls?.length;
-
-  if (!hasContent && !hasToolCalls) return null;
+  if (!message || !hasVisibleContent(message)) return null;
 
   return (
     <li className="py-2">
@@ -255,14 +272,15 @@ ActivityItem.displayName = "ActivityItem";
 const ActivityMessage = React.memo(({ messageId }: { messageId: string }) => {
   const message = useMessage(messageId);
   if (!message?.content) return null;
-  // Skip reporter/planner — they are shown elsewhere
   const agent = message.agent ?? "";
   if (agent === "reporter" || agent === "planner") return null;
+  const cleanContent = stripMeta(message.content);
+  if (!cleanContent) return null;
 
   return (
     <div className="px-4 py-2">
       <Markdown animated checkLinkCredibility>
-        {message.content}
+        {cleanContent}
       </Markdown>
     </div>
   );
