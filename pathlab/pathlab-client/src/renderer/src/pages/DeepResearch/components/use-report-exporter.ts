@@ -15,9 +15,10 @@ import { marked } from "marked";
 import { toast } from "sonner";
 
 import { useTranslations } from "../../../lib/deep-research/i18n";
-import { useStore } from "../../../lib/deep-research/store";
+import { getCitations, useStore } from "../../../lib/deep-research/store";
+import type { Citation } from "../../../lib/deep-research/messages";
 
-export function useReportExporter(reportId?: string) {
+export function useReportExporter(reportId?: string, researchId?: string) {
     // @ts-ignore - i18n shim
     const t = useTranslations("chat.research");
     const [isDownloading, setIsDownloading] = useState(false);
@@ -80,6 +81,24 @@ export function useReportExporter(reportId?: string) {
         );
     }, [reportId, getTimestamp, triggerDownload]);
 
+    // Build citation footnotes HTML from citation data
+    const buildCitationFootnotes = useCallback(
+        (citations: Citation[]): string => {
+            if (!citations.length) return "";
+            const items = citations
+                .map(
+                    (c, i) =>
+                        `<li id="ref-${i + 1}" style="margin: 4px 0; word-break: break-all;">` +
+                        `${c.title ? `<span>${DOMPurify.sanitize(c.title)}</span>` : ""}` +
+                        `${c.url ? ` <a href="${DOMPurify.sanitize(c.url)}" style="color: #0066cc; font-size: 12px;">${DOMPurify.sanitize(c.url)}</a>` : ""}` +
+                        `</li>`,
+                )
+                .join("\n");
+            return `<hr style="margin: 32px 0 16px; border: none; border-top: 1px solid #ccc;" />\n<h2 style="font-size: 18px; font-weight: 600; margin-bottom: 10px;">References</h2>\n<ol style="font-size: 12px; line-height: 1.6; padding-left: 24px; color: #444;">\n${items}\n</ol>`;
+        },
+        [],
+    );
+
     // Download report as HTML
     const handleDownloadHTML = useCallback(() => {
         if (!reportId) return;
@@ -87,6 +106,8 @@ export function useReportExporter(reportId?: string) {
         if (!report) return;
         const rawHtml = marked(report.content) as string;
         const htmlContent = DOMPurify.sanitize(rawHtml);
+        const citations = researchId ? getCitations(researchId) : [];
+        const footnotesHtml = buildCitationFootnotes(citations);
         const fullHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -106,6 +127,7 @@ export function useReportExporter(reportId?: string) {
 </head>
 <body>
 ${htmlContent}
+${footnotesHtml}
 </body>
 </html>`;
         triggerDownload(
@@ -113,7 +135,7 @@ ${htmlContent}
             `research-report-${getTimestamp()}.html`,
             "text/html",
         );
-    }, [reportId, getTimestamp, triggerDownload]);
+    }, [reportId, researchId, getTimestamp, triggerDownload, buildCitationFootnotes]);
 
     // Download report as PDF using an isolated iframe to avoid Tailwind CSS conflicts
     const handleDownloadPDF = useCallback(async () => {
@@ -127,6 +149,10 @@ ${htmlContent}
             // Convert markdown to HTML
             const rawHtml = marked(report.content) as string;
             const htmlContent = DOMPurify.sanitize(rawHtml);
+
+            // Build citation footnotes
+            const citations = researchId ? getCitations(researchId) : [];
+            const footnotesHtml = buildCitationFootnotes(citations);
 
             // Use an iframe to completely isolate from page CSS (avoids lab() color parsing errors)
             iframe = document.createElement("iframe");
@@ -160,7 +186,7 @@ ${htmlContent}
   th { background: #f4f4f4; font-weight: 600; }
   img { max-width: 100%; height: auto; }
   hr { border: none; border-top: 1px solid #eee; margin: 16px 0; }
-</style></head><body>${htmlContent}</body></html>`);
+</style></head><body>${htmlContent}${footnotesHtml}</body></html>`);
             iframeDoc.close();
 
             // Wait for fonts/images to load
@@ -217,7 +243,7 @@ ${htmlContent}
             }
             setIsDownloading(false);
         }
-    }, [reportId, getTimestamp, isDownloading, t]);
+    }, [reportId, researchId, getTimestamp, isDownloading, t, buildCitationFootnotes]);
 
     // Helper function to parse inline markdown formatting for Word export
     const parseInlineMarkdown = useCallback(

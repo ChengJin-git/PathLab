@@ -1902,30 +1902,41 @@ export async function loadConversationFromBackend(conversationId: string): Promi
         }
       }
 
+      // MERGE instead of overwrite: when multiple old researchIds normalize to
+      // the same new ID (e.g., plan under "725" and activities under a nanoid that
+      // also normalizes to "725"), we must merge their data, not discard the first.
+
       const query = researchQueries.get(oldResearchId);
-      if (query != null) {
+      if (query != null && !normalizedResearchQueries.has(normalizedResearchId)) {
         normalizedResearchQueries.set(normalizedResearchId, query);
       }
 
       const planId = researchPlanIds.get(oldResearchId);
-      if (planId && validMessageIds.has(planId)) {
+      if (planId && validMessageIds.has(planId) && !normalizedResearchPlanIds.has(normalizedResearchId)) {
         normalizedResearchPlanIds.set(normalizedResearchId, planId);
       }
 
       const reportId = researchReportIds.get(oldResearchId);
-      if (reportId && validMessageIds.has(reportId)) {
+      if (reportId && validMessageIds.has(reportId) && !normalizedResearchReportIds.has(normalizedResearchId)) {
         normalizedResearchReportIds.set(normalizedResearchId, reportId);
       }
 
-      const activityIds = (researchActivityIds.get(oldResearchId) ?? []).filter((id) =>
+      const newActivityIds = (researchActivityIds.get(oldResearchId) ?? []).filter((id) =>
         validMessageIds.has(id),
       );
-      if (activityIds.length) {
-        normalizedResearchActivityIds.set(normalizedResearchId, activityIds);
+      if (newActivityIds.length) {
+        const existing = normalizedResearchActivityIds.get(normalizedResearchId) ?? [];
+        const merged = [...existing];
+        for (const id of newActivityIds) {
+          if (!merged.includes(id)) {
+            merged.push(id);
+          }
+        }
+        normalizedResearchActivityIds.set(normalizedResearchId, merged);
       }
 
       const citations = useStore.getState().researchCitations.get(oldResearchId);
-      if (citations?.length) {
+      if (citations?.length && !normalizedResearchCitations.has(normalizedResearchId)) {
         normalizedResearchCitations.set(normalizedResearchId, citations);
       }
       const runStatus = researchRunStatus.get(oldResearchId);
@@ -1935,6 +1946,63 @@ export async function loadConversationFromBackend(conversationId: string): Promi
       if (cachedRestartPlanShownSet.has(oldResearchId)) {
         normalizedRestartPlanShownResearchIds.add(normalizedResearchId);
       }
+    }
+
+    // Post-normalization merge: fold plan-less fragment researches into the
+    // nearest preceding research that has a plan.  This handles the common case
+    // of an interrupted research where the reconnected stream created messages
+    // under a new researchId (e.g., a LangGraph run ID) that doesn't share the
+    // plan binding of the original research.
+    for (let i = normalizedResearchIds.length - 1; i > 0; i--) {
+      const rid = normalizedResearchIds[i]!;
+      if (normalizedResearchPlanIds.has(rid) || normalizedResearchReportIds.has(rid)) {
+        continue; // has its own plan or report — not a fragment
+      }
+      // Find the nearest preceding research with a plan to merge into.
+      let targetIdx = -1;
+      for (let j = i - 1; j >= 0; j--) {
+        if (normalizedResearchPlanIds.has(normalizedResearchIds[j]!)) {
+          targetIdx = j;
+          break;
+        }
+      }
+      if (targetIdx < 0) continue;
+      const targetRid = normalizedResearchIds[targetIdx]!;
+
+      // Merge activities
+      const targetActivities = normalizedResearchActivityIds.get(targetRid) ?? [];
+      const fragmentActivities = normalizedResearchActivityIds.get(rid) ?? [];
+      const merged = [...targetActivities];
+      for (const id of fragmentActivities) {
+        if (!merged.includes(id)) merged.push(id);
+      }
+      normalizedResearchActivityIds.set(targetRid, merged);
+      normalizedResearchActivityIds.delete(rid);
+
+      // Merge citations
+      if (!normalizedResearchCitations.has(targetRid) && normalizedResearchCitations.has(rid)) {
+        normalizedResearchCitations.set(targetRid, normalizedResearchCitations.get(rid)!);
+      }
+      normalizedResearchCitations.delete(rid);
+
+      // Carry over run status (prefer non-running terminal status)
+      const fragmentStatus = normalizedResearchRunStatus.get(rid);
+      if (fragmentStatus && fragmentStatus !== "running") {
+        normalizedResearchRunStatus.set(targetRid, fragmentStatus);
+      }
+      normalizedResearchRunStatus.delete(rid);
+      normalizedResearchQueries.delete(rid);
+
+      // Remap open/ongoing IDs
+      if (normalizedOpenResearchId === rid) normalizedOpenResearchId = targetRid;
+      if (normalizedOngoingResearchId === rid) normalizedOngoingResearchId = targetRid;
+
+      normalizedResearchIds.splice(i, 1);
+      deepResearchDebugLog("loadConversation", "merged fragment research into target", {
+        fragmentRid: rid,
+        targetRid,
+        mergedActivityCount: merged.length,
+      });
     }
 
     if (

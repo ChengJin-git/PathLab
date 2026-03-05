@@ -76,7 +76,7 @@ export function ResearchBlock({
     handleDownloadPDF,
     handleDownloadWord,
     handleDownloadImage,
-  } = useReportExporter(reportId);
+  } = useReportExporter(reportId, researchId ?? undefined);
 
   // When the research id changes, set the active tab to activities
   useEffect(() => {
