@@ -103,8 +103,12 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const [batchRegistering, setBatchRegistering] = useState(false)
   const [batchImportTaskId, setBatchImportTaskId] = useState<string | null>(null)
   const [batchDatasets, setBatchDatasets] = useState<DatasetSummary[]>([])
-  const [batchTaskType, setBatchTaskType] = useState<'classification' | 'survival' | 'segmentation'>('classification')
+  const [batchTaskType, setBatchTaskTypeRaw] = useState<'classification' | 'survival' | 'segmentation'>('classification')
   const [batchDataLevel, setBatchDataLevel] = useState<'case' | 'file'>('file')
+  const setBatchTaskType = (type: 'classification' | 'survival' | 'segmentation') => {
+    setBatchTaskTypeRaw(type)
+    if (type === 'segmentation') setBatchDataLevel('file')
+  }
   const [externalDatasets, setExternalDatasets] = useState<ExternalDatasetInfo[]>(() => {
     const cached = getExternalDatasetsCachedSync()
     return cached?.datasets ?? []

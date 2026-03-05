@@ -99,6 +99,7 @@ def _scan_directory_for_wsi(directory: str) -> list:
             "data_type": data_type,  # 'wsi' or 'patch'
             "valid": True,
             "validation_message": None,
+            "has_annotation_json": False,  # Will be checked below
         }
 
         # Handle MRXS format - requires data folder with same name
@@ -137,6 +138,19 @@ def _scan_directory_for_wsi(directory: str) -> list:
                                 pass
             if dt_files:
                 file_info["associated_data"] = sorted(dt_files)
+
+        # Check if a matching COCO annotation JSON exists (case-insensitive stem match)
+        stem_lower = item.stem.lower()
+        json_path_exact = item.parent / f"{item.stem}.json"
+        json_path_lower = item.parent / f"{stem_lower}.json"
+        if json_path_exact.exists() or json_path_lower.exists():
+            file_info["has_annotation_json"] = True
+        else:
+            # Case-insensitive scan via all_items
+            for name in all_items:
+                if name.lower() == f"{stem_lower}.json" and all_items[name].is_file():
+                    file_info["has_annotation_json"] = True
+                    break
 
         # Update size to include associated files
         file_info["size"] = total_size

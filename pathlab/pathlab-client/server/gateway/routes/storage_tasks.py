@@ -25,6 +25,7 @@ from backend.database.repositories import (
     DataGroupRepository,
     TrainingTaskRepository,
     StorageTaskRepository,
+    AnnotationDraftRepository,
 )
 from backend.database.models import TrainingTaskWSI, AIResult, AITask
 from backend.auth import current_active_user, User, get_user_from_token_param
@@ -291,10 +292,51 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                     if task_type == "survival":
                         wsi_data["event_time"] = default_event_time
                         wsi_data["event_status"] = default_event_status
+                    elif task_type == 'segmentation':
+                        # For segmentation: determine label based on JSON mask match
+                        image_stem = path_obj.stem.lower()
+                        json_candidates = [
+                            path_obj.parent / f"{path_obj.stem}.json",
+                            path_obj.parent / f"{path_obj.stem.lower()}.json",
+                        ]
+                        matched_json_path = None
+                        for candidate in json_candidates:
+                            if candidate.exists():
+                                matched_json_path = candidate
+                                break
+                        # Fallback: case-insensitive scan of directory
+                        if matched_json_path is None:
+                            try:
+                                for sibling in path_obj.parent.iterdir():
+                                    if sibling.suffix.lower() == '.json' and sibling.stem.lower() == image_stem:
+                                        matched_json_path = sibling
+                                        break
+                            except Exception:
+                                pass
+                        wsi_data["label"] = "Has Mask" if matched_json_path is not None else "No Mask"
                     else:
                         wsi_data["label"] = default_label
 
                     await WSIRepository.create(db, wsi_data)
+
+                    # For segmentation tasks: import matched COCO JSON annotation file
+                    if task_type == 'segmentation' and matched_json_path is not None:
+                        try:
+                            with open(matched_json_path, 'r', encoding='utf-8') as jf:
+                                coco_data = json.load(jf)
+                            # Validate minimal COCO structure
+                            if isinstance(coco_data, dict) and ('images' in coco_data or 'annotations' in coco_data):
+                                draft_id = f"draft_{wsi_id}"
+                                await AnnotationDraftRepository.upsert_draft(
+                                    db,
+                                    draft_id=draft_id,
+                                    user_id=user_id,
+                                    annotations=coco_data,
+                                    source_dataset_id=resolved_dataset_id,
+                                )
+                                logger.info(f"Imported COCO annotation for {wsi_id} from {matched_json_path.name}")
+                        except Exception as json_err:
+                            logger.warning(f"Failed to import JSON annotation {matched_json_path}: {json_err}")
 
                     results.append({
                         "path": file_path,

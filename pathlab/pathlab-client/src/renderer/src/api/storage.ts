@@ -374,6 +374,7 @@ export interface ScannedWSIFile {
   valid: boolean
   validation_message: string | null
   associated_data?: string | string[] | null
+  has_annotation_json?: boolean  // Whether a matching COCO JSON annotation file exists
 }
 
 export interface ScanDirectoryResponse {

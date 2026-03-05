@@ -2,7 +2,7 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CheckCircle, AlertCircle, RefreshCw, Upload,
-  Layers, Clock, Info, Grid3X3
+  Layers, Clock, Info, Grid3X3, FileJson
 } from 'lucide-react'
 import { Button } from '../../ui/button'
 import { Label } from '../../ui/label'
@@ -88,6 +88,9 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
               <th className="px-3 py-3 text-left w-16 font-semibold text-gray-700">{t('settings.storage.type')}</th>
               <th className="px-3 py-3 text-left w-20 font-semibold text-gray-700">{t('settings.storage.format')}</th>
               <th className="px-3 py-3 text-right w-24 font-semibold text-gray-700">{t('settings.storage.size')}</th>
+              {batchTaskType === 'segmentation' && (
+                <th className="px-3 py-3 text-left w-20 font-semibold text-gray-700" title={t('settings.storage.annotationJsonTooltip')}>JSON</th>
+              )}
               <th className="px-3 py-3 text-left w-32 font-semibold text-gray-700">{t('settings.storage.status')}</th>
             </tr>
           </thead>
@@ -126,6 +129,19 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
                 <td className="px-3 py-3 text-right text-gray-500">
                   {formatFileSize(file.size)}
                 </td>
+                {batchTaskType === 'segmentation' && (
+                  <td className="px-3 py-3">
+                    {file.has_annotation_json ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded bg-teal-50 text-teal-700" title={t('settings.storage.annotationJsonFound')}>
+                        <FileJson className="w-3 h-3" /> {t('settings.storage.matched')}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded bg-gray-50 text-gray-400" title={t('settings.storage.annotationJsonNotFound')}>
+                        <FileJson className="w-3 h-3" /> —
+                      </span>
+                    )}
+                  </td>
+                )}
                 <td className="px-3 py-3">
                   {file.valid ? (
                     <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 gap-1 py-0 px-2 font-normal">
@@ -203,7 +219,7 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
         </div>
       </div>
 
-      <DataLevelSelection batchDataLevel={batchDataLevel} setBatchDataLevel={setBatchDataLevel} />
+      <DataLevelSelection batchDataLevel={batchDataLevel} setBatchDataLevel={setBatchDataLevel} taskType={batchTaskType} />
 
       <DatasetSelection
         batchDatasetMode={batchDatasetMode}
