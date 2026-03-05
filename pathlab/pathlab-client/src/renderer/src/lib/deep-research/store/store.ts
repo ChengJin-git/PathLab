@@ -752,6 +752,60 @@ function getThreadId(): string {
 const RESEARCH_META_BLOCK_START = "[PATHLAB_RESEARCH_META]";
 const RESEARCH_META_BLOCK_END = "[/PATHLAB_RESEARCH_META]";
 
+const TOOL_CALLS_BLOCK_START = "[PATHLAB_TOOL_CALLS]";
+const TOOL_CALLS_BLOCK_END = "[/PATHLAB_TOOL_CALLS]";
+
+/** Max length for a single tool_call result when serializing. */
+const TOOL_RESULT_MAX_LEN = 8000;
+
+interface PersistedToolCall {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+  result?: string;
+}
+
+function serializeToolCalls(toolCalls: import("../messages").ToolCallRuntime[]): string {
+  const compact: PersistedToolCall[] = toolCalls.map((tc) => {
+    const entry: PersistedToolCall = { id: tc.id, name: tc.name, args: tc.args };
+    if (tc.result != null) {
+      entry.result =
+        tc.result.length > TOOL_RESULT_MAX_LEN
+          ? tc.result.slice(0, TOOL_RESULT_MAX_LEN) + "…[truncated]"
+          : tc.result;
+    }
+    return entry;
+  });
+  return `${TOOL_CALLS_BLOCK_START}\n${JSON.stringify(compact)}\n${TOOL_CALLS_BLOCK_END}`;
+}
+
+function extractPersistedToolCalls(raw: string): {
+  content: string;
+  toolCalls: import("../messages").ToolCallRuntime[] | undefined;
+} {
+  const start = raw.indexOf(TOOL_CALLS_BLOCK_START);
+  if (start < 0) return { content: raw, toolCalls: undefined };
+  const end = raw.indexOf(TOOL_CALLS_BLOCK_END, start);
+  if (end < 0) return { content: raw.slice(0, start).trimEnd(), toolCalls: undefined };
+  const jsonText = raw.slice(start + TOOL_CALLS_BLOCK_START.length, end).trim();
+  const cleaned = raw.slice(0, start).trimEnd() + raw.slice(end + TOOL_CALLS_BLOCK_END.length);
+  try {
+    const parsed = JSON.parse(jsonText) as PersistedToolCall[];
+    if (!Array.isArray(parsed)) return { content: cleaned, toolCalls: undefined };
+    return {
+      content: cleaned,
+      toolCalls: parsed.map((tc) => ({
+        id: tc.id,
+        name: tc.name,
+        args: tc.args ?? {},
+        result: tc.result,
+      })),
+    };
+  } catch {
+    return { content: cleaned, toolCalls: undefined };
+  }
+}
+
 type ResearchMetaKind = "research_root" | "plan" | "activity" | "report";
 
 interface PersistedResearchMeta {
@@ -887,12 +941,18 @@ function buildResearchMetaForMessage(message: Message): PersistedResearchMeta | 
 }
 
 function withPersistedResearchMeta(content: string, message: Message): string {
-  const { content: cleanedContent } = extractPersistedResearchMeta(content || "");
+  const { content: step1 } = extractPersistedResearchMeta(content || "");
+  const { content: cleanedContent } = extractPersistedToolCalls(step1);
   const meta = buildResearchMetaForMessage(message);
   if (!meta) {
     return cleanedContent;
   }
-  return `${cleanedContent}\n\n${RESEARCH_META_BLOCK_START}\n${JSON.stringify(meta)}\n${RESEARCH_META_BLOCK_END}`;
+  let result = `${cleanedContent}\n\n${RESEARCH_META_BLOCK_START}\n${JSON.stringify(meta)}\n${RESEARCH_META_BLOCK_END}`;
+  // Persist tool_calls for activity messages so they survive reload.
+  if (message.toolCalls?.length) {
+    result += `\n${serializeToolCalls(message.toolCalls)}`;
+  }
+  return result;
 }
 
 // Coordinator messages contain special block tags used by the UI for guided flows.
@@ -1253,7 +1313,20 @@ async function persistMessage(message: Message): Promise<void> {
     role === "assistant"
       ? withPersistedResearchMeta(message.content || "", message)
       : (message.content || "");
+
+  // Skip persisting empty activity stubs (no text, no tool_calls).
+  // These arise when a research step fails silently.
   const backendId = state.messageBackendIds.get(message.id);
+  if (backendId == null && role === "assistant") {
+    const { content: textOnly } = extractPersistedResearchMeta(persistedContent);
+    const { content: realText } = extractPersistedToolCalls(textOnly);
+    if (!realText.trim() && !message.toolCalls?.length) {
+      const meta = buildResearchMetaForMessage(message);
+      if (meta?.kind === "activity") {
+        return; // skip empty activity stub
+      }
+    }
+  }
   try {
     if (backendId != null) {
       await apiUpdateMessage(conversationId, backendId, persistedContent);
@@ -1528,7 +1601,8 @@ export async function loadConversationFromBackend(conversationId: string): Promi
     const orderedMessages = [...(conv.messages ?? [])].sort((a, b) => a.id - b.id);
     for (const m of orderedMessages) {
       const id = String(m.id);
-      const { content: cleanedContent, meta } = extractPersistedResearchMeta(m.content || "");
+      const { content: rawCleanedContent, meta } = extractPersistedResearchMeta(m.content || "");
+      const { content: cleanedContent, toolCalls: restoredToolCalls } = extractPersistedToolCalls(rawCleanedContent);
       const plannerPayload = m.role === "assistant" ? parsePlannerContent(cleanedContent) : null;
       const inferredPlanner = plannerPayload != null;
       const inferredReport = !inferredPlanner && isLikelyReportContent(cleanedContent);
@@ -1557,6 +1631,7 @@ export async function loadConversationFromBackend(conversationId: string): Promi
         content: cleanedContent,
         contentChunks: [cleanedContent],
         isStreaming: false,
+        ...(restoredToolCalls ? { toolCalls: restoredToolCalls } : {}),
       });
 
       if (m.role === "user") {
