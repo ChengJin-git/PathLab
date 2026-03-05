@@ -136,6 +136,8 @@ async def run_training_pipeline(
     huggingface_token: str = None,
     training_task_type: str = "classification",  # "classification", "survival", or "segmentation"
     assigned_device: str = None,  # GPU device assigned by task queue (e.g., "cuda:0")
+    user_id: str = None,  # User who submitted the task (for permission checks)
+    user_is_admin: bool = False,  # Whether the submitting user is admin
 ):
     """
     Run the training pipeline based on data level:
@@ -178,9 +180,17 @@ async def run_training_pipeline(
                     seed = preprocessing_config.get('split_config', {}).get('seed', 42)
 
                     # Determine num_classes from COCO annotations stored in annotation_drafts
+                    # Only allow access to annotations the user owns or has permissions for
                     num_classes = 1  # default
+                    from backend.database.repositories import DatasetPermissionRepository
+                    elevated_dataset_ids = set()
+                    if not user_is_admin and user_id:
+                        user_permissions = await DatasetPermissionRepository.get_valid_by_user(db, user_id)
+                        elevated_dataset_ids = {p.dataset_id for p in user_permissions if p.is_valid()}
                     for wsi_id in wsi_ids:
-                        draft = await AnnotationDraftRepository.get_draft_by_draft_id(db, f"draft_{wsi_id}")
+                        draft = await AnnotationDraftRepository.get_draft_with_permission(
+                            db, f"draft_{wsi_id}", user_id or "", user_is_admin, elevated_dataset_ids
+                        )
                         if draft and draft.annotations:
                             coco_categories = draft.annotations.get("categories", [])
                             if coco_categories:
