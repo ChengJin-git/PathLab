@@ -10,7 +10,7 @@ import { Tooltip } from "../../../../components/deep-research/tooltip";
 import { Button } from "../../../../components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "../../../../components/ui/card";
 import type { Message, Option } from "../../../../lib/deep-research/messages";
-import { flushDeepResearchPersistNow, useStore } from "../../../../lib/deep-research/store";
+import { flushDeepResearchPersistNow, rePersistMessageToBackend, useStore } from "../../../../lib/deep-research/store";
 import { cn } from "../../../../lib/utils";
 import { parsePlannerPayload } from "../utils";
 import { ThoughtBlock } from "../blocks/thought-block";
@@ -152,13 +152,10 @@ export function PlanCard({
         async (action: "accepted" | "replan") => {
             useStore.getState().setPlanActionLock(message.id, action);
             flushDeepResearchPersistNow();
-
-            const state = useStore.getState();
-            const conversationId = state.conversationId;
-            const backendId = state.messageBackendIds.get(message.id);
-            if (!conversationId || backendId == null) {
-                return;
-            }
+            // Re-persist the plan message to backend so the PATHLAB_RESEARCH_META
+            // block includes the updated planActionLock.  Without this, the lock
+            // is lost when localStorage cache is cleared.
+            rePersistMessageToBackend(message.id);
         },
         [message.id],
     );
@@ -286,8 +283,10 @@ export function PlanCard({
                                                 if (effectiveSubmittedAction !== null) {
                                                     return;
                                                 }
-                                                if (!allowRestartActions && (option.value === "accepted" || option.value === "replan")) {
-                                                    void persistPlanActionLock(option.value);
+                                                if (!allowRestartActions) {
+                                                    void persistPlanActionLock(
+                                                        option.value === "accepted" ? "accepted" : "replan",
+                                                    );
                                                 }
                                                 if (option.value === "accepted") {
                                                     void handleAccept();

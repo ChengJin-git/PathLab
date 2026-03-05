@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { useToast } from '../contexts/ToastContext'
 import { Button } from './ui/button'
 import { BackgroundTaskPanel } from './BackgroundTaskPanel'
+import ConversationSidebar from './ConversationSidebar'
 import { InstallPWA } from './InstallPWA'
 import { DisclaimerModal } from './DisclaimerModal'
 import { MaintenanceNoticeModal } from './MaintenanceNoticeModal'
@@ -255,16 +256,25 @@ export default function Layout({ children }: LayoutProps) {
       </header>
 
       {/* Main Content */}
-      <main
-        className={`flex-1 ${isAIChatPage || location.pathname === '/task-setup'
-          ? 'h-full overflow-hidden'
-          : isRegisterPage
-            ? 'w-full mx-auto p-3 sm:p-6 lg:p-8 h-full overflow-y-auto'
-            : `w-full mx-auto p-3 sm:p-6 lg:p-8`
-          }`}
-      >
-        {children}
-      </main>
+      {isAIChatPage ? (
+        <div className="flex-1 flex overflow-hidden">
+          <ConversationSidebar />
+          <main className="flex-1 min-w-0 overflow-hidden">
+            {children}
+          </main>
+        </div>
+      ) : (
+        <main
+          className={`flex-1 ${location.pathname === '/task-setup'
+            ? 'h-full overflow-hidden'
+            : isRegisterPage
+              ? 'w-full mx-auto p-3 sm:p-6 lg:p-8 h-full overflow-y-auto'
+              : `w-full mx-auto p-3 sm:p-6 lg:p-8`
+            }`}
+        >
+          {children}
+        </main>
+      )}
       <InstallPWA />
 
       {/* Disclaimer Modal - shown when user needs to accept agreement */}

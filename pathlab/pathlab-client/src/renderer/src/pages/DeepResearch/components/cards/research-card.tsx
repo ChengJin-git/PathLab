@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 import React, { useCallback, useMemo } from "react";
+import { nanoid } from "nanoid";
 import i18n from "../../../../i18n";
+import { createConversation as apiCreateChatConversation, addMessage as apiAddChatMessage, getConversation as apiGetConversation } from "../../../../api";
 import { useTranslations } from "../../../../lib/deep-research/i18n";
-import { updateMessage as apiUpdateMessage } from "../../../../api";
+import { useNavigate } from "react-router-dom";
 
 const CHAT_TRAINING_BASE_PROMPT_ZH =
     "我有一组病理图像数据集，想训练一个深度学习模型。我需要配置什么？";
@@ -23,30 +25,55 @@ function getChatTrainingBasePrompt(): string {
 function buildTrainingPromptWithReportContext(
     basePrompt: string,
     reportContent: string | undefined,
+    handoffInstruction: string,
+    jumpMetadata?: {
+        conversationId?: string | null;
+        researchId?: string;
+        title?: string;
+    },
 ): string {
     const cleanedReport = (reportContent ?? "")
-        .replace(/\n?\[PATHLAB_RESEARCH_META\][\s\S]*?\[\/PATHLAB_RESEARCH_META\]/g, "")
+        .replace(/\n?\[PATHLAB_RESEARCH_META\][\s\S]*?(?:\[\/PATHLAB_RESEARCH_META\]|$)/g, "")
         .trim();
-    if (!cleanedReport) {
-        return basePrompt;
+    const chunks: string[] = [basePrompt];
+    if (cleanedReport) {
+        const clippedReport =
+            cleanedReport.length > REPORT_CONTEXT_MAX_CHARS
+                ? `${cleanedReport.slice(0, REPORT_CONTEXT_MAX_CHARS)}\n...(report truncated)`
+                : cleanedReport;
+        chunks.push(
+            "[RESEARCH_REPORT_CONTEXT]",
+            clippedReport,
+            "[/RESEARCH_REPORT_CONTEXT]",
+        );
     }
-    const clippedReport =
-        cleanedReport.length > REPORT_CONTEXT_MAX_CHARS
-            ? `${cleanedReport.slice(0, REPORT_CONTEXT_MAX_CHARS)}\n...(report truncated)`
-            : cleanedReport;
-
-    return [
-        basePrompt,
-        "[RESEARCH_REPORT_CONTEXT]",
-        clippedReport,
-        "[/RESEARCH_REPORT_CONTEXT]",
-    ].join("\n\n");
+    chunks.push(
+        "[TRAINING_HANDOFF_CONTEXT]",
+        handoffInstruction,
+        "[/TRAINING_HANDOFF_CONTEXT]",
+    );
+    if (jumpMetadata?.conversationId && jumpMetadata?.researchId) {
+        chunks.push(
+            "[RESEARCH_JUMP]",
+            JSON.stringify(
+                {
+                    conversation_id: jumpMetadata.conversationId,
+                    research_id: jumpMetadata.researchId,
+                    title: jumpMetadata.title ?? null,
+                },
+                null,
+                2,
+            ),
+            "[/RESEARCH_JUMP]",
+        );
+    }
+    return chunks.join("\n\n");
 }
 import { RainbowText } from "../../../../components/deep-research/rainbow-text";
 import { RollingText } from "../../../../components/deep-research/rolling-text";
 import { Button } from "../../../../components/ui/button";
-import { Card, CardFooter, CardHeader, CardTitle } from "../../../../components/ui/card";
-import { closeResearch, openResearch, useResearchMessage, useStore } from "../../../../lib/deep-research/store";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "../../../../components/ui/card";
+import { closeResearch, flushDeepResearchPersistNow, openResearch, useResearchMessage, useStore } from "../../../../lib/deep-research/store";
 import { cn } from "../../../../lib/utils";
 import { parsePlannerPayload } from "../utils";
 
@@ -70,7 +97,9 @@ export function ResearchCard({
 }) {
     // @ts-ignore - i18n shim
     const t = useTranslations("chat.research");
+    const navigate = useNavigate();
     const reportId = useStore((state) => state.researchReportIds.get(researchId));
+    const conversationId = useStore((state) => state.conversationId);
     const reportMessage = useStore((state) =>
         reportId ? state.messages.get(reportId) : undefined,
     );
@@ -123,14 +152,109 @@ export function ResearchCard({
         onToggleResearch?.();
     }, [openResearchId, researchId, onToggleResearch]);
 
-    const handleStartTraining = useCallback(() => {
+    // Scan all messages for an existing [TRAINING_CHAT_LINK] to prevent duplicate creation
+    const allMessages = useStore((state) => state.messages);
+    const existingTrainingLink = useMemo(() => {
+        for (const msg of allMessages.values()) {
+            const content = msg.content ?? "";
+            const match = content.match(/\[TRAINING_CHAT_LINK\]\s*([\s\S]*?)\s*\[\/TRAINING_CHAT_LINK\]/);
+            if (match?.[1]) {
+                try {
+                    const parsed = JSON.parse(match[1]);
+                    if (parsed.conversation_id) return parsed as { conversation_id: string; title?: string };
+                } catch { /* ignore parse errors */ }
+            }
+        }
+        return null;
+    }, [allMessages]);
+
+    const handleStartTraining = useCallback(async () => {
+        // If a training chat already exists, try to navigate to it directly
+        if (existingTrainingLink) {
+            try {
+                await apiGetConversation(existingTrainingLink.conversation_id);
+                // Conversation still exists — navigate directly
+                navigate(`/dashboard/${existingTrainingLink.conversation_id}`);
+                return;
+            } catch {
+                // Conversation was deleted — fall through to create a new one
+            }
+        }
+
         const basePrompt = getChatTrainingBasePrompt();
+        const handoffInstruction = [
+            "Please continue in normal AI chat mode.",
+            t("uploadDataFirst"),
+            "First guide the user to upload/select dataset, then help complete training setup.",
+            "When needed, provide structured [DATASET_REGISTRATION] and [TASK_CONFIG] blocks.",
+        ].join("\n");
         const prompt = buildTrainingPromptWithReportContext(
             basePrompt,
             reportMessage?.content,
+            handoffInstruction,
+            {
+                conversationId,
+                researchId,
+                title,
+            },
         );
-        onSendMessage?.(prompt);
-    }, [onSendMessage, reportMessage?.content]);
+
+        // Pre-create AI Chat conversation so we can link back to it
+        let preCreatedConversationId: string | undefined;
+        try {
+            // Prefer the report's H1 title, fall back to the plan title
+            const reportH1 = reportMessage?.content?.match(/^#\s+(.+)$/m)?.[1]?.trim();
+            const resolvedTitle = reportH1 || title;
+            const chatTitle = resolvedTitle ? `Training: ${resolvedTitle}` : "Training Chat";
+            const newConv = await apiCreateChatConversation(chatTitle);
+            preCreatedConversationId = newConv.conversation_id;
+
+            // Append a link message in the Deep Research conversation
+            const storeState = useStore.getState();
+            const drConversationId = storeState.conversationId;
+            const threadId = storeState.threadId;
+            if (drConversationId && threadId) {
+                const linkContent = [
+                    "[TRAINING_CHAT_LINK]",
+                    JSON.stringify({
+                        conversation_id: preCreatedConversationId,
+                        title: chatTitle,
+                    }),
+                    "[/TRAINING_CHAT_LINK]",
+                ].join("\n");
+                const linkMessage = {
+                    id: nanoid(),
+                    threadId,
+                    role: "assistant" as const,
+                    content: linkContent,
+                    contentChunks: [linkContent],
+                };
+                storeState.appendMessage(linkMessage);
+                // Persist to backend
+                try {
+                    const saved = await apiAddChatMessage(drConversationId, "assistant", linkContent);
+                    useStore.getState().setMessageBackendId(linkMessage.id, saved.id);
+                } catch (e) {
+                    console.warn("[DeepResearch] Failed to persist training chat link:", e);
+                }
+            }
+        } catch (e) {
+            console.warn("[DeepResearch] Failed to pre-create chat conversation:", e);
+        }
+
+        // Flush local cache before navigating away so the link message survives
+        // the SPA route change (beforeunload doesn't fire for React Router nav).
+        flushDeepResearchPersistNow();
+
+        navigate(preCreatedConversationId ? `/dashboard/${preCreatedConversationId}` : "/dashboard", {
+            state: {
+                initialMessage: prompt,
+                forceNewChat: true,
+                fromDeepResearchStartTraining: true,
+                preCreatedConversationId,
+            },
+        });
+    }, [t, reportMessage?.content, conversationId, researchId, title, navigate, existingTrainingLink]);
 
     return (
         <div className={cn("w-full flex flex-col gap-4", className)}>
@@ -155,11 +279,6 @@ export function ResearchCard({
                         </RollingText>
                         {showActions && (
                             <>
-                                {hasReport && !reportGenerating && (
-                                    <>
-                                        <Button onClick={handleStartTraining}>{t("startTraining")}</Button>
-                                    </>
-                                )}
                                 <Button
                                     variant={!openResearchId ? "default" : "outline"}
                                     onClick={handleOpen}
@@ -180,6 +299,32 @@ export function ResearchCard({
                     </div>
                 </CardFooter>
             </Card>
+            {hasReport && !reportGenerating && (
+                <Card
+                    className={cn(
+                        "w-full transition-colors",
+                        existingTrainingLink
+                            ? "opacity-60 cursor-default"
+                            : "cursor-pointer hover:bg-accent",
+                    )}
+                    onClick={existingTrainingLink ? undefined : handleStartTraining}
+                >
+                    <CardHeader className="pb-0">
+                        <CardTitle className="text-base">
+                            {existingTrainingLink
+                                ? (existingTrainingLink.title || t("startTraining"))
+                                : t("startTraining")}
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pt-2">
+                        <p className="text-muted-foreground text-sm">
+                            {existingTrainingLink
+                                ? t("trainingStarted")
+                                : t("trainingDescription")}
+                        </p>
+                    </CardContent>
+                </Card>
+            )}
         </div>
     );
 }
