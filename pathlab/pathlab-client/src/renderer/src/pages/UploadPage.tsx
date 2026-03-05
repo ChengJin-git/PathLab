@@ -620,7 +620,7 @@ export default function RegisterPage() {
       return {
         item,
         finalMeta: {
-          label: (uiMeta.label && uiMeta.label.trim()) ? uiMeta.label : csvMeta.label,
+          label: uploadMode === 'segmentation' ? undefined : ((uiMeta.label && uiMeta.label.trim()) ? uiMeta.label : csvMeta.label),
           case_id: (uiMeta.case_id && uiMeta.case_id.trim()) ? uiMeta.case_id : csvMeta.case_id,
           age: (uiMeta.age && uiMeta.age.trim()) ? uiMeta.age : csvMeta.age,
           gender: (uiMeta.gender && uiMeta.gender.trim()) ? uiMeta.gender : csvMeta.gender,
@@ -675,7 +675,7 @@ export default function RegisterPage() {
           dataset_name: datasetId ? undefined : datasetName.trim(),
           // Only pass aggregation_level for new datasets (when dataset_id is not set)
           aggregation_level: datasetId ? undefined : dataLevel,
-          label: finalMeta.label ? String(finalMeta.label) : undefined,
+          label: uploadMode !== 'segmentation' && finalMeta.label ? String(finalMeta.label) : undefined,
           case_id: finalMeta.case_id ? String(finalMeta.case_id) : undefined,
           age,
           gender: finalMeta.gender ? String(finalMeta.gender) : undefined,
@@ -726,6 +726,7 @@ export default function RegisterPage() {
     setSelectedItems(new Set())
     setSubmitError(null)
     setMatchedMasks(new Set())
+    setPendingJsonStems(new Set())
   }
 
   // --- Selection Logic ---

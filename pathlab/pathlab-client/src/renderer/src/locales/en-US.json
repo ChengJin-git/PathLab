@@ -1644,6 +1644,7 @@
       "noSegmentationDatasets": "No segmentation datasets found",
       "registerSegmentationHint": "Register image patches with COCO annotation masks to get started",
       "slidesCount": "{{count}} slides",
+      "filesCount": "{{count}} files",
       "selectDataset": "Select Dataset",
       "chooseSource": "Choose a data source for training",
       "filesSelected": "{{count}} files selected",

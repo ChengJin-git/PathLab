@@ -1633,6 +1633,7 @@
       "noSegmentationDatasets": "未找到分割數據集",
       "registerSegmentationHint": "註冊包含 COCO 標註的圖像切片以開始",
       "slidesCount": "{{count}} 張切片",
+      "filesCount": "{{count}} 個檔案",
       "selectDataset": "選擇數據集",
       "chooseSource": "選擇訓練數據來源",
       "filesSelected": "已選擇 {{count}} 個檔案",

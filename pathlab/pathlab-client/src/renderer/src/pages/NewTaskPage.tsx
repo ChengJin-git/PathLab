@@ -539,7 +539,7 @@ export default function NewTaskPage() {
     }
 
     // Check for single-class tasks (classification, segmentation, or survival)
-    if (wizard.taskType === 'classification' || wizard.taskType === 'segmentation') {
+    if (wizard.taskType === 'classification') {
       const classes = Object.keys(splitValidation.classDistribution).filter((k) => k !== '__unlabeled__')
       if (classes.length < 2) {
         errors.push(t('newTask.validation.classificationMinClasses'))

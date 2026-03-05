@@ -91,6 +91,21 @@ export function useSplitValidation({
   // Calculate maximum allowed k for k-fold based on class distribution
   const kFoldValidation = useMemo((): KFoldValidation => {
     const isSurvival = taskType === 'survival'
+    const isSegmentation = taskType === 'segmentation'
+
+    // Segmentation tasks use COCO annotations, not WSI labels — skip label-based validation
+    if (isSegmentation) {
+      const totalSelected = selectedIds.size > 0 ? selectedIds.size : items.length
+      return {
+        isValid: totalSelected >= 2,
+        maxK: totalSelected,
+        minSamplesPerClass: totalSelected,
+        numClasses: 0,
+        unlabeledCount: 0,
+        totalLabeled: totalSelected,
+        message: totalSelected < 2 ? t('training.dataSplit.validation.noLabeledSamples') : undefined,
+      }
+    }
 
     if (isSurvival) {
       const eventCount = classDistribution['__event__'] || 0
@@ -183,7 +198,21 @@ export function useSplitValidation({
   // Calculate validation for random 7:1:2 split
   const randomSplitValidation = useMemo((): RandomSplitValidation => {
     const isSurvival = taskType === 'survival'
+    const isSegmentation = taskType === 'segmentation'
     const minRequiredPerClass = 10
+
+    // Segmentation tasks use COCO annotations, not WSI labels — skip label-based validation
+    if (isSegmentation) {
+      const totalSelected = selectedIds.size > 0 ? selectedIds.size : items.length
+      return {
+        isValid: totalSelected >= 1,
+        minRequired: 1,
+        minSamplesPerClass: totalSelected,
+        numClasses: 0,
+        unlabeledCount: 0,
+        totalLabeled: totalSelected,
+      }
+    }
 
     if (isSurvival) {
       const eventCount = classDistribution['__event__'] || 0

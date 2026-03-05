@@ -352,8 +352,8 @@ export const SEGMENTATION_LOSSES: readonly LossOption[] = [
 ] as const
 
 /** Default segmentation loss configuration */
-export const DEFAULT_SEG_LOSS_NAMES = ['DiceLoss', 'JaccardLoss']
-export const DEFAULT_SEG_LOSS_WEIGHTS = [0.5, 0.5]
+export const DEFAULT_SEG_LOSS_NAMES = ['DiceLoss']
+export const DEFAULT_SEG_LOSS_WEIGHTS = [1.0]
 
 // ============================================================================
 // Segmentation Training Defaults
