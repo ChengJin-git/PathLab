@@ -185,6 +185,8 @@ export default function RegisterPage() {
 
   // Segmentation: track which images have matched JSON mask files (key = item key)
   const [matchedMasks, setMatchedMasks] = useState<Set<string>>(new Set())
+  // Segmentation: JSON stems that arrived without a matching image yet (for retroactive matching)
+  const [pendingJsonStems, setPendingJsonStems] = useState<Set<string>>(new Set())
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1)
@@ -194,6 +196,8 @@ export default function RegisterPage() {
   const [batchMetadata, setBatchMetadata] = useState<FileMetadata>({ ...defaultMetadata })
 
   const tableContainerRef = useRef<HTMLDivElement>(null)
+  // Ref to always have the latest localItems for synchronous reads in async handlers
+  const localItemsRef = useRef<LocalItem[]>(localItems)
 
   const totalPages = Math.ceil(localItems.length / itemsPerPage)
   const paginatedItems = useMemo(() => {
@@ -208,6 +212,11 @@ export default function RegisterPage() {
       setCurrentPage(1)
     }
   }, [totalPages, currentPage])
+
+  // Keep localItemsRef in sync with localItems state
+  useEffect(() => {
+    localItemsRef.current = localItems
+  }, [localItems])
 
   const supportsNativePicker = typeof window !== 'undefined' && !!window.api?.files?.selectFiles
 
@@ -381,31 +390,72 @@ export default function RegisterPage() {
             })
             return updated
           })
+          // Segmentation: retroactively match new images against pending JSON stems
+          if (uploadMode === 'segmentation' && pendingJsonStems.size > 0) {
+            const newlyMatchedKeys: string[] = []
+            const stemsToRemove: string[] = []
+            nonDuplicateItems.forEach(item => {
+              const imageStem = item.name.replace(/\.[^/.]+$/, '').toLowerCase()
+              if (pendingJsonStems.has(imageStem)) {
+                newlyMatchedKeys.push(item.key)
+                stemsToRemove.push(imageStem)
+              }
+            })
+            if (newlyMatchedKeys.length > 0) {
+              setMatchedMasks(prev => {
+                const next = new Set(prev)
+                newlyMatchedKeys.forEach(k => next.add(k))
+                return next
+              })
+              setPendingJsonStems(prev => {
+                const next = new Set(prev)
+                stemsToRemove.forEach(s => next.delete(s))
+                return next
+              })
+            }
+          }
         }
       }
     }
 
     // Segmentation mode: match JSON mask files to image items by filename stem
+    // Uses localItemsRef for a synchronous snapshot — avoids nested state-setter anti-pattern
     if (uploadMode === 'segmentation' && jsonFiles && jsonFiles.length > 0) {
-      // Build a set of JSON stems for quick lookup
       const jsonStems = new Set(
         jsonFiles.map(f => f.name.replace(/\.json$/i, '').toLowerCase())
       )
 
-      setMatchedMasks(prev => {
-        const next = new Set(prev)
-        // Match against all current items (existing + newly added)
-        setLocalItems(currentItems => {
-          for (const item of currentItems) {
-            const imageStem = item.name.replace(/\.[^/.]+$/, '').toLowerCase()
-            if (jsonStems.has(imageStem)) {
-              next.add(item.key)
-            }
-          }
-          return currentItems // no mutation
-        })
-        return next
+      // Match against all current items (snapshot via ref)
+      const matchedKeys: string[] = []
+      const unmatchedStems: string[] = []
+      const currentItems = localItemsRef.current
+      jsonStems.forEach(stem => {
+        const match = currentItems.find(
+          item => item.name.replace(/\.[^/.]+$/, '').toLowerCase() === stem
+        )
+        if (match) {
+          matchedKeys.push(match.key)
+        } else {
+          unmatchedStems.push(stem)
+        }
       })
+
+      if (matchedKeys.length > 0) {
+        setMatchedMasks(prev => {
+          const next = new Set(prev)
+          matchedKeys.forEach(k => next.add(k))
+          return next
+        })
+      }
+
+      // Store unmatched JSON stems so they can match future image drops
+      if (unmatchedStems.length > 0) {
+        setPendingJsonStems(prev => {
+          const next = new Set(prev)
+          unmatchedStems.forEach(s => next.add(s))
+          return next
+        })
+      }
     }
   }
 
