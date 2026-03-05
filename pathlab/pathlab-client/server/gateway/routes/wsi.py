@@ -1128,84 +1128,49 @@ async def export_dataset_labels(
     def generate_csv():
         buffer = io.StringIO()
 
+        if task_type == "survival":
+            fieldnames = ["filename", "event_time", "event_status", "case_id", "age", "gender", "source", "split"]
+        else:
+            fieldnames = ["filename", "label", "case_id", "age", "gender", "source", "split"]
+
+        writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+        writer.writeheader()
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+        # Write one row per file, grouped by case_id for case-level datasets
         if aggregation_level == "case":
-            # Case-level CSV
-            if task_type == "survival":
-                fieldnames = ["case_id", "event_time", "event_status", "file_count", "age", "gender", "source", "split", "filenames"]
-            else:
-                fieldnames = ["case_id", "label", "file_count", "age", "gender", "source", "split", "filenames"]
-
-            writer = csv.DictWriter(buffer, fieldnames=fieldnames)
-            writer.writeheader()
-            yield buffer.getvalue()
-            buffer.seek(0)
-            buffer.truncate(0)
-
-            # Group by case_id
+            # Group by case_id so files from the same case appear together
             case_groups: Dict[str, List] = {}
             for wsi in wsis:
                 case_id = wsi.case_id or wsi.wsi_id
                 if case_id not in case_groups:
                     case_groups[case_id] = []
                 case_groups[case_id].append(wsi)
-
-            # Write case rows
-            for case_id, case_wsis in case_groups.items():
-                first_wsi = case_wsis[0]
-                row = {
-                    "case_id": case_id,
-                    "file_count": len(case_wsis),
-                    "age": first_wsi.age if first_wsi.age is not None else "",
-                    "gender": first_wsi.gender or "",
-                    "source": first_wsi.source or "",
-                    "split": splits.get(first_wsi.wsi_id, "unknown"),
-                    "filenames": ";".join([wsi.original_filename for wsi in case_wsis])
-                }
-                if task_type == "survival":
-                    row["event_time"] = first_wsi.event_time if first_wsi.event_time is not None else ""
-                    row["event_status"] = first_wsi.event_status if first_wsi.event_status is not None else ""
-                else:
-                    row["label"] = first_wsi.label or ""
-
-                writer.writerow(row)
-                yield buffer.getvalue()
-                buffer.seek(0)
-                buffer.truncate(0)
-
+            ordered_wsis = [wsi for case_wsis in case_groups.values() for wsi in case_wsis]
         else:
-            # File-level CSV
-            if task_type == "survival":
-                fieldnames = ["filename", "event_time", "event_status", "case_id", "age", "gender", "source", "split"]
-            else:
-                fieldnames = ["filename", "label", "case_id", "age", "gender", "source", "split"]
+            ordered_wsis = wsis
 
-            writer = csv.DictWriter(buffer, fieldnames=fieldnames)
-            writer.writeheader()
+        for wsi in ordered_wsis:
+            row = {
+                "filename": wsi.original_filename,
+                "case_id": wsi.case_id or "",
+                "age": wsi.age if wsi.age is not None else "",
+                "gender": wsi.gender or "",
+                "source": wsi.source or "",
+                "split": splits.get(wsi.wsi_id, "unknown")
+            }
+            if task_type == "survival":
+                row["event_time"] = wsi.event_time if wsi.event_time is not None else ""
+                row["event_status"] = wsi.event_status if wsi.event_status is not None else ""
+            else:
+                row["label"] = wsi.label or ""
+
+            writer.writerow(row)
             yield buffer.getvalue()
             buffer.seek(0)
             buffer.truncate(0)
-
-            # Write file rows
-            for wsi in wsis:
-                row = {
-                    "filename": wsi.original_filename,
-                    "case_id": wsi.case_id or "",
-                    "age": wsi.age if wsi.age is not None else "",
-                    "gender": wsi.gender or "",
-                    "source": wsi.source or "",
-                    "split": splits.get(wsi.wsi_id, "unknown")
-                }
-                if task_type == "survival":
-                    row["event_time"] = wsi.event_time if wsi.event_time is not None else ""
-                    row["event_status"] = wsi.event_status if wsi.event_status is not None else ""
-                else:
-                    row["label"] = wsi.label or ""
-
-                writer.writerow(row)
-                yield buffer.getvalue()
-                buffer.seek(0)
-                buffer.truncate(0)
-
     # Generate filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{dataset.name}_labels_{timestamp}.csv"
