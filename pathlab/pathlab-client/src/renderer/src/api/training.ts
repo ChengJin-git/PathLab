@@ -20,6 +20,7 @@ export interface TrainingTask {
   preprocessing_config: Record<string, unknown> | null
   model_config: Record<string, unknown> | null
   classes: string[] | null
+  source_dataset_id?: string | null
   created_at: string | null
   updated_at: string | null
   started_at: string | null

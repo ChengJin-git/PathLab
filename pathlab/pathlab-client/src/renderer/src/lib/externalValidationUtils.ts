@@ -50,6 +50,133 @@ export interface TrainingTaskMetadata {
   task_type: string
   data_type: string  // "wsi" or "patch"
   wsi_ids?: string[]
+  classes?: string[] | null
+  source_dataset_id?: string | null
+  model_config?: Record<string, unknown> | null
+}
+
+function normalizeLabels(labels: string[] | null | undefined): string[] {
+  const normalized = (labels || [])
+    .map(label => label?.trim())
+    .filter((label): label is string => Boolean(label))
+  return [...new Set(normalized)].sort()
+}
+
+function getSegmentationModelSpec(model: TrainedModel, modelTask: TrainingTaskMetadata) {
+  const taskArchitectureValue = modelTask.model_config?.['architecture']
+  const taskBackboneValue = modelTask.model_config?.['backbone']
+  const taskArchitecture = typeof taskArchitectureValue === 'string'
+    ? taskArchitectureValue.trim()
+    : ''
+  const taskBackbone = typeof taskBackboneValue === 'string'
+    ? taskBackboneValue.trim()
+    : ''
+  const savedArchitecture = (model.aggregator || '').trim()
+  const savedBackbone = (model.feature_extractor || '').trim()
+
+  return {
+    taskArchitecture,
+    taskBackbone,
+    savedArchitecture,
+    savedBackbone,
+    isComplete: !!taskArchitecture && !!taskBackbone && !!savedArchitecture && !!savedBackbone,
+    isConsistent: !!taskArchitecture && !!taskBackbone && !!savedArchitecture && !!savedBackbone
+      && taskArchitecture === savedArchitecture
+      && taskBackbone === savedBackbone
+  }
+}
+
+export function getDatasetCompatibilityError(
+  model: TrainedModel,
+  modelTask: TrainingTaskMetadata,
+  dataset: ValidationDataset
+): string | null {
+  const modelDataType = modelTask.data_type || 'wsi'
+  const modelIsSurvival = isSurvivalTask(modelTask.task_type)
+  const modelIsSegmentation = isSegmentationTask(modelTask.task_type)
+  const modelClasses = new Set(normalizeLabels(model.classes || []))
+  const modelWsiIds = new Set(modelTask.wsi_ids || [])
+  const modelExtractor = model.feature_extractor || ''
+  const modelEmbedDim = EXTRACTOR_EMBED_DIM[modelExtractor] ?? 0
+
+  if (dataset.data_type !== modelDataType) {
+    return 'Data type mismatch between source model and target dataset.'
+  }
+
+  const datasetIsSurvival = dataset.task_type === 'survival'
+  const datasetIsSegmentation = isSegmentationTask(dataset.task_type)
+  if (modelIsSurvival !== datasetIsSurvival) {
+    return 'Task type mismatch between source model and target dataset.'
+  }
+  if (modelIsSegmentation !== datasetIsSegmentation) {
+    return 'Task type mismatch between source model and target dataset.'
+  }
+
+  if (modelIsSegmentation) {
+    if (dataset.data_type !== 'patch') return 'Segmentation external validation only supports patch datasets.'
+    if (dataset.aggregation_level !== 'file') return 'Segmentation external validation requires file-level datasets.'
+
+    const segmentationSpec = getSegmentationModelSpec(model, modelTask)
+    if (!segmentationSpec.isComplete) {
+      return 'Segmentation source model is missing architecture/backbone metadata.'
+    }
+    if (!segmentationSpec.isConsistent) {
+      return 'Segmentation source model architecture/backbone metadata is inconsistent.'
+    }
+
+    if (!modelTask.source_dataset_id) {
+      return 'Cannot determine the source training dataset for this segmentation model.'
+    }
+    if (dataset.dataset_id === modelTask.source_dataset_id) {
+      return 'Target dataset must be different from the source training dataset.'
+    }
+
+    const modelSegmentationLabels = normalizeLabels(modelTask.classes || model.classes || [])
+    const datasetSegmentationLabels = normalizeLabels(dataset.segmentation_labels || [])
+    if (modelSegmentationLabels.length === 0 || datasetSegmentationLabels.length === 0) {
+      return 'Segmentation labels are missing on the source model or target dataset.'
+    }
+    if (modelSegmentationLabels.length !== datasetSegmentationLabels.length) {
+      return 'Segmentation labels must exactly match between source model and target dataset.'
+    }
+    for (const label of modelSegmentationLabels) {
+      if (!datasetSegmentationLabels.includes(label)) {
+        return 'Segmentation labels must exactly match between source model and target dataset.'
+      }
+    }
+
+    if (modelWsiIds.size > 0 && dataset.wsi_ids?.some(id => modelWsiIds.has(id))) {
+      return 'Target dataset overlaps with the source model training data.'
+    }
+
+    return null
+  }
+
+  if (!modelIsSurvival) {
+    const dsLabels = new Set(dataset.distinct_labels || [])
+    if (modelClasses.size !== dsLabels.size) {
+      return 'Label sets must exactly match between source model and target dataset.'
+    }
+    for (const cls of modelClasses) {
+      if (!dsLabels.has(cls)) {
+        return 'Label sets must exactly match between source model and target dataset.'
+      }
+    }
+  }
+
+  if (modelDataType === 'wsi' && modelExtractor && modelEmbedDim > 0) {
+    const dsExtractors = dataset.available_feature_extractors || []
+    const hasSameDim = dsExtractors.some(e => (EXTRACTOR_EMBED_DIM[e] ?? 0) === modelEmbedDim)
+    if (!hasSameDim) {
+      return 'Feature extractor embedding dimensions do not match.'
+    }
+  }
+
+  if (modelWsiIds.size > 0 && dataset.wsi_ids?.some(id => modelWsiIds.has(id))) {
+    return 'Target dataset overlaps with the source model training data.'
+  }
+
+  return null
 }
 
 /**
@@ -59,8 +186,10 @@ export interface TrainingTaskMetadata {
  * 1. data_type must match (WSI vs patch)
  * 2. task_type must match (survival vs classification)
  * 3. For classification: label sets must match exactly
- * 4. For WSI: feature extractor embedding dimensions must match
- * 5. No WSI overlap with training data (data leakage prevention)
+ * 4. For segmentation: source/target datasets must differ, architecture metadata must be consistent,
+ *    segmentation labels must match exactly, and WSIs must not overlap
+ * 5. For WSI: feature extractor embedding dimensions must match
+ * 6. No WSI overlap with training data (data leakage prevention)
  * 
  * @param model - The trained model to validate against
  * @param modelTask - The training task metadata for the model
@@ -72,52 +201,7 @@ export function filterCompatibleDatasets(
   modelTask: TrainingTaskMetadata,
   datasets: ValidationDataset[]
 ): ValidationDataset[] {
-  const modelDataType = modelTask.data_type || 'wsi'
-  const modelIsSurvival = isSurvivalTask(modelTask.task_type)
-  const modelIsSegmentation = isSegmentationTask(modelTask.task_type)
-  const modelClasses = new Set(model.classes || [])
-  const modelWsiIds = new Set(modelTask.wsi_ids || [])
-  const modelExtractor = model.feature_extractor || ''
-  const modelEmbedDim = EXTRACTOR_EMBED_DIM[modelExtractor] ?? 0
-
-  return datasets.filter(ds => {
-    // Rule 1: data_type must match
-    if (ds.data_type !== modelDataType) return false
-
-    // Rule 2: task_type family must match
-    const datasetIsSurvival = ds.task_type === 'survival'
-    const datasetIsSegmentation = isSegmentationTask(ds.task_type)
-    if (modelIsSurvival !== datasetIsSurvival) return false
-    if (modelIsSegmentation !== datasetIsSegmentation) return false
-
-    if (modelIsSegmentation) {
-      if (ds.data_type !== 'patch') return false
-      if (ds.aggregation_level !== 'file') return false
-      if (modelWsiIds.size > 0 && ds.wsi_ids?.some(id => modelWsiIds.has(id))) return false
-      return true
-    }
-
-    // Rule 3: For classification, require exact label name set match
-    if (!modelIsSurvival) {
-      const dsLabels = new Set(ds.distinct_labels || [])
-      if (modelClasses.size !== dsLabels.size) return false
-      for (const cls of modelClasses) {
-        if (!dsLabels.has(cls)) return false
-      }
-    }
-
-    // Rule 4: For WSI, require matching embed_dim (feature extractor compatibility)
-    if (modelDataType === 'wsi' && modelExtractor && modelEmbedDim > 0) {
-      const dsExtractors = ds.available_feature_extractors || []
-      const hasSameDim = dsExtractors.some(e => (EXTRACTOR_EMBED_DIM[e] ?? 0) === modelEmbedDim)
-      if (!hasSameDim) return false
-    }
-
-    // Rule 5: No WSI overlap with training data (data leakage prevention)
-    if (modelWsiIds.size > 0 && ds.wsi_ids?.some(id => modelWsiIds.has(id))) return false
-
-    return true
-  })
+  return datasets.filter(dataset => getDatasetCompatibilityError(model, modelTask, dataset) === null)
 }
 
 /**
@@ -133,7 +217,6 @@ export function isDatasetCompatible(
   modelTask: TrainingTaskMetadata,
   dataset: ValidationDataset
 ): boolean {
-  const compatible = filterCompatibleDatasets(model, modelTask, [dataset])
-  return compatible.length > 0
+  return getDatasetCompatibilityError(model, modelTask, dataset) === null
 }
 

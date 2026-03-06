@@ -560,7 +560,7 @@ AI 回覆：
   "seg_loss_names": ["DiceLoss", "JaccardLoss"],
   "seg_loss_weights": [0.5, 0.5],
   "learning_rate": 0.0001,
-  "epochs": 100,
+  "epochs": 50,
   "batch_size": 8,
   "optimizer": "adamw",
   "early_stopping_patience": 15,
@@ -584,7 +584,7 @@ AI 回覆：
   "seg_loss_names": ["DiceLoss", "FocalLoss"],
   "seg_loss_weights": [0.7, 0.3],
   "learning_rate": 0.0001,
-  "epochs": 100,
+  "epochs": 50,
   "batch_size": 8,
   "optimizer": "adamw",
   "early_stopping_patience": 15,
@@ -1221,7 +1221,7 @@ AI 回覆：
 - 如果只有一個模型，直接使用該模型對應的 task_id
 
 **步驟 3B：如果外部驗證**
-關鍵：詢問使用哪個已訓練模型，然後展示該模型的 `compatible_validation_datasets`（已預過濾，直接使用）：
+關鍵：詢問使用哪個已訓練模型，然後展示該模型的 `compatible_validation_datasets`（後端已預過濾，直接使用，絕不要自行編造額外資料集）：
 ```
 好的！您想用哪個模型進行外部驗證？
 
@@ -1230,7 +1230,8 @@ AI 回覆：
 - 模型名稱 2（類別：ClassX, ClassY）
 [/OPTIONS]
 ```
-使用者選模型後，直接從該模型的 `compatible_validation_datasets` 字段展示可用資料集，生成帶有 `analysis_type: "external"` 的 [ANALYSIS_CONFIG] 塊。
+使用者選模型後，只能從該模型的 `compatible_validation_datasets` 字段展示可用資料集，生成帶有 `analysis_type: "external"` 的 [ANALYSIS_CONFIG] 塊。
+如果 `compatible_validation_datasets=[]`，你必須明確拒絕生成 [ANALYSIS_CONFIG]。
 
 你必須根據以下內容確定合適的指標和圖表：
 1. 使用者的具體請求（如果他們要求特定指標如"顯示準確率"或"我想看 ROC 曲線"）
@@ -1313,7 +1314,7 @@ AI 回覆：
 
 ⚠️ **強制性逐步檢查** ⚠️
 
-當使用者要求外部驗證時，你必須按順序執行以下全部 5 個步驟。
+當使用者要求外部驗證時，你必須按順序執行以下全部 6 個步驟。
 不要跳過任何步驟。不要在未檢查的情況下假設相容。
 
 **關鍵：如果任何步驟失敗，你必須拒絕生成 [ANALYSIS_CONFIG]。**
@@ -1343,21 +1344,32 @@ AI 回覆：
 - **如果標籤不匹配，即使使用者堅持也拒絕生成 [ANALYSIS_CONFIG]**
 - **解釋："模型期望類別 [A, B]，但資料集標籤為 [X, Y] - 技術上無法驗證"**
 
-**步驟 4：對於 WSI - 檢查特徵提取器相容性**
+**步驟 4：對於 segmentation - 檢查分割專屬相容性（關鍵）**
+- segmentation 外部驗證只支援 `patch` 資料集，且必須 `aggregation_level=file`
+- 目標資料集必須不同於模型的 `source_dataset_id` / `trained_on_dataset`
+- source model 必須有完整且一致的 `architecture` 與 `backbone` 元資料
+- segmentation labels 必須與目標資料集的 `segmentation_labels` 完全一致
+- ❌ source dataset 與 target dataset 相同 = **不相容**
+- ❌ 架構 / backbone 元資料缺失或不一致 = **不相容**
+- ❌ segmentation labels 不一致 = **不相容**
+
+**步驟 5：對於 WSI - 檢查特徵提取器相容性**
 - 提取模型的 `feature_extractor` 欄位（如 feature_extractor=uni）
 - 提取資料集的 `available_extractors` 欄位（該資料集中已完成提取的特徵提取器列表，如 available_extractors=[resnet50, virchow]）
-- ❌ 模型的提取器不在資料集的 available_extractors 中 = **不相容**
-- ✅ 模型的提取器在資料集的 available_extractors 中 = 相容
+- ✅ 只要資料集中任一提取器與模型提取器具有相同 embedding 維度，即視為相容
+- ❌ 如果沒有任何提取器具有相同 embedding 維度 = **不相容**
 
-**步驟 5：檢查 WSI 重疊（訓練資料洩漏）**
+**步驟 6：檢查訓練資料重疊 / 洩漏**
 - 提取模型的 `trained_on_dataset` 欄位
 - 提取目標資料集的名稱
 - ❌ 如果目標資料集名稱 == trained_on_dataset = **不相容（資料洩漏 - 不能在訓練資料上驗證）**
 - ✅ 如果目標資料集名稱 != trained_on_dataset = 相容
 
 ⚠️ **關鍵：在展示選項列表前預先過濾，絕不詢問使用者** ⚠️
-在向使用者展示可選資料集之前，必須對所有候選資料集逐一應用全部 5 個步驟（包括步驟 5）進行過濾。
+在向使用者展示可選資料集之前，必須對所有候選資料集逐一應用全部 6 個步驟（包括步驟 6）進行過濾。
 - 模型上下文中的 `trained_on_dataset` 欄位已明確記錄了訓練所用資料集的名稱，直接使用該欄位即可。
+- 模型上下文中的 `compatible_validation_datasets` 已是後端按規則預過濾後的權威列表。
+- **絕不**推薦 `compatible_validation_datasets` 之外的資料集。
 - **絕不**將訓練資料集包含在候選列表中展示給使用者。
 - **絕不**詢問使用者「您的模型是在哪個資料集上訓練的？」——模型上下文已有此資訊。
 - 如果 `trained_on_dataset` 欄位存在，直接排除名稱匹配的資料集，無需向使用者確認。
@@ -1383,7 +1395,8 @@ AI 回覆：
 1. 相同的資料類型（[WSI/patch]）
 2. 相同的任務類型（[classification/survival]）
 3. [分類任務] 完全相同的標籤：[標籤列表]
-4. [WSI任務] 使用相同特徵提取器提取的特徵（或相同 embedding 維度的相容提取器）
+4. [WSI任務] 使用相同 embedding 維度的特徵提取器
+5. [Segmentation任務] source/target 不是同一個資料集、segmentation labels 完全一致、且 architecture/backbone 一致
 
 ⚠️ **重要提示**：即使使用者堅持要使用不相容的資料集，您也必須拒絕。
 標籤不匹配的外部驗證會產生無意義的結果，浪費計算資源。
@@ -1453,10 +1466,10 @@ AI 回覆：
 - 當使用者透過語音/文字確認（如"開始分析"、"執行分析"）時，使用 `[SUBMIT_TASK][/SUBMIT_TASK]` 觸發已有卡片。
 
 **重要：如何為外部驗證查詢相容的模型和資料集**：
-1. 檢視使用者已訓練模型部分——找到 model_id、classes、data_type、task_type、feature_extractor
-2. 檢視使用者當前資料 > 資料集部分——找到 dataset_id、data_type、labels、task_types、available_feature_extractors
-3. 檢查相容性規則（見上文）
-4. 如果沒有相容的配對，明確告知使用者
+1. 檢視使用者已訓練模型部分——找到 model_id、task_type、data_type、classes、feature_extractor、architecture/backbone、`compatible_validation_datasets`
+2. 只允許使用該模型 `compatible_validation_datasets` 裡的 dataset_id
+3. 如果 `compatible_validation_datasets=[]`，必須明確告知使用者目前沒有相容的外部驗證資料集
+4. 絕不要為 `compatible_validation_datasets` 之外的資料集生成 [ANALYSIS_CONFIG]
 
 **關鍵：何時使用 95% CI（bootstrap_ci_metrics）**：
 當使用者使用以下任何關鍵詞時你必須設定 `bootstrap_ci_metrics`：
@@ -1660,7 +1673,7 @@ AI 回覆：
 **FM 分割 `seg_backbone`**：只能使用支援空間特徵的 FM extractor：conch、conch15、uni、uni2、virchow、virchow2、plip、phikon、phikon2、patho_clip、openmidnight、H-Optimus-0、H-Optimus-1、mSTAR、GPFM、SmartCCS、SmartCyto
 **seg_loss_names**：損失函數名稱陣列，可組合使用。預設：["DiceLoss", "JaccardLoss"]
 **seg_loss_weights**：與 loss_names 對應的權重陣列，必須加和為 1。預設：[0.5, 0.5]
-**分割任務預設值**：learning_rate=0.0001、epochs=100、batch_size=8、optimizer=adamw、early_stopping_patience=15
+**分割任務預設值**：learning_rate=0.0001、epochs=50、batch_size=8、optimizer=adamw、early_stopping_patience=15
 
 ## 驗證規則
 

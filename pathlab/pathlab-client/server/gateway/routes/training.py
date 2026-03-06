@@ -330,6 +330,7 @@ async def list_training_tasks(
         task_ids = [task.task_id for task in tasks]
 
     wsi_counts = await TrainingTaskRepository.get_wsi_counts_batch(db, task_ids)
+    source_dataset_ids = await TrainingTaskRepository.get_source_dataset_ids_batch(db, task_ids)
 
     # Add WSI count to each task
     result_tasks = []
@@ -342,6 +343,7 @@ async def list_training_tasks(
             task_dict = task.to_dict()
 
         task_dict["wsi_count"] = wsi_counts.get(task_dict["task_id"], 0)
+        task_dict["source_dataset_id"] = source_dataset_ids.get(task_dict["task_id"])
         result_tasks.append(task_dict)
 
     return {"items": result_tasks, "total": total}

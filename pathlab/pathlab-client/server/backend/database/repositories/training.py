@@ -522,6 +522,28 @@ class TrainingTaskRepository:
         return wsi_ids_by_task
 
     @staticmethod
+    async def get_source_dataset_ids_batch(db: AsyncSession, task_ids: List[str]) -> Dict[str, Optional[str]]:
+        """Return the source dataset_id for each task when all WSIs come from one dataset."""
+        if not task_ids:
+            return {}
+
+        result = await db.execute(
+            select(
+                TrainingTaskWSI.task_id.label("task_id"),
+                func.count(func.distinct(WSISlide.dataset_id)).label("dataset_count"),
+                func.min(WSISlide.dataset_id).label("dataset_id"),
+            )
+            .join(WSISlide, TrainingTaskWSI.wsi_id == WSISlide.wsi_id)
+            .where(TrainingTaskWSI.task_id.in_(task_ids))
+            .group_by(TrainingTaskWSI.task_id)
+        )
+
+        source_dataset_ids: Dict[str, Optional[str]] = {task_id: None for task_id in task_ids}
+        for row in result.all():
+            source_dataset_ids[row.task_id] = row.dataset_id if row.dataset_count == 1 else None
+        return source_dataset_ids
+
+    @staticmethod
     async def get_wsi_counts_batch(db: AsyncSession, task_ids: List[str]) -> Dict[str, int]:
         """
         Get WSI count for multiple tasks in a single query (batch operation).

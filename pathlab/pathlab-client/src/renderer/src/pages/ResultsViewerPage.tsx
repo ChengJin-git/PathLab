@@ -80,6 +80,9 @@ interface TrainingTask {
   total_case_count: number  // Total case count (case-level)
   display_count: number  // Count based on aggregation level
   wsi_ids: string[]  // WSI IDs for overlap detection
+  classes?: string[] | null
+  source_dataset_id?: string | null
+  model_config?: Record<string, unknown> | null
   model_id: string | null
   is_kfold: boolean  // Whether this task was trained with K-Fold cross-validation
 }

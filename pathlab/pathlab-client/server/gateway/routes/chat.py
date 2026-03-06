@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
-from typing import List, Dict, AsyncIterator, Optional
+from typing import List, Dict, AsyncIterator, Optional, Any, Set
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +37,126 @@ from .chat_pdf import (
 from .chat_pdf_vectorstore import search_pdf_chunks
 
 router = APIRouter(tags=["Chat & Conversations"])
+
+SEGMENTATION_TASK_TYPES = {"segmentation", "patch_segmentation"}
+
+
+def _is_segmentation_task(task_type: Optional[str]) -> bool:
+    return task_type in SEGMENTATION_TASK_TYPES
+
+
+def _normalize_label_names(labels: List[str]) -> List[str]:
+    return sorted({str(label).strip() for label in labels if str(label).strip()})
+
+
+def _extract_segmentation_label_names(categories: List[Dict[str, Any]]) -> List[str]:
+    return _normalize_label_names([
+        str(category.get("name", "")).strip()
+        for category in categories
+        if category.get("name")
+    ])
+
+
+def _get_segmentation_model_spec(model: Any, training_task: Optional[TrainingTask]) -> Dict[str, str | bool]:
+    model_config = training_task.model_config if training_task and isinstance(training_task.model_config, dict) else {}
+    task_architecture = str(model_config.get("architecture") or "").strip()
+    task_backbone = str(model_config.get("backbone") or "").strip()
+    saved_architecture = str(getattr(model, "aggregator", "") or "").strip()
+    saved_backbone = str(getattr(model, "feature_extractor", "") or "").strip()
+    is_complete = bool(task_architecture and task_backbone and saved_architecture and saved_backbone)
+    is_consistent = is_complete and task_architecture == saved_architecture and task_backbone == saved_backbone
+    return {
+        "task_architecture": task_architecture,
+        "task_backbone": task_backbone,
+        "saved_architecture": saved_architecture,
+        "saved_backbone": saved_backbone,
+        "is_complete": is_complete,
+        "is_consistent": is_consistent,
+    }
+
+
+def _get_external_validation_compatibility_error(
+    *,
+    model: Any,
+    training_task: Optional[TrainingTask],
+    model_data_type: str,
+    model_task_type: str,
+    source_dataset_id: Optional[str],
+    training_dataset_ids: Set[str],
+    model_wsi_ids: Set[str],
+    dataset_meta: Dict[str, Any],
+    extractor_embed_dim: Dict[str, int],
+) -> Optional[str]:
+    model_is_survival = model_task_type == "survival"
+    model_is_segmentation = _is_segmentation_task(model_task_type)
+    model_classes = set(_normalize_label_names((training_task.classes if training_task and training_task.classes else None) or model.classes or []))
+    model_extractor = str(getattr(model, "feature_extractor", "") or "").strip()
+    model_embed_dim = extractor_embed_dim.get(model_extractor, 0)
+
+    dataset_data_type = dataset_meta.get("data_type", "unknown")
+    dataset_task_type = dataset_meta.get("task_type", "unknown")
+    dataset_is_survival = dataset_task_type == "survival"
+    dataset_is_segmentation = _is_segmentation_task(dataset_task_type)
+
+    if dataset_data_type != model_data_type:
+        return "data_type mismatch"
+
+    if model_is_survival != dataset_is_survival:
+        return "task_type mismatch"
+
+    if model_is_segmentation != dataset_is_segmentation:
+        return "task_type mismatch"
+
+    if model_is_segmentation:
+        if dataset_data_type != "patch":
+            return "segmentation requires patch dataset"
+        if dataset_meta.get("aggregation_level") != "file":
+            return "segmentation requires file-level dataset"
+
+        segmentation_spec = _get_segmentation_model_spec(model, training_task)
+        if not segmentation_spec["is_complete"]:
+            return "segmentation model metadata incomplete"
+        if not segmentation_spec["is_consistent"]:
+            return "segmentation architecture/backbone mismatch"
+
+        if not source_dataset_id:
+            return "source training dataset cannot be determined"
+        if dataset_meta.get("dataset_id") == source_dataset_id:
+            return "target dataset is the source training dataset"
+
+        model_segmentation_labels = _normalize_label_names(
+            (training_task.classes if training_task and training_task.classes else None) or model.classes or []
+        )
+        dataset_segmentation_labels = _normalize_label_names(dataset_meta.get("segmentation_labels", []))
+        if not model_segmentation_labels or not dataset_segmentation_labels:
+            return "segmentation labels missing"
+        if model_segmentation_labels != dataset_segmentation_labels:
+            return "segmentation labels mismatch"
+
+        dataset_wsi_ids = set(dataset_meta.get("wsi_ids", []))
+        if model_wsi_ids and dataset_wsi_ids and (model_wsi_ids & dataset_wsi_ids):
+            return "training data overlap"
+        return None
+
+    if not model_is_survival:
+        dataset_labels = set(_normalize_label_names(list((dataset_meta.get("labels") or {}).keys())))
+        if model_classes != dataset_labels:
+            return "classification labels mismatch"
+
+    if model_data_type == "wsi" and model_extractor and model_embed_dim > 0:
+        dataset_extractors = dataset_meta.get("available_feature_extractors", []) or []
+        has_same_dim = any((extractor_embed_dim.get(extractor, 0) == model_embed_dim) for extractor in dataset_extractors)
+        if not has_same_dim:
+            return "feature extractor embedding dimension mismatch"
+
+    dataset_wsi_ids = set(dataset_meta.get("wsi_ids", []))
+    if model_wsi_ids and dataset_wsi_ids and (model_wsi_ids & dataset_wsi_ids):
+        return "training data overlap"
+
+    if dataset_meta.get("dataset_id") in training_dataset_ids:
+        return "target dataset is part of training data"
+
+    return None
 
 # Maximum PDF papers to include in the AI supplement response (awaited tasks).
 # ALL PDFs found in search results are started as background tasks (so they get
@@ -1948,6 +2068,9 @@ async def chat_with_ai(
     stats = await WSIRepository.get_chat_context_stats(
         db, user_id=user_id_filter, elevated_dataset_ids=elevated_dataset_ids
     )
+    rich_datasets = await WSIRepository.get_datasets(
+        db, user_id=user_id_filter, elevated_dataset_ids=elevated_dataset_ids
+    )
 
     # Fetch user's trained models
     trained_models = await TrainedModelRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter)
@@ -1963,11 +2086,13 @@ async def chat_with_ai(
     # Format user data context for System Prompt
     wsi_count = stats["total_count"]
     stats_datasets = stats["datasets"]  # Keep original reference; `datasets` may be overwritten later
+    rich_datasets_map = {dataset["dataset_id"]: dataset for dataset in rich_datasets}
     datasets = stats_datasets
     data_type_dist = stats["data_types"]
 
     # Auxiliary lookup dict built during the dataset loop (used later for model compatibility)
     available_extractors_per_dataset: dict = {}  # dataset_id -> list[str]
+    dataset_wsi_ids_per_dataset: dict = {}  # dataset_id -> list[str]
 
     # Format datasets with detailed info (data_type and labels per dataset)
     # Each dataset has its own labels and survival data - do NOT show global labels to avoid confusion
@@ -1984,6 +2109,13 @@ async def chat_with_ai(
             ds_event_status = d.get('event_status', {})
             ds_has_splits = d.get('has_predefined_splits', False)
             ds_access_type = d.get('access_type', 'own')
+            rich_ds = rich_datasets_map.get(ds_id, {})
+            ds_task_type = rich_ds.get('task_type') or d.get('group_task_type', 'unknown')
+            ds_aggregation_level = rich_ds.get('aggregation_level', '')
+            ds_segmentation_labels = _extract_segmentation_label_names(rich_ds.get('coco_categories', []) or [])
+            d['task_type'] = ds_task_type
+            d['aggregation_level'] = ds_aggregation_level
+            d['segmentation_labels'] = ds_segmentation_labels
 
             # Build info parts
             labels_str = ", ".join([f"{lbl}({cnt})" for lbl, cnt in ds_labels.items()]) if ds_labels else "none"
@@ -2010,16 +2142,26 @@ async def chat_with_ai(
             if ds_group_task_type == 'segmentation':
                 task_types.append("segmentation")
             task_types_str = f", supported_tasks=[{', '.join(task_types)}]" if task_types else ""
+            aggregation_str = f", aggregation_level={ds_aggregation_level}" if ds_aggregation_level else ""
+            segmentation_labels_str = (
+                f", segmentation_labels=[{', '.join(ds_segmentation_labels)}]"
+                if ds_segmentation_labels else ""
+            )
+
+            if ds_id != 'unknown':
+                dataset_wsi_ids = await DatasetRepository.get_wsi_ids(db, ds_id)
+            else:
+                dataset_wsi_ids = []
+            dataset_wsi_ids_per_dataset[ds_id] = dataset_wsi_ids
+            d['wsi_ids'] = dataset_wsi_ids
 
             # For WSI datasets, scan feature cache to find available extractors (for external validation compatibility)
+            available_extractors = []
             available_extractors_str = ""
             if ds_type == "wsi":
-                # Get WSI IDs for this dataset
-                wsi_ids = await DatasetRepository.get_wsi_ids(db, ds_id)
-                if wsi_ids:
-                    first_wsi_id = wsi_ids[0]
+                if dataset_wsi_ids:
+                    first_wsi_id = dataset_wsi_ids[0]
                     features_root = Config.get_uploads_dir() / "features"
-                    available_extractors = []
                     if features_root.exists():
                         for extractor_dir in features_root.iterdir():
                             if extractor_dir.is_dir():
@@ -2031,13 +2173,18 @@ async def chat_with_ai(
                                             break  # Found for this extractor, move to next
                     if available_extractors:
                         available_extractors_str = f", available_extractors=[{', '.join(available_extractors)}]"
-                    # Store for model compatibility lookup
-                    available_extractors_per_dataset[ds_id] = available_extractors
+            # Store for model compatibility lookup
+            available_extractors_per_dataset[ds_id] = available_extractors
+            d['available_feature_extractors'] = available_extractors
 
             # Add access type marker for elevated (temporary permission) datasets
             access_marker = " [ELEVATED ACCESS - temporary permission]" if ds_access_type == "elevated" else ""
 
-            datasets_details.append(f"  - {ds_name} (dataset_id={ds_id}){access_marker}: {ds_count} files, type={ds_type}, labels=[{labels_str}]{survival_str}{splits_str}{task_types_str}{available_extractors_str}")
+            datasets_details.append(
+                f"  - {ds_name} (dataset_id={ds_id}){access_marker}: {ds_count} files, type={ds_type}, "
+                f"labels=[{labels_str}]{survival_str}{splits_str}{task_types_str}{aggregation_str}"
+                f"{segmentation_labels_str}{available_extractors_str}"
+            )
         datasets_list = "\n".join(datasets_details)
     else:
         datasets_list = "  None"
@@ -2070,6 +2217,8 @@ async def chat_with_ai(
         training_tasks_map = {}
         # task_id -> set of dataset_ids actually used in training (via TrainingTaskWSI → WSISlide)
         training_dataset_ids_map: Dict[str, set] = {}
+        training_wsi_ids_map: Dict[str, Set[str]] = {}
+        source_dataset_ids_map: Dict[str, Optional[str]] = {}
         if task_ids:
             from sqlalchemy import select
             # Eager load data_group (for data_type / task_type), no need to load datasets relation
@@ -2080,6 +2229,13 @@ async def chat_with_ai(
             tasks = result.scalars().all()
             for task in tasks:
                 training_tasks_map[task.task_id] = task
+
+            training_wsi_ids_raw = await TrainingTaskRepository.get_wsi_ids_batch(db, task_ids)
+            training_wsi_ids_map = {
+                task_id: set(wsi_ids)
+                for task_id, wsi_ids in training_wsi_ids_raw.items()
+            }
+            source_dataset_ids_map = await TrainingTaskRepository.get_source_dataset_ids_batch(db, task_ids)
 
             # Batch-query the actual dataset_ids used in each training task
             # Join TrainingTaskWSI → WSISlide to get the real training datasets
@@ -2110,6 +2266,8 @@ async def chat_with_ai(
             training_task = training_tasks_map.get(model_task_id)
             # Actual dataset_ids this model was trained on (from WSI associations)
             training_dataset_ids = training_dataset_ids_map.get(model_task_id, set())
+            model_wsi_ids = training_wsi_ids_map.get(model_task_id, set())
+            source_dataset_id = source_dataset_ids_map.get(model_task_id)
             if training_task and training_task.data_group:
                 data_type = training_task.data_group.data_type
                 task_type = training_task.data_group.task_type
@@ -2126,50 +2284,29 @@ async def chat_with_ai(
             embed_dim = EXTRACTOR_EMBED_DIM.get(model_feature_extractor, 0)
 
             # -----------------------------------------------------------------------
-            # Pre-compute compatible datasets for external validation at API level
-            # Rules (mirrors frontend externalValidationUtils.ts isDatasetCompatible):
-            #   1. data_type must match
-            #   2. task_type must match (inferred from dataset's labels/survival_count)
-            #   3. For classification: model classes must be a subset of dataset labels
-            #   4. For WSI: dataset must have features extracted with the same extractor
-            #   5. Exclude the dataset this model was trained on
+            # Pre-compute compatible datasets for external validation at API level.
+            # Rules mirror the frontend/backend external validation validation logic.
             # -----------------------------------------------------------------------
             compatible_datasets = []
             if data_type != "unknown" and task_type != "unknown":
-                model_classes_set = set(model_classes)
                 for ds in stats_datasets:
                     cand_id = ds["dataset_id"]
-                    cand_type = ds.get("data_type", "unknown")
-                    cand_labels = ds.get("labels", {})
-                    cand_survival = ds.get("survival_count", 0)
                     cand_name = ds["dataset_name"]
-
-                    # Rule 5: skip any dataset this model was actually trained on
-                    if cand_id in training_dataset_ids:
+                    ds["available_feature_extractors"] = available_extractors_per_dataset.get(cand_id, [])
+                    ds["wsi_ids"] = dataset_wsi_ids_per_dataset.get(cand_id, ds.get("wsi_ids", []))
+                    compatibility_error = _get_external_validation_compatibility_error(
+                        model=m,
+                        training_task=training_task,
+                        model_data_type=data_type,
+                        model_task_type=task_type,
+                        source_dataset_id=source_dataset_id,
+                        training_dataset_ids=training_dataset_ids,
+                        model_wsi_ids=model_wsi_ids,
+                        dataset_meta=ds,
+                        extractor_embed_dim=EXTRACTOR_EMBED_DIM,
+                    )
+                    if compatibility_error is not None:
                         continue
-
-                    # Rule 1: data_type must match
-                    if cand_type != data_type:
-                        continue
-
-                    # Rule 2 + 3: task_type and label compatibility
-                    if task_type == "classification":
-                        # Dataset must support classification (has labels)
-                        if not cand_labels:
-                            continue
-                        # Model classes must be a subset of the dataset's label set
-                        if model_classes_set and not model_classes_set.issubset(set(cand_labels.keys())):
-                            continue
-                    elif task_type == "survival":
-                        # Dataset must have survival data
-                        if cand_survival == 0:
-                            continue
-
-                    # Rule 4: for WSI, feature extractor must be available in the dataset
-                    if data_type == "wsi" and model_feature_extractor != "unknown":
-                        ds_extractors = available_extractors_per_dataset.get(cand_id, [])
-                        if model_feature_extractor not in ds_extractors:
-                            continue
 
                     compatible_datasets.append(f"{cand_name} (dataset_id={cand_id})")
 
@@ -2183,6 +2320,15 @@ async def chat_with_ai(
             # Add classes for classification models
             if model_classes:
                 info_parts.append(f"classes=[{classes_str}]")
+
+            if _is_segmentation_task(task_type):
+                segmentation_spec = _get_segmentation_model_spec(m, training_task)
+                if segmentation_spec["task_architecture"]:
+                    info_parts.append(f"architecture={segmentation_spec['task_architecture']}")
+                if segmentation_spec["task_backbone"]:
+                    info_parts.append(f"backbone={segmentation_spec['task_backbone']}")
+                if source_dataset_id:
+                    info_parts.append(f"source_dataset_id={source_dataset_id}")
 
             # Add feature extractor info for WSI models
             if data_type == "wsi" and model_feature_extractor != "unknown":

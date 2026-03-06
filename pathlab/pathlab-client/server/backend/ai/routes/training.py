@@ -872,7 +872,7 @@ class PatchSegmentationTrainRequest(BaseModel):
     backbone: str = "resnet50"
     loss_names: List[str] = ["DiceLoss", "JaccardLoss"]
     loss_weights: List[float] = [0.5, 0.5]
-    epochs: int = 100
+    epochs: int = 50
     lr: float = 0.0001
     batch_size: int = 8
     optimizer: str = "adamw"

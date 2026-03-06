@@ -65,6 +65,18 @@ router = APIRouter(prefix="/results", tags=["AI Results"])
 logger = logging.getLogger(__name__)
 
 
+def _normalize_label_names(labels: List[str]) -> List[str]:
+    return sorted({str(label).strip() for label in labels if str(label).strip()})
+
+
+def _extract_segmentation_label_names(categories: List[Dict[str, Any]]) -> List[str]:
+    return _normalize_label_names([
+        str(category.get("name", "")).strip()
+        for category in categories
+        if category.get("name")
+    ])
+
+
 async def _get_elevated_dataset_ids(user: User, db: AsyncSession) -> Optional[List[str]]:
     """
     Get dataset IDs for which the user has temporary elevated permissions.
@@ -585,6 +597,7 @@ async def get_analysis_tasks(
 
     # Batch get WSI IDs for all tasks (for frontend WSI overlap detection)
     all_wsi_ids_by_task = await TrainingTaskRepository.get_wsi_ids_batch(db, task_ids)
+    source_dataset_ids = await TrainingTaskRepository.get_source_dataset_ids_batch(db, task_ids)
 
     for task in tasks:
         resources = all_resources.get(task.task_id, {
@@ -652,6 +665,9 @@ async def get_analysis_tasks(
             "total_case_count": resources["total_case_count"],
             "display_count": display_count,  # Count based on aggregation level
             "wsi_ids": all_wsi_ids_by_task.get(task.task_id, []),  # For WSI overlap detection
+            "classes": task.classes,
+            "model_config": task.model_config,
+            "source_dataset_id": source_dataset_ids.get(task.task_id),
             "is_kfold": is_kfold,
             "source": "database"
         })
@@ -2146,6 +2162,10 @@ async def get_datasets_for_validation(
 
         # Determine display count based on aggregation_level
         display_count = total_case_count if dg.aggregation_level == "case" else total_wsi_count
+        segmentation_labels: List[str] = []
+        if dg.task_type in ("segmentation", "patch_segmentation"):
+            coco_categories = await WSIRepository._get_coco_categories_for_dataset(db, dataset_id)
+            segmentation_labels = _extract_segmentation_label_names(coco_categories)
 
         result.append({
             "dataset_id": dataset_id,
@@ -2158,6 +2178,7 @@ async def get_datasets_for_validation(
             "display_count": display_count,
             "distinct_label_count": distinct_label_count,
             "distinct_labels": sorted(distinct_labels),
+            "segmentation_labels": segmentation_labels,
             "available_feature_extractors": available_feature_extractors,
             "wsi_ids": wsi_ids,
         })
@@ -2317,6 +2338,66 @@ async def start_external_validation(
                 status_code=400,
                 detail=" ".join(detail_parts),
             )
+
+    if model_is_segmentation and target_is_segmentation:
+        source_dataset_id = (
+            await TrainingTaskRepository.get_source_dataset_ids_batch(db, [trained_model.task_id])
+        ).get(trained_model.task_id)
+        if not source_dataset_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot determine the source training dataset for this segmentation model. "
+                       "External validation requires a source model trained on a single dataset.",
+            )
+
+        if source_dataset_id == req.dataset_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Target dataset must be different from the source training dataset for segmentation external validation.",
+            )
+
+        model_config = model_task.model_config if isinstance(model_task.model_config, dict) else {}
+        task_architecture = str(model_config.get("architecture") or "").strip()
+        task_backbone = str(model_config.get("backbone") or "").strip()
+        saved_architecture = str(trained_model.aggregator or "").strip()
+        saved_backbone = str(trained_model.feature_extractor or "").strip()
+
+        if not task_architecture or not task_backbone or not saved_architecture or not saved_backbone:
+            raise HTTPException(
+                status_code=400,
+                detail="Segmentation model architecture metadata is incomplete. "
+                       "The source model must include both architecture and backbone metadata for external validation.",
+            )
+
+        if task_architecture != saved_architecture or task_backbone != saved_backbone:
+            raise HTTPException(
+                status_code=400,
+                detail="Segmentation model metadata mismatch detected. "
+                       f"Task config expects architecture/backbone '{task_architecture}/{task_backbone}', "
+                       f"but stored model metadata is '{saved_architecture}/{saved_backbone}'.",
+            )
+
+        model_segmentation_labels = _normalize_label_names(model_task.classes or trained_model.classes or [])
+        target_segmentation_labels = _extract_segmentation_label_names(
+            await WSIRepository._get_coco_categories_for_dataset(db, req.dataset_id)
+        )
+
+        if not model_segmentation_labels or not target_segmentation_labels:
+            raise HTTPException(
+                status_code=400,
+                detail="Segmentation label metadata is incomplete. "
+                       "Both the source model and target dataset must define labels for external validation.",
+            )
+
+        if model_segmentation_labels != target_segmentation_labels:
+            missing_in_dataset = sorted(set(model_segmentation_labels) - set(target_segmentation_labels))
+            extra_in_dataset = sorted(set(target_segmentation_labels) - set(model_segmentation_labels))
+            detail_parts = ["Segmentation label mismatch between source model and target dataset."]
+            if missing_in_dataset:
+                detail_parts.append(f"Model labels not in dataset: {missing_in_dataset}")
+            if extra_in_dataset:
+                detail_parts.append(f"Dataset labels not in model: {extra_in_dataset}")
+            raise HTTPException(status_code=400, detail=" ".join(detail_parts))
 
     # Get WSI IDs from target dataset
     wsi_ids = await DatasetRepository.get_wsi_ids(db, req.dataset_id)

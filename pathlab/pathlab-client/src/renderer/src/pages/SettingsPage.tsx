@@ -223,38 +223,56 @@ export default function SettingsPage() {
         {/* About - Show on all tabs except storage, users, and feedback */}
         {activeTab !== 'storage' && activeTab !== 'users' && activeTab !== 'feedback' && (
           <Card className="p-4 sm:p-6">
-            <h2 className="text-lg sm:text-xl font-semibold text-gray-900 mb-4 flex items-center">
-              <BookOpen className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700" />
-              {t('settings.about')}
-            </h2>
-            <div className="space-y-3 text-sm text-gray-600">
-              <p>
-                <strong className="text-gray-900">{t('settings.aboutText1Part1')}</strong>{t('settings.aboutText1Part2')}
-              </p>
-              <p>
-                {t('settings.aboutText2')}
-              </p>
-              <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                <a
-                  href="https://www.smartlab.cse.ust.hk/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center transition-opacity hover:opacity-100 opacity-80"
-                >
-                  <img src="/images/smartlab-logo.svg" alt="SmartLab" className="h-8 sm:h-10 w-auto" />
-                </a>
-                <p className="mt-3 text-sm text-gray-700">{t('settings.aboutText3')}</p>
-                <p className="mt-1 text-xs text-gray-500">
-                  {t('common.copyright')} <a href="https://www.smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer" className="hover:underline">SmartLab</a> · {t('introduction.allRightsReserved')}
-                </p>
-                <a
-                  href="https://www.smartlab.cse.ust.hk/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-2 inline-block text-xs text-blue-600 hover:text-blue-700 hover:underline"
-                >
-                  www.smartlab.cse.ust.hk
-                </a>
+            <div>
+              <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
+                <BookOpen className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700" />
+                {t('settings.about')}
+              </h2>
+
+              <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.9fr)] lg:gap-8">
+                <div className="space-y-4 sm:space-y-5">
+                  <div>
+                    <h3 className="text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900">
+                      {t('settings.aboutText1Part1')}
+                    </h3>
+                  </div>
+
+                  <p className="text-sm sm:text-base leading-7 text-gray-600">
+                    {t('settings.aboutText1Part2').trim()}
+                  </p>
+
+                  <p className="text-sm leading-7 text-gray-600">
+                    {t('settings.aboutText2')}
+                  </p>
+                </div>
+
+                <div className="border-t border-gray-100 pt-5 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-8">
+                  <div className="flex flex-col items-start">
+                    <a
+                      href="https://smartlab.cse.ust.hk/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex max-w-full items-center transition-opacity hover:opacity-100 opacity-90"
+                    >
+                      <img src="/images/smartlab-logo.svg" alt="SmartLab" className="h-10 sm:h-11 w-auto" />
+                    </a>
+
+                    <p className="mt-4 text-sm leading-6 text-gray-700">{t('settings.aboutText3')}</p>
+
+                    <a
+                      href="https://smartlab.cse.ust.hk/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-4 inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-700 hover:underline"
+                    >
+                      <span className="break-all">smartlab.cse.ust.hk</span>
+                    </a>
+
+                    <p className="mt-4 text-xs leading-5 text-gray-500">
+                      {t('common.copyright')} <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer" className="font-medium text-gray-700 hover:underline">SmartLab</a> · {t('introduction.allRightsReserved')}
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
           </Card>

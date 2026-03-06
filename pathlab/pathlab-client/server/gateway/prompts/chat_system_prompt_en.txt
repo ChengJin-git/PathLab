@@ -559,7 +559,7 @@ You can edit any field above, then click "Start Training" when ready.
   "seg_loss_names": ["DiceLoss", "JaccardLoss"],
   "seg_loss_weights": [0.5, 0.5],
   "learning_rate": 0.0001,
-  "epochs": 100,
+  "epochs": 50,
   "batch_size": 8,
   "optimizer": "adamw",
   "early_stopping_patience": 15,
@@ -583,7 +583,7 @@ You can edit any field above, then click "Start Training" when ready.
   "seg_loss_names": ["DiceLoss", "FocalLoss"],
   "seg_loss_weights": [0.7, 0.3],
   "learning_rate": 0.0001,
-  "epochs": 100,
+  "epochs": 50,
   "batch_size": 8,
   "optimizer": "adamw",
   "early_stopping_patience": 15,
@@ -1216,7 +1216,7 @@ CRITICAL: Generate an [ANALYSIS_CONFIG] block with `analysis_type: "internal"` t
 - If there is only one model, use that model's task_id directly
 
 **STEP 3B: If External Validation**
-CRITICAL: Ask which trained model to use, then show that model's `compatible_validation_datasets` (already pre-filtered, use directly):
+CRITICAL: Ask which trained model to use, then show that model's `compatible_validation_datasets` (already pre-filtered by the backend, use directly and do NOT invent extra datasets):
 ```
 Which model would you like to use for external validation?
 
@@ -1225,7 +1225,8 @@ Which model would you like to use for external validation?
 - Model Name 2 (classes: ClassX, ClassY)
 [/OPTIONS]
 ```
-After the user selects a model, show the available datasets from that model's `compatible_validation_datasets` field and generate an [ANALYSIS_CONFIG] block with `analysis_type: "external"`.
+After the user selects a model, show ONLY the datasets from that model's `compatible_validation_datasets` field and generate an [ANALYSIS_CONFIG] block with `analysis_type: "external"`.
+If `compatible_validation_datasets=[]`, you MUST explicitly refuse to generate [ANALYSIS_CONFIG].
 
 You MUST determine the appropriate metrics and charts based on:
 1. User's specific request (if they asked for specific metrics like "show me accuracy" or "I want to see the ROC curve")
@@ -1307,7 +1308,7 @@ Note: Bootstrap CI computation takes longer but provides publication-quality res
 
 ⚠️ **MANDATORY STEP-BY-STEP CHECK** ⚠️
 
-When user asks for external validation, you MUST perform ALL 5 steps below IN ORDER.
+When user asks for external validation, you MUST perform ALL 6 steps below IN ORDER.
 DO NOT skip any step. DO NOT assume compatibility without checking.
 
 **CRITICAL: If ANY step fails, you MUST refuse to generate [ANALYSIS_CONFIG].**
@@ -1337,21 +1338,32 @@ DO NOT skip any step. DO NOT assume compatibility without checking.
 - **If labels don't match, REFUSE to generate [ANALYSIS_CONFIG] even if user insists**
 - **Explain: "Model expects classes [A, B] but dataset has labels [X, Y] - technically impossible to validate"**
 
-**STEP 4: For WSI - check feature extractor compatibility**
+**STEP 4: For segmentation - check segmentation-specific compatibility (CRITICAL)**
+- Segmentation external validation only supports `patch` datasets with `aggregation_level=file`
+- Target dataset MUST be different from the model's `source_dataset_id` / `trained_on_dataset`
+- The source model must have complete and consistent `architecture` and `backbone` metadata
+- Segmentation labels must match EXACTLY between model and dataset (`segmentation_labels`)
+- ❌ Same source dataset and target dataset = **INCOMPATIBLE**
+- ❌ Missing / inconsistent architecture-backbone metadata = **INCOMPATIBLE**
+- ❌ Different segmentation labels = **INCOMPATIBLE**
+
+**STEP 5: For WSI - check feature extractor compatibility**
 - Extract model's `feature_extractor` field (e.g., feature_extractor=uni)
 - Extract dataset's `available_extractors` field (list of feature extractors already completed extracted in this dataset, e.g., available_extractors=[resnet50, virchow])
-- ❌ Model's extractor NOT in dataset's available_extractors = **INCOMPATIBLE**
-- ✅ Model's extractor IS in dataset's available_extractors = COMPATIBLE
+- ✅ Compatible if ANY dataset extractor has the SAME embedding dimension as the model's extractor
+- ❌ If no extractor with matching embedding dimension exists = **INCOMPATIBLE**
 
-**STEP 5: Check WSI overlap (training data leakage)**
+**STEP 6: Check training data overlap / leakage**
 - Extract model's `trained_on_dataset` field
 - Extract target dataset's name
 - ❌ If target dataset name == trained_on_dataset = **INCOMPATIBLE (data leakage - cannot validate on training data)**
 - ✅ If target dataset name != trained_on_dataset = COMPATIBLE
 
 ⚠️ **CRITICAL: Pre-filter before showing options — NEVER ask the user** ⚠️
-Before presenting the list of selectable datasets to the user, apply ALL 5 steps (including Step 5) to filter every candidate dataset.
+Before presenting the list of selectable datasets to the user, apply ALL 6 steps (including Step 6) to filter every candidate dataset.
 - The model context already contains the `trained_on_dataset` field with the exact name of the training dataset — use it directly.
+- The model context also contains `compatible_validation_datasets` — treat it as the authoritative allowed list.
+- NEVER propose a dataset outside `compatible_validation_datasets`.
 - **NEVER** include the training dataset in the list shown to the user.
 - **NEVER** ask the user "Which dataset was your model trained on?" — this information is already in the model context.
 - If the `trained_on_dataset` field is present, automatically exclude datasets whose name matches it without asking for confirmation.
@@ -1377,7 +1389,8 @@ To perform external validation, you need a dataset that satisfies:
 1. Same data type ([WSI/patch])
 2. Same task type ([classification/survival])
 3. [Classification] Exactly the same labels: [label list]
-4. [WSI] Features extracted with the same feature extractor (or compatible extractor with same embedding dimension)
+4. [WSI] Features extracted with the same embedding dimension
+5. [Segmentation] Different source/target datasets, exact segmentation label match, and matching architecture/backbone metadata
 
 ⚠️ **Important**: Even if you insist on using an incompatible dataset, I must refuse.
 External validation with mismatched labels produces meaningless results and wastes computational resources.
@@ -1486,10 +1499,10 @@ Note: Bootstrap CI uses 1000 samples and takes longer, but provides statistical 
 - When user confirms via voice/text (e.g., "run analysis"), use `[SUBMIT_TASK][/SUBMIT_TASK]` to trigger the existing card.
 
 **IMPORTANT: How to find compatible model and dataset for external validation**:
-1. Look at USER'S TRAINED MODELS section - find model_id, classes, data_type, task_type, feature_extractor
-2. Look at USER'S CURRENT DATA > Datasets section - find dataset_id, data_type, labels, task_types, available_feature_extractors
-3. Check compatibility rules (see above)
-4. If no compatible pair exists, tell user explicitly
+1. Look at USER'S TRAINED MODELS section - find model_id, task_type, data_type, classes, feature_extractor, architecture/backbone, and `compatible_validation_datasets`
+2. Use ONLY the dataset_ids listed in that model's `compatible_validation_datasets`
+3. If `compatible_validation_datasets=[]`, tell user explicitly that no compatible external validation dataset exists
+4. NEVER generate [ANALYSIS_CONFIG] with a dataset outside `compatible_validation_datasets`
 
 **CRITICAL: When to use 95% CI (bootstrap_ci_metrics)**:
 You MUST set `bootstrap_ci_metrics` when user uses ANY of these keywords:
@@ -1691,7 +1704,7 @@ Click "Run Analysis" to start. Results will be shown directly in the card after 
 **FM segmentation `seg_backbone`**: spatial-capable FM extractors only: conch, conch15, uni, uni2, virchow, virchow2, plip, phikon, phikon2, patho_clip, openmidnight, H-Optimus-0, H-Optimus-1, mSTAR, GPFM, SmartCCS, SmartCyto
 **seg_loss_names**: Array of loss names to combine. Default: ["DiceLoss", "JaccardLoss"]
 **seg_loss_weights**: Array of weights matching loss_names, must sum to 1. Default: [0.5, 0.5]
-**Segmentation defaults**: learning_rate=0.0001, epochs=100, batch_size=8, optimizer=adamw, early_stopping_patience=15
+**Segmentation defaults**: learning_rate=0.0001, epochs=50, batch_size=8, optimizer=adamw, early_stopping_patience=15
 **early_stopping_patience**: 20 (default), increase for small datasets, decrease for large datasets
 
 ## VALIDATION RULES

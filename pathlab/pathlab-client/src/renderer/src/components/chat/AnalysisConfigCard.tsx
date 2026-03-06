@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Play, AlertCircle, CheckCircle, Loader2, BarChart3, FileText, ThumbsUp, ThumbsDown, ArrowRight, FlaskConical } from 'lucide-react'
 import { runTaskAnalysis, getTrainingTasks, startExternalValidation, getTrainedModels, fetchDatasetsForValidation } from '../../api'
-import { isDatasetCompatible } from '../../lib/externalValidationUtils'
+import { getDatasetCompatibilityError, isDatasetCompatible } from '../../lib/externalValidationUtils'
 
 // Config from Agent - supports both internal and external analysis
 export interface AgentAnalysisConfig {
@@ -157,10 +157,11 @@ export function AnalysisConfigCard({
           // Check compatibility using shared validation logic
           const compatible = isDatasetCompatible(model, modelTask, dataset)
           if (!compatible) {
+            const compatibilityError = getDatasetCompatibilityError(model, modelTask, dataset)
             setTaskExists(false)
             setValidationError(
               `Dataset "${dataset.name}" is not compatible with model "${model.model_name}". ` +
-              `Please check that task types, data types, and label sets match.`
+              `${compatibilityError || 'Please check source/target compatibility.'}`
             )
             return
           }

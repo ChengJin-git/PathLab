@@ -449,7 +449,7 @@ export interface SegTrainingDefaults {
  */
 export const SEG_TRAINING_DEFAULTS: SegTrainingDefaults = {
   learningRate: 0.0001,
-  epochs: 100,
+  epochs: 50,
   batchSize: 8,
   optimizer: 'adamw',
   earlyStoppingPatience: 15,

@@ -29,6 +29,7 @@ export interface ValidationDataset {
   display_count: number
   distinct_label_count: number
   distinct_labels: string[]
+  segmentation_labels: string[]
   available_feature_extractors: string[]
   wsi_ids: string[]
 }
