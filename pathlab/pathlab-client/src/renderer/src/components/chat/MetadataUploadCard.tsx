@@ -133,9 +133,9 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
       const headers = lines[0].toLowerCase().split(',').map(h => h.trim())
       if (!headers.includes('filename')) return t('chatComponents.metadataUpload.missingFilename')
 
-      if (uploadMode === 'classification' || uploadMode === 'segmentation') {
+      if (uploadMode === 'classification') {
         if (!headers.includes('label')) return t('chatComponents.metadataUpload.missingLabel')
-      } else {
+      } else if (uploadMode === 'survival') {
         if (!headers.includes('event_time')) return t('chatComponents.metadataUpload.missingEventTime')
         if (!headers.includes('event_status')) return t('chatComponents.metadataUpload.missingEventStatus')
       }
