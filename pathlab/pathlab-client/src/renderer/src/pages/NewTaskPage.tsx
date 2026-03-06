@@ -60,12 +60,16 @@ export default function NewTaskPage() {
   // Get COCO category count for segmentation datasets
   const selectedDataset = dataSelection.datasets.find(d => d.dataset_id === dataSelection.selectedDatasetId)
   const numCocoCategories = selectedDataset?.num_coco_categories
+  const effectiveSelectedCount = dataSelection.isWholeDatasetSelected
+    ? dataSelection.selectedDatasetFileCount
+    : dataSelection.selectedIds.size
 
   const splitValidation = useSplitValidation({
     items: dataSelection.filteredItems,
     selectedIds: dataSelection.selectedIds,
     taskType: wizard.taskType,
     dataLevel: wizard.dataLevel,
+    selectedCount: effectiveSelectedCount,
     numCocoCategories,
   })
 
@@ -151,6 +155,12 @@ export default function NewTaskPage() {
       trainingConfig.setSplitStrategy('random')
     }
   }, [dataSelection.hasPreDefinedSplits, trainingConfig.splitStrategy])
+
+  useEffect(() => {
+    if (wizard.taskType === 'segmentation' && trainingConfig.splitStrategy === 'k_fold') {
+      trainingConfig.setSplitStrategy('random')
+    }
+  }, [wizard.taskType, trainingConfig.splitStrategy])
 
   // Auto-adjust default parameters when taskType changes (System-wide defaults: Cls=50, Survival=30, Seg=100)
   useEffect(() => {
@@ -540,17 +550,17 @@ export default function NewTaskPage() {
       errors.push(t('newTask.validation.batchSizePositive'))
     }
 
-    if (dataSelection.selectedIds.size < 10) {
+    if (effectiveSelectedCount < 10) {
       warnings.push(t('newTask.validation.smallDataset'))
     }
 
-    // Check for single-class tasks (classification, segmentation, or survival)
-    if (wizard.taskType === 'classification') {
+    // Skip label-derived validations for whole-dataset selection; backend validates against full dataset.
+    if (!dataSelection.isWholeDatasetSelected && wizard.taskType === 'classification') {
       const classes = Object.keys(splitValidation.classDistribution).filter((k) => k !== '__unlabeled__')
       if (classes.length < 2) {
         errors.push(t('newTask.validation.classificationMinClasses'))
       }
-    } else if (wizard.taskType === 'survival') {
+    } else if (!dataSelection.isWholeDatasetSelected && wizard.taskType === 'survival') {
       const eventCount = splitValidation.classDistribution['__event__'] || 0
       const censoredCount = splitValidation.classDistribution['__censored__'] || 0
       if (eventCount === 0 || censoredCount === 0) {
@@ -561,7 +571,7 @@ export default function NewTaskPage() {
 
     // Note: tile_size validation removed - now auto-determined by PrePATH-style tiling
 
-    if (trainingConfig.splitStrategy === 'k_fold') {
+    if (!dataSelection.isWholeDatasetSelected && trainingConfig.splitStrategy === 'k_fold') {
       if (!splitValidation.kFoldValidation.isValid) {
         errors.push(splitValidation.kFoldValidation.message || t('newTask.validation.kFoldUnavailable'))
       } else if (trainingConfig.kFoldSplits > splitValidation.kFoldValidation.maxK) {
@@ -569,7 +579,7 @@ export default function NewTaskPage() {
       }
     }
 
-    if (trainingConfig.splitStrategy === 'random') {
+    if (!dataSelection.isWholeDatasetSelected && trainingConfig.splitStrategy === 'random') {
       if (!splitValidation.randomSplitValidation.isValid) {
         errors.push(splitValidation.randomSplitValidation.message || t('newTask.validation.randomSplitUnavailable'))
       }
@@ -582,7 +592,8 @@ export default function NewTaskPage() {
     trainingConfig.trainBatchSize,
     trainingConfig.splitStrategy,
     trainingConfig.kFoldSplits,
-    dataSelection.selectedIds.size,
+    effectiveSelectedCount,
+    dataSelection.isWholeDatasetSelected,
     splitValidation.kFoldValidation,
     splitValidation.randomSplitValidation,
     splitValidation.classDistribution,
@@ -798,7 +809,7 @@ export default function NewTaskPage() {
               taskType={wizard.taskType}
               dataLevel={wizard.dataLevel}
               taskDescription={wizard.taskDescription}
-              selectedCount={dataSelection.selectedIds.size}
+              selectedCount={effectiveSelectedCount}
               pyramidLevel={trainingConfig.pyramidLevel}
               segUseOtsu={trainingConfig.segUseOtsu}
               aggregator={trainingConfig.aggregator}
@@ -832,7 +843,7 @@ export default function NewTaskPage() {
             <TaskResultStep
               taskName={wizard.taskName}
               dataLevel={wizard.dataLevel}
-              selectedCount={dataSelection.selectedIds.size}
+              selectedCount={effectiveSelectedCount}
               epochs={trainingConfig.epochs}
               submittedTaskId={wizard.submittedTaskId}
               aggregator={trainingConfig.aggregator}

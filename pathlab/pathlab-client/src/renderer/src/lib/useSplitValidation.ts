@@ -14,6 +14,7 @@ export interface UseSplitValidationProps {
   selectedIds: Set<string>
   taskType: TaskType
   dataLevel: DataLevel
+  selectedCount?: number
   numCocoCategories?: number  // Number of COCO categories for segmentation datasets
 }
 
@@ -28,14 +29,21 @@ export function useSplitValidation({
   selectedIds,
   taskType,
   dataLevel,
+  selectedCount,
   numCocoCategories,
 }: UseSplitValidationProps): UseSplitValidationReturn {
   const { t } = useTranslation()
+  const totalSelectedCount = selectedCount ?? (selectedIds.size > 0 ? selectedIds.size : items.length)
+
   // Calculate class distribution for k-fold validation (classification) or event status distribution (survival)
   const classDistribution = useMemo(() => {
     const selectedItems = items.filter((item) => selectedIds.has(item.wsi_id))
     const distribution: Record<string, number> = {}
     const isCaseLevel = dataLevel !== 'wsi'
+
+    if (taskType === 'segmentation') {
+      return distribution
+    }
 
     if (isCaseLevel) {
       // Case-level: group by case_id, each case counts once
@@ -97,7 +105,6 @@ export function useSplitValidation({
 
     // Segmentation tasks use COCO annotations, not WSI labels
     if (isSegmentation) {
-      const totalSelected = selectedIds.size > 0 ? selectedIds.size : items.length
       const numClasses = numCocoCategories || 0
 
       // If no COCO categories are found, show a warning
@@ -108,19 +115,19 @@ export function useSplitValidation({
           minSamplesPerClass: 0,
           numClasses: 0,
           unlabeledCount: 0,
-          totalLabeled: totalSelected,
+          totalLabeled: totalSelectedCount,
           message: t('training.dataSplit.validation.noCocoCategories'),
         }
       }
 
       return {
-        isValid: totalSelected >= 2,
-        maxK: totalSelected,
-        minSamplesPerClass: totalSelected,
+        isValid: totalSelectedCount >= 2,
+        maxK: totalSelectedCount,
+        minSamplesPerClass: totalSelectedCount,
         numClasses,
         unlabeledCount: 0,
-        totalLabeled: totalSelected,
-        message: totalSelected < 2 ? t('training.dataSplit.validation.noLabeledSamples') : undefined,
+        totalLabeled: totalSelectedCount,
+        message: totalSelectedCount < 2 ? t('training.dataSplit.validation.noLabeledSamples') : undefined,
       }
     }
 
@@ -210,7 +217,7 @@ export function useSplitValidation({
         ? t('training.dataSplit.validation.classMin2Samples', { count: minSamplesPerClass })
         : undefined,
     }
-  }, [classDistribution, taskType, t])
+  }, [classDistribution, taskType, t, numCocoCategories, totalSelectedCount])
 
   // Calculate validation for random 7:1:2 split
   const randomSplitValidation = useMemo((): RandomSplitValidation => {
@@ -220,14 +227,13 @@ export function useSplitValidation({
 
     // Segmentation tasks use COCO annotations, not WSI labels — skip label-based validation
     if (isSegmentation) {
-      const totalSelected = selectedIds.size > 0 ? selectedIds.size : items.length
       return {
-        isValid: totalSelected >= 1,
+        isValid: totalSelectedCount >= 1,
         minRequired: 1,
-        minSamplesPerClass: totalSelected,
+        minSamplesPerClass: totalSelectedCount,
         numClasses: 0,
         unlabeledCount: 0,
-        totalLabeled: totalSelected,
+        totalLabeled: totalSelectedCount,
       }
     }
 
@@ -315,7 +321,7 @@ export function useSplitValidation({
         ? t('training.dataSplit.validation.randomMinPerClass', { count: minRequiredPerClass })
         : undefined,
     }
-  }, [classDistribution, taskType, t])
+  }, [classDistribution, taskType, t, totalSelectedCount])
 
   return {
     classDistribution,

@@ -10,10 +10,11 @@ import { useNavigate } from 'react-router-dom'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Layers, AlertCircle, CheckCircle2, UploadCloud } from 'lucide-react'
-import { SplitStrategy } from '../../constants/training'
+import { SplitStrategy, TaskType } from '../../constants/training'
 import { KFoldValidation, RandomSplitValidation } from '../../types/training'
 
 export interface DataSplitConfigProps {
+  taskType: TaskType
   splitStrategy: SplitStrategy
   setSplitStrategy: (strategy: SplitStrategy) => void
   kFoldSplits: number
@@ -28,6 +29,7 @@ export interface DataSplitConfigProps {
 }
 
 export function DataSplitConfig({
+  taskType,
   splitStrategy,
   setSplitStrategy,
   kFoldSplits,
@@ -42,6 +44,7 @@ export function DataSplitConfig({
 }: DataSplitConfigProps) {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const isSegmentation = taskType === 'segmentation'
 
   return (
     <Card className="mt-6 p-6">
@@ -51,7 +54,7 @@ export function DataSplitConfig({
       </h3>
 
       <div className="space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className={`grid grid-cols-1 gap-4 ${isSegmentation ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
           {/* Random Split */}
           <SplitOption
             selected={splitStrategy === 'random'}
@@ -61,12 +64,14 @@ export function DataSplitConfig({
           />
 
           {/* K-Fold */}
-          <SplitOption
-            selected={splitStrategy === 'k_fold'}
-            onClick={() => setSplitStrategy('k_fold')}
-            title={t('training.dataSplit.kFoldCV')}
-            description={t('training.dataSplit.kFoldCVDesc')}
-          />
+          {!isSegmentation && (
+            <SplitOption
+              selected={splitStrategy === 'k_fold'}
+              onClick={() => setSplitStrategy('k_fold')}
+              title={t('training.dataSplit.kFoldCV')}
+              description={t('training.dataSplit.kFoldCVDesc')}
+            />
+          )}
 
           {/* Manual Split */}
           {hasPreDefinedSplits ? (
@@ -100,7 +105,7 @@ export function DataSplitConfig({
                 </div>
               </div>
             ) : (
-              <RandomSplitDetails validation={randomSplitValidation} />
+              <RandomSplitDetails taskType={taskType} validation={randomSplitValidation} />
             )
           )}
 
@@ -161,8 +166,15 @@ function SplitOption({
 }
 
 /** Random split configuration details */
-function RandomSplitDetails({ validation }: { validation: RandomSplitValidation }) {
+function RandomSplitDetails({
+  taskType,
+  validation,
+}: {
+  taskType: TaskType
+  validation: RandomSplitValidation
+}) {
   const { t } = useTranslation()
+  const isSegmentation = taskType === 'segmentation'
 
   return (
     <div className="space-y-3">
@@ -193,7 +205,7 @@ function RandomSplitDetails({ validation }: { validation: RandomSplitValidation 
         </div>
       )}
 
-      {validation.isValid && (
+      {validation.isValid && !isSegmentation && (
         <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
           <div className="text-xs text-blue-700">
             <p className="font-medium mb-1">

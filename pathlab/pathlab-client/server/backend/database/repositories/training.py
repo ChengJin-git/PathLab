@@ -3,7 +3,8 @@ TrainingTaskRepository - Data Access Layer
 """
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict
+from pathlib import Path
+from typing import List, Optional, Dict, Set, Tuple
 from sqlalchemy import select, update, delete, func, desc, insert, or_, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -13,6 +14,66 @@ logger = logging.getLogger(__name__)
 from ..models import DataGroup, Dataset, WSISlide, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, utc_now
 from backend.ai.utils.data_splitter import split_wsi_dataset, split_case_dataset
 from backend.ai.schemas.base import TaskStatus
+from backend.common.coco_utils import merge_coco_datasets, extract_coco_wsi_label_sets
+
+
+def _build_segmentation_wsi_lookups(wsis: List[WSISlide]) -> Tuple[Dict[str, str], Dict[str, str]]:
+    exact_lookup: Dict[str, str] = {}
+    stem_candidates: Dict[str, Set[str]] = {}
+
+    for wsi in wsis:
+        candidate_names = []
+        if wsi.original_filename:
+            candidate_names.append(str(wsi.original_filename))
+        if wsi.wsi_path:
+            candidate_names.append(Path(str(wsi.wsi_path)).name)
+
+        for candidate in candidate_names:
+            normalized = Path(candidate).name.strip().lower()
+            if not normalized:
+                continue
+            exact_lookup.setdefault(normalized, wsi.wsi_id)
+            stem_candidates.setdefault(Path(normalized).stem, set()).add(wsi.wsi_id)
+
+    stem_lookup = {
+        stem: next(iter(wsi_ids))
+        for stem, wsi_ids in stem_candidates.items()
+        if len(wsi_ids) == 1
+    }
+    return exact_lookup, stem_lookup
+
+
+async def _load_segmentation_multilabels(
+    db: AsyncSession,
+    wsis: List[WSISlide],
+) -> Tuple[List[str], Dict[str, Set[str]]]:
+    dataset_ids = {wsi.dataset_id for wsi in wsis if wsi.dataset_id}
+    if len(dataset_ids) != 1:
+        return [], {}
+
+    from .annotation import SegmentationAnnotationRepository
+
+    dataset_id = next(iter(dataset_ids))
+    records = await SegmentationAnnotationRepository.get_all_by_dataset(
+        db,
+        dataset_id,
+        include_drafts=False,
+    )
+    if not records:
+        return [], {}
+
+    dataset_level_record = next(
+        (record for record in records if record.annotation_id == f"annot_{dataset_id}"),
+        None,
+    )
+    payloads = [dataset_level_record.annotations] if dataset_level_record else [
+        record.annotations for record in records if isinstance(record.annotations, dict)
+    ]
+    merged_coco = merge_coco_datasets(payloads)
+    exact_lookup, stem_lookup = _build_segmentation_wsi_lookups(wsis)
+    multilabels = extract_coco_wsi_label_sets(merged_coco, exact_lookup, stem_lookup)
+    classes = sorted({label for label_set in multilabels.values() for label in label_set})
+    return classes, multilabels
 
 
 class TrainingTaskRepository:
@@ -51,11 +112,17 @@ class TrainingTaskRepository:
                 )
                 wsis.extend(wsi_list.scalars().all())
 
-        # Get unique labels (classes)
-        classes = sorted(list(set(wsi.label for wsi in wsis if wsi.label)))
-
         # Validate task based on task_type
         task_type = task_data.get("task_type", "classification")
+        classes = sorted(list(set(wsi.label for wsi in wsis if wsi.label)))
+        segmentation_multilabels: Dict[str, Set[str]] = {}
+
+        if task_type == "segmentation":
+            classes, segmentation_multilabels = await _load_segmentation_multilabels(db, wsis)
+            if not classes:
+                raise ValueError(
+                    "Segmentation tasks require at least one COCO category in the selected dataset."
+                )
 
         if task_type == "classification":
             # Classification tasks require at least 2 classes
@@ -129,8 +196,9 @@ class TrainingTaskRepository:
                             is_case_level = (group_row[0] == "case")
                             task_type_from_group = group_row[1]
 
-                # Determine if this is a survival task from DataGroup
+                # Determine task type from DataGroup for split behavior
                 is_survival = (task_type_from_group == "survival")
+                is_segmentation = (task_type_from_group == "segmentation")
 
                 if is_case_level:
                     # Build case_id_map and case-level labels
@@ -158,7 +226,11 @@ class TrainingTaskRepository:
                     if "labels" in split_config_copy:
                         del split_config_copy["labels"]  # We'll use case_labels instead
                     wsi_splits = split_case_dataset(
-                        wsi_ids, case_id_map, labels=case_labels, **split_config_copy
+                        wsi_ids,
+                        case_id_map,
+                        labels=case_labels,
+                        multilabels=segmentation_multilabels if is_segmentation else None,
+                        **split_config_copy,
                     )
                 else:
                     # For slide-level datasets, use regular splitter
@@ -175,7 +247,12 @@ class TrainingTaskRepository:
 
                         if label_val:
                             wsi_labels[wsi.wsi_id] = label_val
-                    wsi_splits = split_wsi_dataset(wsi_ids, labels=wsi_labels, **split_config)
+                    wsi_splits = split_wsi_dataset(
+                        wsi_ids,
+                        labels=None if is_segmentation else wsi_labels,
+                        multilabels=segmentation_multilabels if is_segmentation else None,
+                        **split_config,
+                    )
 
         # Use bulk insert to avoid ORM identity map issues and improve performance
         # This is much faster and more reliable for large datasets
@@ -595,6 +672,21 @@ class TrainingTaskRepository:
             update(TrainingTask)
             .where(TrainingTask.task_id == task_id)
             .values(**update_data)
+        )
+        await db.flush()
+        return await TrainingTaskRepository.get_by_id(db, task_id)
+
+    @staticmethod
+    async def update_preprocessing_config(
+        db: AsyncSession,
+        task_id: str,
+        preprocessing_config: Dict,
+    ) -> Optional[TrainingTask]:
+        """Update a training task's preprocessing_config JSON blob."""
+        await db.execute(
+            update(TrainingTask)
+            .where(TrainingTask.task_id == task_id)
+            .values(preprocessing_config=preprocessing_config, updated_at=utc_now())
         )
         await db.flush()
         return await TrainingTaskRepository.get_by_id(db, task_id)

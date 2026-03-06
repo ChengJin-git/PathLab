@@ -237,6 +237,7 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
       {/* Data Split Strategy - show when dataset selected (whole or with specific files) */}
       {selectedDatasetId && (selectedIds.size > 0 || isWholeDatasetSelected) && (
         <DataSplitConfig
+          taskType={taskType}
           splitStrategy={splitStrategy}
           setSplitStrategy={setSplitStrategy}
           kFoldSplits={kFoldSplits}

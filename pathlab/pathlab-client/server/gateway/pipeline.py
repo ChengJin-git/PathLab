@@ -10,12 +10,19 @@ Synchronous HTTP Architecture:
 """
 import asyncio
 import httpx
+import os
 import traceback
-from typing import List, Dict
+from pathlib import Path
+from typing import List, Dict, Set, Tuple
 from contextlib import asynccontextmanager
 
 from backend.ai.schemas.base import TaskStatus
-from backend.database.repositories import TrainingTaskRepository, SegmentationAnnotationRepository
+from backend.common.coco_utils import (
+    extract_coco_wsi_label_sets,
+    materialize_coco_to_disk,
+    merge_coco_datasets,
+)
+from backend.database.repositories import TrainingTaskRepository, SegmentationAnnotationRepository, WSIRepository
 from backend.database.utils.training_logger import TrainingLogger
 from backend.common.config import Config
 from .dependencies import logger, PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
@@ -25,6 +32,160 @@ from .utils import cancel_ai_service_training
 def get_training_timeout() -> int:
     """Get the configured training task timeout in seconds."""
     return Config.get_task_timeout()
+
+
+def _build_segmentation_wsi_lookups(wsis) -> Tuple[Dict[str, str], Dict[str, str]]:
+    exact_lookup: Dict[str, str] = {}
+    stem_candidates: Dict[str, Set[str]] = {}
+
+    for wsi in wsis:
+        candidate_names = []
+        if getattr(wsi, "original_filename", None):
+            candidate_names.append(str(wsi.original_filename))
+        if getattr(wsi, "wsi_path", None):
+            candidate_names.append(Path(str(wsi.wsi_path)).name)
+
+        for candidate in candidate_names:
+            normalized = Path(candidate).name.strip().lower()
+            if not normalized:
+                continue
+            exact_lookup.setdefault(normalized, wsi.wsi_id)
+            stem_candidates.setdefault(Path(normalized).stem, set()).add(wsi.wsi_id)
+
+    stem_lookup = {
+        stem: next(iter(wsi_ids))
+        for stem, wsi_ids in stem_candidates.items()
+        if len(wsi_ids) == 1
+    }
+    return exact_lookup, stem_lookup
+
+
+async def _load_segmentation_coco_payload(db, dataset_id: str) -> dict:
+    records = await SegmentationAnnotationRepository.get_all_by_dataset(
+        db,
+        dataset_id,
+        include_drafts=False,
+    )
+    if not records:
+        return {}
+
+    dataset_level_record = next(
+        (record for record in records if record.annotation_id == f"annot_{dataset_id}"),
+        None,
+    )
+    payloads = [dataset_level_record.annotations] if dataset_level_record else [
+        record.annotations for record in records if isinstance(record.annotations, dict)
+    ]
+    return merge_coco_datasets(payloads)
+
+
+def _build_split_coco_payload(
+    coco_data: dict,
+    allowed_wsi_ids: Set[str],
+    exact_lookup: Dict[str, str],
+    stem_lookup: Dict[str, str],
+    wsi_to_relative_path: Dict[str, str],
+) -> dict:
+    allowed_image_ids: Set[int] = set()
+    images = []
+
+    for image in coco_data.get("images") or []:
+        if not isinstance(image, dict):
+            continue
+        normalized_name = Path(str(image.get("file_name") or "")).name.strip().lower()
+        if not normalized_name:
+            continue
+        wsi_id = exact_lookup.get(normalized_name) or stem_lookup.get(Path(normalized_name).stem)
+        if wsi_id not in allowed_wsi_ids:
+            continue
+
+        image_copy = dict(image)
+        image_copy["file_name"] = wsi_to_relative_path.get(wsi_id, image_copy.get("file_name"))
+        images.append(image_copy)
+        allowed_image_ids.add(image_copy.get("id"))
+
+    annotations = [
+        dict(annotation)
+        for annotation in (coco_data.get("annotations") or [])
+        if isinstance(annotation, dict) and annotation.get("image_id") in allowed_image_ids
+    ]
+
+    payload = {
+        "images": images,
+        "annotations": annotations,
+        "categories": coco_data.get("categories", []),
+    }
+    if coco_data.get("info") is not None:
+        payload["info"] = coco_data.get("info")
+    if coco_data.get("licenses") is not None:
+        payload["licenses"] = coco_data.get("licenses")
+    return payload
+
+
+async def _prepare_segmentation_training_dataset(
+    db,
+    task_id: str,
+    wsi_ids: List[str],
+    preprocessing_config: Dict,
+) -> Tuple[Dict, int]:
+    wsi_map = await WSIRepository.get_by_ids(db, wsi_ids)
+    wsis = [wsi_map[wsi_id] for wsi_id in wsi_ids if wsi_id in wsi_map]
+    if not wsis:
+        raise ValueError("No patch images found for segmentation training task")
+
+    dataset_ids = {wsi.dataset_id for wsi in wsis if wsi.dataset_id}
+    if len(dataset_ids) != 1:
+        raise ValueError("Segmentation training requires all selected images to belong to the same dataset")
+
+    dataset_id = next(iter(dataset_ids))
+    coco_data = await _load_segmentation_coco_payload(db, dataset_id)
+    if not coco_data.get("images"):
+        raise ValueError(f"No finalized COCO annotations found for segmentation dataset {dataset_id}")
+
+    exact_lookup, stem_lookup = _build_segmentation_wsi_lookups(wsis)
+    label_sets = extract_coco_wsi_label_sets(coco_data, exact_lookup, stem_lookup)
+    classes = sorted({label for labels in label_sets.values() for label in labels})
+    if not classes:
+        raise ValueError("Segmentation dataset has no COCO categories available for training")
+
+    split_config = preprocessing_config.get("split_config") or {}
+    strategy = split_config.get("strategy", "random")
+    if strategy == "k_fold":
+        raise ValueError("Patch segmentation training does not support k-fold splits yet")
+
+    splits_map = await TrainingTaskRepository.get_wsi_ids_by_split(db, task_id)
+    expected_splits = ["train", "val", "test"]
+    if not all(split_name in splits_map for split_name in expected_splits):
+        raise ValueError("Segmentation training requires train/val/test split assignments")
+
+    image_parents = [str(Path(str(wsi.wsi_path)).resolve().parent) for wsi in wsis if wsi.wsi_path]
+    image_root = Path(os.path.commonpath(image_parents)) if image_parents else Config.get_uploads_dir()
+    wsi_to_relative_path = {
+        wsi.wsi_id: os.path.relpath(str(Path(str(wsi.wsi_path)).resolve()), str(image_root))
+        for wsi in wsis
+        if wsi.wsi_path
+    }
+
+    split_dir = Config.get_uploads_dir() / task_id / "segmentation_splits"
+    split_dir.mkdir(parents=True, exist_ok=True)
+    dataset_config: Dict[str, Dict[str, str]] = {"classes": len(classes), "channels": 3}
+
+    for split_name in expected_splits:
+        split_payload = _build_split_coco_payload(
+            coco_data,
+            set(splits_map.get(split_name, [])),
+            exact_lookup,
+            stem_lookup,
+            wsi_to_relative_path,
+        )
+        split_path = split_dir / f"{split_name}.json"
+        materialize_coco_to_disk(split_payload, split_path)
+        dataset_config[split_name] = {
+            "image_dir": str(image_root),
+            "annotations_path": str(split_path),
+        }
+
+    return dataset_config, len(classes)
 
 
 async def _call_ai_service(

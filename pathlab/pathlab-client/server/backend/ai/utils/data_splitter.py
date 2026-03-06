@@ -1,10 +1,193 @@
 import json
 import os
 import random
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Set
 
 import numpy as np
 from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold
+
+
+MULTILABEL_NEGATIVE_TAG = "__negative__"
+
+
+def _normalize_coco_categories(categories: Any) -> List[dict]:
+    if isinstance(categories, list):
+        normalized: List[dict] = []
+        for item in categories:
+            if not isinstance(item, dict):
+                continue
+            try:
+                category_id = int(item.get("id"))
+            except (TypeError, ValueError):
+                continue
+            normalized.append({"id": category_id, "name": str(item.get("name") or category_id)})
+        return normalized
+
+    if isinstance(categories, dict):
+        normalized = []
+        for key, value in categories.items():
+            try:
+                category_id = int(key)
+            except (TypeError, ValueError):
+                continue
+            normalized.append({"id": category_id, "name": str(value)})
+        return sorted(normalized, key=lambda item: item["id"])
+
+    return []
+
+
+def _calculate_target_sizes(total_items: int, ratios: Dict[str, float]) -> Dict[str, int]:
+    split_names = [name for name, ratio in ratios.items() if ratio > 0]
+    if total_items <= 0 or not split_names:
+        return {name: 0 for name in ratios}
+
+    if total_items >= len(split_names):
+        targets = {name: 1 for name in split_names}
+        remaining = total_items - len(split_names)
+    else:
+        targets = {name: 0 for name in split_names}
+        remaining = total_items
+
+    total_ratio = sum(ratios[name] for name in split_names)
+    raw_counts = {
+        name: (remaining * ratios[name] / total_ratio) if total_ratio > 0 else 0.0
+        for name in split_names
+    }
+    extra_counts = {name: int(np.floor(raw_counts[name])) for name in split_names}
+    for name, count in extra_counts.items():
+        targets[name] += count
+
+    assigned = sum(targets.values())
+    remainder = total_items - assigned
+    order = sorted(
+        split_names,
+        key=lambda name: (raw_counts[name] - extra_counts[name], ratios[name]),
+        reverse=True,
+    )
+    for idx in range(remainder):
+        targets[order[idx % len(order)]] += 1
+
+    return {name: targets.get(name, 0) for name in ratios}
+
+
+def _coerce_multilabel_sets(
+    items: Sequence[Any],
+    multilabels: Optional[Dict[Any, Sequence[str] | Set[str]]],
+) -> Dict[Any, Set[str]]:
+    coerced: Dict[Any, Set[str]] = {}
+    for item in items:
+        raw_labels = multilabels.get(item, set()) if multilabels else set()
+        label_set = {str(label) for label in raw_labels if label not in (None, "")}
+        coerced[item] = label_set if label_set else {MULTILABEL_NEGATIVE_TAG}
+    return coerced
+
+
+def _greedy_multilabel_assignment(
+    items: Sequence[Any],
+    multilabels: Optional[Dict[Any, Sequence[str] | Set[str]]],
+    targets: Dict[str, int],
+    seed: int,
+) -> Dict[Any, str]:
+    if not items:
+        return {}
+
+    rng = random.Random(seed)
+    label_sets = _coerce_multilabel_sets(items, multilabels)
+    label_totals: Dict[str, int] = {}
+    for labels in label_sets.values():
+        for label in labels:
+            label_totals[label] = label_totals.get(label, 0) + 1
+
+    target_label_counts = {
+        split_name: {
+            label: label_totals[label] * (targets[split_name] / len(items)) if len(items) > 0 else 0.0
+            for label in label_totals
+        }
+        for split_name in targets
+    }
+
+    size_counts = {split_name: 0 for split_name in targets}
+    label_counts = {split_name: {label: 0 for label in label_totals} for split_name in targets}
+
+    ordered_items = list(items)
+    rng.shuffle(ordered_items)
+    ordered_items.sort(
+        key=lambda item: (
+            -sum(1.0 / max(label_totals[label], 1) for label in label_sets[item]),
+            -len(label_sets[item]),
+        )
+    )
+
+    assignments: Dict[Any, str] = {}
+    for item in ordered_items:
+        labels = label_sets[item]
+        best_split = None
+        best_score = None
+
+        for split_name, target_size in targets.items():
+            size_need = target_size - size_counts[split_name]
+            if target_size == 0:
+                size_penalty = -1e9
+            elif size_need <= 0:
+                size_penalty = size_need * 1000.0
+            else:
+                size_penalty = size_need * 10.0
+
+            label_need = sum(
+                max(target_label_counts[split_name][label] - label_counts[split_name][label], 0.0)
+                for label in labels
+            )
+            novelty_bonus = sum(
+                1.0 / max(label_totals[label], 1)
+                for label in labels
+                if label_counts[split_name][label] == 0
+            )
+            score = label_need * 100.0 + novelty_bonus * 10.0 + size_penalty
+
+            tie_breaker = rng.random()
+            candidate = (score, size_need, tie_breaker)
+            if best_score is None or candidate > best_score:
+                best_score = candidate
+                best_split = split_name
+
+        chosen_split = best_split or next(iter(targets))
+        assignments[item] = chosen_split
+        size_counts[chosen_split] += 1
+        for label in labels:
+            label_counts[chosen_split][label] += 1
+
+    return assignments
+
+
+def get_multilabel_random_splits(
+    items: Sequence[Any],
+    multilabels: Optional[Dict[Any, Sequence[str] | Set[str]]],
+    train_ratio: float = 0.7,
+    val_ratio: float = 0.1,
+    test_ratio: float = 0.2,
+    seed: int = 42,
+) -> Dict[Any, str]:
+    targets = _calculate_target_sizes(
+        len(items),
+        {"train": train_ratio, "val": val_ratio, "test": test_ratio},
+    )
+    return _greedy_multilabel_assignment(items, multilabels, targets, seed)
+
+
+def get_multilabel_k_fold_splits(
+    items: Sequence[Any],
+    multilabels: Optional[Dict[Any, Sequence[str] | Set[str]]],
+    k: int = 5,
+    seed: int = 42,
+) -> Dict[Any, str]:
+    if k <= 1:
+        return {item: "fold_0" for item in items}
+
+    targets = _calculate_target_sizes(
+        len(items),
+        {f"fold_{idx}": 1.0 for idx in range(k)},
+    )
+    return _greedy_multilabel_assignment(items, multilabels, targets, seed)
 
 
 def segmentation_data_splitter(
@@ -12,6 +195,7 @@ def segmentation_data_splitter(
     train_ratio: float = 0.7,
     val_ratio: float = 0.1,
     test_ratio: float = 0.2,
+    seed: int = 42,
     debug: bool = False,
 ):
     """
@@ -38,49 +222,41 @@ def segmentation_data_splitter(
     # Get metadata and categories
     info = full_data.get("info", {})
     licenses = full_data.get("licenses", [])
-    categories = full_data.get("categories", {})
+    categories = _normalize_coco_categories(full_data.get("categories", []))
     
     images = full_data.get("images", [])
     annotations = full_data.get("annotations", [])
     
-    # Build a mapping of image_id -> list of category_ids
+    category_lookup = {cat["id"]: cat["name"] for cat in categories}
+
+    # Build a mapping of image_id -> set of category names
     image_to_categories = {}
     for img in images:
         image_to_categories[img["id"]] = set()
     
     for ann in annotations:
-        image_to_categories[ann["image_id"]].add(ann["category_id"])
-    
-    # Group images by their primary category (the first category in the image)
-    category_to_images = {}
-    for img in images:
-        img_id = img["id"]
-        if image_to_categories[img_id]:
-            # Use the first category as the primary category for grouping
-            primary_category = min(image_to_categories[img_id])
-            if primary_category not in category_to_images:
-                category_to_images[primary_category] = []
-            category_to_images[primary_category].append(img_id)
-    
-    # Split images by category to maintain class balance
-    train_ids = set()
-    val_ids = set()
-    test_ids = set()
-    
-    for category_id, image_ids in category_to_images.items():
-        # Shuffle images within each category
-        shuffled_ids = image_ids.copy()
-        random.shuffle(shuffled_ids)
-        
-        # Calculate split indices for this category
-        total = len(shuffled_ids)
-        train_count = int(total * train_ratio)
-        val_count = int(total * val_ratio)
-        
-        # Assign to splits
-        train_ids.update(shuffled_ids[:train_count])
-        val_ids.update(shuffled_ids[train_count:train_count + val_count])
-        test_ids.update(shuffled_ids[train_count + val_count:])
+        image_id = ann.get("image_id")
+        if image_id not in image_to_categories:
+            continue
+        category_id = ann.get("category_id")
+        try:
+            category_id = int(category_id)
+        except (TypeError, ValueError):
+            pass
+        image_to_categories[image_id].add(category_lookup.get(category_id, str(category_id)))
+
+    split_map = get_multilabel_random_splits(
+        [img["id"] for img in images],
+        image_to_categories,
+        train_ratio=train_ratio,
+        val_ratio=val_ratio,
+        test_ratio=test_ratio,
+        seed=seed,
+    )
+
+    train_ids = {img_id for img_id, split in split_map.items() if split == "train"}
+    val_ids = {img_id for img_id, split in split_map.items() if split == "val"}
+    test_ids = {img_id for img_id, split in split_map.items() if split == "test"}
     
     # Split images and annotations
     train_images = [img for img in images if img["id"] in train_ids]
@@ -377,18 +553,39 @@ def split_case_dataset(
     # Get unique case IDs
     case_ids = list(case_to_wsi.keys())
 
+    case_multilabels_raw = kwargs.get("multilabels")
+    case_multilabels: Optional[Dict[str, Set[str]]] = None
+    if case_multilabels_raw:
+        case_multilabels = {}
+        for case_id, case_wsi_ids in case_to_wsi.items():
+            aggregated: Set[str] = set()
+            for wsi_id in case_wsi_ids:
+                aggregated.update(case_multilabels_raw.get(wsi_id, set()))
+            case_multilabels[case_id] = aggregated
+
     # Split at case level
     if strategy == "k_fold":
         k = kwargs.get("n_splits", 5)
         seed = kwargs.get("seed", 42)
-        if labels:
+        if case_multilabels:
+            case_splits = get_multilabel_k_fold_splits(case_ids, case_multilabels, k=k, seed=seed)
+        elif labels:
             case_splits = get_stratified_k_fold_splits(case_ids, labels, k=k, seed=seed)
         else:
             case_splits = get_k_fold_splits(case_ids, k=k, seed=seed)
     else:  # random or default
         ratios = kwargs.get("ratios", {"train": 0.7, "val": 0.1, "test": 0.2})
         seed = kwargs.get("seed", 42)
-        if labels:
+        if case_multilabels:
+            case_splits = get_multilabel_random_splits(
+                case_ids,
+                case_multilabels,
+                train_ratio=ratios.get("train", 0.7),
+                val_ratio=ratios.get("val", 0.1),
+                test_ratio=ratios.get("test", 0.2),
+                seed=seed,
+            )
+        elif labels:
             case_splits = get_stratified_random_splits(
                 case_ids,
                 labels,
@@ -420,6 +617,7 @@ def split_wsi_dataset(
     wsi_ids: list,
     strategy: str = "random",
     labels: Optional[Dict[str, str]] = None,
+    multilabels: Optional[Dict[str, Sequence[str] | Set[str]]] = None,
     **kwargs
 ) -> dict:
     """
@@ -453,6 +651,8 @@ def split_wsi_dataset(
     elif strategy == "k_fold":
         k = kwargs.get("n_splits", 5)
         seed = kwargs.get("seed", 42)
+        if multilabels:
+            return get_multilabel_k_fold_splits(wsi_ids, multilabels, k=k, seed=seed)
         if labels:
             return get_stratified_k_fold_splits(wsi_ids, labels, k=k, seed=seed)
         else:
@@ -461,6 +661,15 @@ def split_wsi_dataset(
     else:  # random or default
         ratios = kwargs.get("ratios", {"train": 0.7, "val": 0.1, "test": 0.2})
         seed = kwargs.get("seed", 42)
+        if multilabels:
+            return get_multilabel_random_splits(
+                wsi_ids,
+                multilabels,
+                train_ratio=ratios.get("train", 0.7),
+                val_ratio=ratios.get("val", 0.1),
+                test_ratio=ratios.get("test", 0.2),
+                seed=seed,
+            )
         if labels:
             return get_stratified_random_splits(
                 wsi_ids,

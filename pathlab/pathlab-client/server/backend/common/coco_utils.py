@@ -6,10 +6,11 @@ Provides:
 - Materialization: write COCO JSON from DB to disk for training consumption
 """
 
+import copy
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +163,132 @@ def roi_annotations_to_coco(
         "annotations": coco_annotations,
         "categories": categories,
     }
+
+
+def merge_coco_datasets(coco_payloads: List[dict]) -> dict:
+    """
+    Merge one or more COCO payloads into a single normalized dataset.
+
+    The merge is resilient to per-file imports where image/category IDs restart from 1.
+    Categories are unified by category name and re-indexed to a stable global list.
+    """
+    merged_images: List[dict] = []
+    merged_annotations: List[dict] = []
+    category_name_to_id: Dict[str, int] = {}
+    next_image_id = 1
+    next_annotation_id = 1
+
+    for payload in coco_payloads or []:
+        if not isinstance(payload, dict):
+            continue
+
+        categories_map = _normalize_categories(payload.get("categories", []))
+        for category_name in categories_map.values():
+            if category_name not in category_name_to_id:
+                category_name_to_id[category_name] = len(category_name_to_id)
+
+        image_id_map: Dict[Any, int] = {}
+        for image in payload.get("images") or []:
+            if not isinstance(image, dict):
+                continue
+
+            old_image_id = image.get("id")
+            if old_image_id is None:
+                continue
+
+            merged_image = copy.deepcopy(image)
+            merged_image["id"] = next_image_id
+            merged_images.append(merged_image)
+            image_id_map[old_image_id] = next_image_id
+            next_image_id += 1
+
+        for annotation in payload.get("annotations") or []:
+            if not isinstance(annotation, dict):
+                continue
+
+            mapped_image_id = image_id_map.get(annotation.get("image_id"))
+            if mapped_image_id is None:
+                continue
+
+            category_id = annotation.get("category_id")
+            try:
+                category_id = int(category_id)
+            except (TypeError, ValueError):
+                pass
+
+            category_name = categories_map.get(category_id, str(category_id))
+            if category_name not in category_name_to_id:
+                category_name_to_id[category_name] = len(category_name_to_id)
+
+            merged_annotation = copy.deepcopy(annotation)
+            merged_annotation["id"] = next_annotation_id
+            merged_annotation["image_id"] = mapped_image_id
+            merged_annotation["category_id"] = category_name_to_id[category_name]
+            merged_annotations.append(merged_annotation)
+            next_annotation_id += 1
+
+    categories = [
+        {"id": category_id, "name": category_name}
+        for category_name, category_id in category_name_to_id.items()
+    ]
+
+    return {
+        "images": merged_images,
+        "annotations": merged_annotations,
+        "categories": categories,
+    }
+
+
+def extract_coco_wsi_label_sets(
+    coco_data: dict,
+    file_name_to_wsi_id: Dict[str, str],
+    file_stem_to_wsi_id: Optional[Dict[str, str]] = None,
+) -> Dict[str, Set[str]]:
+    """
+    Extract per-WSI multi-label category names from a COCO dataset.
+
+    Returns a mapping of ``wsi_id -> {category_name, ...}``. Images with no
+    annotations are intentionally omitted so callers can treat them as negatives.
+    """
+    if not isinstance(coco_data, dict):
+        return {}
+
+    categories = _normalize_categories(coco_data.get("categories", []))
+    image_id_to_wsi_id: Dict[Any, str] = {}
+    label_sets: Dict[str, Set[str]] = {}
+
+    for image in coco_data.get("images") or []:
+        if not isinstance(image, dict):
+            continue
+
+        normalized_name = _normalize_file_key(image.get("file_name"))
+        if not normalized_name:
+            continue
+
+        wsi_id = file_name_to_wsi_id.get(normalized_name)
+        if not wsi_id and file_stem_to_wsi_id:
+            wsi_id = file_stem_to_wsi_id.get(Path(normalized_name).stem)
+        if wsi_id:
+            image_id_to_wsi_id[image.get("id")] = wsi_id
+
+    for annotation in coco_data.get("annotations") or []:
+        if not isinstance(annotation, dict):
+            continue
+
+        wsi_id = image_id_to_wsi_id.get(annotation.get("image_id"))
+        if not wsi_id:
+            continue
+
+        category_id = annotation.get("category_id")
+        try:
+            category_id = int(category_id)
+        except (TypeError, ValueError):
+            pass
+
+        label_name = categories.get(category_id, str(category_id))
+        label_sets.setdefault(wsi_id, set()).add(label_name)
+
+    return label_sets
 
 
 def materialize_coco_to_disk(
