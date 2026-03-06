@@ -3,8 +3,13 @@ Utility functions for Gateway service
 """
 import os
 import httpx
+from typing import Any, Mapping, Optional
+
 from Aslide import Slide
-from .dependencies import logger, AI_SERVICE_URL
+from fastapi import HTTPException
+from fastapi.responses import Response
+
+from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 
 
 async def cancel_ai_service_training(task_id: str) -> None:
@@ -23,6 +28,87 @@ async def cancel_ai_service_training(task_id: str) -> None:
         logger.info(f"Cancellation request sent to AI service for task {task_id} (fire-and-forget)")
     except Exception as e:
         logger.warning(f"Failed to send cancellation to AI service for task {task_id}: {e}")
+
+
+async def request_preprocessing_service(
+    method: str,
+    path: str,
+    *,
+    params: Optional[Mapping[str, Any]] = None,
+    json_body: Optional[Any] = None,
+    timeout: float = 30.0,
+) -> httpx.Response:
+    """Send a request to the preprocessing service with shared error handling."""
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.request(
+                method=method,
+                url=f"{PREPROCESSING_SERVICE_URL}{path}",
+                params=params,
+                json=json_body,
+            )
+
+        if response.status_code != 200:
+            logger.error(
+                f"Preprocessing service error for {method.upper()} {path}: {response.text}"
+            )
+            raise HTTPException(status_code=response.status_code, detail=response.text)
+
+        return response
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Preprocessing service timeout")
+    except HTTPException:
+        raise
+    except httpx.RequestError as e:
+        logger.error(
+            f"Failed to connect to preprocessing service for {method.upper()} {path}: {e}"
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=f"Preprocessing service unavailable: {str(e)}",
+        )
+
+
+async def proxy_preprocessing_json(
+    method: str,
+    path: str,
+    *,
+    params: Optional[Mapping[str, Any]] = None,
+    json_body: Optional[Any] = None,
+    timeout: float = 30.0,
+) -> Any:
+    """Proxy a preprocessing-service request and return parsed JSON."""
+    response = await request_preprocessing_service(
+        method,
+        path,
+        params=params,
+        json_body=json_body,
+        timeout=timeout,
+    )
+    return response.json()
+
+
+async def proxy_preprocessing_binary(
+    method: str,
+    path: str,
+    *,
+    params: Optional[Mapping[str, Any]] = None,
+    json_body: Optional[Any] = None,
+    timeout: float = 30.0,
+    default_media_type: str = "application/octet-stream",
+) -> Response:
+    """Proxy a preprocessing-service request and return a binary response."""
+    response = await request_preprocessing_service(
+        method,
+        path,
+        params=params,
+        json_body=json_body,
+        timeout=timeout,
+    )
+    return Response(
+        content=response.content,
+        media_type=response.headers.get("content-type", default_media_type),
+    )
 
 
 def extract_wsi_properties(wsi_path: str) -> dict:

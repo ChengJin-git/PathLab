@@ -79,6 +79,29 @@ export interface HeatmapData {
 // Cache for fetchAvailableHeatmaps (keyed by wsi_id, 60s TTL)
 const heatmapAvailabilityCache = createKeyedCache<AvailableHeatmap[]>(LONG_CACHE_TTL)
 
+function buildAuthedHeatmapUrl(
+  path: string,
+  params?: Record<string, string | number | undefined | null>
+): string {
+  const search = new URLSearchParams()
+
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) {
+        search.set(key, String(value))
+      }
+    })
+  }
+
+  const token = getAuthToken()
+  if (token) {
+    search.set('token', token)
+  }
+
+  const query = search.toString()
+  return `${API_BASE}${path}${query ? `?${query}` : ''}`
+}
+
 /**
  * Fetch available heatmaps (attention data) for a WSI (with caching)
  * @param wsi_id - The WSI ID
@@ -143,12 +166,7 @@ export async function fetchHeatmapData(
  * @returns URL for the patch image (with auth token for <img> tags)
  */
 export function getPatchImageUrl(wsi_id: string, x: number, y: number, size: number = 256): string {
-  const token = getAuthToken()
-  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_image?x=${x}&y=${y}&size=${size}`
-  if (token) {
-    url += `&token=${encodeURIComponent(token)}`
-  }
-  return url
+  return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_image`, { x, y, size })
 }
 
 /**
@@ -174,18 +192,11 @@ export interface PatchCAMData {
  * @returns URL for the CAM overlay PNG image (with auth token for <img> tags)
  */
 export function getPatchCAMImageUrl(wsi_id: string, task_id?: string, fold_key?: string): string {
-  const token = getAuthToken()
-  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam?format=image`
-  if (task_id) {
-    url += `&task_id=${encodeURIComponent(task_id)}`
-  }
-  if (fold_key) {
-    url += `&fold_key=${encodeURIComponent(fold_key)}`
-  }
-  if (token) {
-    url += `&token=${encodeURIComponent(token)}`
-  }
-  return url
+  return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam`, {
+    format: 'image',
+    task_id,
+    fold_key,
+  })
 }
 
 /**
@@ -196,22 +207,10 @@ export function getPatchCAMImageUrl(wsi_id: string, task_id?: string, fold_key?:
  * @returns URL for the seg mask overlay PNG image (with auth token for <img> tags)
  */
 export function getSegMaskImageUrl(wsi_id: string, task_id?: string, fold_key?: string): string {
-  const token = getAuthToken()
-  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/seg_mask`
-  const params: string[] = []
-  if (task_id) {
-    params.push(`task_id=${encodeURIComponent(task_id)}`)
-  }
-  if (fold_key) {
-    params.push(`fold_key=${encodeURIComponent(fold_key)}`)
-  }
-  if (token) {
-    params.push(`token=${encodeURIComponent(token)}`)
-  }
-  if (params.length > 0) {
-    url += `?${params.join('&')}`
-  }
-  return url
+  return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/seg_mask`, {
+    task_id,
+    fold_key,
+  })
 }
 
 /**
@@ -228,18 +227,11 @@ export function getHeatmapThumbnailUrl(
   size: number = 256,
   class_idx?: number
 ): string {
-  const token = getAuthToken()
-  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/heatmap_thumbnail?size=${size}`
-  if (task_id) {
-    url += `&task_id=${encodeURIComponent(task_id)}`
-  }
-  if (class_idx !== undefined) {
-    url += `&class_idx=${class_idx}`
-  }
-  if (token) {
-    url += `&token=${encodeURIComponent(token)}`
-  }
-  return url
+  return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/heatmap_thumbnail`, {
+    size,
+    task_id,
+    class_idx,
+  })
 }
 
 /**
@@ -268,12 +260,7 @@ export async function fetchPatchCAMData(wsi_id: string, task_id?: string, fold_k
  * @returns URL for the patch image (with auth token for <img> tags)
  */
 export function getPatchFileImageUrl(wsi_id: string): string {
-  const token = getAuthToken()
-  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/image`
-  if (token) {
-    url += `?token=${encodeURIComponent(token)}`
-  }
-  return url
+  return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/image`)
 }
 
 /**
@@ -283,35 +270,6 @@ export function getPatchFileImageUrl(wsi_id: string): string {
  * @returns URL for the thumbnail image with auth token
  */
 export function getThumbnailUrl(wsi_id: string, size: number = 256): string {
-  const token = getAuthToken()
-  let url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/thumbnail?size=${size}`
-  if (token) {
-    url += `&token=${encodeURIComponent(token)}`
-  }
-  return url
-}
-
-/**
- * Determine if a file is a WSI or Patch based on file extension and file size.
- *
- * @param fileExtension - File extension (e.g. ".svs", ".png")
- * @param fileSize - The file size in bytes
- * @returns 'WSI' or 'Patch'
- */
-export function getFileType(fileExtension: string | null, fileSize: number | null): 'WSI' | 'Patch' {
-  if (!fileExtension) return 'WSI'
-  const ext = fileExtension.toLowerCase()
-
-  // Patch/image file extensions
-  const patchExtensions = ['.png', '.jpg', '.jpeg', '.bmp']
-  if (patchExtensions.includes(ext)) return 'Patch'
-
-  // For .tif/.tiff files, check file size (100 MB threshold)
-  if (ext === '.tif' || ext === '.tiff') {
-    const SIZE_THRESHOLD = 100 * 1024 * 1024 // 100 MB
-    return (fileSize || 0) >= SIZE_THRESHOLD ? 'WSI' : 'Patch'
-  }
-
-  return 'WSI'
+  return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/thumbnail`, { size })
 }
 

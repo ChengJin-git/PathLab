@@ -10,7 +10,6 @@ Authentication & Authorization:
 """
 import csv
 import io
-import httpx
 from typing import Optional, List, Dict
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Query
@@ -24,14 +23,20 @@ from backend.database.repositories import (
     DatasetRepository,
     DataGroupRepository,
     AIResultRepository,
-    DatasetPermissionRepository,
 )
 from backend.database.models import AIResult, AITask, TrainingTaskWSI
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, get_user_id_filter, check_wsi_access_permission
+from backend.auth.dependencies import (
+    require_pathologist_or_admin,
+    get_dataset_with_access,
+    get_permitted_dataset_ids,
+    get_user_id_filter,
+    get_wsi_with_access,
+)
 from backend.ai.utils.data_splitter import split_case_dataset, split_wsi_dataset
-from ..dependencies import logger, storage_manager, PREPROCESSING_SERVICE_URL
+from ..dependencies import logger, storage_manager
 from ..models import DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest
+from ..utils import proxy_preprocessing_json
 
 router = APIRouter(prefix="/wsi", tags=["WSI Management"])
 
@@ -69,10 +74,7 @@ async def list_wsi(
       - WSI slides in datasets they have temporary elevated permissions for
     """
     # Get elevated dataset IDs for non-admin users
-    elevated_dataset_ids = None
-    if not user.is_admin():
-        permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
-        elevated_dataset_ids = [p.dataset_id for p in permissions if p.is_valid()]
+    elevated_dataset_ids = await get_permitted_dataset_ids(user, db)
 
     user_id_str = str(user.id)
     is_admin = user.is_admin()
@@ -199,10 +201,7 @@ async def list_datasets(
         }
     """
     # Get elevated dataset IDs for non-admin users
-    elevated_dataset_ids = None
-    if not user.is_admin():
-        permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
-        elevated_dataset_ids = [p.dataset_id for p in permissions if p.is_valid()]
+    elevated_dataset_ids = await get_permitted_dataset_ids(user, db)
 
     datasets = await WSIRepository.get_datasets(
         db,
@@ -257,13 +256,14 @@ async def rename_dataset(
         new_name: New display name
     """
     try:
-        dataset = await DatasetRepository.get_by_id(db, req.dataset_id)
-        if not dataset:
-            raise HTTPException(status_code=404, detail=f"Dataset not found: {req.dataset_id}")
-
-        # Check ownership (admin can rename any, others only their own)
-        if not check_data_ownership(dataset.user_id, user):
-            raise HTTPException(status_code=403, detail="You don't have permission to rename this dataset")
+        dataset = await get_dataset_with_access(
+            req.dataset_id,
+            user,
+            db,
+            require_owner=True,
+            not_found_detail=f"Dataset not found: {req.dataset_id}",
+            forbidden_detail="You don't have permission to rename this dataset",
+        )
 
         updated = await DatasetRepository.update(db, req.dataset_id, {"name": req.new_name})
         await db.commit()
@@ -302,13 +302,14 @@ async def update_dataset_type(
             raise HTTPException(status_code=400, detail="task_type must be 'classification' or 'survival'")
 
         # Check dataset exists (with data_group loaded)
-        dataset = await DatasetRepository.get_by_id(db, dataset_id)
-        if not dataset:
-            raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
-
-        # Check ownership (admin can update any, others only their own)
-        if not check_data_ownership(dataset.user_id, user):
-            raise HTTPException(status_code=403, detail="You don't have permission to update this dataset")
+        dataset = await get_dataset_with_access(
+            dataset_id,
+            user,
+            db,
+            require_owner=True,
+            not_found_detail=f"Dataset not found: {dataset_id}",
+            forbidden_detail="You don't have permission to update this dataset",
+        )
 
         # Get current DataGroup to preserve data_type and aggregation_level
         current_data_group = dataset.data_group
@@ -397,13 +398,14 @@ async def update_dataset_data_level(
             raise HTTPException(status_code=400, detail="aggregation_level must be 'case' or 'file'")
 
         # Check dataset exists (with data_group loaded)
-        dataset = await DatasetRepository.get_by_id(db, dataset_id)
-        if not dataset:
-            raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
-
-        # Check ownership (admin can update any, others only their own)
-        if not check_data_ownership(dataset.user_id, user):
-            raise HTTPException(status_code=403, detail="You don't have permission to update this dataset")
+        dataset = await get_dataset_with_access(
+            dataset_id,
+            user,
+            db,
+            require_owner=True,
+            not_found_detail=f"Dataset not found: {dataset_id}",
+            forbidden_detail="You don't have permission to update this dataset",
+        )
 
         # Get current DataGroup to preserve data_type and task_type
         current_group = dataset.data_group
@@ -491,14 +493,14 @@ async def get_wsi(
 ):
     """Get WSI metadata and latest result.
     Users can access their own WSI, WSI in datasets they have elevated permissions for, or admin can access all."""
-    wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
-    if not wsi:
-        raise HTTPException(status_code=404, detail="wsi_id not found")
-
-    # Check access permission (ownership or elevated dataset permission)
-    has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
-    if not has_access:
-        raise HTTPException(status_code=403, detail="You don't have permission to access this WSI")
+    wsi = await get_wsi_with_access(
+        wsi_id,
+        user,
+        db,
+        with_dataset=True,
+        not_found_detail="wsi_id not found",
+        forbidden_detail="You don't have permission to access this WSI",
+    )
 
     # Get latest result
     last_result = await AIResultRepository.get_by_wsi_id(db, wsi_id)
@@ -558,13 +560,14 @@ async def delete_wsi(
     """
     try:
         # Get WSI from database
-        wsi = await WSIRepository.get_by_id(db, wsi_id)
-        if not wsi:
-            raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
-
-        # Check ownership
-        if not check_data_ownership(wsi.user_id, user):
-            raise HTTPException(status_code=403, detail="You don't have permission to delete this WSI")
+        wsi = await get_wsi_with_access(
+            wsi_id,
+            user,
+            db,
+            require_owner=True,
+            not_found_detail=f"WSI not found: {wsi_id}",
+            forbidden_detail="You don't have permission to delete this WSI",
+        )
 
         wsi_path = wsi.wsi_path
 
@@ -629,13 +632,15 @@ async def update_wsi_metadata(
     """
     try:
         # Get WSI from database (with dataset for to_dict())
-        wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
-        if not wsi:
-            raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
-
-        # Check ownership
-        if not check_data_ownership(wsi.user_id, user):
-            raise HTTPException(status_code=403, detail="You don't have permission to update this WSI")
+        wsi = await get_wsi_with_access(
+            wsi_id,
+            user,
+            db,
+            require_owner=True,
+            with_dataset=True,
+            not_found_detail=f"WSI not found: {wsi_id}",
+            forbidden_detail="You don't have permission to update this WSI",
+        )
 
         # Update fields if provided
         if req.label is not None:
@@ -701,13 +706,13 @@ async def compute_patches(
     logger.info(f"Proxying compute_patches request for WSI: {wsi_id}")
 
     # Verify WSI exists in database
-    wsi = await WSIRepository.get_by_id(db, wsi_id)
-    if not wsi:
-        raise HTTPException(status_code=404, detail="WSI not found")
-
-    # Check ownership
-    if not check_data_ownership(wsi.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to compute patches for this WSI")
+    await get_wsi_with_access(
+        wsi_id,
+        user,
+        db,
+        require_owner=True,
+        forbidden_detail="You don't have permission to compute patches for this WSI",
+    )
 
     # Build query parameters (patch_size and stride are auto-determined by PrePATH-style tiling)
     params = {
@@ -721,43 +726,14 @@ async def compute_patches(
         "contour_fn": contour_fn
     }
 
-    # Forward request to preprocessing service
-    try:
-        async with httpx.AsyncClient(timeout=600.0) as client:
-            response = await client.post(
-                f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
-                params=params
-            )
-
-            if response.status_code != 200:
-                logger.error(f"Preprocessing service error: {response.text}")
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"Preprocessing service error: {response.text}"
-                )
-
-            result = response.json()
-            logger.info(f"Successfully computed patches for WSI: {wsi_id}")
-            return result
-
-    except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error from preprocessing service: {e}")
-        raise HTTPException(
-            status_code=e.response.status_code,
-            detail=f"Preprocessing service error: {e.response.text}"
-        )
-    except httpx.RequestError as e:
-        logger.error(f"Failed to connect to preprocessing service: {e}")
-        raise HTTPException(
-            status_code=503,
-            detail=f"Preprocessing service unavailable: {str(e)}"
-        )
-    except Exception as e:
-        logger.error(f"Failed to compute patches: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to compute patches: {str(e)}"
-        )
+    result = await proxy_preprocessing_json(
+        "POST",
+        f"/wsi/{wsi_id}/compute_patches",
+        params=params,
+        timeout=600.0,
+    )
+    logger.info(f"Successfully computed patches for WSI: {wsi_id}")
+    return result
 
 
 @router.post("/datasets/{dataset_id}/splits")
@@ -845,13 +821,14 @@ async def upload_dataset_splits(
                 )
 
     # Validate dataset exists
-    dataset = await DatasetRepository.get_by_id(db, dataset_id)
-    if not dataset:
-        raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
-
-    # Check ownership (admin can modify any, others only their own)
-    if not check_data_ownership(dataset.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to modify this dataset")
+    dataset = await get_dataset_with_access(
+        dataset_id,
+        user,
+        db,
+        require_owner=True,
+        not_found_detail=f"Dataset not found: {dataset_id}",
+        forbidden_detail="You don't have permission to modify this dataset",
+    )
 
     # Get existing WSIs for mapping (only user's WSIs if not admin)
     wsis = await WSIRepository.get_by_dataset(db, dataset_id, user_id=user_id_filter)

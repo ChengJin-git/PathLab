@@ -5,7 +5,8 @@
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { fetchDatasets, fetchWSIList, DatasetSummary, getFileType } from '../api'
+import { fetchDatasets, fetchWSIList, DatasetSummary } from '../api'
+import { getFileType } from '../constants/fileTypes'
 import { DataLevel, TaskType } from '../constants/training'
 import { WSIItem } from '../types/training'
 

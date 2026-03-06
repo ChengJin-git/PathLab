@@ -18,9 +18,9 @@ from backend.database.repositories import (
     WSIRepository,
     AITaskRepository,
     AIResultRepository,
-    DatasetPermissionRepository,
 )
 from backend.auth import current_active_user, require_admin, User
+from backend.auth.dependencies import get_permitted_dataset_ids
 
 router = APIRouter(prefix="/stats", tags=["Statistics"])
 
@@ -115,10 +115,7 @@ async def get_recent_activity(
     user_id = str(user.id)
 
     # Get datasets the user has elevated permissions for (non-admin only)
-    permitted_dataset_ids = []
-    if not is_admin:
-        permissions = await DatasetPermissionRepository.get_valid_by_user(db, user_id)
-        permitted_dataset_ids = [p.dataset_id for p in permissions]
+    permitted_dataset_ids = await get_permitted_dataset_ids(user, db) or []
 
     # Get recent uploads (WSI slides)
     # User can see: their own uploads OR uploads in datasets they have permission for

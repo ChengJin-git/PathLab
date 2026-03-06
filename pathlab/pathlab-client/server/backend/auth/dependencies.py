@@ -115,6 +115,23 @@ async def get_user_id_filter(user: User = Depends(current_active_user)) -> Optio
     return None if user.is_admin() else str(user.id)
 
 
+async def get_permitted_dataset_ids(user: User, db: AsyncSession) -> Optional[list[str]]:
+    """
+    Get dataset IDs the user can access via temporary elevated permissions.
+
+    Returns:
+        - None for admin users (no restriction needed)
+        - List of permitted dataset IDs for non-admin users
+    """
+    if user.is_admin():
+        return None
+
+    from backend.database.repositories import DatasetPermissionRepository
+
+    permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
+    return [permission.dataset_id for permission in permissions if permission.is_valid()]
+
+
 def check_data_ownership(resource_user_id: Optional[str], current_user: User) -> bool:
     """
     Check if the current user can access a resource based on ownership.
@@ -187,6 +204,102 @@ async def check_wsi_access_permission(
             return True
 
     return False
+
+
+async def check_dataset_access_permission(
+    user: User,
+    dataset_id: str,
+    dataset_user_id: Optional[str],
+    db: AsyncSession
+) -> bool:
+    """
+    Check if a user can access a specific dataset.
+
+    Returns True if:
+    - User is admin
+    - User owns the dataset
+    - Dataset has no owner (legacy data)
+    - User has valid temporary elevated permission for the dataset
+    """
+    if check_data_ownership(dataset_user_id, user):
+        return True
+
+    from backend.database.repositories import DatasetPermissionRepository
+
+    return await DatasetPermissionRepository.has_valid_permission(
+        db, dataset_id, str(user.id), "pathologist"
+    )
+
+
+async def get_dataset_with_access(
+    dataset_id: str,
+    user: User,
+    db: AsyncSession,
+    *,
+    require_owner: bool = False,
+    not_found_detail: str = "Dataset not found",
+    forbidden_detail: str = "You don't have permission to access this dataset",
+):
+    """Load a dataset and enforce either owner-only or read access."""
+    from backend.database.repositories import DatasetRepository
+
+    dataset = await DatasetRepository.get_by_id(db, dataset_id)
+    if not dataset:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=not_found_detail,
+        )
+
+    if require_owner:
+        has_access = check_data_ownership(dataset.user_id, user)
+    else:
+        has_access = await check_dataset_access_permission(user, dataset_id, dataset.user_id, db)
+
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=forbidden_detail,
+        )
+
+    return dataset
+
+
+async def get_wsi_with_access(
+    wsi_id: str,
+    user: User,
+    db: AsyncSession,
+    *,
+    require_owner: bool = False,
+    with_dataset: bool = False,
+    not_found_detail: str = "WSI not found",
+    forbidden_detail: str = "You don't have permission to access this WSI",
+):
+    """Load a WSI and enforce either owner-only or read access."""
+    from backend.database.repositories import WSIRepository
+
+    if with_dataset:
+        wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
+    else:
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+
+    if not wsi:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=not_found_detail,
+        )
+
+    if require_owner:
+        has_access = check_data_ownership(wsi.user_id, user)
+    else:
+        has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
+
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=forbidden_detail,
+        )
+
+    return wsi
 
 
 async def check_task_access_permission(

@@ -9,7 +9,6 @@ SSE: polls Redis progress_store for extraction task progress.
 import json
 import uuid
 import asyncio
-import httpx
 from copy import deepcopy
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends
@@ -18,16 +17,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.database.repositories import (
-    DatasetPermissionRepository,
-    DatasetRepository,
     SegmentationAnnotationRepository,
     WSIRepository,
 )
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import (
-    check_data_ownership,
-    check_wsi_access_permission,
+    get_dataset_with_access,
     get_user_from_token_param,
+    get_wsi_with_access,
 )
 from backend.common.coco_utils import coco_to_roi_annotations
 from backend.common.file_types import is_patch_file
@@ -43,12 +40,13 @@ from backend.common.annotation_summary_cache import (
     save_draft_annotation_summary_cache,
 )
 from backend.common.progress_store import get_progress
-from ..dependencies import logger, PREPROCESSING_SERVICE_URL
+from ..dependencies import logger
 from ..models import (
     AnnotationSaveRequest,
     AnnotationExtractRequest,
     AnnotationDeleteByLabelsRequest,
 )
+from ..utils import request_preprocessing_service
 
 router = APIRouter(prefix="/annotation", tags=["Annotation"])
 
@@ -130,19 +128,12 @@ def _convert_gt_record_for_wsi(record, wsi):
 
 
 async def _get_dataset_with_access(dataset_id: str, user: User, db: AsyncSession):
-    dataset = await DatasetRepository.get_by_id(db, dataset_id)
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-
-    has_access = check_data_ownership(dataset.user_id, user)
-    if not has_access:
-        has_access = await DatasetPermissionRepository.has_valid_permission(
-            db, dataset_id, str(user.id), "pathologist"
-        )
-    if not has_access:
-        raise HTTPException(status_code=403, detail="You don't have permission to access this dataset")
-
-    return dataset
+    return await get_dataset_with_access(
+        dataset_id,
+        user,
+        db,
+        forbidden_detail="You don't have permission to access this dataset",
+    )
 
 
 async def _get_dataset_wsis(dataset_id: str, db: AsyncSession):
@@ -280,6 +271,9 @@ async def save_annotation(
 ):
     """Create or update a segmentation annotation (auto-save)."""
     try:
+        if req.source_dataset_id:
+            await _get_dataset_with_access(req.source_dataset_id, user, db)
+
         annotation = await SegmentationAnnotationRepository.upsert(
             db,
             annotation_id=req.annotation_id,
@@ -418,13 +412,13 @@ async def get_wsi_ground_truth_annotations(
     db: AsyncSession = Depends(get_db),
 ):
     """Return GT for a single WSI/patch, avoiding whole-dataset conversion."""
-    wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
-    if not wsi:
-        raise HTTPException(status_code=404, detail="WSI not found")
-
-    has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
-    if not has_access:
-        raise HTTPException(status_code=403, detail="You don't have permission to access this WSI")
+    wsi = await get_wsi_with_access(
+        wsi_id,
+        user,
+        db,
+        with_dataset=True,
+        forbidden_detail="You don't have permission to access this WSI",
+    )
 
     elevated_dataset_ids = {wsi.dataset_id} if wsi.dataset_id else None
     record_candidates = []
@@ -624,14 +618,14 @@ async def extract_regions(
     # --- 2. Validate WSI access for every referenced slide ---
     wsi_ids = list(annotations.keys())
     for wsi_id in wsi_ids:
-        wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
-        if not wsi:
-            raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
-        has_access = await check_wsi_access_permission(
-            user, wsi.dataset_id, wsi.user_id, db
+        await get_wsi_with_access(
+            wsi_id,
+            user,
+            db,
+            with_dataset=True,
+            not_found_detail=f"WSI not found: {wsi_id}",
+            forbidden_detail=f"No access to WSI: {wsi_id}",
         )
-        if not has_access:
-            raise HTTPException(status_code=403, detail=f"No access to WSI: {wsi_id}")
 
     # --- 3. Build region map & proxy to preprocessing ---
     task_id = f"annot_{uuid.uuid4().hex[:12]}"
@@ -653,33 +647,22 @@ async def extract_regions(
             for roi in roi_list
         ]
 
-    try:
-        payload = {
-            "regions": regions,
-            "dataset_name": req.dataset_name,
-            "task_type": req.task_type,
-            "user_id": user_id,
-            "task_id": task_id,
-        }
-        if req.source_dataset_id:
-            payload["source_dataset_id"] = req.source_dataset_id
+    payload = {
+        "regions": regions,
+        "dataset_name": req.dataset_name,
+        "task_type": req.task_type,
+        "user_id": user_id,
+        "task_id": task_id,
+    }
+    if req.source_dataset_id:
+        payload["source_dataset_id"] = req.source_dataset_id
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{PREPROCESSING_SERVICE_URL}/annotation/extract_regions",
-                json=payload,
-            )
-            if response.status_code != 200:
-                raise HTTPException(
-                    status_code=response.status_code, detail=response.text
-                )
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Preprocessing service timeout")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"ROI extraction proxy failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+    await request_preprocessing_service(
+        "POST",
+        "/annotation/extract_regions",
+        json_body=payload,
+        timeout=30.0,
+    )
 
     return {"task_id": task_id, "status": "started"}
 

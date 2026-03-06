@@ -14,6 +14,7 @@ from backend.database import get_db
 from backend.database.repositories import (
     DatasetRepository,
     DatasetPermissionRepository,
+    SegmentationAnnotationRepository,
     TrainingTaskRepository,
 )
 from backend.database.models import TrainingTask, WSISlide
@@ -216,6 +217,19 @@ async def revoke_dataset_permission(
             logger.debug(f"Permission revocation sent to AI service for task {task_id} (fire-and-forget)")
         except Exception as e:
             logger.warning(f"Failed to send permission revocation to AI service for task {task_id}: {e}")
+
+    deleted_annotation_count = await SegmentationAnnotationRepository.delete_by_dataset_and_user(
+        db,
+        dataset_id,
+        target_user_id,
+    )
+    if deleted_annotation_count:
+        logger.info(
+            "Deleted %s annotation record(s) for user %s on dataset %s during permission revocation",
+            deleted_annotation_count,
+            target_user_id,
+            dataset_id,
+        )
 
     # Delete permission from database
     deleted = await DatasetPermissionRepository.delete_by_dataset_and_user(db, dataset_id, target_user_id)

@@ -41,7 +41,7 @@ import {
 } from '../api/annotation'
 import { useToast } from '../contexts/ToastContext'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
-import { PATCH_EXTENSIONS } from '../constants/fileTypes'
+import { getFileType } from '../constants/fileTypes'
 
 export default function WSIViewerPage() {
   const { t } = useTranslation()
@@ -264,9 +264,7 @@ export default function WSIViewerPage() {
     if (annotatedWsiIds.size === 0) return false
     return allWSIs.some(wsi => {
       if (!annotatedWsiIds.has(wsi.wsi_id)) return false
-      const ext = wsi.file_extension?.toLowerCase() || ''
-      // Patch extensions are always patches; others are WSI
-      return !PATCH_EXTENSIONS.includes(ext)
+      return getFileType(wsi.file_extension || null, wsi.file_size ?? null) === 'WSI'
     })
   }, [allAnnotations, allWSIs])
 
@@ -568,6 +566,13 @@ export default function WSIViewerPage() {
     }
   }, [t])
 
+  const buildEmptyDatasetDraftAnnotations = useCallback((): AnnotationsMap => {
+    if (Object.keys(allAnnotations).length > 0) {
+      return allAnnotations
+    }
+    return wsi_id ? { [wsi_id]: [] } : {}
+  }, [allAnnotations, wsi_id])
+
   // Manual save handler
   const handleManualSave = useCallback(async () => {
     setSavingAnnotations(true)
@@ -576,13 +581,14 @@ export default function WSIViewerPage() {
       if (totalRegions === 0) {
         if (effectiveDatasetId) {
           const id = annotationId || crypto.randomUUID()
+          const emptyDatasetDraft = buildEmptyDatasetDraftAnnotations()
           if (!annotationId) setAnnotationId(id)
           await saveAnnotation({
             annotation_id: id,
             source_dataset_id: effectiveDatasetId,
-            annotations: {},
+            annotations: emptyDatasetDraft,
           })
-          updateDraftCache(id, {})
+          updateDraftCache(id, emptyDatasetDraft)
         } else if (annotationId) {
           // Nothing to save; if an annotation exists, delete it
           const idToDelete = annotationId
@@ -613,7 +619,7 @@ export default function WSIViewerPage() {
     } finally {
       setSavingAnnotations(false)
     }
-  }, [allAnnotations, annotationId, effectiveDatasetId, refreshDatasetAnnotationSummary, t, toast, updateDraftCache])
+  }, [allAnnotations, annotationId, buildEmptyDatasetDraftAnnotations, effectiveDatasetId, refreshDatasetAnnotationSummary, t, toast, updateDraftCache])
 
   const handleDeleteCrossSlideByLabel = useCallback(async (labels: string[]) => {
     const labelSet = new Set(labels)
@@ -707,13 +713,14 @@ export default function WSIViewerPage() {
     if (totalRegions === 0) {
       if (effectiveDatasetId) {
         const id = annotationId || crypto.randomUUID()
+        const emptyDatasetDraft = buildEmptyDatasetDraftAnnotations()
         if (!annotationId) setAnnotationId(id)
         saveAnnotation({
           annotation_id: id,
           source_dataset_id: effectiveDatasetId,
-          annotations: {},
+          annotations: emptyDatasetDraft,
         }).then(() => {
-          updateDraftCache(id, {})
+          updateDraftCache(id, emptyDatasetDraft)
           setHasUnsavedChanges(false)
           refreshDatasetAnnotationSummary()
         }).catch(err => {
@@ -756,7 +763,7 @@ export default function WSIViewerPage() {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     }
-  }, [annotationMode, allAnnotations, annotationId, effectiveDatasetId, hasUnsavedChanges, refreshDatasetAnnotationSummary, updateDraftCache])
+  }, [annotationMode, allAnnotations, annotationId, buildEmptyDatasetDraftAnnotations, effectiveDatasetId, hasUnsavedChanges, refreshDatasetAnnotationSummary, updateDraftCache])
 
   // Annotation: recovery when entering annotation mode
   useEffect(() => {

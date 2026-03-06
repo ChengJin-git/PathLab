@@ -25,6 +25,9 @@ export const TIF_EXTENSIONS: readonly string[] = [
   '.tif', '.tiff',
 ] as const
 
+// File size threshold for determining WSI vs Patch for .tif/.tiff files (100 MB)
+export const SIZE_THRESHOLD = 100 * 1024 * 1024
+
 // All supported extensions (WSI + TIF + Patch)
 export const ALL_EXTENSIONS: readonly string[] = [
   ...WSI_EXTENSIONS,
@@ -52,6 +55,20 @@ export const ALL_ACCEPT_STRING = ALL_EXTENSIONS.join(',')
 export function isSupportedName(name: string): boolean {
   const normalized = name.toLowerCase()
   return ALL_EXTENSIONS.some(ext => normalized.endsWith(ext))
+}
+
+/** Determine whether a file should be treated as a WSI or Patch */
+export function getFileType(fileExtension: string | null, fileSize: number | null): 'WSI' | 'Patch' {
+  if (!fileExtension) return 'WSI'
+  const ext = fileExtension.toLowerCase()
+
+  if (PATCH_EXTENSIONS.includes(ext)) return 'Patch'
+
+  if (TIF_EXTENSIONS.includes(ext)) {
+    return (fileSize || 0) >= SIZE_THRESHOLD ? 'WSI' : 'Patch'
+  }
+
+  return 'WSI'
 }
 
 /** Check if a filename is a TMAP data file (.dt0, .dt1, etc.) */

@@ -110,6 +110,21 @@ class SegmentationAnnotationRepository:
         return result.rowcount > 0
 
     @staticmethod
+    async def delete_by_dataset_and_user(
+        db: AsyncSession,
+        dataset_id: str,
+        user_id: str,
+    ) -> int:
+        """Delete all annotations for a user within a dataset. Returns deleted row count."""
+        result = await db.execute(
+            delete(SegmentationAnnotation)
+            .where(SegmentationAnnotation.source_dataset_id == dataset_id)
+            .where(SegmentationAnnotation.user_id == user_id)
+        )
+        await db.flush()
+        return int(result.rowcount or 0)
+
+    @staticmethod
     async def get_with_permission(
         db: AsyncSession,
         annotation_id: str,
