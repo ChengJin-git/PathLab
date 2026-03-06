@@ -2409,6 +2409,7 @@
       "saving": "Saving...",
       "saveChanges": "Save Changes",
       "batchEditMetadata": "Batch Edit Metadata",
+      "updateImages": "Update {{count}} images at once",
       "updateSlides": "Update {{count}} slides at once",
       "leaveFieldsEmpty": "Leave fields empty to keep existing values",
       "keepExisting": "Keep existing",

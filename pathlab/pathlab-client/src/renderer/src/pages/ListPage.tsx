@@ -2182,6 +2182,7 @@ export default function ListPage() {
           batchEditEventTime={batchEditEventTime}
           batchEditEventStatus={batchEditEventStatus}
           datasetType={selectedDatasetType}
+          visualType={selectedDatasetVisualType}
           onBatchEditLabelChange={setBatchEditLabel}
           onBatchEditCaseIdChange={setBatchEditCaseId}
           onBatchEditAgeChange={setBatchEditAge}

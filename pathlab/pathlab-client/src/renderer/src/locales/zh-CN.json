@@ -2358,6 +2358,7 @@
       "saving": "保存中...",
       "saveChanges": "保存更改",
       "batchEditMetadata": "批量编辑元数据",
+      "updateImages": "批量更新 {{count}} 张图像",
       "updateSlides": "批量更新 {{count}} 张切片",
       "leaveFieldsEmpty": "留空字段将保留现有值",
       "keepExisting": "保留现有值",

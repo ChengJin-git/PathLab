@@ -2345,6 +2345,7 @@
       "saving": "儲存中...",
       "saveChanges": "儲存變更",
       "batchEditMetadata": "批量編輯元數據",
+      "updateImages": "批量更新 {{count}} 張圖像",
       "updateSlides": "批量更新 {{count}} 張切片",
       "leaveFieldsEmpty": "留空欄位將保留現有值",
       "keepExisting": "保留現有值",

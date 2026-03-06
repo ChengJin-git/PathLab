@@ -168,6 +168,7 @@ export interface BatchEditModalProps {
   batchEditEventTime: string
   batchEditEventStatus: string
   datasetType?: 'classification' | 'survival' | 'segmentation'
+  visualType?: 'slides' | 'images'
   onBatchEditLabelChange: (v: string) => void
   onBatchEditCaseIdChange: (v: string) => void
   onBatchEditAgeChange: (v: string) => void
@@ -184,6 +185,7 @@ export function BatchEditModal({
   selectedCount, batchEditLabel, batchEditCaseId, batchEditAge, batchEditGender, batchEditSource,
   batchEditEventTime, batchEditEventStatus,
   datasetType,
+  visualType,
   onBatchEditLabelChange, onBatchEditCaseIdChange, onBatchEditAgeChange, onBatchEditGenderChange, onBatchEditSourceChange,
   onBatchEditEventTimeChange, onBatchEditEventStatusChange,
   batchUpdating, onCancel, onConfirm,
@@ -194,6 +196,7 @@ export function BatchEditModal({
   const isClassification = datasetType === 'classification'
   const isSurvival = datasetType === 'survival'
   const isSegmentation = datasetType === 'segmentation'
+  const isImageDataset = visualType === 'images'
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
@@ -204,7 +207,7 @@ export function BatchEditModal({
             <Edit className="w-6 h-6 sm:w-10 sm:h-10 text-blue-600" />
           </div>
           <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2">{t('listComponents.editModals.batchEditMetadata')}</h3>
-          <p className="text-xs sm:text-sm text-gray-600">{t('listComponents.editModals.updateSlides', { count: selectedCount })}</p>
+          <p className="text-xs sm:text-sm text-gray-600">{t(isImageDataset ? 'listComponents.editModals.updateImages' : 'listComponents.editModals.updateSlides', { count: selectedCount })}</p>
         </div>
 
         {/* Info Message */}
