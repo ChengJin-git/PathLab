@@ -32,6 +32,7 @@ from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_admin
 from ..dependencies import logger, storage_manager
 from ..models import StartBatchImportRequest, StartDeleteExternalRequest, StartBatchUpdateMetadataRequest
+from ..utils import ensure_segmentation_contract, ensure_dataset_segmentation_contract, find_matching_segmentation_annotation_path, load_coco_annotation_file
 from backend.ai.schemas.base import TaskStatus
 from backend.common.annotation_summary_cache import rebuild_dataset_annotation_summary_cache
 from backend.common.config import Config
@@ -168,6 +169,14 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
             resolved_dataset_id = None
             resolved_dataset_name = None
 
+            if task_type == 'segmentation' and aggregation_level != 'file':
+                await StorageTaskRepository.update_status(
+                    db, task_id, 'failed',
+                    error_message="Segmentation batch import must use aggregation_level='file'"
+                )
+                await db.commit()
+                return
+
             if dataset_id:
                 existing_dataset = await DatasetRepository.get_by_id(db, dataset_id)
                 if not existing_dataset:
@@ -177,16 +186,43 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                     )
                     await db.commit()
                     return
+                try:
+                    data_group = ensure_dataset_segmentation_contract(
+                        existing_dataset,
+                        context='Batch import',
+                        expected_task_type=task_type,
+                    )
+                except HTTPException as exc:
+                    await StorageTaskRepository.update_status(db, task_id, 'failed', error_message=str(exc.detail))
+                    await db.commit()
+                    return
                 resolved_dataset_id = dataset_id
                 resolved_dataset_name = existing_dataset.name
             elif dataset_name:
                 # Determine data_type from files (default to 'wsi')
                 # Check first file to determine if patch or wsi
                 data_type = 'wsi'
-                if files:
+                if task_type == 'segmentation':
+                    if any(not is_patch_file((f.get('path', '') if isinstance(f, dict) else f.path)) for f in files):
+                        await StorageTaskRepository.update_status(
+                            db, task_id, 'failed',
+                            error_message='Segmentation batch import only supports patch/image files with same-name COCO JSON annotations'
+                        )
+                        await db.commit()
+                        return
+                    data_type = 'patch'
+                    aggregation_level = 'file'
+                elif files:
                     first_file_path = files[0].get('path', '') if isinstance(files[0], dict) else files[0].path
                     if is_patch_file(first_file_path):
                         data_type = 'patch'
+
+                try:
+                    ensure_segmentation_contract(task_type, data_type, aggregation_level, context='Batch import')
+                except HTTPException as exc:
+                    await StorageTaskRepository.update_status(db, task_id, 'failed', error_message=str(exc.detail))
+                    await db.commit()
+                    return
 
                 # Get or create DataGroup first
                 data_group = await DataGroupRepository.get_or_create(
@@ -295,52 +331,55 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                         wsi_data["event_time"] = default_event_time
                         wsi_data["event_status"] = default_event_status
                     elif task_type == 'segmentation':
-                        # For segmentation: determine label based on JSON mask match
-                        image_stem = path_obj.stem.lower()
-                        json_candidates = [
-                            path_obj.parent / f"{path_obj.stem}.json",
-                            path_obj.parent / f"{path_obj.stem.lower()}.json",
-                        ]
-                        matched_json_path = None
-                        for candidate in json_candidates:
-                            if candidate.exists():
-                                matched_json_path = candidate
-                                break
-                        # Fallback: case-insensitive scan of directory
+                        if not is_patch_file(file_path, file_size):
+                            results.append({
+                                "path": file_path,
+                                "wsi_id": None,
+                                "status": "failed",
+                                "message": "Segmentation batch import only supports patch/image files"
+                            })
+                            failed_count += 1
+                            continue
+                        matched_json_path = find_matching_segmentation_annotation_path(file_path)
                         if matched_json_path is None:
-                            try:
-                                for sibling in path_obj.parent.iterdir():
-                                    if sibling.suffix.lower() == '.json' and sibling.stem.lower() == image_stem:
-                                        matched_json_path = sibling
-                                        break
-                            except Exception:
-                                pass
-                        wsi_data["label"] = "Has Mask" if matched_json_path is not None else "No Mask"
+                            results.append({
+                                "path": file_path,
+                                "wsi_id": None,
+                                "status": "failed",
+                                "message": "Missing same-name COCO JSON annotation"
+                            })
+                            failed_count += 1
+                            continue
+                        try:
+                            coco_data = load_coco_annotation_file(matched_json_path)
+                        except HTTPException as json_err:
+                            results.append({
+                                "path": file_path,
+                                "wsi_id": None,
+                                "status": "failed",
+                                "message": str(json_err.detail)
+                            })
+                            failed_count += 1
+                            continue
+                        wsi_data["label"] = "Segmentation"
                     else:
                         wsi_data["label"] = default_label
 
                     await WSIRepository.create(db, wsi_data)
 
                     # For segmentation tasks: import matched COCO JSON annotation file
-                    if task_type == 'segmentation' and matched_json_path is not None:
-                        try:
-                            with open(matched_json_path, 'r', encoding='utf-8') as jf:
-                                coco_data = json.load(jf)
-                            # Validate minimal COCO structure
-                            if isinstance(coco_data, dict) and ('images' in coco_data or 'annotations' in coco_data):
-                                annotation_id = f"annot_{wsi_id}"
-                                await SegmentationAnnotationRepository.upsert(
-                                    db,
-                                    annotation_id=annotation_id,
-                                    user_id=user_id,
-                                    annotations=coco_data,
-                                    source_dataset_id=resolved_dataset_id,
-                                    status="finalized",
-                                    source="import",
-                                )
-                                logger.info(f"Imported COCO annotation for {wsi_id} from {matched_json_path.name}")
-                        except Exception as json_err:
-                            logger.warning(f"Failed to import JSON annotation {matched_json_path}: {json_err}")
+                    if task_type == 'segmentation':
+                        annotation_id = f"annot_{wsi_id}"
+                        await SegmentationAnnotationRepository.upsert(
+                            db,
+                            annotation_id=annotation_id,
+                            user_id=user_id,
+                            annotations=coco_data,
+                            source_dataset_id=resolved_dataset_id,
+                            status="finalized",
+                            source="import",
+                        )
+                        logger.info(f"Imported COCO annotation for {wsi_id} from {matched_json_path.name}")
 
                     results.append({
                         "path": file_path,
@@ -745,6 +784,9 @@ async def start_batch_import_task(
     Progress can be monitored via SSE at /storage/tasks/stream
     """
     try:
+        if request.task_type == 'segmentation' and request.aggregation_level != 'file':
+            raise HTTPException(status_code=400, detail="Segmentation batch import must use aggregation_level='file'")
+
         # Generate task ID
         task_id = f"import_{uuid.uuid4().hex[:16]}"
 

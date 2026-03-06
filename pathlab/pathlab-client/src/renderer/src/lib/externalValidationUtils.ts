@@ -74,6 +74,7 @@ export function filterCompatibleDatasets(
 ): ValidationDataset[] {
   const modelDataType = modelTask.data_type || 'wsi'
   const modelIsSurvival = isSurvivalTask(modelTask.task_type)
+  const modelIsSegmentation = isSegmentationTask(modelTask.task_type)
   const modelClasses = new Set(model.classes || [])
   const modelWsiIds = new Set(modelTask.wsi_ids || [])
   const modelExtractor = model.feature_extractor || ''
@@ -83,9 +84,18 @@ export function filterCompatibleDatasets(
     // Rule 1: data_type must match
     if (ds.data_type !== modelDataType) return false
 
-    // Rule 2: task_type must match (survival vs classification)
+    // Rule 2: task_type family must match
     const datasetIsSurvival = ds.task_type === 'survival'
+    const datasetIsSegmentation = isSegmentationTask(ds.task_type)
     if (modelIsSurvival !== datasetIsSurvival) return false
+    if (modelIsSegmentation !== datasetIsSegmentation) return false
+
+    if (modelIsSegmentation) {
+      if (ds.data_type !== 'patch') return false
+      if (ds.aggregation_level !== 'file') return false
+      if (modelWsiIds.size > 0 && ds.wsi_ids?.some(id => modelWsiIds.has(id))) return false
+      return true
+    }
 
     // Rule 3: For classification, require exact label name set match
     if (!modelIsSurvival) {

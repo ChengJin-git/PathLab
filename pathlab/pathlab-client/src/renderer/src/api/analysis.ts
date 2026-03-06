@@ -184,6 +184,30 @@ export interface QuickAnalysisResponse {
       low_risk: { times: number[]; probs: number[]; ci_lower?: number[]; ci_upper?: number[] }
       cutoff: number
     }
+    iou_curve?: {
+      epochs: number[]
+      train_values: number[]
+      val_values?: number[]
+      metric_name: string
+    }
+    dice_curve?: {
+      epochs: number[]
+      train_values: number[]
+      val_values?: number[]
+      metric_name: string
+    }
+    per_class_iou?: {
+      classes: string[]
+      means: number[]
+      stds?: number[]
+      metric_name?: string
+    }
+    per_class_dice?: {
+      classes: string[]
+      means: number[]
+      stds?: number[]
+      metric_name?: string
+    }
   }
   chart_urls?: Record<string, string>
   // Async analysis fields (when analysis is pending/running)

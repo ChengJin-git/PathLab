@@ -307,6 +307,7 @@ export interface EditDatasetModalProps {
   editingDatasetOriginalDataLevel: 'case' | 'file'
   editingDatasetSaving: boolean
   isSlideDataset: boolean
+  canSelectSegmentation: boolean
   onNameChange: (v: string) => void
   onTypeChange: (v: 'classification' | 'survival' | 'segmentation') => void
   onDataLevelChange: (v: 'case' | 'file') => void
@@ -317,7 +318,7 @@ export interface EditDatasetModalProps {
 export function EditDatasetModal({
   editingDatasetName, editingDatasetType, editingDatasetOriginalType,
   editingDatasetDataLevel, editingDatasetOriginalDataLevel, editingDatasetSaving,
-  isSlideDataset, onNameChange, onTypeChange, onDataLevelChange, onCancel, onSave,
+  isSlideDataset, canSelectSegmentation, onNameChange, onTypeChange, onDataLevelChange, onCancel, onSave,
 }: EditDatasetModalProps) {
   const { t } = useTranslation()
   return (
@@ -359,11 +360,14 @@ export function EditDatasetModal({
               }`}>
               <span className="font-medium text-sm">{t('listComponents.editModals.survival')}</span>
             </button>
-            <button type="button" onClick={() => onTypeChange('segmentation')}
+            <button type="button" onClick={() => canSelectSegmentation && onTypeChange('segmentation')}
+              disabled={!canSelectSegmentation}
               className={`flex items-center justify-center gap-2 px-3 py-3 rounded-lg border-2 transition-all ${
                 editingDatasetType === 'segmentation'
                   ? 'border-violet-500 bg-violet-50 text-violet-700'
-                  : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                  : canSelectSegmentation
+                    ? 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                    : 'border-gray-100 bg-gray-50 text-gray-300 cursor-not-allowed'
               }`}>
               <span className="font-medium text-sm">{t('listComponents.editModals.segmentation')}</span>
             </button>

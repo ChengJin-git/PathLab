@@ -82,6 +82,7 @@ export interface UploadTaskFile {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
     aggregation_level?: 'case' | 'file'  // Aggregation level for new dataset
+    task_type?: 'classification' | 'survival' | 'segmentation'
     label?: string
     case_id?: string
     age?: number

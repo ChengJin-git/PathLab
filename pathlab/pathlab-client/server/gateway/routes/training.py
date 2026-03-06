@@ -23,6 +23,7 @@ from backend.database.repositories import (
 )
 from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, get_user_id_filter, check_wsi_access_permission
+from ..utils import ensure_dataset_segmentation_contract
 from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
 from ..dependencies import logger, storage_manager
@@ -57,6 +58,10 @@ async def create_training_task(
                 raise HTTPException(status_code=400, detail="No WSI files found in the specified dataset")
         if not wsi_ids:
             raise HTTPException(status_code=400, detail="At least one WSI must be selected")
+
+        expected_task_type = None
+        expected_data_type = None
+        expected_aggregation_level = "file"
 
         # --- Session 1: Read-only validations (fetch WSIs, check permissions, check storage tasks) ---
         async with safe_session() as db:
@@ -100,6 +105,38 @@ async def create_training_task(
 
             # Check for active batch import tasks (in same session)
             active_storage_tasks = await StorageTaskRepository.get_active_tasks(db)
+
+            dataset_ids = [dataset_id for dataset_id in dataset_ids_involved if dataset_id]
+            dataset_map = {
+                dataset.dataset_id: dataset
+                for dataset in await DatasetRepository.get_by_ids(db, list(dataset_ids))
+            }
+            group_contracts = set()
+            for dataset_id in dataset_ids:
+                dataset = dataset_map.get(dataset_id)
+                if dataset is None:
+                    raise HTTPException(status_code=400, detail=f"Dataset not found: {dataset_id}")
+                data_group = ensure_dataset_segmentation_contract(dataset, context='Training dataset')
+                group_contracts.add((data_group.task_type, data_group.data_type, data_group.aggregation_level))
+
+            if len(group_contracts) != 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail='All selected files must belong to datasets with the same task_type, data_type, and aggregation_level',
+                )
+
+            if group_contracts:
+                expected_task_type, expected_data_type, expected_aggregation_level = group_contracts.pop()
+                if req.task_type != expected_task_type:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Requested task_type '{req.task_type}' does not match dataset task_type '{expected_task_type}'",
+                    )
+                if req.data_type != expected_data_type:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Requested data_type '{req.data_type}' does not match dataset data_type '{expected_data_type}'",
+                    )
 
             # Check GPU permission for non-GPU users (in same session)
             if not user.can_use_gpu():
@@ -175,13 +212,7 @@ async def create_training_task(
 
         # --- Session 2: Write - create task and WSI associations ---
         async with safe_session() as db:
-            # Determine aggregation_level from the first WSI's dataset's DataGroup
-            aggregation_level = "file"
-            first_wsi = wsi_map.get(wsi_ids[0])
-            if first_wsi and first_wsi.dataset_id:
-                first_dataset = await DatasetRepository.get_by_id(db, first_wsi.dataset_id)
-                if first_dataset and first_dataset.data_group:
-                    aggregation_level = first_dataset.data_group.aggregation_level
+            aggregation_level = expected_aggregation_level
 
             # Get or create DataGroup for this training task
             data_group = await DataGroupRepository.get_or_create(

@@ -188,14 +188,51 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const [predefinedSplitCounts, setPredefinedSplitCounts] = useState<{ train: number, val: number, test: number }>({ train: 0, val: 0, test: 0 })
 
   // Get the currently selected dataset summary (for file_count when WSI list not loaded)
+  const normalizedDataType = useMemo(() => {
+    if (config.task_type === 'segmentation') return 'patch'
+    if (config.task_type === 'survival') return 'wsi'
+    return config.data_type
+  }, [config.task_type, config.data_type])
+
+  const compatibleDatasets = useMemo(() => {
+    return availableDatasets.filter(dataset => {
+      if (dataset.task_type !== config.task_type) return false
+      if (dataset.data_type !== normalizedDataType) return false
+      if (config.task_type === 'segmentation') {
+        return dataset.aggregation_level === 'file'
+      }
+      return true
+    })
+  }, [availableDatasets, config.task_type, normalizedDataType])
+
   const selectedDataset = useMemo(() => {
-    return availableDatasets.find(d => d.dataset_id === selectedDatasetId) || null
-  }, [availableDatasets, selectedDatasetId])
+    return compatibleDatasets.find(d => d.dataset_id === selectedDatasetId) || null
+  }, [compatibleDatasets, selectedDatasetId])
 
   // Load available datasets on mount
   useEffect(() => {
     loadDatasets()
   }, [])
+
+  useEffect(() => {
+    if (config.task_type === 'segmentation' && config.data_type !== 'patch') {
+      const nextConfig = { ...config, data_type: 'patch' as const }
+      setConfig(nextConfig)
+      onConfigChange?.(nextConfig)
+    } else if (config.task_type === 'survival' && config.data_type !== 'wsi') {
+      const nextConfig = { ...config, data_type: 'wsi' as const }
+      setConfig(nextConfig)
+      onConfigChange?.(nextConfig)
+    }
+  }, [config, onConfigChange])
+
+  useEffect(() => {
+    if (selectedDatasetId && !compatibleDatasets.some(d => d.dataset_id === selectedDatasetId)) {
+      setSelectedDatasetId(null)
+      setHasPreDefinedSplits(false)
+      setPredefinedSplitCounts({ train: 0, val: 0, test: 0 })
+    }
+  }, [selectedDatasetId, compatibleDatasets])
 
 
 
@@ -290,6 +327,14 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
 
   const updateConfig = (field: keyof AgentTaskConfig, value: any) => {
     const newConfig = { ...config, [field]: value }
+    if (field === 'task_type') {
+      if (value === 'segmentation') newConfig.data_type = 'patch'
+      if (value === 'survival') newConfig.data_type = 'wsi'
+    }
+    if (field === 'data_type') {
+      if (config.task_type === 'segmentation') newConfig.data_type = 'patch'
+      if (config.task_type === 'survival') newConfig.data_type = 'wsi'
+    }
     setConfig(newConfig)
     onConfigChange?.(newConfig)
     // Clear validation error for this field
@@ -359,7 +404,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         task_id: taskId,
         task_name: config.task_name,
         task_type: config.task_type as 'classification' | 'survival' | 'segmentation',
-        data_type: config.data_type,
+        data_type: normalizedDataType,
         task_description: config.task_description || `Created by PathLab Agent`,
         dataset_id: selectedDatasetId,
         preprocessing: {
@@ -491,9 +536,9 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.dataLevel')}</label>
             <select
-              value={config.data_type}
+              value={normalizedDataType}
               onChange={(e) => updateConfig('data_type', e.target.value)}
-              disabled={isCoreFieldLocked}
+              disabled={isCoreFieldLocked || config.task_type === 'segmentation' || config.task_type === 'survival'}
               className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${lockedSelectClass}`}
             >
               {FIELD_OPTIONS.data_type.map(opt => (
@@ -517,7 +562,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
               <Loader2 className="w-4 h-4 animate-spin" />
               {t('chatComponents.taskConfig.loadingDatasets')}
             </div>
-          ) : availableDatasets.length === 0 ? (
+          ) : compatibleDatasets.length === 0 ? (
             <p className="text-sm text-amber-600 py-2">{t('chatComponents.taskConfig.noDatasetsAvailable')}</p>
           ) : (
             <select
@@ -529,7 +574,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
 
                 // Immediately update split info from dataset summary
                 if (newDatasetId) {
-                  const selectedDataset = availableDatasets.find(d => d.dataset_id === newDatasetId)
+                  const selectedDataset = compatibleDatasets.find(d => d.dataset_id === newDatasetId)
                   if (selectedDataset) {
                     const hasSplits = selectedDataset.has_predefined_splits ?? false
                     const counts = selectedDataset.predefined_split_counts ?? { train: 0, val: 0, test: 0 }
@@ -553,7 +598,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 } ${lockedSelectClass}`}
             >
               <option value="">{t('chatComponents.taskConfig.selectDatasetPlaceholder')}</option>
-              {availableDatasets.map(dataset => (
+              {compatibleDatasets.map(dataset => (
                 <option key={dataset.dataset_id || 'uncategorized'} value={dataset.dataset_id || ''}>
                   {dataset.dataset_name} ({t('chatComponents.taskConfig.filesCount', { count: dataset.file_count })})
                 </option>

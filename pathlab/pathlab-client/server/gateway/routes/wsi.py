@@ -36,7 +36,7 @@ from backend.auth.dependencies import (
 from backend.ai.utils.data_splitter import split_case_dataset, split_wsi_dataset
 from ..dependencies import logger, storage_manager
 from ..models import DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest
-from ..utils import proxy_preprocessing_json
+from ..utils import proxy_preprocessing_json, ensure_segmentation_contract, ensure_dataset_segmentation_contract
 
 router = APIRouter(prefix="/wsi", tags=["WSI Management"])
 
@@ -298,8 +298,8 @@ async def update_dataset_type(
     """
     try:
         # Validate task_type
-        if req.task_type not in ["classification", "survival"]:
-            raise HTTPException(status_code=400, detail="task_type must be 'classification' or 'survival'")
+        if req.task_type not in ["classification", "survival", "segmentation"]:
+            raise HTTPException(status_code=400, detail="task_type must be 'classification', 'survival', or 'segmentation'")
 
         # Check dataset exists (with data_group loaded)
         dataset = await get_dataset_with_access(
@@ -315,6 +315,15 @@ async def update_dataset_type(
         current_data_group = dataset.data_group
         if not current_data_group:
             raise HTTPException(status_code=400, detail="Dataset has no associated DataGroup")
+        ensure_dataset_segmentation_contract(dataset, context='Dataset update')
+
+        if req.task_type == 'segmentation':
+            ensure_segmentation_contract(
+                req.task_type,
+                current_data_group.data_type,
+                current_data_group.aggregation_level,
+                context='Dataset update',
+            )
 
         # Get all WSIs in this dataset
         from sqlalchemy import update as sql_update
@@ -411,6 +420,13 @@ async def update_dataset_data_level(
         current_group = dataset.data_group
         if not current_group:
             raise HTTPException(status_code=500, detail="Dataset has no associated DataGroup")
+        ensure_dataset_segmentation_contract(dataset, context='Dataset data-level update')
+
+        if current_group.task_type == 'segmentation' and aggregation_level != 'file':
+            raise HTTPException(
+                status_code=400,
+                detail="Segmentation datasets must keep aggregation_level='file'",
+            )
 
         # If aggregation_level hasn't changed, no update needed
         if current_group.aggregation_level == aggregation_level:

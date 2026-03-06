@@ -634,6 +634,13 @@ interface MetricCurveData {
   metric_name: string  // e.g., 'IoU', 'Dice'
 }
 
+interface PerClassMetricBarData {
+  classes: string[]
+  means: number[]
+  stds?: number[]
+  metric_name: string
+}
+
 export const MetricCurveChart = memo(function MetricCurveChart({ data, title, compact }: { data: MetricCurveData } & ChartProps) {
   const { t } = useTranslation()
   const chartRef = useRef<ReactECharts | null>(null)
@@ -714,4 +721,67 @@ export const MetricCurveChart = memo(function MetricCurveChart({ data, title, co
   )
 })
 
-export type { ConfusionMatrixData, RocCurveData, LossCurveData, KFoldLossCurveData, MetricCurveData }
+export const PerClassMetricBarChart = memo(function PerClassMetricBarChart({ data, title, compact }: { data: PerClassMetricBarData } & ChartProps) {
+  const { t } = useTranslation()
+  const chartRef = useRef<ReactECharts | null>(null)
+  const safeName = data.metric_name.toLowerCase().replace(/\s+/g, '_')
+  const handleExport = useCallback(() => exportChartAsPng(chartRef, `${safeName}_per_class.png`, 600), [safeName])
+
+  const option: EChartsOption = useMemo(() => ({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: any) => {
+        if (!Array.isArray(params) || params.length === 0) return ''
+        const index = params[0]?.dataIndex ?? 0
+        const std = data.stds?.[index]
+        const value = data.means[index]
+        const lines = [`${data.classes[index]}<br/>${data.metric_name}: ${(value * 100).toFixed(2)}%`]
+        if (typeof std === 'number') {
+          lines.push(`Std: ${(std * 100).toFixed(2)}%`)
+        }
+        return lines.join('<br/>')
+      }
+    },
+    grid: compact
+      ? { left: 50, right: 20, top: 50, bottom: 70 }
+      : { left: 65, right: 30, top: 60, bottom: 85 },
+    xAxis: {
+      type: 'category',
+      data: data.classes,
+      axisLabel: { interval: 0, rotate: compact ? 25 : 35, fontSize: compact ? 10 : 12 }
+    },
+    yAxis: {
+      type: 'value',
+      min: 0,
+      max: 1,
+      name: data.metric_name,
+      nameLocation: 'middle',
+      nameGap: compact ? 35 : 45,
+      axisLabel: {
+        fontSize: compact ? 10 : 12,
+        formatter: (value: number) => `${Math.round(value * 100)}%`
+      }
+    },
+    series: [{
+      name: data.metric_name,
+      type: 'bar',
+      data: data.means,
+      itemStyle: { color: data.metric_name.toLowerCase().includes('dice') ? COLORS[4] : COLORS[0] },
+      barMaxWidth: compact ? 28 : 40,
+      emphasis: { focus: 'series' }
+    }]
+  }), [compact, data])
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+      <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+        <span className="text-sm font-medium text-gray-700">{title || `${data.metric_name} by Class`}</span>
+        <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title={t('analysisCharts.exportPng')}><Download className="w-4 h-4" /></button>
+      </div>
+      <ReactECharts ref={chartRef} option={option} style={{ height: compact ? '300px' : '420px', width: '100%' }} notMerge={true} />
+    </div>
+  )
+})
+
+export type { ConfusionMatrixData, RocCurveData, LossCurveData, KFoldLossCurveData, MetricCurveData, PerClassMetricBarData }

@@ -465,6 +465,7 @@ async def _run_external_validation_segmentation_analysis(task, request, db, mode
             "classes": [f"Class {s['class_index']}" for s in per_class_data["iou_per_class"]],
             "means": [s["mean"] for s in per_class_data["iou_per_class"]],
             "stds": [s["std"] for s in per_class_data["iou_per_class"]],
+            "metric_name": "IoU",
         }
 
     if "per_class_dice" in request.charts and per_class_data.get("dice_per_class"):
@@ -472,6 +473,7 @@ async def _run_external_validation_segmentation_analysis(task, request, db, mode
             "classes": [f"Class {s['class_index']}" for s in per_class_data["dice_per_class"]],
             "means": [s["mean"] for s in per_class_data["dice_per_class"]],
             "stds": [s["std"] for s in per_class_data["dice_per_class"]],
+            "metric_name": "Dice",
         }
 
     if progress_callback:
@@ -483,13 +485,15 @@ async def _run_external_validation_segmentation_analysis(task, request, db, mode
     for key, stat in metrics.items():
         flat_metrics[key] = stat["mean"]
 
+    num_with_ground_truth = sum(1 for r in image_results if r.get("has_ground_truth"))
+
     summary = {
         "task_id": task_id,
-        "task_type": "external_validation_segmentation",
+        "task_type": "segmentation",
         "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z',
         "description": request.description,
         "num_samples": len(image_results),
-        "num_with_ground_truth": sum(1 for r in image_results if r.get("has_ground_truth")),
+        "num_with_ground_truth": num_with_ground_truth,
         "num_classes": num_classes,
         "metrics": flat_metrics,
         "metrics_detailed": metrics,
@@ -519,9 +523,16 @@ async def _run_external_validation_segmentation_analysis(task, request, db, mode
         })
 
     await asyncio.to_thread(_write_json_sync, analysis_dir / "results.json", {
-        "image_results": per_image_details,
-        "aggregate_metrics": metrics,
+        "task_id": task_id,
+        "task_type": "segmentation",
+        "num_samples": len(image_results),
+        "num_with_ground_truth": num_with_ground_truth,
+        "num_classes": num_classes,
+        "metrics": flat_metrics,
+        "metrics_detailed": metrics,
         "per_class_data": per_class_data,
+        "chart_data": chart_data,
+        "wsi_results": per_image_details,
     })
 
     if progress_callback:

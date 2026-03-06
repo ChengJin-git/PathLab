@@ -1,6 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link } from 'react-router-dom'
 import { 
   UploadCloud, FolderPlus, File as FileIcon, AlertCircle, CheckCircle, 
   Loader2, Database, AlertTriangle, FileSpreadsheet, Plus, X, Download,
@@ -9,6 +8,7 @@ import {
 import { fetchDatasets, DatasetSummary, downloadCSVTemplate } from '../../api'
 import { useBackgroundTask, UploadTaskFile } from '../../contexts/BackgroundTaskContext'
 import { isSupportedName } from '../../constants/fileTypes'
+import { getSegmentationStem, mergeSegmentationJsonFiles, summarizeSegmentationMatches } from '../../lib/segmentationUploadUtils'
 
 export function parseDatasetRegistrationConfig(content: string): DatasetRegistrationConfig | null {
   const match = content.match(/\[DATASET_REGISTRATION\]([\s\S]*?)\[\/DATASET_REGISTRATION\]/)
@@ -95,6 +95,18 @@ export function DatasetRegistrationCard({
   
   const [validationErrors, setValidationErrors] = useState<string[]>([])
   const [segMissingMasks, setSegMissingMasks] = useState(false)
+  const [segmentationJsonFiles, setSegmentationJsonFiles] = useState<Map<string, File>>(new Map())
+  const [segmentationDuplicateJsonStems, setSegmentationDuplicateJsonStems] = useState<Set<string>>(new Set())
+
+  const filteredDatasets = useMemo(() => {
+    return datasets.filter(dataset => {
+      if (isSegmentation) {
+        return dataset.task_type === 'segmentation' && dataset.data_type === 'patch' && dataset.aggregation_level === 'file'
+      }
+      if (!config?.upload_mode) return true
+      return dataset.task_type === config.upload_mode
+    })
+  }, [datasets, isSegmentation, config?.upload_mode])
 
   useEffect(() => {
     if (config?.submitted_task_id) {
@@ -112,6 +124,33 @@ export function DatasetRegistrationCard({
   useEffect(() => {
     loadDatasets()
   }, [])
+
+  useEffect(() => {
+    if (isSegmentation) {
+      setDataLevel('file')
+    }
+  }, [isSegmentation])
+
+  useEffect(() => {
+    if (mode === 'existing' && selectedDatasetId && !filteredDatasets.some(d => d.dataset_id === selectedDatasetId)) {
+      setSelectedDatasetId('')
+    }
+  }, [mode, selectedDatasetId, filteredDatasets])
+
+  useEffect(() => {
+    if (!isSegmentation) {
+      setSegMissingMasks(false)
+      return
+    }
+
+    const { duplicateImageStems, missingImageStems, orphanJsonStems } = summarizeSegmentationMatches(localItems, segmentationJsonFiles)
+    setSegMissingMasks(
+      duplicateImageStems.length > 0 ||
+      missingImageStems.length > 0 ||
+      orphanJsonStems.length > 0 ||
+      segmentationDuplicateJsonStems.size > 0
+    )
+  }, [isSegmentation, localItems, segmentationJsonFiles, segmentationDuplicateJsonStems])
 
   const loadDatasets = async () => {
     try {
@@ -189,7 +228,6 @@ export function DatasetRegistrationCard({
       }
 
       const entries = items.map(item => (item as any).webkitGetAsEntry?.()).filter(Boolean)
-      const collectedItems: LocalItem[] = []
       
       const hasDirectory = entries.some(e => e.isDirectory)
       
@@ -225,19 +263,15 @@ export function DatasetRegistrationCard({
 
       setLocalItems(prev => [...prev, ...newItems])
 
-      // For segmentation: also include JSON mask files in the upload
       if (isSegmentation) {
-        if (jsonFiles.length > 0) {
-          const jsonItems = jsonFiles.map(f => ({
-            key: `${f.name}-${f.size}`,
-            name: f.name,
-            file: f,
-            type: 'standard' as const
-          }))
-          setLocalItems(prev => [...prev, ...jsonItems])
-          setSegMissingMasks(false)
-        } else {
-          setSegMissingMasks(true)
+        let duplicateJsonStems: string[] = []
+        setSegmentationJsonFiles(prev => {
+          const merged = mergeSegmentationJsonFiles(prev, jsonFiles)
+          duplicateJsonStems = merged.duplicateJsonStems
+          return merged.jsonFilesByStem
+        })
+        if (duplicateJsonStems.length > 0) {
+          setSegmentationDuplicateJsonStems(prev => new Set([...prev, ...duplicateJsonStems]))
         }
       }
 
@@ -260,16 +294,36 @@ export function DatasetRegistrationCard({
         throw new Error(t('chatComponents.datasetRegistration.selectDataset'))
       }
 
+      if (mode === 'existing' && !filteredDatasets.some(d => d.dataset_id === selectedDatasetId)) {
+        throw new Error('Selected dataset is not compatible with this registration mode.')
+      }
+
+      if (isSegmentation) {
+        const { duplicateImageStems, missingImageStems, orphanJsonStems } = summarizeSegmentationMatches(localItems, segmentationJsonFiles)
+        if (segmentationDuplicateJsonStems.size > 0) {
+          throw new Error(`Duplicate segmentation JSON stems detected: ${Array.from(segmentationDuplicateJsonStems).join(', ')}`)
+        }
+        if (duplicateImageStems.length > 0) {
+          throw new Error(`Duplicate segmentation image stems detected: ${duplicateImageStems.join(', ')}`)
+        }
+        if (missingImageStems.length > 0) {
+          throw new Error(`Missing same-name COCO JSON annotations for: ${missingImageStems.join(', ')}`)
+        }
+        if (orphanJsonStems.length > 0) {
+          throw new Error(`Segmentation JSON files without matching images: ${orphanJsonStems.join(', ')}`)
+        }
+      }
+
       const uploadTasks: UploadTaskFile[] = localItems.map(item => ({
         key: item.key,
         name: item.name,
         file: item.file,
         path: item.path,
-        type: item.type,
         metadata: {
           dataset_id: mode === 'existing' ? selectedDatasetId : undefined,
           dataset_name: mode === 'new' ? newDatasetName : undefined,
           aggregation_level: dataLevel,
+          task_type: config?.upload_mode || 'classification',
           label: isSegmentation ? undefined : '',
           case_id: '',
           age: undefined,
@@ -277,7 +331,8 @@ export function DatasetRegistrationCard({
           source: '',
           event_time: undefined,
           event_status: undefined
-        }
+        },
+        associatedFiles: isSegmentation ? [segmentationJsonFiles.get(getSegmentationStem(item.name))!] : undefined
       }))
 
       const taskId = await addUploadTask(uploadTasks)
@@ -340,20 +395,10 @@ export function DatasetRegistrationCard({
                   <div className="flex items-start gap-3 bg-orange-50 border border-orange-200 rounded-lg p-3">
                     <AlertTriangle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
                     <div>
-                      <p className="text-xs text-orange-800 font-medium">
-                        {t('chatComponents.datasetRegistration.segMissingMasksTitle')}
-                      </p>
+                      <p className="text-xs text-orange-800 font-medium">Segmentation registration requires strict image/JSON pairing.</p>
                       <p className="text-xs text-orange-700 mt-1 leading-relaxed">
-                        {t('chatComponents.datasetRegistration.segMissingMasksDesc')}
+                        Put one same-name COCO JSON file next to every image and remove extra / duplicate JSON files before starting registration.
                       </p>
-                      <ul className="text-xs text-orange-700 mt-1.5 space-y-1 list-disc list-inside">
-                        <li>
-                          <Link to="/wsi-list" className="text-orange-700 underline hover:text-orange-900 font-medium">
-                            {t('chatComponents.datasetRegistration.segGoToDataRepo')}
-                          </Link>
-                        </li>
-                        <li>{t('chatComponents.datasetRegistration.segAppendJsonLater')}</li>
-                      </ul>
                     </div>
                   </div>
                 )}
@@ -457,7 +502,7 @@ export function DatasetRegistrationCard({
                           className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 h-[38px]"
                         >
                           <option value="">{t('chatComponents.datasetRegistration.chooseDataset')}</option>
-                          {datasets.map(d => (
+                          {filteredDatasets.map(d => (
                              <option key={d.dataset_id || 'uncoded'} value={d.dataset_id || ''}>{d.dataset_name}</option>
                           ))}
                         </select>

@@ -192,7 +192,7 @@ async def run_training_pipeline(
                             db, f"annot_{wsi_id}", user_id or "", user_is_admin, elevated_dataset_ids
                         )
                         if annotation and annotation.annotations:
-                            coco_categories = draft.annotations.get("categories", [])
+                            coco_categories = annotation.annotations.get("categories", [])
                             if coco_categories:
                                 num_classes = len(coco_categories)
                                 break

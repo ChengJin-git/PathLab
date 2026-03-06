@@ -1,6 +1,6 @@
 import { Download, FlaskConical } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, type LossCurveData, type KFoldLossCurveData } from '../charts/AnalysisCharts'
+import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, MetricCurveChart, PerClassMetricBarChart, type LossCurveData, type KFoldLossCurveData } from '../charts/AnalysisCharts'
 import { getAuthToken } from '../../api'
 import { API_BASE } from '../../config'
 
@@ -11,6 +11,10 @@ export interface ChartData {
   roc_curve?: import('../charts/AnalysisCharts').RocCurveData
   loss_curve?: LossCurveData | KFoldLossCurveData
   km_curve?: import('../charts/AnalysisCharts').KMCurveData
+  iou_curve?: import('../charts/AnalysisCharts').MetricCurveData
+  dice_curve?: import('../charts/AnalysisCharts').MetricCurveData
+  per_class_iou?: import('../charts/AnalysisCharts').PerClassMetricBarData
+  per_class_dice?: import('../charts/AnalysisCharts').PerClassMetricBarData
 }
 
 export interface KFoldMetricValue {
@@ -444,6 +448,26 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                 <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/km_curve.png`)} alt={t('analysisDetails.kmCurve')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             ))}
+
+            {/* IoU Curve */}
+            {shouldShowChart('iou_curve') && analysis.chart_data?.iou_curve && (
+              <MetricCurveChart data={analysis.chart_data.iou_curve} title="IoU Curve" />
+            )}
+
+            {/* Dice Curve */}
+            {shouldShowChart('dice_curve') && analysis.chart_data?.dice_curve && (
+              <MetricCurveChart data={analysis.chart_data.dice_curve} title="Dice Curve" />
+            )}
+
+            {/* External Segmentation Per-Class IoU */}
+            {shouldShowChart('per_class_iou') && analysis.chart_data?.per_class_iou && (
+              <PerClassMetricBarChart data={analysis.chart_data.per_class_iou} title="Per-Class IoU" />
+            )}
+
+            {/* External Segmentation Per-Class Dice */}
+            {shouldShowChart('per_class_dice') && analysis.chart_data?.per_class_dice && (
+              <PerClassMetricBarChart data={analysis.chart_data.per_class_dice} title="Per-Class Dice" />
+            )}
           </div>
         </div>
       )}

@@ -101,8 +101,8 @@ export const EXTERNAL_VALIDATION_SURVIVAL_CHARTS: readonly ChartDefinition[] = [
 ] as const
 
 export const EXTERNAL_VALIDATION_SEGMENTATION_CHARTS: readonly ChartDefinition[] = [
-  { id: 'iou_curve', label: 'IoU Curve', description: 'IoU score over epochs', labelKey: 'resultsPage.chartLabels.iou_curve', descriptionKey: 'resultsPage.chartDescriptions.iou_curve' },
-  { id: 'dice_curve', label: 'Dice Curve', description: 'Dice score over epochs', labelKey: 'resultsPage.chartLabels.dice_curve', descriptionKey: 'resultsPage.chartDescriptions.dice_curve' },
+  { id: 'per_class_iou', label: 'Per-Class IoU', description: 'Per-class IoU distribution across the validation set', labelKey: 'resultsPage.chartLabels.per_class_iou', descriptionKey: 'resultsPage.chartDescriptions.per_class_iou' },
+  { id: 'per_class_dice', label: 'Per-Class Dice', description: 'Per-class Dice distribution across the validation set', labelKey: 'resultsPage.chartLabels.per_class_dice', descriptionKey: 'resultsPage.chartDescriptions.per_class_dice' },
 ] as const
 
 // ============================================================================
@@ -211,7 +211,7 @@ export const DEFAULT_EXTERNAL_SURVIVAL_CHARTS = ['km_curve']
 /**
  * Default charts for external validation segmentation (no loss_curve since no training).
  */
-export const DEFAULT_EXTERNAL_SEGMENTATION_CHARTS = ['iou_curve', 'dice_curve']
+export const DEFAULT_EXTERNAL_SEGMENTATION_CHARTS = ['per_class_iou', 'per_class_dice']
 
 // ============================================================================
 // Helper Functions

@@ -2201,6 +2201,10 @@ export default function ListPage() {
             const ds = datasets.find(d => d.dataset_id === editingDatasetId)
             return ds ? getDatasetVisualType(ds) === 'slides' : false
           })()}
+          canSelectSegmentation={editingDatasetDataLevel === 'file' && (() => {
+            const ds = datasets.find(d => d.dataset_id === editingDatasetId)
+            return ds ? getDatasetVisualType(ds) !== 'slides' : false
+          })()}
           onNameChange={setEditingDatasetName}
           onTypeChange={setEditingDatasetType}
           onDataLevelChange={setEditingDatasetDataLevel}

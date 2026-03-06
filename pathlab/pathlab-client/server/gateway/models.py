@@ -72,6 +72,7 @@ class UploadByPathRequest(BaseModel):
     dataset_id: Optional[str] = None  # Dataset UUID (existing dataset) or None for new
     dataset_name: Optional[str] = None  # Dataset display name (for creating new dataset)
     aggregation_level: Optional[str] = None  # Aggregation level for new dataset: "case" or "file"
+    task_type: Optional[str] = None  # classification | survival | segmentation
     label: Optional[str] = None
     case_id: Optional[str] = None
     wsi_id: Optional[str] = None

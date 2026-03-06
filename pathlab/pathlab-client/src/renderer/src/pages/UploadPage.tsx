@@ -34,6 +34,7 @@ import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCS
 import { useToast } from '../contexts/ToastContext'
 import { ALL_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../constants/fileTypes'
 import { parseCsvMetadata } from '../lib/csvImporter'
+import { getSegmentationStem, mergeSegmentationJsonFiles, summarizeSegmentationMatches } from '../lib/segmentationUploadUtils'
 import {
   type LocalItem, type FileMetadata, type UploadMode, type DataLevel, type DataType,
   type ElectronApi, type MrxsDataFolder, type CollectionResult,
@@ -45,7 +46,7 @@ import {
 declare const window: Window & { api?: ElectronApi }
 
 export default function RegisterPage() {
-  const { error: toastError, warning: toastWarning, info: toastInfo } = useToast()
+  const { error: toastError, warning: toastWarning } = useToast()
   const navigate = useNavigate()
   const { addUploadTask } = useBackgroundTask()
   const { t } = useTranslation()
@@ -187,6 +188,8 @@ export default function RegisterPage() {
   const [matchedMasks, setMatchedMasks] = useState<Set<string>>(new Set())
   // Segmentation: JSON stems that arrived without a matching image yet (for retroactive matching)
   const [pendingJsonStems, setPendingJsonStems] = useState<Set<string>>(new Set())
+  const [segmentationJsonFiles, setSegmentationJsonFiles] = useState<Map<string, File>>(new Map())
+  const [segmentationDuplicateJsonStems, setSegmentationDuplicateJsonStems] = useState<Set<string>>(new Set())
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1)
@@ -196,8 +199,6 @@ export default function RegisterPage() {
   const [batchMetadata, setBatchMetadata] = useState<FileMetadata>({ ...defaultMetadata })
 
   const tableContainerRef = useRef<HTMLDivElement>(null)
-  // Ref to always have the latest localItems for synchronous reads in async handlers
-  const localItemsRef = useRef<LocalItem[]>(localItems)
 
   const totalPages = Math.ceil(localItems.length / itemsPerPage)
   const paginatedItems = useMemo(() => {
@@ -213,10 +214,17 @@ export default function RegisterPage() {
     }
   }, [totalPages, currentPage])
 
-  // Keep localItemsRef in sync with localItems state
   useEffect(() => {
-    localItemsRef.current = localItems
-  }, [localItems])
+    if (uploadMode !== 'segmentation') {
+      setMatchedMasks(new Set())
+      setPendingJsonStems(new Set())
+      return
+    }
+
+    const { matchedStems, orphanJsonStems } = summarizeSegmentationMatches(localItems, segmentationJsonFiles)
+    setMatchedMasks(new Set(localItems.filter(item => matchedStems.has(getSegmentationStem(item.name))).map(item => item.key)))
+    setPendingJsonStems(new Set(orphanJsonStems))
+  }, [localItems, segmentationJsonFiles, uploadMode])
 
   const supportsNativePicker = typeof window !== 'undefined' && !!window.api?.files?.selectFiles
 
@@ -390,71 +398,19 @@ export default function RegisterPage() {
             })
             return updated
           })
-          // Segmentation: retroactively match new images against pending JSON stems
-          if (uploadMode === 'segmentation' && pendingJsonStems.size > 0) {
-            const newlyMatchedKeys: string[] = []
-            const stemsToRemove: string[] = []
-            nonDuplicateItems.forEach(item => {
-              const imageStem = item.name.replace(/\.[^/.]+$/, '').toLowerCase()
-              if (pendingJsonStems.has(imageStem)) {
-                newlyMatchedKeys.push(item.key)
-                stemsToRemove.push(imageStem)
-              }
-            })
-            if (newlyMatchedKeys.length > 0) {
-              setMatchedMasks(prev => {
-                const next = new Set(prev)
-                newlyMatchedKeys.forEach(k => next.add(k))
-                return next
-              })
-              setPendingJsonStems(prev => {
-                const next = new Set(prev)
-                stemsToRemove.forEach(s => next.delete(s))
-                return next
-              })
-            }
-          }
         }
       }
     }
 
-    // Segmentation mode: match JSON mask files to image items by filename stem
-    // Uses localItemsRef for a synchronous snapshot — avoids nested state-setter anti-pattern
     if (uploadMode === 'segmentation' && jsonFiles && jsonFiles.length > 0) {
-      const jsonStems = new Set(
-        jsonFiles.map(f => f.name.replace(/\.json$/i, '').toLowerCase())
-      )
-
-      // Match against all current items (snapshot via ref)
-      const matchedKeys: string[] = []
-      const unmatchedStems: string[] = []
-      const currentItems = localItemsRef.current
-      jsonStems.forEach(stem => {
-        const match = currentItems.find(
-          item => item.name.replace(/\.[^/.]+$/, '').toLowerCase() === stem
-        )
-        if (match) {
-          matchedKeys.push(match.key)
-        } else {
-          unmatchedStems.push(stem)
-        }
+      let duplicateJsonStems: string[] = []
+      setSegmentationJsonFiles(prev => {
+        const merged = mergeSegmentationJsonFiles(prev, jsonFiles)
+        duplicateJsonStems = merged.duplicateJsonStems
+        return merged.jsonFilesByStem
       })
-
-      if (matchedKeys.length > 0) {
-        setMatchedMasks(prev => {
-          const next = new Set(prev)
-          matchedKeys.forEach(k => next.add(k))
-          return next
-        })
-      }
-
-      // Store unmatched JSON stems so they can match future image drops
-      if (unmatchedStems.length > 0) {
-        setPendingJsonStems(prev => {
-          const next = new Set(prev)
-          unmatchedStems.forEach(s => next.add(s))
-          return next
-        })
+      if (duplicateJsonStems.length > 0) {
+        setSegmentationDuplicateJsonStems(prev => new Set([...prev, ...duplicateJsonStems]))
       }
     }
   }
@@ -604,6 +560,36 @@ export default function RegisterPage() {
 
     if (localItems.length === 0) return
 
+    if (uploadMode === 'segmentation') {
+      const invalidSegmentationItems = localItems.filter(item => item.type !== 'standard')
+      if (invalidSegmentationItems.length > 0) {
+        setSubmitError('Segmentation upload only supports patch/image files with same-name COCO JSON annotations.')
+        return
+      }
+
+      const { duplicateImageStems, orphanJsonStems } = summarizeSegmentationMatches(localItems, segmentationJsonFiles)
+      const missingFileAnnotations = localItems
+        .filter(item => item.file && !segmentationJsonFiles.has(getSegmentationStem(item.name)))
+        .map(item => item.name)
+
+      if (segmentationDuplicateJsonStems.size > 0) {
+        setSubmitError(`Duplicate segmentation JSON stems detected: ${Array.from(segmentationDuplicateJsonStems).join(', ')}`)
+        return
+      }
+      if (duplicateImageStems.length > 0) {
+        setSubmitError(`Duplicate segmentation image stems detected: ${duplicateImageStems.join(', ')}`)
+        return
+      }
+      if (orphanJsonStems.length > 0) {
+        setSubmitError(`Segmentation JSON files without matching images: ${orphanJsonStems.join(', ')}`)
+        return
+      }
+      if (missingFileAnnotations.length > 0) {
+        setSubmitError(`Missing same-name COCO JSON annotations for: ${missingFileAnnotations.join(', ')}`)
+        return
+      }
+    }
+
     // Prepare items with resolved metadata (UI + CSV)
     const itemsWithMeta = localItems.map(item => {
       const uiMeta = localMetadata.get(item.key) || {} as FileMetadata
@@ -675,6 +661,7 @@ export default function RegisterPage() {
           dataset_name: datasetId ? undefined : datasetName.trim(),
           // Only pass aggregation_level for new datasets (when dataset_id is not set)
           aggregation_level: datasetId ? undefined : dataLevel,
+          task_type: uploadMode,
           label: uploadMode !== 'segmentation' && finalMeta.label ? String(finalMeta.label) : undefined,
           case_id: finalMeta.case_id ? String(finalMeta.case_id) : undefined,
           age,
@@ -683,7 +670,9 @@ export default function RegisterPage() {
           event_time: eventTime,
           event_status: eventStatus
         },
-        associatedFiles: item.associatedFiles
+        associatedFiles: uploadMode === 'segmentation' && item.file
+          ? [segmentationJsonFiles.get(getSegmentationStem(item.name))!]
+          : item.associatedFiles
       }
     })
 
@@ -697,14 +686,6 @@ export default function RegisterPage() {
 
       // Show warning about not refreshing during upload
       toastWarning(t('uploadPage.uploadingWarning'), 8000)
-
-      // For segmentation: warn about missing annotations
-      if (uploadMode === 'segmentation') {
-        const missingCount = localItems.filter(item => !matchedMasks.has(item.key)).length
-        if (missingCount > 0) {
-          toastInfo(t('uploadPage.missingAnnotationWarning', { count: missingCount }), 10000)
-        }
-      }
 
       // Clear the form
       resetUpload()
@@ -727,6 +708,8 @@ export default function RegisterPage() {
     setSubmitError(null)
     setMatchedMasks(new Set())
     setPendingJsonStems(new Set())
+    setSegmentationJsonFiles(new Map())
+    setSegmentationDuplicateJsonStems(new Set())
   }
 
   // --- Selection Logic ---

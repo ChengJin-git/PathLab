@@ -458,6 +458,7 @@ export async function uploadWSIFile(
     dataset_id?: string
     dataset_name?: string
     aggregation_level?: 'case' | 'file'
+    task_type?: 'classification' | 'survival' | 'segmentation'
     label?: string
     case_id?: string
     age?: number
@@ -477,6 +478,7 @@ export async function uploadWSIFile(
   if (options?.dataset_id) formData.append('dataset_id', options.dataset_id)
   if (options?.dataset_name) formData.append('dataset_name', options.dataset_name)
   if (options?.aggregation_level) formData.append('aggregation_level', options.aggregation_level)
+  if (options?.task_type) formData.append('task_type', options.task_type)
   if (options?.label) formData.append('label', options.label)
   if (options?.case_id) formData.append('case_id', options.case_id)
   if (options?.age !== undefined) formData.append('age', options.age.toString())
@@ -562,6 +564,7 @@ export async function uploadWSIByPath(
     dataset_id?: string
     dataset_name?: string
     aggregation_level?: 'case' | 'file'
+    task_type?: 'classification' | 'survival' | 'segmentation'
     label?: string
     case_id?: string
     wsi_id?: string
@@ -583,6 +586,7 @@ export async function uploadWSIByPath(
         dataset_id: options?.dataset_id,
         dataset_name: options?.dataset_name,
         aggregation_level: options?.aggregation_level,
+        task_type: options?.task_type,
         label: options?.label,
         case_id: options?.case_id,
         wsi_id: options?.wsi_id,
