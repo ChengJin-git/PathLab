@@ -291,11 +291,11 @@ export default function ListPage() {
     options: Array<{ value: string; label: string }>,
     onChange: (value: string) => void
   ) => (
-    <div className="space-y-2.5">
-      <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-[0.18em] text-gray-400">
+    <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 min-w-0">
+      <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400 whitespace-nowrap">
         {label}
       </p>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-1.5 sm:gap-2 min-w-0">
         {options.map((option) => {
           const selected = option.value === value
 
@@ -304,7 +304,7 @@ export default function ListPage() {
               key={option.value}
               type="button"
               onClick={() => onChange(option.value)}
-              className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap border ${selected
+              className={`px-2.5 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all whitespace-nowrap border ${selected
                 ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
                 : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300 hover:text-gray-900 hover:bg-gray-50'
                 }`}
@@ -1026,32 +1026,8 @@ export default function ListPage() {
           {/* Dataset Filters */}
           {!datasetsLoading && !datasetsError && visibleDatasets.length > 0 && (
             <Card className="border-gray-100 shadow-sm bg-white/80 backdrop-blur-sm">
-              <div className="p-4 sm:p-5 space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
-                  <div>
-                    <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-[0.18em] text-gray-400">
-                      {t('listPage.filters.title')}
-                    </p>
-                    <p className="text-sm text-gray-600 mt-1">
-                      {t('listPage.filters.summary', {
-                        shown: filteredDatasets.length,
-                        total: visibleDatasets.length,
-                      })}
-                    </p>
-                  </div>
-
-                  {hasActiveDatasetFilters && (
-                    <button
-                      type="button"
-                      onClick={clearDatasetFilters}
-                      className="self-start sm:self-auto text-sm font-semibold text-indigo-600 hover:text-indigo-700 transition-colors"
-                    >
-                      {t('listPage.filters.clear')}
-                    </button>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+              <div className="px-4 py-3 sm:px-5 sm:py-3.5">
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
                   {renderDatasetFilterGroup(
                     t('listPage.filters.groups.taskType'),
                     datasetTaskFilter,
@@ -1069,8 +1045,8 @@ export default function ListPage() {
                     datasetTypeFilter,
                     [
                       { value: 'all', label: t('common.all') },
-                      { value: 'wsi', label: t('listPage.wsi') },
-                      { value: 'patch', label: t('listPage.patch') },
+                      { value: 'wsi', label: t('listPage.wholeSlideImaging') },
+                      { value: 'patch', label: t('listPage.patchCollection') },
                     ],
                     (nextValue) => setDatasetTypeFilter(nextValue as DatasetTypeFilter)
                   )}
@@ -1085,6 +1061,25 @@ export default function ListPage() {
                     ],
                     (nextValue) => setDatasetLevelFilter(nextValue as DatasetLevelFilter)
                   )}
+
+                  <div className="flex items-center gap-2 sm:gap-3 ml-auto pl-0 sm:pl-2">
+                    <span className="inline-flex items-center rounded-full bg-slate-50 px-2.5 sm:px-3 py-1 text-[11px] sm:text-xs font-medium text-slate-600 whitespace-nowrap">
+                      {t('listPage.filters.compactSummary', {
+                        shown: filteredDatasets.length,
+                        total: visibleDatasets.length,
+                      })}
+                    </span>
+
+                    {hasActiveDatasetFilters && (
+                      <button
+                        type="button"
+                        onClick={clearDatasetFilters}
+                        className="text-[11px] sm:text-xs font-semibold text-indigo-600 hover:text-indigo-700 transition-colors whitespace-nowrap"
+                      >
+                        {t('listPage.filters.clear')}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </Card>
@@ -2130,7 +2125,7 @@ export default function ListPage() {
       {showBatchDeleteModal && (
         <BatchDeleteModal
           selectedIds={selectedIds}
-          datasetToDeleteId={datasetToDeleteId}
+          datasetToDeleteId={datasetToDeleteId ?? ''}
           datasetToDeleteName={datasetToDeleteName}
           deleteMode={deleteMode}
           onDeleteModeChange={setDeleteMode}

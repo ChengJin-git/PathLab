@@ -1487,6 +1487,7 @@
       "title": "Filter datasets",
       "clear": "Clear filters",
       "summary": "Showing {{shown}} of {{total}} datasets",
+      "compactSummary": "{{shown}} / {{total}} datasets",
       "groups": {
         "taskType": "Task Type",
         "dataType": "Data Type",

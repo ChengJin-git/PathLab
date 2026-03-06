@@ -169,7 +169,7 @@ export function DeleteConfirmModal({
 
 export interface BatchDeleteModalProps {
   selectedIds: Set<string>
-  datasetToDeleteId: string
+  datasetToDeleteId: string | null
   datasetToDeleteName: string
   deleteMode: 'standard' | 'complete'
   onDeleteModeChange: (mode: 'standard' | 'complete') => void

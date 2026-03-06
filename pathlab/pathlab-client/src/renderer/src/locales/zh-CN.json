@@ -1474,8 +1474,8 @@
     "stratifiedSplit": "分层划分（按标签）",
     "exportWithSplit": "导出并划分",
     "ratiosMustSumToOne": "比例之和必须为 1.0",
-    "wholeSlideImaging": "全切片图像数据",
-    "patchCollection": "普通图像数据",
+    "wholeSlideImaging": "全切片图像",
+    "patchCollection": "普通图像",
     "survival": "生存分析",
     "classification": "分类",
     "segmentation": "分割",
@@ -1487,6 +1487,7 @@
       "title": "筛选数据集",
       "clear": "清除筛选",
       "summary": "当前显示 {{shown}} / {{total}} 个数据集",
+      "compactSummary": "{{shown}} / {{total}} 个数据集",
       "groups": {
         "taskType": "任务类型",
         "dataType": "数据类型",
