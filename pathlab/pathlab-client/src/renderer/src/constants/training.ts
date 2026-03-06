@@ -59,6 +59,7 @@ export interface ExtractorOption {
   id: string
   name: string
   description: string
+  supports_spatial?: boolean
 }
 
 /**
@@ -66,29 +67,30 @@ export interface ExtractorOption {
  * Order matches backend registry.py to avoid UI jump.
  */
 export const FEATURE_EXTRACTORS: readonly ExtractorOption[] = [
-  { id: 'resnet50', name: 'ResNet50', description: 'ImageNet pretrained CNN, 2048-dim, general-purpose baseline' },
-  { id: 'vit_l_16', name: 'ViT-Large', description: 'ImageNet pretrained ViT-L/16, 1024-dim, general-purpose baseline' },
-  { id: 'conch', name: 'CONCH', description: 'CLIP ViT-B/16, 512-dim (Mahmood Lab)' },
-  { id: 'uni', name: 'UNI', description: 'DINOv2 ViT-L/16, 1024-dim (Mahmood Lab)' },
-  { id: 'uni2', name: 'UNI2', description: 'ViT-G/14, 1536-dim (Mahmood Lab)' },
-  { id: 'virchow', name: 'Virchow', description: 'DINOv2 ViT-H/14, 1280-dim (Paige AI)' },
-  { id: 'virchow2', name: 'Virchow2', description: 'DINOv2 ViT-H/14, 1280-dim (Paige AI)' },
-  { id: 'plip', name: 'PLIP', description: 'CLIP ViT-B/32, 512-dim (Stanford)' },
-  { id: 'phikon', name: 'Phikon', description: 'DINOv2 ViT-B/16, 768-dim (Owkin)' },
-  { id: 'phikon2', name: 'Phikon2', description: 'DINOv2 ViT-L/16, 1024-dim (Owkin)' },
-  { id: 'patho_clip', name: 'PathoCLIP', description: 'CLIP ViT-L/14, 768-dim' },
-  { id: 'openmidnight', name: 'OpenMidnight', description: 'DINOv2 ViT-G/14, 1536-dim' },
-  { id: 'conch15', name: 'CONCH 1.5', description: 'CLIP ViT-B/16, 512-dim (Mahmood Lab)' },
-  { id: 'H-Optimus-1', name: 'H-Optimus-1', description: 'ViT-G/14, 1536-dim (Bioptimus)' },
-  { id: 'H-Optimus-0', name: 'H-Optimus-0', description: 'ViT-G/14, 1536-dim (Bioptimus)' },
-  { id: 'mSTAR', name: 'mSTAR', description: 'DINOv2 ViT-L/16, 1024-dim' },
-  { id: 'GPFM', name: 'GPFM', description: 'DINOv2 ViT-G/14, 1536-dim' },
-  { id: 'SmartCCS', name: 'Smart-CCS', description: 'DINOv2 ViT-L/14, 1024-dim (Smartlab)' },
-  { id: 'SmartCyto', name: 'SmartCyto', description: 'DINOv3 ViT-B/16, 768-dim (Smartlab)' }
+  { id: 'resnet50', name: 'ResNet50', description: 'ImageNet pretrained CNN, 2048-dim, general-purpose baseline', supports_spatial: false },
+  { id: 'vit_l_16', name: 'ViT-Large', description: 'ImageNet pretrained ViT-L/16, 1024-dim, general-purpose baseline', supports_spatial: false },
+  { id: 'conch', name: 'CONCH', description: 'CLIP ViT-B/16, 512-dim (Mahmood Lab)', supports_spatial: true },
+  { id: 'uni', name: 'UNI', description: 'DINOv2 ViT-L/16, 1024-dim (Mahmood Lab)', supports_spatial: true },
+  { id: 'uni2', name: 'UNI2', description: 'ViT-G/14, 1536-dim (Mahmood Lab)', supports_spatial: true },
+  { id: 'virchow', name: 'Virchow', description: 'DINOv2 ViT-H/14, 1280-dim (Paige AI)', supports_spatial: true },
+  { id: 'virchow2', name: 'Virchow2', description: 'DINOv2 ViT-H/14, 1280-dim (Paige AI)', supports_spatial: true },
+  { id: 'plip', name: 'PLIP', description: 'CLIP ViT-B/32, 512-dim (Stanford)', supports_spatial: true },
+  { id: 'phikon', name: 'Phikon', description: 'DINOv2 ViT-B/16, 768-dim (Owkin)', supports_spatial: true },
+  { id: 'phikon2', name: 'Phikon2', description: 'DINOv2 ViT-L/16, 1024-dim (Owkin)', supports_spatial: true },
+  { id: 'patho_clip', name: 'PathoCLIP', description: 'CLIP ViT-L/14, 768-dim', supports_spatial: true },
+  { id: 'openmidnight', name: 'OpenMidnight', description: 'DINOv2 ViT-G/14, 1536-dim', supports_spatial: true },
+  { id: 'conch15', name: 'CONCH 1.5', description: 'CLIP ViT-B/16, 512-dim (Mahmood Lab)', supports_spatial: true },
+  { id: 'H-Optimus-1', name: 'H-Optimus-1', description: 'ViT-G/14, 1536-dim (Bioptimus)', supports_spatial: true },
+  { id: 'H-Optimus-0', name: 'H-Optimus-0', description: 'ViT-G/14, 1536-dim (Bioptimus)', supports_spatial: true },
+  { id: 'mSTAR', name: 'mSTAR', description: 'DINOv2 ViT-L/16, 1024-dim', supports_spatial: true },
+  { id: 'GPFM', name: 'GPFM', description: 'DINOv2 ViT-G/14, 1536-dim', supports_spatial: true },
+  { id: 'SmartCCS', name: 'Smart-CCS', description: 'DINOv2 ViT-L/14, 1024-dim (Smartlab)', supports_spatial: true },
+  { id: 'SmartCyto', name: 'SmartCyto', description: 'DINOv3 ViT-B/16, 768-dim (Smartlab)', supports_spatial: true }
 ] as const
 
 /** Default feature extractor ID */
 export const DEFAULT_EXTRACTOR = 'resnet50'
+export const FM_SEGMENTATION_ARCHITECTURE = 'conv_decoder'
 
 /**
  * Feature extractors as SelectOption format for dropdowns.

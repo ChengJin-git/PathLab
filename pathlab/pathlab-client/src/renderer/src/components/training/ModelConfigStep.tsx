@@ -4,7 +4,7 @@
  * Step 4: Aggregator/feature extractor selection and training parameters.
  */
 
-import React, { useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
@@ -13,15 +13,16 @@ import {
   DataLevel,
   TaskType,
   ExtractorOption,
-  BackboneOption,
-  LossOption,
   AGGREGATORS,
   OPTIMIZERS,
   PATCH_CLASSIFIERS,
+  FEATURE_EXTRACTORS,
   SEGMENTATION_ARCHITECTURES,
   SEGMENTATION_BACKBONES,
   SEGMENTATION_LOSSES,
   BACKBONE_GROUPS,
+  DEFAULT_SEG_BACKBONE,
+  isSegFmEncoder,
 } from '../../constants/training'
 
 export interface ModelConfigStepProps {
@@ -138,6 +139,60 @@ export function ModelConfigStep({
     return list
   }, [backboneSearch, backboneGroup])
 
+  const allSegmentationFmExtractors = useMemo(
+    () => FEATURE_EXTRACTORS.filter((extractor) => extractor.supports_spatial && isSegFmEncoder(extractor.id)),
+    []
+  )
+
+  const filteredSegmentationFmExtractors = useMemo(
+    () => filteredExtractors.filter((extractor) => extractor.supports_spatial && isSegFmEncoder(extractor.id)),
+    [filteredExtractors]
+  )
+
+  const isFmSegmentation = isSegFmEncoder(segBackbone)
+  const [lastStandardBackbone, setLastStandardBackbone] = useState(
+    isFmSegmentation ? DEFAULT_SEG_BACKBONE : segBackbone || DEFAULT_SEG_BACKBONE
+  )
+  const [lastFmExtractor, setLastFmExtractor] = useState(
+    isFmSegmentation ? segBackbone : (allSegmentationFmExtractors[0]?.id ?? 'uni')
+  )
+
+  useEffect(() => {
+    if (isSegFmEncoder(segBackbone)) {
+      setLastFmExtractor(segBackbone)
+    } else if (segBackbone) {
+      setLastStandardBackbone(segBackbone)
+    }
+  }, [segBackbone])
+
+  const switchSegmentationModelType = (mode: 'standard' | 'fm') => {
+    setBackboneSearch('')
+    setBackboneGroup(null)
+    setExtractorSearch('')
+
+    if (mode === 'fm') {
+      const nextExtractor = isSegFmEncoder(segBackbone)
+        ? segBackbone
+        : (lastFmExtractor || allSegmentationFmExtractors[0]?.id)
+      if (nextExtractor) {
+        setSegBackbone(nextExtractor)
+      }
+      return
+    }
+
+    setSegBackbone(isSegFmEncoder(segBackbone) ? lastStandardBackbone || DEFAULT_SEG_BACKBONE : segBackbone)
+  }
+
+  const selectSegmentationBackbone = (backboneId: string) => {
+    setLastStandardBackbone(backboneId)
+    setSegBackbone(backboneId)
+  }
+
+  const selectSegmentationFmExtractor = (extractorId: string) => {
+    setLastFmExtractor(extractorId)
+    setSegBackbone(extractorId)
+  }
+
   // Toggle a loss function on/off
   const toggleLoss = (lossId: string) => {
     const idx = segLossNames.indexOf(lossId)
@@ -169,7 +224,7 @@ export function ModelConfigStep({
               <h3 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-primary-600" />
                 {isSegmentation
-                  ? t('training.modelConfig.segArchitecture')
+                  ? t('training.modelConfig.segmentationModel')
                   : dataLevel === 'wsi'
                   ? t('training.modelConfig.aggregationMethod')
                   : t('training.modelConfig.featureExtractor')}
@@ -192,109 +247,197 @@ export function ModelConfigStep({
           <div className="flex-1 overflow-y-auto p-4 sm:p-5 pt-0 custom-scrollbar">
             {/* Segmentation Architecture + Backbone + Loss */}
             {isSegmentation && (
-              <div className="space-y-6">
-                {/* Architecture Selection */}
-                <div>
-                  <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">
-                    {t('training.modelConfig.architecture')}
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
+                  <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest">
+                    {t('training.modelConfig.modelType')}
                   </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
-                    {SEGMENTATION_ARCHITECTURES.map((arch) => (
-                      <div
-                        key={arch.id}
-                        onClick={() => setSegArchitecture(arch.id)}
-                        className={`group relative p-3 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
-                          segArchitecture === arch.id ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between mb-0.5">
-                          <div className="font-bold text-gray-900 text-xs sm:text-sm">{arch.name}</div>
-                          {segArchitecture === arch.id && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600" />}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => switchSegmentationModelType('standard')}
+                      className={`text-left p-3 rounded-xl border transition-all hover:shadow-sm ${
+                        !isFmSegmentation ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-gray-900 text-xs sm:text-sm">{t('training.modelConfig.standardSegmentation')}</div>
+                          <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
+                            {t('training.modelConfig.standardSegmentationDesc')}
+                          </div>
                         </div>
-                        <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed line-clamp-2">{arch.description}</div>
+                        {!isFmSegmentation && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600 flex-shrink-0" />}
                       </div>
-                    ))}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => switchSegmentationModelType('fm')}
+                      className={`text-left p-3 rounded-xl border transition-all hover:shadow-sm ${
+                        isFmSegmentation ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="font-bold text-gray-900 text-xs sm:text-sm">{t('training.modelConfig.foundationSegmentation')}</div>
+                          <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
+                            {t('training.modelConfig.foundationSegmentationDesc')}
+                          </div>
+                        </div>
+                        {isFmSegmentation && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600 flex-shrink-0" />}
+                      </div>
+                    </button>
                   </div>
                 </div>
 
-                {/* Backbone Selection with Search + Group Filter */}
-                <div>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+                {!isFmSegmentation && (
+                  <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
                     <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest">
-                      {t('training.modelConfig.backbone')}
+                      {t('training.modelConfig.architecture')}
                     </label>
-                    <div className="relative w-full sm:w-48">
-                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-                      <input
-                        type="text"
-                        placeholder={t('training.modelConfig.searchBackbone')}
-                        className="w-full pl-8 pr-3 py-1.5 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 transition-all bg-white"
-                        value={backboneSearch}
-                        onChange={(e) => setBackboneSearch(e.target.value)}
-                      />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3">
+                      {SEGMENTATION_ARCHITECTURES.map((arch) => (
+                        <div
+                          key={arch.id}
+                          onClick={() => setSegArchitecture(arch.id)}
+                          className={`group relative p-3 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
+                            segArchitecture === arch.id ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between mb-0.5 gap-2">
+                            <div className="font-bold text-gray-900 text-xs sm:text-sm">{arch.name}</div>
+                            {segArchitecture === arch.id && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600 flex-shrink-0" />}
+                          </div>
+                          <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed line-clamp-2">{arch.description}</div>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                  {/* Group filter pills */}
-                  <div className="flex flex-wrap gap-1.5 mb-3">
-                    <button
-                      type="button"
-                      onClick={() => setBackboneGroup(null)}
-                      className={`px-2.5 py-1 text-[10px] sm:text-xs rounded-full border transition-all ${
-                        backboneGroup === null
-                          ? 'bg-primary-50 border-primary-300 text-primary-700 font-semibold'
-                          : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
-                      }`}
-                    >
-                      {t('training.modelConfig.allGroups')}
-                    </button>
-                    {BACKBONE_GROUPS.map((group) => (
+                )}
+
+                {!isFmSegmentation ? (
+                  <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
+                    <div className="flex flex-col gap-2">
+                      <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest">
+                        {t('training.modelConfig.backbone')}
+                      </label>
+                      <div className="relative w-full sm:max-w-xs">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder={t('training.modelConfig.searchBackbone')}
+                          className="w-full pl-8 pr-3 py-1.5 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 transition-all bg-white"
+                          value={backboneSearch}
+                          onChange={(e) => setBackboneSearch(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
                       <button
-                        key={group}
                         type="button"
-                        onClick={() => setBackboneGroup(backboneGroup === group ? null : group)}
+                        onClick={() => setBackboneGroup(null)}
                         className={`px-2.5 py-1 text-[10px] sm:text-xs rounded-full border transition-all ${
-                          backboneGroup === group
+                          backboneGroup === null
                             ? 'bg-primary-50 border-primary-300 text-primary-700 font-semibold'
                             : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
                         }`}
                       >
-                        {group}
+                        {t('training.modelConfig.allGroups')}
                       </button>
-                    ))}
-                  </div>
-                  {/* Backbone grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 max-h-[300px] overflow-y-auto custom-scrollbar">
-                    {filteredBackbones.map((bb) => (
-                      <div
-                        key={bb.id}
-                        onClick={() => setSegBackbone(bb.id)}
-                        className={`p-3 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
-                          segBackbone === bb.id ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1 min-w-0">
-                            <div className="font-bold text-gray-900 text-xs sm:text-sm">{bb.name}</div>
-                            <div className="text-[10px] sm:text-xs text-gray-500 mt-1 line-clamp-1">{bb.description}</div>
-                          </div>
-                          <div className="flex items-center gap-1.5 flex-shrink-0">
-                            <span className="text-[9px] sm:text-[10px] text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded">{bb.group}</span>
-                            {segBackbone === bb.id && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600" />}
+                      {BACKBONE_GROUPS.map((group) => (
+                        <button
+                          key={group}
+                          type="button"
+                          onClick={() => setBackboneGroup(backboneGroup === group ? null : group)}
+                          className={`px-2.5 py-1 text-[10px] sm:text-xs rounded-full border transition-all ${
+                            backboneGroup === group
+                              ? 'bg-primary-50 border-primary-300 text-primary-700 font-semibold'
+                              : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+                          }`}
+                        >
+                          {group}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 max-h-[360px] overflow-y-auto custom-scrollbar pr-1">
+                      {filteredBackbones.map((bb) => (
+                        <div
+                          key={bb.id}
+                          onClick={() => selectSegmentationBackbone(bb.id)}
+                          className={`p-3 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
+                            segBackbone === bb.id ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="font-bold text-gray-900 text-xs sm:text-sm">{bb.name}</div>
+                              <div className="text-[10px] sm:text-xs text-gray-500 mt-1 line-clamp-2">{bb.description}</div>
+                            </div>
+                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                              <span className="text-[9px] sm:text-[10px] text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded">{bb.group}</span>
+                              {segBackbone === bb.id && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600" />}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
-                    {filteredBackbones.length === 0 && (
-                      <div className="col-span-2 text-center text-sm text-gray-400 py-6">
-                        {t('training.modelConfig.noBackboneResults')}
-                      </div>
-                    )}
+                      ))}
+                      {filteredBackbones.length === 0 && (
+                        <div className="col-span-full text-center text-sm text-gray-400 py-6">
+                          {t('training.modelConfig.noBackboneResults')}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                      <div>
+                        <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest">
+                          {t('training.modelConfig.featureExtractor')}
+                        </label>
+                        <p className="text-[10px] sm:text-xs text-gray-500 mt-1">
+                          {t('training.modelConfig.fixedDecoder')}
+                        </p>
+                      </div>
+                      <div className="relative w-full sm:max-w-xs">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder={t('training.modelConfig.search')}
+                          className="w-full pl-8 pr-3 py-1.5 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 transition-all bg-white"
+                          value={extractorSearch}
+                          onChange={(e) => setExtractorSearch(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 max-h-[360px] overflow-y-auto custom-scrollbar pr-1">
+                      {filteredSegmentationFmExtractors.map((extractor) => (
+                        <div
+                          key={extractor.id}
+                          onClick={() => selectSegmentationFmExtractor(extractor.id)}
+                          className={`p-3 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
+                            segBackbone === extractor.id ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="font-bold text-gray-900 text-xs sm:text-sm">{extractor.name}</div>
+                              <div className="text-[10px] sm:text-xs text-gray-500 mt-1 line-clamp-2">{extractor.description}</div>
+                            </div>
+                            {segBackbone === extractor.id && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600 flex-shrink-0" />}
+                          </div>
+                        </div>
+                      ))}
+                      {filteredSegmentationFmExtractors.length === 0 && (
+                        <div className="col-span-full text-center text-sm text-gray-400 py-6">
+                          {t('training.modelConfig.noFeatureExtractorResults')}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
-                {/* Loss Functions */}
-                <div>
-                  <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">
+                <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
+                  <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest">
                     {t('training.modelConfig.lossFunction')}
                   </label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
@@ -308,10 +451,10 @@ export function ModelConfigStep({
                             isSelected ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
                           }`}
                         >
-                          <div className="flex items-start justify-between">
+                          <div className="flex items-start justify-between gap-2">
                             <div className="flex-1 min-w-0">
                               <div className="font-bold text-gray-900 text-xs sm:text-sm">{loss.name}</div>
-                              <div className="text-[10px] sm:text-xs text-gray-500 mt-1 line-clamp-1">{loss.description}</div>
+                              <div className="text-[10px] sm:text-xs text-gray-500 mt-1 line-clamp-2">{loss.description}</div>
                             </div>
                             {isSelected && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600 flex-shrink-0" />}
                           </div>

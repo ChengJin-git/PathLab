@@ -613,12 +613,13 @@ async def get_analysis_tasks(
 
         # Extract feature_extractor and split_strategy from preprocessing_config
         feature_extractor = None
+        is_segmentation_task = task_type in ("segmentation", "patch_segmentation")
         is_kfold = False
         if task.preprocessing_config and isinstance(task.preprocessing_config, dict):
             feature_extractor = task.preprocessing_config.get("feature_extractor")
             # Check split strategy to determine if K-Fold training
             split_config = task.preprocessing_config.get("split_config", {})
-            is_kfold = split_config.get("strategy") == "k_fold"
+            is_kfold = not is_segmentation_task and split_config.get("strategy") == "k_fold"
 
         # Determine display count based on aggregation_level
         aggregation_level = resources.get("aggregation_level", "file")
@@ -4945,7 +4946,8 @@ async def get_quick_analysis(
 
     # Include K-Fold training details if available
     kfold_training = latest_summary.get("kfold_training")
-    if kfold_training:
+    task_type = latest_summary.get("task_type", "classification")
+    if task_type not in ("segmentation", "patch_segmentation") and kfold_training:
         response["kfold_training"] = kfold_training
 
     return response
@@ -5296,7 +5298,8 @@ async def run_analysis_pipeline(
             # because it measures uncertainty on the new dataset, independent of training method.
             split_config = task.preprocessing_config.get("split_config", {}) if task.preprocessing_config else {}
             split_strategy = split_config.get("strategy", "random")
-            is_kfold = split_strategy == "k_fold"
+            is_segmentation_task = task_type_str in ("segmentation", "patch_segmentation")
+            is_kfold = not is_segmentation_task and split_strategy == "k_fold"
             if is_kfold and has_ci_calculation and task_type_str != "external_validation":
                 has_ci_calculation = False  # K-Fold doesn't use Bootstrap CI (internal analysis only)
 

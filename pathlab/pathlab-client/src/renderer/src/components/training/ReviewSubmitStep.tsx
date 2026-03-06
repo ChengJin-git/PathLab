@@ -148,7 +148,11 @@ export function ReviewSubmitStep({
                       {isSegFmEncoder(segBackbone) ? (
                         <>
                           <div className="text-[11px] sm:text-sm font-bold text-gray-900 truncate">
-                            {segBackbone}
+                            {availableExtractors.find((e) => e.id === segBackbone)?.name || segBackbone}
+                          </div>
+                          <div className="mt-1 text-[10px] sm:text-xs flex items-center gap-1.5 text-gray-500">
+                            <span className="text-gray-400">{t('training.review.segFeatureExtractor')}:</span>
+                            <span className="font-bold text-gray-700 truncate">{availableExtractors.find((e) => e.id === segBackbone)?.name || segBackbone}</span>
                           </div>
                           <div className="mt-1 text-[10px] sm:text-xs flex items-center gap-1.5 text-gray-500">
                             <span className="text-gray-400">{t('training.review.segDecoder')}:</span>

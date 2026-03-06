@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import importlib
 import logging
-from typing import Dict, Type, List, Callable, Tuple
+from typing import Any, Dict, Type, List, Callable, Tuple
 
 from .base import BaseExtractor
 from .transforms import get_default_transforms
@@ -41,26 +41,26 @@ _EXTRACTOR_LAZY_REGISTRY: Dict[str, Tuple[str, str]] = {
 # Cache for already-imported extractor classes
 _EXTRACTOR_CLASS_CACHE: Dict[str, Type[BaseExtractor]] = {}
 
-_EXTRACTOR_METADATA: Dict[str, Dict[str, str]] = {
-    "resnet50": {"name": "ResNet50", "description": "ImageNet pretrained CNN, 2048-dim, general-purpose baseline"},
-    "vit_l_16": {"name": "ViT-Large", "description": "ImageNet pretrained ViT-L/16, 1024-dim, general-purpose baseline"},
-    "conch": {"name": "CONCH", "description": "CLIP ViT-B/16, 512-dim (Mahmood Lab), recommended for histopathology"},
-    "uni": {"name": "UNI", "description": "DINOv2 ViT-L/16, 1024-dim (Mahmood Lab), recommended for histopathology"},
-    "uni2": {"name": "UNI2", "description": "ViT-G/14, 1536-dim (Mahmood Lab), recommended for histopathology"},
-    "virchow": {"name": "Virchow", "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI), recommended for histopathology"},
-    "virchow2": {"name": "Virchow2", "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI), recommended for histopathology"},
-    "plip": {"name": "PLIP", "description": "CLIP ViT-B/16, 512-dim (James Zou Group), recommended for histopathology"},
-    "phikon": {"name": "Phikon", "description": "iBOT ViT-L/16, 1024-dim (Owkin), recommended for histopathology"},
-    "phikon2": {"name": "Phikon2", "description": "DINOv2 ViT-L/16, 1024-dim (Owkin), recommended for histopathology"},
-    "patho_clip": {"name": "PathoCLIP", "description": "CLIP fine-tuned, 512-dim (Hong Bu Lab), recommended for histopathology"},
-    "openmidnight": {"name": "OpenMidnight", "description": "ViT 1.1B, 1536-dim (SophontAI), recommended for histopathology"},
-    "conch15": {"name": "CONCH 1.5", "description": "CLIP ViT-B/16, 512-dim (Mahmood Lab), recommended for histopathology"},
-    "H-Optimus-1": {"name": "H-Optimus-1", "description": "ViT 1.1B, 1536-dim (Bioptimus), recommended for histopathology"},
-    "H-Optimus-0": {"name": "H-Optimus-0", "description": "ViT 1.1B, 1536-dim (Bioptimus), recommended for histopathology"},
-    "mSTAR": {"name": "mSTAR", "description": "ViT-L/16, 1024-dim (HKUST Smart Lab), recommended for histopathology"},
-    "GPFM": {"name": "GPFM", "description": "DINOv2 ViT-L/14, 1024-dim (HKUST Smart Lab), recommended for histopathology"},
-    "SmartCCS": {"name": "Smart-CCS", "description": "DINOv2 ViT-L/14, 1024-dim (HKUST Smart Lab), recommended for cytopathology"},
-    "SmartCyto": {"name": "SmartCyto", "description": "DINOv3 ViT-B/16, 768-dim (HKUST Smart Lab), recommended for cytopathology"},
+_EXTRACTOR_METADATA: Dict[str, Dict[str, Any]] = {
+    "resnet50": {"name": "ResNet50", "description": "ImageNet pretrained CNN, 2048-dim, general-purpose baseline", "supports_spatial": False},
+    "vit_l_16": {"name": "ViT-Large", "description": "ImageNet pretrained ViT-L/16, 1024-dim, general-purpose baseline", "supports_spatial": False},
+    "conch": {"name": "CONCH", "description": "CLIP ViT-B/16, 512-dim (Mahmood Lab), recommended for histopathology", "supports_spatial": True},
+    "uni": {"name": "UNI", "description": "DINOv2 ViT-L/16, 1024-dim (Mahmood Lab), recommended for histopathology", "supports_spatial": True},
+    "uni2": {"name": "UNI2", "description": "ViT-G/14, 1536-dim (Mahmood Lab), recommended for histopathology", "supports_spatial": True},
+    "virchow": {"name": "Virchow", "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI), recommended for histopathology", "supports_spatial": True},
+    "virchow2": {"name": "Virchow2", "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI), recommended for histopathology", "supports_spatial": True},
+    "plip": {"name": "PLIP", "description": "CLIP ViT-B/16, 512-dim (James Zou Group), recommended for histopathology", "supports_spatial": True},
+    "phikon": {"name": "Phikon", "description": "iBOT ViT-L/16, 1024-dim (Owkin), recommended for histopathology", "supports_spatial": True},
+    "phikon2": {"name": "Phikon2", "description": "DINOv2 ViT-L/16, 1024-dim (Owkin), recommended for histopathology", "supports_spatial": True},
+    "patho_clip": {"name": "PathoCLIP", "description": "CLIP fine-tuned, 512-dim (Hong Bu Lab), recommended for histopathology", "supports_spatial": True},
+    "openmidnight": {"name": "OpenMidnight", "description": "ViT 1.1B, 1536-dim (SophontAI), recommended for histopathology", "supports_spatial": True},
+    "conch15": {"name": "CONCH 1.5", "description": "CLIP ViT-B/16, 512-dim (Mahmood Lab), recommended for histopathology", "supports_spatial": True},
+    "H-Optimus-1": {"name": "H-Optimus-1", "description": "ViT 1.1B, 1536-dim (Bioptimus), recommended for histopathology", "supports_spatial": True},
+    "H-Optimus-0": {"name": "H-Optimus-0", "description": "ViT 1.1B, 1536-dim (Bioptimus), recommended for histopathology", "supports_spatial": True},
+    "mSTAR": {"name": "mSTAR", "description": "ViT-L/16, 1024-dim (HKUST Smart Lab), recommended for histopathology", "supports_spatial": True},
+    "GPFM": {"name": "GPFM", "description": "DINOv2 ViT-L/14, 1024-dim (HKUST Smart Lab), recommended for histopathology", "supports_spatial": True},
+    "SmartCCS": {"name": "Smart-CCS", "description": "DINOv2 ViT-L/14, 1024-dim (HKUST Smart Lab), recommended for cytopathology", "supports_spatial": True},
+    "SmartCyto": {"name": "SmartCyto", "description": "DINOv3 ViT-B/16, 768-dim (HKUST Smart Lab), recommended for cytopathology", "supports_spatial": True},
 }
 
 
@@ -148,7 +148,7 @@ def list_extractors() -> List[str]:
     return list(_EXTRACTOR_LAZY_REGISTRY.keys())
 
 
-def get_available_extractors() -> List[Dict[str, str]]:
+def get_available_extractors() -> List[Dict[str, Any]]:
     """Return detailed metadata for all registered extractors."""
     results = []
     for extractor_id in _EXTRACTOR_LAZY_REGISTRY.keys():

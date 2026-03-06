@@ -102,6 +102,13 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
   const effectiveTaskId = analysis.task_id || taskId
   const isSurvival = analysis.task_type === 'wsi_survival' || analysis.task_type === 'survival' || analysis.task_type === 'external_validation_survival'
   const isSegmentation = analysis.task_type === 'segmentation' || analysis.task_type === 'patch_segmentation'
+  const showKFoldTraining = !isSegmentation && Boolean(analysis.kfold_training)
+  const showKFoldLossCurve = Boolean(
+    !isSegmentation &&
+    analysis.chart_data?.loss_curve &&
+    'is_kfold' in analysis.chart_data.loss_curve &&
+    analysis.chart_data.loss_curve.is_kfold
+  )
 
   const accentBg = isExternal ? 'bg-orange-600' : isSegmentation ? 'bg-violet-600' : 'bg-indigo-600'
   const accentText = isExternal ? 'text-orange-600' : isSegmentation ? 'text-violet-600' : 'text-indigo-600'
@@ -180,7 +187,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
     <div className="h-full flex flex-col space-y-6">
       <div className="flex-1 space-y-6">
         {/* K-Fold Training Results - if available */}
-      {analysis.kfold_training && (
+      {showKFoldTraining && analysis.kfold_training && (
         <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
           <h5 className="text-sm font-semibold text-purple-800 mb-3 flex items-center gap-2">
             <FlaskConical className="w-4 h-4" />
@@ -411,7 +418,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
 
             {/* Loss Curve */}
             {shouldShowChart('loss_curve') && (analysis.chart_data?.loss_curve ? (
-              'is_kfold' in analysis.chart_data.loss_curve && analysis.chart_data.loss_curve.is_kfold ? (
+              showKFoldLossCurve ? (
                 <KFoldLossCurveChart data={analysis.chart_data.loss_curve as KFoldLossCurveData} title={t('analysisDetails.kFoldLossCurve')} />
               ) : (
                 <LossCurveChart data={analysis.chart_data.loss_curve as LossCurveData} title={t('analysisDetails.trainingLossCurve')} />

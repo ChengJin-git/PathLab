@@ -152,6 +152,7 @@ export interface FeatureExtractor {
   id: string
   name: string
   description: string
+  supports_spatial?: boolean
 }
 
 /**

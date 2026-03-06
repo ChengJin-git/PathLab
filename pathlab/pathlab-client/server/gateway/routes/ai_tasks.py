@@ -45,21 +45,21 @@ async def list_available_extractors(
         logger.error(f"Failed to fetch extractors from AI Service: {e}")
         # Comprehensive fallback if AI Service is down or hasn't reloaded
         return {"items": [
-            {"id": "resnet50", "name": "ResNet50", "description": "ImageNet pretrained CNN, 2048-dim, general-purpose baseline"},
-            {"id": "vit_l_16", "name": "ViT-Large", "description": "ImageNet pretrained ViT-L/16, 1024-dim, general-purpose baseline"},
-            {"id": "uni", "name": "UNI", "description": "DINOv2 ViT-L/16, 1024-dim (Mahmood Lab)"},
-            {"id": "uni2", "name": "UNI2", "description": "ViT-G/14, 1536-dim (Mahmood Lab)"},
-            {"id": "conch", "name": "CONCH", "description": "CLIP ViT-B/16, 512-dim (Mahmood Lab)"},
-            {"id": "conch15", "name": "CONCH 1.5", "description": "CLIP ViT-B/16, 512-dim (Mahmood Lab)"},
-            {"id": "virchow", "name": "Virchow", "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI)"},
-            {"id": "virchow2", "name": "Virchow2", "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI)"},
-            {"id": "H-Optimus-1", "name": "H-Optimus-1", "description": "ViT 1.1B, 1536-dim (Bioptimus)"},
-            {"id": "plip", "name": "PLIP", "description": "CLIP ViT-B/16, 512-dim (James Zou Lab)"},
-            {"id": "phikon2", "name": "Phikon2", "description": "DINOv2 ViT-L/16, 1024-dim (Owkin)"},
-            {"id": "mSTAR", "name": "mSTAR", "description": "ViT-L/16, 1024-dim (Smartlab)"},
-            {"id": "GPFM", "name": "GPFM", "description": "DINOv2 ViT-L/14, 1024-dim (Smartlab)"},
-            {"id": "SmartCCS", "name": "Smart-CCS", "description": "DINOv2 ViT-L/14, 1024-dim (Smartlab)"},
-            {"id": "SmartCyto", "name": "SmartCyto", "description": "DINOv3 ViT-B/16, 768-dim (Smartlab)"},
+            {"id": "resnet50", "name": "ResNet50", "description": "ImageNet pretrained CNN, 2048-dim, general-purpose baseline", "supports_spatial": False},
+            {"id": "vit_l_16", "name": "ViT-Large", "description": "ImageNet pretrained ViT-L/16, 1024-dim, general-purpose baseline", "supports_spatial": False},
+            {"id": "uni", "name": "UNI", "description": "DINOv2 ViT-L/16, 1024-dim (Mahmood Lab)", "supports_spatial": True},
+            {"id": "uni2", "name": "UNI2", "description": "ViT-G/14, 1536-dim (Mahmood Lab)", "supports_spatial": True},
+            {"id": "conch", "name": "CONCH", "description": "CLIP ViT-B/16, 512-dim (Mahmood Lab)", "supports_spatial": True},
+            {"id": "conch15", "name": "CONCH 1.5", "description": "CLIP ViT-B/16, 512-dim (Mahmood Lab)", "supports_spatial": True},
+            {"id": "virchow", "name": "Virchow", "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI)", "supports_spatial": True},
+            {"id": "virchow2", "name": "Virchow2", "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI)", "supports_spatial": True},
+            {"id": "H-Optimus-1", "name": "H-Optimus-1", "description": "ViT 1.1B, 1536-dim (Bioptimus)", "supports_spatial": True},
+            {"id": "plip", "name": "PLIP", "description": "CLIP ViT-B/16, 512-dim (James Zou Lab)", "supports_spatial": True},
+            {"id": "phikon2", "name": "Phikon2", "description": "DINOv2 ViT-L/16, 1024-dim (Owkin)", "supports_spatial": True},
+            {"id": "mSTAR", "name": "mSTAR", "description": "ViT-L/16, 1024-dim (Smartlab)", "supports_spatial": True},
+            {"id": "GPFM", "name": "GPFM", "description": "DINOv2 ViT-L/14, 1024-dim (Smartlab)", "supports_spatial": True},
+            {"id": "SmartCCS", "name": "Smart-CCS", "description": "DINOv2 ViT-L/14, 1024-dim (Smartlab)", "supports_spatial": True},
+            {"id": "SmartCyto", "name": "SmartCyto", "description": "DINOv3 ViT-B/16, 768-dim (Smartlab)", "supports_spatial": True},
         ]}
 
 

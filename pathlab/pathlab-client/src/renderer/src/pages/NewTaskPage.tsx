@@ -14,6 +14,7 @@ import {
   getTrainingTask,
   updateWSIMetadata,
   startBatchUpdateMetadataTask,
+  FeatureExtractor,
   TrainingTaskDetail,
 } from '../api'
 import { PageHeader } from '../components/PageHeader'
@@ -26,6 +27,7 @@ import { useDataSelection } from '../lib/useDataSelection'
 import { useTrainingConfig } from '../lib/useTrainingConfig'
 import { useSplitValidation } from '../lib/useSplitValidation'
 import { formatBytes } from '../lib/utils'
+import { FEATURE_EXTRACTORS, FM_SEGMENTATION_ARCHITECTURE, isSegFmEncoder } from '../constants/training'
 
 // Step components
 import {
@@ -75,9 +77,7 @@ export default function NewTaskPage() {
 
   // ========== Additional Local State ==========
   // Extractor state
-  const [availableExtractors, setAvailableExtractors] = useState<
-    { id: string; name: string; description: string }[]
-  >([])
+  const [availableExtractors, setAvailableExtractors] = useState<FeatureExtractor[]>([])
   const [extractorSearch, setExtractorSearch] = useState('')
 
   // Delete modal
@@ -204,7 +204,12 @@ export default function NewTaskPage() {
     if (availableExtractors.length > 0) return
     try {
       const data = await fetchExtractors()
-      setAvailableExtractors(data)
+      setAvailableExtractors(
+        data.map((extractor) => ({
+          ...FEATURE_EXTRACTORS.find((item) => item.id === extractor.id),
+          ...extractor,
+        }))
+      )
     } catch (e) {
       console.error('Failed to load extractors:', e)
       setAvailableExtractors([])
@@ -460,9 +465,10 @@ export default function NewTaskPage() {
 
       // Build model config based on task type
       const isSegTask = wizard.taskType === 'segmentation'
+      const isSegFmTask = isSegTask && isSegFmEncoder(trainingConfig.segBackbone)
       const modelConfig = isSegTask
         ? {
-            architecture: trainingConfig.segArchitecture,
+            architecture: isSegFmTask ? FM_SEGMENTATION_ARCHITECTURE : trainingConfig.segArchitecture,
             backbone: trainingConfig.segBackbone,
             loss_names: trainingConfig.segLossNames,
             loss_weights: trainingConfig.segLossWeights,
