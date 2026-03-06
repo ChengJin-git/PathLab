@@ -862,21 +862,26 @@ class StorageTask(Base):
         }
 
 
-class AnnotationDraft(Base):
+class SegmentationAnnotation(Base):
     """
-    Annotation Draft table.
-    Stores in-progress annotation sessions (auto-saved).
-    Each draft contains annotations across multiple WSI slides.
+    Segmentation Annotation table.
+    Stores COCO-format annotations for segmentation tasks.
+    Annotations can come from viewer drawing, file import, upload, or ROI extraction.
     """
-    __tablename__ = "annotation_drafts"
+    __tablename__ = "segmentation_annotations"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    draft_id = Column(String(255), unique=True, nullable=False, index=True)
+    annotation_id = Column(String(255), unique=True, nullable=False, index=True)
     user_id = Column(String(255), nullable=False, index=True)
     source_dataset_id = Column(String(255), ForeignKey("datasets.dataset_id"), nullable=True, index=True)
 
-    # JSON structure: { "wsi_001": [{ "type": "rect", "x": ..., "label": ... }, ...], ... }
+    # Unified COCO format: { "images": [...], "annotations": [...], "categories": [...] }
     annotations = Column(JSON, nullable=False, default=dict)
+
+    # Annotation lifecycle status: "draft" (in-progress from viewer) or "finalized" (imported/extracted)
+    status = Column(String(20), nullable=False, default="draft")
+    # Provenance: "viewer" | "import" | "upload" | "extraction"
+    source = Column(String(50), nullable=False, default="viewer")
 
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
@@ -888,10 +893,12 @@ class AnnotationDraft(Base):
     def to_dict(self):
         """Convert to dictionary for API responses."""
         return {
-            "draft_id": self.draft_id,
+            "annotation_id": self.annotation_id,
             "user_id": self.user_id,
             "source_dataset_id": self.source_dataset_id,
             "annotations": self.annotations,
+            "status": self.status,
+            "source": self.source,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
         }

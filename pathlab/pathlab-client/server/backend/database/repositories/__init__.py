@@ -19,7 +19,7 @@ from .training_log import TrainingLogRepository
 from .permissions import DatasetPermissionRepository
 from .storage_task import StorageTaskRepository
 from .orphaned import OrphanedRecordsRepository
-from .annotation import AnnotationDraftRepository
+from .annotation import SegmentationAnnotationRepository
 
 __all__ = [
     "DataGroupRepository",
@@ -36,5 +36,5 @@ __all__ = [
     "DatasetPermissionRepository",
     "StorageTaskRepository",
     "OrphanedRecordsRepository",
-    "AnnotationDraftRepository",
+    "SegmentationAnnotationRepository",
 ]

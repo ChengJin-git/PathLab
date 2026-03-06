@@ -1331,9 +1331,27 @@ async def _extract_segmentation_dataset(
         "categories": categories,
     }
 
-    # Save COCO JSON
+    # Save COCO JSON to disk (cache for training)
     coco_path = annotations_dir / f"{dataset_id}_coco.json"
     await asyncio.to_thread(_save_coco_json, coco_json, coco_path)
+
+    # Also save to DB as source of truth
+    try:
+        from backend.common.annotation_summary_cache import rebuild_dataset_annotation_summary_cache
+        from backend.database.repositories import SegmentationAnnotationRepository
+        await SegmentationAnnotationRepository.upsert(
+            db,
+            annotation_id=f"annot_{dataset_id}",
+            user_id=user_id,
+            annotations=coco_json,
+            source_dataset_id=dataset_id,
+            status="finalized",
+            source="extraction",
+        )
+        await db.commit()
+        await rebuild_dataset_annotation_summary_cache(db, dataset_id)
+    except Exception as e:
+        logger.warning(f"Failed to save COCO annotation to DB for dataset {dataset_id}: {e}")
 
     logger.info(
         f"Segmentation dataset created: dataset_id={dataset_id}, "

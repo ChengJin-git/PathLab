@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 from backend.database import get_db, async_session
 from backend.database.models import (
     WSISlide, AITask, TrainingTask,
-    ChatConversation, ChatMessage, AnnotationDraft, MessageFeedback,
+    ChatConversation, ChatMessage, SegmentationAnnotation, MessageFeedback,
 )
 from backend.database.repositories import (
     WSIRepository,
@@ -225,8 +225,8 @@ async def get_user_usage_stats(
             .subquery()
         )
         annotation_sq = (
-            select(AnnotationDraft.user_id, func.count(AnnotationDraft.id).label("annotation_count"))
-            .group_by(AnnotationDraft.user_id)
+            select(SegmentationAnnotation.user_id, func.count(SegmentationAnnotation.id).label("annotation_count"))
+            .group_by(SegmentationAnnotation.user_id)
             .subquery()
         )
         feedback_sq = (

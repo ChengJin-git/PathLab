@@ -1,18 +1,21 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Pencil, Trash2, PackagePlus, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react'
-import { AnnotationRegion, AnnotationsMap } from '../../api/annotation'
+import { AnnotationRegion, AnnotationsMap, DatasetAnnotationSummaryResponse } from '../../api/annotation'
 import { Card } from '../common'
 
 interface AnnotationListPanelProps {
   currentWsiId: string
   regions: AnnotationRegion[]
   allAnnotations: AnnotationsMap
+  preferRemoteCrossSlideSummary?: boolean
+  crossSlideSummary?: DatasetAnnotationSummaryResponse | null
+  loadingCrossSlideSummary?: boolean
   labelColors: Record<string, string>
   onUpdateRegion: (regionId: string, updates: Partial<AnnotationRegion>) => void
   onDeleteRegion: (regionId: string) => void
   onDeleteRegions: (regionIds: string[]) => void
-  onDeleteCrossSlideByLabel: (labels: string[]) => void
+  onDeleteCrossSlideByLabel: (labels: string[]) => void | Promise<void>
   onCreateDataset: () => void
 }
 
@@ -20,6 +23,9 @@ export function AnnotationListPanel({
   currentWsiId,
   regions,
   allAnnotations,
+  preferRemoteCrossSlideSummary = false,
+  crossSlideSummary,
+  loadingCrossSlideSummary = false,
   labelColors,
   onUpdateRegion,
   onDeleteRegion,
@@ -36,8 +42,7 @@ export function AnnotationListPanel({
   // Confirmation dialog state: { type, message } or null
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'current' | 'crossSlide'; message: string } | null>(null)
 
-  // Cross-slide summary: total ROIs per label
-  const summary = useMemo(() => {
+  const localSummary = useMemo(() => {
     const counts: Record<string, { total: number; slides: Set<string> }> = {}
     for (const [wsiId, regs] of Object.entries(allAnnotations)) {
       for (const r of regs) {
@@ -49,13 +54,36 @@ export function AnnotationListPanel({
     return counts
   }, [allAnnotations])
 
-  const totalRegions = useMemo(() => {
-    return Object.values(allAnnotations).reduce((sum, regs) => sum + regs.length, 0)
-  }, [allAnnotations])
+  const isRemoteSummaryPending = preferRemoteCrossSlideSummary && (!crossSlideSummary || loadingCrossSlideSummary)
 
-  const totalSlides = useMemo(() => {
-    return Object.keys(allAnnotations).filter(k => allAnnotations[k].length > 0).length
-  }, [allAnnotations])
+  const effectiveSummary = useMemo(() => {
+    if (preferRemoteCrossSlideSummary && !crossSlideSummary) {
+      return {
+        counts: {},
+        totalRegions: 0,
+        totalSlides: 0,
+      }
+    }
+
+    if (!crossSlideSummary) {
+      return {
+        counts: localSummary,
+        totalRegions: Object.values(allAnnotations).reduce((sum, regs) => sum + regs.length, 0),
+        totalSlides: Object.keys(allAnnotations).filter(k => allAnnotations[k].length > 0).length,
+      }
+    }
+
+    return {
+      counts: Object.fromEntries(
+        Object.entries(crossSlideSummary.labels).map(([label, data]) => [
+          label,
+          { total: data.total_regions, slides: new Set<string>(Array.from({ length: data.total_slides }, (_, idx) => `${label}:${idx}`)) },
+        ])
+      ) as Record<string, { total: number; slides: Set<string> }>,
+      totalRegions: crossSlideSummary.total_regions,
+      totalSlides: crossSlideSummary.total_slides,
+    }
+  }, [allAnnotations, crossSlideSummary, localSummary, preferRemoteCrossSlideSummary])
 
   const handleStartEdit = (region: AnnotationRegion) => {
     setEditingId(region.id)
@@ -106,13 +134,13 @@ export function AnnotationListPanel({
     })
   }
 
-  const allCrossSlideLabelsSelected = Object.keys(summary).length > 0 && Object.keys(summary).every(l => selectedCrossSlideLabels.has(l))
+  const allCrossSlideLabelsSelected = Object.keys(effectiveSummary.counts).length > 0 && Object.keys(effectiveSummary.counts).every(l => selectedCrossSlideLabels.has(l))
 
   const toggleSelectAllCrossSlideLabels = () => {
     if (allCrossSlideLabelsSelected) {
       setSelectedCrossSlideLabels(new Set())
     } else {
-      setSelectedCrossSlideLabels(new Set(Object.keys(summary)))
+      setSelectedCrossSlideLabels(new Set(Object.keys(effectiveSummary.counts)))
     }
   }
 
@@ -120,13 +148,13 @@ export function AnnotationListPanel({
     let total = 0
     const slides = new Set<string>()
     for (const label of selectedCrossSlideLabels) {
-      if (summary[label]) {
-        total += summary[label].total
-        summary[label].slides.forEach(s => slides.add(s))
+      if (effectiveSummary.counts[label]) {
+        total += effectiveSummary.counts[label].total
+        effectiveSummary.counts[label].slides.forEach(s => slides.add(s))
       }
     }
     return { total, slides: slides.size }
-  }, [selectedCrossSlideLabels, summary])
+  }, [effectiveSummary.counts, selectedCrossSlideLabels])
 
   const handleBatchDeleteCrossSlide = () => {
     if (selectedCrossSlideLabels.size === 0) return
@@ -228,7 +256,7 @@ export function AnnotationListPanel({
           onClick={() => setShowSummary(!showSummary)}
           className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 bg-gradient-to-br from-gray-50 to-white w-full text-left"
         >
-          {Object.keys(summary).length > 0 && (
+          {!isRemoteSummaryPending && Object.keys(effectiveSummary.counts).length > 0 && (
             <input
               type="checkbox"
               checked={allCrossSlideLabelsSelected}
@@ -252,18 +280,22 @@ export function AnnotationListPanel({
               </span>
             )}
             <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
-              {totalRegions} ROIs · {totalSlides} {t('annotation.slides')}
+              {isRemoteSummaryPending
+                ? t('common.loading')
+                : `${effectiveSummary.totalRegions} ROIs · ${effectiveSummary.totalSlides} ${t('annotation.slides')}`}
             </span>
           </div>
           {showSummary ? <ChevronUp className="w-3.5 h-3.5 text-gray-400" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />}
         </button>
         {showSummary && (
           <div className="p-3">
-            {Object.keys(summary).length === 0 ? (
+            {isRemoteSummaryPending ? (
+              <p className="text-xs text-gray-400 text-center py-4">{t('common.loading')}</p>
+            ) : Object.keys(effectiveSummary.counts).length === 0 ? (
               <p className="text-xs text-gray-400 text-center py-4">{t('annotation.noAnnotationsAcrossSlides')}</p>
             ) : (
               <div className="space-y-1.5">
-                {Object.entries(summary).map(([label, data]) => (
+                {Object.entries(effectiveSummary.counts).map(([label, data]) => (
                   <div key={label} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-colors ${selectedCrossSlideLabels.has(label) ? 'bg-emerald-50 ring-1 ring-emerald-200' : 'bg-gray-50'}`}>
                     <input
                       type="checkbox"
@@ -271,7 +303,7 @@ export function AnnotationListPanel({
                       onChange={() => toggleSelectCrossSlideLabel(label)}
                       className="w-3.5 h-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer flex-shrink-0"
                     />
-                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-gray-200" style={{ backgroundColor: labelColors[label] }} />
+                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-gray-200" style={{ backgroundColor: labelColors[label] || crossSlideSummary?.labels[label]?.color || '#3b82f6' }} />
                     <span className="flex-1 text-xs text-gray-700 truncate">{label}</span>
                     <span className="text-[10px] text-gray-500">{data.total} ROIs</span>
                     <span className="text-[10px] text-gray-400">{data.slides.size} {t('annotation.slides')}</span>
@@ -280,7 +312,7 @@ export function AnnotationListPanel({
               </div>
             )}
             {/* Create Dataset button */}
-            {totalRegions > 0 && (
+            {effectiveSummary.totalRegions > 0 && !isRemoteSummaryPending && (
               <button
                 onClick={onCreateDataset}
                 className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"

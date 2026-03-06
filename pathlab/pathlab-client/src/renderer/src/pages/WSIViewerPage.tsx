@@ -27,13 +27,26 @@ import { AnnotationToolbar, getColorForLabel } from '../components/wsiViewer/Ann
 import { AnnotationOverlay } from '../components/wsiViewer/AnnotationOverlay'
 import { AnnotationListPanel } from '../components/wsiViewer/AnnotationListPanel'
 import { CreateDatasetDialog } from '../components/wsiViewer/CreateDatasetDialog'
-import { AnnotationRegion, AnnotationsMap, saveDraft, listDrafts, deleteDraft } from '../api/annotation'
+import {
+  AnnotationRegion,
+  AnnotationsMap,
+  DatasetAnnotationSummaryResponse,
+  saveAnnotation,
+  listAnnotations,
+  deleteAnnotation,
+  getWSIGroundTruth,
+  getDatasetAnnotationSummary,
+  deleteDatasetAnnotationsByLabels,
+  extractRegions,
+} from '../api/annotation'
 import { useToast } from '../contexts/ToastContext'
+import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { PATCH_EXTENSIONS } from '../constants/fileTypes'
 
 export default function WSIViewerPage() {
   const { t } = useTranslation()
   const toast = useToast()
+  const { addExtractionTask } = useBackgroundTask()
   const { wsi_id = '' } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
@@ -221,12 +234,20 @@ export default function WSIViewerPage() {
   const [labelColors, setLabelColors] = useState<Record<string, string>>({})
   const [isLabelDropdownOpen, setIsLabelDropdownOpen] = useState(false)
   const [allAnnotations, setAllAnnotations] = useState<AnnotationsMap>({})
-  const [draftId, setDraftId] = useState<string | null>(null)
+  const [annotationId, setAnnotationId] = useState<string | null>(null)
   const [osdViewer, setOsdViewer] = useState<any>(null)
   const [slideWidth, setSlideWidth] = useState(0)
   const [slideHeight, setSlideHeight] = useState(0)
   const [showCreateDatasetDialog, setShowCreateDatasetDialog] = useState(false)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const effectiveDatasetId = datasetId ?? detail?.meta?.dataset_id
+  const draftCacheKey = effectiveDatasetId ?? '__NO_DATASET__'
+  const draftCacheRef = useRef<{
+    key: string
+    draft: { annotation_id: string; annotations: AnnotationsMap } | null
+  } | null>(null)
+  const [datasetAnnotationSummary, setDatasetAnnotationSummary] = useState<DatasetAnnotationSummaryResponse | null>(null)
+  const [loadingDatasetAnnotationSummary, setLoadingDatasetAnnotationSummary] = useState(false)
 
   // Manual save & unsaved-changes tracking
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
@@ -249,6 +270,26 @@ export default function WSIViewerPage() {
     })
   }, [allAnnotations, allWSIs])
 
+  const refreshDatasetAnnotationSummary = useCallback(async () => {
+    if (!effectiveDatasetId) {
+      setDatasetAnnotationSummary(null)
+      return
+    }
+
+    setLoadingDatasetAnnotationSummary(true)
+    try {
+      const summary = await getDatasetAnnotationSummary(effectiveDatasetId)
+      setDatasetAnnotationSummary(summary)
+      if (summary.annotation_id && !annotationId) {
+        setAnnotationId(summary.annotation_id)
+      }
+    } catch (err) {
+      console.error('Failed to load dataset annotation summary:', err)
+    } finally {
+      setLoadingDatasetAnnotationSummary(false)
+    }
+  }, [annotationId, effectiveDatasetId])
+
   // Load WSI list for navigation
   // If coming from a dataset, load only that dataset's WSIs; otherwise load all
   useEffect(() => {
@@ -258,6 +299,15 @@ export default function WSIViewerPage() {
       }
     })
   }, [fromDataset, datasetId])
+
+  useEffect(() => {
+    if (!annotationMode || !effectiveDatasetId) {
+      setDatasetAnnotationSummary(null)
+      setLoadingDatasetAnnotationSummary(false)
+      return
+    }
+    refreshDatasetAnnotationSummary()
+  }, [annotationMode, effectiveDatasetId, refreshDatasetAnnotationSummary])
 
   // Load WSI detail and available heatmaps
   useEffect(() => {
@@ -377,6 +427,38 @@ export default function WSIViewerPage() {
     return getColorForLabel(currentLabel, labelColors)
   }, [currentLabel, labelColors])
 
+  const updateDraftCache = useCallback((nextAnnotationId: string | null, annotations: AnnotationsMap | null) => {
+    draftCacheRef.current = {
+      key: draftCacheKey,
+      draft: nextAnnotationId
+        ? {
+            annotation_id: nextAnnotationId,
+            annotations: annotations ?? {},
+          }
+        : null,
+    }
+  }, [draftCacheKey])
+
+  const mergeLabelColorsFromAnnotations = useCallback((annotations: AnnotationsMap) => {
+    setLabelColors(prev => {
+      const next = { ...prev }
+      for (const regions of Object.values(annotations)) {
+        for (const region of regions) {
+          if (!region.label) continue
+          if (next[region.label]) continue
+
+          const usedColors = new Set(Object.values(next))
+          if (region.color && !usedColors.has(region.color)) {
+            next[region.label] = region.color
+          } else {
+            next[region.label] = getColorForLabel(region.label, next)
+          }
+        }
+      }
+      return next
+    })
+  }, [])
+
   // Annotation: handlers
   const handleViewerReady = useCallback((viewer: any) => {
     setOsdViewer(viewer)
@@ -398,11 +480,16 @@ export default function WSIViewerPage() {
     }))
     setHasUnsavedChanges(true)
     // Auto-assign color to label
-    if (region.label && !labelColors[region.label]) {
-      const color = getColorForLabel(region.label, labelColors)
-      setLabelColors(prev => ({ ...prev, [region.label]: color }))
+    if (region.label) {
+      setLabelColors(prev => {
+        if (prev[region.label]) return prev
+        return {
+          ...prev,
+          [region.label]: getColorForLabel(region.label, prev),
+        }
+      })
     }
-  }, [wsi_id, labelColors])
+  }, [wsi_id])
 
   const handleRegionTooLarge = useCallback(() => {
     toast.warning(t('annotation.regionTooLarge'))
@@ -413,6 +500,15 @@ export default function WSIViewerPage() {
       ...prev,
       [wsi_id]: (prev[wsi_id] || []).map(r => r.id === regionId ? { ...r, ...updates } : r),
     }))
+    if (updates.label) {
+      setLabelColors(prev => {
+        if (prev[updates.label!]) return prev
+        return {
+          ...prev,
+          [updates.label!]: getColorForLabel(updates.label!, prev),
+        }
+      })
+    }
     setHasUnsavedChanges(true)
   }, [wsi_id])
 
@@ -432,18 +528,6 @@ export default function WSIViewerPage() {
     }))
     setHasUnsavedChanges(true)
   }, [wsi_id])
-
-  const handleDeleteCrossSlideByLabel = useCallback((labels: string[]) => {
-    const labelSet = new Set(labels)
-    setAllAnnotations(prev => {
-      const next: typeof prev = {}
-      for (const [key, regions] of Object.entries(prev)) {
-        next[key] = regions.filter(r => !labelSet.has(r.label))
-      }
-      return next
-    })
-    setHasUnsavedChanges(true)
-  }, [])
 
   const handleLabelChange = useCallback((label: string) => {
     const defaultLabel = t('annotation.defaultLabel')
@@ -473,11 +557,16 @@ export default function WSIViewerPage() {
       })
     }
     setCurrentLabel(label)
-    if (label && !labelColors[label]) {
-      const color = getColorForLabel(label, labelColors)
-      setLabelColors(prev => ({ ...prev, [label]: color }))
+    if (label) {
+      setLabelColors(prev => {
+        if (prev[label]) return prev
+        return {
+          ...prev,
+          [label]: getColorForLabel(label, prev),
+        }
+      })
     }
-  }, [labelColors, t])
+  }, [t])
 
   // Manual save handler
   const handleManualSave = useCallback(async () => {
@@ -485,30 +574,116 @@ export default function WSIViewerPage() {
     try {
       const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
       if (totalRegions === 0) {
-        // Nothing to save; if a draft exists, delete it
-        if (draftId) {
-          const idToDelete = draftId
-          setDraftId(null)
-          await deleteDraft(idToDelete)
+        if (effectiveDatasetId) {
+          const id = annotationId || crypto.randomUUID()
+          if (!annotationId) setAnnotationId(id)
+          await saveAnnotation({
+            annotation_id: id,
+            source_dataset_id: effectiveDatasetId,
+            annotations: {},
+          })
+          updateDraftCache(id, {})
+        } else if (annotationId) {
+          // Nothing to save; if an annotation exists, delete it
+          const idToDelete = annotationId
+          setAnnotationId(null)
+          await deleteAnnotation(idToDelete)
+          updateDraftCache(null, null)
         }
       } else {
-        const id = draftId || crypto.randomUUID()
-        if (!draftId) setDraftId(id)
-        await saveDraft({
-          draft_id: id,
-          source_dataset_id: datasetId,
+        const id = annotationId || crypto.randomUUID()
+        if (!annotationId) setAnnotationId(id)
+        await saveAnnotation({
+          annotation_id: id,
+          source_dataset_id: effectiveDatasetId,
           annotations: allAnnotations,
         })
+        updateDraftCache(id, allAnnotations)
       }
       setHasUnsavedChanges(false)
+      if (effectiveDatasetId) {
+        await refreshDatasetAnnotationSummary()
+      }
       toast.success(t('annotation.saved'))
+      return true
     } catch (err) {
-      console.error('Failed to save annotation draft:', err)
+      console.error('Failed to save annotation:', err)
       toast.error(t('annotation.saveFailed'))
+      return false
     } finally {
       setSavingAnnotations(false)
     }
-  }, [allAnnotations, draftId, datasetId, t, toast])
+  }, [allAnnotations, annotationId, effectiveDatasetId, refreshDatasetAnnotationSummary, t, toast, updateDraftCache])
+
+  const handleDeleteCrossSlideByLabel = useCallback(async (labels: string[]) => {
+    const labelSet = new Set(labels)
+
+    if (!effectiveDatasetId) {
+      setAllAnnotations(prev => {
+        const next: typeof prev = {}
+        for (const [key, regions] of Object.entries(prev)) {
+          next[key] = regions.filter(r => !labelSet.has(r.label))
+        }
+        return next
+      })
+      setHasUnsavedChanges(true)
+      return
+    }
+
+    try {
+      if (hasUnsavedChanges) {
+        const saved = await handleManualSave()
+        if (!saved) return
+      }
+
+      const result = await deleteDatasetAnnotationsByLabels(effectiveDatasetId, { labels })
+      setAnnotationId(result.annotation_id)
+      draftCacheRef.current = null
+      setDatasetAnnotationSummary(result.summary)
+      setAllAnnotations(prev => {
+        const next: typeof prev = {}
+        for (const [key, regions] of Object.entries(prev)) {
+          next[key] = regions.filter(r => !labelSet.has(r.label))
+        }
+        return next
+      })
+      setHasUnsavedChanges(false)
+      toast.success(t('annotation.saved'))
+    } catch (err) {
+      console.error('Failed to delete dataset annotations by labels:', err)
+      toast.error(t('annotation.saveFailed'))
+    }
+  }, [effectiveDatasetId, handleManualSave, hasUnsavedChanges, t, toast])
+
+  const handleCreateDatasetFromAnnotations = useCallback(async ({
+    datasetName,
+    taskType,
+  }: {
+    datasetName: string
+    taskType: 'classification' | 'segmentation'
+  }) => {
+    try {
+      if (effectiveDatasetId && hasUnsavedChanges) {
+        const saved = await handleManualSave()
+        if (!saved) return
+      }
+
+      const isSegReuse = taskType === 'segmentation' && !!effectiveDatasetId
+      const result = await extractRegions({
+        annotation_id: annotationId || undefined,
+        annotations: effectiveDatasetId ? undefined : allAnnotations,
+        dataset_name: isSegReuse ? '' : datasetName,
+        task_type: taskType,
+        ...(effectiveDatasetId ? { source_dataset_id: effectiveDatasetId, dataset_scope: true } : {}),
+      })
+
+      addExtractionTask(result.task_id, isSegReuse ? t('annotation.reuseDataset') : datasetName)
+      toast.success(t('annotation.extractSubmitted'))
+    } catch (err: any) {
+      toast.error(err?.message || t('annotation.extractFailed'))
+      throw err
+    }
+  }, [addExtractionTask, allAnnotations, annotationId, effectiveDatasetId, handleManualSave, hasUnsavedChanges, t, toast])
 
   // Navigation guard: wrap navigation in unsaved-changes check
   const guardedNavigate = useCallback((navigateFn: () => void) => {
@@ -519,75 +694,139 @@ export default function WSIViewerPage() {
     }
   }, [hasUnsavedChanges, annotationMode])
 
-  // Annotation: auto-save draft (debounced 2s)
+  // Annotation: auto-save (debounced 2s)
   useEffect(() => {
     if (!annotationMode) return
+    if (!hasUnsavedChanges) return
     const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
 
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
 
-    // If all regions are deleted and a draft exists, delete it from server immediately
-    // (no debounce — the user's intent is clear, and delaying risks the timer being
-    // cancelled by an annotation-mode toggle, leaving a stale draft on the server)
+    // For dataset-scoped annotations, persist empty drafts so intentional GT clearing
+    // does not resurrect the dataset GT on the next load.
     if (totalRegions === 0) {
-      if (draftId) {
-        const idToDelete = draftId
-        setDraftId(null)
-        deleteDraft(idToDelete).catch(err => {
-          console.error('Failed to delete empty annotation draft:', err)
+      if (effectiveDatasetId) {
+        const id = annotationId || crypto.randomUUID()
+        if (!annotationId) setAnnotationId(id)
+        saveAnnotation({
+          annotation_id: id,
+          source_dataset_id: effectiveDatasetId,
+          annotations: {},
+        }).then(() => {
+          updateDraftCache(id, {})
+          setHasUnsavedChanges(false)
+          refreshDatasetAnnotationSummary()
+        }).catch(err => {
+          console.error('Failed to save empty dataset annotation:', err)
         })
+      } else if (annotationId) {
+        const idToDelete = annotationId
+        setAnnotationId(null)
+        deleteAnnotation(idToDelete).then(() => {
+          updateDraftCache(null, null)
+          setHasUnsavedChanges(false)
+        }).catch(err => {
+          console.error('Failed to delete empty annotation:', err)
+        })
+      } else {
+        setHasUnsavedChanges(false)
       }
-      // Nothing to save — clear unsaved flag so navigation guard doesn't trigger
-      setHasUnsavedChanges(false)
       return
     }
 
     saveTimerRef.current = setTimeout(async () => {
       try {
-        const id = draftId || crypto.randomUUID()
-        if (!draftId) setDraftId(id)
-        await saveDraft({
-          draft_id: id,
-          source_dataset_id: datasetId,
+        const id = annotationId || crypto.randomUUID()
+        if (!annotationId) setAnnotationId(id)
+        await saveAnnotation({
+          annotation_id: id,
+          source_dataset_id: effectiveDatasetId,
           annotations: allAnnotations,
         })
+        updateDraftCache(id, allAnnotations)
+        setHasUnsavedChanges(false)
+        if (effectiveDatasetId) {
+          await refreshDatasetAnnotationSummary()
+        }
       } catch (err) {
-        console.error('Failed to auto-save annotation draft:', err)
+        console.error('Failed to auto-save annotation:', err)
       }
     }, 2000)
 
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     }
-  }, [annotationMode, allAnnotations, draftId, datasetId])
+  }, [annotationMode, allAnnotations, annotationId, effectiveDatasetId, hasUnsavedChanges, refreshDatasetAnnotationSummary, updateDraftCache])
 
-  // Annotation: draft recovery when entering annotation mode
+  // Annotation: recovery when entering annotation mode
   useEffect(() => {
     if (!annotationMode) return
-    // Only recover if annotations state is pristine (empty object).
-    // If keys exist (even with empty arrays), the user explicitly cleared them —
-    // don't restore the old draft.
-    if (Object.keys(allAnnotations).length > 0) return
+    if (!datasetId && !detail) return
+    // Recover per current WSI instead of blocking on any previously loaded slide.
+    // If the current key exists (even with an empty array), treat it as already loaded.
+    if (Object.prototype.hasOwnProperty.call(allAnnotations, wsi_id)) return
 
-    listDrafts().then(drafts => {
-      // Find a draft matching this dataset (use == to handle null vs undefined)
-      const matching = drafts.find(d => (d.source_dataset_id ?? undefined) === (datasetId ?? undefined))
-      if (matching && Object.keys(matching.annotations).length > 0) {
-        setAllAnnotations(matching.annotations)
-        setDraftId(matching.draft_id)
-        // Recover label colors
-        const colors: Record<string, string> = {}
-        for (const regions of Object.values(matching.annotations)) {
-          for (const r of regions) {
-            if (r.label && r.color) colors[r.label] = r.color
+    let cancelled = false
+
+    const recoverAnnotations = async () => {
+      try {
+        let matching = draftCacheRef.current?.key === draftCacheKey
+          ? draftCacheRef.current.draft
+          : null
+
+        if (draftCacheRef.current?.key !== draftCacheKey) {
+          const annotations = await listAnnotations()
+          if (cancelled) return
+
+          const found = annotations.find(d => (d.source_dataset_id ?? undefined) === (effectiveDatasetId ?? undefined))
+          matching = found
+            ? {
+                annotation_id: found.annotation_id,
+                annotations: found.annotations,
+              }
+            : null
+          draftCacheRef.current = {
+            key: draftCacheKey,
+            draft: matching,
           }
         }
-        setLabelColors(prev => ({ ...prev, ...colors }))
+
+        // Draft wins over GT fallback for the current WSI if it already has an entry.
+        if (matching) {
+          setAnnotationId(matching.annotation_id)
+          if (Object.keys(matching.annotations).length > 0) {
+            setAllAnnotations(prev => ({
+              ...prev,
+              ...matching.annotations,
+            }))
+            mergeLabelColorsFromAnnotations(matching.annotations)
+          }
+          if (Object.prototype.hasOwnProperty.call(matching.annotations, wsi_id)) return
+        } else {
+          setAnnotationId(null)
+        }
+
+        if (!wsi_id) return
+
+        const gt = await getWSIGroundTruth(wsi_id)
+        if (cancelled || Object.keys(gt.annotations).length === 0) return
+
+        setAllAnnotations(prev => ({
+          ...prev,
+          ...gt.annotations,
+        }))
+        mergeLabelColorsFromAnnotations(gt.annotations)
+      } catch (err) {
+        console.error('Failed to recover annotation:', err)
       }
-    }).catch(err => {
-      console.error('Failed to recover annotation draft:', err)
-    })
-  }, [annotationMode]) // eslint-disable-line react-hooks/exhaustive-deps
+    }
+
+    recoverAnnotations()
+
+    return () => {
+      cancelled = true
+    }
+  }, [annotationMode, allAnnotations, datasetId, detail, draftCacheKey, effectiveDatasetId, mergeLabelColorsFromAnnotations, wsi_id])
 
   // Annotation: beforeunload warning (only when there are unsaved changes)
   useEffect(() => {
@@ -935,6 +1174,9 @@ export default function WSIViewerPage() {
             currentWsiId={wsi_id}
             regions={currentRegions}
             allAnnotations={allAnnotations}
+            preferRemoteCrossSlideSummary={!!effectiveDatasetId}
+            crossSlideSummary={effectiveDatasetId ? datasetAnnotationSummary : null}
+            loadingCrossSlideSummary={effectiveDatasetId ? loadingDatasetAnnotationSummary : false}
             labelColors={labelColors}
             onUpdateRegion={handleUpdateRegion}
             onDeleteRegion={handleDeleteRegion}
@@ -1030,10 +1272,11 @@ export default function WSIViewerPage() {
         show={showCreateDatasetDialog}
         onClose={() => setShowCreateDatasetDialog(false)}
         allAnnotations={allAnnotations}
+        summary={effectiveDatasetId ? datasetAnnotationSummary : null}
         labelColors={labelColors}
-        sourceDatasetId={datasetId}
-        draftId={draftId || undefined}
-        hasWsiSources={hasWsiSources}
+        sourceDatasetId={effectiveDatasetId}
+        hasWsiSources={datasetAnnotationSummary?.has_wsi_sources ?? hasWsiSources}
+        onSubmitCreateDataset={handleCreateDatasetFromAnnotations}
       />
 
       {/* Unsaved Annotations Confirmation Modal */}
@@ -1069,7 +1312,8 @@ export default function WSIViewerPage() {
               </button>
               <button
                 onClick={async () => {
-                  await handleManualSave()
+                  const saved = await handleManualSave()
+                  if (!saved) return
                   const nav = pendingNavigation
                   setPendingNavigation(null)
                   nav()

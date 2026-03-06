@@ -226,17 +226,23 @@ class StartBatchUpdateMetadataRequest(BaseModel):
 
 # ── Annotation ──────────────────────────────────────────────────────────────
 
-class AnnotationDraftSaveRequest(BaseModel):
-    """Request model for creating/updating an annotation draft (auto-save)"""
-    draft_id: str
+class AnnotationSaveRequest(BaseModel):
+    """Request model for creating/updating a segmentation annotation (auto-save)"""
+    annotation_id: str
     source_dataset_id: Optional[str] = None
     # { wsi_id: [{ type, x, y, width, height, points, label, color }, ...] }
     annotations: Dict
 
 class AnnotationExtractRequest(BaseModel):
     """Request model for extracting annotated ROIs into a new dataset"""
-    draft_id: Optional[str] = None       # Load annotations from saved draft
-    annotations: Optional[Dict] = None   # Or provide directly (overrides draft)
+    annotation_id: Optional[str] = None    # Load annotations from saved annotation
+    annotations: Optional[Dict] = None     # Or provide directly (overrides saved)
     dataset_name: str
-    task_type: str = "classification"     # classification or segmentation
+    task_type: str = "classification"       # classification or segmentation
     source_dataset_id: Optional[str] = None  # For segmentation: reuse existing dataset
+    dataset_scope: bool = False             # Build effective annotations from the whole dataset
+
+
+class AnnotationDeleteByLabelsRequest(BaseModel):
+    """Delete annotations by label across an effective dataset annotation view."""
+    labels: List[str]

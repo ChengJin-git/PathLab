@@ -15,7 +15,7 @@ from typing import List, Dict
 from contextlib import asynccontextmanager
 
 from backend.ai.schemas.base import TaskStatus
-from backend.database.repositories import TrainingTaskRepository, AnnotationDraftRepository
+from backend.database.repositories import TrainingTaskRepository, SegmentationAnnotationRepository
 from backend.database.utils.training_logger import TrainingLogger
 from backend.common.config import Config
 from .dependencies import logger, PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
@@ -179,7 +179,7 @@ async def run_training_pipeline(
                     early_stopping_patience = int(model_config.get('early_stopping_patience', 15))
                     seed = preprocessing_config.get('split_config', {}).get('seed', 42)
 
-                    # Determine num_classes from COCO annotations stored in annotation_drafts
+                    # Determine num_classes from COCO annotations stored in segmentation_annotations
                     # Only allow access to annotations the user owns or has permissions for
                     num_classes = 1  # default
                     from backend.database.repositories import DatasetPermissionRepository
@@ -188,10 +188,10 @@ async def run_training_pipeline(
                         user_permissions = await DatasetPermissionRepository.get_valid_by_user(db, user_id)
                         elevated_dataset_ids = {p.dataset_id for p in user_permissions if p.is_valid()}
                     for wsi_id in wsi_ids:
-                        draft = await AnnotationDraftRepository.get_draft_with_permission(
-                            db, f"draft_{wsi_id}", user_id or "", user_is_admin, elevated_dataset_ids
+                        annotation = await SegmentationAnnotationRepository.get_with_permission(
+                            db, f"annot_{wsi_id}", user_id or "", user_is_admin, elevated_dataset_ids
                         )
-                        if draft and draft.annotations:
+                        if annotation and annotation.annotations:
                             coco_categories = draft.annotations.get("categories", [])
                             if coco_categories:
                                 num_classes = len(coco_categories)

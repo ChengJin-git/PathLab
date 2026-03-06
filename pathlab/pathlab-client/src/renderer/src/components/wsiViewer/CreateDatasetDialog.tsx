@@ -1,34 +1,31 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PackagePlus, Loader2 } from 'lucide-react'
-import { AnnotationsMap, extractRegions } from '../../api/annotation'
-import { useToast } from '../../contexts/ToastContext'
-import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
+import { AnnotationsMap, DatasetAnnotationSummaryResponse } from '../../api/annotation'
 
 interface CreateDatasetDialogProps {
   show: boolean
   onClose: () => void
   allAnnotations: AnnotationsMap
+  summary?: DatasetAnnotationSummaryResponse | null
   labelColors: Record<string, string>
   sourceDatasetId?: string
-  draftId?: string
   /** True if any annotated source slide is a WSI (not a patch image) */
   hasWsiSources?: boolean
+  onSubmitCreateDataset: (params: { datasetName: string; taskType: 'classification' | 'segmentation' }) => Promise<void>
 }
 
 export function CreateDatasetDialog({
-  show, onClose, allAnnotations, labelColors, sourceDatasetId, draftId,
+  show, onClose, allAnnotations, summary, labelColors, sourceDatasetId,
   hasWsiSources = false,
+  onSubmitCreateDataset,
 }: CreateDatasetDialogProps) {
   const { t } = useTranslation()
-  const toast = useToast()
-  const { addExtractionTask } = useBackgroundTask()
   const [datasetName, setDatasetName] = useState('')
   const [taskType, setTaskType] = useState<'classification' | 'segmentation'>('classification')
   const [submitting, setSubmitting] = useState(false)
 
-  // Compute summary
-  const summary = useMemo(() => {
+  const localSummary = useMemo(() => {
     const labelCounts: Record<string, number> = {}
     let totalRegions = 0
     const slideIds = new Set<string>()
@@ -43,6 +40,17 @@ export function CreateDatasetDialog({
     return { totalRegions, totalSlides: slideIds.size, labelCounts }
   }, [allAnnotations])
 
+  const effectiveSummary = useMemo(() => {
+    if (!summary) return localSummary
+    return {
+      totalRegions: summary.total_regions,
+      totalSlides: summary.total_slides,
+      labelCounts: Object.fromEntries(
+        Object.entries(summary.labels).map(([label, data]) => [label, data.total_regions])
+      ),
+    }
+  }, [localSummary, summary])
+
   // Reset state when dialog opens
   useEffect(() => {
     if (show) {
@@ -56,23 +64,13 @@ export function CreateDatasetDialog({
   const isSegReuse = taskType === 'segmentation' && !!sourceDatasetId
 
   const handleSubmit = async () => {
-    if ((!isSegReuse && !datasetName.trim()) || summary.totalRegions === 0 || submitting) return
+    if ((!isSegReuse && !datasetName.trim()) || effectiveSummary.totalRegions === 0 || submitting) return
     setSubmitting(true)
 
     try {
-      const result = await extractRegions({
-        draft_id: draftId,
-        annotations: allAnnotations,
-        dataset_name: isSegReuse ? '' : datasetName.trim(),
-        task_type: taskType,
-        ...(isSegReuse ? { source_dataset_id: sourceDatasetId } : {}),
-      })
-      // Register extraction task in background task center for progress tracking
-      addExtractionTask(result.task_id, isSegReuse ? t('annotation.reuseDataset') : datasetName.trim())
-      toast.success(t('annotation.extractSubmitted'))
+      await onSubmitCreateDataset({ datasetName: datasetName.trim(), taskType })
       onClose()
-    } catch (err: any) {
-      toast.error(err.message || t('annotation.extractFailed'))
+    } catch {
       setSubmitting(false)
     }
   }
@@ -144,14 +142,14 @@ export function CreateDatasetDialog({
           <div className="bg-gray-50 rounded-lg p-3 mb-2">
             <h4 className="text-xs font-semibold text-gray-600 mb-2">{t('annotation.annotationSummary')}</h4>
             <div className="grid grid-cols-2 gap-2 text-xs mb-2">
-              <div className="flex justify-between"><span className="text-gray-500">{t('annotation.totalRegions')}</span><span className="font-medium text-gray-900">{summary.totalRegions}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">{t('annotation.totalSlides')}</span><span className="font-medium text-gray-900">{summary.totalSlides}</span></div>
+              <div className="flex justify-between"><span className="text-gray-500">{t('annotation.totalRegions')}</span><span className="font-medium text-gray-900">{effectiveSummary.totalRegions}</span></div>
+              <div className="flex justify-between"><span className="text-gray-500">{t('annotation.totalSlides')}</span><span className="font-medium text-gray-900">{effectiveSummary.totalSlides}</span></div>
             </div>
             <h4 className="text-xs font-semibold text-gray-600 mb-1">{t('annotation.labelDistribution')}</h4>
             <div className="space-y-1">
-              {Object.entries(summary.labelCounts).map(([label, count]) => (
+              {Object.entries(effectiveSummary.labelCounts).map(([label, count]) => (
                 <div key={label} className="flex items-center gap-2 text-xs">
-                  <span className="w-2.5 h-2.5 rounded-full border border-gray-200 flex-shrink-0" style={{ backgroundColor: labelColors[label] || '#3b82f6' }} />
+                  <span className="w-2.5 h-2.5 rounded-full border border-gray-200 flex-shrink-0" style={{ backgroundColor: labelColors[label] || summary?.labels[label]?.color || '#3b82f6' }} />
                   <span className="flex-1 text-gray-700 truncate">{label}</span>
                   <span className="text-gray-500">{count}</span>
                 </div>
@@ -170,7 +168,7 @@ export function CreateDatasetDialog({
           </button>
           <button
             onClick={handleSubmit}
-            disabled={(!isSegReuse && !datasetName.trim()) || summary.totalRegions === 0 || submitting}
+            disabled={(!isSegReuse && !datasetName.trim()) || effectiveSummary.totalRegions === 0 || submitting}
             className="flex-1 px-4 py-2 text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {submitting ? (

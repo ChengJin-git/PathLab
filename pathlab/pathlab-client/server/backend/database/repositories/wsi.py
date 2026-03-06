@@ -837,7 +837,10 @@ class WSIRepository:
     @staticmethod
     async def _get_coco_categories_for_dataset(db: AsyncSession, dataset_id: str) -> List[Dict]:
         """
-        Extract COCO categories from annotation JSON files for a segmentation dataset.
+        Extract COCO categories from segmentation annotations stored in DB.
+
+        Looks up SegmentationAnnotation records linked to this dataset_id
+        and extracts categories from the COCO JSON.
 
         Args:
             db: Database session
@@ -846,53 +849,54 @@ class WSIRepository:
         Returns:
             List of category dicts with id, name, and optionally supercategory
         """
-        import json
-        import os
-        from pathlib import Path
+        from backend.database.models import SegmentationAnnotation
 
-        # Query one WSI from this dataset that has an annotation file
-        query = select(WSISlide).where(
-            and_(
-                WSISlide.dataset_id == dataset_id,
-                WSISlide.wsi_path.like('%.json')
-            )
+        # Query annotations linked to this dataset
+        query = select(SegmentationAnnotation).where(
+            SegmentationAnnotation.source_dataset_id == dataset_id
         ).limit(1)
 
         result = await db.execute(query)
-        wsi = result.scalar_one_or_none()
+        annotation = result.scalar_one_or_none()
 
-        if not wsi or not wsi.wsi_path:
+        if not annotation or not annotation.annotations:
             return []
 
-        # Read the JSON file to extract categories
         try:
-            json_path = Path(wsi.wsi_path)
-            if not json_path.exists():
+            coco_data = annotation.annotations
+            if not isinstance(coco_data, dict):
                 return []
-
-            with open(json_path, 'r') as f:
-                coco_data = json.load(f)
 
             # Extract categories from COCO format
             categories = coco_data.get('categories', [])
             if not categories:
+                # Legacy format: categories as dict { "0": "label", ... }
                 return []
 
-            # Return simplified category info
-            return [
-                {
-                    "id": cat.get("id"),
-                    "name": cat.get("name"),
-                    "supercategory": cat.get("supercategory")
-                }
-                for cat in categories
-                if cat.get("id") is not None and cat.get("name")
-            ]
+            # Handle list format (standard COCO)
+            if isinstance(categories, list):
+                return [
+                    {
+                        "id": cat.get("id"),
+                        "name": cat.get("name"),
+                        "supercategory": cat.get("supercategory")
+                    }
+                    for cat in categories
+                    if cat.get("id") is not None and cat.get("name")
+                ]
+
+            # Handle dict format { "0": "label", "1": "label2" }
+            if isinstance(categories, dict):
+                return [
+                    {"id": int(cat_id), "name": cat_name}
+                    for cat_id, cat_name in categories.items()
+                ]
+
+            return []
         except Exception as e:
-            # Log error but don't fail the entire request
             import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Failed to extract COCO categories from {wsi.wsi_path}: {e}")
+            _logger = logging.getLogger(__name__)
+            _logger.warning(f"Failed to extract COCO categories for dataset {dataset_id}: {e}")
             return []
 
     @staticmethod
@@ -996,6 +1000,23 @@ class WSIRepository:
 
         result = await db.execute(query)
         return result.scalar_one()
+
+    @staticmethod
+    async def get_dataset_cache_key(db: AsyncSession, dataset_id: str) -> dict:
+        """Return a lightweight cache key for WSI membership/metadata in a dataset."""
+        query = select(func.count(WSISlide.id), func.max(WSISlide.updated_at))
+
+        if dataset_id == "Uncategorized":
+            query = query.where(WSISlide.dataset_id.is_(None))
+        else:
+            query = query.where(WSISlide.dataset_id == dataset_id)
+
+        result = await db.execute(query)
+        count, latest_updated_at = result.one()
+        return {
+            "count": int(count or 0),
+            "latest_updated_at": latest_updated_at.isoformat() if latest_updated_at else None,
+        }
 
     # ------------------------------------------------------------------
     # Search helper

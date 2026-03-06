@@ -25,7 +25,7 @@ from backend.database.repositories import (
     DataGroupRepository,
     TrainingTaskRepository,
     StorageTaskRepository,
-    AnnotationDraftRepository,
+    SegmentationAnnotationRepository,
 )
 from backend.database.models import TrainingTaskWSI, AIResult, AITask
 from backend.auth import current_active_user, User, get_user_from_token_param
@@ -33,6 +33,7 @@ from backend.auth.dependencies import require_admin
 from ..dependencies import logger, storage_manager
 from ..models import StartBatchImportRequest, StartDeleteExternalRequest, StartBatchUpdateMetadataRequest
 from backend.ai.schemas.base import TaskStatus
+from backend.common.annotation_summary_cache import rebuild_dataset_annotation_summary_cache
 from backend.common.config import Config
 from backend.common.file_types import is_patch_file
 
@@ -327,13 +328,15 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                                 coco_data = json.load(jf)
                             # Validate minimal COCO structure
                             if isinstance(coco_data, dict) and ('images' in coco_data or 'annotations' in coco_data):
-                                draft_id = f"draft_{wsi_id}"
-                                await AnnotationDraftRepository.upsert_draft(
+                                annotation_id = f"annot_{wsi_id}"
+                                await SegmentationAnnotationRepository.upsert(
                                     db,
-                                    draft_id=draft_id,
+                                    annotation_id=annotation_id,
                                     user_id=user_id,
                                     annotations=coco_data,
                                     source_dataset_id=resolved_dataset_id,
+                                    status="finalized",
+                                    source="import",
                                 )
                                 logger.info(f"Imported COCO annotation for {wsi_id} from {matched_json_path.name}")
                         except Exception as json_err:
@@ -381,6 +384,12 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                 results=results
             )
             await db.commit()
+
+            if task_type == 'segmentation' and resolved_dataset_id and success_count > 0:
+                try:
+                    await rebuild_dataset_annotation_summary_cache(db, resolved_dataset_id)
+                except Exception as cache_err:
+                    logger.warning(f"Failed to refresh annotation summary cache for {resolved_dataset_id}: {cache_err}")
 
             logger.info(f"Batch import task {task_id} completed: {success_count} success, {failed_count} failed, {skipped_count} skipped")
 
