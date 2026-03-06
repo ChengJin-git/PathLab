@@ -398,8 +398,9 @@ async def _run_segmentation_analysis(
         if train_iou or val_iou:
             chart_data["iou_curve"] = {
                 "epochs": list(range(1, max(len(train_iou), len(val_iou)) + 1)),
-                "train_iou": train_iou,
-                "val_iou": val_iou,
+                "train_values": train_iou,
+                "val_values": val_iou,
+                "metric_name": "IoU",
             }
             chart_gen_tasks.append(("iou_curve", run_chart_in_process(
                 _render_metric_curve_sync,
@@ -415,8 +416,9 @@ async def _run_segmentation_analysis(
         if train_dice or val_dice:
             chart_data["dice_curve"] = {
                 "epochs": list(range(1, max(len(train_dice), len(val_dice)) + 1)),
-                "train_dice": train_dice,
-                "val_dice": val_dice,
+                "train_values": train_dice,
+                "val_values": val_dice,
+                "metric_name": "Dice",
             }
             chart_gen_tasks.append(("dice_curve", run_chart_in_process(
                 _render_metric_curve_sync,
