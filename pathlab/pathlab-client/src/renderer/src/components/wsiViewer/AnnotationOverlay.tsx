@@ -30,6 +30,14 @@ function viewportToL0(vx: number, vy: number, slideWidth: number) {
   return { x: vx * slideWidth, y: vy * slideWidth }
 }
 
+function withAlpha(color: string, alphaHex: string) {
+  if (color.startsWith('#')) {
+    if (color.length === 7) return `${color}${alphaHex}`
+    if (color.length === 9) return `${color.slice(0, 7)}${alphaHex}`
+  }
+  return color
+}
+
 export function AnnotationOverlay({
   viewer,
   annotationMode,
@@ -97,10 +105,11 @@ export function AnnotationOverlay({
     const bottomRight = l0ToScreen(region.x + region.width, region.y + region.height)
     if (!topLeft || !bottomRight) return
 
-    const highlightStrokeColor = 'rgba(245, 158, 11, 0.95)'
+    const baseLineWidth = highlight ? 4 : 2
+    const highlightStrokeColor = 'rgba(255, 255, 255, 0.98)'
     ctx.strokeStyle = color
-    ctx.lineWidth = highlight ? 3 : 2
-    ctx.fillStyle = color + '20' // 12% opacity fill
+    ctx.lineWidth = baseLineWidth
+    ctx.fillStyle = withAlpha(color, highlight ? '2E' : '20')
 
     if (region.type === 'polygon' && region.points && region.points.length >= 3) {
       const screenPoints = region.points
@@ -119,30 +128,80 @@ export function AnnotationOverlay({
 
       if (highlight) {
         drawPolygonPath()
+        ctx.save()
         ctx.strokeStyle = highlightStrokeColor
-        ctx.lineWidth = 6
+        ctx.lineWidth = 10
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.35)'
+        ctx.shadowBlur = 10
         ctx.stroke()
+        ctx.restore()
       }
 
       drawPolygonPath()
       ctx.fill()
       ctx.strokeStyle = color
-      ctx.lineWidth = highlight ? 3 : 2
+      ctx.lineWidth = baseLineWidth
       ctx.stroke()
+
+      if (highlight) {
+        screenPoints.forEach(point => {
+          ctx.save()
+          ctx.fillStyle = highlightStrokeColor
+          ctx.shadowColor = 'rgba(0, 0, 0, 0.28)'
+          ctx.shadowBlur = 6
+          ctx.beginPath()
+          ctx.arc(point.x, point.y, 4.5, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.restore()
+
+          ctx.fillStyle = color
+          ctx.beginPath()
+          ctx.arc(point.x, point.y, 2.5, 0, Math.PI * 2)
+          ctx.fill()
+        })
+      }
     } else {
       const w = bottomRight.x - topLeft.x
       const h = bottomRight.y - topLeft.y
 
       if (highlight) {
+        ctx.save()
         ctx.strokeStyle = highlightStrokeColor
-        ctx.lineWidth = 6
+        ctx.lineWidth = 10
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.35)'
+        ctx.shadowBlur = 10
         ctx.strokeRect(topLeft.x, topLeft.y, w, h)
+        ctx.restore()
       }
 
       ctx.fillRect(topLeft.x, topLeft.y, w, h)
       ctx.strokeStyle = color
-      ctx.lineWidth = highlight ? 3 : 2
+      ctx.lineWidth = baseLineWidth
       ctx.strokeRect(topLeft.x, topLeft.y, w, h)
+
+      if (highlight) {
+        const corners = [
+          [topLeft.x, topLeft.y],
+          [bottomRight.x, topLeft.y],
+          [topLeft.x, bottomRight.y],
+          [bottomRight.x, bottomRight.y],
+        ]
+        corners.forEach(([x, y]) => {
+          ctx.save()
+          ctx.fillStyle = highlightStrokeColor
+          ctx.shadowColor = 'rgba(0, 0, 0, 0.28)'
+          ctx.shadowBlur = 6
+          ctx.beginPath()
+          ctx.arc(x, y, 4.5, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.restore()
+
+          ctx.fillStyle = color
+          ctx.beginPath()
+          ctx.arc(x, y, 2.5, 0, Math.PI * 2)
+          ctx.fill()
+        })
+      }
     }
 
     // Label text
@@ -173,8 +232,16 @@ export function AnnotationOverlay({
     ctx.closePath()
     ctx.fill()
     if (highlight) {
+      ctx.save()
       ctx.strokeStyle = highlightStrokeColor
-      ctx.lineWidth = 1.5
+      ctx.lineWidth = 3
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.25)'
+      ctx.shadowBlur = 6
+      ctx.stroke()
+      ctx.restore()
+
+      ctx.strokeStyle = color
+      ctx.lineWidth = 1.25
       ctx.stroke()
     }
     // Shadow
@@ -200,8 +267,18 @@ export function AnnotationOverlay({
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     if (!viewer || !viewer.viewport) return
 
+    const hasHighlightedRegion = !!highlightedRegionId && regions.some(r => r.id === highlightedRegionId)
+
     // Draw existing regions
-    regions.forEach(r => drawRegion(ctx, r, r.id === highlightedRegionId))
+    regions.forEach(r => {
+      const isHighlighted = r.id === highlightedRegionId
+      ctx.save()
+      if (hasHighlightedRegion && !isHighlighted) {
+        ctx.globalAlpha = 0.4
+      }
+      drawRegion(ctx, r, isHighlighted)
+      ctx.restore()
+    })
 
     // Draw in-progress rectangle
     if (isDrawing && drawingTool === 'rect' && rectStart && rectEnd) {
