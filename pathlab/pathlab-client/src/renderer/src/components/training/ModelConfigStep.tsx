@@ -216,9 +216,9 @@ export function ModelConfigStep({
 
   return (
     <>
-      <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 mb-6">
+      <div className="flex flex-col lg:flex-row lg:items-start gap-4 sm:gap-6 mb-6">
         {/* Left Column: Model Architecture */}
-        <Card className="flex-1 lg:max-w-3xl flex flex-col bg-gray-50/50 overflow-hidden min-h-[350px]">
+        <Card className="min-w-0 flex-1 flex flex-col bg-gray-50/50 overflow-hidden min-h-[350px] lg:h-[640px] xl:h-[680px]">
           <div className="p-4 sm:p-5 pb-0 flex-shrink-0">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
               <h3 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
@@ -247,60 +247,54 @@ export function ModelConfigStep({
           <div className="flex-1 overflow-y-auto p-4 sm:p-5 pt-0 custom-scrollbar">
             {/* Segmentation Architecture + Backbone + Loss */}
             {isSegmentation && (
-              <div className="space-y-4">
-                <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
-                  <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest">
-                    {t('training.modelConfig.modelType')}
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-3">
+                <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm space-y-2.5">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest">
+                      {t('training.modelConfig.modelType')}
+                    </label>
+                    <div className="inline-flex w-full sm:w-auto rounded-xl bg-gray-100 p-1">
                     <button
                       type="button"
                       onClick={() => switchSegmentationModelType('standard')}
-                      className={`text-left p-3 rounded-xl border transition-all hover:shadow-sm ${
-                        !isFmSegmentation ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
+                      className={`flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
+                        !isFmSegmentation ? 'bg-white text-primary-700 shadow-sm border border-primary-200' : 'text-gray-500 hover:text-gray-700'
                       }`}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="font-bold text-gray-900 text-xs sm:text-sm">{t('training.modelConfig.standardSegmentation')}</div>
-                          <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
-                            {t('training.modelConfig.standardSegmentationDesc')}
-                          </div>
-                        </div>
-                        {!isFmSegmentation && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600 flex-shrink-0" />}
-                      </div>
+                      {t('training.modelConfig.standardSegmentation')}
                     </button>
                     <button
                       type="button"
                       onClick={() => switchSegmentationModelType('fm')}
-                      className={`text-left p-3 rounded-xl border transition-all hover:shadow-sm ${
-                        isFmSegmentation ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
+                      className={`flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
+                        isFmSegmentation ? 'bg-white text-primary-700 shadow-sm border border-primary-200' : 'text-gray-500 hover:text-gray-700'
                       }`}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="font-bold text-gray-900 text-xs sm:text-sm">{t('training.modelConfig.foundationSegmentation')}</div>
-                          <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
-                            {t('training.modelConfig.foundationSegmentationDesc')}
-                          </div>
-                        </div>
-                        {isFmSegmentation && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600 flex-shrink-0" />}
-                      </div>
+                      {t('training.modelConfig.foundationSegmentation')}
                     </button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] sm:text-xs text-gray-500 leading-snug">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-primary-500 flex-shrink-0" />
+                    <span>
+                      {isFmSegmentation
+                        ? t('training.modelConfig.foundationSegmentationDesc')
+                        : t('training.modelConfig.standardSegmentationDesc')}
+                    </span>
                   </div>
                 </div>
 
                 {!isFmSegmentation && (
-                  <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
+                  <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm space-y-2.5">
                     <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest">
                       {t('training.modelConfig.architecture')}
                     </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
                       {SEGMENTATION_ARCHITECTURES.map((arch) => (
                         <div
                           key={arch.id}
                           onClick={() => setSegArchitecture(arch.id)}
-                          className={`group relative p-3 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
+                          className={`group relative p-2.5 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
                             segArchitecture === arch.id ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
                           }`}
                         >
@@ -308,7 +302,7 @@ export function ModelConfigStep({
                             <div className="font-bold text-gray-900 text-xs sm:text-sm">{arch.name}</div>
                             {segArchitecture === arch.id && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600 flex-shrink-0" />}
                           </div>
-                          <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed line-clamp-2">{arch.description}</div>
+                          <div className="text-[10px] sm:text-xs text-gray-500 mt-0.5 leading-snug line-clamp-1">{arch.description}</div>
                         </div>
                       ))}
                     </div>
@@ -316,8 +310,8 @@ export function ModelConfigStep({
                 )}
 
                 {!isFmSegmentation ? (
-                  <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
-                    <div className="flex flex-col gap-2">
+                  <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm space-y-2.5">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest">
                         {t('training.modelConfig.backbone')}
                       </label>
@@ -359,19 +353,19 @@ export function ModelConfigStep({
                         </button>
                       ))}
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 max-h-[360px] overflow-y-auto custom-scrollbar pr-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[300px] lg:max-h-[320px] overflow-y-auto custom-scrollbar pr-1">
                       {filteredBackbones.map((bb) => (
                         <div
                           key={bb.id}
                           onClick={() => selectSegmentationBackbone(bb.id)}
-                          className={`p-3 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
+                          className={`p-2.5 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
                             segBackbone === bb.id ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
                           }`}
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex-1 min-w-0">
                               <div className="font-bold text-gray-900 text-xs sm:text-sm">{bb.name}</div>
-                              <div className="text-[10px] sm:text-xs text-gray-500 mt-1 line-clamp-2">{bb.description}</div>
+                              <div className="text-[10px] sm:text-xs text-gray-500 mt-0.5 line-clamp-1">{bb.description}</div>
                             </div>
                             <div className="flex items-center gap-1.5 flex-shrink-0">
                               <span className="text-[9px] sm:text-[10px] text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded">{bb.group}</span>
@@ -388,15 +382,12 @@ export function ModelConfigStep({
                     </div>
                   </div>
                 ) : (
-                  <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
-                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                      <div>
+                  <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm space-y-2.5">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                      <div className="min-w-0">
                         <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest">
                           {t('training.modelConfig.featureExtractor')}
                         </label>
-                        <p className="text-[10px] sm:text-xs text-gray-500 mt-1">
-                          {t('training.modelConfig.fixedDecoder')}
-                        </p>
                       </div>
                       <div className="relative w-full sm:max-w-xs">
                         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
@@ -409,19 +400,19 @@ export function ModelConfigStep({
                         />
                       </div>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 max-h-[360px] overflow-y-auto custom-scrollbar pr-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[300px] lg:max-h-[320px] overflow-y-auto custom-scrollbar pr-1">
                       {filteredSegmentationFmExtractors.map((extractor) => (
                         <div
                           key={extractor.id}
                           onClick={() => selectSegmentationFmExtractor(extractor.id)}
-                          className={`p-3 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
+                          className={`p-2.5 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
                             segBackbone === extractor.id ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
                           }`}
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex-1 min-w-0">
                               <div className="font-bold text-gray-900 text-xs sm:text-sm">{extractor.name}</div>
-                              <div className="text-[10px] sm:text-xs text-gray-500 mt-1 line-clamp-2">{extractor.description}</div>
+                              <div className="text-[10px] sm:text-xs text-gray-500 mt-0.5 line-clamp-1">{extractor.description}</div>
                             </div>
                             {segBackbone === extractor.id && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600 flex-shrink-0" />}
                           </div>
@@ -436,25 +427,25 @@ export function ModelConfigStep({
                   </div>
                 )}
 
-                <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
+                <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm space-y-2.5">
                   <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest">
                     {t('training.modelConfig.lossFunction')}
                   </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
                     {SEGMENTATION_LOSSES.map((loss) => {
                       const isSelected = segLossNames.includes(loss.id)
                       return (
                         <div
                           key={loss.id}
                           onClick={() => toggleLoss(loss.id)}
-                          className={`p-3 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
+                          className={`p-2.5 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
                             isSelected ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm' : 'bg-white border-gray-100 hover:border-gray-200'
                           }`}
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex-1 min-w-0">
                               <div className="font-bold text-gray-900 text-xs sm:text-sm">{loss.name}</div>
-                              <div className="text-[10px] sm:text-xs text-gray-500 mt-1 line-clamp-2">{loss.description}</div>
+                              <div className="text-[10px] sm:text-xs text-gray-500 mt-0.5 line-clamp-1">{loss.description}</div>
                             </div>
                             {isSelected && <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600 flex-shrink-0" />}
                           </div>
@@ -542,13 +533,13 @@ export function ModelConfigStep({
         </Card>
 
         {/* Right Column: Training Parameters */}
-        <Card className="flex-1 lg:max-w-md p-4 sm:p-5 flex flex-col bg-white overflow-hidden shadow-sm border-gray-100">
+        <Card className="w-full lg:w-[320px] xl:w-[340px] lg:flex-none lg:sticky lg:top-4 self-start p-4 sm:p-5 flex flex-col bg-white overflow-hidden shadow-sm border-gray-100">
           <h3 className="text-sm sm:text-base font-bold text-gray-900 mb-4 flex items-center gap-2">
             <Settings className="w-4 h-4 text-primary-600" />
             {t('training.modelConfig.trainingParams')}
           </h3>
 
-          <div className="space-y-4">
+          <div className="space-y-3">
             <div>
               <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">{t('training.modelConfig.learningRate')}</label>
               <input

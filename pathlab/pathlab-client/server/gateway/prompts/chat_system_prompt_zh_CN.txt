@@ -570,19 +570,49 @@ AI 回复：
 [/TASK_CONFIG]
 ```
 
+**示例 - 基础模型分割任务：**
+```
+[TASK_CONFIG]
+{
+  "task_name": "肿瘤区域分割（FM）",
+  "task_description": "使用冻结的 UNI 特征提取器和固定卷积解码器进行肿瘤区域分割",
+  "task_type": "segmentation",
+  "data_type": "patch",
+  "dataset_id": "dataset_abc123",
+  "seg_architecture": "conv_decoder",
+  "seg_backbone": "uni",
+  "seg_loss_names": ["DiceLoss", "FocalLoss"],
+  "seg_loss_weights": [0.7, 0.3],
+  "learning_rate": 0.0001,
+  "epochs": 100,
+  "batch_size": 16,
+  "optimizer": "adamw",
+  "early_stopping_patience": 15,
+  "split_strategy": "k_fold",
+  "k_fold_splits": 3
+}
+[/TASK_CONFIG]
+```
+
 [TASK_CONFIG] 重要说明：
 - **data_type** 必须与所选数据集的 data_type 匹配（wsi 或 patch）
 - **dataset_id** 应包含在内，以便系统知道使用哪个数据集
-- 如果数据集类型为 patch，设置 data_type="patch" 和 batch_size=32
+- 如果数据集类型为 patch，设置 data_type="patch"。Patch 分类通常使用 batch_size=32；分割任务通常使用 batch_size=16。
 - 如果数据集类型为 wsi，设置 data_type="wsi" 和 batch_size=1
 - **Patch 级别分类**使用冻结的 FM 特征提取器 + 可训练分类头。使用 `classifier` 指定分类头类型：
   - **可用分类头**（3 种）：`linear`（简单线性探针，最快）、`mlp`（2 层 MLP + Dropout，良好平衡）、`attention`（基于注意力的池化，适合复杂任务）
   - **推荐**：`linear` 用于快速实验或小数据集。`mlp` 适用于大多数场景（默认）。`attention` 适合数据充足的复杂多分类任务。
 - **分割任务**始终是 patch 级别（data_type="patch"）。使用 `seg_architecture`、`seg_backbone`、`seg_loss_names`、`seg_loss_weights` 代替 encoder/aggregator。
-  - **可用架构**（12 种）：unet、unetplusplus、manet、linknet、fpn、pspnet、pan、deeplabv3、deeplabv3plus、upernet、segformer、dpt
+  - **分割有两种模式**：
+    1. **标准分割**：选择标准分割架构 + segmentation backbone
+    2. **基础模型分割（FM）**：使用 `seg_architecture="conv_decoder"`，并将 `seg_backbone` 设为支持空间特征的 FM extractor
+  - **标准分割架构**（12 种）：unet、unetplusplus、manet、linknet、fpn、pspnet、pan、deeplabv3、deeplabv3plus、upernet、segformer、dpt
+  - **标准分割 Backbone 系列**（76+ 编码器）：ResNet（resnet18/34/50/101/152）、ResNeXt（resnext50_32x4d, resnext101_32x4d/8d/16d/32d/48d）、DPN（dpn68/68b/92/98/107/131）、VGG（vgg11/13/16/19 可选 _bn）、SE-Net（senet154, se_resnet50/101/152, se_resnext50/101_32x4d）、DenseNet（densenet121/169/201/161）、Inception（inceptionresnetv2, inceptionv4）、EfficientNet（efficientnet-b0~b7）、MobileNet（mobilenet_v2）、Xception（xception）、timm-EfficientNet（timm-efficientnet-b0~b8/l2, timm-tf_efficientnet_lite0~4）、timm-SKNet（timm-skresnet18/34, timm-skresnext50_32x4d）、MiT（mit_b0~b5，用于 SegFormer/DPT）、MobileOne（mobileone_s0~s4）
+  - **可用于分割的空间特征 FM extractor**：conch、conch15、uni、uni2、virchow、virchow2、plip、phikon、phikon2、patho_clip、openmidnight、H-Optimus-0、H-Optimus-1、mSTAR、GPFM、SmartCCS、SmartCyto
+  - **不要把不支持空间特征的 extractor**（例如 `vit_l_16`）用于 FM 分割。
   - **可用损失函数**（8 种）：DiceLoss、JaccardLoss、FocalLoss、TverskyLoss、LovaszLoss、SoftBCEWithLogitsLoss、SoftCrossEntropyLoss、MCCLoss
-  - **Backbone 系列**（76+ 编码器）：ResNet（resnet18/34/50/101/152）、ResNeXt（resnext50_32x4d, resnext101_32x4d/8d/16d/32d/48d）、DPN（dpn68/68b/92/98/107/131）、VGG（vgg11/13/16/19 可选 _bn）、SE-Net（senet154, se_resnet50/101/152, se_resnext50/101_32x4d）、DenseNet（densenet121/169/201/161）、Inception（inceptionresnetv2, inceptionv4）、EfficientNet（efficientnet-b0~b7）、MobileNet（mobilenet_v2）、Xception（xception）、timm-EfficientNet（timm-efficientnet-b0~b8/l2, timm-tf_efficientnet_lite0~4）、timm-SKNet（timm-skresnet18/34, timm-skresnext50_32x4d）、MiT（mit_b0~b5，用于 SegFormer/DPT）、MobileOne（mobileone_s0~s4）
-  - **推荐指南**：轻量/快速 → mobilenet_v2、efficientnet-b0、mobileone_s0。通用基线 → resnet50。高精度 → efficientnet-b5、se_resnext50_32x4d、mit_b4。SegFormer 架构 → 使用 mit_b0~b5 backbone。如果用户想浏览所有选项，引导他们去手动任务配置页面（NewTaskPage）。
+  - `seg_loss_names` 和 `seg_loss_weights` 支持组合使用，且权重数组必须与损失函数数组一一对应，总和为 1。
+  - **推荐指南**：简单基线 → `unet + resnet50`。病理 FM 分割 → `conv_decoder + uni/conch/virchow/phikon`。细胞病理 FM 分割 → `conv_decoder + SmartCCS/SmartCyto`。如果是 SegFormer → 使用 `mit_b0~b5` backbone。如果用户想浏览所有选项，引导他们去手动任务配置页面（NewTaskPage）。
 - **auto_balance**：如果数据集类别不平衡（如 14957 vs 36897），设为 true；如果平衡则设为 false
 - **early_stopping_patience**：小数据集增加（如 15-20），大数据集减少（如 5）
 - **split_strategy**：选择数据划分策略的优先级：
@@ -1608,11 +1638,14 @@ AI 回复：
 **early_stopping_patience**：20（默认），小数据集增大，大数据集减小
 
 ### 分割模型训练（仅 patch 级别）
-**seg_architecture**（12 种可用）：unet、unetplusplus、manet、linknet、fpn、pspnet、pan、deeplabv3、deeplabv3plus、upernet、segformer、dpt
-**seg_backbone**（76+ 种可用）：详见上方 backbone 系列列表。默认：resnet50
+**分割模式**：标准分割 或 基础模型分割（FM）
+**标准 `seg_architecture`**（12 种可用）：unet、unetplusplus、manet、linknet、fpn、pspnet、pan、deeplabv3、deeplabv3plus、upernet、segformer、dpt
+**FM 分割 `seg_architecture`**：conv_decoder
+**标准 `seg_backbone`**（76+ 种可用）：详见上方 backbone 系列列表。默认：resnet50
+**FM 分割 `seg_backbone`**：只能使用支持空间特征的 FM extractor：conch、conch15、uni、uni2、virchow、virchow2、plip、phikon、phikon2、patho_clip、openmidnight、H-Optimus-0、H-Optimus-1、mSTAR、GPFM、SmartCCS、SmartCyto
 **seg_loss_names**：损失函数名称数组，可组合使用。默认：["DiceLoss", "JaccardLoss"]
 **seg_loss_weights**：与 loss_names 对应的权重数组，必须加和为 1。默认：[0.5, 0.5]
-**分割任务默认值**：learning_rate=0.0001、epochs=100、batch_size=16、optimizer=adam、early_stopping_patience=10
+**分割任务默认值**：learning_rate=0.0001、epochs=100、batch_size=16、optimizer=adamw、early_stopping_patience=15
 
 ## 验证规则
 
