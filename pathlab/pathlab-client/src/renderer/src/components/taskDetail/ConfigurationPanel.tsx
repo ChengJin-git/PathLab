@@ -27,7 +27,7 @@ const LossFunctionList: React.FC<{
             className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-2 py-1 shadow-sm"
           >
             <span className="font-bold text-gray-900 text-[10px] sm:text-xs">{name}</span>
-            <span className="font-mono text-[10px] sm:text-xs text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100 shadow-sm">
+            <span className="tabular-nums font-bold text-[10px] sm:text-xs text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100 shadow-sm">
               {weightLabel}: {weights?.[index] ?? '—'}
             </span>
           </div>
