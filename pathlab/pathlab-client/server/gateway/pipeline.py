@@ -324,9 +324,23 @@ async def run_training_pipeline(
         # For patch-level tasks, route based on training_task_type
         if data_type == 'patch':
             if training_task_type == "segmentation":
+                preprocessing_config = dict(preprocessing_config or {})
                 # Patch Segmentation: uses architecture + backbone (not feature extractor)
                 async with logger_manager.session() as (logger, db):
                     await logger.info("Patch-level segmentation task detected")
+
+                    segmentation_dataset, num_classes = await _prepare_segmentation_training_dataset(
+                        db=db,
+                        task_id=task_id,
+                        wsi_ids=wsi_ids,
+                        preprocessing_config=preprocessing_config,
+                    )
+                    preprocessing_config["segmentation_dataset"] = segmentation_dataset
+                    await TrainingTaskRepository.update_preprocessing_config(
+                        db,
+                        task_id,
+                        preprocessing_config,
+                    )
 
                     # Get segmentation-specific training parameters
                     architecture = model_config.get('architecture', 'unet')
@@ -340,26 +354,14 @@ async def run_training_pipeline(
                     early_stopping_patience = int(model_config.get('early_stopping_patience', 15))
                     seed = preprocessing_config.get('split_config', {}).get('seed', 42)
 
-                    # Determine num_classes from COCO annotations stored in segmentation_annotations
-                    # Only allow access to annotations the user owns or has permissions for
-                    num_classes = 1  # default
-                    from backend.database.repositories import DatasetPermissionRepository
-                    elevated_dataset_ids = set()
-                    if not user_is_admin and user_id:
-                        user_permissions = await DatasetPermissionRepository.get_valid_by_user(db, user_id)
-                        elevated_dataset_ids = {p.dataset_id for p in user_permissions if p.is_valid()}
-                    for wsi_id in wsi_ids:
-                        annotation = await SegmentationAnnotationRepository.get_with_permission(
-                            db, f"annot_{wsi_id}", user_id or "", user_is_admin, elevated_dataset_ids
-                        )
-                        if annotation and annotation.annotations:
-                            coco_categories = annotation.annotations.get("categories", [])
-                            if coco_categories:
-                                num_classes = len(coco_categories)
-                                break
                     await logger.info(
-                        f"Detected {num_classes} segmentation class(es) from COCO annotations",
-                        metadata={"num_classes": num_classes}
+                        "Prepared segmentation dataset splits for training",
+                        metadata={
+                            "num_classes": num_classes,
+                            "train_annotations_path": segmentation_dataset["train"]["annotations_path"],
+                            "val_annotations_path": segmentation_dataset["val"]["annotations_path"],
+                            "test_annotations_path": segmentation_dataset["test"]["annotations_path"],
+                        }
                     )
 
                     await logger.info(

@@ -903,9 +903,26 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
             },
             "save_dir": save_dir,
         }
-        # Merge dataset paths from preprocessing_config (set by gateway pipeline)
-        if preprocessing_config.get("segmentation_dataset"):
-            config["dataset"] = preprocessing_config["segmentation_dataset"]
+        segmentation_dataset = preprocessing_config.get("segmentation_dataset")
+        if not segmentation_dataset:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Missing segmentation_dataset in preprocessing_config. "
+                    "The gateway pipeline must prepare train/val/test COCO split files before "
+                    "starting patch segmentation training."
+                ),
+            )
+
+        for split_name in ("train", "val", "test"):
+            split_cfg = segmentation_dataset.get(split_name) or {}
+            if not split_cfg.get("image_dir") or not split_cfg.get("annotations_path"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Incomplete segmentation_dataset config for split '{split_name}'",
+                )
+
+        config["dataset"] = segmentation_dataset
         # Always apply num_classes from request (overrides default of 1)
         config.setdefault("dataset", {})["classes"] = req.num_classes
 
