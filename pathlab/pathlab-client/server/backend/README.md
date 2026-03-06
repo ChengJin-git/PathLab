@@ -1,227 +1,92 @@
 # PathLab Backend Services
 
-后端微服务，提供 WSI 处理和 AI 推理功能。
+`server/backend/` 存放 Gateway 共享的核心后端模块，以及两个内部 FastAPI 服务（Preprocessing / AI）的具体实现。
 
-## 运行模式
+## 当前模块划分
 
-| 模式 | 端口策略 | 说明 |
-|------|---------|------|
-| **网页端** (调试模式) | 固定端口 | Gateway: 6100, Preprocessing: 6101, AI: 6102 |
-| **本地端** (打包模式) | 动态端口 | 自动寻找可用端口，避免冲突 |
-
-## 服务架构
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   PathLab Backend                           │
-├─────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐  ┌──────────────────┐  ┌──────────────┐   │
-│  │   Gateway    │  │  Preprocessing   │  │  AI Service  │   │
-│  │    :6100     │  │     :6101        │  │    :6102     │   │
-│  └──────────────┘  └──────────────────┘  └──────────────┘   │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │       PostgreSQL Database (asyncpg, 18 tables)       │
-│  └──────────────────────────────────────────────────────┘   │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │  Redis Cache (训练日志 Streams / 进度 KV / 状态 Hash)  │   │
-│  └──────────────────────────────────────────────────────┘   │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │         File System Storage (uploads/)               │   │
-│  └──────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
+```text
+backend/
+├── ai/               # 训练、推理、模型相关服务
+├── auth/             # 用户模型、JWT/FastAPI-Users 配置
+├── common/           # 配置、Redis、端口与通用工具
+├── database/         # SQLAlchemy 模型、Session、Repository
+├── preprocessing/    # WSI 信息 / DZI / Tile / Heatmap 服务
+└── storage/          # 存储统计、迁移、孤立文件处理
 ```
 
-## 技术栈
+## Preprocessing 服务现状
 
-- **框架**: FastAPI (Python 3.12)
-- **ASGI**: Uvicorn
-- **数据库**: PostgreSQL + asyncpg (异步)
-- **缓存**: Redis (训练日志 Streams、任务进度 KV、分析状态 Hash)
-- **ORM**: SQLAlchemy 2.0+
-- **WSI 处理**: ASlide, OpenSlide
-- **AI 框架**: PyTorch 2.x
-- **特征提取**: 19 种预训练模型
-- **聚合器**: 8 种 MIL 聚合方法 (ABMIL, MeanMIL, MaxMIL, DSMIL, DTFDMIL, CLAM-SB, CLAM-MB, TransMIL)
+入口文件：`backend/preprocessing/main.py`
 
----
+当前暴露的能力包括：
 
-## Preprocessing Service
+- `/health`
+- `/wsi/{wsi_id}/info`
+- `/wsi/{wsi_id}/image`
+- `/wsi/{wsi_id}/thumbnail`
+- `/wsi/{wsi_id}/dzi`
+- `/wsi/{wsi_id}/tiles/{level}/{x}_{y}.jpeg`
+- `/api/wsi`（WSI 列表）
+- `heatmap_routes.py` 中的热图相关接口
 
-**端口**: 6101 (调试模式) / 动态 (打包模式)
+它更像是底层图像服务，不直接承担业务权限和用户会话逻辑。
 
-### API 端点
+## AI 服务现状
 
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| GET | `/health` | 健康检查 |
-| GET | `/api/wsi` | 列出 WSI |
-| GET | `/api/wsi/{wsi_id}/dzi` | 获取 DZI 描述符 |
-| GET | `/api/wsi/{wsi_id}/tiles/{z}/{x}_{y}.jpeg` | 获取图像瓦片 |
-| GET | `/api/wsi/{wsi_id}/mask` | 获取组织掩膜 |
-| GET | `/api/wsi/{wsi_id}/coordinates` | 获取组织坐标 |
-| GET | `/api/wsi/{wsi_id}/thumbnail` | 获取缩略图 |
+入口文件：`backend/ai/main.py`
 
-### 功能说明
+当前由两个子 router 组成：
 
-- **WSI 文件处理**: 支持 .svs, .tif, .ndpi 等格式（通过 ASlide/OpenSlide）
-- **DZI 生成**: Deep Zoom Image 描述符，支持前端瓦片浏览
-- **组织分割**: Otsu 阈值自动检测组织区域
-- **坐标提取**: 生成 AI 处理所需的瓦片坐标
-- **LRU 缓存**: 滑片对象和 DeepZoom 生成器缓存
+- `routes/training.py`
+- `routes/inference.py`
 
----
+已知公开接口包括：
 
-## AI Service
+- `/health`
+- `/api/ai/training/start`
+- `/api/ai/training/status/{task_id}`
+- `/api/ai/training/task/{task_id}`
+- `/api/ai/training/results/{task_id}`
+- `/api/ai/analyze`
+- `/api/ai/wsi_classification`
 
-**端口**: 6102 (调试模式) / 动态 (打包模式)
+## Shared Infrastructure
 
-### API 端点
+### 认证
 
-| 方法 | 端点 | 说明 |
-|------|------|------|
-| GET | `/health` | 健康检查 |
-| GET | `/api/ai/gpu` | 获取 GPU 信息 |
-| POST | `/api/ai/inference` | 运行推理任务 |
-| GET | `/api/ai/inference/{task_id}` | 获取推理状态 |
-| POST | `/api/ai/training` | 创建训练任务 |
-| GET | `/api/ai/training/{task_id}` | 获取训练状态 |
-| GET | `/api/ai/training/{task_id}/logs` | 获取训练日志（SSE） |
-| POST | `/api/ai/training/{task_id}/stop` | 停止训练 |
+- 用户模型在 `auth/models.py`
+- FastAPI Users 配置在 `auth/users.py`
+- 当前会话控制依赖 JWT 与用户 `nonce`
 
-### 支持的特征提取器（19 种）
+### 数据库
 
-| 模型 | ID | 输出维度 | 来源 |
-|------|-----|---------|------|
-| ResNet50 | `resnet50` | 2048 | ImageNet |
-| ViT-Large | `vit_l_16` | 1024 | ImageNet |
-| UNI | `uni` | 1024 | Mahmood Lab |
-| UNI2 | `uni2` | 1536 | Mahmood Lab |
-| CONCH | `conch` | 512 | Mahmood Lab |
-| CONCH 1.5 | `conch15` | 512 | Mahmood Lab |
-| Virchow | `virchow` | 1280 | Paige AI |
-| Virchow2 | `virchow2` | 1280 | Paige AI |
-| H-Optimus-0 | `H-Optimus-0` | 1536 | Bioptimus |
-| H-Optimus-1 | `H-Optimus-1` | 1536 | Bioptimus |
-| Phikon | `phikon` | 768 | Owkin |
-| Phikon2 | `phikon2` | 1024 | Owkin |
-| PLIP | `plip` | 512 | James Zou Lab |
-| PathoCLIP | `patho_clip` | 512 | Hong Bu Lab |
-| OpenMidnight | `openmidnight` | 1536 | SophontAI |
-| mSTAR | `mSTAR` | 1024 | HKUST Smart Lab |
-| GPFM | `GPFM` | 1024 | HKUST Smart Lab |
-| SmartCCS | `smartccs` | 1024 | HKUST Smart Lab |
-| SmartCyto | `smartcyto` | 768 | HKUST Smart Lab |
+- ORM 模型：`database/models.py`
+- 仓储导出：`database/repositories/__init__.py`
+- 初始化：`database/init_db.py`
+- 当前已确认 ORM 表共 17 个
 
-### 支持的聚合器（8 种）
+### Redis / 配置
 
-| 聚合器 | ID | 说明 |
-|--------|-----|------|
-| ABMIL | `abmil` | Attention-based MIL（推荐） |
-| MeanMIL | `meanmil` | 均值池化 |
-| MaxMIL | `maxmil` | 最大值池化 |
-| DSMIL | `dsmil` | 双流 MIL |
-| DTFDMIL | `dtfdmil` | DTF-MIL |
-| CLAM-SB | `clam_sb` | CLAM 单分支 |
-| CLAM-MB | `clam_mb` | CLAM 多分支 |
-| TransMIL | `transmil` | Transformer MIL |
+- 统一配置：`common/config.py`
+- Redis 封装：`common/redis_manager.py`
+- 端口与服务发现工具：`common/port_utils.py` 等
 
-### 任务类型
+### 存储
 
-- **WSI 分类**: 特征提取 → 聚合 → 滑片级预测
-- **Patch 分类**: 特征提取 → 聚合 → Patch 级预测
-- **Patch 分割**: 特征提取 → 分割头 → Patch 级分割掩膜
-- **生存分析**: 特征提取 → 聚合 → 风险评分 + 生存曲线
-- **外部验证**: 使用已训练模型对新数据集进行验证
+- 统一入口：`storage/manager.py`
+- 统计：`storage/stats_mixin.py`
+- 孤立文件 / 记录检测：`storage/orphan_mixin.py`
+- 迁移：`storage/migration.py`
 
----
+## 当前代码状态提示
 
-## 数据库架构
+- 旧文档中的 `annotation_drafts` 已不再对应当前表名；当前模型为 `segmentation_annotations`
+- 旧文档中的单体 API / 单体服务表述已经过时，当前实现明显拆成 Gateway / Preprocessing / AI 三层
+- 文件系统状态不只包含 WSI，本地还管理模型、训练日志、特征、遮罩、坐标、PDF 缓存等目录
 
-PostgreSQL 数据库包含 18 个表（自动创建）：
+## 相关文档
 
-| 表名 | 用途 |
-|------|------|
-| `users` | 用户账户（FastAPI-Users） |
-| `accesstoken` | 访问令牌（FastAPI-Users）|
-| `data_groups` | 数据组定义（数据类型、聚合级别、任务类型组合）|
-| `datasets` | 数据集元数据（UUID 隐私保护） |
-| `dataset_permissions` | 数据集临时提权（GPU 操作） |
-| `wsi_slides` | WSI 元数据（含患者信息、标签、生存数据） |
-| `ai_tasks` | AI 推理任务记录 |
-| `ai_results` | AI 分析结果 |
-| `chat_conversations` | 聊天会话 |
-| `chat_messages` | 聊天消息历史 |
-| `message_feedbacks` | 消息反馈（点赞/点踩/任务有用性）|
-| `export_tasks` | 数据导出任务追踪 |
-| `training_tasks` | 训练任务配置（分类/生存） |
-| `training_task_wsi` | 训练任务与 WSI 多对多关联 |
-| `trained_models` | 模型检查点元数据 |
-| `training_logs` | 训练日志条目（运行时通过 Redis Streams 读写，SSE 流式） |
-| `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
-| `annotation_drafts` | 标注草稿 |
-
-### 数据库连接
-
-```bash
-# 默认连接（本地开发）
-DATABASE_URL=postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab
-```
-
----
-
-## 文件存储结构
-
-```
-uploads/
-├── wsi_files/          # WSI 原始文件
-│   └── {wsi_id}.svs
-├── masks/              # 组织掩膜（也作为缩略图）
-│   └── {wsi_id}_mask.png
-├── coordinates/        # 瓦片坐标缓存 (H5)
-│   └── {wsi_id}_coords.h5
-├── features/           # 全局特征缓存（跨任务复用）
-│   └── {extractor_name}/
-│       └── {params_hash}/
-│           └── {wsi_id}.pt
-├── training/           # 训练任务数据
-│   └── {task_id}/
-│       ├── features/   # 特征文件（软链接）
-│       └── checkpoints/
- # 用户训练的模型
-│   └── {model_id}/
-│       ├── checkpoint.pth
-├── models/            │       └── config.json
-└── ai_results/         # AI 推理结果
-    └── {wsi_id}/
-        └── {task_id}_attention.npy
-```
-
----
-
-## 启动方式
-
-### 调试模式（网页端）
-
-```bash
-cd pathlab/pathlab-client
-npm run dev
-# 自动启动 Gateway:6100, Preprocessing:6101, AI:6102
-# 浏览器访问 http://localhost:5173
-```
-
-### 打包模式（本地端）
-
-```bash
-cd pathlab/pathlab-client
-npm run build:linux  # 或 build:mac, build:win
-# 生成 Electron 桌面应用，端口动态分配
-```
-
----
-
-## License
-
-See root repository LICENSE file.
+- [Server README](../README.md)
+- [Gateway README](../gateway/README.md)
+- [Database README](database/README.md)
+- [Storage README](storage/README.md)

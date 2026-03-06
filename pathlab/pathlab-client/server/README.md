@@ -1,240 +1,73 @@
 # PathLab Python Backend
 
-PathLab 的 Python 后端服务，提供 WSI 处理、AI 推理和 API 网关功能。
+`server/` 是当前 Python sidecar 目录。它不是单一 FastAPI 应用，而是由 `main.py` 统一拉起 **Gateway / Preprocessing / AI** 三个服务进程。
 
-## 🚀 运行模式
+## 当前启动方式
 
-| 模式 | 端口策略 | 启动方式 | 说明 |
-|------|---------|---------|------|
-| **网页端** (调试模式) | 固定端口 | `python main.py` 或 `npm run dev` | Gateway: 6100, Preprocessing: 6101, AI: 6102 |
-| **本地端** (打包模式) | 动态端口 | Electron 启动 | 自动寻找可用端口，通过 `PORT=xxxxx` 通知 Electron |
+### 统一入口
 
-## 核心特性
+- 文件：`server/main.py`
+- 作用：
+  - 选择固定端口或动态端口
+  - 设置服务发现环境变量
+  - 启动 3 个 uvicorn 进程
+  - 在退出时统一清理子进程
 
-- **零配置**: PostgreSQL 数据库 (18 表)，asyncpg 异步驱动
-- **Redis 缓存**: 训练日志 (Streams)、任务进度 (KV)、分析状态 (Hash)，异步非阻塞
-- **动态端口**: 自动寻找可用端口，避免端口冲突
-- **单进程架构**: 统一入口 `main.py`，简化部署
-- **特征缓存**: 全局特征缓存，跨任务复用
+### 两种端口模式
 
-## 架构概览
+| 模式 | 端口 | 触发方式 |
+|------|------|----------|
+| 调试 / 固定端口 | Gateway `6100`、Preprocessing `6101`、AI `6102` | `PATHLAB_DEBUG=1` |
+| Electron / 动态端口 | 3 个服务自动分配可用端口 | 默认 sidecar 启动方式 |
 
-```
+## 当前目录结构
+
+```text
 server/
-├── main.py               # 统一入口 (动态端口发现)
-├── requirements.txt      # Python 依赖
-├── pipeline.py           # AI Pipeline 编排
-├── gateway/              # API 网关服务 (对外唯一入口)
-│   ├── main.py           # Gateway FastAPI 应用
-│   ├── task_queue.py     # GPU 任务队列管理器
-│   ├── models.py         # Pydantic 请求/响应模型
-│   ├── pipeline.py       # AI Pipeline 编排
-│   ├── routes/           # 模块化路由 (29 个模块)
-│   │   ├── auth.py           # 认证 (FastAPI-Users)
-│   │   ├── wsi.py            # WSI CRUD + 数据集
-│   │   ├── wsi_upload.py     # WSI 上传 (文件/路径/CSV)
-│   │   ├── wsi_permissions.py # WSI 权限管理
-│   │   ├── ai_tasks.py       # AI 推理任务 + 提取器列表
-│   │   ├── training.py       # 训练任务 (SSE 日志流)
-│   │   ├── results.py        # 结果查询 + 外部验证 + 分割分析
-│   │   ├── models.py         # 模型管理
-│   │   ├── chat.py           # AI Chat (SSE 流式)
-│   │   ├── chat_pdf.py       # PDF 文档对话 (RAG)
-│   │   ├── chat_pdf_vectorstore.py # PDF 向量存储管理
-│   │   ├── chat_feedback.py  # 消息反馈
-│   │   ├── queue.py          # GPU 队列管理
-│   │   ├── storage.py        # 存储管理 + 迁移
-│   │   ├── storage_tasks.py  # 存储任务
-│   │   ├── storage_scan.py   # 存储扫描
-│   │   ├── heatmap.py        # 热图数据 + Patch 图像
-│   │   ├── asr.py            # 语音识别 (DashScope)
-│   │   ├── stats.py          # 系统统计
-│   │   ├── settings.py       # 全局设置
-│   │   ├── gpu.py            # GPU 信息
-│   │   ├── annotation.py     # 标注管理
-│   │   ├── classification_analysis.py  # 分类分析
-│   │   ├── survival_analysis.py       # 生存分析
-│   │   ├── external_validation_analysis.py # 外部验证
-│   │   ├── segmentation_analysis.py   # 分割分析
-│   │   ├── analysis_metrics.py        # 分析指标
-│   │   ├── analysis_state.py          # 分析状态
-│   │   ├── analysis_helpers.py        # 分析辅助
-│   ├── utils.py            # 工具函数
-│   └── dependencies.py   # 依赖注入
-│
-└── backend/              # 核心后端服务
-    ├── ai/               # AI 服务 (内部端口)
-    │   ├── main.py           # AI FastAPI 应用
-    │   ├── routes/           # 训练/推理路由
-    │   ├── tasks/            # 任务类型
-    │   │   ├── wsi_classification/   # WSI 分类 (MIL)
-    │   │   ├── patch_classification/ # Patch 分类
-    │   │   ├── patch_segmentation/  # Patch 分割
-    │   │   └── wsi_survival/        # 生存分析
-    │   ├── extractors/       # 19 种特征提取器
-    │   ├── aggregators/      # 8 种聚合器 (ABMIL, MeanMIL, MaxMIL, DSMIL, DTFDMIL, CLAM-SB, CLAM-MB, TransMIL)
-    │   ├── classifiers/      # 分类器
-    │   ├── segmentors/       # 分割器
-    │   ├── permission_revocation.py # 权限撤销
-    │   └── utils/            # CAM 工具 (Grad-CAM, Attention)
-    ├── preprocessing/    # 预处理服务 (内部端口)
-    │   ├── main.py           # 预处理 FastAPI 应用
-    │   └── tiling.py         # WSI 切片、坐标提取
-    ├── database/         # PostgreSQL ORM
-    │   ├── database.py       # 异步连接管理 (asyncpg)
-    │   ├── models.py         # 数据模型 (18 个表)
-    │   └── repositories/     # 数据访问层 (Repository 模式，模块化目录)
-    ├── storage/          # 文件存储管理
-    │   └── manager.py        # 存储管理器 (级联删除)
-    ├── auth/             # 认证模块
-    └── common/           # 公共模块
-        ├── redis_client.py   # Redis 异步连接池
-        ├── progress_store.py # 任务进度存储 (Redis)
-        ├── port_utils.py     # 端口发现工具
-        ├── config.py         # 配置管理
-        ├── logger.py         # 日志工具
-        ├── file_types.py     # 支持的文件类型定义
-        ├── gpu_utils.py      # GPU 工具函数
-        └── slide_utils.py    # WSI 切片工具函数
+├── main.py                 # 统一入口，负责拉起 3 个服务
+├── requirements.txt        # Python 依赖
+├── main.spec               # PyInstaller 配置
+├── gateway/                # 对外 API 网关
+├── backend/
+│   ├── ai/                 # AI 服务与任务实现
+│   ├── auth/               # 认证模型与 FastAPI-Users 配置
+│   ├── common/             # 配置、Redis、端口发现、通用工具
+│   ├── database/           # SQLAlchemy 模型与仓储层
+│   ├── preprocessing/      # WSI 预处理与瓦片服务
+│   └── storage/            # 存储统计、迁移、清理
+├── build/                  # 打包产物目录
+└── dist/                   # 打包产物目录
 ```
 
-## 数据库模型 (18 个表)
+## 三个服务的职责
 
-| 表名 | 用途 |
-|------|------|
-| `users` | 用户账户（FastAPI-Users，含角色 RBAC）|
-| `accesstoken` | 访问令牌（FastAPI-Users）|
-| `data_groups` | 数据组定义（数据类型、聚合级别、任务类型组合）|
-| `datasets` | 数据集元信息 (UUID 隐私保护) |
-| `dataset_permissions` | 数据集临时提权（GPU 操作）|
-| `wsi_slides` | WSI 切片元数据（含患者信息、标签、生存分析字段） |
-| `ai_tasks` | AI 推理任务记录 |
-| `ai_results` | AI 分析结果 |
-| `chat_conversations` | 聊天会话 |
-| `chat_messages` | 聊天消息历史 |
-| `message_feedbacks` | 消息反馈（点赞/点踩/任务有用性）|
-| `export_tasks` | 数据导出任务追踪 |
-| `training_tasks` | 训练任务配置和状态 (classification/survival) |
-| `training_task_wsi` | 训练任务与 WSI 多对多关联 |
-| `trained_models` | 训练生成的模型信息 |
-| `training_logs` | 训练日志（运行时通过 Redis Streams 读写，SSE 流式） |
-| `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
-| `annotation_drafts` | 标注草稿 |
+| 服务 | 当前职责 |
+|------|----------|
+| Gateway | 认证、用户管理、WSI / 任务 / 结果 / 聊天 / 存储 / 设置等对外 API |
+| Preprocessing | WSI 基本信息、缩略图、DZI、瓦片、热图相关底层接口 |
+| AI | 训练、推理、特征提取与模型内部接口 |
 
-## GPU 任务队列
+## 运行依赖
 
-支持 GPU 任务的并发控制和故障恢复：
+- PostgreSQL：元数据与业务状态
+- Redis：训练日志、任务进度、部分状态缓存
+- `uploads/`：WSI、特征缓存、模型、日志、标注及衍生文件
 
-- **最大并发控制**: 默认 1 个 GPU 任务同时运行
-- **FIFO 调度**: 先进先出任务调度
-- **断电恢复**: 服务重启后自动恢复未完成任务
-- **统一管理**: 同时支持训练任务 (TrainingTask) 和推理任务 (AITask)
-- **实时状态**: SSE 流式推送任务状态更新
+默认配置可在 `backend/common/config.py` 中看到，包括：
 
-## 开发运行
+- `DATABASE_URL_DEFAULT=postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab`
+- `REDIS_URL_DEFAULT=redis://localhost:6379/0`
 
-```bash
-# 方式一：直接运行 (推荐)
-cd server && python main.py
+## 当前实现重点
 
-# 输出示例:
-# PORT=48427              ← Electron 通过此解析端口
-# [Gateway] Starting on port 48427
-# [Services] Gateway: 48427, Preprocessing: 47001, AI: 53633
-# [Database] Using PostgreSQL: postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab
-
-# 方式二：Electron 开发模式自动启动
-npm run dev  # 在父目录执行
-```
-
-**注意**: 需确保 PostgreSQL 和 Redis 服务已运行，PostgreSQL 默认连接 `postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab`，Redis 默认连接 `redis://localhost:6379/0`。
-
-## 数据库配置
-
-通过 `DATABASE_URL` 环境变量配置：
-
-```bash
-# 默认 (本地开发)
-DATABASE_URL=postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab
-```
-
-## 动态端口发现
-
-Python 后端启动时自动寻找可用端口：
-
-```python
-# backend/common/port_utils.py
-def find_free_port() -> int:
-    """查找可用端口"""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('', 0))
-        return s.getsockname()[1]
-
-def announce_port(port: int):
-    """通知 Electron 端口号"""
-    print(f"PORT={port}", flush=True)
-```
-
-Electron 主进程解析 `PORT=xxxxx` 输出配置 API 地址。
-
-## 打包
-
-```bash
-../build-python.sh
-```
-
-生成独立可执行文件到 `dist/` 目录。
-
-## API 文档
-
-启动服务后访问（端口动态分配）：
-
-```bash
-python main.py
-# PORT=48427
-# 访问: http://127.0.0.1:48427/docs
-```
-
-## 特征提取器 (19 种)
-
-| 模型 | ID | 维度 | 来源 |
-|------|-----|------|------|
-| ResNet50 | resnet50 | 2048 | ImageNet |
-| ViT-Large | vit_l_16 | 1024 | ImageNet |
-| UNI | uni | 1024 | Mahmood Lab |
-| UNI2 | uni2 | 1536 | Mahmood Lab |
-| CONCH | conch | 512 | Mahmood Lab |
-| CONCH 1.5 | conch15 | 512 | Mahmood Lab |
-| Virchow | virchow | 1280 | Paige AI |
-| Virchow2 | virchow2 | 1280 | Paige AI |
-| H-Optimus-0 | H-Optimus-0 | 1536 | Bioptimus |
-| H-Optimus-1 | H-Optimus-1 | 1536 | Bioptimus |
-| Phikon | phikon | 768 | Owkin |
-| Phikon2 | phikon2 | 1024 | Owkin |
-| PLIP | plip | 512 | James Zou Lab |
-| PathoCLIP | patho_clip | 512 | Hong Bu Lab |
-| OpenMidnight | openmidnight | 1536 | SophontAI |
-| mSTAR | mSTAR | 1024 | HKUST Smart Lab |
-| GPFM | GPFM | 1024 | HKUST Smart Lab |
-| SmartCCS | smartccs | 1024 | HKUST Smart Lab |
-| SmartCyto | smartcyto | 768 | HKUST Smart Lab |
-
-## 聚合器 (8 种)
-
-| 聚合器 | ID | 说明 |
-|--------|-----|------|
-| ABMIL | abmil | Attention-based MIL |
-| MeanMIL | meanmil | 均值池化 |
-| MaxMIL | maxmil | 最大值池化 |
-| DSMIL | dsmil | 双流 MIL |
-| DTFDMIL | dtfdmil | DTF-MIL |
-| CLAM-SB | clam_sb | CLAM 单分支 |
-| CLAM-MB | clam_mb | CLAM 多分支 |
-| TransMIL | transmil | Transformer MIL |
+- `main.py` 中 Preprocessing 默认支持多 worker，并可配置 `PREPROCESSING_MAX_REQUESTS`
+- Gateway 启动时会等待依赖服务可用后再提供完整功能
+- AI 与 Preprocessing 的内部服务地址通过环境变量注入给 Gateway
+- `main.spec` 用于将 sidecar 打包为独立可执行文件
 
 ## 相关文档
 
-- [Gateway 服务](gateway/README.md)
-- [Backend 服务](backend/README.md)
-- [数据库层](backend/database/README.md)
-- [存储管理](backend/storage/README.md)
+- [Gateway README](gateway/README.md)
+- [Backend Services README](backend/README.md)
+- [Database README](backend/database/README.md)
+- [Storage README](backend/storage/README.md)

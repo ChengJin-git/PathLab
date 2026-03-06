@@ -1,21 +1,18 @@
 # OpenSeadragon Assets
 
-This directory contains the image assets required by OpenSeadragon for its navigation controls.
+This directory stores the static image assets bundled with PathLab's local OpenSeadragon distribution.
 
-## Images
+## What is here
 
-The images in the `images` directory are used for the OpenSeadragon viewer's navigation controls, such as:
-- Zoom in/out buttons
-- Home button
-- Fullscreen toggle
-- Rotation controls
-- Navigation arrows
+- Navigation control icons used by the WSI viewer
+- Assets copied into the frontend build output for direct browser/Electron loading
 
-## Source
+## How PathLab uses it
 
-These images are sourced from the official OpenSeadragon repository:
-https://github.com/openseadragon/openseadragon
+- The viewer UI is wrapped by `src/renderer/src/components/WSIViewer.tsx`
+- The preprocessing service provides DZI descriptors and tiles; these assets only provide the viewer chrome
+- Project-specific viewer behavior is documented in the frontend READMEs, not here
 
-## License
+## Maintenance note
 
-OpenSeadragon is released under the New BSD license.
+If the bundled OpenSeadragon version is updated, keep this asset directory in sync so icon paths and control images remain valid.

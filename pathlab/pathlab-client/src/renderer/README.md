@@ -1,380 +1,74 @@
 # PathLab Frontend
 
-数字病理学研究平台前端，基于 React + TypeScript + Vite 构建。
+`src/renderer/` 是当前前端打包与浏览器构建目录，既服务 Electron 渲染进程，也支持独立 Web 构建。
 
-## 🚀 运行模式
+## 当前实现概览
 
-| 模式 | 启动方式 | API 地址 | 说明 |
-|------|---------|---------|------|
-| **网页端** (调试模式) | `npm run dev` | `http://localhost:6100` | Vite 热更新，浏览器访问 |
-| **本地端** (打包模式) | Electron 打包 | 动态端口 | 桌面应用，离线可用 |
+- 技术栈：React 18 + TypeScript + Vite + Tailwind CSS
+- 路由：浏览器模式使用 `BrowserRouter`，Electron 模式使用 `HashRouter`
+- 国际化：`en-US`、`zh-CN`、`zh-HK`
+- PWA：`vite-plugin-pwa` 已启用，浏览器模式下会注册 Service Worker
+- WSI 阅片：OpenSeadragon 资源随项目一起打包
 
-## Architecture Overview
+## 关键入口文件
 
-### Technology Stack
+- `vite.config.ts`：独立 Web 构建配置
+- `../electron.vite.config.ts`：Electron `main` / `preload` / `renderer` 联合构建配置
+- `src/main.tsx`：前端运行时入口
+- `src/App.tsx`：页面路由定义
+- `src/config.ts`：Gateway / Preprocessing / AI 地址解析
 
-- **Framework**: React 18 + TypeScript
-- **Build Tool**: Vite 5
-- **Routing**: React Router v6
-- **Styling**: Tailwind CSS
-- **WSI Viewer**: OpenSeadragon (bundled locally)
-- **State Management**: React Hooks (useState, useEffect)
-- **HTTP Client**: Fetch API with streaming support
+## 目录结构
 
-### Key Features
-
-1. **WSI Viewer** - Interactive multi-gigapixel image viewer
-   - Deep Zoom Image (DZI) protocol
-   - Tile-based rendering for performance
-   - Navigation controls and mini-map
-   - Full-screen support
-   - Heatmap overlay support
-
-2. **AI Chat Assistant** - Natural language interface for research tasks
-   - Streaming LLM responses (OpenRouter)
-   - Task description parsing
-   - Automatic parameter extraction (PathLab Agent)
-   - Conversation history (database-persisted)
-   - PDF document Q&A (RAG)
-
-3. **Dashboard** - System overview and statistics
-   - WSI count and label distribution
-   - Task status monitoring
-   - Quick access to recent analyses
-
-4. **File Browser** - WSI library management
-   - Grid/list view of all slides
-   - Metadata display (case ID, label, dimensions)
-   - Quick navigation to viewer
-   - Dataset organization
-
-5. **Analysis Setup** - Configure AI analysis tasks
-   - Parameter customization (tile size, stride, model selection)
-   - Device selection (CPU/GPU)
-   - Real-time task submission
-   - 19 feature extractors + 8 MIL aggregators
-
-6. **Results Viewer** - View analysis results
-   - WSI classification predictions
-   - Attention heatmap visualization
-   - Patch-level predictions
-   - Survival analysis curves
-
-7. **Storage Management** - File lifecycle management
-   - Storage statistics
-   - Orphaned file detection
-   - Storage migration support
-
-## Project Structure
-
-```
-pathlab/pathlab-client/src/renderer/
+```text
+src/renderer/
+├── public/                 # 静态资源（images、OpenSeadragon 资源等）
 ├── src/
-│   ├── components/          # Reusable UI components
-│   │   ├── Layout.tsx       # Main layout with sidebar navigation
-│   │   ├── WSIViewer.tsx    # OpenSeadragon wrapper component
-│   │   ├── PageHeader.tsx   # Page header component
-│   │   └── ...
-│   ├── pages/               # Route-level page components (14 pages)
-│   ├── contexts/            # React Context
-│   │   ├── AuthContext.tsx           # Authentication state
-│   │   └── BackgroundTaskContext.tsx # Background task management
-│   ├── api.ts               # Backend API client functions
-│   ├── config.ts            # Environment-based configuration
-│   ├── App.tsx              # Root component with routing
-│   ├── main.tsx             # Application entry point
-│   └── index.css            # Global styles + Tailwind
-├── public/
-│   └── assets/
-│       └── openseadragon/   # OpenSeadragon library (bundled)
-├── .env.example             # Environment variables template
-├── vite.config.ts           # Vite configuration
-├── tailwind.config.js       # Tailwind CSS configuration
-├── tsconfig.json            # TypeScript configuration
-└── package.json             # Dependencies and scripts
+│   ├── api/                # 模块化 API 客户端
+│   ├── components/         # UI、聊天、阅片、结果、设置等组件
+│   ├── constants/          # 常量定义
+│   ├── contexts/           # Auth / BackgroundTask / Toast
+│   ├── lib/                # hooks 与工具函数
+│   ├── locales/            # i18n 文案
+│   ├── pages/              # 页面组件
+│   ├── types/              # 类型声明
+│   ├── App.tsx
+│   ├── config.ts
+│   └── main.tsx
+└── vite.config.ts
 ```
 
-## API Integration
+## 当前路由与页面
 
-The frontend communicates with the Python backend through dynamic port discovery:
+`src/App.tsx` 当前定义了：
 
-### 1. Gateway Service (Dynamic Port)
-- **Purpose**: Main API gateway and orchestration
-- **Port Discovery**: Electron main process parses `PORT=xxxxx` from Python output
-- **Endpoints**:
-  - `GET /wsi` - List all WSI slides
-  - `GET /wsi/{wsi_id}` - Get WSI metadata
-  - `POST /tasks/wsi_classification` - Create analysis task
-  - `GET /tasks/{task_id}` - Get task status
-  - `GET /results/{wsi_id}` - Get analysis results
-  - `POST /chat` - AI chat (streaming)
-  - `GET /stats` - System statistics
-  - `POST /wsi/upload/path` - Register WSI by file path
-  - `GET /queue` - Get GPU task queue status
+- 公开页：`/`、`/login`
+- 受保护页：`/dashboard`、`/dashboard/:conversationId`、`/tools`、`/settings`
+- 任务相关：`/task-setup`、`/task-list`、`/task/:task_id`
+- 数据相关：`/wsi-list`、`/register`、`/wsi/:wsi_id`
+- 结果相关：`/results`、`/reports`
+- 以及 1 个 `*` 兜底路由
 
-### 2. Preprocessing Service (Internal Port)
-- **Purpose**: WSI file processing, tissue segmentation, patch extraction, and tile generation
-- **Note**: Accessed via Gateway proxy, frontend does not call directly
-- **Endpoints** (via Gateway):
-  - `GET /api/wsi/{wsi_id}/dzi` - DZI descriptor
-  - `GET /api/wsi/{wsi_id}/tiles/{z}/{x}_{y}.jpeg` - Image tiles
-  - `GET /api/wsi/{wsi_id}/thumbnail` - Thumbnail image
+另外，`pages/StorageManagementPage.tsx` 目前作为设置页内部功能页使用，并非独立路由。
 
-### 3. AI Service (Internal Port)
-- **Purpose**: AI model inference and analysis
-- **Note**: Accessed via Gateway proxy, frontend does not call directly
-- **Endpoints** (via Gateway):
-  - `POST /api/ai/analyze` - Run AI analysis
-  - `GET /api/ai/results/{wsi_id}` - Get AI results
+## 与后端的连接方式
 
-### API Client (`src/api.ts`)
+- Electron 模式：通过 preload 暴露的 IPC 获取 Gateway 动态端口
+- 浏览器模式：默认使用固定调试端口 `6100 / 6101 / 6102`，也可由环境变量覆盖
+- `src/config.ts` 会统一导出：
+  - `API_BASE`
+  - `PREPROCESSING_BASE`
+  - `AI_BASE`
 
-All API calls are centralized in `api.ts`:
+## 当前和旧文档的差异
 
-```typescript
-// Example: Streaming chat
-export async function chatWithAI(
-  messages: Array<{ role: 'user' | 'assistant', content: string }>,
-  onChunk: (chunk: string) => void
-): Promise<void>
+- API 客户端已经从单文件拆成 `src/api/` 目录
+- 运行时增加了 `ToastProvider`
+- 浏览器模式会注册 Service Worker；Electron 模式不会
+- OpenSeadragon 资源使用本地打包资产，而不是运行时远程加载
 
-// Example: Fetch WSI list
-export async function fetchWSIList(): Promise<{ items: WSIItem[] }>
+## 相关文档
 
-// Example: Submit analysis task
-export async function analyzeWSI(wsi_id: string, params: any): Promise<{ task_id: string }>
-```
-
-## Development Setup
-
-### Prerequisites
-
-- Node.js 18+ (or pnpm/yarn)
-- Backend services running (Gateway, WSI, AI)
-
-### Installation
-
-```bash
-# Navigate to frontend directory
-cd pathlab/pathlab-client/src/renderer
-
-# Install dependencies
-npm install
-# or: pnpm install / yarn install
-```
-
-### Environment Configuration
-
-Create `.env.development` for local development:
-
-```bash
-# Base path for the application
-VITE_BASE_PATH=/
-
-# API endpoints (dynamic port, injected by Electron main process)
-# In development mode, actual port is obtained via preload script
-# VITE_API_BASE is set dynamically at runtime
-```
-
-Create `.env.production` for production build:
-
-```bash
-# Base path for Nginx deployment
-VITE_BASE_PATH=/PathLab/
-
-# API endpoints (proxied through Nginx)
-VITE_API_BASE=/PathLab/api
-VITE_AI_BASE=/PathLab/api/ai
-VITE_PREPROCESSING_BASE=/PathLab/preprocessing
-```
-
-### Running Development Server
-
-```bash
-npm run dev
-```
-
-- Opens at: `http://127.0.0.1:5173`
-- Hot Module Replacement (HMR) enabled
-- CORS already configured on backend services
-
-### Building for Production
-
-```bash
-npm run build
-```
-
-- Output: `dist/` directory
-- Optimized and minified assets
-- Ready for Nginx deployment at `/PathLab/`
-
-### Production Deployment
-
-The built frontend is served by Nginx with the following configuration:
-
-```nginx
-location /PathLab/ {
-    alias /path/to/dist/;
-    try_files $uri $uri/ /PathLab/index.html;
-}
-
-location /PathLab/api/ {
-    # Port is dynamically allocated, configure to actual running port
-    proxy_pass http://127.0.0.1:$PORT/;
-}
-```
-
-## UI/UX Design
-
-### Layout System
-
-- **Responsive Sidebar**: Collapsible navigation (desktop) / drawer (mobile)
-- **Header**: User info and breadcrumbs
-- **Main Content**: Page-specific content area
-- **Full-Screen Mode**: Available for WSI viewer
-
-### Color Scheme
-
-- **Primary**: Blue gradient (`from-blue-500 to-blue-600`)
-- **Secondary**: Purple gradient (`from-purple-500 to-purple-600`)
-- **Accent**: Teal (`teal-500`)
-- **Neutral**: Gray scale for text and backgrounds
-
-### Component Library
-
-All components use Tailwind CSS utility classes for consistent styling:
-
-- Buttons: `bg-primary-500 hover:bg-primary-600 text-white rounded-lg`
-- Cards: `bg-white rounded-lg shadow-sm border border-gray-200`
-- Inputs: `border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500`
-
-## Data Flow
-
-### WSI Viewing Flow
-
-```
-User navigates to /wsi/{wsi_id}
-  ↓
-WSIViewerPage fetches metadata from Gateway
-  ↓
-WSIViewer component initializes OpenSeadragon
-  ↓
-OpenSeadragon requests DZI descriptor from Preprocessing Service
-  ↓
-OpenSeadragon requests tiles as user pans/zooms
-  ↓
-Preprocessing Service generates tiles on-demand (cached)
-```
-
-### AI Analysis Flow
-
-```
-User submits analysis request
-  ↓
-Frontend calls Gateway /tasks/wsi_classification
-  ↓
-Gateway forwards to AI Service
-  ↓
-AI Service creates task and returns task_id
-  ↓
-Frontend polls /tasks/{task_id} for status
-  ↓
-When complete, fetch results from /results/{wsi_id}
-  ↓
-Display prediction and probabilities
-```
-
-### Chat Flow
-
-```
-User sends message
-  ↓
-Frontend calls Gateway /chat with message history
-  ↓
-Gateway streams LLM response (SSE/chunked transfer)
-  ↓
-Frontend updates UI incrementally as chunks arrive
-  ↓
-Parse response for task parameters (if applicable)
-  ↓
-Offer to create task or navigate to setup page
-```
-
-## Configuration
-
-### Vite Configuration (`vite.config.ts`)
-
-- **Base Path**: Configurable via `VITE_BASE_PATH` env variable
-- **Dev Server**: Runs on `0.0.0.0:5173` for network access
-- **Proxy**: WSI tile requests proxied to Preprocessing service in dev mode
-- **File System**: Allows serving files from `uploads/` directory
-
-### TypeScript Configuration
-
-- **Target**: ES2020
-- **Module**: ESNext
-- **JSX**: React
-- **Strict Mode**: Enabled
-- **Path Aliases**: Not configured (uses relative imports)
-
-## Testing (Planned)
-
-Currently no automated tests. Recommended setup:
-
-- **Unit Tests**: Vitest + React Testing Library
-- **E2E Tests**: Playwright or Cypress
-- **Component Tests**: Storybook
-
-## Known Limitations
-
-1. **Real-time Updates**: Task status requires polling
-   - **Solution**: Implement WebSocket for live updates
-
-2. **Error Handling**: Basic error messages
-   - **Solution**: Add toast notifications and detailed error pages
-
-3. **Accessibility**: Limited ARIA labels and keyboard navigation
-   - **Solution**: Audit with axe-core and add proper semantics
-
-## Future Enhancements
-
-### Phase 1 (Current)
-- ✅ Basic WSI viewer
-- ✅ AI chat interface
-- ✅ Task submission
-- ✅ Results display
-
-### Phase 2 (Partially Complete)
-- [ ] Multi-user collaboration features
-- [ ] Annotation tools (drawing, measurements)
-- ✅ Advanced visualization (heatmaps, overlays)
-- [ ] Batch analysis support
-- ✅ Export functionality (PDF reports, CSV)
-
-### Phase 3 (Future)
-- [ ] Real-time collaboration (WebSocket)
-- [ ] Mobile app (React Native)
-- [ ] Offline mode (PWA)
-- [ ] Plugin system for custom tools
-- [ ] Integration with PACS/DICOM systems
-
-## References
-
-- [React Documentation](https://react.dev/)
-- [Vite Documentation](https://vitejs.dev/)
-- [OpenSeadragon Documentation](https://openseadragon.github.io/)
-- [Tailwind CSS Documentation](https://tailwindcss.com/)
-- [React Router Documentation](https://reactrouter.com/)
-
-## Contributing
-
-1. Follow existing code style (TypeScript + functional components)
-2. Use Tailwind CSS for styling (avoid inline styles)
-3. Keep components small and focused
-4. Add comments for complex logic
-5. Test manually before committing
-
-## License
-
-See root repository LICENSE file.
-
+- [Source README](src/README.md)
+- [PathLab Client README](../../README.md)
+- [Python Backend README](../../server/README.md)

@@ -1,106 +1,77 @@
 # PathLab Frontend Source
 
-> 📌 PathLab 支持两种运行模式：**网页端**（`npm run dev`）和**本地端**（Electron 打包）
+`src/renderer/src` 是当前 React 应用的真实源码目录。
 
-This directory contains the source code for the PathLab frontend React application.
+## 当前源码结构
 
-## Directory Structure
-
-```
+```text
 src/
-├── components/          # Reusable UI components
-│   ├── Layout.tsx           # Main layout (sidebar navigation)
-│   ├── WSIViewer.tsx        # OpenSeadragon wrapper
-│   ├── PageHeader.tsx       # Page header component
-│   ├── HeatmapOverlay.tsx  # Attention heatmap overlay
-│   └── ...
-├── pages/               # Page components (14 pages)
-│   ├── IntroductionPage.tsx      # Product introduction (/)
-│   ├── LoginPage.tsx             # Login welcome page (/login)
-│   ├── AIChatPage.tsx            # AI assistant (/dashboard)
-│   ├── ToolsPage.tsx             # Utility tools
-│   ├── ListPage.tsx              # Slide browser (/wsi-list)
-│   ├── WSIViewerPage.tsx         # WSI viewer (/wsi/:wsi_id, fullscreen)
-│   ├── UploadPage.tsx            # Upload/register slide
-│   ├── NewTaskPage.tsx           # Task configuration (/task-setup)
-│   ├── TaskListPage.tsx          # Task list (/task-list)
-│   ├── TaskDetailPage.tsx        # Task details (/task/:task_id)
-│   ├── ResultsViewerPage.tsx     # Results viewer (/results)
-│   ├── ReportGeneratorPage.tsx   # Report generator (/reports)
-│   ├── StorageManagementPage.tsx  # Storage management (in Settings tab)
-│   └── SettingsPage.tsx          # System settings (/settings)
-├── contexts/            # React Context
-│   ├── AuthContext.tsx           # Authentication state management
-│   └── BackgroundTaskContext.tsx # Background task management
-├── api.ts               # Backend API client
-├── config.ts            # Environment configuration
-├── App.tsx              # Root component (routing)
-├── main.tsx             # Application entry point
-└── index.css            # Global styles + Tailwind
+├── App.tsx                 # 路由入口
+├── main.tsx                # BrowserRouter / HashRouter 选择、Context 装配、PWA 注册
+├── config.ts               # Gateway / Preprocessing / AI 地址解析
+├── api/                    # 按业务拆分的 API 客户端
+├── components/             # 可复用 UI、聊天、阅片、结果、设置等组件
+├── contexts/               # Auth / BackgroundTask / Toast 状态
+├── constants/              # 文件类型、指标、训练等常量
+├── lib/                    # hooks 与辅助工具
+├── locales/                # `en-US` / `zh-CN` / `zh-HK`
+├── pages/                  # 页面级组件
+└── types/                  # 类型声明
 ```
 
-## Technology Stack
+## 当前路由
 
-- **Framework**: React 18 + TypeScript
-- **Build Tool**: Vite 5
-- **Routing**: React Router v6
-- **Styling**: Tailwind CSS
-- **WSI Viewer**: OpenSeadragon
-- **State Management**: React Hooks + Context
+`App.tsx` 中现在有 14 个主路由入口，外加 1 个兜底 `*` 路由：
 
-## Page Routes (14 pages)
+- 公开页：`/`、`/login`
+- 受保护页面：
+  - `/dashboard`
+  - `/dashboard/:conversationId`
+  - `/tools`
+  - `/settings`
+  - `/task-setup`
+  - `/task-list`
+  - `/task/:task_id`
+  - `/wsi-list`
+  - `/register`
+  - `/results`
+  - `/reports`
+  - `/wsi/:wsi_id`
 
-| Route | Page | Description |
-|-------|------|-------------|
-| `/` | IntroductionPage | Product introduction page (public) |
-| `/login` | LoginPage | Login welcome page (public) |
-| `/dashboard` | AIChatPage | AI assistant (SSE streaming) |
-| `/dashboard/:conversationId` | AIChatPage | AI assistant with specific conversation |
-| `/tools` | ToolsPage | Utility tools |
-| `/settings` | SettingsPage | System settings (with Storage tab) |
-| `/task-setup` | NewTaskPage | Task configuration |
-| `/task-list` | TaskListPage | Task list |
-| `/task/:task_id` | TaskDetailPage | Task details |
-| `/wsi-list` | ListPage | Slide browser |
-| `/wsi/:wsi_id` | WSIViewerPage | WSI viewer (fullscreen) |
-| `/register` | UploadPage | Register/upload slide |
-| `/results` | ResultsViewerPage | Results viewer |
-| `/reports` | ReportGeneratorPage | Report generator |
+说明：`pages/StorageManagementPage.tsx` 目前不是独立路由，而是作为设置页内部视图使用。
 
-> Note: All routes except `/` and `/login` are protected and require authentication.
+## 运行时事实
 
-## API Integration
+- Electron 环境下使用 `HashRouter`
+- 浏览器环境下使用 `BrowserRouter`
+- `main.tsx` 会先调用 `initializeApiConfig()`，从 preload / Electron IPC 获取 Gateway 端口
+- 浏览器模式会注册 Service Worker；Electron 模式不会注册
 
-The frontend obtains dynamic port via Electron preload script to communicate with Python backend:
+## API 客户端现状
 
-```typescript
-// Get backend API URL
-const backendUrl = await window.api.getBackendUrl()
-// Returns: http://127.0.0.1:48427 (port dynamically allocated)
-```
+旧文档里提到的单体 `api.ts` 已经拆分为模块化目录：
 
-## Supported AI Models
+- `api/auth.ts`
+- `api/chat.ts`
+- `api/wsi.ts`
+- `api/training.ts`
+- `api/results.ts`
+- `api/storage.ts`
+- `api/annotation.ts`
+- `api/analysis.ts`
+- 以及 `client.ts` / `index.ts` 等公共封装
 
-### Feature Extractors (19 models)
+## 主要页面文件
 
-- ResNet50, ViT-Large (ImageNet)
-- UNI, UNI2, CONCH, CONCH 1.5 (Mahmood Lab)
-- Virchow, Virchow2 (Paige AI)
-- H-Optimus-0, H-Optimus-1 (Bioptimus)
-- Phikon, Phikon2 (Owkin)
-- PLIP, PathoCLIP (PathLAIA)
-- OpenMidnight (SophontAI)
-- mSTAR, GPFM, SmartCCS, SmartCyto (HKUST Smart Lab)
+- `AIChatPage.tsx`：AI 对话与 PDF 辅助阅读
+- `ListPage.tsx`：WSI 列表与数据浏览
+- `WSIViewerPage.tsx`：全屏阅片器
+- `NewTaskPage.tsx` / `TaskDetailPage.tsx` / `TaskListPage.tsx`：任务配置与追踪
+- `ResultsViewerPage.tsx` / `ReportGeneratorPage.tsx`：结果查看与报告导出
+- `SettingsPage.tsx`：系统设置、存储管理入口
 
-### MIL Aggregators (8 models)
+## 相关文档
 
-- ABMIL, MeanMIL, MaxMIL
-- DSMIL, DTFDMIL
-- CLAM-SB, CLAM-MB
-- TransMIL
-
-## Related Documentation
-
-- [Frontend README](../README.md) - Detailed frontend documentation
-- [Project README](../../../../../README.md) - Complete project documentation
-- [Backend README](../../../../server/README.md) - Python backend documentation
+- [Frontend README](../README.md)
+- [Project README](../../../../../README.md)
+- [Backend README](../../../../server/README.md)

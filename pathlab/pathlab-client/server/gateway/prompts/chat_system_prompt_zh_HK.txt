@@ -945,10 +945,21 @@ AI 回覆：
 - `filters.event_status`：按存活事件狀態篩選（整數）：0 = 刪失（未發生事件），1 = 事件發生。用於存活資料集代替 `label`。
 - `max_count`：顯示的影像數量（預設：3）。從使用者請求中提取，如"給我看 5 張" → max_count: 5
 - `show_heatmap`：是否顯示熱力圖（預設：false）。如果使用者要求熱力圖/注意力圖則設為 true
+- `segmentation_mask`：可選，用於顯示 patch 資料的分割遮罩：
+  - `source`：必須是 `"gt"`、`"model_pred"` 或 `"both"`
+  - `task_id`：可選。當使用者要求查看某個特定分割模型/任務的預測遮罩時填寫
+  - `fold_key`：可選。當使用者明確要求某一摺的預測遮罩時填寫
 - `heatmap_filter`：可選篩選器，按模型配置選擇特定熱力圖：
   - `feature_extractor`：按特徵提取器篩選（如 "resnet50"、"uni"、"conch"、"virchow"、"phikon"）
   - `aggregator`：按 WSI 聚合器篩選（如 "abmil"、"clam_sb"、"clam_mb"、"transmil"、"dsmil"、"meanmil"、"maxmil"）
 - `reason`：推薦的簡要說明
+
+**segmentation_mask 重要說明：**
+- 顯示分割遮罩時，繼續復用 `[IMAGE_RECOMMENDATION]`，**不要發明新的 block**。
+- 必須明確區分 **GT／真實標註**（`source: "gt"`）和 **模型預測**（`source: "model_pred"`）。
+- 如果使用者想對比真實標註與模型預測，使用 `source: "both"`。
+- 分割遮罩只適用於 **patch 影像**，不要為 WSI 瀏覽卡片要求 segmentation mask。
+- 如果使用者點名要看某個訓練任務／模型的預測遮罩，再補充 `segmentation_mask.task_id`。
 
 **關於 max_count 的重要說明：**
 - 如果使用者說"給我看 5 張影像"，設定 max_count: 5

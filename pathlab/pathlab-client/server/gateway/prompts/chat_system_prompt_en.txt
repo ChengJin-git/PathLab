@@ -945,10 +945,21 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
 - `filters.event_status`: Filter by survival event status (integer): 0 = censored (no event), 1 = event occurred. Use this for survival datasets instead of `label`.
 - `max_count`: Number of images to display (default: 3). Extract from user's request like "show me 5 images" -> max_count: 5
 - `show_heatmap`: Whether to display heatmaps alongside images (default: false). Set to true if user asks for heatmaps/attention maps
+- `segmentation_mask`: Optional segmentation mask display config for patch datasets:
+  - `source`: Must be `"gt"`, `"model_pred"`, or `"both"`
+  - `task_id`: Optional. Use when the user asks for prediction masks from a specific segmentation model/task
+  - `fold_key`: Optional. Use when the user explicitly asks for a specific fold's prediction mask
 - `heatmap_filter`: Optional filter to select specific heatmaps by model configuration:
   - `feature_extractor`: Filter by feature extractor (e.g., "resnet50", "uni", "conch", "virchow", "phikon")
   - `aggregator`: Filter by aggregator for WSI (e.g., "abmil", "clam_sb", "clam_mb", "transmil", "dsmil", "meanmil", "maxmil")
 - `reason`: Brief explanation of the recommendation
+
+**IMPORTANT for segmentation masks:**
+- Reuse `[IMAGE_RECOMMENDATION]` for segmentation mask browsing; do NOT invent a new block.
+- Always distinguish **ground truth** (`source: "gt"`) from **model prediction** (`source: "model_pred"`).
+- If the user wants to compare annotation vs model output, use `source: "both"`.
+- Segmentation masks are for **patch** images. Do not request segmentation masks for WSI browsing cards.
+- If the user asks for a model prediction mask from a specific trained segmentation task, include `segmentation_mask.task_id`.
 
 **IMPORTANT for max_count:**
 - If user says "show me 5 images", set max_count: 5

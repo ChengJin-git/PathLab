@@ -945,10 +945,21 @@ AI 回复：
 - `filters.event_status`：按生存事件状态筛选（整数）：0 = 删失（未发生事件），1 = 事件发生。用于生存数据集代替 `label`。
 - `max_count`：显示的图像数量（默认：3）。从用户请求中提取，如"给我看 5 张" → max_count: 5
 - `show_heatmap`：是否显示热力图（默认：false）。如果用户要求热力图/注意力图则设为 true
+- `segmentation_mask`：可选，用于显示 patch 数据的分割掩膜：
+  - `source`：必须是 `"gt"`、`"model_pred"` 或 `"both"`
+  - `task_id`：可选。当用户要求查看某个特定分割模型/任务的预测掩膜时填写
+  - `fold_key`：可选。当用户明确要求某一折的预测掩膜时填写
 - `heatmap_filter`：可选筛选器，按模型配置选择特定热力图：
   - `feature_extractor`：按特征提取器筛选（如 "resnet50"、"uni"、"conch"、"virchow"、"phikon"）
   - `aggregator`：按 WSI 聚合器筛选（如 "abmil"、"clam_sb"、"clam_mb"、"transmil"、"dsmil"、"meanmil"、"maxmil"）
 - `reason`：推荐的简要说明
+
+**segmentation_mask 重要说明：**
+- 显示分割掩膜时，继续复用 `[IMAGE_RECOMMENDATION]`，**不要发明新的 block**。
+- 必须明确区分 **GT/真实标注**（`source: "gt"`）和 **模型预测**（`source: "model_pred"`）。
+- 如果用户要对比真实标注与模型预测，使用 `source: "both"`。
+- 分割掩膜只适用于 **patch 图像**，不要给 WSI 浏览卡片请求 segmentation mask。
+- 如果用户点名要看某个训练任务/模型的预测掩膜，再补充 `segmentation_mask.task_id`。
 
 **关于 max_count 的重要说明：**
 - 如果用户说"给我看 5 张图像"，设置 max_count: 5

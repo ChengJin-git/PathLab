@@ -1,423 +1,95 @@
-# PathLab Gateway Service
-
-API 网关服务，PathLab 数字病理平台的统一入口。
-
-## 🚀 运行模式
-
-| 模式 | Gateway 端口 | 说明 |
-|------|-------------|------|
-| **网页端** (调试模式) | 6100 (固定) | `npm run dev` 启动，浏览器访问 |
-| **本地端** (打包模式) | 动态分配 | Electron 启动，通过 `PORT=xxxxx` 通知前端 |
-
-## 功能概述
-
-- **请求路由**: 转发请求到 Preprocessing/AI 服务
-- **数据聚合**: 合并多服务响应
-- **元数据管理**: WSI/Dataset CRUD（PostgreSQL，18 表）
-- **用户认证**: FastAPI-Users + JWT，本地邮箱密码登录，客户端 SHA256 哈希
-- **AI 聊天**: OpenRouter LLM 集成，对话持久化
-- **训练管理**: 训练任务生命周期，SSE 实时日志
-- **GPU 队列**: 最大并发控制，FIFO 调度，断电恢复
-
----
-
-## 完整 API 端点列表
-
-### 1. 认证 API (`/auth/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| POST | `/auth/jwt/login` | ⛔ 已禁用（防止绕过 reCAPTCHA） | — |
-| POST | `/auth/jwt/logout` | 登出 | 已登录 |
-| POST | `/auth/secure-login` | 安全登录（客户端哈希） | 公开 |
-| POST | `/auth/register` | 注册新用户 | 公开 |
-| POST | `/auth/migrate-password` | 迁移旧密码格式 | 已登录 |
-| GET | `/auth/me` | 获取当前用户信息 | 已登录 |
-| PATCH | `/auth/me` | 更新当前用户信息 | 已登录 |
-| GET | `/auth/users` | 列出所有用户 | 管理员 |
-| GET | `/auth/users/{id}` | 获取指定用户 | 管理员 |
-| PATCH | `/auth/users/{id}` | 更新指定用户 | 管理员 |
-| DELETE | `/auth/users/{id}` | 删除用户 | 管理员 |
-| POST | `/auth/accept-agreement` | 接受服务条款 | 已登录 |
-| POST | `/auth/users/{id}/revoke-agreement` | 撤销用户协议 | 管理员 |
-
----
-
-### 2. WSI 管理 API (`/wsi/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/wsi` | 列出所有 WSI（支持分页、筛选） | 已登录 |
-| GET | `/wsi/{wsi_id}` | 获取 WSI 详情 | 已登录 |
-| POST | `/wsi/upload/path` | 通过路径注册 WSI | 已登录 |
-| POST | `/wsi/upload/file` | 上传 WSI 文件 | 已登录 |
-| POST | `/wsi/batch` | 批量注册 WSI | 已登录 |
-| PATCH | `/wsi/{wsi_id}` | 更新 WSI 元数据 | 已登录 |
-| DELETE | `/wsi/{wsi_id}` | 删除 WSI | 已登录 |
-
----
-
-### 3. Dataset 管理 API (`/datasets/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/datasets` | 列出所有数据集 | 已登录 |
-| GET | `/datasets/{dataset_id}` | 获取数据集详情 | 已登录 |
-| POST | `/datasets` | 创建数据集 | 已登录 |
-| PATCH | `/datasets/{dataset_id}` | 更新数据集 | 已登录 |
-| DELETE | `/datasets/{dataset_id}` | 删除数据集 | 已登录 |
-| POST | `/datasets/{dataset_id}/wsi` | 添加 WSI 到数据集 | 已登录 |
-| DELETE | `/datasets/{dataset_id}/wsi/{wsi_id}` | 从数据集移除 WSI | 已登录 |
-
----
-
-### 4. WSI 权限 API (`/wsi/permissions/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/wsi/permissions` | 获取 WSI 权限列表 | 已登录 |
-| POST | `/wsi/permissions` | 创建 WSI 权限 | 已登录 |
-| DELETE | `/wsi/permissions/{id}` | 删除 WSI 权限 | 已登录 |
-| GET | `/wsi/permissions/my-permissions` | 获取当前用户权限列表 | 已登录 |
-| GET | `/wsi/permissions/user-permissions/{target_user_id}` | 获取指定用户的权限 | 已登录 |
-| GET | `/wsi/permissions/datasets/{dataset_id}/permissions` | 获取数据集的权限列表 | 已登录 |
-| POST | `/wsi/permissions/datasets/{dataset_id}/permissions` | 创建数据集权限 | 已登录 |
-| DELETE | `/wsi/permissions/datasets/{dataset_id}/permissions/{target_user_id}` | 删除数据集权限 | 已登录 |
-
----
-
-### 5. AI 任务 API (`/tasks/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/tasks/extractors` | 列出可用特征提取器（19种） | 已登录 |
-| POST | `/tasks/wsi_classification` | 创建 WSI 分类任务 | 已登录 |
-| POST | `/tasks/patch_classification` | 创建 Patch 分类任务 | 已登录 |
-| POST | `/tasks/patch_segmentation` | 创建 Patch 分割任务 | 已登录 |
-| GET | `/tasks/{task_id}` | 获取任务状态 | 已登录 |
-
----
-
-### 6. 训练 API (`/training/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/training/tasks` | 列出训练任务 | 已登录 |
-| GET | `/training/tasks/{task_id}` | 获取训练任务详情 | 已登录 |
-| POST | `/training/tasks` | 创建训练任务 | 已登录 |
-| DELETE | `/training/tasks/{task_id}` | 删除训练任务 | 已登录 |
-| POST | `/training/tasks/{task_id}/start` | 启动训练 | 已登录 |
-| POST | `/training/tasks/{task_id}/stop` | 停止训练 | 已登录 |
-| GET | `/training/tasks/{task_id}/logs` | 获取训练日志（SSE 流式） | 已登录 |
-| GET | `/training/models` | 列出已训练模型 | 已登录 |
-| GET | `/training/models/{model_id}` | 获取模型详情 | 已登录 |
-| DELETE | `/training/models/{model_id}` | 删除模型 | 已登录 |
-| POST | `/training/models/{model_id}/set-default` | 设置默认模型 | 已登录 |
-
----
-
-### 7. 结果 API (`/results/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/results` | 获取所有 AI 结果 | 已登录 |
-| GET | `/results/analysis/stats` | 获取分析统计 | 已登录 |
-| GET | `/results/tasks` | 获取可分析任务列表 | 已登录 |
-| GET | `/results/datasets-for-validation` | 获取可用于验证的数据集 | 已登录 |
-| POST | `/results/external-validation` | 开始外部验证 | 已登录 |
-| GET | `/results/external-validation/completed` | 获取已完成的外部验证 | 已登录 |
-| GET | `/results/external-validation/{task_id}` | 获取验证进度 | 已登录 |
-| POST | `/results/tasks/{task_id}/analysis` | 运行任务分析 | 已登录 |
-| GET | `/results/tasks/{task_id}/analysis` | 获取任务分析结果 | 已登录 |
-| GET | `/results/tasks/{task_id}/analysis/stream` | 获取分析流 | 已登录 |
-| GET | `/results/tasks/{task_id}/quick-analysis` | 快速分析 | 已登录 |
-| GET | `/results/tasks/{task_id}/analysis/{analysis_id}/file/{filename}` | 获取分析文件 | 已登录 |
-| GET | `/results/analysis/{analysis_id}/status` | 获取分析状态 | 已登录 |
-| DELETE | `/results/tasks/{task_id}/analysis/{analysis_id}` | 删除分析 | 已登录 |
-| POST | `/results/tasks/{task_id}/regenerate` | 重新生成 AI 结果 | 已登录 |
-
----
-
-### 8. 热力图 API (`/heatmap/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/heatmap/wsi/{wsi_id}/available` | 获取可用热力图列表 | 已登录 |
-| GET | `/heatmap/wsi/{wsi_id}/data` | 获取热力图数据 | 已登录 |
-| GET | `/heatmap/wsi/{wsi_id}/patch_image` | 获取 patch 图像 | 已登录 |
-| GET | `/heatmap/wsi/{wsi_id}/patch_cam` | 获取 patch CAM | 已登录 |
-| GET | `/heatmap/wsi/{wsi_id}/image` | 获取 patch 文件图像 | 已登录 |
-| GET | `/heatmap/wsi/{wsi_id}/thumbnail` | 获取 WSI 缩略图 | 已登录 |
-
----
-
-### 9. GPU 队列 API (`/queue/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/queue/config` | 获取队列配置 | 已登录 |
-| GET | `/queue` | 获取队列状态 | 已登录 |
-| POST | `/queue/config` | 更新队列配置 | 管理员 |
-| DELETE | `/queue/{task_id}` | 取消排队任务 | 已登录 |
-| GET | `/queue/{task_id}` | 检查任务是否在队列中 | 已登录 |
-
----
-
-### 10. 聊天 API (`/chat`, `/conversations/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| POST | `/conversations` | 创建新对话 | 已登录 |
-| GET | `/conversations` | 列出对话 | 已登录 |
-| GET | `/conversations/{id}` | 获取对话详情（含消息） | 已登录 |
-| DELETE | `/conversations/{id}` | 删除对话 | 已登录 |
-| POST | `/conversations/{id}/messages` | 添加消息 | 已登录 |
-| PATCH | `/conversations/{id}/messages/{message_id}` | 更新消息 | 已登录 |
-| DELETE | `/conversations/{id}/messages/{message_id}` | 删除消息起点 | 已登录 |
-| POST | `/chat` | AI 聊天（SSE 流式响应） | 已登录 |
-
----
-
-### 11. PDF 聊天 API (`/chat/pdf/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/chat/pdf/images/{url_hash}/{filename}` | 获取 PDF 页面图像 | 已登录 |
-
----
-
-### 12. PDF 向量存储 API (`/chat/pdf/vectorstore/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| POST | `/chat/pdf/vectorstore/add` | 添加 PDF 到向量存储 | 已登录 |
-| DELETE | `/chat/pdf/vectorstore/{id}` | 删除向量存储 | 已登录 |
-| GET | `/chat/pdf/vectorstore` | 列出所有向量存储 | 已登录 |
-
----
-
-### 13. 语音识别 API (`/asr/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| POST | `/asr/transcribe` | 语音转文字（DashScope Qwen3-ASR） | 已登录 |
-
----
-
-### 14. GPU 信息 API (`/gpu/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/gpu/info` | 获取 GPU 信息（显存、利用率） | 已登录 |
-
----
-
-### 15. 存储管理 API (`/storage/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/storage/stats` | 获取存储统计 | 已登录 |
-| GET | `/storage/disk-space` | 获取磁盘空间信息 | 已登录 |
-| GET | `/storage/check-upload-space` | 检查上传空间是否充足 | 已登录 |
-| GET | `/storage/config` | 获取存储配置 | 已登录 |
-| POST | `/storage/config` | 更新存储配置 | 管理员 |
-| GET | `/storage/wsi/{wsi_id}` | 获取 WSI 存储信息 | 已登录 |
-| GET | `/storage/training/{task_id}` | 获取训练任务存储信息 | 已登录 |
-| POST | `/storage/migrate` | 开始存储迁移 | 管理员 |
-| GET | `/storage/migration/status` | 获取迁移状态 | 已登录 |
-| GET | `/storage/orphaned` | 检测孤立文件 | 管理员 |
-| POST | `/storage/orphaned/cleanup` | 清理孤立文件 | 管理员 |
-
----
-
-### 16. 存储任务 API (`/storage/tasks/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/storage/tasks` | 获取存储任务列表 | 已登录 |
-| GET | `/storage/tasks/{task_id}` | 获取存储任务详情 | 已登录 |
-| DELETE | `/storage/tasks/{task_id}` | 删除存储任务 | 已登录 |
-| GET | `/storage/tasks/tasks/stream` | 获取任务流 | 已登录 |
-| POST | `/storage/tasks/reset-derived-data` | 重置派生数据 | 管理员 |
-| POST | `/storage/tasks/tasks/batch-import` | 批量导入 | 管理员 |
-| POST | `/storage/tasks/tasks/delete-external` | 删除外部数据 | 管理员 |
-| POST | `/storage/tasks/batch-update-metadata` | 批量更新元数据 | 管理员 |
-
----
-
-### 17. 存储扫描 API (`/storage/scan/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| POST | `/storage/scan/scan-directory` | 启动存储扫描 | 管理员 |
-| GET | `/storage/scan/status` | 获取扫描状态 | 已登录 |
-| GET | `/storage/scan/external-datasets-summary` | 获取外部数据集摘要 | 已登录 |
-| POST | `/storage/scan/tasks/unbind-dataset` | 解绑数据集 | 管理员 |
-| POST | `/storage/scan/check-external-files` | 检查外部文件 | 管理员 |
-| POST | `/storage/scan/delete-unavailable-files` | 删除不可用文件 | 管理员 |
-
----
-
-### 18. 系统设置 API (`/settings/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/settings` | 获取全局设置 | 已登录 |
-| POST | `/settings` | 更新全局设置 | 管理员 |
+# PathLab Gateway
 
----
+Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚合、静态资源挂载以及与 Preprocessing / AI 内部服务的协作。
 
-### 19. 统计 API (`/stats/*`)
+## 当前应用行为
 
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/stats` | 获取系统统计 | 已登录 |
-| GET | `/stats/recent-activity` | 获取最近活动 | 已登录 |
+- 启动文件：`server/gateway/main.py`
+- Web 框架：FastAPI
+- 启动时会：
+  - 初始化数据库
+  - 等待 Preprocessing / AI 服务可用
+  - 注册所有顶层 router
+  - 在存在前端构建产物时挂载静态资源
+  - 始终挂载 `/avatars`
 
----
+## 当前直接注册的 router
 
-### 20. 消息反馈 API (`/feedback/*`)
+`main.py` 里当前直接注册了 16 个顶层 router：
 
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| POST | `/feedback/messages/{message_id}/feedback` | 提交消息反馈 | 已登录 |
-| GET | `/feedback/messages/{message_id}/feedback` | 获取消息反馈 | 已登录 |
-| DELETE | `/feedback/messages/{message_id}/feedback` | 删除消息反馈 | 已登录 |
-| GET | `/feedback/conversations/{conversation_id}/feedbacks` | 获取会话反馈列表 | 已登录 |
-| GET | `/feedback/admin/feedbacks` | 获取所有反馈（管理员） | 管理员 |
-| GET | `/feedback/admin/feedbacks/stats` | 获取反馈统计 | 管理员 |
-| GET | `/feedback/admin/feedbacks/export` | 导出反馈数据 | 管理员 |
-| POST | `/feedback/admin/feedbacks/export-async` | 异步导出反馈 | 管理员 |
-| GET | `/feedback/admin/feedbacks/export-async/{task_id}` | 获取导出任务状态 | 管理员 |
-| GET | `/feedback/admin/feedbacks/export-async/{task_id}/download` | 下载导出文件 | 管理员 |
-| DELETE | `/feedback/admin/feedbacks/reset` | 重置反馈数据 | 管理员 |
-
----
-
-### 21. 标注 API (`/annotation/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/annotation/drafts` | 获取标注草稿列表 | 已登录 |
-| POST | `/annotation/drafts` | 创建标注草稿 | 已登录 |
-| GET | `/annotation/drafts/{id}` | 获取标注草稿详情 | 已登录 |
-| PATCH | `/annotation/drafts/{id}` | 更新标注草稿 | 已登录 |
-| DELETE | `/annotation/drafts/{id}` | 删除标注草稿 | 已登录 |
-
----
-
-### 22. 分类分析 API (`/analysis/classification/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| POST | `/analysis/classification` | 运行分类分析 | 已登录 |
-| GET | `/analysis/classification/{id}` | 获取分析结果 | 已登录 |
-
----
-
-### 23. 生存分析 API (`/analysis/survival/*`)
-
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| POST | `/analysis/survival` | 运行生存分析 | 已登录 |
-| GET | `/analysis/survival/{id}` | 获取分析结果 | 已登录 |
+1. `auth`
+2. `stats`
+3. `wsi`
+4. `wsi_upload`
+5. `training`
+6. `ai_tasks`
+7. `results`
+8. `models`
+9. `chat`
+10. `storage`
+11. `queue`
+12. `asr`
+13. `heatmap`
+14. `settings`
+15. `gpu`
+16. `annotation`
 
----
+这些 router 覆盖了当前主要公开能力：
 
-### 24. 外部验证分析 API (`/analysis/external-validation/*`)
+- 登录 / 用户管理 / 维护通知 / 头像上传
+- WSI 上传、列表、详情、权限检查
+- 训练任务、AI 任务与队列观察
+- 模型管理、结果查看、报告导出
+- AI 对话、会话历史、PDF 图片缓存与反馈
+- 存储统计、扫描、清理与配置
+- GPU 信息、热图、标注、系统设置
 
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| POST | `/analysis/external-validation` | 运行外部验证 | 已登录 |
-| GET | `/analysis/external-validation/{id}` | 获取验证结果 | 已登录 |
+## 路由目录现状
 
----
+`server/gateway/routes/` 当前共有 29 个 Python 文件。
 
-### 25. 分割分析 API (`/analysis/segmentation/*`)
+除了上面 16 个顶层 router 外，目录里还有若干**被其他 router 复用的支持模块**，例如：
 
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| POST | `/analysis/segmentation` | 运行分割分析 | 已登录 |
-| GET | `/analysis/segmentation/{id}` | 获取分割结果 | 已登录 |
+- 分析相关：`classification_analysis.py`、`segmentation_analysis.py`、`survival_analysis.py`、`external_validation_analysis.py`
+- 分析辅助：`analysis_helpers.py`、`analysis_metrics.py`、`analysis_state.py`
+- 聊天辅助：`chat_pdf.py`、`chat_pdf_vectorstore.py`、`chat_feedback.py`
+- 存储辅助：`storage_scan.py`、`storage_tasks.py`
+- WSI 权限辅助：`wsi_permissions.py`
 
----
+这些文件通常通过导入被组合到顶层 router，而不是单独挂载。
 
-### 26. 分析指标 API (`/analysis/metrics/*`)
+## 认证现状
 
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/analysis/metrics` | 获取分析指标 | 已登录 |
-| GET | `/analysis/metrics/{task_id}` | 获取任务指标 | 已登录 |
+认证相关代码集中在 `routes/auth.py` 与 `backend/auth/`：
 
----
+- 使用 FastAPI Users + JWT strategy
+- 维护用户 `nonce`，用于单设备会话控制
+- 支持 `secure-login`、登出、资料更新、头像上传
+- 包含管理员批量启用 / 禁用 / 删除用户接口
+- 当前代码里没有单独暴露的 `AccessToken` ORM 模型 README 记录，认证主要依赖 JWT
 
-### 27. 分析状态 API (`/analysis/state/*`)
+## 静态资源挂载
 
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/analysis/state` | 获取分析状态 | 已登录 |
-| PUT | `/analysis/state` | 更新分析状态 | 已登录 |
+- `/avatars` → `uploads/avatars`
+- `/images`、`/assets` → 当前前端构建产物目录（如果存在）
 
----
+这意味着浏览器部署模式下，Gateway 既提供 API，也可以为前端构建产物提供静态资源入口。
 
-### 28. 健康检查
+## 与内部服务的关系
 
-| 方法 | 端点 | 说明 | 权限 |
-|------|------|------|------|
-| GET | `/health` | 健康检查 | 公开 |
+- Preprocessing：提供 WSI 信息、缩略图、DZI、瓦片等底层接口
+- AI：提供训练、推理等内部能力
+- Database / Storage：通过 `backend/` 共享模块提供 ORM、仓储、文件系统能力
 
----
+## 阅读建议
 
-## 数据库架构
+- 如果你要看公开 API 面：先看 `main.py` 和 `routes/`
+- 如果你要看数据落库：继续看 `../backend/database/README.md`
+- 如果你要看文件与目录占用：继续看 `../backend/storage/README.md`
 
-PostgreSQL 数据库包含 18 个表（自动创建）：
+## 相关文档
 
-| 表名 | 用途 |
-|------|------|
-| `users` | 用户账户（FastAPI-Users） |
-| `accesstoken` | 访问令牌（FastAPI-Users）|
-| `data_groups` | 数据组定义（数据类型、聚合级别、任务类型组合）|
-| `datasets` | 数据集元数据（UUID 隐私保护） |
-| `dataset_permissions` | 数据集临时提权 |
-| `wsi_slides` | WSI 元数据（含患者信息、标签、生存数据） |
-| `ai_tasks` | AI 推理任务记录 |
-| `ai_results` | AI 分析结果 |
-| `chat_conversations` | 聊天会话 |
-| `chat_messages` | 聊天消息历史 |
-| `message_feedbacks` | 消息反馈（点赞/点踩/任务有用性）|
-| `export_tasks` | 数据导出任务追踪 |
-| `training_tasks` | 训练任务配置（分类/生存） |
-| `training_task_wsi` | 训练任务与 WSI 多对多关联 |
-| `trained_models` | 模型检查点元数据 |
-| `training_logs` | 训练日志条目（运行时通过 Redis Streams 读写，SSE 流式） |
-| `storage_tasks` | 存储操作任务追踪（批量导入/删除）|
-| `annotation_drafts` | 标注草稿 |
-
----
-
-## GPU 任务队列
-
-任务队列管理器 (`task_queue.py`) 提供：
-
-- **最大并发**: 默认 1 个 GPU 任务
-- **FIFO 调度**: 先进先出
-- **断电恢复**: 重启后自动恢复待处理任务
-- **统一管理**: 支持 TrainingTask + AITask
-
----
-
-## 技术栈
-
-- **框架**: FastAPI (Python 3.12)
-- **认证**: FastAPI-Users + JWT
-- **数据库**: PostgreSQL + asyncpg (异步)
-- **缓存**: Redis (训练日志 Streams、任务进度 KV、分析状态 Hash)
-- **ORM**: SQLAlchemy 2.0+
-- **LLM**: OpenRouter API
-- **ASR**: DashScope Qwen3-ASR
-
----
-
-## License
-
-See root repository LICENSE file.
+- [Server README](../README.md)
+- [Backend README](../backend/README.md)
+- [Database README](../backend/database/README.md)
+- [Storage README](../backend/storage/README.md)
