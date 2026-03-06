@@ -5,8 +5,11 @@ Shared helper utilities used across classification, survival, and external
 validation analysis modules.
 """
 import logging
-from typing import Optional
+from typing import Any, Optional
 
+from fastapi import HTTPException
+
+from backend.auth.dependencies import check_dataset_gpu_permission, check_task_access_permission
 from backend.database.repositories import TrainingTaskRepository, WSIRepository
 
 logger = logging.getLogger(__name__)
@@ -50,6 +53,70 @@ async def _resolve_task_dataset_id(task, db) -> Optional[str]:
         first_wsi = await WSIRepository.get_by_id(db, wsi_ids[0])
         if first_wsi and first_wsi.dataset_id:
             return first_wsi.dataset_id
+
+    return None
+
+
+async def _require_task_access(
+    user,
+    task,
+    db,
+    *,
+    owner_user_id: Optional[str] = None,
+    forbidden_detail: str = "You don't have permission to access this task",
+) -> Optional[str]:
+    """Require read access to a training task and return its resolved dataset_id."""
+    task_dataset_id = await _resolve_task_dataset_id(task, db)
+    if not await check_task_access_permission(
+        user,
+        owner_user_id or task.user_id,
+        task_dataset_id,
+        db,
+    ):
+        raise HTTPException(status_code=403, detail=forbidden_detail)
+    return task_dataset_id
+
+
+async def _get_task_with_access(
+    task_id: str,
+    user,
+    db,
+    *,
+    not_found_detail: Optional[str] = None,
+    forbidden_detail: str = "You don't have permission to access this task",
+) -> tuple[Any, Optional[str]]:
+    """Load a task, require access, and return ``(task, dataset_id)``."""
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=not_found_detail or f"Task not found: {task_id}")
+
+    task_dataset_id = await _require_task_access(
+        user,
+        task,
+        db,
+        forbidden_detail=forbidden_detail,
+    )
+    return task, task_dataset_id
+
+
+async def _require_task_gpu_permission(
+    user,
+    task,
+    db,
+    *,
+    forbidden_detail: str,
+    fallback_role_detail: Optional[str] = None,
+) -> Optional[str]:
+    """Require GPU permission for a task's dataset, with role fallback when no dataset exists."""
+    task_dataset_id = await _resolve_task_dataset_id(task, db)
+    if task_dataset_id:
+        has_permission = await check_dataset_gpu_permission(user, task_dataset_id, db)
+        if not has_permission:
+            raise HTTPException(status_code=403, detail=forbidden_detail)
+        return task_dataset_id
+
+    if not user.can_use_gpu():
+        raise HTTPException(status_code=403, detail=fallback_role_detail or forbidden_detail)
 
     return None
 

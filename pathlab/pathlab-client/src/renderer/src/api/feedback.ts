@@ -1,5 +1,5 @@
 import { API_BASE } from '../config'
-import { apiFetch, ApiError, getAuthToken } from './client'
+import { apiFetch, apiFetchBlob } from './client'
 
 // ============================================================================
 // Message Feedback APIs
@@ -175,23 +175,19 @@ export async function getFeedbackStats(): Promise<FeedbackStats> {
 export async function exportFeedbacks(
   format: 'json' | 'csv' = 'json'
 ): Promise<{ feedbacks: MessageFeedback[] } | Blob> {
-  const token = getAuthToken()
-
-  const response = await fetch(`${API_BASE}/admin/feedbacks/export?format=${format}`, {
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    }
-  })
-
-  if (!response.ok) {
-    throw new ApiError('Failed to export feedbacks', response.status)
-  }
-
   if (format === 'csv') {
-    return response.blob()
-  } else {
-    return response.json()
+    return apiFetchBlob(
+      `${API_BASE}/admin/feedbacks/export?format=${format}`,
+      undefined,
+      'Failed to export feedbacks'
+    )
   }
+
+  return apiFetch<{ feedbacks: MessageFeedback[] }>(
+    `${API_BASE}/admin/feedbacks/export?format=${format}`,
+    undefined,
+    'Failed to export feedbacks'
+  )
 }
 
 /**

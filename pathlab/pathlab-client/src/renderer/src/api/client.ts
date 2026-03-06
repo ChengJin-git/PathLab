@@ -133,20 +133,14 @@ export function getErrorCodeFromStatus(status: number): ApiErrorCodeType {
  * This is the unified error handling function for all API calls
  */
 async function handleResponse<T>(response: Response, context?: string): Promise<T> {
-  if (response.ok) {
-    // Handle empty responses (204 No Content, etc.)
-    const contentLength = response.headers.get('content-length')
-    if (response.status === 204 || contentLength === '0') {
-      return undefined as T
-    }
-    return response.json()
+  const okResponse = await ensureSuccessfulResponse(response, context)
+
+  // Handle empty responses (204 No Content, etc.)
+  const contentLength = okResponse.headers.get('content-length')
+  if (okResponse.status === 204 || contentLength === '0') {
+    return undefined as T
   }
-
-  const { message, detail } = await parseErrorResponse(response)
-  const code = getErrorCodeFromStatus(response.status)
-  const errorMessage = context ? `${context}: ${message}` : message
-
-  throw new ApiError(errorMessage, response.status, code, detail)
+  return okResponse.json()
 }
 
 // Token storage key (defined early for use in apiFetch)
@@ -187,31 +181,23 @@ export function clearAuthToken(): void {
   localStorage.removeItem(AUTH_TOKEN_KEY)
 }
 
-/**
- * Wrap fetch call with unified error handling
- * Catches network errors and converts them to ApiError
- * Automatically adds Authorization header if token is available
- */
-export async function apiFetch<T>(
-  url: string,
-  options?: RequestInit,
-  context?: string,
-  skipAuth: boolean = false
-): Promise<T> {
-  // Check if user had a token before the request (for session expiry detection)
-  const hadToken = !!_getAuthToken()
-  try {
-    // Add auth header if token exists and not skipping auth
-    let headers = { ...(options?.headers || {}) } as Record<string, string>
-    if (!skipAuth) {
-      const token = _getAuthToken()
-      if (token && !headers['Authorization']) {
-        headers['Authorization'] = `Bearer ${token}`
-      }
-    }
+async function ensureSuccessfulResponse(response: Response, context?: string): Promise<Response> {
+  if (response.ok) {
+    return response
+  }
 
-    const response = await fetch(url, { ...options, headers })
-    return await handleResponse<T>(response, context)
+  const { message, detail } = await parseErrorResponse(response)
+  const code = getErrorCodeFromStatus(response.status)
+  const errorMessage = context ? `${context}: ${message}` : message
+
+  throw new ApiError(errorMessage, response.status, code, detail)
+}
+
+async function runApiRequest<T>(operation: () => Promise<T>, context?: string): Promise<T> {
+  const hadToken = !!_getAuthToken()
+
+  try {
+    return await operation()
   } catch (error) {
     // If it's already an ApiError, check for session expiry (401 while authenticated)
     if (error instanceof ApiError) {
@@ -250,6 +236,70 @@ export async function apiFetch<T>(
       errorMessage
     )
   }
+}
+
+async function fetchWithAuth(
+  url: string,
+  options?: RequestInit,
+  skipAuth: boolean = false
+): Promise<Response> {
+  // Add auth header if token exists and not skipping auth
+  let headers = { ...(options?.headers || {}) } as Record<string, string>
+  if (!skipAuth) {
+    const token = _getAuthToken()
+    if (token && !headers['Authorization']) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+  }
+
+  return fetch(url, { ...options, headers })
+}
+
+/**
+ * Wrap fetch call with unified error handling
+ * Catches network errors and converts them to ApiError
+ * Automatically adds Authorization header if token is available
+ */
+export async function apiFetch<T>(
+  url: string,
+  options?: RequestInit,
+  context?: string,
+  skipAuth: boolean = false
+): Promise<T> {
+  return runApiRequest(async () => {
+    const response = await fetchWithAuth(url, options, skipAuth)
+    return handleResponse<T>(response, context)
+  }, context)
+}
+
+/**
+ * Fetch a binary response with the same auth and error handling as apiFetch.
+ */
+export async function apiFetchBlob(
+  url: string,
+  options?: RequestInit,
+  context?: string,
+  skipAuth: boolean = false
+): Promise<Blob> {
+  return runApiRequest(async () => {
+    const response = await fetchWithAuth(url, options, skipAuth)
+    const okResponse = await ensureSuccessfulResponse(response, context)
+    return okResponse.blob()
+  }, context)
+}
+
+/**
+ * Trigger a browser download for a Blob.
+ */
+export function downloadBlobFile(blob: Blob, filename: string): void {
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  window.URL.revokeObjectURL(url)
 }
 
 // ============================================================================

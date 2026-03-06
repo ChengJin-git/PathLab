@@ -30,11 +30,16 @@ from backend.database.repositories import AIResultRepository, WSIRepository, Tra
 from backend.common.config import Config
 from backend.storage import StorageManager
 from backend.auth import current_active_user, User, get_user_from_header_or_param, get_user_from_token_param
-from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, check_wsi_access_permission, check_task_access_permission
+from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, check_wsi_access_permission
 
 # Analysis modules (extracted from this file for maintainability)
 from .analysis_state import get_analysis_state, AnalysisRequest
-from .analysis_helpers import _get_random_seed_from_task, _resolve_task_dataset_id
+from .analysis_helpers import (
+    _get_random_seed_from_task,
+    _get_task_with_access,
+    _require_task_access,
+    _require_task_gpu_permission,
+)
 from .classification_analysis import _run_classification_analysis
 from .segmentation_analysis import _run_segmentation_analysis
 from .survival_analysis import _run_survival_analysis
@@ -2200,10 +2205,13 @@ async def start_external_validation(
     model_task = await TrainingTaskRepository.get_by_id(db, trained_model.task_id)
     if not model_task:
         raise HTTPException(status_code=404, detail=f"Model's training task not found: {trained_model.task_id}")
-    model_mc = model_task.model_config or {}
-    model_dataset_id = await _resolve_task_dataset_id(model_task, db)
-    if not await check_task_access_permission(user, trained_model.user_id, model_dataset_id, db):
-        raise HTTPException(status_code=403, detail="You don't have permission to use this model")
+    await _require_task_access(
+        user,
+        model_task,
+        db,
+        owner_user_id=trained_model.user_id,
+        forbidden_detail="You don't have permission to use this model",
+    )
 
     if not trained_model.is_active:
         raise HTTPException(status_code=400, detail=f"Model is not active: {req.model_id}")
@@ -2575,14 +2583,13 @@ async def get_validation_progress(
     db: AsyncSession = Depends(get_db)
 ):
     """Get the progress of an external validation task. Users can only view their own tasks."""
-    task = await TrainingTaskRepository.get_by_id(db, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"Validation task not found: {task_id}")
-
-    # Check ownership (supports temporary elevated dataset permissions)
-    mc = task.model_config or {}
-    if not await check_task_access_permission(user, task.user_id, mc.get("dataset_id"), db):
-        raise HTTPException(status_code=403, detail="You don't have permission to view this task")
+    task, _ = await _get_task_with_access(
+        task_id,
+        user,
+        db,
+        not_found_detail=f"Validation task not found: {task_id}",
+        forbidden_detail="You don't have permission to view this task",
+    )
 
     # Check if this is an external validation task via DataGroup
     task_data_group = task.data_group
@@ -4435,9 +4442,12 @@ async def get_task_analysis(
     # Check task ownership (supports temporary elevated dataset permissions)
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if task:
-        task_dataset_id = await _resolve_task_dataset_id(task, db)
-        if not await check_task_access_permission(user, task.user_id, task_dataset_id, db):
-            raise HTTPException(status_code=403, detail="You don't have permission to view this task's analysis")
+        await _require_task_access(
+            user,
+            task,
+            db,
+            forbidden_detail="You don't have permission to view this task's analysis",
+        )
 
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id
 
@@ -4522,30 +4532,20 @@ async def run_task_analysis(
     """
     from gateway.task_queue import get_task_queue, TaskType
 
-    task = await TrainingTaskRepository.get_by_id(db, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+    task, _ = await _get_task_with_access(
+        task_id,
+        user,
+        db,
+        forbidden_detail="You don't have permission to analyze this task",
+    )
 
-    # Check ownership (supports temporary elevated dataset permissions)
-    task_dataset_id = await _resolve_task_dataset_id(task, db)
-    if not await check_task_access_permission(user, task.user_id, task_dataset_id, db):
-        raise HTTPException(status_code=403, detail="You don't have permission to analyze this task")
-
-    # Check GPU permission (pathologist/admin OR temporary elevated permission)
-    wsi_ids_for_check = await TrainingTaskRepository.get_wsi_ids(db, task_id)
-    if wsi_ids_for_check:
-        # Get dataset_id from first WSI
-        first_wsi = await WSIRepository.get_by_id(db, wsi_ids_for_check[0])
-        if first_wsi and first_wsi.dataset_id:
-            has_permission = await check_dataset_gpu_permission(user, first_wsi.dataset_id, db)
-            if not has_permission:
-                raise HTTPException(
-                    status_code=403,
-                    detail="You don't have GPU permission for this dataset. Contact admin for temporary access."
-                )
-    elif not user.can_use_gpu():
-        # No WSIs found, fall back to role check
-        raise HTTPException(status_code=403, detail="GPU operations require pathologist or admin role")
+    await _require_task_gpu_permission(
+        user,
+        task,
+        db,
+        forbidden_detail="You don't have GPU permission for this dataset. Contact admin for temporary access.",
+        fallback_role_detail="GPU operations require pathologist or admin role",
+    )
 
     # Generate analysis_id (timestamp format)
     analysis_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -4738,13 +4738,12 @@ async def get_quick_analysis(
     Supports filtering to only return requested metrics/charts.
     """
     # Check task ownership
-    task = await TrainingTaskRepository.get_by_id(db, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
-
-    task_dataset_id = await _resolve_task_dataset_id(task, db)
-    if not await check_task_access_permission(user, task.user_id, task_dataset_id, db):
-        raise HTTPException(status_code=403, detail="You don't have permission to view this task's analysis")
+    task, _ = await _get_task_with_access(
+        task_id,
+        user,
+        db,
+        forbidden_detail="You don't have permission to view this task's analysis",
+    )
 
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id
 
@@ -4772,22 +4771,13 @@ async def get_quick_analysis(
     if latest_summary is None and run_if_missing:
         from gateway.task_queue import get_task_queue, TaskType
 
-        # Check GPU permission
-        wsi_ids_for_check = await TrainingTaskRepository.get_wsi_ids(db, task_id)
-        if wsi_ids_for_check:
-            first_wsi = await WSIRepository.get_by_id(db, wsi_ids_for_check[0])
-            if first_wsi and first_wsi.dataset_id:
-                has_permission = await check_dataset_gpu_permission(user, first_wsi.dataset_id, db)
-                if not has_permission:
-                    raise HTTPException(
-                        status_code=403,
-                        detail="No existing analysis and you don't have GPU permission to run analysis."
-                    )
-        elif not user.can_use_gpu():
-            raise HTTPException(
-                status_code=403,
-                detail="No existing analysis and GPU operations require pathologist or admin role"
-            )
+        await _require_task_gpu_permission(
+            user,
+            task,
+            db,
+            forbidden_detail="No existing analysis and you don't have GPU permission to run analysis.",
+            fallback_role_detail="No existing analysis and GPU operations require pathologist or admin role",
+        )
 
         # Generate analysis_id (timestamp format)
         analysis_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -4971,9 +4961,12 @@ async def get_analysis_file(
     # Check task ownership (supports temporary elevated dataset permissions)
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if task:
-        task_dataset_id = await _resolve_task_dataset_id(task, db)
-        if not await check_task_access_permission(user, task.user_id, task_dataset_id, db):
-            raise HTTPException(status_code=403, detail="You don't have permission to view this file")
+        await _require_task_access(
+            user,
+            task,
+            db,
+            forbidden_detail="You don't have permission to view this file",
+        )
 
     file_path = Config.get_uploads_dir() / "logs" / "analysis" / task_id / analysis_id / filename
 
@@ -5056,9 +5049,12 @@ async def get_analysis_status(
                         # Analysis exists on disk, check ownership (supports temp permissions)
                         task = await TrainingTaskRepository.get_by_id(db, task_dir.name)
                         if task:
-                            mc = task.model_config or {}
-                            if not await check_task_access_permission(user, task.user_id, mc.get("dataset_id"), db):
-                                raise HTTPException(status_code=403, detail="You don't have permission to view this analysis")
+                            await _require_task_access(
+                                user,
+                                task,
+                                db,
+                                forbidden_detail="You don't have permission to view this analysis",
+                            )
 
                         return {
                             "analysis_id": analysis_id,
@@ -5076,9 +5072,12 @@ async def get_analysis_status(
     if task_id:
         task = await TrainingTaskRepository.get_by_id(db, task_id)
         if task:
-            mc = task.model_config or {}
-            if not await check_task_access_permission(user, task.user_id, mc.get("dataset_id"), db):
-                raise HTTPException(status_code=403, detail="You don't have permission to view this analysis")
+            await _require_task_access(
+                user,
+                task,
+                db,
+                forbidden_detail="You don't have permission to view this analysis",
+            )
 
     return {
         "analysis_id": analysis_id,

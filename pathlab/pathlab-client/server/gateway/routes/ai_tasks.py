@@ -16,13 +16,13 @@ from backend.database.repositories import (
     AITaskRepository,
     TrainingTaskRepository,
     TrainedModelRepository,
-    StorageTaskRepository,
 )
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import check_data_ownership, require_dataset_gpu_permission, check_wsi_access_permission, get_permitted_dataset_ids
 from ..dependencies import logger, AI_SERVICE_URL
 from ..models import WSIClassifyRequest
 from ..task_queue import get_task_queue, TaskType
+from ..utils import require_no_active_batch_imports
 
 router = APIRouter(prefix="/tasks", tags=["AI Inference"])
 
@@ -110,14 +110,10 @@ async def create_wsi_classification(
                        f"Please check your network storage connection and try again."
             )
 
-    # Check if there are any active batch import tasks
-    active_storage_tasks = await StorageTaskRepository.get_active_tasks(db)
-    batch_import_tasks = [t for t in active_storage_tasks if t.task_type == 'batch_import']
-    if batch_import_tasks:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot submit inference task while files are being imported. Please wait for all imports to complete."
-        )
+    await require_no_active_batch_imports(
+        db,
+        detail="Cannot submit inference task while files are being imported. Please wait for all imports to complete.",
+    )
 
     # Check GPU permission: either user has GPU access OR has temporary elevated permission for this dataset
     await require_dataset_gpu_permission(user, wsi.dataset_id, db)

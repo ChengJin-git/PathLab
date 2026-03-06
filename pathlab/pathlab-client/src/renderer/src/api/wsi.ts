@@ -1,6 +1,6 @@
 import { API_BASE } from '../config'
 import { createKeyedCache, DEFAULT_CACHE_TTL } from '../lib/cache'
-import { apiFetch, ApiError, ApiErrorCode, getAuthToken, getErrorCodeFromStatus, parseErrorResponse } from './client'
+import { apiFetch, apiFetchBlob, downloadBlobFile, getAuthToken } from './client'
 import { invalidateHeatmapAvailabilityCache } from './heatmap'
 
 // ============================================================================
@@ -676,55 +676,17 @@ export async function getMigrationStatus(): Promise<MigrationStatus> {
  * @throws {ApiError} If the request fails
  */
 export async function downloadCSVTemplate(taskType: 'classification' | 'survival' | 'segmentation' = 'classification'): Promise<void> {
-  let response: Response
-  try {
-    const headers: Record<string, string> = {}
-    const token = getAuthToken()
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`
-    }
-    response = await fetch(`${API_BASE}/wsi/upload/csv/template?task_type=${taskType}`, { headers })
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error)
-    if (
-      errorMessage.toLowerCase().includes('fetch') ||
-      errorMessage.toLowerCase().includes('network')
-    ) {
-      throw new ApiError(
-        'Cannot connect to server. Please check your network connection.',
-        0,
-        ApiErrorCode.NETWORK_ERROR,
-        errorMessage
-      )
-    }
-    throw error
-  }
-
-  if (!response.ok) {
-    const { message, detail } = await parseErrorResponse(response)
-    throw new ApiError(
-      `Failed to download CSV template: ${message}`,
-      response.status,
-      getErrorCodeFromStatus(response.status),
-      detail
-    )
-  }
-
-  // Get the blob and create a download link
-  const blob = await response.blob()
-  const url = window.URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
   const filenames: Record<string, string> = {
     survival: 'wsi_survival_metadata_template.csv',
     segmentation: 'segmentation_metadata_template.csv',
     classification: 'wsi_classification_metadata_template.csv',
   }
-  a.download = filenames[taskType] || filenames.classification
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  window.URL.revokeObjectURL(url)
+  const blob = await apiFetchBlob(
+    `${API_BASE}/wsi/upload/csv/template?task_type=${taskType}`,
+    undefined,
+    'Failed to download CSV template'
+  )
+  downloadBlobFile(blob, filenames[taskType] || filenames.classification)
 }
 
 /**
@@ -732,49 +694,12 @@ export async function downloadCSVTemplate(taskType: 'classification' | 'survival
  * @throws {ApiError} If the request fails
  */
 export async function downloadCocoTemplate(): Promise<void> {
-  let response: Response
-  try {
-    const headers: Record<string, string> = {}
-    const token = getAuthToken()
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`
-    }
-    response = await fetch(`${API_BASE}/wsi/upload/coco/template`, { headers })
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error)
-    if (
-      errorMessage.toLowerCase().includes('fetch') ||
-      errorMessage.toLowerCase().includes('network')
-    ) {
-      throw new ApiError(
-        'Cannot connect to server. Please check your network connection.',
-        0,
-        ApiErrorCode.NETWORK_ERROR,
-        errorMessage
-      )
-    }
-    throw error
-  }
-
-  if (!response.ok) {
-    const { message, detail } = await parseErrorResponse(response)
-    throw new ApiError(
-      `Failed to download COCO template: ${message}`,
-      response.status,
-      getErrorCodeFromStatus(response.status),
-      detail
-    )
-  }
-
-  const blob = await response.blob()
-  const url = window.URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = 'segmentation_annotation_template.json'
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  window.URL.revokeObjectURL(url)
+  const blob = await apiFetchBlob(
+    `${API_BASE}/wsi/upload/coco/template`,
+    undefined,
+    'Failed to download COCO template'
+  )
+  downloadBlobFile(blob, 'segmentation_annotation_template.json')
 }
 
 /**

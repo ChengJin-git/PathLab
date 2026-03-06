@@ -1,5 +1,5 @@
 import { API_BASE } from '../config'
-import { apiFetch, ApiError, getAuthToken } from './client'
+import { apiFetch, apiFetchBlob } from './client'
 
 // ============================================================================
 // Async Export APIs (for large datasets)
@@ -81,18 +81,10 @@ export async function getExportTaskStatus(taskId: string): Promise<ExportTaskSta
  * @throws {ApiError} If the request fails or export not ready
  */
 export async function downloadExportFile(taskId: string): Promise<Blob> {
-  const token = getAuthToken()
-
-  const response = await fetch(`${API_BASE}/admin/feedbacks/export-async/${taskId}/download`, {
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    }
-  })
-
-  if (!response.ok) {
-    throw new ApiError('Failed to download export file', response.status)
-  }
-
-  return response.blob()
+  return apiFetchBlob(
+    `${API_BASE}/admin/feedbacks/export-async/${taskId}/download`,
+    undefined,
+    'Failed to download export file'
+  )
 }
 

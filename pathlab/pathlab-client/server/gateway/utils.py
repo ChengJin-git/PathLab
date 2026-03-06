@@ -10,7 +10,9 @@ from typing import Any, Mapping, Optional
 from Aslide import Slide
 from fastapi import HTTPException
 from fastapi.responses import Response
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.database.repositories import StorageTaskRepository
 from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 
 
@@ -120,6 +122,13 @@ def load_coco_annotation_file(annotation_path: str | Path) -> dict:
         raise HTTPException(status_code=400, detail=f"{path_obj.name}: invalid JSON annotation") from exc
 
     return validate_coco_annotation_payload(payload, source_name=path_obj.name)
+
+
+async def require_no_active_batch_imports(db: AsyncSession, *, detail: str) -> None:
+    """Raise HTTP 400 when a batch import storage task is still running."""
+    active_storage_tasks = await StorageTaskRepository.get_active_tasks(db)
+    if any(task.task_type == "batch_import" for task in active_storage_tasks):
+        raise HTTPException(status_code=400, detail=detail)
 
 
 async def cancel_ai_service_training(task_id: str) -> None:

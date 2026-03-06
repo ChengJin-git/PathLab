@@ -19,7 +19,6 @@ from backend.database.repositories import (
     TrainingLogRepository,
     DataGroupRepository,
     DatasetRepository,
-    StorageTaskRepository,
 )
 from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, get_user_id_filter, check_wsi_access_permission
@@ -30,7 +29,7 @@ from ..dependencies import logger, storage_manager
 from ..models import TrainingTaskRequest, TrainingTaskUpdateRequest, DeletionMode
 from ..pipeline import run_training_pipeline
 from ..task_queue import get_task_queue, TaskType
-from ..utils import cancel_ai_service_training
+from ..utils import cancel_ai_service_training, require_no_active_batch_imports
 
 router = APIRouter(prefix="/tasks/training", tags=["Training Tasks"])
 
@@ -103,8 +102,10 @@ async def create_training_task(
                     if wsi.wsi_path:
                         paths_to_check.append((wsi_id, wsi.wsi_path, wsi.original_filename))
 
-            # Check for active batch import tasks (in same session)
-            active_storage_tasks = await StorageTaskRepository.get_active_tasks(db)
+            await require_no_active_batch_imports(
+                db,
+                detail="Cannot submit training task while files are being imported. Please wait for all imports to complete.",
+            )
 
             dataset_ids = [dataset_id for dataset_id in dataset_ids_involved if dataset_id]
             dataset_map = {
@@ -147,14 +148,6 @@ async def create_training_task(
                             status_code=403,
                             detail=f"GPU operations not available. You need pathologist access or temporary elevated permission for dataset: {dataset_id}"
                         )
-
-        # --- Validation checks that don't need DB session ---
-        batch_import_tasks = [t for t in active_storage_tasks if t.task_type == 'batch_import']
-        if batch_import_tasks:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot submit training task while files are being imported. Please wait for all imports to complete."
-            )
 
         # Check file accessibility concurrently using asyncio.to_thread
         # Use timeout to prevent hanging when external storage is unreachable
