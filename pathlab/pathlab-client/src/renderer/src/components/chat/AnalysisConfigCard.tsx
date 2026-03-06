@@ -432,7 +432,9 @@ export function AnalysisConfigCard({
       {submitStatus === 'success' && (
         <div className="mx-5 mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
           <CheckCircle className="w-4 h-4 text-green-500" />
-          <p className="text-sm font-medium text-green-700">{t('chatComponents.analysisConfig.analysisCompletedSuccess')}</p>
+          <p className="text-sm font-medium text-green-700">
+            {isExternal ? t('chatComponents.analysisConfig.validationStarted') : t('chatComponents.analysisConfig.analysisSubmitted')}
+          </p>
         </div>
       )}
 

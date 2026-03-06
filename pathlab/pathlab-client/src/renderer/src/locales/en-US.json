@@ -1227,9 +1227,9 @@
       "inferenceResultsDesc": "Click to open the Results Viewer and analyze the inference results.",
       "externalValidationStarted": "External validation started! Task ID: `{{taskId}}`\n\nThe model will run inference on the target dataset, then automatically analyze the results. You can track progress in the Background Tasks panel.",
       "validationResultsDesc": "Click to open the Results Viewer. Results will appear once validation completes.",
-      "analysisCompleted": "Analysis completed successfully!\n\nYou can view the detailed results including metrics and charts in the Results Viewer.",
+      "analysisCompleted": "Analysis submitted successfully!\n\nThe analysis is now running in the background. Results will appear in the Results Viewer once processing completes.",
       "viewAnalysisResults": "View Analysis Results",
-      "analysisResultsDesc": "Click to open the Results Viewer and see your analysis results."
+      "analysisResultsDesc": "Click to open the Results Viewer. Submitted analysis results will appear once processing completes."
     }
   },
   "uploadPage": {
