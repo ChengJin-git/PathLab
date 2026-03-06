@@ -1451,7 +1451,7 @@
     "loadingFiles": "正在載入檔案...",
     "errorLoadingFiles": "載入檔案出錯",
     "filesInDataset": "此資料集中有 {{count}} 個檔案",
-    "description": "瀏覽和管理您的資料集與 WSI 切片",
+    "description": "瀏覽和管理您的資料集",
     "backToChat": "返回聊天",
     "backToRepository": "返回資料庫",
     "backToDashboard": "返回",

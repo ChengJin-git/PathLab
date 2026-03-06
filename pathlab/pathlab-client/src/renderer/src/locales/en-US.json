@@ -1462,7 +1462,7 @@
     "loadingFiles": "Loading files...",
     "errorLoadingFiles": "Error loading files",
     "filesInDataset": "{{count}} files in this dataset",
-    "description": "Browse and manage your datasets and WSI slides",
+    "description": "Browse and manage your datasets",
     "backToChat": "Back to Chat",
     "backToRepository": "Back to Repository",
     "backToDashboard": "Back",

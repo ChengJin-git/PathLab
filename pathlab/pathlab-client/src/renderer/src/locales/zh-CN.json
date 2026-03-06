@@ -1462,7 +1462,7 @@
     "loadingFiles": "正在加载文件...",
     "errorLoadingFiles": "加载文件出错",
     "filesInDataset": "此数据集中有 {{count}} 个文件",
-    "description": "浏览和管理您的数据集与 WSI 切片",
+    "description": "浏览和管理您的数据集",
     "backToChat": "返回聊天",
     "backToRepository": "返回仓库",
     "backToDashboard": "返回",
