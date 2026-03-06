@@ -28,6 +28,8 @@ export interface TaskResultStepProps {
 
   // Polled task status
   polledTask: TrainingTaskDetail | null
+  submissionIssue: string | null
+  creationSlow: boolean
 
   // Helpers
   getErrorSuggestion: (error: string) => string | null
@@ -43,6 +45,8 @@ export function TaskResultStep({
   featureExtractor,
   availableExtractors,
   polledTask,
+  submissionIssue,
+  creationSlow,
   getErrorSuggestion,
 }: TaskResultStepProps) {
   const { t } = useTranslation()
@@ -65,6 +69,13 @@ export function TaskResultStep({
   }
 
   const getStatusColor = () => {
+    if (!polledTask && submissionIssue) {
+      return { ping: 'bg-red-400', dot: 'bg-red-500', text: 'text-red-500' }
+    }
+    if (!polledTask && creationSlow) {
+      return { ping: 'bg-amber-400', dot: 'bg-amber-500', text: 'text-amber-600' }
+    }
+
     switch (polledTask?.status) {
       case 'failed':
         return { ping: 'bg-red-400', dot: 'bg-red-500', text: 'text-red-500' }
@@ -80,6 +91,8 @@ export function TaskResultStep({
   }
 
   const statusColor = getStatusColor()
+  const isCreationFailed = !polledTask && !!submissionIssue
+  const isCreationSlow = !polledTask && !submissionIssue && creationSlow
 
   return (
     <div className="flex flex-col items-center justify-center p-2 sm:p-4 min-h-full">
@@ -88,7 +101,27 @@ export function TaskResultStep({
           {/* Left Column: Status State & Actions */}
           <div className="lg:w-1/3 bg-gray-50/50 p-6 sm:p-8 flex flex-col justify-center items-center text-center border-b lg:border-b-0 lg:border-r border-gray-100">
             {/* Dynamic Status Icon */}
-            {polledTask?.status === 'failed' ? (
+            {isCreationFailed ? (
+              <>
+                <div className="w-12 h-12 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mb-4 sm:mb-5 ring-4 ring-red-50 shadow-sm animate-in zoom-in duration-300">
+                  <XCircle className="w-6 h-6 sm:w-8 sm:h-8 text-red-600" />
+                </div>
+                <h2 className="text-lg sm:text-xl font-bold text-red-900 mb-1 sm:mb-2 tracking-tight">{t('training.taskResult.creationFailed')}</h2>
+                <p className="text-xs sm:text-sm text-red-600 mb-4 sm:mb-6 max-w-[280px] mx-auto leading-relaxed font-medium break-words overflow-hidden">
+                  {submissionIssue}
+                </p>
+              </>
+            ) : isCreationSlow ? (
+              <>
+                <div className="w-12 h-12 sm:w-16 sm:h-16 bg-amber-100 rounded-full flex items-center justify-center mb-4 sm:mb-5 ring-4 ring-amber-50 shadow-sm animate-in zoom-in duration-300">
+                  <Loader2 className="w-6 h-6 sm:w-8 sm:h-8 text-amber-600 animate-spin" />
+                </div>
+                <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-1 sm:mb-2 tracking-tight">{t('training.taskResult.creationSlow')}</h2>
+                <p className="text-xs sm:text-sm text-gray-500 mb-4 sm:mb-6 max-w-[280px] mx-auto leading-relaxed font-medium">
+                  {t('training.taskResult.creationSlowDesc')}
+                </p>
+              </>
+            ) : polledTask?.status === 'failed' ? (
               <>
                 <div className="w-12 h-12 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mb-4 sm:mb-5 ring-4 ring-red-50 shadow-sm animate-in zoom-in duration-300">
                   <XCircle className="w-6 h-6 sm:w-8 sm:h-8 text-red-600" />
@@ -165,7 +198,9 @@ export function TaskResultStep({
                 <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${statusColor.ping}`}></span>
                 <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${statusColor.dot}`}></span>
               </span>
-              <span className={`text-[10px] font-bold uppercase tracking-wider ${statusColor.text}`}>{polledTask?.status || t('training.taskResult.queued')}</span>
+              <span className={`text-[10px] font-bold uppercase tracking-wider ${statusColor.text}`}>
+                {isCreationFailed ? t('training.taskResult.creationFailedShort') : polledTask?.status || t('training.taskResult.queued')}
+              </span>
             </div>
 
             {/* Task Summary */}
@@ -203,6 +238,24 @@ export function TaskResultStep({
                 <Layers className="w-3.5 h-3.5 text-primary-600" />
                 {t('training.taskResult.pipelineStatus')}
               </h3>
+              {!polledTask ? (
+                <div className={`rounded-xl border p-4 text-sm ${isCreationFailed ? 'border-red-200 bg-red-50 text-red-700' : isCreationSlow ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-blue-200 bg-blue-50 text-blue-700'}`}>
+                  <div className="font-semibold mb-1">
+                    {isCreationFailed
+                      ? t('training.taskResult.creationFailed')
+                      : isCreationSlow
+                        ? t('training.taskResult.creationSlow')
+                        : t('training.taskResult.creationPending')}
+                  </div>
+                  <p className="leading-relaxed">
+                    {isCreationFailed
+                      ? submissionIssue
+                      : isCreationSlow
+                        ? t('training.taskResult.creationSlowDesc')
+                        : t('training.taskResult.creationPendingDesc')}
+                  </p>
+                </div>
+              ) : (
               <div className="space-y-4">
                 {/* Step 1: Preprocessing (WSI only) */}
                 {dataLevel === 'wsi' && (
@@ -245,6 +298,7 @@ export function TaskResultStep({
                   }
                 />
               </div>
+              )}
             </div>
 
             {/* Error Details Panel - shown when task failed */}

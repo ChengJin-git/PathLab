@@ -714,6 +714,12 @@ class CONCH15Extractor(BaseExtractor):
     @property
     def output_dim(self) -> int:
         return 768
+
+    @property
+    def spatial_output_dim(self) -> int:
+        # The contrastive head outputs 768-d pooled embeddings, while the trunk
+        # patch tokens used for segmentation remain at the ViT-L hidden size.
+        return 1024
     
     @property
     def default_image_size(self) -> int:

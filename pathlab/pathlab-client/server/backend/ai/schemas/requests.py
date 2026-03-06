@@ -50,12 +50,12 @@ class PatchClassificationConfig(BaseTrainConfig):
 
 class PatchSegmentationConfig(BaseTrainConfig):
     """Patch segmentation task configuration"""
+    batch_size: int = Field(default=8, ge=1, description="Batch size")
     backbone: str = Field(default="dinov2_vitl14", description="Backbone network")
     backbone_out_layers: List[int] = Field(default=[8, 11, 14, 17], description="Output layer indices")
     
     # Loss weights
     diceloss_weight: float = Field(default=1.0, description="Dice loss weight")
-    celoss_weight: float = Field(default=1.0, description="CE loss weight")
     
     # Eval
     eval_crop_size: int = Field(default=518, description="Evaluation crop size")

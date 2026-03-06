@@ -13,6 +13,12 @@ import { parseTaskError } from '../components/taskDetail/parseTaskError'
 import { ProgressSection } from '../components/taskDetail/ProgressSection'
 import { ConfigurationPanel } from '../components/taskDetail/ConfigurationPanel'
 import { LogViewer } from '../components/taskDetail/LogViewer'
+import {
+  getTrainingSubmissionRecord,
+  markTrainingSubmissionCreated,
+  markTrainingSubmissionFailed,
+  markTrainingSubmissionPending,
+} from '../lib/trainingSubmissionTracker'
 export default function TaskDetailPage() {
   const { t } = useTranslation()
   const { task_id } = useParams<{ task_id: string }>()
@@ -24,6 +30,8 @@ export default function TaskDetailPage() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [waitingForCreation, setWaitingForCreation] = useState(false)
+  const [creationSlow, setCreationSlow] = useState(false)
+  const [creationIssue, setCreationIssue] = useState<{ kind: 'failed' | 'deleted'; message: string } | null>(null)
   const [rerunning, setRerunning] = useState(false)
   const [rerunError, setRerunError] = useState<string | null>(null)
   const [copySuccess, setCopySuccess] = useState(false)
@@ -33,15 +41,30 @@ export default function TaskDetailPage() {
   const logsContainerRef = useRef<HTMLDivElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
 
+  const resolveTrackedCreationIssue = (id: string) => {
+    const tracked = getTrainingSubmissionRecord(id)
+    if (tracked?.state === 'failed') {
+      return { kind: 'failed' as const, message: tracked.error || t('taskDetail.creatingTaskFailedDescription') }
+    }
+    if (tracked?.state === 'created') {
+      return { kind: 'deleted' as const, message: t('taskDetail.taskUnavailableAfterCreationDescription') }
+    }
+    return null
+  }
+
   // Load initial task details on mount
   useEffect(() => {
     setLogs([])
+    setTask(null)
+    setWaitingForCreation(false)
+    setCreationSlow(false)
+    setCreationIssue(null)
     loadTaskDetail()
   }, [task_id])
 
   // Setup SSE for real-time log streaming and task status updates
   useEffect(() => {
-    if (!task_id) return
+    if (!task_id || !task) return
 
     // Get auth token for SSE (EventSource doesn't support custom headers)
     const token = getAuthToken()
@@ -115,7 +138,7 @@ export default function TaskDetailPage() {
         eventSourceRef.current = null
       }
     }
-  }, [task_id])
+  }, [task_id, task?.task_id])
 
   // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
@@ -135,11 +158,26 @@ export default function TaskDetailPage() {
       const data = await getTrainingTask(task_id)
       setTask(data as TaskDetail)
       setWaitingForCreation(false)
+      setCreationSlow(false)
+      setCreationIssue(null)
+      markTrainingSubmissionCreated(task_id)
     } catch (error) {
       // If task not found (404), it may still be creating on the backend
       // (fire-and-forget submission). Start polling instead of showing error immediately.
       if (error instanceof ApiError && error.isNotFound()) {
-        setWaitingForCreation(true)
+        const tracked = getTrainingSubmissionRecord(task_id)
+        const trackedIssue = resolveTrackedCreationIssue(task_id)
+        if (trackedIssue) {
+          setCreationIssue(trackedIssue)
+          setCreationSlow(false)
+          setWaitingForCreation(false)
+        } else if (tracked?.state === 'pending') {
+          setCreationIssue(null)
+          setWaitingForCreation(true)
+        } else {
+          setCreationIssue(null)
+          setWaitingForCreation(false)
+        }
       } else {
         console.error('Failed to load task detail:', error)
       }
@@ -153,21 +191,33 @@ export default function TaskDetailPage() {
     if (!waitingForCreation || !task_id || task) return
 
     let attempts = 0
-    const maxAttempts = 30  // 30 * 2s = 60 seconds max wait
     const intervalId = setInterval(async () => {
       attempts++
       try {
         const data = await getTrainingTask(task_id)
         setTask(data as TaskDetail)
         setWaitingForCreation(false)
+        setCreationSlow(false)
+        setCreationIssue(null)
+        markTrainingSubmissionCreated(task_id)
         clearInterval(intervalId)
       } catch (error) {
-        if (attempts >= maxAttempts) {
-          // Give up after 60 seconds — task creation likely failed
-          console.error('Task creation timed out:', task_id)
+        const trackedIssue = resolveTrackedCreationIssue(task_id)
+        if (trackedIssue) {
+          setCreationIssue(trackedIssue)
           setWaitingForCreation(false)
           clearInterval(intervalId)
+          return
         }
+
+        if (error instanceof ApiError && error.isNotFound()) {
+          if (attempts >= 30) {
+            setCreationSlow(true)
+          }
+          return
+        }
+
+        console.error('Failed while waiting for task creation:', error)
       }
     }, 2000)
 
@@ -240,7 +290,10 @@ export default function TaskDetailPage() {
 
     setRerunning(true)
     try {
-      const result = await createTrainingTask({
+      const taskId = `train_${crypto.randomUUID().replace(/-/g, '').substring(0, 16)}`
+      markTrainingSubmissionPending(taskId, `${task.task_name} (rerun)`)
+      void createTrainingTask({
+        task_id: taskId,
         task_name: `${task.task_name} (rerun)`,
         task_type: task.task_type,
         data_type: task.data_type,
@@ -282,9 +335,15 @@ export default function TaskDetailPage() {
         },
         // Preserve the original split configuration for exact rerun
         split_config: task.preprocessing_config.split_config,
+      }).then(() => {
+        markTrainingSubmissionCreated(taskId)
+      }).catch((error: any) => {
+        const message = error?.message || error?.detail || String(error)
+        markTrainingSubmissionFailed(taskId, message)
+        console.error('Failed to rerun task in background:', error)
       })
       // Navigate to the new task
-      navigate(`/task/${result.task_id}`)
+      navigate(`/task/${taskId}`)
     } catch (error: any) {
       console.error('Failed to rerun task:', error)
       const errMsg = error?.message || error?.detail || String(error)
@@ -327,18 +386,31 @@ export default function TaskDetailPage() {
     return (
       <div className="flex flex-col items-center justify-center h-64 space-y-4">
         <Loader2 className="w-12 h-12 text-primary-600 animate-spin" />
-        <div className="text-xl font-semibold text-gray-900">{t('taskDetail.creatingTask', 'Creating Task...')}</div>
-        <p className="text-gray-500">{t('taskDetail.creatingTaskDescription', 'Your task is being set up. This may take a moment for large datasets.')}</p>
+        <div className="text-xl font-semibold text-gray-900">
+          {creationSlow ? t('taskDetail.creatingTaskSlow') : t('taskDetail.creatingTask', 'Creating Task...')}
+        </div>
+        <p className="text-gray-500 text-center max-w-xl">
+          {creationSlow
+            ? t('taskDetail.creatingTaskSlowDescription')
+            : t('taskDetail.creatingTaskDescription', 'Your task is being set up. This may take a moment for large datasets.')}
+        </p>
       </div>
     )
   }
 
   if (!task) {
+    const title = creationIssue?.kind === 'failed'
+      ? t('taskDetail.creatingTaskFailed')
+      : creationIssue?.kind === 'deleted'
+        ? t('taskDetail.taskUnavailableAfterCreation')
+        : t('taskDetail.taskNotFound')
+    const description = creationIssue?.message || t('taskDetail.taskNotFoundDescription')
+
     return (
       <div className="flex flex-col items-center justify-center h-64 space-y-4">
         <AlertCircle className="w-12 h-12 text-red-500" />
-        <div className="text-xl font-semibold text-gray-900">{t('taskDetail.taskNotFound')}</div>
-        <p className="text-gray-500">{t('taskDetail.taskNotFoundDescription')}</p>
+        <div className="text-xl font-semibold text-gray-900">{title}</div>
+        <p className="text-gray-500 text-center max-w-xl">{description}</p>
         <Button onClick={() => navigate(fromAIChat ? '/dashboard' : '/task-list')} variant="outline">
           {fromAIChat ? t('taskDetail.backToChat') : t('taskDetail.backToTaskList')}
         </Button>

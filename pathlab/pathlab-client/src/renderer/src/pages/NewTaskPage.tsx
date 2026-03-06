@@ -14,6 +14,7 @@ import {
   getTrainingTask,
   updateWSIMetadata,
   startBatchUpdateMetadataTask,
+  ApiError,
   FeatureExtractor,
   TrainingTaskDetail,
 } from '../api'
@@ -26,8 +27,20 @@ import { useTaskWizard } from '../lib/useTaskWizard'
 import { useDataSelection } from '../lib/useDataSelection'
 import { useTrainingConfig } from '../lib/useTrainingConfig'
 import { useSplitValidation } from '../lib/useSplitValidation'
+import {
+  getTrainingSubmissionRecord,
+  markTrainingSubmissionCreated,
+  markTrainingSubmissionFailed,
+  markTrainingSubmissionPending,
+} from '../lib/trainingSubmissionTracker'
 import { formatBytes } from '../lib/utils'
-import { FEATURE_EXTRACTORS, FM_SEGMENTATION_ARCHITECTURE, isSegFmEncoder } from '../constants/training'
+import {
+  FEATURE_EXTRACTORS,
+  FM_SEGMENTATION_ARCHITECTURE,
+  isSegFmEncoder,
+  SEG_TRAINING_DEFAULTS,
+  TRAINING_DEFAULTS,
+} from '../constants/training'
 
 // Step components
 import {
@@ -109,6 +122,8 @@ export default function NewTaskPage() {
 
   // Polling state
   const [polledTask, setPolledTask] = useState<TrainingTaskDetail | null>(null)
+  const [submissionIssue, setSubmissionIssue] = useState<string | null>(null)
+  const [creationSlow, setCreationSlow] = useState(false)
 
   // ========== Computed Values ==========
   const filteredExtractors = useMemo(() => {
@@ -162,31 +177,63 @@ export default function NewTaskPage() {
     }
   }, [wizard.taskType, trainingConfig.splitStrategy])
 
-  // Auto-adjust default parameters when taskType changes (System-wide defaults: Cls=50, Survival=30, Seg=100)
+  // Auto-adjust default parameters when taskType changes
   useEffect(() => {
     if (wizard.taskType === 'survival') {
       trainingConfig.setEpochs(30)
+      trainingConfig.setTrainBatchSize(TRAINING_DEFAULTS.batchSize)
     } else if (wizard.taskType === 'segmentation') {
-      trainingConfig.setEpochs(100)
+      trainingConfig.setEpochs(SEG_TRAINING_DEFAULTS.epochs)
+      trainingConfig.setTrainBatchSize(SEG_TRAINING_DEFAULTS.batchSize)
     } else {
-      trainingConfig.setEpochs(50)
+      trainingConfig.setEpochs(TRAINING_DEFAULTS.epochs)
+      trainingConfig.setTrainBatchSize(TRAINING_DEFAULTS.batchSize)
     }
   }, [wizard.taskType])
 
   // Poll for task status in Step 6
   useEffect(() => {
     let intervalId: NodeJS.Timeout
+    let notFoundAttempts = 0
 
     if (wizard.currentStep === 6 && wizard.submittedTaskId) {
       const poll = async () => {
         try {
           const task = await getTrainingTask(wizard.submittedTaskId)
           setPolledTask(task)
+          setSubmissionIssue(null)
+          setCreationSlow(false)
+          markTrainingSubmissionCreated(wizard.submittedTaskId)
           if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
             if (intervalId) clearInterval(intervalId)
           }
         } catch (error) {
+          const tracked = getTrainingSubmissionRecord(wizard.submittedTaskId)
+
+          if (tracked?.state === 'failed') {
+            setSubmissionIssue(tracked.error || t('training.taskResult.creationFailedDesc'))
+            setCreationSlow(false)
+            if (intervalId) clearInterval(intervalId)
+            return
+          }
+
+          if (error instanceof ApiError && error.isNotFound()) {
+            if (tracked?.state === 'created') {
+              setSubmissionIssue(t('training.taskResult.taskUnavailableAfterCreationDesc'))
+              setCreationSlow(false)
+              if (intervalId) clearInterval(intervalId)
+              return
+            }
+
+            notFoundAttempts += 1
+            if (notFoundAttempts >= 30) {
+              setCreationSlow(true)
+            }
+            return
+          }
+
           console.error('Failed to poll task status', error)
+          setSubmissionIssue(error instanceof Error ? error.message : String(error))
         }
       }
 
@@ -418,6 +465,9 @@ export default function NewTaskPage() {
     wizard.setTrainingStatus('validating')
     wizard.setSubmitError('')
     wizard.setSubmittedTaskId('')
+    setPolledTask(null)
+    setSubmissionIssue(null)
+    setCreationSlow(false)
 
     // Check if there are any uploading tasks (upload or batch_import)
     if (hasUploadingTasks()) {
@@ -490,7 +540,11 @@ export default function NewTaskPage() {
             early_stopping_patience: trainingConfig.earlyStoppingPatience,
           }
 
-      const result = await createTrainingTask({
+      const taskId = `train_${crypto.randomUUID().replace(/-/g, '').substring(0, 16)}`
+      markTrainingSubmissionPending(taskId, wizard.taskName)
+
+      const request = {
+        task_id: taskId,
         task_name: wizard.taskName,
         task_type: wizard.taskType,
         data_type: wizard.dataLevel,
@@ -517,9 +571,20 @@ export default function NewTaskPage() {
         },
         model: modelConfig,
         split_config: splitConfig,
+      } as const
+
+      void createTrainingTask(request).then(() => {
+        markTrainingSubmissionCreated(taskId)
+      }).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err)
+        markTrainingSubmissionFailed(taskId, message)
+        setSubmissionIssue(message)
+        setCreationSlow(false)
+        wizard.setSubmitError(message)
+        console.error('Failed to submit training task in background:', err)
       })
 
-      wizard.setSubmittedTaskId(result.task_id)
+      wizard.setSubmittedTaskId(taskId)
       wizard.setTrainingStatus('submitted')
 
       setTimeout(() => {
@@ -856,6 +921,8 @@ export default function NewTaskPage() {
               featureExtractor={trainingConfig.featureExtractor}
               availableExtractors={availableExtractors}
               polledTask={polledTask}
+              submissionIssue={submissionIssue}
+              creationSlow={creationSlow}
               getErrorSuggestion={getErrorSuggestion}
             />
           )}

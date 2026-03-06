@@ -35,6 +35,7 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, ReduceLROnPlat
 import segmentation_models_pytorch as smp
 from sklearn.metrics import confusion_matrix
 
+from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 from backend.ai.utils.segmentation_dataset import SegmentationDataset, get_transforms
 from backend.ai.segmentors import Segmentor
 
@@ -108,7 +109,7 @@ class SegmentationTrainer:
         task_id: str,
         uploads_root: Path,
         device: str | None = None,
-        batch_size: int = 16,
+        batch_size: int = 8,
         config: Dict[str, Any] = None,
     ):
         self.task_id = task_id
@@ -215,8 +216,7 @@ class SegmentationTrainer:
         self.model.eval()
         total_loss = 0.0
         total_samples = 0
-        all_preds = []
-        all_targets = []
+        accumulated_stats = None
         
         with torch.no_grad():
             for images, masks in data_loader:
@@ -228,26 +228,57 @@ class SegmentationTrainer:
                 
                 total_loss += loss.item() * images.size(0)
                 total_samples += images.size(0)
-                
-                all_preds.append(outputs.cpu())
-                all_targets.append(masks.cpu())
+                accumulated_stats = self._accumulate_metric_stats(
+                    accumulated_stats,
+                    self._get_batch_metric_stats(outputs, masks),
+                )
         
         avg_loss = total_loss / total_samples
-        all_preds = torch.cat(all_preds)
-        all_targets = torch.cat(all_targets)
-        
         metrics = {"loss": avg_loss}
-        # Calculate additional metrics like IoU, accuracy
-        for metric in self.config.get("metrics", []):
-            if metric == "iou":
-                iou_score = smp.metrics.iou_score(all_preds, all_targets, mode='multilabel')
-                metrics['iou'] = iou_score.item()
-            elif metric == "accuracy":
-                acc = smp.metrics.accuracy(all_preds, all_targets, mode='multilabel')
-                metrics["accuracy"] = acc.item()
+        if accumulated_stats is not None:
+            all_metrics = self._compute_metrics_from_stats(
+                *self._finalize_metric_stats(accumulated_stats)
+            )
+            for metric_name in self.config.get("metrics", []):
+                if metric_name in all_metrics:
+                    metrics[metric_name] = all_metrics[metric_name]
         
         return metrics
     
+    def _get_batch_metric_stats(
+        self,
+        preds: torch.Tensor,
+        targets: torch.Tensor,
+        threshold: float = 0.5,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Compute per-sample/per-class confusion stats for a single batch."""
+        preds_binary = (torch.sigmoid(preds.detach()) > threshold).long()
+        targets_long = targets.detach().long()
+
+        tp, fp, fn, tn = smp.metrics.get_stats(
+            preds_binary, targets_long, mode='multilabel', threshold=None
+        )
+        return tuple(stat.cpu() for stat in (tp, fp, fn, tn))
+
+    def _accumulate_metric_stats(
+        self,
+        accumulated: Optional[Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]],
+        batch_stats: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+    ) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
+        """Accumulate compact per-sample confusion stats across batches."""
+        if accumulated is None:
+            return tuple([stat] for stat in batch_stats)
+        for current, update in zip(accumulated, batch_stats):
+            current.append(update)
+        return accumulated
+
+    def _finalize_metric_stats(
+        self,
+        accumulated: Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]],
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Concatenate accumulated per-sample stats across all batches."""
+        return tuple(torch.cat(stats, dim=0) for stats in accumulated)
+
     def _compute_metrics(
         self, 
         preds: torch.Tensor, 
@@ -265,18 +296,19 @@ class SegmentationTrainer:
         Returns:
             Dictionary of metric values
         """
-        # Apply sigmoid and threshold for binary predictions
-        preds_prob = torch.sigmoid(preds)
-        preds_binary = (preds_prob > threshold).float()
-        
+        stats = self._get_batch_metric_stats(preds, targets, threshold=threshold)
+        return self._compute_metrics_from_stats(*stats)
+
+    def _compute_metrics_from_stats(
+        self,
+        tp: torch.Tensor,
+        fp: torch.Tensor,
+        fn: torch.Tensor,
+        tn: torch.Tensor,
+    ) -> Dict[str, float]:
+        """Compute segmentation metrics from accumulated confusion stats."""
         metrics = {}
-        mode = 'multilabel'
-        
-        # IoU (Intersection over Union) / Jaccard Index
-        tp, fp, fn, tn = smp.metrics.get_stats(
-            preds_binary.long(), targets.long(), mode=mode, threshold=None
-        )
-        
+
         # Per-class IoU, then average
         iou_per_class = smp.metrics.iou_score(tp, fp, fn, tn, reduction='none')
         metrics['iou'] = iou_per_class.mean().item()
@@ -450,12 +482,16 @@ class SegmentationTrainer:
         scheduler_type = training_cfg.get("scheduler", "cosine_warm_restarts").lower()
         
         total_loss = 0.0
-        all_preds = []
-        all_targets = []
+        accumulated_stats = None
         
         optimizer.zero_grad()
         
         for batch_idx, (images, masks) in enumerate(train_loader):
+            if is_task_cancelled(self.task_id):
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                raise TrainingCancelledException("Training cancelled during segmentation batch loop")
+
             images = images.to(self.device)
             masks = masks.to(self.device)
             
@@ -502,10 +538,12 @@ class SegmentationTrainer:
             
             total_loss += loss.item() * accumulation_steps * images.size(0)
             
-            # Collect predictions for metrics (detached)
+            # Accumulate compact metrics state instead of caching full predictions
             with torch.no_grad():
-                all_preds.append(outputs.detach().cpu())
-                all_targets.append(masks.detach().cpu())
+                accumulated_stats = self._accumulate_metric_stats(
+                    accumulated_stats,
+                    self._get_batch_metric_stats(outputs, masks),
+                )
         
         # Step scheduler for epoch-based schedulers
         if scheduler is not None and scheduler_type == "cosine_warm_restarts":
@@ -514,9 +552,9 @@ class SegmentationTrainer:
         avg_loss = total_loss / len(train_loader.dataset)
         
         # Compute training metrics
-        all_preds = torch.cat(all_preds)
-        all_targets = torch.cat(all_targets)
-        train_metrics = self._compute_metrics(all_preds, all_targets)
+        train_metrics = self._compute_metrics_from_stats(
+            *self._finalize_metric_stats(accumulated_stats)
+        )
         train_metrics['loss'] = avg_loss
         
         return avg_loss, train_metrics
@@ -541,11 +579,15 @@ class SegmentationTrainer:
         use_amp = training_cfg.get("use_amp", True) and self.device != "cpu"
         
         total_loss = 0.0
-        all_preds = []
-        all_targets = []
+        accumulated_stats = None
         
         with torch.no_grad():
             for images, masks in val_loader:
+                if is_task_cancelled(self.task_id):
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    raise TrainingCancelledException("Training cancelled during segmentation validation")
+
                 images = images.to(self.device)
                 masks = masks.to(self.device)
                 
@@ -558,15 +600,17 @@ class SegmentationTrainer:
                     loss = self.loss_fn(outputs, masks)
                 
                 total_loss += loss.item() * images.size(0)
-                all_preds.append(outputs.cpu())
-                all_targets.append(masks.cpu())
+                accumulated_stats = self._accumulate_metric_stats(
+                    accumulated_stats,
+                    self._get_batch_metric_stats(outputs, masks),
+                )
         
         avg_loss = total_loss / len(val_loader.dataset)
         
         # Compute validation metrics
-        all_preds = torch.cat(all_preds)
-        all_targets = torch.cat(all_targets)
-        val_metrics = self._compute_metrics(all_preds, all_targets)
+        val_metrics = self._compute_metrics_from_stats(
+            *self._finalize_metric_stats(accumulated_stats)
+        )
         val_metrics['loss'] = avg_loss
         
         return avg_loss, val_metrics
@@ -696,6 +740,11 @@ class SegmentationTrainer:
         start_time = time.time()
         
         for epoch in range(1, epochs + 1):
+            if is_task_cancelled(self.task_id):
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                raise TrainingCancelledException(f"Training cancelled at epoch {epoch}")
+
             epoch_start_time = time.time()
             
             # Train for one epoch

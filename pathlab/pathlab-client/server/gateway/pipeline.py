@@ -29,6 +29,32 @@ from .dependencies import logger, PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
 from .utils import cancel_ai_service_training
 
 
+_UNSUPPORTED_PATCH_SEGMENTATION_LOSS_TOKENS = frozenset({
+    "ce",
+    "softcrossentropyloss",
+    "crossentropy",
+    "crossentropyloss",
+})
+
+
+def _normalize_patch_segmentation_loss_name(loss_name: str) -> str:
+    return "".join(ch for ch in str(loss_name).lower() if ch.isalnum())
+
+
+def _validate_patch_segmentation_loss_names(loss_names: List[str]) -> None:
+    unsupported_losses = [
+        loss_name for loss_name in loss_names
+        if _normalize_patch_segmentation_loss_name(loss_name) in _UNSUPPORTED_PATCH_SEGMENTATION_LOSS_TOKENS
+    ]
+    if unsupported_losses:
+        unsupported_display = ", ".join(sorted(set(unsupported_losses)))
+        raise ValueError(
+            "Patch segmentation does not support Cross Entropy losses "
+            f"({unsupported_display}). This training path uses multi-channel float masks; "
+            "please use Dice/Jaccard/Tversky/Focal/Lovasz/BCE/MCC losses instead."
+        )
+
+
 def get_training_timeout() -> int:
     """Get the configured training task timeout in seconds."""
     return Config.get_task_timeout()
@@ -347,6 +373,7 @@ async def run_training_pipeline(
                     backbone = model_config.get('backbone', 'resnet50')
                     loss_names = model_config.get('loss_names', ['DiceLoss', 'JaccardLoss'])
                     loss_weights = model_config.get('loss_weights', [0.5, 0.5])
+                    _validate_patch_segmentation_loss_names(loss_names)
                     epochs = int(model_config.get('epochs', 100))
                     lr = float(model_config.get('learning_rate', 0.0001))
                     batch_size = int(model_config.get('batch_size', 16))

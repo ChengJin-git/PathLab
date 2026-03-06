@@ -49,6 +49,34 @@ from backend.common.config import Config
 
 logger = logging.getLogger("training_routes")
 
+_UNSUPPORTED_PATCH_SEGMENTATION_LOSS_TOKENS = frozenset({
+    "ce",
+    "softcrossentropyloss",
+    "crossentropy",
+    "crossentropyloss",
+})
+
+
+def _normalize_patch_segmentation_loss_name(loss_name: str) -> str:
+    return "".join(ch for ch in str(loss_name).lower() if ch.isalnum())
+
+
+def _validate_patch_segmentation_loss_names(loss_names: List[str]) -> None:
+    unsupported_losses = [
+        loss_name for loss_name in loss_names
+        if _normalize_patch_segmentation_loss_name(loss_name) in _UNSUPPORTED_PATCH_SEGMENTATION_LOSS_TOKENS
+    ]
+    if unsupported_losses:
+        unsupported_display = ", ".join(sorted(set(unsupported_losses)))
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Patch segmentation does not support Cross Entropy losses "
+                f"({unsupported_display}). This training path uses multi-channel float masks; "
+                "please use Dice/Jaccard/Tversky/Focal/Lovasz/BCE/MCC losses instead."
+            ),
+        )
+
 # Paths
 UPLOADS_DIR = Config.get_uploads_dir()
 
@@ -846,7 +874,7 @@ class PatchSegmentationTrainRequest(BaseModel):
     loss_weights: List[float] = [0.5, 0.5]
     epochs: int = 100
     lr: float = 0.0001
-    batch_size: int = 16
+    batch_size: int = 8
     optimizer: str = "adamw"
     early_stopping_patience: int = 15
     device: Optional[str] = None
@@ -866,6 +894,8 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
     import asyncio
     import uuid as uuid_mod
     from backend.ai.tasks import SegmentationTrainer
+
+    _validate_patch_segmentation_loss_names(req.loss_names)
 
     scoped_session = ScopedSession(req.task_id)
     scoped_logger = ScopedTrainingLogger(req.task_id)

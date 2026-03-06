@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName } from '../api'
 import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles, User, Edit2 } from 'lucide-react'
-import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES, ANALYSIS_CANCELLABLE_STATUSES, CancellableStatus } from '../constants/status'
+import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES, CancellableStatus } from '../constants/status'
 import { isSegFmEncoder } from '../constants/training'
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
@@ -27,6 +27,14 @@ interface Task {
   model_config?: any
   user_id?: string | null  // User ID of task creator
   username?: string | null  // Username of task creator (only for admin users)
+}
+
+function isTaskCancellable(task: Task): boolean {
+  const cancellableStatuses = task.task_type === 'external_validation'
+    ? VALIDATION_CANCELLABLE_STATUSES
+    : TRAINING_CANCELLABLE_STATUSES
+
+  return cancellableStatuses.includes(task.status as CancellableStatus)
 }
 
 export default function TaskListPage() {
@@ -189,8 +197,16 @@ export default function TaskListPage() {
     setDeleteError(null)
 
     try {
-      // Delete tasks synchronously - wait for each to complete
+      // Delete tasks synchronously - cancel active tasks first, then delete
       for (const taskId of taskIdsToDelete) {
+        const task = tasks.find(t => t.task_id === taskId)
+        if (task && isTaskCancellable(task)) {
+          try {
+            await cancelQueueTask(taskId)
+          } catch (cancelError) {
+            console.warn(`Failed to cancel task ${taskId} before delete, continuing with delete`, cancelError)
+          }
+        }
         await deleteTrainingTask(taskId, deleteMode)
       }
 
@@ -670,12 +686,7 @@ export default function TaskListPage() {
                     )}
 
                     {/* Cancel button - only for running/pending tasks */}
-                    {(() => {
-                      const taskType = task.task_type === 'external_validation' ? 'validation' : 'analysis'
-                      const cancellableStatuses = 
-                        taskType === 'validation' ? VALIDATION_CANCELLABLE_STATUSES :
-                        ANALYSIS_CANCELLABLE_STATUSES
-                      return cancellableStatuses.includes(task.status as CancellableStatus) && (
+                    {isTaskCancellable(task) && (
                       <button
                         onClick={(e) => handleCancelTask(task.task_id, e)}
                         disabled={cancellingTaskId === task.task_id}
@@ -688,7 +699,7 @@ export default function TaskListPage() {
                           <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                         )}
                       </button>
-                    )})()}
+                    )}
 
                     <button
                       onClick={(e) => handleDeleteTask(task.task_id, e)}

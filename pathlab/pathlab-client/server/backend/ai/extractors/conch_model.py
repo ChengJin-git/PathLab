@@ -32,6 +32,12 @@ class CONCHExtractor(BaseExtractor):
         return 512
 
     @property
+    def spatial_output_dim(self) -> int:
+        # encode_image() returns a projected 512-d embedding, while the visual
+        # trunk patch tokens used for segmentation stay in the ViT hidden size.
+        return 768
+
+    @property
     def default_image_size(self) -> int:
         return 448
 

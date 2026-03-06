@@ -25,6 +25,7 @@ from backend.auth.dependencies import require_can_use_gpu, require_pathologist_o
 from ..utils import ensure_dataset_segmentation_contract
 from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
+from backend.database.utils.training_logger import TrainingLogger
 from ..dependencies import logger, storage_manager
 from ..models import TrainingTaskRequest, TrainingTaskUpdateRequest, DeletionMode
 from ..pipeline import run_training_pipeline
@@ -274,8 +275,25 @@ async def create_training_task(
             **pipeline_kwargs
         )
 
+        async with safe_session() as db:
+            await TrainingTaskRepository.update_status(db, task_id, TaskStatus.QUEUED, progress=0)
+            await db.commit()
+
+        training_logger = TrainingLogger(task_id)
+        await training_logger.info(
+            "[Queue] Task submitted to training queue, waiting for available worker/GPU resources",
+            metadata={
+                "status": TaskStatus.QUEUED,
+                "task_type": req.task_type,
+                "data_type": req.data_type,
+                "wsi_count": len(wsi_ids),
+            }
+        )
+
         # Return task info
         result = task.to_dict()
+        result["status"] = TaskStatus.QUEUED
+        result["progress"] = 0
         result["wsi_count"] = len(wsi_ids)
 
         return result
@@ -560,8 +578,11 @@ async def delete_training_task(
         if not check_data_ownership(task.user_id, user):
             raise HTTPException(status_code=403, detail="You don't have permission to delete this task")
 
-        # If task is still running or queued, cancel it first to release GPU
-        if task.status in [TaskStatus.PENDING, TaskStatus.RESUMING, TaskStatus.PATCHING, TaskStatus.EXTRACTING, TaskStatus.TRAINING]:
+        # If task is still active, cancel it first in both gateway queue and AI service.
+        # This makes delete behave as "cancel then delete" for running/queued tasks.
+        if task.status in [TaskStatus.PENDING, TaskStatus.QUEUED, TaskStatus.RESUMING, TaskStatus.PATCHING, TaskStatus.EXTRACTING, TaskStatus.TRAINING]:
+            queue = get_task_queue()
+            await queue.cancel_task(task_id)
             await cancel_ai_service_training(task_id)
 
         # Get all trained models for this task

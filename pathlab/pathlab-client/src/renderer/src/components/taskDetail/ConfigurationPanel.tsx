@@ -149,7 +149,7 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                               {name}
                             </span>
                             <span className="font-mono text-gray-500 text-[10px] sm:text-xs">
-                              {task.model_config.loss_weights?.[i] ?? '—'}
+                              {t('taskDetail.configuration.lossWeight')}: {task.model_config.loss_weights?.[i] ?? '—'}
                             </span>
                           </div>
                         ))}

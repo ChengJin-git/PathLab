@@ -34,6 +34,17 @@ class BaseExtractor(ABC, nn.Module):
         pass
 
     @property
+    def spatial_output_dim(self) -> int:
+        """Return the channel dimension of ``forward_spatial()`` outputs.
+
+        For most extractors this matches :attr:`output_dim`. Override this when
+        the pooled feature vector dimension used by classification differs from
+        the patch-token/channel dimension exposed by :meth:`forward_spatial`
+        (e.g. models that project or concatenate pooled tokens).
+        """
+        return self.output_dim
+
+    @property
     def default_image_size(self) -> int:
         """
         Return the default input image size for this model.

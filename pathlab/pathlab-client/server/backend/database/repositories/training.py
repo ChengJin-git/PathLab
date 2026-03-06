@@ -1,6 +1,8 @@
 """
 TrainingTaskRepository - Data Access Layer
 """
+import asyncio
+from functools import partial
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +45,39 @@ def _build_segmentation_wsi_lookups(wsis: List[WSISlide]) -> Tuple[Dict[str, str
     return exact_lookup, stem_lookup
 
 
+def _extract_segmentation_multilabels_from_payloads(
+    payloads: List[dict],
+    wsis: List[WSISlide],
+) -> Tuple[List[str], Dict[str, Set[str]]]:
+    merged_coco = merge_coco_datasets(payloads)
+    exact_lookup, stem_lookup = _build_segmentation_wsi_lookups(wsis)
+    multilabels = extract_coco_wsi_label_sets(merged_coco, exact_lookup, stem_lookup)
+    classes = sorted({label for label_set in multilabels.values() for label in label_set})
+    return classes, multilabels
+
+
+def _build_training_task_wsi_batches(
+    task_id: str,
+    wsi_ids: List[str],
+    wsi_splits: Dict[str, str],
+    insert_batch_size: int,
+) -> List[List[Dict[str, object]]]:
+    batches: List[List[Dict[str, object]]] = []
+    for i in range(0, len(wsi_ids), insert_batch_size):
+        batch_wsi_ids = wsi_ids[i:i + insert_batch_size]
+        batch_created_at = utc_now()
+        batches.append([
+            {
+                "task_id": task_id,
+                "wsi_id": wsi_id,
+                "split": wsi_splits.get(wsi_id, "train"),
+                "created_at": batch_created_at,
+            }
+            for wsi_id in batch_wsi_ids
+        ])
+    return batches
+
+
 async def _load_segmentation_multilabels(
     db: AsyncSession,
     wsis: List[WSISlide],
@@ -69,11 +104,7 @@ async def _load_segmentation_multilabels(
     payloads = [dataset_level_record.annotations] if dataset_level_record else [
         record.annotations for record in records if isinstance(record.annotations, dict)
     ]
-    merged_coco = merge_coco_datasets(payloads)
-    exact_lookup, stem_lookup = _build_segmentation_wsi_lookups(wsis)
-    multilabels = extract_coco_wsi_label_sets(merged_coco, exact_lookup, stem_lookup)
-    classes = sorted({label for label_set in multilabels.values() for label in label_set})
-    return classes, multilabels
+    return await asyncio.to_thread(_extract_segmentation_multilabels_from_payloads, payloads, wsis)
 
 
 class TrainingTaskRepository:
@@ -152,21 +183,6 @@ class TrainingTaskRepository:
             preprocessing_config["split_config"] = split_config
             task_data["preprocessing_config"] = preprocessing_config
 
-        # Remove task_type from task_data before creating TrainingTask
-        # (task_type is stored in the associated DataGroup, not in TrainingTask directly)
-        task_data_cleaned = {k: v for k, v in task_data.items() if k != "task_type"}
-
-        # Create training task
-        task = TrainingTask(
-            **task_data_cleaned,
-            classes=classes,
-            status=TaskStatus.PENDING,
-            progress=0
-        )
-        db.add(task)
-        await db.flush()
-        await db.refresh(task)
-
         # Calculate splits
         wsi_splits = {}
         if split_config:
@@ -225,12 +241,15 @@ class TrainingTaskRepository:
                     split_config_copy = {**split_config}
                     if "labels" in split_config_copy:
                         del split_config_copy["labels"]  # We'll use case_labels instead
-                    wsi_splits = split_case_dataset(
-                        wsi_ids,
-                        case_id_map,
-                        labels=case_labels,
-                        multilabels=segmentation_multilabels if is_segmentation else None,
-                        **split_config_copy,
+                    wsi_splits = await asyncio.to_thread(
+                        partial(
+                            split_case_dataset,
+                            wsi_ids,
+                            case_id_map,
+                            labels=case_labels,
+                            multilabels=segmentation_multilabels if is_segmentation else None,
+                            **split_config_copy,
+                        )
                     )
                 else:
                     # For slide-level datasets, use regular splitter
@@ -247,31 +266,45 @@ class TrainingTaskRepository:
 
                         if label_val:
                             wsi_labels[wsi.wsi_id] = label_val
-                    wsi_splits = split_wsi_dataset(
-                        wsi_ids,
-                        labels=None if is_segmentation else wsi_labels,
-                        multilabels=segmentation_multilabels if is_segmentation else None,
-                        **split_config,
+                    wsi_splits = await asyncio.to_thread(
+                        partial(
+                            split_wsi_dataset,
+                            wsi_ids,
+                            labels=None if is_segmentation else wsi_labels,
+                            multilabels=segmentation_multilabels if is_segmentation else None,
+                            **split_config,
+                        )
                     )
+
+        # Pre-build bulk insert payloads before opening the write-heavy phase.
+        insert_batch_size = 1000
+
+        # Remove task_type from task_data before creating TrainingTask
+        # (task_type is stored in the associated DataGroup, not in TrainingTask directly)
+        task_data_cleaned = {k: v for k, v in task_data.items() if k != "task_type"}
+        task_id = task_data_cleaned["task_id"]
+        association_batches = await asyncio.to_thread(
+            _build_training_task_wsi_batches,
+            task_id,
+            wsi_ids,
+            wsi_splits,
+            insert_batch_size,
+        )
+
+        # Create training task only after the expensive preparation work is done,
+        # to minimize how long we hold the database write transaction.
+        task = TrainingTask(
+            **task_data_cleaned,
+            classes=classes,
+            status=TaskStatus.PENDING,
+            progress=0
+        )
+        db.add(task)
+        await db.flush()
 
         # Use bulk insert to avoid ORM identity map issues and improve performance
         # This is much faster and more reliable for large datasets
-        insert_batch_size = 1000
-        for i in range(0, len(wsi_ids), insert_batch_size):
-            batch_wsi_ids = wsi_ids[i:i + insert_batch_size]
-
-            # Build list of records to insert
-            records = []
-            for wsi_id in batch_wsi_ids:
-                split = wsi_splits.get(wsi_id, "train")
-                records.append({
-                    "task_id": task.task_id,
-                    "wsi_id": wsi_id,
-                    "split": split,
-                    "created_at": utc_now()
-                })
-
-            # Bulk insert using Core API (bypasses ORM identity map)
+        for records in association_batches:
             if records:
                 await db.execute(insert(TrainingTaskWSI), records)
 
@@ -283,7 +316,7 @@ class TrainingTaskRepository:
         result = await db.execute(
             select(TrainingTask)
             .options(selectinload(TrainingTask.data_group))
-            .where(TrainingTask.task_id == task.task_id)
+            .where(TrainingTask.task_id == task_id)
         )
         return result.scalar_one()
 

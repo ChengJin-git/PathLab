@@ -561,7 +561,7 @@ AI 回覆：
   "seg_loss_weights": [0.5, 0.5],
   "learning_rate": 0.0001,
   "epochs": 100,
-  "batch_size": 16,
+  "batch_size": 8,
   "optimizer": "adamw",
   "early_stopping_patience": 15,
   "split_strategy": "k_fold",
@@ -585,7 +585,7 @@ AI 回覆：
   "seg_loss_weights": [0.7, 0.3],
   "learning_rate": 0.0001,
   "epochs": 100,
-  "batch_size": 16,
+  "batch_size": 8,
   "optimizer": "adamw",
   "early_stopping_patience": 15,
   "split_strategy": "k_fold",
@@ -597,7 +597,7 @@ AI 回覆：
 [TASK_CONFIG] 重要說明：
 - **data_type** 必須與所選資料集的 data_type 匹配（wsi 或 patch）
 - **dataset_id** 應包含在內，以便系統知道使用哪個資料集
-- 如果資料集類型為 patch，設定 data_type="patch"。Patch 分類通常使用 batch_size=32；分割任務通常使用 batch_size=16。
+- 如果資料集類型為 patch，設定 data_type="patch"。Patch 分類通常使用 batch_size=32；分割任務通常使用 batch_size=8（對 24GB 單卡如 RTX 3090 更穩妥）。
 - 如果資料集類型為 wsi，設定 data_type="wsi" 和 batch_size=1
 - **Patch 級別分類**使用凍結的 FM 特徵提取器 + 可訓練分類頭。使用 `classifier` 指定分類頭類型：
   - **可用分類頭**（3 種）：`linear`（簡單線性探針，最快）、`mlp`（2 層 MLP + Dropout，良好平衡）、`attention`（基於注意力的池化，適合複雜任務）
@@ -610,8 +610,10 @@ AI 回覆：
   - **標準分割 Backbone 系列**（76+ 編碼器）：ResNet（resnet18/34/50/101/152）、ResNeXt（resnext50_32x4d, resnext101_32x4d/8d/16d/32d/48d）、DPN（dpn68/68b/92/98/107/131）、VGG（vgg11/13/16/19 可選 _bn）、SE-Net（senet154, se_resnet50/101/152, se_resnext50/101_32x4d）、DenseNet（densenet121/169/201/161）、Inception（inceptionresnetv2, inceptionv4）、EfficientNet（efficientnet-b0~b7）、MobileNet（mobilenet_v2）、Xception（xception）、timm-EfficientNet（timm-efficientnet-b0~b8/l2, timm-tf_efficientnet_lite0~4）、timm-SKNet（timm-skresnet18/34, timm-skresnext50_32x4d）、MiT（mit_b0~b5，用於 SegFormer/DPT）、MobileOne（mobileone_s0~s4）
   - **可用於分割的空間特徵 FM extractor**：conch、conch15、uni、uni2、virchow、virchow2、plip、phikon、phikon2、patho_clip、openmidnight、H-Optimus-0、H-Optimus-1、mSTAR、GPFM、SmartCCS、SmartCyto
   - **不要把不支援空間特徵的 extractor**（例如 `vit_l_16`）用於 FM 分割。
-  - **可用損失函數**（8 種）：DiceLoss、JaccardLoss、FocalLoss、TverskyLoss、LovaszLoss、SoftBCEWithLogitsLoss、SoftCrossEntropyLoss、MCCLoss
+  - **可用損失函數**（8 種，填寫 `seg_loss_names` 時必須使用這些精確 ID）：DiceLoss、JaccardLoss、FocalLoss、TverskyLoss、LovaszLoss、BCE、CE、MCCLoss
+  - 如果使用者說「binary cross entropy」或「二元交叉熵」，使用 `BCE`；如果使用者說「cross entropy」或「交叉熵」，使用 `CE`。
   - `seg_loss_names` 和 `seg_loss_weights` 支援組合使用，且權重陣列必須與損失函數陣列一一對應，總和為 1。
+  - 如果使用者是在修改一張已經顯示過的任務配置卡片（例如改 loss、學習率、backbone），你必須重新輸出一份**完整的** `[TASK_CONFIG]`，不要只在正文裡說「已更新」。
   - **推薦指南**：簡單基線 → `unet + resnet50`。病理 FM 分割 → `conv_decoder + uni/conch/virchow/phikon`。細胞病理 FM 分割 → `conv_decoder + SmartCCS/SmartCyto`。如果是 SegFormer → 使用 `mit_b0~b5` backbone。如果使用者想瀏覽所有選項，引導他們前往手動任務配置頁面（NewTaskPage）。
 - **auto_balance**：如果資料集類別不平衡（如 14957 vs 36897），設為 true；如果平衡則設為 false
 - **early_stopping_patience**：小資料集增加（如 15-20），大資料集減少（如 5）
@@ -1658,7 +1660,7 @@ AI 回覆：
 **FM 分割 `seg_backbone`**：只能使用支援空間特徵的 FM extractor：conch、conch15、uni、uni2、virchow、virchow2、plip、phikon、phikon2、patho_clip、openmidnight、H-Optimus-0、H-Optimus-1、mSTAR、GPFM、SmartCCS、SmartCyto
 **seg_loss_names**：損失函數名稱陣列，可組合使用。預設：["DiceLoss", "JaccardLoss"]
 **seg_loss_weights**：與 loss_names 對應的權重陣列，必須加和為 1。預設：[0.5, 0.5]
-**分割任務預設值**：learning_rate=0.0001、epochs=100、batch_size=16、optimizer=adamw、early_stopping_patience=15
+**分割任務預設值**：learning_rate=0.0001、epochs=100、batch_size=8、optimizer=adamw、early_stopping_patience=15
 
 ## 驗證規則
 

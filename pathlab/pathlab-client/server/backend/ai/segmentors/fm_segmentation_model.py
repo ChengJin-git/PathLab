@@ -78,8 +78,11 @@ class FMSegmentationModel(nn.Module):
         self.input_size = input_size
         self.classes = classes
 
-        # Build decoder
-        embed_dim = extractor.output_dim
+        # Build decoder from the spatial feature-map channel dimension.
+        # Some extractors expose a pooled/aggregated ``output_dim`` for
+        # classification that differs from the patch-token dimension returned by
+        # ``forward_spatial()`` (e.g. CONCH / Virchow variants).
+        embed_dim = extractor.spatial_output_dim
         channels = [embed_dim] + list(decoder_channels)
         blocks = []
         for i in range(len(decoder_channels)):
@@ -127,6 +130,17 @@ class FMSegmentationModel(nn.Module):
         # Frozen backbone → spatial feature map (B, D, H', W')
         with torch.no_grad():
             feat = self.extractor.forward_spatial(x)
+
+        first_block = self.decoder[0] if len(self.decoder) > 0 else None
+        expected_in_channels = getattr(getattr(first_block, "conv", None), "in_channels", feat.shape[1])
+        if feat.shape[1] != expected_in_channels:
+            raise RuntimeError(
+                "FM segmentation decoder channel mismatch: "
+                f"extractor={self.extractor.__class__.__name__}, "
+                f"spatial_output_dim={expected_in_channels}, "
+                f"forward_spatial returned {feat.shape[1]} channels. "
+                "Please ensure the extractor's spatial_output_dim matches its patch-token dimension."
+            )
 
         # Decoder upsampling
         out = self.decoder(feat)  # (B, last_ch, H'*2^n, W'*2^n)

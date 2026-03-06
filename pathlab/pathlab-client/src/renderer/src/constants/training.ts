@@ -349,9 +349,79 @@ export const SEGMENTATION_LOSSES: readonly LossOption[] = [
   { id: 'FocalLoss', name: 'Focal Loss', description: 'Down-weights easy examples, focuses on hard cases' },
   { id: 'LovaszLoss', name: 'Lovász Loss', description: 'Submodular IoU surrogate, good for imbalanced data' },
   { id: 'BCE', name: 'Binary Cross Entropy', description: 'Standard per-pixel binary classification loss' },
-  { id: 'CE', name: 'Cross Entropy', description: 'Standard multi-class cross entropy loss' },
   { id: 'MCCLoss', name: 'MCC Loss', description: 'Matthews Correlation Coefficient loss' },
 ] as const
+
+const SUPPORTED_SEGMENTATION_LOSS_NAMES = new Set(SEGMENTATION_LOSSES.map((loss) => loss.id))
+
+const normalizeSegmentationLossToken = (name: string): string => (
+  name.trim().replace(/[\s_-]+/g, '').toLowerCase()
+)
+
+const SEGMENTATION_LOSS_NAME_BY_KEY: Readonly<Record<string, string>> = Object.freeze({
+  ...Object.fromEntries(SEGMENTATION_LOSSES.map((loss) => [normalizeSegmentationLossToken(loss.id), loss.id])),
+  softbcewithlogitsloss: 'BCE',
+  binarycrossentropy: 'BCE',
+  binarycrossentropyloss: 'BCE',
+  bcewithlogitsloss: 'BCE',
+})
+
+export function normalizeSegmentationLossName(name: string): string {
+  return SEGMENTATION_LOSS_NAME_BY_KEY[normalizeSegmentationLossToken(name)] ?? name
+}
+
+export function normalizeSegmentationLossConfig(
+  lossNames?: string[],
+  lossWeights?: number[]
+): { lossNames: string[], lossWeights: number[] } {
+  const names = Array.isArray(lossNames) ? lossNames : []
+  if (names.length === 0) {
+    return {
+      lossNames: [...DEFAULT_SEG_LOSS_NAMES],
+      lossWeights: [...DEFAULT_SEG_LOSS_WEIGHTS],
+    }
+  }
+
+  const hasAlignedWeights = Array.isArray(lossWeights) && lossWeights.length === names.length
+  const mergedWeights = new Map<string, number>()
+  const normalizedNames: string[] = []
+
+  names.forEach((rawName, index) => {
+    const normalizedName = normalizeSegmentationLossName(rawName)
+    if (!SUPPORTED_SEGMENTATION_LOSS_NAMES.has(normalizedName)) {
+      return
+    }
+
+    if (!mergedWeights.has(normalizedName)) {
+      normalizedNames.push(normalizedName)
+      mergedWeights.set(normalizedName, 0)
+    }
+
+    if (hasAlignedWeights) {
+      const rawWeight = Number(lossWeights?.[index])
+      const safeWeight = Number.isFinite(rawWeight) && rawWeight > 0 ? rawWeight : 0
+      mergedWeights.set(normalizedName, (mergedWeights.get(normalizedName) ?? 0) + safeWeight)
+    }
+  })
+
+  if (normalizedNames.length === 0) {
+    return {
+      lossNames: [...DEFAULT_SEG_LOSS_NAMES],
+      lossWeights: [...DEFAULT_SEG_LOSS_WEIGHTS],
+    }
+  }
+
+  let normalizedWeights = hasAlignedWeights
+    ? normalizedNames.map((name) => mergedWeights.get(name) ?? 0)
+    : normalizedNames.map(() => 1 / normalizedNames.length)
+
+  const totalWeight = normalizedWeights.reduce((sum, weight) => sum + weight, 0)
+  normalizedWeights = totalWeight > 0
+    ? normalizedWeights.map((weight) => weight / totalWeight)
+    : normalizedNames.map(() => 1 / normalizedNames.length)
+
+  return { lossNames: normalizedNames, lossWeights: normalizedWeights }
+}
 
 /** Default segmentation loss configuration */
 export const DEFAULT_SEG_LOSS_NAMES = ['DiceLoss']
@@ -375,11 +445,12 @@ export interface SegTrainingDefaults {
 /**
  * Default training hyperparameters for segmentation tasks.
  * Different from classification defaults to match backend __default_config__.
+ * Batch size is kept conservative for common single-GPU RTX 3090 (24GB) training.
  */
 export const SEG_TRAINING_DEFAULTS: SegTrainingDefaults = {
   learningRate: 0.0001,
   epochs: 100,
-  batchSize: 16,
+  batchSize: 8,
   optimizer: 'adamw',
   earlyStoppingPatience: 15,
   scheduler: 'cosine_warm_restarts',

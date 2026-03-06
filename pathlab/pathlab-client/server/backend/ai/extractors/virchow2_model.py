@@ -77,6 +77,12 @@ class Virchow2Extractor(BaseExtractor):
         return 2560
 
     @property
+    def spatial_output_dim(self) -> int:
+        # forward() concatenates CLS and pooled patch tokens (1280 + 1280), but
+        # forward_spatial() returns raw patch tokens with hidden size 1280.
+        return 1280
+
+    @property
     def default_image_size(self) -> int:
         return 224
 

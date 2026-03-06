@@ -560,7 +560,7 @@ You can edit any field above, then click "Start Training" when ready.
   "seg_loss_weights": [0.5, 0.5],
   "learning_rate": 0.0001,
   "epochs": 100,
-  "batch_size": 16,
+  "batch_size": 8,
   "optimizer": "adamw",
   "early_stopping_patience": 15,
   "split_strategy": "k_fold",
@@ -584,7 +584,7 @@ You can edit any field above, then click "Start Training" when ready.
   "seg_loss_weights": [0.7, 0.3],
   "learning_rate": 0.0001,
   "epochs": 100,
-  "batch_size": 16,
+  "batch_size": 8,
   "optimizer": "adamw",
   "early_stopping_patience": 15,
   "split_strategy": "k_fold",
@@ -596,7 +596,7 @@ You can edit any field above, then click "Start Training" when ready.
 IMPORTANT for [TASK_CONFIG]:
 - **data_type** MUST match the selected dataset's data_type (wsi or patch)
 - **dataset_id** should be included so the system knows which dataset to use
-- If dataset is type=patch, set data_type="patch". For patch classification, batch_size is typically 32. For segmentation, batch_size is typically 16.
+- If dataset is type=patch, set data_type="patch". For patch classification, batch_size is typically 32. For segmentation, batch_size is typically 8 on a 24GB single GPU (e.g. RTX 3090).
 - If dataset is type=wsi, set data_type="wsi" and batch_size=1
 - **Patch-level classification** uses a frozen FM feature extractor + trainable classifier head. Use `classifier` to specify the head type:
   - **Available classifier heads** (3): `linear` (simple linear probe, fastest), `mlp` (2-layer MLP with dropout, good balance), `attention` (attention-based pooling, best for complex tasks)
@@ -609,8 +609,10 @@ IMPORTANT for [TASK_CONFIG]:
   - **Standard segmentation backbone families** (76+ encoders): ResNet (resnet18/34/50/101/152), ResNeXt (resnext50_32x4d, resnext101_32x4d/8d/16d/32d/48d), DPN (dpn68/68b/92/98/107/131), VGG (vgg11/13/16/19 with optional _bn), SE-Net (senet154, se_resnet50/101/152, se_resnext50/101_32x4d), DenseNet (densenet121/169/201/161), Inception (inceptionresnetv2, inceptionv4), EfficientNet (efficientnet-b0~b7), MobileNet (mobilenet_v2), Xception (xception), timm-EfficientNet (timm-efficientnet-b0~b8/l2, timm-tf_efficientnet_lite0~4), timm-SKNet (timm-skresnet18/34, timm-skresnext50_32x4d), MiT (mit_b0~b5, for SegFormer/DPT), MobileOne (mobileone_s0~s4)
   - **Spatial-capable FM extractors for segmentation**: conch, conch15, uni, uni2, virchow, virchow2, plip, phikon, phikon2, patho_clip, openmidnight, H-Optimus-0, H-Optimus-1, mSTAR, GPFM, SmartCCS, SmartCyto
   - **Do NOT use non-spatial extractors** such as `vit_l_16` for FM segmentation.
-  - **Available losses** (8): DiceLoss, JaccardLoss, FocalLoss, TverskyLoss, LovaszLoss, SoftBCEWithLogitsLoss, SoftCrossEntropyLoss, MCCLoss
+  - **Available losses** (8; when filling `seg_loss_names`, use these exact IDs): DiceLoss, JaccardLoss, FocalLoss, TverskyLoss, LovaszLoss, BCE, CE, MCCLoss
+  - If the user asks for binary cross entropy, use `BCE`; if they ask for cross entropy, use `CE`.
   - `seg_loss_names` and `seg_loss_weights` can be combined. The weight array must align with the loss array and sum to 1.
+  - If the user is modifying an already shown task config card (for example changing the loss, learning rate, or backbone), you must output a **complete** replacement `[TASK_CONFIG]`, not just describe the update in prose.
   - **Recommendation guide**: For a simple baseline → `unet + resnet50`. For stronger pathology performance with FM segmentation → `conv_decoder + uni/conch/virchow/phikon`. For cytology-oriented FM segmentation → `conv_decoder + SmartCCS/SmartCyto`. For SegFormer → use `mit_b0~b5` backbone. If user wants to browse ALL options, guide them to the manual task configuration page (NewTaskPage).
 - **auto_balance**: Set to true if dataset has imbalanced classes (e.g., 14957 vs 36897), false if balanced
 - **early_stopping_patience**: Increase (e.g., 15-20) for small datasets, decrease (e.g., 5) for large datasets
@@ -1689,7 +1691,7 @@ Click "Run Analysis" to start. Results will be shown directly in the card after 
 **FM segmentation `seg_backbone`**: spatial-capable FM extractors only: conch, conch15, uni, uni2, virchow, virchow2, plip, phikon, phikon2, patho_clip, openmidnight, H-Optimus-0, H-Optimus-1, mSTAR, GPFM, SmartCCS, SmartCyto
 **seg_loss_names**: Array of loss names to combine. Default: ["DiceLoss", "JaccardLoss"]
 **seg_loss_weights**: Array of weights matching loss_names, must sum to 1. Default: [0.5, 0.5]
-**Segmentation defaults**: learning_rate=0.0001, epochs=100, batch_size=16, optimizer=adamw, early_stopping_patience=15
+**Segmentation defaults**: learning_rate=0.0001, epochs=100, batch_size=8, optimizer=adamw, early_stopping_patience=15
 **early_stopping_patience**: 20 (default), increase for small datasets, decrease for large datasets
 
 ## VALIDATION RULES

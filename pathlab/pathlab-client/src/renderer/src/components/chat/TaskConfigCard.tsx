@@ -4,6 +4,11 @@ import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers
 import { createTrainingTask, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type SplitConfig } from '../../api'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
 import {
+  markTrainingSubmissionCreated,
+  markTrainingSubmissionFailed,
+  markTrainingSubmissionPending,
+} from '../../lib/trainingSubmissionTracker'
+import {
   TASK_TYPES,
   DATA_LEVELS,
   ENCODER_OPTIONS,
@@ -25,7 +30,7 @@ import {
   DEFAULT_SEG_ARCHITECTURE,
   DEFAULT_SEG_BACKBONE,
   DEFAULT_SEG_LOSS_NAMES,
-  DEFAULT_SEG_LOSS_WEIGHTS,
+  normalizeSegmentationLossConfig,
 } from '../../constants/training'
 
 // Simplified config from Agent (doesn't include wsi_ids, etc.)
@@ -122,7 +127,15 @@ export function parseTaskConfig(content: string): AgentTaskConfig | null {
 
   try {
     const jsonStr = match[1].trim()
-    return JSON.parse(jsonStr)
+    const config = JSON.parse(jsonStr)
+
+    if (config && (config.task_type === 'segmentation' || Array.isArray(config.seg_loss_names))) {
+      const normalizedLossConfig = normalizeSegmentationLossConfig(config.seg_loss_names, config.seg_loss_weights)
+      config.seg_loss_names = normalizedLossConfig.lossNames
+      config.seg_loss_weights = normalizedLossConfig.lossWeights
+    }
+
+    return config
   } catch {
     return null
   }
@@ -397,9 +410,11 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       // Generate task_id on the client so we can navigate immediately
       // without waiting for backend to finish processing 50k+ WSI records
       const taskId = `train_${crypto.randomUUID().replace(/-/g, '').substring(0, 16)}`
+      markTrainingSubmissionPending(taskId, config.task_name)
 
       // Build full TrainingTaskConfig using constants for defaults
       // Send dataset_id instead of wsi_ids — backend resolves WSI IDs from dataset
+      const normalizedSegLossConfig = normalizeSegmentationLossConfig(config.seg_loss_names, config.seg_loss_weights)
       const fullConfig: TrainingTaskConfig = {
         task_id: taskId,
         task_name: config.task_name,
@@ -424,8 +439,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           aggregator: '',  // Not used for segmentation
           architecture: config.seg_architecture ?? DEFAULT_SEG_ARCHITECTURE,
           backbone: config.seg_backbone ?? DEFAULT_SEG_BACKBONE,
-          loss_names: config.seg_loss_names ?? DEFAULT_SEG_LOSS_NAMES,
-          loss_weights: config.seg_loss_weights ?? DEFAULT_SEG_LOSS_WEIGHTS,
+          loss_names: normalizedSegLossConfig.lossNames,
+          loss_weights: normalizedSegLossConfig.lossWeights,
           learning_rate: config.learning_rate ?? SEG_TRAINING_DEFAULTS.learningRate,
           epochs: config.epochs ?? SEG_TRAINING_DEFAULTS.epochs,
           optimizer: config.optimizer ?? SEG_TRAINING_DEFAULTS.optimizer,
@@ -447,9 +462,15 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
 
       // Fire-and-forget: send request to backend without waiting for response
       // Backend will process asynchronously; TaskDetailPage will poll until task appears
-      createTrainingTask(fullConfig).catch((error) => {
+      void createTrainingTask(fullConfig).then(() => {
+        markTrainingSubmissionCreated(taskId)
+      }).catch((error) => {
         const msg = error instanceof Error ? error.message : t('chatComponents.taskConfig.errors.failedToCreate')
+        markTrainingSubmissionFailed(taskId, msg)
         console.error('Background task creation failed:', msg)
+        setSubmitStatus('error')
+        setErrorMessage(msg)
+        setIsSubmitting(false)
         onSubmitError?.(msg)
       })
 
@@ -470,6 +491,9 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
 
   // Form is disabled after successful submission or during pending optimistic update
   const isFormDisabled = submitStatus === 'success' || submitStatus === 'pending' || isSubmitting
+  const defaultBatchSize = config.task_type === 'segmentation'
+    ? SEG_TRAINING_DEFAULTS.batchSize
+    : (config.data_type === 'wsi' ? 1 : TRAINING_DEFAULTS.batchSize)
 
   // Check if this is an AI-recommended config - core fields should be locked
   const isAgentConfig = isAgentRecommendedConfig(initialConfig)
@@ -924,7 +948,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
               <label className="block text-xs font-medium text-gray-600 mb-1">{t('chatComponents.taskConfig.batchSize')}</label>
               <input
                 type="number"
-                value={config.batch_size ?? (config.data_type === 'wsi' ? 1 : TRAINING_DEFAULTS.batchSize)}
+                value={config.batch_size ?? defaultBatchSize}
                 onChange={(e) => updateConfig('batch_size', parseInt(e.target.value))}
                 disabled={isFormDisabled}
                 className={`w-full px-2 py-1.5 border rounded text-sm ${getFieldError('batch_size') ? 'border-red-300' : 'border-gray-200'
