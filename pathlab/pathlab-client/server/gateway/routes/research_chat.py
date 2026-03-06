@@ -18,11 +18,9 @@ from typing import Optional
 import httpx
 from fastapi import APIRouter, Depends, Request, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from backend.auth import current_active_user, User
 from backend.common.config import Config
-from backend.database import get_db, async_session
+from backend.database import async_session
 from backend.database.repositories import ResearchJobRepository
 from ..dependencies import logger
 from ..models import ChatRequest

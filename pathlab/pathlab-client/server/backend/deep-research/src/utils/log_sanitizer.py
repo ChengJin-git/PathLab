@@ -12,7 +12,7 @@ logging to prevent attackers from forging log entries through:
 """
 
 import re
-from typing import Any, Optional
+from typing import Any
 
 
 def sanitize_log_input(value: Any, max_length: int = 500) -> str:

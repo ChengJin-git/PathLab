@@ -6,7 +6,7 @@ Citation formatter for generating citation sections and inline references.
 """
 
 import re
-from typing import Any, Dict, List
+from typing import Dict, List
 
 from .models import Citation
 

@@ -22,17 +22,14 @@ function Image({
   alt: string;
   fallback?: React.ReactNode;
 }) {
-  const [, setIsLoading] = useState(true);
   const [isError, setIsError] = useState(false);
 
   useEffect(() => {
     setIsError(false);
-    setIsLoading(true);
   }, [src]);
 
   const handleLoad = useCallback(() => {
     setIsError(false);
-    setIsLoading(false);
   }, []);
   const handleError = useCallback(
     (e: React.SyntheticEvent<HTMLImageElement>) => {

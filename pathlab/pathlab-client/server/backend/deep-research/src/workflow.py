@@ -5,7 +5,6 @@ import logging
 
 from src.config.configuration import get_recursion_limit
 from src.graph import build_graph
-from src.graph.utils import build_clarified_topic_from_history
 
 # Configure logging
 logging.basicConfig(

@@ -3,7 +3,7 @@
 
 import json
 import logging
-from typing import Any, Callable, List, Optional
+from typing import Any, List, Optional
 
 from langchain_core.tools import BaseTool
 from langgraph.types import interrupt

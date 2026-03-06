@@ -4,8 +4,7 @@
 import asyncio
 import json
 import logging
-import re
-from typing import Annotated, Optional, Type
+from typing import Optional, Type
 
 import aiohttp
 import requests
