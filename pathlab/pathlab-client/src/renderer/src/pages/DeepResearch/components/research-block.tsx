@@ -28,7 +28,6 @@ import {
   DropdownMenuTrigger,
 } from "../../../components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
-import { useReplay } from "../../../lib/deep-research/replay";
 import { closeResearch, useStore } from "../../../lib/deep-research/store";
 import { cn } from "../../../lib/utils";
 
@@ -55,7 +54,6 @@ export function ResearchBlock({
   const reportStreaming = useStore((state) =>
     reportId ? (state.messages.get(reportId)?.isStreaming ?? false) : false,
   );
-  const { isReplay } = useReplay();
   useEffect(() => {
     if (hasReport) {
       setActiveTab("report");
@@ -102,7 +100,6 @@ export function ResearchBlock({
                       className="text-gray-400"
                       size="icon"
                       variant="ghost"
-                      disabled={isReplay}
                       onClick={handleEdit}
                     >
                       {editing ? <Undo2 /> : <Pencil />}

@@ -168,6 +168,8 @@ export default function AIChatPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const initialMessageSent = useRef(false)
   const scrollRestoredRef = useRef(false)
+  // Report context from deep research handoff — injected into system prompt by backend
+  const reportContextRef = useRef<string | undefined>(undefined)
   // Ref for aborting AI generation
   const abortControllerRef = useRef<AbortController | null>(null)
   // Ref to access latest messages in callbacks
@@ -303,7 +305,7 @@ export default function AIChatPage() {
   // Restore conversation from URL (supports page refresh)
   // Also supports legacy sessionStorage restore for backward compatibility
   useEffect(() => {
-    const state = location.state as { forceNewChat?: boolean; preCreatedConversationId?: string } | null
+    const state = location.state as { forceNewChat?: boolean; preCreatedConversationId?: string; reportContext?: string } | null
 
     // Priority 1: Load from URL if conversationId is present
     if (urlConversationId) {
@@ -318,6 +320,7 @@ export default function AIChatPage() {
       // async handleLoadConversation resolves, causing a duplicate conversation.
       if (state?.forceNewChat && state?.preCreatedConversationId === urlConversationId) {
         setCurrentConversationId(urlConversationId)
+        if (state.reportContext) reportContextRef.current = state.reportContext
         return
       }
       handleLoadConversation(urlConversationId)
@@ -328,6 +331,7 @@ export default function AIChatPage() {
     // skip legacy restore and ensure we start from a clean chat state.
     if (state?.forceNewChat) {
       sessionStorage.removeItem('ai-chat-conversation-id')
+      if (state.reportContext) reportContextRef.current = state.reportContext
       if (state?.preCreatedConversationId) {
         setCurrentConversationId(state.preCreatedConversationId)
         skipConversationLoadRef.current = true
@@ -412,6 +416,7 @@ export default function AIChatPage() {
   const handleNewChat = () => {
     setMessages([])
     setCurrentConversationId(null)
+    reportContextRef.current = undefined
     setInput('')
     setImageAttachments([])
     setFileAttachments([])
@@ -427,6 +432,9 @@ export default function AIChatPage() {
   const handleLoadConversation = async (conversationId: string) => {
     try {
       const conv = await getConversation(conversationId)
+
+      // Restore report context from conversation record (for reloaded training handoff chats)
+      reportContextRef.current = conv.report_context || undefined
 
       // Sort messages by id to ensure chronological order (defense-in-depth)
       const sortedApiMessages = [...conv.messages].sort((a, b) => a.id - b.id)
@@ -906,7 +914,6 @@ export default function AIChatPage() {
         if (generationIdRef.current === currentGenerationId) {
           setGenerationPhase('pdf_waiting')
         }
-      }, () => {
         // Context limit reached — append [CONTEXT_LIMIT] block to the AI message
         const contextLimitBlock = '\n\n[CONTEXT_LIMIT][/CONTEXT_LIMIT]'
         const currentTrackingId = trackingId
@@ -917,7 +924,7 @@ export default function AIChatPage() {
               : m
           )
         )
-      })
+      }, reportContextRef.current)
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         if (isTimeoutAbort) {

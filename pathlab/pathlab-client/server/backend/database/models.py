@@ -355,6 +355,7 @@ class ChatConversation(Base):
     user_id = Column(String(255), index=True)  # For future multi-user support
     title = Column(String(500))  # Auto-generated from first message
     conversation_type = Column(String(50), default="ai_chat")  # "ai_chat" or "deep_research"
+    report_context = Column(Text, nullable=True)  # Research report context for training handoff chats
 
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
@@ -375,6 +376,7 @@ class ChatConversation(Base):
             "user_id": self.user_id,
             "title": self.title,
             "conversation_type": self.conversation_type or "ai_chat",
+            "report_context": self.report_context,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
             "message_count": message_count,

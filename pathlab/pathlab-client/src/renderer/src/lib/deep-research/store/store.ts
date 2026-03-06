@@ -3904,16 +3904,8 @@ export function useTokenUsage() {
   return useStore(useShallow((state) => state.tokenUsage));
 }
 
-export function useSessionTokenUsage() {
-  return useStore(useShallow((state) => state.sessionTokenUsage));
-}
-
 export function useResponseTiming() {
   return useStore(useShallow((state) => state.responseTiming));
-}
-
-export function useGenerationPhase() {
-  return useStore(useShallow((state) => state.generationPhase));
 }
 
 // Expose debug utilities on window for DevTools console access

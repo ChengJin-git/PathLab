@@ -418,11 +418,6 @@ export async function stopResearch(threadId: string): Promise<void> {
 
 
 
-let fastForwardReplaying = false;
-export function fastForwardReplay(value: boolean) {
-  fastForwardReplaying = value;
-}
-
 export interface ResearchIntentDecision {
   startNewResearch: boolean;
   confidence: number;

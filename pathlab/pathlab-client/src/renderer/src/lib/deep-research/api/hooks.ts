@@ -1,15 +1,9 @@
 // API hooks adapted from deep-research for PathLab
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { AppConfig } from "../config";
-import { useReplay } from "../replay";
 
 import { resolveServiceURL, getAuthHeaders } from "./resolve-service-url";
-
-export function useReplayMetadata() {
-  const { isReplay } = useReplay();
-  return { title: null, isLoading: { current: false }, hasError: false };
-}
 
 const DEFAULT_CONFIG: AppConfig = {
   rag: { provider: "" },

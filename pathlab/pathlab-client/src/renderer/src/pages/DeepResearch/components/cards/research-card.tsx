@@ -22,9 +22,20 @@ function getChatTrainingBasePrompt(): string {
         : CHAT_TRAINING_BASE_PROMPT_ZH;
 }
 
-function buildTrainingPromptWithReportContext(
+/** Clean and clip the report content for use as system-prompt context. */
+function extractReportContext(reportContent: string | undefined): string {
+    const cleaned = (reportContent ?? "")
+        .replace(/\n?\[PATHLAB_RESEARCH_META\][\s\S]*?(?:\[\/PATHLAB_RESEARCH_META\]|$)/g, "")
+        .trim();
+    if (!cleaned) return "";
+    return cleaned.length > REPORT_CONTEXT_MAX_CHARS
+        ? `${cleaned.slice(0, REPORT_CONTEXT_MAX_CHARS)}\n...(report truncated)`
+        : cleaned;
+}
+
+/** Build the visible user message (no report context — that goes in system prompt now). */
+function buildTrainingPrompt(
     basePrompt: string,
-    reportContent: string | undefined,
     handoffInstruction: string,
     jumpMetadata?: {
         conversationId?: string | null;
@@ -32,21 +43,7 @@ function buildTrainingPromptWithReportContext(
         title?: string;
     },
 ): string {
-    const cleanedReport = (reportContent ?? "")
-        .replace(/\n?\[PATHLAB_RESEARCH_META\][\s\S]*?(?:\[\/PATHLAB_RESEARCH_META\]|$)/g, "")
-        .trim();
     const chunks: string[] = [basePrompt];
-    if (cleanedReport) {
-        const clippedReport =
-            cleanedReport.length > REPORT_CONTEXT_MAX_CHARS
-                ? `${cleanedReport.slice(0, REPORT_CONTEXT_MAX_CHARS)}\n...(report truncated)`
-                : cleanedReport;
-        chunks.push(
-            "[RESEARCH_REPORT_CONTEXT]",
-            clippedReport,
-            "[/RESEARCH_REPORT_CONTEXT]",
-        );
-    }
     chunks.push(
         "[TRAINING_HANDOFF_CONTEXT]",
         handoffInstruction,
@@ -253,9 +250,11 @@ export function ResearchCard({
             "First guide the user to upload/select dataset, then help complete training setup.",
             "When needed, provide structured [DATASET_REGISTRATION] and [TASK_CONFIG] blocks.",
         ].join("\n");
-        const prompt = buildTrainingPromptWithReportContext(
+        // Report context is now passed separately and injected into the system prompt
+        // by the backend, instead of being embedded in the user message on every turn.
+        const reportContext = extractReportContext(reportMessage?.content);
+        const prompt = buildTrainingPrompt(
             basePrompt,
-            reportMessage?.content,
             handoffInstruction,
             {
                 conversationId,
@@ -271,7 +270,7 @@ export function ResearchCard({
             const reportH1 = reportMessage?.content?.match(/^#\s+(.+)$/m)?.[1]?.trim();
             const resolvedTitle = reportH1 || title;
             const chatTitle = resolvedTitle ? `Training: ${resolvedTitle}` : "Training Chat";
-            const newConv = await apiCreateChatConversation(chatTitle);
+            const newConv = await apiCreateChatConversation(chatTitle, undefined, reportContext || undefined);
             preCreatedConversationId = newConv.conversation_id;
 
             // Append a link message in the Deep Research conversation
@@ -317,6 +316,7 @@ export function ResearchCard({
                 forceNewChat: true,
                 fromDeepResearchStartTraining: true,
                 preCreatedConversationId,
+                reportContext: reportContext || undefined,
             },
         });
     }, [t, reportMessage?.content, conversationId, researchId, title, navigate, existingTrainingLink]);
