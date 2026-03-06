@@ -308,7 +308,6 @@ async def check_task_access_permission(
 
     Returns True if:
     - User is admin (can access all)
-    - Task has no owner (legacy data)
     - User owns the task (task_user_id matches)
     - User has valid temporary elevated permission for the task's dataset
 
@@ -323,10 +322,6 @@ async def check_task_access_permission(
     """
     # Admin can access everything
     if user.is_admin():
-        return True
-
-    # If task has no owner (legacy data), allow access
-    if task_user_id is None:
         return True
 
     # Check if user owns the task

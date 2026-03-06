@@ -89,8 +89,7 @@ async def create_training_task(
                     wsi = wsi_map[wsi_id]
                     # In-memory permission check (no DB query per WSI)
                     has_access = (
-                        wsi.user_id is None  # Legacy data
-                        or wsi.user_id == str(user.id)  # Owner
+                        wsi.user_id == str(user.id)  # Owner
                         or (wsi.dataset_id and wsi.dataset_id in elevated_dataset_ids)  # Elevated permission
                     )
                     if not has_access:
