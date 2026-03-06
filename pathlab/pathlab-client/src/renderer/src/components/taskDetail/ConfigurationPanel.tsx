@@ -9,6 +9,34 @@ interface ConfigurationPanelProps {
   task: TaskDetail
 }
 
+const LossFunctionList: React.FC<{
+  title: string
+  names?: string[]
+  weights?: number[]
+  weightLabel: string
+}> = ({ title, names, weights, weightLabel }) => {
+  if (!names || names.length === 0) return null
+
+  return (
+    <div className="text-[11px] sm:text-sm">
+      <span className="text-gray-500 font-medium block mb-2">{title}</span>
+      <div className="flex flex-wrap gap-2">
+        {names.map((name, index) => (
+          <div
+            key={`${name}-${index}`}
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-2 py-1 shadow-sm"
+          >
+            <span className="font-bold text-gray-900 text-[10px] sm:text-xs">{name}</span>
+            <span className="font-mono text-[10px] sm:text-xs text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100 shadow-sm">
+              {weightLabel}: {weights?.[index] ?? '—'}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) => {
   const { t } = useTranslation()
   const isExternalValidation = task.task_type === 'external_validation'
@@ -139,23 +167,12 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                       </div>
                     </>
                   )}
-                  {task.model_config.loss_names && task.model_config.loss_names.length > 0 && (
-                    <div className="text-[11px] sm:text-sm">
-                      <span className="text-gray-500 font-medium block mb-2">{t('taskDetail.configuration.lossFunctions')}</span>
-                      <div className="space-y-1.5">
-                        {task.model_config.loss_names.map((name, i) => (
-                          <div key={name} className="flex justify-between items-center">
-                            <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm text-[10px] sm:text-xs">
-                              {name}
-                            </span>
-                            <span className="font-mono text-gray-500 text-[10px] sm:text-xs">
-                              {t('taskDetail.configuration.lossWeight')}: {task.model_config.loss_weights?.[i] ?? '—'}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  <LossFunctionList
+                    title={t('taskDetail.configuration.lossFunctions')}
+                    names={task.model_config.loss_names}
+                    weights={task.model_config.loss_weights}
+                    weightLabel={t('taskDetail.configuration.lossWeight')}
+                  />
                 </>
               ) : (
                 <>

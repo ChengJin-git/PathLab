@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db, async_session, safe_session
 from backend.database.repositories import (
     WSIRepository,
+    AIResultRepository,
     TrainingTaskRepository,
     TrainedModelRepository,
     TrainingLogRepository,
@@ -588,6 +589,9 @@ async def delete_training_task(
         # Get all trained models for this task
         models = await TrainedModelRepository.get_by_task_id(db, task_id)
         model_ids = [model.model_id for model in models]
+
+        # Delete task-scoped AI result records before removing the task record itself.
+        await AIResultRepository.delete_by_task_id(db, task_id)
 
         # Delete task from database (cascades to associations, models, logs)
         await TrainingTaskRepository.delete(db, task_id)

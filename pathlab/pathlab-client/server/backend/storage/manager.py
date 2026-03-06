@@ -92,6 +92,32 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
     # StorageStatsMixin and StorageOrphanMixin via inheritance.
     # See stats_mixin.py and orphan_mixin.py for details.
 
+    def _get_task_ai_result_patterns(self, task_id: str) -> List[str]:
+        """Get filename patterns for task-scoped AI result artifacts."""
+        return [
+            f"{task_id}_*",
+            f"train_{task_id}_*",
+            f"extval_{task_id}_*",
+        ]
+
+    def _iter_task_ai_result_files(self, task_id: str):
+        """Yield task-scoped AI result files across all WSI result directories."""
+        if not self.ai_results_dir.exists() or not self.ai_results_dir.is_dir():
+            return
+
+        seen_paths = set()
+        patterns = self._get_task_ai_result_patterns(task_id)
+
+        for wsi_result_dir in self.ai_results_dir.iterdir():
+            if not wsi_result_dir.is_dir():
+                continue
+
+            for pattern in patterns:
+                for file_path in wsi_result_dir.glob(pattern):
+                    if file_path.is_file() and file_path not in seen_paths:
+                        seen_paths.add(file_path)
+                        yield file_path
+
     def delete_wsi_files(self, wsi_id: str, wsi_path: Optional[str] = None, mode: str = "standard") -> Dict:
         """
         Delete files associated with a WSI.
@@ -338,18 +364,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
 
         if task_id:
             # Delete only files for the specific task
-            # File naming varies:
-            # - From wsi_classification/trainer.py: train_{task_id}_result.json (task_id may already have "train_" prefix)
-            # - From inference.py: {task_id}_attention.npy
-            # So actual files can be: train_train_{uuid}_*.*, {task_id}_*.*, train_{task_id}_*.*
-            patterns = [
-                # Direct task_id patterns (from inference.py)
-                f"{task_id}_*.json",
-                f"{task_id}_*.npy",
-                # train_ prefixed patterns (from trainer.py when task_id doesn't start with train_)
-                f"train_{task_id}_*.json",
-                f"train_{task_id}_*.npy",
-            ]
+            patterns = self._get_task_ai_result_patterns(task_id)
             for pattern in patterns:
                 for file_path in ai_results_wsi_dir.glob(pattern):
                     if file_path.is_file():
@@ -430,7 +445,30 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         failed = []
         total_size = 0
 
-        # 1. Delete training directory (contains features - may be symlinks to cache)
+        # 1. Delete task-scoped AI result files (internal inference or external validation)
+        touched_ai_result_dirs = set()
+        for file_path in self._iter_task_ai_result_files(task_id) or []:
+            try:
+                size = file_path.stat().st_size
+                file_path.unlink()
+                deleted_files.append(str(file_path))
+                total_size += size
+                touched_ai_result_dirs.add(file_path.parent)
+                logger.info(f"Deleted task AI result file: {file_path}")
+            except Exception as e:
+                failed.append((str(file_path), str(e)))
+                logger.error(f"Failed to delete task AI result file {file_path}: {e}")
+
+        for result_dir in touched_ai_result_dirs:
+            if result_dir.exists() and not any(result_dir.iterdir()):
+                try:
+                    result_dir.rmdir()
+                    deleted_dirs.append(str(result_dir))
+                    logger.info(f"Removed empty AI results directory: {result_dir}")
+                except Exception as e:
+                    logger.warning(f"Could not remove AI results directory {result_dir}: {e}")
+
+        # 2. Delete training directory (contains features - may be symlinks to cache)
         training_task_dir = self.training_dir / task_id
         if training_task_dir.exists() and training_task_dir.is_dir():
             try:
@@ -456,7 +494,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 failed.append((str(training_task_dir), str(e)))
                 logger.error(f"Failed to delete training directory {training_task_dir}: {e}")
 
-        # 2. Delete log directory (new structure: logs/training/{task_id}/)
+        # 3. Delete log directory (new structure: logs/training/{task_id}/)
         training_log_dir = self.logs_dir / "training" / task_id
         if training_log_dir.exists() and training_log_dir.is_dir():
             try:
@@ -469,7 +507,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 failed.append((str(training_log_dir), str(e)))
                 logger.error(f"Failed to delete training log directory {training_log_dir}: {e}")
 
-        # 3. Delete analysis log directory (logs/analysis/{task_id}/)
+        # 4. Delete analysis log directory (logs/analysis/{task_id}/)
         analysis_log_dir = self.logs_dir / "analysis" / task_id
         if analysis_log_dir.exists() and analysis_log_dir.is_dir():
             try:
@@ -482,7 +520,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 failed.append((str(analysis_log_dir), str(e)))
                 logger.error(f"Failed to delete analysis log directory {analysis_log_dir}: {e}")
 
-        # 3. Delete model directories (only in complete mode)
+        # 5. Delete model directories (only in complete mode)
         # model_paths can be either model IDs (e.g., "abmil_train_xxx") or full paths
         if mode == "complete" and model_paths:
             for model_path in model_paths:
@@ -676,6 +714,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         """
         info = {
             "task_id": task_id,
+            "ai_results": {},
             "training_dir": {},
             "training_logs": {},
             "analysis_logs": {},
@@ -683,6 +722,28 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             "total_size": 0,
             "total_files": 0
         }
+
+        # Task-scoped AI result files across ai_results/{wsi_id}/
+        ai_result_size = 0
+        ai_result_count = 0
+        ai_result_wsi_dirs = set()
+        for file_path in self._iter_task_ai_result_files(task_id) or []:
+            try:
+                ai_result_size += file_path.stat().st_size
+                ai_result_count += 1
+                ai_result_wsi_dirs.add(str(file_path.parent))
+            except Exception:
+                continue
+
+        info["ai_results"] = {
+            "path": str(self.ai_results_dir),
+            "size": ai_result_size,
+            "exists": ai_result_count > 0,
+            "file_count": ai_result_count,
+            "wsi_dir_count": len(ai_result_wsi_dirs)
+        }
+        info["total_size"] += ai_result_size
+        info["total_files"] += ai_result_count
 
         # Training directory - use optimized single-pass stats
         training_dir = self.training_dir / task_id

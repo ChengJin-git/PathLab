@@ -50,6 +50,13 @@ export interface WSIStorageInfo {
 
 export interface TrainingTaskStorageInfo {
   task_id: string
+  ai_results: {
+    path: string
+    size: number
+    exists: boolean
+    file_count: number
+    wsi_dir_count: number
+  }
   training_dir: {
     path: string
     size: number

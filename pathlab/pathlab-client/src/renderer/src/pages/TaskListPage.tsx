@@ -770,8 +770,14 @@ export default function TaskListPage() {
                       {taskStorageInfo.training_dir.exists && (
                         <li>• {t('taskList.deleteModal.trainingData', { size: formatBytes(taskStorageInfo.training_dir.size) })}</li>
                       )}
+                      {taskStorageInfo.ai_results.exists && (
+                        <li>• {t('taskList.deleteModal.aiResults', { size: formatBytes(taskStorageInfo.ai_results.size) })}</li>
+                      )}
                       {taskStorageInfo.training_logs.exists && (
                         <li>• {t('taskList.deleteModal.logs', { size: formatBytes(taskStorageInfo.training_logs.size) })}</li>
+                      )}
+                      {taskStorageInfo.analysis_logs.exists && (
+                        <li>• {t('taskList.deleteModal.analysisLogs', { size: formatBytes(taskStorageInfo.analysis_logs.size) })}</li>
                       )}
                       {deleteMode === 'complete' && taskStorageInfo.models.length > 0 && (
                         <li>• {t('taskList.deleteModal.models', { size: formatBytes(modelsSize) })}</li>
