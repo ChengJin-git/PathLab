@@ -13,7 +13,7 @@ from ..dependencies import logger
 from ..utils import cancel_ai_service_training
 from backend.ai.schemas.base import TaskStatus
 from backend.database import get_db
-from backend.database.repositories import TrainingTaskRepository
+from backend.database.repositories import TrainingTaskRepository, AITaskRepository
 from backend.common.config import Config
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_admin, check_data_ownership
@@ -28,9 +28,9 @@ class QueueConfigRequest(BaseModel):
 
 
 @router.get("/config")
-async def get_queue_config(user: User = Depends(current_active_user)):
+async def get_queue_config(user: User = Depends(require_admin)):
     """
-    Get current queue and task configuration.
+    Get current queue and task configuration. Admin only.
 
     Returns:
         {
@@ -48,9 +48,9 @@ async def get_queue_config(user: User = Depends(current_active_user)):
 
 
 @router.get("")
-async def get_queue_status(user: User = Depends(current_active_user)):
+async def get_queue_status(user: User = Depends(require_admin)):
     """
-    Get the current status of the task queue.
+    Get the current status of the task queue. Admin only.
 
     Returns:
         {
@@ -185,6 +185,10 @@ async def cancel_queued_task(
             }
 
     # Check if this is a training task (stored in database)
+    ai_task = await AITaskRepository.get_by_id(db, task_id)
+    if ai_task and not check_data_ownership(ai_task.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to cancel this task")
+
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if task and not check_data_ownership(task.user_id, user):
         raise HTTPException(status_code=403, detail="You don't have permission to cancel this task")
@@ -201,7 +205,20 @@ async def cancel_queued_task(
     await cancel_ai_service_training(task_id)
 
     # Always try to update database status (handles orphaned tasks after restart)
-    if task and task.status not in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+    if ai_task and ai_task.status not in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+        await AITaskRepository.update_status(
+            db,
+            task_id,
+            status=TaskStatus.CANCELLED,
+            error_message="Task cancelled by user"
+        )
+        await db.commit()
+
+        return {
+            "cancelled": True,
+            "message": f"Task {task_id} cancelled successfully"
+        }
+    elif task and task.status not in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
         await TrainingTaskRepository.update_status(
             db,
             task_id,
@@ -229,7 +246,8 @@ async def cancel_queued_task(
 @router.get("/{task_id}")
 async def check_task_in_queue(
     task_id: str,
-    user: User = Depends(current_active_user)
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Check if a task is in the queue.
@@ -241,6 +259,35 @@ async def check_task_in_queue(
             "status": "running" | "pending" | "not_found"
         }
     """
+    if not user.is_admin():
+        analysis_state = get_analysis_state()
+        analysis_task = await analysis_state.get(task_id)
+
+        if analysis_task:
+            if analysis_task.get("user_id") != str(user.id):
+                return {
+                    "task_id": task_id,
+                    "in_queue": False,
+                    "status": "not_found"
+                }
+        else:
+            ai_task = await AITaskRepository.get_by_id(db, task_id)
+            if ai_task:
+                if not check_data_ownership(ai_task.user_id, user):
+                    return {
+                        "task_id": task_id,
+                        "in_queue": False,
+                        "status": "not_found"
+                    }
+            else:
+                training_task = await TrainingTaskRepository.get_by_id(db, task_id)
+                if not training_task or not check_data_ownership(training_task.user_id, user):
+                    return {
+                        "task_id": task_id,
+                        "in_queue": False,
+                        "status": "not_found"
+                    }
+
     queue = get_task_queue()
     if not queue:
         raise HTTPException(status_code=503, detail="Task queue not initialized")

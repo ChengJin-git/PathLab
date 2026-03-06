@@ -19,7 +19,7 @@ from backend.database.repositories import (
     StorageTaskRepository,
 )
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import require_can_use_gpu, check_data_ownership, require_dataset_gpu_permission, check_wsi_access_permission
+from backend.auth.dependencies import check_data_ownership, require_dataset_gpu_permission, check_wsi_access_permission, get_permitted_dataset_ids
 from ..dependencies import logger, AI_SERVICE_URL
 from ..models import WSIClassifyRequest
 from ..task_queue import get_task_queue, TaskType
@@ -76,7 +76,8 @@ async def create_wsi_classification(
     The task is submitted to the GPU task queue for execution.
     When it's the task's turn, Gateway calls AI Service's sync endpoint.
 
-    If classes are not provided, they will be auto-detected from all WSI labels in the database.
+    If classes are not provided, they will be auto-detected from labels in the
+    current WSI's accessible dataset scope.
     """
     # Validate WSI exists in database
     wsi = await WSIRepository.get_by_id_with_dataset(db, req.wsi_id)
@@ -124,21 +125,29 @@ async def create_wsi_classification(
     # Auto-detect classes if not provided
     classes = req.classes
     if not classes:
-        # Get all unique labels from database
-        all_wsi = await WSIRepository.get_all(db, skip=0, limit=10000)
-        unique_labels = set()
-        for w in all_wsi:
-            if w.label:
-                unique_labels.add(w.label)
+        elevated_dataset_ids = await get_permitted_dataset_ids(user, db)
+        dataset_scope = wsi.dataset_id or "Uncategorized"
+        visible_wsi = await WSIRepository.get_by_dataset(
+            db,
+            dataset_scope,
+            user_id=None if user.is_admin() else str(user.id),
+            elevated_dataset_ids=elevated_dataset_ids,
+        )
+        unique_labels = {candidate.label for candidate in visible_wsi if candidate.label}
 
         if not unique_labels:
             raise HTTPException(
                 status_code=400,
-                detail="No classes provided and no labeled WSI found in database. Please provide classes parameter."
+                detail="No classes provided and no labeled WSI found in the accessible dataset scope. Please provide classes parameter."
             )
 
         classes = sorted(list(unique_labels))
-        logger.info(f"Auto-detected classes from database: {classes}")
+        logger.info(
+            "Auto-detected classes for WSI %s from dataset scope %s: %s",
+            req.wsi_id,
+            dataset_scope,
+            classes,
+        )
 
     # Validate model exists
     model_id = req.model_id

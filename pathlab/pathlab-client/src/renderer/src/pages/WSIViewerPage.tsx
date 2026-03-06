@@ -43,6 +43,13 @@ import { useToast } from '../contexts/ToastContext'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { getFileType } from '../constants/fileTypes'
 
+const FOCUS_REGION_PADDING_MULTIPLIER = 1.8
+const FOCUS_REGION_MIN_SIZE = 512
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max)
+}
+
 export default function WSIViewerPage() {
   const { t } = useTranslation()
   const toast = useToast()
@@ -239,6 +246,7 @@ export default function WSIViewerPage() {
   const [slideWidth, setSlideWidth] = useState(0)
   const [slideHeight, setSlideHeight] = useState(0)
   const [showCreateDatasetDialog, setShowCreateDatasetDialog] = useState(false)
+  const [focusedRegionId, setFocusedRegionId] = useState<string | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const effectiveDatasetId = datasetId ?? detail?.meta?.dataset_id
   const draftCacheKey = effectiveDatasetId ?? '__NO_DATASET__'
@@ -410,6 +418,10 @@ export default function WSIViewerPage() {
   // Annotation: computed values
   const currentRegions = useMemo(() => allAnnotations[wsi_id] || [], [allAnnotations, wsi_id])
 
+  useEffect(() => {
+    setFocusedRegionId(prev => prev && currentRegions.some(region => region.id === prev) ? prev : null)
+  }, [currentRegions])
+
   const allLabels = useMemo(() => {
     const labels = new Set<string>()
     for (const regions of Object.values(allAnnotations)) {
@@ -466,6 +478,49 @@ export default function WSIViewerPage() {
     setSlideWidth(info.width)
     setSlideHeight(info.height)
   }, [])
+
+  const handleFocusRegion = useCallback((regionId: string) => {
+    setFocusedRegionId(regionId)
+
+    const region = currentRegions.find(item => item.id === regionId)
+    if (!region || !osdViewer?.viewport || !window.OpenSeadragon || slideWidth <= 0 || slideHeight <= 0) {
+      return
+    }
+
+    const viewportAspect = Math.max(osdViewer.viewport.getAspectRatio?.() || 1, 0.1)
+    const regionCenterX = region.x + region.width / 2
+    const regionCenterY = region.y + region.height / 2
+
+    let targetWidth = Math.max(region.width * FOCUS_REGION_PADDING_MULTIPLIER, FOCUS_REGION_MIN_SIZE)
+    let targetHeight = Math.max(region.height * FOCUS_REGION_PADDING_MULTIPLIER, FOCUS_REGION_MIN_SIZE)
+
+    if (targetWidth / targetHeight > viewportAspect) {
+      targetHeight = targetWidth / viewportAspect
+    } else {
+      targetWidth = targetHeight * viewportAspect
+    }
+
+    const scale = Math.min(1, slideWidth / targetWidth, slideHeight / targetHeight)
+    targetWidth *= scale
+    targetHeight *= scale
+
+    const targetX = clamp(regionCenterX - targetWidth / 2, 0, Math.max(0, slideWidth - targetWidth))
+    const targetY = clamp(regionCenterY - targetHeight / 2, 0, Math.max(0, slideHeight - targetHeight))
+
+    const bounds = new window.OpenSeadragon.Rect(
+      targetX / slideWidth,
+      targetY / slideWidth,
+      targetWidth / slideWidth,
+      targetHeight / slideWidth,
+    )
+
+    if (typeof osdViewer.viewport.fitBoundsWithConstraints === 'function') {
+      osdViewer.viewport.fitBoundsWithConstraints(bounds, false)
+    } else {
+      osdViewer.viewport.fitBounds(bounds, false)
+      osdViewer.viewport.applyConstraints()
+    }
+  }, [currentRegions, osdViewer, slideHeight, slideWidth])
 
   const handleRegionCreated = useCallback((region: Omit<AnnotationRegion, 'id'>) => {
     const newRegion: AnnotationRegion = {
@@ -1089,6 +1144,7 @@ export default function WSIViewerPage() {
                 drawingTool={drawingTool}
                 currentLabel={currentLabel}
                 currentColor={currentColor}
+                highlightedRegionId={focusedRegionId}
                 regions={currentRegions}
                 labelColors={labelColors}
                 slideWidth={slideWidth}
@@ -1185,6 +1241,8 @@ export default function WSIViewerPage() {
             crossSlideSummary={effectiveDatasetId ? datasetAnnotationSummary : null}
             loadingCrossSlideSummary={effectiveDatasetId ? loadingDatasetAnnotationSummary : false}
             labelColors={labelColors}
+            focusedRegionId={focusedRegionId}
+            onFocusRegion={handleFocusRegion}
             onUpdateRegion={handleUpdateRegion}
             onDeleteRegion={handleDeleteRegion}
             onDeleteRegions={handleDeleteRegions}

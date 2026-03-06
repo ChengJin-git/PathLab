@@ -12,6 +12,8 @@ interface AnnotationListPanelProps {
   crossSlideSummary?: DatasetAnnotationSummaryResponse | null
   loadingCrossSlideSummary?: boolean
   labelColors: Record<string, string>
+  focusedRegionId?: string | null
+  onFocusRegion?: (regionId: string) => void
   onUpdateRegion: (regionId: string, updates: Partial<AnnotationRegion>) => void
   onDeleteRegion: (regionId: string) => void
   onDeleteRegions: (regionIds: string[]) => void
@@ -27,6 +29,8 @@ export function AnnotationListPanel({
   crossSlideSummary,
   loadingCrossSlideSummary = false,
   labelColors,
+  focusedRegionId = null,
+  onFocusRegion,
   onUpdateRegion,
   onDeleteRegion,
   onDeleteRegions,
@@ -214,11 +218,25 @@ export function AnnotationListPanel({
           ) : (
             <div className="space-y-1.5">
               {regions.map((region, idx) => (
-                <div key={region.id} className={`flex items-center gap-2 px-2.5 py-2 rounded-lg group transition-colors ${selectedRegionIds.has(region.id) ? 'bg-indigo-50 ring-1 ring-indigo-200' : 'bg-gray-50 hover:bg-gray-100'}`}>
+                <div
+                  key={region.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onFocusRegion?.(region.id)}
+                  onKeyDown={e => {
+                    if (e.target !== e.currentTarget) return
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      onFocusRegion?.(region.id)
+                    }
+                  }}
+                  className={`flex items-center gap-2 px-2.5 py-2 rounded-lg group transition-all cursor-pointer ${focusedRegionId === region.id ? 'bg-amber-50 ring-2 ring-amber-300 shadow-sm' : selectedRegionIds.has(region.id) ? 'bg-indigo-50 ring-1 ring-indigo-200' : 'bg-gray-50 hover:bg-gray-100'}`}
+                >
                   <input
                     type="checkbox"
                     checked={selectedRegionIds.has(region.id)}
                     onChange={() => toggleSelectRegion(region.id)}
+                    onClick={e => e.stopPropagation()}
                     className="w-3.5 h-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer flex-shrink-0"
                   />
                   <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-gray-200" style={{ backgroundColor: labelColors[region.label] || region.color }} />
@@ -227,6 +245,7 @@ export function AnnotationListPanel({
                       type="text"
                       value={editLabel}
                       onChange={e => setEditLabel(e.target.value)}
+                      onClick={e => e.stopPropagation()}
                       onBlur={() => handleSaveEdit(region.id)}
                       onKeyDown={e => { if (e.key === 'Enter') handleSaveEdit(region.id); if (e.key === 'Escape') setEditingId(null) }}
                       className="flex-1 px-1.5 py-0.5 text-xs border border-indigo-300 rounded focus:ring-1 focus:ring-indigo-500 outline-none"
@@ -237,10 +256,10 @@ export function AnnotationListPanel({
                   )}
                   <span className="text-[10px] text-gray-400">{region.type === 'polygon' ? '⬠' : '▭'} #{idx + 1}</span>
                   <span className="text-[10px] text-gray-400">{Math.round(region.width)}×{Math.round(region.height)}</span>
-                  <button onClick={() => handleStartEdit(region)} className="p-1 text-gray-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity" title={t('annotation.editLabel')}>
+                  <button onClick={e => { e.stopPropagation(); handleStartEdit(region) }} className="p-1 text-gray-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity" title={t('annotation.editLabel')}>
                     <Pencil className="w-3 h-3" />
                   </button>
-                  <button onClick={() => onDeleteRegion(region.id)} className="p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity" title={t('annotation.deleteRegion')}>
+                  <button onClick={e => { e.stopPropagation(); onDeleteRegion(region.id) }} className="p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity" title={t('annotation.deleteRegion')}>
                     <Trash2 className="w-3 h-3" />
                   </button>
                 </div>

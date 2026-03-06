@@ -7,6 +7,7 @@ interface AnnotationOverlayProps {
   drawingTool: 'rect' | 'polygon'
   currentLabel: string
   currentColor: string
+  highlightedRegionId?: string | null
   regions: AnnotationRegion[]    // current slide's annotations
   labelColors: Record<string, string>
   slideWidth: number
@@ -35,6 +36,7 @@ export function AnnotationOverlay({
   drawingTool,
   currentLabel,
   currentColor,
+  highlightedRegionId = null,
   regions,
   labelColors,
   slideWidth,
@@ -95,26 +97,51 @@ export function AnnotationOverlay({
     const bottomRight = l0ToScreen(region.x + region.width, region.y + region.height)
     if (!topLeft || !bottomRight) return
 
+    const highlightStrokeColor = 'rgba(245, 158, 11, 0.95)'
     ctx.strokeStyle = color
     ctx.lineWidth = highlight ? 3 : 2
     ctx.fillStyle = color + '20' // 12% opacity fill
 
     if (region.type === 'polygon' && region.points && region.points.length >= 3) {
-      ctx.beginPath()
-      const first = l0ToScreen(region.points[0][0], region.points[0][1])
-      if (!first) return
-      ctx.moveTo(first.x, first.y)
-      for (let i = 1; i < region.points.length; i++) {
-        const pt = l0ToScreen(region.points[i][0], region.points[i][1])
-        if (pt) ctx.lineTo(pt.x, pt.y)
+      const screenPoints = region.points
+        .map(point => l0ToScreen(point[0], point[1]))
+        .filter((point): point is { x: number; y: number } => point !== null)
+      if (screenPoints.length < 3) return
+
+      const drawPolygonPath = () => {
+        ctx.beginPath()
+        ctx.moveTo(screenPoints[0].x, screenPoints[0].y)
+        for (let i = 1; i < screenPoints.length; i++) {
+          ctx.lineTo(screenPoints[i].x, screenPoints[i].y)
+        }
+        ctx.closePath()
       }
-      ctx.closePath()
+
+      if (highlight) {
+        drawPolygonPath()
+        ctx.strokeStyle = highlightStrokeColor
+        ctx.lineWidth = 6
+        ctx.stroke()
+      }
+
+      drawPolygonPath()
       ctx.fill()
+      ctx.strokeStyle = color
+      ctx.lineWidth = highlight ? 3 : 2
       ctx.stroke()
     } else {
       const w = bottomRight.x - topLeft.x
       const h = bottomRight.y - topLeft.y
+
+      if (highlight) {
+        ctx.strokeStyle = highlightStrokeColor
+        ctx.lineWidth = 6
+        ctx.strokeRect(topLeft.x, topLeft.y, w, h)
+      }
+
       ctx.fillRect(topLeft.x, topLeft.y, w, h)
+      ctx.strokeStyle = color
+      ctx.lineWidth = highlight ? 3 : 2
       ctx.strokeRect(topLeft.x, topLeft.y, w, h)
     }
 
@@ -145,6 +172,11 @@ export function AnnotationOverlay({
     ctx.quadraticCurveTo(rx, ry, rx + radius, ry)
     ctx.closePath()
     ctx.fill()
+    if (highlight) {
+      ctx.strokeStyle = highlightStrokeColor
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+    }
     // Shadow
     ctx.shadowColor = 'rgba(0,0,0,0.1)'
     ctx.shadowBlur = 4
@@ -169,7 +201,7 @@ export function AnnotationOverlay({
     if (!viewer || !viewer.viewport) return
 
     // Draw existing regions
-    regions.forEach(r => drawRegion(ctx, r))
+    regions.forEach(r => drawRegion(ctx, r, r.id === highlightedRegionId))
 
     // Draw in-progress rectangle
     if (isDrawing && drawingTool === 'rect' && rectStart && rectEnd) {
@@ -220,7 +252,7 @@ export function AnnotationOverlay({
       }
       ctx.setLineDash([])
     }
-  }, [viewer, regions, isDrawing, drawingTool, rectStart, rectEnd, polygonPoints, mousePos, currentColor, drawRegion, l0ToScreen, resizeCanvas])
+  }, [viewer, regions, highlightedRegionId, isDrawing, drawingTool, rectStart, rectEnd, polygonPoints, mousePos, currentColor, drawRegion, l0ToScreen, resizeCanvas])
 
   // Re-render on viewport change (zoom/pan)
   useEffect(() => {
