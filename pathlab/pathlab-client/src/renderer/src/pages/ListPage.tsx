@@ -2,8 +2,8 @@ import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, invalidateWSIListCache, getFileType } from '../api'
-import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User } from 'lucide-react'
+import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, invalidateWSIListCache, getFileType, exportDatasetLabels } from '../api'
+import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -11,7 +11,7 @@ import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { ALL_ACCEPT_STRING } from '../constants/fileTypes'
 import { formatBytes } from '../lib/utils'
 import { useAuth } from '../contexts/AuthContext'
-import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal } from '../components/list'
+import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, type ExportLabelsOptions } from '../components/list'
 
 export default function ListPage() {
   const { t } = useTranslation()
@@ -75,12 +75,23 @@ export default function ListPage() {
 
   // Edit metadata modal
   const [showEditModal, setShowEditModal] = useState(false)
-  const [editingWSI, setEditingWSI] = useState<{ wsi_id: string; label: string; case_id: string; age?: number; gender?: string; source?: string } | null>(null)
+  const [editingWSI, setEditingWSI] = useState<{
+    wsi_id: string
+    label?: string
+    case_id: string
+    age?: number
+    gender?: string
+    source?: string
+    event_time?: number
+    event_status?: number
+  } | null>(null)
   const [editLabel, setEditLabel] = useState('')
   const [editCaseId, setEditCaseId] = useState('')
   const [editAge, setEditAge] = useState('')
   const [editGender, setEditGender] = useState('')
   const [editSource, setEditSource] = useState('')
+  const [editEventTime, setEditEventTime] = useState('')
+  const [editEventStatus, setEditEventStatus] = useState('')
   const [updating, setUpdating] = useState(false)
 
   // Batch edit metadata
@@ -90,6 +101,8 @@ export default function ListPage() {
   const [batchEditAge, setBatchEditAge] = useState('')
   const [batchEditGender, setBatchEditGender] = useState('')
   const [batchEditSource, setBatchEditSource] = useState('')
+  const [batchEditEventTime, setBatchEditEventTime] = useState('')
+  const [batchEditEventStatus, setBatchEditEventStatus] = useState('')
   const [batchUpdating, setBatchUpdating] = useState(false)
 
   // Case grouping - tracks which case_ids are expanded
@@ -114,6 +127,11 @@ export default function ListPage() {
   const [deleting, setDeleting] = useState(false)
   // Optimistically hide datasets that are being deleted in background
   const [optimisticallyDeletedDatasetIds, setOptimisticallyDeletedDatasetIds] = useState<Set<string>>(new Set())
+
+  // Export labels - stores dataset for export modal
+  const [exportingDataset, setExportingDataset] = useState<DatasetSummary | null>(null)
+  const [showExportModal, setShowExportModal] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   const visibleDatasets = useMemo(() => {
     return datasets.filter(d => !d.dataset_id || !optimisticallyDeletedDatasetIds.has(d.dataset_id))
@@ -448,13 +466,17 @@ export default function ListPage() {
       case_id: wsi.case_id,
       age: wsi.age,
       gender: wsi.gender,
-      source: wsi.source
+      source: wsi.source,
+      event_time: wsi.event_time,
+      event_status: wsi.event_status
     })
     setEditLabel(wsi.label || '')
     setEditCaseId(wsi.case_id || '')
     setEditAge(wsi.age?.toString() || '')
     setEditGender(wsi.gender || '')
     setEditSource(wsi.source || '')
+    setEditEventTime(wsi.event_time?.toString() || '')
+    setEditEventStatus(wsi.event_status?.toString() || '')
     setShowEditModal(true)
   }
 
@@ -464,12 +486,17 @@ export default function ListPage() {
     setUpdating(true)
     try {
       const age = editAge ? parseInt(editAge) : undefined
+      const event_time = editEventTime ? parseFloat(editEventTime) : undefined
+      const event_status = editEventStatus ? parseInt(editEventStatus) : undefined
+
       await updateWSIMetadata(editingWSI.wsi_id, {
-        label: editLabel,
-        case_id: editCaseId,
+        label: editLabel || undefined,
+        case_id: editCaseId || undefined,
         age: age,
-        gender: editGender,
-        source: editSource
+        gender: editGender || undefined,
+        source: editSource || undefined,
+        event_time: event_time,
+        event_status: event_status
       })
       setShowEditModal(false)
       setEditingWSI(null)
@@ -492,6 +519,8 @@ export default function ListPage() {
     setBatchEditAge('')
     setBatchEditGender('')
     setBatchEditSource('')
+    setBatchEditEventTime('')
+    setBatchEditEventStatus('')
     setShowBatchEditModal(true)
   }
 
@@ -499,7 +528,7 @@ export default function ListPage() {
     if (selectedIds.size === 0) return
 
     // Check if at least one field is provided
-    const hasUpdates = batchEditLabel || batchEditCaseId || batchEditAge || batchEditGender || batchEditSource
+    const hasUpdates = batchEditLabel || batchEditCaseId || batchEditAge || batchEditGender || batchEditSource || batchEditEventTime || batchEditEventStatus
     if (!hasUpdates) {
       setShowBatchEditModal(false)
       return
@@ -509,13 +538,18 @@ export default function ListPage() {
     try {
       // Prepare the request
       const age = batchEditAge ? parseInt(batchEditAge) : undefined
+      const event_time = batchEditEventTime ? parseFloat(batchEditEventTime) : undefined
+      const event_status = batchEditEventStatus ? parseInt(batchEditEventStatus) : undefined
+
       const request = {
         wsi_ids: Array.from(selectedIds),
         label: batchEditLabel || undefined,
         case_id: batchEditCaseId || undefined,
         age: age,
         gender: batchEditGender || undefined,
-        source: batchEditSource || undefined
+        source: batchEditSource || undefined,
+        event_time: event_time,
+        event_status: event_status
       }
 
       // Start background task
@@ -598,6 +632,52 @@ export default function ListPage() {
     } finally {
       handleEditDatasetCancel()
     }
+  }
+
+  // Export labels handlers
+  const handleExportLabelsClick = async (e: React.MouseEvent, dataset: DatasetSummary) => {
+    e.stopPropagation()
+
+    // Check if dataset has predefined splits
+    if (dataset.has_predefined_splits) {
+      // Direct export without modal
+      setExporting(true)
+      try {
+        await exportDatasetLabels(dataset.dataset_id!)
+        toastSuccess(t('listPage.exportSuccess'))
+      } catch (error) {
+        console.error('Failed to export labels:', error)
+        toastError(t('listPage.exportFailed'))
+      } finally {
+        setExporting(false)
+      }
+    } else {
+      // Show modal for split configuration
+      setExportingDataset(dataset)
+      setShowExportModal(true)
+    }
+  }
+
+  const handleExportConfirm = async (options: ExportLabelsOptions) => {
+    if (!exportingDataset) return
+
+    setExporting(true)
+    try {
+      await exportDatasetLabels(exportingDataset.dataset_id!, options)
+      toastSuccess(t('listPage.exportSuccess'))
+    } catch (error) {
+      console.error('Failed to export labels:', error)
+      toastError(t('listPage.exportFailed'))
+    } finally {
+      setExporting(false)
+      setShowExportModal(false)
+      setExportingDataset(null)
+    }
+  }
+
+  const handleExportCancel = () => {
+    setShowExportModal(false)
+    setExportingDataset(null)
   }
 
   // Legacy inline rename functions (kept for compatibility)
@@ -951,6 +1031,22 @@ export default function ListPage() {
                             </h3>
                             {dataset.can_delete && (
                               <div className="flex items-center sm:opacity-0 group-hover/title:opacity-100 transition-all -ml-0.5 sm:-ml-1">
+                                {isAdmin && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-green-600"
+                                    onClick={(e) => handleExportLabelsClick(e, dataset)}
+                                    title={t('listPage.exportLabels')}
+                                    disabled={exporting}
+                                  >
+                                    {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <Download className="w-3.5 h-3.5" />
+                                    )}
+                                  </Button>
+                                )}
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -1901,11 +1997,16 @@ export default function ListPage() {
           editAge={editAge}
           editGender={editGender}
           editSource={editSource}
+          editEventTime={editEventTime}
+          editEventStatus={editEventStatus}
+          datasetType={selectedDatasetType}
           onEditLabelChange={setEditLabel}
           onEditCaseIdChange={setEditCaseId}
           onEditAgeChange={setEditAge}
           onEditGenderChange={setEditGender}
           onEditSourceChange={setEditSource}
+          onEditEventTimeChange={setEditEventTime}
+          onEditEventStatusChange={setEditEventStatus}
           updating={updating}
           onCancel={() => {
             setShowEditModal(false)
@@ -1924,11 +2025,16 @@ export default function ListPage() {
           batchEditAge={batchEditAge}
           batchEditGender={batchEditGender}
           batchEditSource={batchEditSource}
+          batchEditEventTime={batchEditEventTime}
+          batchEditEventStatus={batchEditEventStatus}
+          datasetType={selectedDatasetType}
           onBatchEditLabelChange={setBatchEditLabel}
           onBatchEditCaseIdChange={setBatchEditCaseId}
           onBatchEditAgeChange={setBatchEditAge}
           onBatchEditGenderChange={setBatchEditGender}
           onBatchEditSourceChange={setBatchEditSource}
+          onBatchEditEventTimeChange={setBatchEditEventTime}
+          onBatchEditEventStatusChange={setBatchEditEventStatus}
           batchUpdating={batchUpdating}
           onCancel={() => setShowBatchEditModal(false)}
           onConfirm={handleConfirmBatchEdit}
@@ -1953,6 +2059,15 @@ export default function ListPage() {
           onDataLevelChange={setEditingDatasetDataLevel}
           onCancel={handleEditDatasetCancel}
           onSave={handleEditDatasetSave}
+        />
+      )}
+
+      {/* Export Labels Modal */}
+      {showExportModal && exportingDataset && (
+        <ExportLabelsModal
+          dataset={exportingDataset}
+          onConfirm={handleExportConfirm}
+          onCancel={handleExportCancel}
         />
       )}
     </div>

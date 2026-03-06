@@ -11,8 +11,10 @@ Authentication & Authorization:
 import csv
 import io
 import httpx
-from typing import Optional, List
+from typing import Optional, List, Dict
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete as sql_delete
 
@@ -27,6 +29,7 @@ from backend.database.repositories import (
 from backend.database.models import AIResult, AITask, TrainingTaskWSI
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, get_user_id_filter, check_wsi_access_permission
+from backend.ai.utils.data_splitter import split_case_dataset, split_wsi_dataset
 from ..dependencies import logger, storage_manager, PREPROCESSING_SERVICE_URL
 from ..models import DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest
 
@@ -53,7 +56,7 @@ async def list_wsi(
 
     When dataset_id is provided, pagination is case-level:
     - Each distinct case_id is one page unit
-    - All files without case_id form one __no_case__ group (always last)
+    - Files without case_id are individually paginated (one file = one page unit)
     - Response includes total_cases, has_multi_slide_cases metadata
 
     When dataset_id is NOT provided, falls back to file-level pagination
@@ -1005,5 +1008,179 @@ async def upload_dataset_splits(
     }
 
 
+@router.get("/datasets/{dataset_id}/export-labels")
+async def export_dataset_labels(
+    dataset_id: str,
+    generate_split: bool = Query(False, description="Generate new split if no predefined split exists"),
+    seed: int = Query(42, description="Random seed for split generation"),
+    stratified: bool = Query(True, description="Use stratified split (by label or event_status)"),
+    train_ratio: float = Query(0.7, ge=0.0, le=1.0, description="Training set ratio"),
+    val_ratio: float = Query(0.1, ge=0.0, le=1.0, description="Validation set ratio"),
+    test_ratio: float = Query(0.2, ge=0.0, le=1.0, description="Test set ratio"),
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Export dataset labels as CSV file.
+
+    Admin only. Non-blocking operation using StreamingResponse.
+
+    If dataset has predefined splits, exports them directly.
+    If generate_split=True and no predefined splits, generates splits using the same
+    logic as training (respects file-level vs case-level aggregation).
+
+    CSV columns vary by task_type and aggregation_level:
+    - Classification (file-level): filename, label, case_id, age, gender, source, split
+    - Classification (case-level): case_id, label, file_count, age, gender, source, split, filenames
+    - Survival (file-level): filename, event_time, event_status, case_id, age, gender, source, split
+    - Survival (case-level): case_id, event_time, event_status, file_count, age, gender, source, split, filenames
+    """
+    # Admin only
+    if not user.is_admin():
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    # Validate ratios sum to 1.0
+    total_ratio = train_ratio + val_ratio + test_ratio
+    if abs(total_ratio - 1.0) > 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ratios must sum to 1.0, got {total_ratio:.2f}"
+        )
+
+    # Get dataset
+    dataset = await DatasetRepository.get_by_id(db, dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    aggregation_level = dataset.data_group.aggregation_level if dataset.data_group else "file"
+    task_type = dataset.data_group.task_type if dataset.data_group else "classification"
+
+    # Get all WSI slides in dataset
+    wsis = await WSIRepository.get_by_dataset(db, dataset_id, skip=0, limit=0)
+
+    if not wsis:
+        raise HTTPException(status_code=400, detail="Dataset is empty")
+
+    # Check if dataset has predefined splits
+    has_predefined_splits = any(wsi.split for wsi in wsis)
+
+    # Determine splits
+    splits: Dict[str, str] = {}
+
+    if has_predefined_splits:
+        # Use predefined splits
+        splits = {wsi.wsi_id: wsi.split or "unknown" for wsi in wsis}
+        logger.info(f"Exporting dataset {dataset_id} with predefined splits")
+    elif generate_split:
+        # Generate new splits using training logic
+        logger.info(f"Generating splits for dataset {dataset_id}: aggregation_level={aggregation_level}, task_type={task_type}")
+
+        # Build labels dict for stratification
+        if task_type == "survival":
+            # For survival, stratify by event_status
+            labels = {wsi.wsi_id: str(wsi.event_status) for wsi in wsis if wsi.event_status is not None}
+        else:
+            # For classification/segmentation, stratify by label
+            labels = {wsi.wsi_id: wsi.label for wsi in wsis if wsi.label}
+
+        wsi_ids = [wsi.wsi_id for wsi in wsis]
+
+        if aggregation_level == "case":
+            # Case-level: ensure all slides from same case are in same split
+            case_id_map = {wsi.wsi_id: wsi.case_id or wsi.wsi_id for wsi in wsis}
+
+            # For case-level, labels need to be keyed by case_id
+            case_labels: Dict[str, str] = {}
+            for wsi in wsis:
+                case_id = wsi.case_id or wsi.wsi_id
+                if case_id not in case_labels:
+                    if task_type == "survival":
+                        if wsi.event_status is not None:
+                            case_labels[case_id] = str(wsi.event_status)
+                    else:
+                        if wsi.label:
+                            case_labels[case_id] = wsi.label
+
+            splits = split_case_dataset(
+                wsi_ids=wsi_ids,
+                case_id_map=case_id_map,
+                strategy="random",
+                labels=case_labels if stratified else None,
+                ratios={"train": train_ratio, "val": val_ratio, "test": test_ratio},
+                seed=seed
+            )
+        else:
+            # File-level: split at slide level
+            splits = split_wsi_dataset(
+                wsi_ids=wsi_ids,
+                strategy="random",
+                labels=labels if stratified else None,
+                ratios={"train": train_ratio, "val": val_ratio, "test": test_ratio},
+                seed=seed
+            )
+
+        logger.info(f"Generated splits for {len(splits)} items")
+    else:
+        # No splits - mark all as "unknown"
+        splits = {wsi.wsi_id: "unknown" for wsi in wsis}
+
+    # Generate CSV using streaming to avoid memory issues
+    def generate_csv():
+        buffer = io.StringIO()
+
+        if task_type == "survival":
+            fieldnames = ["filename", "event_time", "event_status", "case_id", "age", "gender", "source", "split"]
+        else:
+            fieldnames = ["filename", "label", "case_id", "age", "gender", "source", "split"]
+
+        writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+        writer.writeheader()
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+        # Write one row per file, grouped by case_id for case-level datasets
+        if aggregation_level == "case":
+            # Group by case_id so files from the same case appear together
+            case_groups: Dict[str, List] = {}
+            for wsi in wsis:
+                case_id = wsi.case_id or wsi.wsi_id
+                if case_id not in case_groups:
+                    case_groups[case_id] = []
+                case_groups[case_id].append(wsi)
+            ordered_wsis = [wsi for case_wsis in case_groups.values() for wsi in case_wsis]
+        else:
+            ordered_wsis = wsis
+
+        for wsi in ordered_wsis:
+            row = {
+                "filename": wsi.original_filename,
+                "case_id": wsi.case_id or "",
+                "age": wsi.age if wsi.age is not None else "",
+                "gender": wsi.gender or "",
+                "source": wsi.source or "",
+                "split": splits.get(wsi.wsi_id, "unknown")
+            }
+            if task_type == "survival":
+                row["event_time"] = wsi.event_time if wsi.event_time is not None else ""
+                row["event_status"] = wsi.event_status if wsi.event_status is not None else ""
+            else:
+                row["label"] = wsi.label or ""
+
+            writer.writerow(row)
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+    # Generate filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{dataset.name}_labels_{timestamp}.csv"
+
+    return StreamingResponse(
+        generate_csv(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+    )
 
 

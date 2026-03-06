@@ -2,7 +2,7 @@
 AnnotationDraftRepository - Data Access Layer for Annotation Drafts
 """
 import logging
-from typing import List, Optional
+from typing import List, Optional, Set
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -94,3 +94,35 @@ class AnnotationDraftRepository:
         await db.flush()
         return result.rowcount > 0
 
+    @staticmethod
+    async def get_draft_with_permission(
+        db: AsyncSession,
+        draft_id: str,
+        user_id: str,
+        is_admin: bool = False,
+        elevated_dataset_ids: Optional[Set[str]] = None,
+    ) -> Optional['AnnotationDraft']:
+        """
+        Get a draft if the user has permission:
+          - admin: always allowed
+          - owner (draft.user_id == user_id): allowed
+          - temporary escalation via dataset_permissions on source_dataset_id: allowed
+        Returns None if the draft doesn't exist or the user has no access.
+        """
+        result = await db.execute(
+            select(AnnotationDraft).where(AnnotationDraft.draft_id == draft_id)
+        )
+        draft = result.scalar_one_or_none()
+        if draft is None:
+            return None
+        if is_admin:
+            return draft
+        if draft.user_id == user_id:
+            return draft
+        if (
+            elevated_dataset_ids
+            and draft.source_dataset_id
+            and draft.source_dataset_id in elevated_dataset_ids
+        ):
+            return draft
+        return None  # No access

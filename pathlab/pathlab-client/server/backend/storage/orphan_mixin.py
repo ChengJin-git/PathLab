@@ -158,6 +158,210 @@ class StorageOrphanMixin:
 
     # ==================== Orphan Detection ====================
 
+    def _scan_wsi_files(self, directory: Path, existing_wsi_set: set, result: Dict[str, Any]) -> None:
+        """Scanner for WSI files."""
+        if directory.exists():
+            for item in directory.iterdir():
+                if item.is_file() and item.suffix.lower() in ALL_IMAGE_EXTENSIONS:
+                    wsi_id = item.stem
+                    if wsi_id not in existing_wsi_set:
+                        size = item.stat().st_size
+                        result["orphaned_wsi_files"].append({
+                            "path": str(item),
+                            "size": size,
+                            "wsi_id": wsi_id
+                        })
+                        result["total_orphaned_size"] += size
+                        result["total_orphaned_count"] += 1
+                        result["total_orphaned_file_count"] += 1
+
+    def _scan_coordinates(self, directory: Path, existing_wsi_set: set, result: Dict[str, Any]) -> None:
+        """Scanner for coordinate files."""
+        if directory.exists():
+            for params_hash_dir in directory.iterdir():
+                if params_hash_dir.is_dir():
+                    for item in params_hash_dir.glob("*_coords.h5"):
+                        wsi_id = item.stem.replace("_coords", "")
+                        if wsi_id not in existing_wsi_set:
+                            size = item.stat().st_size
+                            result["orphaned_coordinates"].append({
+                                "path": str(item),
+                                "size": size,
+                                "wsi_id": wsi_id,
+                                "params_hash": params_hash_dir.name
+                            })
+                            result["total_orphaned_size"] += size
+                            result["total_orphaned_count"] += 1
+                            result["total_orphaned_file_count"] += 1
+
+    def _scan_masks(self, directory: Path, existing_wsi_set: set, result: Dict[str, Any]) -> None:
+        """Scanner for mask files."""
+        if directory.exists():
+            for item in directory.glob("*_mask.png"):
+                wsi_id = item.stem.replace("_mask", "")
+                if wsi_id not in existing_wsi_set:
+                    size = item.stat().st_size
+                    result["orphaned_masks"].append({
+                        "path": str(item),
+                        "size": size,
+                        "wsi_id": wsi_id
+                    })
+                    result["total_orphaned_size"] += size
+                    result["total_orphaned_count"] += 1
+                    result["total_orphaned_file_count"] += 1
+
+    def _scan_features_cache(self, directory: Path, existing_wsi_set: set, result: Dict[str, Any]) -> None:
+        """Scanner for feature cache files."""
+        if directory.exists():
+            for extractor_dir in directory.iterdir():
+                if extractor_dir.is_dir():
+                    for params_hash_dir in extractor_dir.iterdir():
+                        if params_hash_dir.is_dir():
+                            for item in params_hash_dir.glob("*.pt"):
+                                wsi_id = item.stem
+                                if wsi_id not in existing_wsi_set:
+                                    size = item.stat().st_size
+                                    result["orphaned_features_cache"].append({
+                                        "path": str(item),
+                                        "size": size,
+                                        "wsi_id": wsi_id,
+                                        "extractor": extractor_dir.name,
+                                        "params_hash": params_hash_dir.name
+                                    })
+                                    result["total_orphaned_size"] += size
+                                    result["total_orphaned_count"] += 1
+                                    result["total_orphaned_file_count"] += 1
+
+    def _scan_ai_results(self, directory: Path, existing_wsi_set: set, existing_task_set: set, result: Dict[str, Any]) -> None:
+        """Scanner for AI results."""
+        if directory.exists():
+            for wsi_dir in directory.iterdir():
+                if wsi_dir.is_dir():
+                    wsi_id = wsi_dir.name
+                    if wsi_id not in existing_wsi_set:
+                        size = self._get_dir_size(wsi_dir)
+                        result["orphaned_ai_results"].append({
+                            "path": str(wsi_dir),
+                            "size": size,
+                            "wsi_id": wsi_id,
+                            "type": "wsi_directory"
+                        })
+                        result["total_orphaned_size"] += size
+                        result["total_orphaned_count"] += 1
+                        result["total_orphaned_dir_count"] += 1
+                    else:
+                        for file_item in wsi_dir.iterdir():
+                            if file_item.is_file():
+                                filename = file_item.stem
+                                task_id = None
+                                for suffix in ["_result", "_attention_raw", "_attention", "_cam"]:
+                                    if filename.endswith(suffix):
+                                        name_without_suffix = filename[:-len(suffix)]
+                                        if name_without_suffix.startswith("train_"):
+                                            task_id = name_without_suffix[6:]
+                                        else:
+                                            task_id = name_without_suffix
+                                        break
+                                if task_id is None:
+                                    continue
+                                if task_id not in existing_task_set:
+                                    size = file_item.stat().st_size
+                                    result["orphaned_ai_results"].append({
+                                        "path": str(file_item),
+                                        "size": size,
+                                        "wsi_id": wsi_id,
+                                        "task_id": task_id,
+                                        "type": "task_file"
+                                    })
+                                    result["total_orphaned_size"] += size
+                                    result["total_orphaned_count"] += 1
+                                    result["total_orphaned_file_count"] += 1
+
+    def _scan_training_dirs(self, directory: Path, existing_task_set: set, result: Dict[str, Any]) -> None:
+        """Scanner for training directories."""
+        if directory.exists():
+            for task_dir in directory.iterdir():
+                if task_dir.is_dir():
+                    task_id = task_dir.name
+                    if task_id not in existing_task_set:
+                        size = self._get_dir_size(task_dir)
+                        result["orphaned_training_dirs"].append({
+                            "path": str(task_dir),
+                            "size": size,
+                            "task_id": task_id
+                        })
+                        result["total_orphaned_size"] += size
+                        result["total_orphaned_count"] += 1
+                        result["total_orphaned_dir_count"] += 1
+
+    def _scan_models(self, directory: Path, existing_model_set: set, result: Dict[str, Any]) -> None:
+        """Scanner for model directories."""
+        if directory.exists():
+            for model_dir in directory.iterdir():
+                if model_dir.is_dir():
+                    model_id = model_dir.name
+                    if model_id not in existing_model_set:
+                        size = self._get_dir_size(model_dir)
+                        result["orphaned_models"].append({
+                            "path": str(model_dir),
+                            "size": size,
+                            "model_id": model_id
+                        })
+                        result["total_orphaned_size"] += size
+                        result["total_orphaned_count"] += 1
+                        result["total_orphaned_dir_count"] += 1
+
+    def _scan_logs(self, directory: Path, existing_task_set: set, result: Dict[str, Any]) -> None:
+        """Scanner for log directories and files."""
+        if directory.exists():
+            training_logs_dir = directory / "training"
+            if training_logs_dir.exists():
+                for task_dir in training_logs_dir.iterdir():
+                    if task_dir.is_dir():
+                        task_id = task_dir.name
+                        if task_id not in existing_task_set:
+                            size = self._get_dir_size(task_dir)
+                            result["orphaned_logs"].append({
+                                "path": str(task_dir),
+                                "size": size,
+                                "task_id": task_id,
+                                "log_type": "training"
+                            })
+                            result["total_orphaned_size"] += size
+                            result["total_orphaned_count"] += 1
+                            result["total_orphaned_dir_count"] += 1
+
+            analysis_logs_dir = directory / "analysis"
+            if analysis_logs_dir.exists():
+                for task_dir in analysis_logs_dir.iterdir():
+                    if task_dir.is_dir():
+                        task_id = task_dir.name
+                        if task_id not in existing_task_set:
+                            size = self._get_dir_size(task_dir)
+                            result["orphaned_logs"].append({
+                                "path": str(task_dir),
+                                "size": size,
+                                "task_id": task_id,
+                                "log_type": "analysis"
+                            })
+                            result["total_orphaned_size"] += size
+                            result["total_orphaned_count"] += 1
+                            result["total_orphaned_dir_count"] += 1
+
+            for item in directory.glob("*.log"):
+                task_id = item.stem
+                if task_id not in existing_task_set:
+                    size = item.stat().st_size
+                    result["orphaned_logs"].append({
+                        "path": str(item),
+                        "size": size,
+                        "task_id": task_id,
+                        "log_type": "legacy"
+                    })
+                    result["total_orphaned_size"] += size
+                    result["total_orphaned_count"] += 1
+                    result["total_orphaned_file_count"] += 1
+
     def _calculate_orphaned_files(self, existing_wsi_ids: List[str], existing_task_ids: List[str],
                                     existing_model_ids: List[str]) -> Dict[str, Any]:
         """
@@ -218,251 +422,71 @@ class StorageOrphanMixin:
                     result["total_orphaned_file_count"] += 1
             skipped_categories.append(category)
 
-        # Check WSI/image files (uses ALL_IMAGE_EXTENSIONS from file_types.py)
-        if _should_use_cache("wsi_files", "orphaned_wsi_files", self.wsi_files_dir):
-            _use_cached_category("wsi_files", "orphaned_wsi_files", self.wsi_files_dir)
-        else:
-            rescanned_categories.append("wsi_files")
-            new_dir_mtimes["wsi_files"] = self._get_directory_mtime(self.wsi_files_dir)
-            if self.wsi_files_dir.exists():
-                for item in self.wsi_files_dir.iterdir():
-                    if item.is_file() and item.suffix.lower() in ALL_IMAGE_EXTENSIONS:
-                        wsi_id = item.stem
-                        if wsi_id not in existing_wsi_set:
-                            size = item.stat().st_size
-                            result["orphaned_wsi_files"].append({
-                                "path": str(item),
-                                "size": size,
-                                "wsi_id": wsi_id
-                            })
-                            result["total_orphaned_size"] += size
-                            result["total_orphaned_count"] += 1
-                            result["total_orphaned_file_count"] += 1
+        # Configuration for all scan categories
+        scan_configs = [
+            {
+                "category": "wsi_files",
+                "result_key": "orphaned_wsi_files",
+                "directory": self.wsi_files_dir,
+                "scanner": lambda d: self._scan_wsi_files(d, existing_wsi_set, result)
+            },
+            {
+                "category": "coordinates",
+                "result_key": "orphaned_coordinates",
+                "directory": self.uploads_dir / "coordinates",
+                "scanner": lambda d: self._scan_coordinates(d, existing_wsi_set, result)
+            },
+            {
+                "category": "masks",
+                "result_key": "orphaned_masks",
+                "directory": self.uploads_dir / "masks",
+                "scanner": lambda d: self._scan_masks(d, existing_wsi_set, result)
+            },
+            {
+                "category": "features_cache",
+                "result_key": "orphaned_features_cache",
+                "directory": self.uploads_dir / "features",
+                "scanner": lambda d: self._scan_features_cache(d, existing_wsi_set, result)
+            },
+            {
+                "category": "ai_results",
+                "result_key": "orphaned_ai_results",
+                "directory": self.uploads_dir / "ai_results",
+                "scanner": lambda d: self._scan_ai_results(d, existing_wsi_set, existing_task_set, result)
+            },
+            {
+                "category": "training",
+                "result_key": "orphaned_training_dirs",
+                "directory": self.uploads_dir / "training",
+                "scanner": lambda d: self._scan_training_dirs(d, existing_task_set, result)
+            },
+            {
+                "category": "models",
+                "result_key": "orphaned_models",
+                "directory": self.uploads_dir / "models",
+                "scanner": lambda d: self._scan_models(d, existing_model_set, result)
+            },
+            {
+                "category": "logs",
+                "result_key": "orphaned_logs",
+                "directory": self.uploads_dir / "logs",
+                "scanner": lambda d: self._scan_logs(d, existing_task_set, result)
+            }
+        ]
 
-        # Check coordinates (new structure: coordinates/{params_hash}/{wsi_id}_coords.h5)
-        coords_dir = self.uploads_dir / "coordinates"
-        if _should_use_cache("coordinates", "orphaned_coordinates", coords_dir):
-            _use_cached_category("coordinates", "orphaned_coordinates", coords_dir)
-        else:
-            rescanned_categories.append("coordinates")
-            new_dir_mtimes["coordinates"] = self._get_directory_mtime(coords_dir)
-            if coords_dir.exists():
-                # Scan all params_hash subdirectories
-                for params_hash_dir in coords_dir.iterdir():
-                    if params_hash_dir.is_dir():
-                        for item in params_hash_dir.glob("*_coords.h5"):
-                            wsi_id = item.stem.replace("_coords", "")
-                            if wsi_id not in existing_wsi_set:
-                                size = item.stat().st_size
-                                result["orphaned_coordinates"].append({
-                                    "path": str(item),
-                                    "size": size,
-                                    "wsi_id": wsi_id,
-                                    "params_hash": params_hash_dir.name
-                                })
-                                result["total_orphaned_size"] += size
-                                result["total_orphaned_count"] += 1
-                                result["total_orphaned_file_count"] += 1
+        # Process all categories using configuration
+        for config in scan_configs:
+            category = config["category"]
+            result_key = config["result_key"]
+            directory = config["directory"]
+            scanner = config["scanner"]
 
-        # Check masks
-        masks_dir = self.uploads_dir / "masks"
-        if _should_use_cache("masks", "orphaned_masks", masks_dir):
-            _use_cached_category("masks", "orphaned_masks", masks_dir)
-        else:
-            rescanned_categories.append("masks")
-            new_dir_mtimes["masks"] = self._get_directory_mtime(masks_dir)
-            if masks_dir.exists():
-                for item in masks_dir.glob("*_mask.png"):
-                    wsi_id = item.stem.replace("_mask", "")
-                    if wsi_id not in existing_wsi_set:
-                        size = item.stat().st_size
-                        result["orphaned_masks"].append({
-                            "path": str(item),
-                            "size": size,
-                            "wsi_id": wsi_id
-                        })
-                        result["total_orphaned_size"] += size
-                        result["total_orphaned_count"] += 1
-                        result["total_orphaned_file_count"] += 1
-
-
-        # Check features cache (structure: features/{extractor}/{params_hash}/{wsi_id}.pt)
-        features_cache_dir = self.uploads_dir / "features"
-        if _should_use_cache("features_cache", "orphaned_features_cache", features_cache_dir):
-            _use_cached_category("features_cache", "orphaned_features_cache", features_cache_dir)
-        else:
-            rescanned_categories.append("features_cache")
-            new_dir_mtimes["features_cache"] = self._get_directory_mtime(features_cache_dir)
-            if features_cache_dir.exists():
-                for extractor_dir in features_cache_dir.iterdir():
-                    if extractor_dir.is_dir():
-                        for params_hash_dir in extractor_dir.iterdir():
-                            if params_hash_dir.is_dir():
-                                for item in params_hash_dir.glob("*.pt"):
-                                    # Extract wsi_id from filename: {wsi_id}.pt
-                                    wsi_id = item.stem
-                                    if wsi_id not in existing_wsi_set:
-                                        size = item.stat().st_size
-                                        result["orphaned_features_cache"].append({
-                                            "path": str(item),
-                                            "size": size,
-                                            "wsi_id": wsi_id,
-                                            "extractor": extractor_dir.name,
-                                            "params_hash": params_hash_dir.name
-                                        })
-                                        result["total_orphaned_size"] += size
-                                        result["total_orphaned_count"] += 1
-                                        result["total_orphaned_file_count"] += 1
-
-        # Check AI results
-        ai_results_dir = self.uploads_dir / "ai_results"
-        if _should_use_cache("ai_results", "orphaned_ai_results", ai_results_dir):
-            _use_cached_category("ai_results", "orphaned_ai_results", ai_results_dir)
-        else:
-            rescanned_categories.append("ai_results")
-            new_dir_mtimes["ai_results"] = self._get_directory_mtime(ai_results_dir)
-            if ai_results_dir.exists():
-                for wsi_dir in ai_results_dir.iterdir():
-                    if wsi_dir.is_dir():
-                        wsi_id = wsi_dir.name
-                        if wsi_id not in existing_wsi_set:
-                            size = self._get_dir_size(wsi_dir)
-                            result["orphaned_ai_results"].append({
-                                "path": str(wsi_dir),
-                                "size": size,
-                                "wsi_id": wsi_id,
-                                "type": "wsi_directory"
-                            })
-                            result["total_orphaned_size"] += size
-                            result["total_orphaned_count"] += 1
-                            result["total_orphaned_dir_count"] += 1
-                        else:
-                            for file_item in wsi_dir.iterdir():
-                                if file_item.is_file():
-                                    filename = file_item.stem
-                                    task_id = None
-                                    for suffix in ["_result", "_attention_raw", "_attention", "_cam"]:
-                                        if filename.endswith(suffix):
-                                            name_without_suffix = filename[:-len(suffix)]
-                                            if name_without_suffix.startswith("train_"):
-                                                task_id = name_without_suffix[6:]
-                                            else:
-                                                task_id = name_without_suffix
-                                            break
-                                    if task_id is None:
-                                        continue
-                                    if task_id not in existing_task_set:
-                                        size = file_item.stat().st_size
-                                        result["orphaned_ai_results"].append({
-                                            "path": str(file_item),
-                                            "size": size,
-                                            "wsi_id": wsi_id,
-                                            "task_id": task_id,
-                                            "type": "task_file"
-                                        })
-                                        result["total_orphaned_size"] += size
-                                        result["total_orphaned_count"] += 1
-                                        result["total_orphaned_file_count"] += 1
-
-        # Check training directories
-        training_dir = self.uploads_dir / "training"
-        if _should_use_cache("training", "orphaned_training_dirs", training_dir):
-            _use_cached_category("training", "orphaned_training_dirs", training_dir)
-        else:
-            rescanned_categories.append("training")
-            new_dir_mtimes["training"] = self._get_directory_mtime(training_dir)
-            if training_dir.exists():
-                for task_dir in training_dir.iterdir():
-                    if task_dir.is_dir():
-                        task_id = task_dir.name
-                        if task_id not in existing_task_set:
-                            size = self._get_dir_size(task_dir)
-                            result["orphaned_training_dirs"].append({
-                                "path": str(task_dir),
-                                "size": size,
-                                "task_id": task_id
-                            })
-                            result["total_orphaned_size"] += size
-                            result["total_orphaned_count"] += 1
-                            result["total_orphaned_dir_count"] += 1
-
-        # Check models
-        models_dir = self.uploads_dir / "models"
-        if _should_use_cache("models", "orphaned_models", models_dir):
-            _use_cached_category("models", "orphaned_models", models_dir)
-        else:
-            rescanned_categories.append("models")
-            new_dir_mtimes["models"] = self._get_directory_mtime(models_dir)
-            if models_dir.exists():
-                for model_dir in models_dir.iterdir():
-                    if model_dir.is_dir():
-                        model_id = model_dir.name
-                        if model_id not in existing_model_set:
-                            size = self._get_dir_size(model_dir)
-                            result["orphaned_models"].append({
-                                "path": str(model_dir),
-                                "size": size,
-                                "model_id": model_id
-                            })
-                            result["total_orphaned_size"] += size
-                            result["total_orphaned_count"] += 1
-                            result["total_orphaned_dir_count"] += 1
-
-        # Check logs
-        logs_dir = self.uploads_dir / "logs"
-        if _should_use_cache("logs", "orphaned_logs", logs_dir):
-            _use_cached_category("logs", "orphaned_logs", logs_dir)
-        else:
-            rescanned_categories.append("logs")
-            new_dir_mtimes["logs"] = self._get_directory_mtime(logs_dir)
-            if logs_dir.exists():
-                training_logs_dir = logs_dir / "training"
-                if training_logs_dir.exists():
-                    for task_dir in training_logs_dir.iterdir():
-                        if task_dir.is_dir():
-                            task_id = task_dir.name
-                            if task_id not in existing_task_set:
-                                size = self._get_dir_size(task_dir)
-                                result["orphaned_logs"].append({
-                                    "path": str(task_dir),
-                                    "size": size,
-                                    "task_id": task_id,
-                                    "log_type": "training"
-                                })
-                                result["total_orphaned_size"] += size
-                                result["total_orphaned_count"] += 1
-                                result["total_orphaned_dir_count"] += 1
-
-                analysis_logs_dir = logs_dir / "analysis"
-                if analysis_logs_dir.exists():
-                    for task_dir in analysis_logs_dir.iterdir():
-                        if task_dir.is_dir():
-                            task_id = task_dir.name
-                            if task_id not in existing_task_set:
-                                size = self._get_dir_size(task_dir)
-                                result["orphaned_logs"].append({
-                                    "path": str(task_dir),
-                                    "size": size,
-                                    "task_id": task_id,
-                                    "log_type": "analysis"
-                                })
-                                result["total_orphaned_size"] += size
-                                result["total_orphaned_count"] += 1
-                                result["total_orphaned_dir_count"] += 1
-
-                for item in logs_dir.glob("*.log"):
-                    task_id = item.stem
-                    if task_id not in existing_task_set:
-                        size = item.stat().st_size
-                        result["orphaned_logs"].append({
-                            "path": str(item),
-                            "size": size,
-                            "task_id": task_id,
-                            "log_type": "legacy"
-                        })
-                        result["total_orphaned_size"] += size
-                        result["total_orphaned_count"] += 1
-                        result["total_orphaned_file_count"] += 1
+            if _should_use_cache(category, result_key, directory):
+                _use_cached_category(category, result_key, directory)
+            else:
+                rescanned_categories.append(category)
+                new_dir_mtimes[category] = self._get_directory_mtime(directory)
+                scanner(directory)
 
         # Update mtime cache
         self._orphan_dir_mtime_cache = new_dir_mtimes

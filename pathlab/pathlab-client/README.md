@@ -44,7 +44,7 @@ pathlab-client/
 │           │   ├── Layout.tsx        # 主布局 + 侧边栏
 │           │   ├── WSIViewer.tsx     # OpenSeadragon 封装
 │           │   └── HeatmapOverlay.tsx # 注意力热图叠加层
-│           ├── pages/            # 页面组件 (14 页)
+│           ├── pages/            # 页面组件 (13 页, 14 路由)
 │           └── contexts/         # React Context
 │               ├── AuthContext.tsx       # 认证状态
 │               └── BackgroundTaskContext.tsx  # 后台任务追踪
@@ -56,7 +56,7 @@ pathlab-client/
     │   ├── task_queue.py     # GPU 任务队列管理器
     │   ├── models.py         # Pydantic 请求/响应模型
     │   ├── pipeline.py       # AI Pipeline 编排
-    │   ├── routes/           # 模块化路由 (30 个模块)
+    │   ├── routes/           # 模块化路由 (29 个模块)
     │   │   ├── auth.py           # 认证 (FastAPI-Users)
     │   │   ├── wsi.py            # WSI CRUD + 数据集管理
     │   │   ├── wsi_upload.py     # WSI 上传 (文件/路径/CSV)
@@ -117,7 +117,10 @@ pathlab-client/
             ├── progress_store.py # 任务进度存储 (Redis)
             ├── port_utils.py     # 端口发现工具
             ├── config.py         # 配置管理
-            └── logger.py         # 日志工具
+            ├── logger.py         # 日志工具
+            ├── file_types.py     # 支持的文件类型定义
+            ├── gpu_utils.py      # GPU 工具函数
+            └── slide_utils.py    # WSI 切片工具函数
 ```
 
 ## 快速开始
@@ -218,7 +221,7 @@ cd server && python main.py
 | CLAM-MB | clam_mb | CLAM 多分支 |
 | TransMIL | transmil | Transformer MIL |
 
-### Gateway 路由模块 (30 个)
+### Gateway 路由模块 (29 个文件, 16 个顶层路由器)
 
 | 模块 | 路由前缀 | 功能 |
 |------|---------|------|

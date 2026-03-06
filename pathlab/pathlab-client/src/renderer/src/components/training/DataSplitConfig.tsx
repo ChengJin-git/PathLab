@@ -27,6 +27,7 @@ export interface DataSplitConfigProps {
   predefinedSplitCounts: { train: number; val: number; test: number }
   selectedDatasetId: string | null
   selectedDatasetName: string
+  isWholeDatasetSelected?: boolean
 }
 
 export function DataSplitConfig({
@@ -40,6 +41,7 @@ export function DataSplitConfig({
   predefinedSplitCounts,
   selectedDatasetId,
   selectedDatasetName,
+  isWholeDatasetSelected = false,
 }: DataSplitConfigProps) {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -93,10 +95,28 @@ export function DataSplitConfig({
 
         {/* Conditional Inputs */}
         <div className="mt-4 pl-1">
-          {splitStrategy === 'random' && <RandomSplitDetails validation={randomSplitValidation} />}
+          {splitStrategy === 'random' && (
+            isWholeDatasetSelected ? (
+              <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                <div className="text-xs text-blue-700">
+                  <p className="font-medium">{t('training.dataSplit.wholeDatasetSplitNote')}</p>
+                </div>
+              </div>
+            ) : (
+              <RandomSplitDetails validation={randomSplitValidation} />
+            )
+          )}
 
           {splitStrategy === 'k_fold' && (
-            <KFoldDetails kFoldSplits={kFoldSplits} setKFoldSplits={setKFoldSplits} validation={kFoldValidation} />
+            isWholeDatasetSelected ? (
+              <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                <div className="text-xs text-blue-700">
+                  <p className="font-medium">{t('training.dataSplit.wholeDatasetSplitNote')}</p>
+                </div>
+              </div>
+            ) : (
+              <KFoldDetails kFoldSplits={kFoldSplits} setKFoldSplits={setKFoldSplits} validation={kFoldValidation} />
+            )
           )}
 
           {splitStrategy === 'manual' && (

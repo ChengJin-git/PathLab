@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Layers, Brain, Activity } from 'lucide-react'
 import { Card } from '../ui/card'
 import { TaskDetail } from './types'
+import { isSegFmEncoder } from '../../constants/training'
 
 interface ConfigurationPanelProps {
   task: TaskDetail
@@ -11,6 +12,8 @@ interface ConfigurationPanelProps {
 export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) => {
   const { t } = useTranslation()
   const isExternalValidation = task.task_type === 'external_validation'
+  const isSegmentation = task.task_type === 'segmentation'
+  const segIsFm = isSegmentation && isSegFmEncoder(task.model_config.backbone)
 
   return (
     <Card className="p-4 sm:p-6 border-gray-100 shadow-sm overflow-hidden">
@@ -98,41 +101,98 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
           <div className="bg-gray-50/80 rounded-xl p-4 border border-gray-100">
             <h4 className="text-xs sm:text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
               <Activity className="w-3.5 h-3.5 text-blue-600" />
-              {t('taskDetail.configuration.preprocessing')}
+              {isSegmentation
+                ? (segIsFm ? t('taskDetail.configuration.featureExtractor') : t('taskDetail.configuration.architecture'))
+                : t('taskDetail.configuration.preprocessing')}
             </h4>
             <div className="space-y-3">
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.saturationThreshold')}</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.preprocessing_config.sthresh ?? 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.maskThreshold')}</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.preprocessing_config.mthresh ?? 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.useOtsu')}</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.preprocessing_config.use_otsu !== undefined
-                    ? (task.preprocessing_config.use_otsu ? t('taskDetail.configuration.yes') : t('taskDetail.configuration.no'))
-                    : 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.extractor')}</span>
-                <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
-                  {task.preprocessing_config.feature_extractor || 'N/A'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.featureBatchSize')}</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.preprocessing_config.feature_batch_size ?? 'N/A'}
-                </span>
-              </div>
+              {isSegmentation ? (
+                <>
+                  {segIsFm ? (
+                    <>
+                      <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                        <span className="text-gray-500 font-medium">{t('taskDetail.configuration.featureExtractor')}</span>
+                        <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
+                          {task.model_config.backbone || 'N/A'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                        <span className="text-gray-500 font-medium">{t('taskDetail.configuration.decoder')}</span>
+                        <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
+                          {t('taskDetail.configuration.convDecoder')}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                        <span className="text-gray-500 font-medium">{t('taskDetail.configuration.architecture')}</span>
+                        <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
+                          {task.model_config.architecture || 'N/A'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                        <span className="text-gray-500 font-medium">{t('taskDetail.configuration.backbone')}</span>
+                        <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
+                          {task.model_config.backbone || 'N/A'}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                  {task.model_config.loss_names && task.model_config.loss_names.length > 0 && (
+                    <div className="text-[11px] sm:text-sm">
+                      <span className="text-gray-500 font-medium block mb-2">{t('taskDetail.configuration.lossFunctions')}</span>
+                      <div className="space-y-1.5">
+                        {task.model_config.loss_names.map((name, i) => (
+                          <div key={name} className="flex justify-between items-center">
+                            <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm text-[10px] sm:text-xs">
+                              {name}
+                            </span>
+                            <span className="font-mono text-gray-500 text-[10px] sm:text-xs">
+                              {task.model_config.loss_weights?.[i] ?? '—'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">{t('taskDetail.configuration.saturationThreshold')}</span>
+                    <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                      {task.preprocessing_config.sthresh ?? 'N/A'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">{t('taskDetail.configuration.maskThreshold')}</span>
+                    <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                      {task.preprocessing_config.mthresh ?? 'N/A'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">{t('taskDetail.configuration.useOtsu')}</span>
+                    <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                      {task.preprocessing_config.use_otsu !== undefined
+                        ? (task.preprocessing_config.use_otsu ? t('taskDetail.configuration.yes') : t('taskDetail.configuration.no'))
+                        : 'N/A'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">{t('taskDetail.configuration.extractor')}</span>
+                    <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
+                      {task.preprocessing_config.feature_extractor || 'N/A'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">{t('taskDetail.configuration.featureBatchSize')}</span>
+                    <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                      {task.preprocessing_config.feature_batch_size ?? 'N/A'}
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -142,7 +202,7 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
               {t('taskDetail.configuration.modelAndTraining')}
             </h4>
             <div className="space-y-3">
-              {task.data_type === 'wsi' && (
+              {!isSegmentation && task.data_type === 'wsi' && (
                 <div className="flex justify-between items-center text-[11px] sm:text-sm">
                   <span className="text-gray-500 font-medium">{t('taskDetail.configuration.aggregator')}</span>
                   <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
@@ -150,9 +210,12 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                   </span>
                 </div>
               )}
-              {task.data_type === 'patch' && (
+              {!isSegmentation && task.data_type === 'patch' && (
                 <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">{t(`taskList.classifiers.${task.model_config.classifier || 'linear'}`, t('taskList.linearProbe'))}</span>
+                  <span className="text-gray-500 font-medium">{t('taskDetail.configuration.classifierHead')}</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {t(`taskList.classifiers.${task.model_config.classifier || 'linear'}`, t('taskList.linearProbe'))}
+                  </span>
                 </div>
               )}
               <div className="flex justify-between items-center text-[11px] sm:text-sm">

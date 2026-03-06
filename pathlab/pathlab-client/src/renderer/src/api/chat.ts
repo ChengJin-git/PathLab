@@ -39,7 +39,6 @@ export async function chatWithAI(
   conversationId?: string,
   onMessageId?: (messageId: number) => void,
   signal?: AbortSignal,
-  onPdfWaitStart?: () => void,
   onContextLimit?: () => void
 ): Promise<void> {
   // Get AI configuration from localStorage
@@ -140,10 +139,6 @@ export async function chatWithAI(
             // Handle message_id event for persistence
             if (parsed.message_id && onMessageId) {
               onMessageId(parsed.message_id)
-            }
-            // Handle pdf_wait_start event — initial LLM response done, entering PDF wait phase
-            if (parsed.pdf_wait_start && onPdfWaitStart) {
-              onPdfWaitStart()
             }
             // Handle context_limit event — LLM output was truncated (finish_reason: "length")
             if (parsed.context_limit && onContextLimit) {

@@ -241,6 +241,8 @@ async def create_training_task(
             "model_config": req.model,
             "huggingface_token": huggingface_token,
             "training_task_type": req.task_type,  # Use different name to avoid conflict with TaskType enum
+            "user_id": str(user.id),
+            "user_is_admin": user.is_admin(),
         }
         # Use positional arguments to avoid conflict: submit()'s task_type (for queue) vs pipeline_kwargs' training_task_type (for coro_func)
         await task_queue.submit(

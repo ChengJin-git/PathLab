@@ -56,11 +56,17 @@ export default function NewTaskPage() {
     taskType: wizard.taskType,
   })
   const trainingConfig = useTrainingConfig()
+
+  // Get COCO category count for segmentation datasets
+  const selectedDataset = dataSelection.datasets.find(d => d.dataset_id === dataSelection.selectedDatasetId)
+  const numCocoCategories = selectedDataset?.num_coco_categories
+
   const splitValidation = useSplitValidation({
     items: dataSelection.filteredItems,
     selectedIds: dataSelection.selectedIds,
     taskType: wizard.taskType,
     dataLevel: wizard.dataLevel,
+    numCocoCategories,
   })
 
   // ========== Additional Local State ==========
@@ -539,7 +545,7 @@ export default function NewTaskPage() {
     }
 
     // Check for single-class tasks (classification, segmentation, or survival)
-    if (wizard.taskType === 'classification' || wizard.taskType === 'segmentation') {
+    if (wizard.taskType === 'classification') {
       const classes = Object.keys(splitValidation.classDistribution).filter((k) => k !== '__unlabeled__')
       if (classes.length < 2) {
         errors.push(t('newTask.validation.classificationMinClasses'))
@@ -805,6 +811,10 @@ export default function NewTaskPage() {
               earlyStoppingPatience={trainingConfig.earlyStoppingPatience}
               autoBalance={trainingConfig.autoBalance}
               classifier={trainingConfig.classifier}
+              segArchitecture={trainingConfig.segArchitecture}
+              segBackbone={trainingConfig.segBackbone}
+              segLossNames={trainingConfig.segLossNames}
+              segLossWeights={trainingConfig.segLossWeights}
               validateConfiguration={validateConfiguration}
               trainingStatus={wizard.trainingStatus}
               submitError={wizard.submitError}

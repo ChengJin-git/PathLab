@@ -313,6 +313,19 @@ export const BACKBONE_GROUPS: readonly string[] = [
 /** Default segmentation backbone */
 export const DEFAULT_SEG_BACKBONE = 'resnet50'
 
+/**
+ * Check whether a segmentation backbone/encoder name refers to a Foundation Model.
+ * Mirrors backend `is_fm_encoder()` logic in segmentors/__init__.py:
+ * FM if it's a known FM extractor but NOT a traditional SMP encoder.
+ */
+export function isSegFmEncoder(encoderName: string | undefined): boolean {
+  if (!encoderName) return false
+  return (
+    FEATURE_EXTRACTORS.some((e) => e.id === encoderName) &&
+    !SEGMENTATION_BACKBONES.some((b) => b.id === encoderName)
+  )
+}
+
 // ============================================================================
 // Segmentation Loss Functions
 // ============================================================================
@@ -339,8 +352,8 @@ export const SEGMENTATION_LOSSES: readonly LossOption[] = [
 ] as const
 
 /** Default segmentation loss configuration */
-export const DEFAULT_SEG_LOSS_NAMES = ['DiceLoss', 'JaccardLoss']
-export const DEFAULT_SEG_LOSS_WEIGHTS = [0.5, 0.5]
+export const DEFAULT_SEG_LOSS_NAMES = ['DiceLoss']
+export const DEFAULT_SEG_LOSS_WEIGHTS = [1.0]
 
 // ============================================================================
 // Segmentation Training Defaults

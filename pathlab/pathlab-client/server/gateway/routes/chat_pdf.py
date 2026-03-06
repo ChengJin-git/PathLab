@@ -18,6 +18,7 @@ import tempfile
 import asyncio
 import hashlib
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from typing import Any
 from datetime import datetime, timedelta
@@ -29,10 +30,32 @@ from backend.common.gpu_utils import select_optimal_gpu_for_task
 
 # Process pool for MinerU heavy parsing — runs in a separate process with its own
 # GIL so CPU-intensive PyTorch / vLLM operations do NOT block the asyncio event loop.
-_mineru_process_executor = ProcessPoolExecutor(
-    max_workers=1,
-    mp_context=multiprocessing.get_context('spawn'),
-)
+# Created lazily and shut down after each task to release GPU memory (CUDA context).
+_mineru_process_executor: ProcessPoolExecutor | None = None
+
+
+def _get_mineru_executor() -> ProcessPoolExecutor:
+    """Return the MinerU ProcessPoolExecutor, creating it if needed."""
+    global _mineru_process_executor
+    if _mineru_process_executor is None:
+        _mineru_process_executor = ProcessPoolExecutor(
+            max_workers=1,
+            mp_context=multiprocessing.get_context('spawn'),
+        )
+    return _mineru_process_executor
+
+
+def _shutdown_mineru_executor() -> None:
+    """Shut down the MinerU ProcessPoolExecutor to kill the subprocess and
+    release all GPU memory (including CUDA context).  Safe to call repeatedly."""
+    global _mineru_process_executor
+    if _mineru_process_executor is not None:
+        try:
+            _mineru_process_executor.shutdown(wait=False)
+            logger.info("[MinerU] ProcessPoolExecutor shut down — subprocess GPU memory released")
+        except Exception as e:
+            logger.warning(f"[MinerU] Error shutting down executor: {e}")
+        _mineru_process_executor = None
 
 # Minimum free VRAM (MB) required to run MinerU hybrid_auto with VLM backend
 MIN_VRAM_MB_FOR_MINERU = 14000
@@ -56,8 +79,33 @@ def get_pdf_image_path(url_hash: str, filename: str) -> Path:
 
     Used by the /pdf-images/{url_hash}/{filename} HTTP endpoint to locate files.
     Images are stored at: pdf_cache/images/{url_hash}/{filename}
+
+    Supports **fig-N** aliases: ``fig-1.jpg`` resolves to the 1st image
+    (alphabetically sorted) in the directory.  This prevents 404 errors
+    caused by LLMs hallucinating hash-based filenames.
     """
-    return _get_pdf_cache_dir() / "images" / url_hash / filename
+    images_dir = _get_pdf_cache_dir() / "images" / url_hash
+
+    # ── fig-N alias resolution ────────────────────────────────────────────
+    # Tolerant regex: accepts fig-3.jpg, fig-2d.png, fig-12a.jpg, etc.
+    # LLMs often hallucinate sub-figure letters (a/b/c/d) or wrong extensions.
+    # We extract only the leading digits as the figure number.
+    fig_match = re.match(r'^fig-(\d+)[a-zA-Z]*\.[a-zA-Z]+$', filename)
+    if fig_match:
+        fig_num = int(fig_match.group(1))  # 1-based, letter suffix ignored
+        if images_dir.is_dir():
+            image_files = sorted(
+                f for f in images_dir.iterdir()
+                if f.is_file()
+                and not f.name.startswith('fig-')
+                and not f.name.startswith('_')
+            )
+            if 1 <= fig_num <= len(image_files):
+                return image_files[fig_num - 1]
+        # If alias can't be resolved, fall through to the literal path
+        # (will result in a 404 at the endpoint level).
+
+    return images_dir / filename
 
 
 PDF_URL_PATTERNS = [
@@ -336,13 +384,17 @@ def _trigger_vector_index(url_hash: str, markdown: str, paper_title: str) -> Non
 # ── BM25 Page-Level Search ──────────────────────────────────────────────────
 
 def _tokenize_for_search(text: str) -> list[str]:
-    """Simple tokenizer for BM25 search. Handles English, numbers, and CJK.
+    """Simple tokenizer for BM25 search. Handles English, numbers, CJK, Japanese, and Korean.
 
     - Lowercases all text
     - Keeps alphanumeric runs (e.g. ``bm25``, ``page3``) as single tokens
-    - Splits each CJK character as an individual token
+    - Splits each CJK / Hiragana / Katakana / Hangul character as an individual token
     """
-    return re.findall(r'[a-z0-9]+|[\u4e00-\u9fff\u3400-\u4dbf]', text.lower())
+    # CJK Unified + Extension A + Hiragana + Katakana + Hangul Syllables
+    return re.findall(
+        r'[a-z0-9]+|[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]',
+        text.lower(),
+    )
 
 
 def _split_md_into_pages(markdown: str) -> list[tuple[int, str]]:
@@ -498,8 +550,9 @@ async def _background_mineru_upgrade(url: str, pdf_bytes: bytes, max_pages: int 
     try:
         logger.info(f"[BG MinerU] Queuing upgrade for {url}")
         loop = asyncio.get_event_loop()
+        executor = _get_mineru_executor()
         markdown = await loop.run_in_executor(
-            _mineru_process_executor,
+            executor,
             _run_mineru_in_process,
             pdf_bytes, max_pages,
             str(images_output_dir), images_url_prefix,
@@ -515,6 +568,9 @@ async def _background_mineru_upgrade(url: str, pdf_bytes: bytes, max_pages: int 
             logger.warning(f"[BG MinerU] Upgrade failed for {url}: {markdown[:80]}")
     except Exception as e:
         logger.error(f"[BG MinerU] Upgrade error for {url}: {e}")
+    finally:
+        # Kill the subprocess to release GPU memory (CUDA context holds ~GBs).
+        _shutdown_mineru_executor()
 
 
 async def trigger_mineru_upgrade_by_hash(url_hash: str) -> bool:
@@ -1078,8 +1134,17 @@ async def _try_semantic_scholar_download(url: str, doi: str | None = None) -> by
         return None
 
 
+# Maximum PDF file size to download (50 MB) — prevents OOM on huge files.
+_MAX_PDF_DOWNLOAD_BYTES = 50 * 1024 * 1024
+
+
 async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
     try:
+        # Validate URL scheme — only http(s) is supported.
+        if not url.startswith(('http://', 'https://')):
+            logger.warning(f"Invalid URL scheme (not http/https): {url}")
+            return None
+
         # Pre-step: Resolve PubMed abstract URLs to the actual content URL
         # (PMC PDF or publisher page via DOI redirect).  This MUST run before
         # the publisher elif-chain so the resolved URL can be matched below.
@@ -1142,6 +1207,13 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
 
             if response.status_code == 200:
                 content = response.content
+                # Size guard — reject files larger than _MAX_PDF_DOWNLOAD_BYTES
+                if len(content) > _MAX_PDF_DOWNLOAD_BYTES:
+                    logger.warning(
+                        f"PDF too large ({len(content) / 1024 / 1024:.1f} MB > "
+                        f"{_MAX_PDF_DOWNLOAD_BYTES / 1024 / 1024:.0f} MB limit): {url}"
+                    )
+                    return None
                 if content[:4] == b'%PDF':
                     return content
                 content_type = response.headers.get('content-type', '')
@@ -1179,6 +1251,12 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
             return oa_bytes
 
         logger.warning(f"All download attempts failed for {url}")
+        return None
+    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        logger.error(f"Network unreachable when downloading PDF from {url}: {e}")
+        return None
+    except httpx.TimeoutException as e:
+        logger.error(f"Download timed out for PDF from {url}: {e}")
         return None
     except Exception as e:
         logger.error(f"Error downloading PDF from {url}: {e}")
@@ -1274,6 +1352,18 @@ def _parse_pdf_with_pymupdf(
         if garbage_ratio > 0.1:
             logger.info(f"PyMuPDF: too much garbage ({garbage_ratio:.1%}), need MinerU fallback")
             return None
+
+        # Per-page density check: catch scanned PDFs with sparse headers/footers
+        # that pass the total char threshold but have very little content per page.
+        num_pages = len(page_sections)
+        if num_pages > 0:
+            avg_chars_per_page = total_chars / num_pages
+            if avg_chars_per_page < 50 and num_pages >= 3:
+                logger.info(
+                    f"PyMuPDF: low per-page density ({avg_chars_per_page:.0f} chars/page "
+                    f"across {num_pages} pages), likely scanned PDF — need MinerU fallback"
+                )
+                return None
 
         md_content = "\n\n".join(page_sections)
 
@@ -1624,14 +1714,27 @@ async def parse_pdf(
     # --- Tier 2: MinerU GPU-based parsing in subprocess ---
     logger.info("PyMuPDF extraction insufficient, falling back to MinerU GPU parsing (queued)")
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
-        _mineru_process_executor,
-        _run_mineru_in_process,
-        pdf_bytes, max_pages,
-        str(images_output_dir) if images_output_dir else None,
-        images_url_prefix,
-        MIN_VRAM_MB_FOR_MINERU,
-    )
+    try:
+        executor = _get_mineru_executor()
+        result = await loop.run_in_executor(
+            executor,
+            _run_mineru_in_process,
+            pdf_bytes, max_pages,
+            str(images_output_dir) if images_output_dir else None,
+            images_url_prefix,
+            MIN_VRAM_MB_FOR_MINERU,
+        )
+        return result
+    except BrokenProcessPool:
+        logger.error(
+            "[MinerU] ProcessPoolExecutor is broken (subprocess crash). "
+            "Rebuilding executor for future requests."
+        )
+        _shutdown_mineru_executor()
+        return "[Error: MinerU subprocess crashed. Please retry.]"
+    finally:
+        # Kill the subprocess to release GPU memory (CUDA context holds ~GBs).
+        _shutdown_mineru_executor()
 
 
 async def summarize_pdf_content(
@@ -1942,6 +2045,8 @@ async def process_pdf_url(
         "reference_card": None,
         "page_count": None,    # Total pages parsed (int), filled after parsing
         "parse_method": None,  # "pymupdf" or "mineru" — indicates quality tier
+        "image_count": 0,      # Number of extracted images on disk
+        "images_ready": False, # Whether images are available for the AI to reference
     }
 
     try:
@@ -2028,6 +2133,15 @@ async def process_pdf_url(
                 if not pdf_content.startswith("[Error") and use_cache:
                     _save_mineru_to_cache(url, pdf_content, paper_title=title)
 
+        # Guard: empty result (not an [Error prefix but no content extracted)
+        if not pdf_content or not pdf_content.strip():
+            result["error"] = "parse_failed"
+            result["error_detail"] = (
+                f"PDF parsing produced no content for '{title}'. "
+                "The file may be an image-only scan, empty, or in an unsupported format."
+            )
+            return result
+
         if pdf_content.startswith("[Error"):
             # Distinguish GPU unavailable from other parse errors
             if "GPU unavailable" in pdf_content:
@@ -2068,11 +2182,12 @@ async def process_pdf_url(
         # MinerU upgrade overwrites pymupdf images with higher-quality versions.
         url_hash_for_images = _get_url_hash(url)
         images_dir_for_check = _get_pdf_cache_dir() / "images" / url_hash_for_images
-        has_images_on_disk = (
-            images_dir_for_check.is_dir()
-            and any(images_dir_for_check.iterdir())
-        ) if images_dir_for_check.exists() else False
-        images_ready = has_images_on_disk
+        image_count_on_disk = 0
+        if images_dir_for_check.exists() and images_dir_for_check.is_dir():
+            image_count_on_disk = sum(1 for f in images_dir_for_check.iterdir() if f.is_file())
+        images_ready = image_count_on_disk > 0
+        result["image_count"] = image_count_on_disk
+        result["images_ready"] = images_ready
 
         # Build the content blob for the AI.
         if images_ready:

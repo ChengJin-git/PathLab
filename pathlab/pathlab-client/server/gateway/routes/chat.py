@@ -223,6 +223,61 @@ def _collect_pdf_urls_from_contexts(messages: list[dict]) -> list[str]:
     return list(seen.keys())
 
 
+def _replace_images_with_fig_aliases(md_content: str, url_hash: str) -> str:
+    """Replace hash-based image filenames with simple ``fig-N`` aliases.
+
+    LLMs cannot reliably reproduce 64-char SHA-256 hashes, leading to
+    hallucinated filenames and cascading 404 errors.  This replaces e.g.
+
+        ![](http://host/pdf-images/hash/abc123…def.jpg)
+
+    with:
+
+        ![Figure 3](http://host/pdf-images/hash/fig-3.jpg)
+
+    The server endpoint ``get_pdf_image_path`` resolves ``fig-N`` back to
+    the real file by alphabetically sorted directory listing.
+    """
+    images_dir = _get_pdf_cache_dir() / "images" / url_hash
+    if not images_dir.is_dir():
+        return md_content
+
+    # Canonical file list — sorted, excluding any fig-* aliases or meta files
+    image_files = sorted(
+        f.name for f in images_dir.iterdir()
+        if f.is_file()
+        and not f.name.startswith('fig-')
+        and not f.name.startswith('_')
+    )
+    if not image_files:
+        return md_content
+
+    # Reverse map: real filename → fig-N number (1-based)
+    file_to_fig: dict[str, int] = {name: i + 1 for i, name in enumerate(image_files)}
+
+    def _replacer(match: re.Match) -> str:
+        alt = match.group(1)
+        prefix = match.group(2)          # up to and including …/pdf-images/hash/
+        filename_with_ext = match.group(3)  # e.g. "abc123…def.jpg"
+
+        fig_num = file_to_fig.get(filename_with_ext)
+        if fig_num is None:
+            return match.group(0)  # unknown file — leave as-is
+
+        ext = filename_with_ext.rsplit('.', 1)[-1]
+        new_alt = alt.strip() if alt.strip() else f"Figure {fig_num}"
+        return f"![{new_alt}]({prefix}fig-{fig_num}.{ext})"
+
+    # Pattern: ![alt](…/pdf-images/{url_hash}/filename.ext)
+    pattern = (
+        r'!\[([^\]]*)\]\('
+        r'((?:[^\)]*?/)?pdf-images/' + re.escape(url_hash) + r'/)'
+        r'([^/\)\s]+)'
+        r'\)'
+    )
+    return re.sub(pattern, _replacer, md_content, flags=re.IGNORECASE)
+
+
 def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lang: str = "en") -> str:
     """Build a single merged PDF context from all unique URLs with BM25 page selection.
 
@@ -305,11 +360,14 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
         is_academic = pd.get('is_academic', False)
         label = "Paper" if is_academic else "Doc"
         content_type = "Academic Paper" if is_academic else "General Document"
-        quality_label = (
-            "High-precision (MinerU — includes tables, formulas, images)"
-            if parse_method == "mineru"
-            else "Fast (PyMuPDF — text only, images not yet extracted)"
-        )
+        _img_count = pd['image_count']
+        _imgs_ready = _img_count > 0
+        if parse_method == "mineru":
+            quality_label = f"High-precision (MinerU) — {_img_count} images extracted" if _imgs_ready else "High-precision (MinerU) — no images"
+        elif _imgs_ready:
+            quality_label = f"Fast (PyMuPDF) — {_img_count} images extracted (MinerU upgrade pending in background)"
+        else:
+            quality_label = "Fast (PyMuPDF) — images not yet extracted (MinerU upgrade pending in background)"
         page_info = f"{page_count} pages" if page_count else "page count unknown"
 
         enhanced_parts.append(
@@ -328,6 +386,11 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
 
         # 改动 8: Strip stale IMAGE_STATUS markers from old content
         full_md = re.sub(r'\[PDF_IMAGES_STATUS:[^\]]*\]', '', full_md)
+
+        # 改动 9: Replace hash-based image filenames with fig-N aliases.
+        # LLMs hallucinate 64-char SHA-256 hashes → cascading 404 errors.
+        url_hash_for_imgs = _get_url_hash(url)
+        full_md = _replace_images_with_fig_aliases(full_md, url_hash_for_imgs)
 
         # Short papers: include everything
         if len(full_md) <= _PDF_MAX_CHARS_PER_PAPER:
@@ -522,12 +585,16 @@ def _extract_citation_contexts(
     most relevant ~200-char snippet from the corresponding page in the
     article PDF content (which contains ``--- Page X ---`` markers).
 
+    Also handles bare ``[N]`` citations (without page numbers) by using
+    BM25 on the full paper content.  These are keyed ``"N-bare"`` in the
+    returned dict so the frontend can distinguish them.
+
     When *per_paper_content* is provided (multi-paper follow-up), each
     paper's pages are stored separately so page numbers from different
     papers don't collide.
 
-    Returns a dict keyed by ``"N-pY"`` with ``{page, context}`` values,
-    or ``None`` if no citations are found.
+    Returns a dict keyed by ``"N-pY"`` or ``"N-bare"`` with
+    ``{page, context}`` values, or ``None`` if no citations are found.
     """
     import math
     from collections import Counter
@@ -535,7 +602,16 @@ def _extract_citation_contexts(
     # General pattern: [N, p.ANY_PAGE_DESCRIPTION] — matches p.2, p.2-3, p.2, p.4, etc.
     citation_pattern = re.compile(r'\[(\d{1,2}),\s*(p\.[^\]]+)\]')
     citations = citation_pattern.findall(ai_response)
-    if not citations:
+
+    # Also detect bare [N] citations (no page number).
+    # Negative lookbehind avoids matching inside [N, p.Y] or markdown links.
+    bare_pattern = re.compile(r'(?<![,\w])\[(\d{1,2})\](?!\()')
+    bare_matches = set(bare_pattern.findall(ai_response))
+    # Remove indices already covered by [N, p.Y] patterns
+    covered_indices = {idx_str for idx_str, _ in citations}
+    bare_only = bare_matches - covered_indices
+
+    if not citations and not bare_only:
         return None
 
     # Build per-paper page maps to avoid page-number collisions
@@ -648,6 +724,36 @@ def _extract_citation_contexts(
         contexts[key] = {
             "page": unique_pages[0],
             "context": _best_paragraph(page_content, query),
+        }
+
+    # ── Bare [N] citations — BM25 on full paper content ──────────────────
+    for idx_str in bare_only:
+        key = f"{idx_str}-bare"
+        if key in contexts:
+            continue
+        paper_idx = int(idx_str)
+
+        # Select full content for this paper
+        if per_paper_content and paper_idx in per_paper_content:
+            full_content = per_paper_content[paper_idx]
+        elif not per_paper_content:
+            full_content = article_pdf_content
+        else:
+            continue
+
+        # Extract ~160 chars around the bare citation for BM25 query
+        citation_text = f"[{idx_str}]"
+        pos = ai_response.find(citation_text)
+        if pos >= 0:
+            start = max(0, pos - 80)
+            end = min(len(ai_response), pos + 80)
+            query = ai_response[start:end]
+        else:
+            query = ai_response[:160]
+
+        contexts[key] = {
+            "page": 0,  # no specific page
+            "context": _best_paragraph(full_content, query),
         }
 
     return contexts if contexts else None
@@ -1057,6 +1163,8 @@ After saving, return here and start chatting!"""
     _stream_next_iteration = False
     _response_already_streamed = False
     full_response = ""
+    _search_count = 0  # Track consecutive web searches to prevent infinite loops
+    _MAX_SEARCHES = 2  # Max web searches per user message
 
     for iteration in range(max_tool_iterations):
 
@@ -1117,6 +1225,14 @@ After saving, return here and start chatting!"""
                         yield f"data: {json.dumps({'content': ctx_block})}\n\n"
                 except Exception as e:
                     logger.warning(f"Failed to extract citation contexts: {e}")
+
+            # Emit follow-up reference cards so the frontend can build
+            # citationMap with paper title/URL for InlineCitation tooltips.
+            # Without this, the streaming early-return would skip the
+            # _followup_reference_cards emission at the end of the function.
+            if _followup_reference_cards:
+                ref_block = "\n".join(_followup_reference_cards)
+                yield f"data: {json.dumps({'content': ref_block})}\n\n"
 
             yield "data: [DONE]\n\n"
             return
@@ -1202,16 +1318,60 @@ After saving, return here and start chatting!"""
 
         # Check if AI requested web search
         search_match = json.loads('null')
+        _search_json_error = False
         try:
             import re
             pattern = r'\[WEB_SEARCH\](.*?)\[/WEB_SEARCH\]'
             match = re.search(pattern, full_response, re.DOTALL)
             if match:
                 search_match = json.loads(match.group(1).strip())
-        except:
+        except json.JSONDecodeError:
+            # #19: AI produced malformed JSON in tool block — flag for retry
+            _search_json_error = True
+            search_match = None
+            logger.warning(f"Malformed JSON in [WEB_SEARCH] block: {full_response[:200]}")
+        except Exception:
             search_match = None
 
+        # #19: Retry on malformed tool block JSON
+        if _search_json_error:
+            current_messages = current_messages + [
+                {"role": "assistant", "content": full_response},
+                {"role": "user", "content": (
+                    "Your [WEB_SEARCH] tool call contained invalid JSON. "
+                    "Please re-format and try again with valid JSON."
+                )}
+            ]
+            continue
+
+        # #2: AI wants to search but Exa API key is not configured
+        if search_match and not exa_api_key:
+            logger.warning("AI requested [WEB_SEARCH] but no Exa API key is configured")
+            current_messages = current_messages + [
+                {"role": "assistant", "content": full_response},
+                {"role": "user", "content": (
+                    "Web search is currently unavailable (API key not configured). "
+                    "Please answer the user's question using your existing knowledge. "
+                    "Do NOT attempt to use [WEB_SEARCH] again."
+                )}
+            ]
+            continue
+
         if search_match and exa_api_key:
+            # #4: Enforce search count limit
+            _search_count += 1
+            if _search_count > _MAX_SEARCHES:
+                logger.info(f"Search limit reached ({_MAX_SEARCHES}), forcing AI to answer with existing results")
+                current_messages = current_messages + [
+                    {"role": "assistant", "content": full_response},
+                    {"role": "user", "content": (
+                        f"You have already performed {_MAX_SEARCHES} web searches. "
+                        "Please synthesize the information from the results you already have "
+                        "and provide your answer now. Do NOT search again."
+                    )}
+                ]
+                continue
+
             # ── Handle [WEB_SEARCH] ──
             # If text was already streamed before the tool block, tell the
             # frontend to clear it so the search results appear cleanly
@@ -1239,6 +1399,23 @@ After saving, return here and start chatting!"""
                 # Deduplicate results — the same paper often appears via
                 # multiple mirrors (PubMed, nature.com, arxiv, lab pages…).
                 search_results["results"] = _deduplicate_search_results(search_results["results"])
+
+                # #1/#5: Handle empty search results explicitly
+                if not search_results["results"]:
+                    logger.info(f"Exa search returned 0 results for query: {query}")
+                    # Emit empty result to frontend so search card shows "no results"
+                    web_search_result_block = json.dumps(search_results)
+                    yield f"data: {json.dumps({'content': f'[WEB_SEARCH_RESULT]{web_search_result_block}[/WEB_SEARCH_RESULT]'})}\n\n"
+                    current_messages = current_messages + [
+                        {"role": "assistant", "content": full_response},
+                        {"role": "user", "content": (
+                            f"The web search for '{query}' returned NO results. "
+                            "Please answer the user's question using your existing knowledge, "
+                            "or suggest alternative search terms the user could try. "
+                            "Do NOT fabricate references or citations."
+                        )}
+                    ]
+                    continue
 
                 # Emit web search results to frontend so UI can display completion status
                 web_search_result_block = json.dumps(search_results)
@@ -1278,8 +1455,25 @@ After saving, return here and start chatting!"""
             except ClientDisconnectedError:
                 logger.info("Client disconnected during Exa search — stopping")
                 return
+            except httpx.TimeoutException:
+                # #3: Search timeout — update frontend card and let AI answer with existing knowledge
+                logger.warning(f"Exa search timed out for query: {query}")
+                failed_status = json.dumps({"query": query, "reason": reason, "status": "timeout"})
+                yield f"data: {json.dumps({'content': f'[SEARCH_STATUS]{failed_status}[/SEARCH_STATUS]'})}\n\n"
+                current_messages = current_messages + [
+                    {"role": "assistant", "content": full_response},
+                    {"role": "user", "content": (
+                        f"The web search for '{query}' timed out. "
+                        "Please answer the user's question using your existing knowledge. "
+                        "Do NOT attempt to use [WEB_SEARCH] again."
+                    )}
+                ]
+                continue
             except Exception as e:
                 logger.error(f"Exa search error: {e}")
+                # Emit failed status so frontend search card updates
+                failed_status = json.dumps({"query": query, "reason": reason, "status": "error"})
+                yield f"data: {json.dumps({'content': f'[SEARCH_STATUS]{failed_status}[/SEARCH_STATUS]'})}\n\n"
                 break
 
         # ── Check for [READ_ARTICLE] ──
@@ -1312,17 +1506,30 @@ After saving, return here and start chatting!"""
 
             try:
                 _active_pdf_url = article_url
-                pdf_result = await _run_or_cancel_on_disconnect(
-                    process_pdf_url(
-                        url=article_url,
-                        title=article_title,
-                        base_url=effective_base_url,
-                        api_key=effective_api_key,
-                        model=effective_model,
-                        use_cache=True
-                    ),
-                    request,
+                # #22: Run PDF processing as a task and emit heartbeats every
+                # 10 s to prevent frontend silence-timeout (~60 s).
+                _pdf_task = asyncio.create_task(
+                    _run_or_cancel_on_disconnect(
+                        process_pdf_url(
+                            url=article_url,
+                            title=article_title,
+                            base_url=effective_base_url,
+                            api_key=effective_api_key,
+                            model=effective_model,
+                            use_cache=True
+                        ),
+                        request,
+                    )
                 )
+                _HEARTBEAT_INTERVAL = 10  # seconds
+                while not _pdf_task.done():
+                    try:
+                        await asyncio.wait_for(asyncio.shield(_pdf_task), timeout=_HEARTBEAT_INTERVAL)
+                    except asyncio.TimeoutError:
+                        # Task still running — emit heartbeat to keep connection alive
+                        hb_status = {"url": article_url, "title": article_title, "status": "parsing"}
+                        yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(hb_status)}[/PDF_PARSE_STATUS]'})}\n\n"
+                pdf_result = _pdf_task.result()
                 _active_pdf_url = None
 
                 # For uncached PDFs: transition downloading → parsing → completed
@@ -1346,6 +1553,10 @@ After saving, return here and start chatting!"""
                 if pdf_result.get("success"):
                     # Build article content for AI
                     content = pdf_result.get("pdf_content") or pdf_result.get("summary") or ""
+                    # 改动 9b: Replace hash-based image filenames with fig-N aliases
+                    # (first-read path — same as 改动 9 in _build_merged_pdf_context)
+                    _first_read_url_hash = _get_url_hash(article_url)
+                    content = _replace_images_with_fig_aliases(content, _first_read_url_hash)
                     # Save raw PDF content (with page markers) for citation context extraction
                     article_pdf_content = content
                     # Head + tail truncation for long articles
@@ -1360,11 +1571,14 @@ After saving, return here and start chatting!"""
                     # Build metadata
                     page_count = pdf_result.get("page_count")
                     parse_method = pdf_result.get("parse_method", "pymupdf")
-                    quality_label = (
-                        "High-precision (MinerU — includes tables, formulas, images)"
-                        if parse_method == "mineru"
-                        else "Fast (PyMuPDF — text only, images not yet extracted)"
-                    )
+                    _img_count = pdf_result.get("image_count", 0)
+                    _imgs_ready = pdf_result.get("images_ready", False)
+                    if parse_method == "mineru":
+                        quality_label = f"High-precision (MinerU) — {_img_count} images extracted" if _imgs_ready else "High-precision (MinerU) — no images"
+                    elif _imgs_ready:
+                        quality_label = f"Fast (PyMuPDF) — {_img_count} images extracted (MinerU upgrade pending in background)"
+                    else:
+                        quality_label = "Fast (PyMuPDF) — images not yet extracted (MinerU upgrade pending in background)"
                     page_info = f"{page_count} pages" if page_count else "page count unknown"
                     is_academic = pdf_result.get("is_academic", False)
                     label = "Paper" if is_academic else "Doc"
@@ -2236,65 +2450,109 @@ async def chat_with_ai(
         return content.strip()
 
     async def stream_with_persistence():
-        """Stream AI response and save to database if conversation_id is provided"""
-        full_response = ""
-        async for chunk in stream_ai_response(messages, api_key, base_url, model, detected_lang, request):
-            # Intercept pdf_context event - save to DB as hidden user message but don't
-            # yield to frontend. This lets follow-up questions reference the PDF content.
-            if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":
-                try:
-                    data = json.loads(chunk[6:])
-                    if "pdf_context" in data:
-                        if req.conversation_id:
-                            async for db_session in get_db():
-                                try:
-                                    message_data = {
-                                        "conversation_id": req.conversation_id,
-                                        "role": "user",
-                                        "content": f"[PDF_CONTEXT]\n{data['pdf_context']}\n[/PDF_CONTEXT]",
-                                    }
-                                    await ChatRepository.add_message(db_session, message_data)
-                                    await db_session.commit()
-                                finally:
-                                    await db_session.close()
-                        continue  # Don't yield this to frontend
-                except (json.JSONDecodeError, KeyError):
-                    pass
+        """Stream AI response and save to database if conversation_id is provided.
 
-            # Don't yield [DONE] yet - we need to send message_id first
-            if chunk == "data: [DONE]\n\n":
-                # Save assistant response to database and return message_id BEFORE [DONE]
-                if req.conversation_id and full_response:
+        Uses try/finally to ensure partial responses are saved even when the
+        client disconnects mid-stream (e.g. user navigates away during PDF
+        parsing).  Without this, the assistant message is lost and the UI shows
+        a broken state when the user returns.
+        """
+        full_response = ""
+        saved_to_db = False  # Track whether we already persisted via [DONE]
+        try:
+            async for chunk in stream_ai_response(messages, api_key, base_url, model, detected_lang, request):
+                # Intercept pdf_context event - save to DB as hidden user message but don't
+                # yield to frontend. This lets follow-up questions reference the PDF content.
+                if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":
+                    try:
+                        data = json.loads(chunk[6:])
+                        if "pdf_context" in data:
+                            if req.conversation_id:
+                                async for db_session in get_db():
+                                    try:
+                                        message_data = {
+                                            "conversation_id": req.conversation_id,
+                                            "role": "user",
+                                            "content": f"[PDF_CONTEXT]\n{data['pdf_context']}\n[/PDF_CONTEXT]",
+                                        }
+                                        await ChatRepository.add_message(db_session, message_data)
+                                        await db_session.commit()
+                                    finally:
+                                        await db_session.close()
+                            continue  # Don't yield this to frontend
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+
+                # Don't yield [DONE] yet - we need to send message_id first
+                if chunk == "data: [DONE]\n\n":
+                    # Save assistant response to database and return message_id BEFORE [DONE]
+                    if req.conversation_id and full_response:
+                        async for db_session in get_db():
+                            try:
+                                # Strip internal-only status blocks before persisting so that
+                                # on the next turn the AI won't mistake them for existing search results.
+                                save_content = _strip_internal_status_blocks(full_response)
+                                message_data = {
+                                    "conversation_id": req.conversation_id,
+                                    "role": "assistant",
+                                    "content": save_content,
+                                }
+                                saved_message = await ChatRepository.add_message(db_session, message_data)
+                                await db_session.commit()
+                                saved_to_db = True
+                                # Send message_id back to frontend so it can update the message ID
+                                # This enables proper persistence of task submission status
+                                if saved_message:
+                                    yield f"data: {json.dumps({'message_id': saved_message.id})}\n\n"
+                            finally:
+                                await db_session.close()
+                    else:
+                        saved_to_db = True  # Nothing to save
+                    # Now yield [DONE] after message_id has been sent
+                    yield chunk
+                else:
+                    yield chunk
+                    # Extract content from SSE chunk
+                    if chunk.startswith("data: "):
+                        try:
+                            data = json.loads(chunk[6:])
+                            if "content" in data and data["content"] is not None:
+                                full_response += data["content"]
+                        except:
+                            pass
+        finally:
+            # Save a "cancelled" assistant message on abnormal exit (client disconnect,
+            # error, etc.) so the conversation isn't left with a dangling user message
+            # and no reply.  When the user returns, they see a clean cancel notice
+            # instead of a broken UI state.
+            if not saved_to_db and req.conversation_id:
+                _CANCEL_MSGS = {
+                    "zh-CN": "*用户取消了回答。*",
+                    "zh-HK": "*用戶取消了回答。*",
+                    "en": "*Response cancelled by user.*",
+                }
+                cancel_text = _CANCEL_MSGS.get(detected_lang, _CANCEL_MSGS["en"])
+                # If there was partial content, append cancel notice after it
+                if full_response.strip():
+                    save_content = _strip_internal_status_blocks(full_response)
+                    save_content = f"{save_content}\n\n---\n\n{cancel_text}"
+                else:
+                    save_content = cancel_text
+                try:
                     async for db_session in get_db():
                         try:
-                            # Strip internal-only status blocks before persisting so that
-                            # on the next turn the AI won't mistake them for existing search results.
-                            save_content = _strip_internal_status_blocks(full_response)
                             message_data = {
                                 "conversation_id": req.conversation_id,
                                 "role": "assistant",
                                 "content": save_content,
                             }
-                            saved_message = await ChatRepository.add_message(db_session, message_data)
+                            await ChatRepository.add_message(db_session, message_data)
                             await db_session.commit()
-                            # Send message_id back to frontend so it can update the message ID
-                            # This enables proper persistence of task submission status
-                            if saved_message:
-                                yield f"data: {json.dumps({'message_id': saved_message.id})}\n\n"
+                            logger.info(f"Saved cancelled assistant response on stream interruption")
                         finally:
                             await db_session.close()
-                # Now yield [DONE] after message_id has been sent
-                yield chunk
-            else:
-                yield chunk
-                # Extract content from SSE chunk
-                if chunk.startswith("data: "):
-                    try:
-                        data = json.loads(chunk[6:])
-                        if "content" in data and data["content"] is not None:
-                            full_response += data["content"]
-                    except:
-                        pass
+                except Exception as e:
+                    logger.warning(f"Failed to save cancelled response on disconnect: {e}")
 
     return StreamingResponse(
         stream_with_persistence(),

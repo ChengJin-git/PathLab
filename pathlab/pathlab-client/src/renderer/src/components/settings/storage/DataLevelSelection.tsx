@@ -6,9 +6,10 @@ import { Label } from '../../ui/label'
 interface DataLevelSelectionProps {
   batchDataLevel: 'case' | 'file'
   setBatchDataLevel: (level: 'case' | 'file') => void
+  taskType?: 'classification' | 'survival' | 'segmentation'
 }
 
-export const DataLevelSelection: React.FC<DataLevelSelectionProps> = ({ batchDataLevel, setBatchDataLevel }) => {
+export const DataLevelSelection: React.FC<DataLevelSelectionProps> = ({ batchDataLevel, setBatchDataLevel, taskType }) => {
   const { t } = useTranslation()
 
   return (
@@ -32,14 +33,18 @@ export const DataLevelSelection: React.FC<DataLevelSelectionProps> = ({ batchDat
         <button
           type="button"
           onClick={() => setBatchDataLevel('case')}
+          disabled={taskType === 'segmentation'}
+          title={taskType === 'segmentation' ? t('settings.storage.caseLevelDisabledForSegmentation') : undefined}
           className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-            batchDataLevel === 'case'
-              ? 'bg-primary-100 text-primary-900 border-2 border-primary-300 shadow-sm'
-              : 'bg-white text-gray-500 border border-gray-100 hover:border-primary-200 hover:text-primary-600'
+            taskType === 'segmentation'
+              ? 'opacity-40 cursor-not-allowed bg-white text-gray-400 border border-gray-100'
+              : batchDataLevel === 'case'
+                ? 'bg-primary-100 text-primary-900 border-2 border-primary-300 shadow-sm'
+                : 'bg-white text-gray-500 border border-gray-100 hover:border-primary-200 hover:text-primary-600'
           }`}
         >
           <div className="flex items-center justify-center gap-2">
-            <Database className={`w-4 h-4 ${batchDataLevel === 'case' ? 'text-primary-700' : 'text-gray-400'}`} />
+            <Database className={`w-4 h-4 ${taskType === 'segmentation' ? 'text-gray-300' : batchDataLevel === 'case' ? 'text-primary-700' : 'text-gray-400'}`} />
             {t('settings.storage.caseLevel')}
           </div>
         </button>

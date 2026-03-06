@@ -10,7 +10,7 @@ import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { CheckSquare, Settings, AlignLeft, Layers, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react'
 import { ConfigurationValidation } from '../../types/training'
-import { DataLevel, TaskType, TrainingStatus, ExtractorOption, AGGREGATORS, PATCH_CLASSIFIERS } from '../../constants/training'
+import { DataLevel, TaskType, TrainingStatus, ExtractorOption, AGGREGATORS, PATCH_CLASSIFIERS, SEGMENTATION_ARCHITECTURES, SEGMENTATION_BACKBONES, SEGMENTATION_LOSSES, isSegFmEncoder } from '../../constants/training'
 
 export interface ReviewSubmitStepProps {
   // Task info
@@ -33,6 +33,12 @@ export interface ReviewSubmitStepProps {
   earlyStoppingPatience: number
   autoBalance: boolean
   classifier?: string
+
+  // Segmentation-specific
+  segArchitecture?: string
+  segBackbone?: string
+  segLossNames?: string[]
+  segLossWeights?: number[]
 
   // Validation
   validateConfiguration: ConfigurationValidation
@@ -70,6 +76,10 @@ export function ReviewSubmitStep({
   earlyStoppingPatience,
   autoBalance,
   classifier,
+  segArchitecture,
+  segBackbone,
+  segLossNames,
+  segLossWeights,
   validateConfiguration,
   trainingStatus,
   submitError,
@@ -133,19 +143,60 @@ export function ReviewSubmitStep({
                   <Layers className="w-4 h-4 sm:w-5 sm:h-5 text-primary-600" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[11px] sm:text-sm font-bold text-gray-900 truncate">
-                    {dataLevel === 'wsi' ? AGGREGATORS.find((a) => a.id === aggregator)?.name : availableExtractors.find((e) => e.id === featureExtractor)?.name}
-                  </div>
-                  {dataLevel === 'wsi' && (
-                    <div className="mt-1 text-[10px] sm:text-xs flex items-center gap-1.5 text-gray-500">
-                      <span className="text-gray-400">{t('training.review.features')}</span>
-                      <span className="font-bold text-gray-700 truncate">{availableExtractors.find((e) => e.id === featureExtractor)?.name}</span>
-                    </div>
-                  )}
-                  {dataLevel === 'patch' && (
-                    <div className="mt-1 text-[10px] flex items-center gap-1 text-gray-400">
-                      <span>{PATCH_CLASSIFIERS.find((c) => c.value === classifier)?.label ?? t('training.review.linearProbe')}</span>
-                    </div>
+                  {taskType === 'segmentation' ? (
+                    <>
+                      {isSegFmEncoder(segBackbone) ? (
+                        <>
+                          <div className="text-[11px] sm:text-sm font-bold text-gray-900 truncate">
+                            {segBackbone}
+                          </div>
+                          <div className="mt-1 text-[10px] sm:text-xs flex items-center gap-1.5 text-gray-500">
+                            <span className="text-gray-400">{t('training.review.segDecoder')}:</span>
+                            <span className="font-bold text-gray-700 truncate">{t('taskDetail.configuration.convDecoder')}</span>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-[11px] sm:text-sm font-bold text-gray-900 truncate">
+                            {SEGMENTATION_ARCHITECTURES.find((a) => a.id === segArchitecture)?.name || segArchitecture}
+                          </div>
+                          <div className="mt-1 text-[10px] sm:text-xs flex items-center gap-1.5 text-gray-500">
+                            <span className="text-gray-400">{t('training.review.segBackbone')}:</span>
+                            <span className="font-bold text-gray-700 truncate">{SEGMENTATION_BACKBONES.find((b) => b.id === segBackbone)?.name || segBackbone}</span>
+                          </div>
+                        </>
+                      )}
+                      {segLossNames && segLossNames.length > 0 && (
+                        <div className="mt-1.5 text-[10px] sm:text-xs text-gray-500">
+                          <span className="text-gray-400">{t('training.review.segLossFunctions')}:</span>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {segLossNames.map((name, i) => (
+                              <span key={name} className="inline-flex items-center gap-1 bg-gray-100 px-1.5 py-0.5 rounded text-[9px] sm:text-[10px] font-medium text-gray-700">
+                                {SEGMENTATION_LOSSES.find((l) => l.id === name)?.name || name}
+                                {segLossWeights?.[i] != null && <span className="text-gray-400">({segLossWeights[i]})</span>}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-[11px] sm:text-sm font-bold text-gray-900 truncate">
+                        {dataLevel === 'wsi' ? AGGREGATORS.find((a) => a.id === aggregator)?.name : availableExtractors.find((e) => e.id === featureExtractor)?.name}
+                      </div>
+                      {dataLevel === 'wsi' && (
+                        <div className="mt-1 text-[10px] sm:text-xs flex items-center gap-1.5 text-gray-500">
+                          <span className="text-gray-400">{t('training.review.features')}</span>
+                          <span className="font-bold text-gray-700 truncate">{availableExtractors.find((e) => e.id === featureExtractor)?.name}</span>
+                        </div>
+                      )}
+                      {dataLevel === 'patch' && (
+                        <div className="mt-1 text-[10px] flex items-center gap-1 text-gray-400">
+                          <span>{PATCH_CLASSIFIERS.find((c) => c.value === classifier)?.label ?? t('training.review.linearProbe')}</span>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>

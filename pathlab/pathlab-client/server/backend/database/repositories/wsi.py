@@ -804,7 +804,7 @@ class WSIRepository:
             test_count = row.split_test_count or 0
             has_predefined_splits = train_count > 0  # At least train split must exist
 
-            datasets.append({
+            dataset_dict = {
                 "dataset_id": row.dataset_id,  # UUID for API calls
                 "dataset_name": row.dataset_name or "Uncategorized",  # Display name
                 "user_id": row.dataset_user_id,  # Dataset owner
@@ -820,8 +820,80 @@ class WSIRepository:
                     "val": val_count,
                     "test": test_count
                 }
-            })
+            }
+
+            # For segmentation datasets, fetch COCO categories from annotation files
+            if row.task_type == "segmentation" and row.dataset_id:
+                coco_categories = await WSIRepository._get_coco_categories_for_dataset(db, row.dataset_id)
+                if coco_categories:
+                    dataset_dict["coco_categories"] = coco_categories
+                    dataset_dict["num_coco_categories"] = len(coco_categories)
+                else:
+                    dataset_dict["num_coco_categories"] = 0
+
+            datasets.append(dataset_dict)
         return datasets
+
+    @staticmethod
+    async def _get_coco_categories_for_dataset(db: AsyncSession, dataset_id: str) -> List[Dict]:
+        """
+        Extract COCO categories from annotation JSON files for a segmentation dataset.
+
+        Args:
+            db: Database session
+            dataset_id: Dataset UUID
+
+        Returns:
+            List of category dicts with id, name, and optionally supercategory
+        """
+        import json
+        import os
+        from pathlib import Path
+
+        # Query one WSI from this dataset that has an annotation file
+        query = select(WSISlide).where(
+            and_(
+                WSISlide.dataset_id == dataset_id,
+                WSISlide.wsi_path.like('%.json')
+            )
+        ).limit(1)
+
+        result = await db.execute(query)
+        wsi = result.scalar_one_or_none()
+
+        if not wsi or not wsi.wsi_path:
+            return []
+
+        # Read the JSON file to extract categories
+        try:
+            json_path = Path(wsi.wsi_path)
+            if not json_path.exists():
+                return []
+
+            with open(json_path, 'r') as f:
+                coco_data = json.load(f)
+
+            # Extract categories from COCO format
+            categories = coco_data.get('categories', [])
+            if not categories:
+                return []
+
+            # Return simplified category info
+            return [
+                {
+                    "id": cat.get("id"),
+                    "name": cat.get("name"),
+                    "supercategory": cat.get("supercategory")
+                }
+                for cat in categories
+                if cat.get("id") is not None and cat.get("name")
+            ]
+        except Exception as e:
+            # Log error but don't fail the entire request
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to extract COCO categories from {wsi.wsi_path}: {e}")
+            return []
 
     @staticmethod
     async def get_by_dataset(
@@ -964,12 +1036,12 @@ class WSIRepository:
         """Count distinct case groups for case-level pagination.
 
         A "case" is a distinct non-NULL case_id.  Files with NULL case_id
-        form a single ``__no_case__`` group.
+        are each treated as individual pagination units.
 
         Returns dict with keys:
             named_case_count  – number of distinct non-NULL case_ids
             no_case_count     – number of files without case_id
-            total_cases       – named_case_count + (1 if no_case_count > 0 else 0)
+            total_cases       – named_case_count + no_case_count (each uncased file = 1 unit)
             total_files       – total matching file count
             has_multi_slide_cases – whether any case_id has more than one file
         """
@@ -1011,7 +1083,7 @@ class WSIRepository:
         q_total = select(func.count(WSISlide.id)).where(*filters)
         total_files = (await db.execute(q_total)).scalar_one()
 
-        total_cases = named_case_count + (1 if no_case_count > 0 else 0)
+        total_cases = named_case_count + no_case_count
 
         # has_multi_slide_cases: any non-NULL case_id with count > 1
         q_multi = (
@@ -1051,8 +1123,8 @@ class WSIRepository:
         Ordering: named cases alphabetically by case_id first, then the
         ``__no_case__`` group (NULL case_id files) last.
 
-        Each named case_id counts as 1 page unit; ALL files without case_id
-        together count as 1 page unit (consistent with frontend grouping).
+        Each named case_id counts as 1 page unit; each file without case_id
+        counts as 1 individual page unit (paginated with OFFSET/LIMIT).
 
         Returns the list of WSISlide objects belonging to the cases on the
         requested page (with dataset relationship loaded).
@@ -1105,28 +1177,35 @@ class WSIRepository:
             file_result = await db.execute(q_files)
             results.extend(file_result.scalars().all())
 
-        # Step 3: Check if __no_case__ group falls on this page
-        # __no_case__ is always the LAST case unit.
-        # Count named cases first to know if __no_case__ is on this page.
+        # Step 3: Check if __no_case__ files fall on this page
+        # __no_case__ files are individually paginated after all named cases.
+        # Compute offset into uncased files based on how many page slots remain.
         q_named_count = select(func.count(func.distinct(WSISlide.case_id))).where(
             WSISlide.case_id.isnot(None), *filters
         )
         named_count = (await db.execute(q_named_count)).scalar_one()
 
-        # __no_case__ index (0-based) = named_count
+        # __no_case__ files start at virtual index = named_count (0-based)
         no_case_index = named_count
         page_start = offset
         page_end = offset + page_size  # exclusive
-        if page_start <= no_case_index < page_end:
-            # __no_case__ is on this page – fetch all uncased files
-            q_no_case = (
-                select(WSISlide)
-                .options(selectinload(WSISlide.dataset))
-                .where(WSISlide.case_id.is_(None), *filters)
-                .order_by(desc(WSISlide.created_at))
-            )
-            no_case_result = await db.execute(q_no_case)
-            results.extend(no_case_result.scalars().all())
+        if page_end > no_case_index:
+            # This page overlaps with the uncased-file region — paginate them
+            no_case_offset = max(0, page_start - no_case_index)
+            # How many named-case slots were consumed on this page
+            named_on_page = len(page_case_ids)
+            no_case_limit = page_size - named_on_page
+            if no_case_limit > 0:
+                q_no_case = (
+                    select(WSISlide)
+                    .options(selectinload(WSISlide.dataset))
+                    .where(WSISlide.case_id.is_(None), *filters)
+                    .order_by(desc(WSISlide.created_at))
+                    .offset(no_case_offset)
+                    .limit(no_case_limit)
+                )
+                no_case_result = await db.execute(q_no_case)
+                results.extend(no_case_result.scalars().all())
 
         return results
 

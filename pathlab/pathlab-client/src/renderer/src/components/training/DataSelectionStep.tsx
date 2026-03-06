@@ -247,6 +247,7 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
           predefinedSplitCounts={predefinedSplitCounts}
           selectedDatasetId={selectedDatasetId}
           selectedDatasetName={selectedDatasetName}
+          isWholeDatasetSelected={isWholeDatasetSelected}
         />
       )}
 
@@ -362,7 +363,7 @@ function DatasetGrid({
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 sm:mt-2">
                   <span className={`text-[10px] sm:text-xs font-semibold flex items-center gap-1 ${isSelected ? 'text-primary-600' : 'text-gray-500'}`}>
                     <FileText className="w-3 h-3" />
-                    {t('training.dataSelection.slidesCount', { count: dataset.file_count })}
+                    {t(dataset.data_type === 'patch' ? 'training.dataSelection.filesCount' : 'training.dataSelection.slidesCount', { count: dataset.file_count })}
                   </span>
                   <span className={`hidden sm:inline w-1 h-1 rounded-full ${isSelected ? 'bg-primary-300' : 'bg-gray-300'}`}></span>
                   <span className={`text-[10px] sm:text-xs font-semibold ${isSelected ? 'text-primary-600' : 'text-gray-500'}`}>{formatBytes(dataset.total_size)}</span>

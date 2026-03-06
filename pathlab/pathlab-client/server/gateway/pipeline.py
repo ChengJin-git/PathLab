@@ -15,7 +15,7 @@ from typing import List, Dict
 from contextlib import asynccontextmanager
 
 from backend.ai.schemas.base import TaskStatus
-from backend.database.repositories import TrainingTaskRepository
+from backend.database.repositories import TrainingTaskRepository, AnnotationDraftRepository
 from backend.database.utils.training_logger import TrainingLogger
 from backend.common.config import Config
 from .dependencies import logger, PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
@@ -25,6 +25,63 @@ from .utils import cancel_ai_service_training
 def get_training_timeout() -> int:
     """Get the configured training task timeout in seconds."""
     return Config.get_task_timeout()
+
+
+async def _call_ai_service(
+    logger_manager: 'ScopedLogger',
+    task_id: str,
+    endpoint: str,
+    payload: dict,
+    operation_name: str,
+    timeout: int = None,
+) -> dict:
+    """
+    Unified AI service HTTP call with standardized error handling.
+
+    Args:
+        logger_manager: ScopedLogger instance for database logging
+        task_id: Training task ID
+        endpoint: Full URL endpoint to call
+        payload: JSON payload to send
+        operation_name: Human-readable operation name for error messages
+        timeout: Optional timeout in seconds (defaults to configured training timeout)
+
+    Returns:
+        Response JSON data
+
+    Raises:
+        Exception: On HTTP errors, timeouts, or connection failures
+    """
+    timeout = timeout or get_training_timeout()
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(endpoint, json=payload)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        body = e.response.text if e.response is not None else str(e)
+        async with logger_manager.session() as (logger, db):
+            await logger.error(
+                f"AI service {operation_name} failed: {e}",
+                metadata={"status_code": e.response.status_code if e.response else None, "body": body}
+            )
+        raise
+    except httpx.TimeoutException as e:
+        async with logger_manager.session() as (logger, db):
+            await logger.error(
+                f"{operation_name} timeout after {timeout} seconds. Requesting AI service to cancel and release GPU.",
+                metadata={"timeout_seconds": timeout, "error": str(e)}
+            )
+        await cancel_ai_service_training(task_id)
+        raise Exception(f"{operation_name} timeout after {timeout // 3600} hours. Task cancelled.") from e
+    except httpx.RequestError as e:
+        async with logger_manager.session() as (logger, db):
+            await logger.error(
+                f"Failed to connect to AI service for {operation_name}: {e}",
+                metadata={"ai_service_url": AI_SERVICE_URL, "error": str(e)}
+            )
+        raise Exception(f"AI service unavailable at {AI_SERVICE_URL}. Please ensure the AI service is running.") from e
+
 
 class ScopedLogger:
     """
@@ -79,6 +136,8 @@ async def run_training_pipeline(
     huggingface_token: str = None,
     training_task_type: str = "classification",  # "classification", "survival", or "segmentation"
     assigned_device: str = None,  # GPU device assigned by task queue (e.g., "cuda:0")
+    user_id: str = None,  # User who submitted the task (for permission checks)
+    user_is_admin: bool = False,  # Whether the submitting user is admin
 ):
     """
     Run the training pipeline based on data level:
@@ -120,6 +179,28 @@ async def run_training_pipeline(
                     early_stopping_patience = int(model_config.get('early_stopping_patience', 15))
                     seed = preprocessing_config.get('split_config', {}).get('seed', 42)
 
+                    # Determine num_classes from COCO annotations stored in annotation_drafts
+                    # Only allow access to annotations the user owns or has permissions for
+                    num_classes = 1  # default
+                    from backend.database.repositories import DatasetPermissionRepository
+                    elevated_dataset_ids = set()
+                    if not user_is_admin and user_id:
+                        user_permissions = await DatasetPermissionRepository.get_valid_by_user(db, user_id)
+                        elevated_dataset_ids = {p.dataset_id for p in user_permissions if p.is_valid()}
+                    for wsi_id in wsi_ids:
+                        draft = await AnnotationDraftRepository.get_draft_with_permission(
+                            db, f"draft_{wsi_id}", user_id or "", user_is_admin, elevated_dataset_ids
+                        )
+                        if draft and draft.annotations:
+                            coco_categories = draft.annotations.get("categories", [])
+                            if coco_categories:
+                                num_classes = len(coco_categories)
+                                break
+                    await logger.info(
+                        f"Detected {num_classes} segmentation class(es) from COCO annotations",
+                        metadata={"num_classes": num_classes}
+                    )
+
                     await logger.info(
                         f"Training {architecture} with {backbone} backbone",
                         metadata={"architecture": architecture, "backbone": backbone,
@@ -130,51 +211,27 @@ async def run_training_pipeline(
                     await TrainingTaskRepository.update_status(db, task_id, TaskStatus.TRAINING, progress=50)
 
                 # Call AI service for patch segmentation training
-                timeout = get_training_timeout()
-                try:
-                    async with httpx.AsyncClient(timeout=timeout) as client:
-                        resp = await client.post(
-                            f"{AI_SERVICE_URL}/api/ai/training/patch_segmentation",
-                            json={
-                                "task_id": task_id,
-                                "architecture": architecture,
-                                "backbone": backbone,
-                                "loss_names": loss_names,
-                                "loss_weights": loss_weights,
-                                "epochs": epochs,
-                                "lr": lr,
-                                "batch_size": batch_size,
-                                "optimizer": optimizer,
-                                "early_stopping_patience": early_stopping_patience,
-                                "device": assigned_device,
-                                "seed": seed,
-                            },
-                        )
-                        resp.raise_for_status()
-                        _ = resp.json()
-                except httpx.HTTPStatusError as e:
-                    body = e.response.text if e.response is not None else str(e)
-                    async with logger_manager.session() as (logger, db):
-                        await logger.error(
-                            f"AI service patch segmentation training failed: {e}",
-                            metadata={"status_code": e.response.status_code if e.response else None, "body": body}
-                        )
-                    raise
-                except httpx.TimeoutException as e:
-                    async with logger_manager.session() as (logger, db):
-                        await logger.error(
-                            f"Training timeout after {timeout} seconds. Requesting AI service to cancel and release GPU.",
-                            metadata={"timeout_seconds": timeout, "error": str(e)}
-                        )
-                    await cancel_ai_service_training(task_id)
-                    raise Exception(f"Training timeout after {timeout // 3600} hours. Task cancelled.") from e
-                except httpx.RequestError as e:
-                    async with logger_manager.session() as (logger, db):
-                        await logger.error(
-                            f"Failed to connect to AI service for patch segmentation training: {e}",
-                            metadata={"ai_service_url": AI_SERVICE_URL, "error": str(e)}
-                        )
-                    raise Exception(f"AI service unavailable at {AI_SERVICE_URL}. Please ensure the AI service is running.") from e
+                await _call_ai_service(
+                    logger_manager=logger_manager,
+                    task_id=task_id,
+                    endpoint=f"{AI_SERVICE_URL}/api/ai/training/patch_segmentation",
+                    payload={
+                        "task_id": task_id,
+                        "architecture": architecture,
+                        "backbone": backbone,
+                        "loss_names": loss_names,
+                        "loss_weights": loss_weights,
+                        "epochs": epochs,
+                        "lr": lr,
+                        "batch_size": batch_size,
+                        "optimizer": optimizer,
+                        "early_stopping_patience": early_stopping_patience,
+                        "device": assigned_device,
+                        "seed": seed,
+                        "num_classes": num_classes,
+                    },
+                    operation_name="patch segmentation training"
+                )
 
                 async with logger_manager.session() as (logger, db):
                     await logger.info("Patch segmentation training completed successfully")
@@ -205,52 +262,26 @@ async def run_training_pipeline(
                 await TrainingTaskRepository.update_status(db, task_id, TaskStatus.TRAINING, progress=50)
 
             # Call AI service for patch classification training (synchronous, waits for completion)
-            timeout = get_training_timeout()
-            try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
-                    resp = await client.post(
-                        f"{AI_SERVICE_URL}/api/ai/training/patch_classification",
-                        json={
-                            "task_id": task_id,
-                            "epochs": epochs,
-                            "lr": lr,
-                            "feature_extractor": feature_extractor,
-                            "classifier": classifier,
-                            "batch_size": batch_size,
-                            "huggingface_token": huggingface_token or "",
-                            "optimizer": optimizer,
-                            "auto_balance": auto_balance,
-                            "early_stopping_patience": early_stopping_patience,
-                            "device": assigned_device,  # Pass GPU device for multi-GPU support
-                            "seed": seed,
-                        },
-                    )
-                    resp.raise_for_status()
-                    _ = resp.json()
-            except httpx.HTTPStatusError as e:
-                body = e.response.text if e.response is not None else str(e)
-                async with logger_manager.session() as (logger, db):
-                    await logger.error(
-                        f"AI service patch classification training failed: {e}",
-                        metadata={"status_code": e.response.status_code if e.response else None, "body": body}
-                    )
-                raise
-            except httpx.TimeoutException as e:
-                # Timeout - request AI service to cancel training and release GPU
-                async with logger_manager.session() as (logger, db):
-                    await logger.error(
-                        f"Training timeout after {timeout} seconds. Requesting AI service to cancel and release GPU.",
-                        metadata={"timeout_seconds": timeout, "error": str(e)}
-                    )
-                await cancel_ai_service_training(task_id)
-                raise Exception(f"Training timeout after {timeout // 3600} hours. Task cancelled.") from e
-            except httpx.RequestError as e:
-                async with logger_manager.session() as (logger, db):
-                    await logger.error(
-                        f"Failed to connect to AI service for patch training: {e}",
-                        metadata={"ai_service_url": AI_SERVICE_URL, "error": str(e)}
-                    )
-                raise Exception(f"AI service unavailable at {AI_SERVICE_URL}. Please ensure the AI service is running.") from e
+            await _call_ai_service(
+                logger_manager=logger_manager,
+                task_id=task_id,
+                endpoint=f"{AI_SERVICE_URL}/api/ai/training/patch_classification",
+                payload={
+                    "task_id": task_id,
+                    "epochs": epochs,
+                    "lr": lr,
+                    "feature_extractor": feature_extractor,
+                    "classifier": classifier,
+                    "batch_size": batch_size,
+                    "huggingface_token": huggingface_token or "",
+                    "optimizer": optimizer,
+                    "auto_balance": auto_balance,
+                    "early_stopping_patience": early_stopping_patience,
+                    "device": assigned_device,
+                    "seed": seed,
+                },
+                operation_name="patch classification training"
+            )
 
             async with logger_manager.session() as (logger, db):
                 await logger.info("Patch classification training completed successfully")
@@ -393,53 +424,27 @@ async def run_training_pipeline(
         # Step 2: Feature extraction via AI service
         feature_extractor = preprocessing_config.get('feature_extractor', 'resnet50')
         feature_batch_size = preprocessing_config.get('feature_batch_size', 64)  # Match constants/training.ts
-        
+
         async with logger_manager.session() as (logger, db):
             await logger.info(f"Calling AI service for feature extraction (using {feature_extractor})")
 
-        timeout = get_training_timeout()
-        try:
-            # Call AI Service (NO DB SESSION HELD)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(
-                    f"{AI_SERVICE_URL}/api/ai/training/extract_features",
-                    json={
-                        "task_id": task_id,
-                        "wsi_ids": wsi_ids,
-                        "feature_extractor": feature_extractor,
-                        "batch_size": feature_batch_size,
-                        "force_recompute": False,  # Use cached features if available
-                        "huggingface_token": huggingface_token or "",
-                        "preprocessing_config": preprocessing_config,  # For cache key computation
-                        "device": assigned_device,  # Pass GPU device for multi-GPU support
-                    },
-                )
-                resp.raise_for_status()
-                _ = resp.json()
-        except httpx.HTTPStatusError as e:
-            body = e.response.text if e.response is not None else str(e)
-            async with logger_manager.session() as (logger, db):
-                await logger.error(
-                    f"AI service feature extraction failed: {e}",
-                    metadata={"status_code": e.response.status_code if e.response else None, "body": body}
-                )
-            raise
-        except httpx.TimeoutException as e:
-            # Timeout - request AI service to cancel and release GPU
-            async with logger_manager.session() as (logger, db):
-                await logger.error(
-                    f"Feature extraction timeout after {timeout} seconds. Requesting AI service to cancel and release GPU.",
-                    metadata={"timeout_seconds": timeout, "error": str(e)}
-                )
-            await cancel_ai_service_training(task_id)
-            raise Exception(f"Feature extraction timeout after {timeout // 3600} hours. Task cancelled.") from e
-        except httpx.RequestError as e:
-            async with logger_manager.session() as (logger, db):
-                await logger.error(
-                    f"Failed to connect to AI service for feature extraction: {e}",
-                    metadata={"ai_service_url": AI_SERVICE_URL, "error": str(e)}
-                )
-            raise Exception(f"AI service unavailable at {AI_SERVICE_URL}. Please ensure the AI service is running.") from e
+        # Call AI Service (NO DB SESSION HELD)
+        await _call_ai_service(
+            logger_manager=logger_manager,
+            task_id=task_id,
+            endpoint=f"{AI_SERVICE_URL}/api/ai/training/extract_features",
+            payload={
+                "task_id": task_id,
+                "wsi_ids": wsi_ids,
+                "feature_extractor": feature_extractor,
+                "batch_size": feature_batch_size,
+                "force_recompute": False,
+                "huggingface_token": huggingface_token or "",
+                "preprocessing_config": preprocessing_config,
+                "device": assigned_device,
+            },
+            operation_name="feature extraction"
+        )
 
         async with logger_manager.session() as (logger, db):
             await logger.info("Feature extraction completed for all WSI")
@@ -456,70 +461,45 @@ async def run_training_pipeline(
         async with logger_manager.session() as (logger, db):
             await logger.info(f"Calling AI service to train {aggregator.upper()} model")
 
-        try:
-            # Use correct endpoint based on training_task_type
-            if training_task_type == "survival":
-                endpoint = f"{AI_SERVICE_URL}/api/ai/training/wsi_survival"
-                payload = {
-                    "task_id": task_id,
-                    "epochs": epochs,
-                    "lr": lr,
-                    "aggregator": aggregator,
-                    "feature_extractor": feature_extractor,
-                    "num_bins": 4,  # Standard for manual NLLLoss
-                    "optimizer": optimizer,
-                    "early_stopping_patience": early_stopping_patience,
-                    "device": assigned_device,  # Pass GPU device for multi-GPU support
-                    "seed": seed,
-                    # Note: auto_balance not applicable for survival (no class weights)
-                }
-            else:
-                endpoint = f"{AI_SERVICE_URL}/api/ai/training/wsi_classification"
-                payload = {
-                    "task_id": task_id,
-                    "epochs": epochs,
-                    "lr": lr,
-                    "aggregator": aggregator,
-                    "feature_extractor": feature_extractor,
-                    "optimizer": optimizer,
-                    "auto_balance": auto_balance,
-                    "early_stopping_patience": early_stopping_patience,
-                    "device": assigned_device,  # Pass GPU device for multi-GPU support
-                    "seed": seed,
-                }
+        # Use correct endpoint based on training_task_type
+        if training_task_type == "survival":
+            endpoint = f"{AI_SERVICE_URL}/api/ai/training/wsi_survival"
+            payload = {
+                "task_id": task_id,
+                "epochs": epochs,
+                "lr": lr,
+                "aggregator": aggregator,
+                "feature_extractor": feature_extractor,
+                "num_bins": 4,  # Standard for manual NLLLoss
+                "optimizer": optimizer,
+                "early_stopping_patience": early_stopping_patience,
+                "device": assigned_device,
+                "seed": seed,
+                # Note: auto_balance not applicable for survival (no class weights)
+            }
+        else:
+            endpoint = f"{AI_SERVICE_URL}/api/ai/training/wsi_classification"
+            payload = {
+                "task_id": task_id,
+                "epochs": epochs,
+                "lr": lr,
+                "aggregator": aggregator,
+                "feature_extractor": feature_extractor,
+                "optimizer": optimizer,
+                "auto_balance": auto_balance,
+                "early_stopping_patience": early_stopping_patience,
+                "device": assigned_device,
+                "seed": seed,
+            }
 
-            # Send training request (synchronous, waits for completion) (NO DB SESSION HELD)
-            timeout = get_training_timeout()
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(endpoint, json=payload)
-                resp.raise_for_status()
-                _ = resp.json()
-
-        except httpx.HTTPStatusError as e:
-            body = e.response.text if e.response is not None else str(e)
-            async with logger_manager.session() as (logger, db):
-                await logger.error(
-                    f"AI service training failed: {e}",
-                    metadata={"status_code": e.response.status_code if e.response else None, "body": body}
-                )
-            raise
-        except httpx.TimeoutException as e:
-            # Timeout - request AI service to cancel training and release GPU
-            timeout = get_training_timeout()
-            async with logger_manager.session() as (logger, db):
-                await logger.error(
-                    f"WSI training timeout after {timeout} seconds. Requesting AI service to cancel and release GPU.",
-                    metadata={"timeout_seconds": timeout, "error": str(e)}
-                )
-            await cancel_ai_service_training(task_id)
-            raise Exception(f"WSI training timeout after {timeout // 3600} hours. Task cancelled.") from e
-        except httpx.RequestError as e:
-            async with logger_manager.session() as (logger, db):
-                await logger.error(
-                    f"Failed to connect to AI service for training: {e}",
-                    metadata={"ai_service_url": AI_SERVICE_URL, "error": str(e)}
-                )
-            raise Exception(f"AI service unavailable at {AI_SERVICE_URL}. Please ensure the AI service is running.") from e
+        # Send training request (synchronous, waits for completion) (NO DB SESSION HELD)
+        await _call_ai_service(
+            logger_manager=logger_manager,
+            task_id=task_id,
+            endpoint=endpoint,
+            payload=payload,
+            operation_name="WSI training"
+        )
 
         async with logger_manager.session() as (logger, db):
             await logger.info("Training pipeline completed successfully")

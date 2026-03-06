@@ -334,8 +334,14 @@ export function useDataSelection({
     setSelectedIds(new Set())
   }, [])
 
-  // Check for pre-defined splits
+  // Check for pre-defined splits (only when files are expanded and individual items are selected)
   useEffect(() => {
+    // When using whole-dataset selection (files not expanded), the split info
+    // comes from the dataset summary (set in selectDataset), so skip this effect.
+    if (!filesExpanded && selectedDatasetId) {
+      return
+    }
+
     if (selectedIds.size === 0) {
       setHasPreDefinedSplits(false)
       setPredefinedSplitCounts({ train: 0, val: 0, test: 0 })
@@ -359,7 +365,7 @@ export function useDataSelection({
 
     setPredefinedSplitCounts(counts)
     setHasPreDefinedSplits(!hasMissing && counts.train > 0)
-  }, [selectedIds, items])
+  }, [selectedIds, items, filesExpanded, selectedDatasetId])
 
   // Whether user selected a dataset without expanding individual files
   const isWholeDatasetSelected = !!selectedDatasetId && !filesExpanded

@@ -270,7 +270,7 @@ export function DatasetRegistrationCard({
           dataset_id: mode === 'existing' ? selectedDatasetId : undefined,
           dataset_name: mode === 'new' ? newDatasetName : undefined,
           aggregation_level: dataLevel,
-          label: '',
+          label: isSegmentation ? undefined : '',
           case_id: '',
           age: undefined,
           gender: '',

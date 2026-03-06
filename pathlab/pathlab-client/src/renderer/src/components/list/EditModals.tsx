@@ -6,28 +6,50 @@ import { Button } from '../ui/button'
 // ─── EditMetadataModal ───────────────────────────────────────────────────────
 
 export interface EditMetadataModalProps {
-  editingWSI: { wsi_id: string; label: string; case_id: string; age?: number; gender?: string; source?: string }
+  editingWSI: {
+    wsi_id: string
+    label?: string
+    case_id: string
+    age?: number
+    gender?: string
+    source?: string
+    event_time?: number
+    event_status?: number
+  }
   editLabel: string
   editCaseId: string
   editAge: string
   editGender: string
   editSource: string
+  editEventTime: string
+  editEventStatus: string
+  datasetType?: 'classification' | 'survival' | 'segmentation'
   onEditLabelChange: (v: string) => void
   onEditCaseIdChange: (v: string) => void
   onEditAgeChange: (v: string) => void
   onEditGenderChange: (v: string) => void
   onEditSourceChange: (v: string) => void
+  onEditEventTimeChange: (v: string) => void
+  onEditEventStatusChange: (v: string) => void
   updating: boolean
   onCancel: () => void
   onConfirm: () => void
 }
 
 export function EditMetadataModal({
-  editingWSI, editLabel, editCaseId, editAge, editGender, editSource,
+  editingWSI, editLabel, editCaseId, editAge, editGender, editSource, editEventTime, editEventStatus,
+  datasetType,
   onEditLabelChange, onEditCaseIdChange, onEditAgeChange, onEditGenderChange, onEditSourceChange,
+  onEditEventTimeChange, onEditEventStatusChange,
   updating, onCancel, onConfirm,
 }: EditMetadataModalProps) {
   const { t } = useTranslation()
+
+  // Different task types show different fields
+  const isClassification = datasetType === 'classification'
+  const isSurvival = datasetType === 'survival'
+  const isSegmentation = datasetType === 'segmentation'
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
       <div className="bg-white rounded-2xl shadow-2xl max-w-md w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
@@ -47,13 +69,36 @@ export function EditMetadataModal({
             className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed text-xs sm:text-sm" />
         </div>
 
-        {/* Label Input */}
-        <div className="mb-3 sm:mb-4">
-          <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.labelDiseaseClassification')}</label>
-          <input type="text" value={editLabel} onChange={(e) => onEditLabelChange(e.target.value)}
-            placeholder={t('listComponents.editModals.labelPlaceholder')}
-            className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm" />
-        </div>
+        {/* Label Input - Only for classification */}
+        {isClassification && (
+          <div className="mb-3 sm:mb-4">
+            <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.labelDiseaseClassification')}</label>
+            <input type="text" value={editLabel} onChange={(e) => onEditLabelChange(e.target.value)}
+              placeholder={t('listComponents.editModals.labelPlaceholder')}
+              className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm" />
+          </div>
+        )}
+
+        {/* Event Time and Status - Only for survival */}
+        {isSurvival && (
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4">
+            <div>
+              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.eventTime')}</label>
+              <input type="number" step="0.1" value={editEventTime} onChange={(e) => onEditEventTimeChange(e.target.value)}
+                placeholder={t('listComponents.editModals.eventTimePlaceholder')}
+                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm" />
+            </div>
+            <div>
+              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.eventStatus')}</label>
+              <select value={editEventStatus} onChange={(e) => onEditEventStatusChange(e.target.value)}
+                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm bg-white">
+                <option value="">{t('listComponents.editModals.selectStatus')}</option>
+                <option value="1">{t('listComponents.editModals.event')}</option>
+                <option value="0">{t('listComponents.editModals.censored')}</option>
+              </select>
+            </div>
+          </div>
+        )}
 
         {/* Case ID Input */}
         <div className="mb-3 sm:mb-4">
@@ -117,11 +162,16 @@ export interface BatchEditModalProps {
   batchEditAge: string
   batchEditGender: string
   batchEditSource: string
+  batchEditEventTime: string
+  batchEditEventStatus: string
+  datasetType?: 'classification' | 'survival' | 'segmentation'
   onBatchEditLabelChange: (v: string) => void
   onBatchEditCaseIdChange: (v: string) => void
   onBatchEditAgeChange: (v: string) => void
   onBatchEditGenderChange: (v: string) => void
   onBatchEditSourceChange: (v: string) => void
+  onBatchEditEventTimeChange: (v: string) => void
+  onBatchEditEventStatusChange: (v: string) => void
   batchUpdating: boolean
   onCancel: () => void
   onConfirm: () => void
@@ -129,10 +179,19 @@ export interface BatchEditModalProps {
 
 export function BatchEditModal({
   selectedCount, batchEditLabel, batchEditCaseId, batchEditAge, batchEditGender, batchEditSource,
+  batchEditEventTime, batchEditEventStatus,
+  datasetType,
   onBatchEditLabelChange, onBatchEditCaseIdChange, onBatchEditAgeChange, onBatchEditGenderChange, onBatchEditSourceChange,
+  onBatchEditEventTimeChange, onBatchEditEventStatusChange,
   batchUpdating, onCancel, onConfirm,
 }: BatchEditModalProps) {
   const { t } = useTranslation()
+
+  // Different task types show different fields
+  const isClassification = datasetType === 'classification'
+  const isSurvival = datasetType === 'survival'
+  const isSegmentation = datasetType === 'segmentation'
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
       <div className="bg-white rounded-2xl shadow-2xl max-w-md w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
@@ -153,13 +212,36 @@ export function BatchEditModal({
         </div>
 
         <div className="space-y-3 sm:space-y-4">
-          {/* Label Input */}
-          <div>
-            <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.labelDiseaseClassification')}</label>
-            <input type="text" value={batchEditLabel} onChange={(e) => onBatchEditLabelChange(e.target.value)}
-              placeholder={t('listComponents.editModals.keepExisting')}
-              className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm" />
-          </div>
+          {/* Label Input - Only for classification */}
+          {isClassification && (
+            <div>
+              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.labelDiseaseClassification')}</label>
+              <input type="text" value={batchEditLabel} onChange={(e) => onBatchEditLabelChange(e.target.value)}
+                placeholder={t('listComponents.editModals.keepExisting')}
+                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm" />
+            </div>
+          )}
+
+          {/* Event Time and Status - Only for survival */}
+          {isSurvival && (
+            <div className="grid grid-cols-2 gap-3 sm:gap-4">
+              <div>
+                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.eventTime')}</label>
+                <input type="number" step="0.1" value={batchEditEventTime} onChange={(e) => onBatchEditEventTimeChange(e.target.value)}
+                  placeholder={t('listComponents.editModals.keepExisting')}
+                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm" />
+              </div>
+              <div>
+                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.eventStatus')}</label>
+                <select value={batchEditEventStatus} onChange={(e) => onBatchEditEventStatusChange(e.target.value)}
+                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm bg-white">
+                  <option value="">{t('listComponents.editModals.keepExisting')}</option>
+                  <option value="1">{t('listComponents.editModals.event')}</option>
+                  <option value="0">{t('listComponents.editModals.censored')}</option>
+                </select>
+              </div>
+            </div>
+          )}
 
           {/* Case ID Input */}
           <div>

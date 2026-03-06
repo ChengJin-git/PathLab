@@ -87,7 +87,7 @@ const SearchingStatus = React.memo(function SearchingStatus({ query, reason }: S
       className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-xl my-2"
     >
       {/* Animated search icon */}
-      <div className="relative">
+      <div className="relative flex-shrink-0">
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
@@ -97,14 +97,14 @@ const SearchingStatus = React.memo(function SearchingStatus({ query, reason }: S
       </div>
 
       {/* Status text */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1 sm:gap-2">
-          <span className="text-xs sm:text-sm font-medium text-blue-700">
+      <div className="flex-1 min-w-0 overflow-hidden">
+        <div className="flex items-center gap-1 sm:gap-2 min-w-0">
+          <span className="text-xs sm:text-sm font-medium text-blue-700 whitespace-nowrap flex-shrink-0">
             {t('settings.general.searching')}
           </span>
           {query && (
-            <span className="text-[10px] sm:text-xs text-blue-500 truncate">
-              "{query}"
+            <span className="text-[10px] sm:text-xs text-blue-500 truncate min-w-0">
+              &quot;{query}&quot;
             </span>
           )}
         </div>
@@ -116,7 +116,7 @@ const SearchingStatus = React.memo(function SearchingStatus({ query, reason }: S
       </div>
 
       {/* Animated dots */}
-      <div className="flex gap-1">
+      <div className="flex gap-1 flex-shrink-0">
         {[0, 1, 2].map((i) => (
           <motion.div
             key={i}
@@ -429,7 +429,7 @@ export const PdfParsingStatus = React.memo(function PdfParsingStatus({
       className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-3 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-100 rounded-xl my-2"
     >
       {/* Animated icon — Download for downloading, FileText for parsing */}
-      <div className="relative">
+      <div className="relative flex-shrink-0">
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
@@ -442,19 +442,17 @@ export const PdfParsingStatus = React.memo(function PdfParsingStatus({
       </div>
 
       {/* Status text */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1 sm:gap-2">
-          <span className="text-xs sm:text-sm font-medium text-amber-700">
-            {statusText}
-          </span>
-        </div>
+      <div className="flex-1 min-w-0 overflow-hidden">
+        <span className="text-xs sm:text-sm font-medium text-amber-700 whitespace-nowrap">
+          {statusText}
+        </span>
         {currentTitle && (
           <p className="text-[10px] sm:text-xs text-amber-600/70 mt-0.5 truncate">{currentTitle}</p>
         )}
       </div>
 
       {/* Animated dots */}
-      <div className="flex gap-1">
+      <div className="flex gap-1 flex-shrink-0">
         {[0, 1, 2].map((i) => (
           <motion.div
             key={i}
