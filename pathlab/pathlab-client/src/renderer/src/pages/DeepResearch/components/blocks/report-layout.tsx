@@ -1,7 +1,8 @@
 import React, { useMemo, useRef } from "react";
 import { cn } from "../../../../lib/utils";
 import { Markdown } from "../../../../components/deep-research/markdown";
-import type { CitationData } from "../../../../components/deep-research/citation";
+import { stripResearchMeta } from "../../../../lib/deep-research/utils";
+import type { Citation } from "../../../../lib/deep-research/messages";
 
 function generateSlug(text: string): string {
     return text
@@ -44,21 +45,16 @@ function extractHeadings(markdown: string): { id: string; level: number }[] {
     });
 }
 
-/** Strip PATHLAB_RESEARCH_META blocks so they don't leak into rendered output. */
-function stripMetaBlocks(md: string): string {
-    return md.replace(/\[PATHLAB_RESEARCH_META\][\s\S]*?(?:\[\/PATHLAB_RESEARCH_META\]|$)/g, "").trim();
-}
-
 export function ReportLayout({
     content = "",
     citations,
     className,
 }: {
     content?: string;
-    citations?: CitationData[];
+    citations?: Citation[];
     className?: string;
 }) {
-    const cleanContent = useMemo(() => stripMetaBlocks(content), [content]);
+    const cleanContent = useMemo(() => stripResearchMeta(content), [content]);
     const headings = useMemo(() => extractHeadings(cleanContent), [cleanContent]);
 
     // Heading counter consumed sequentially by react-markdown as it renders h1-h4.

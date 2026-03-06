@@ -5,7 +5,7 @@ import type { Citation, Option } from "../messages";
 
 // Tool Calls
 
-export interface ToolCall {
+interface ToolCall {
   type: "tool_call";
   id: string;
   name: string;
@@ -76,7 +76,7 @@ export interface InterruptEvent
     }
   > { }
 
-export interface CitationsEvent {
+interface CitationsEvent {
   type: "citations";
   data: {
     thread_id: string;
@@ -120,19 +120,19 @@ export interface ErrorEvent {
   };
 }
 
-export interface CancelledEvent {
+interface CancelledEvent {
   type: "cancelled";
   data: {
     thread_id?: string;
   };
 }
 
-export interface JobCreatedEvent {
+interface JobCreatedEvent {
   type: "job_created";
   data: { job_id: string };
 }
 
-export interface CursorUpdateEvent {
+interface CursorUpdateEvent {
   type: "cursor_update";
   data: { cursor: number };
 }

@@ -28,6 +28,7 @@ import {
 import type { ChatEvent, TokenUsageEvent } from "../api/types";
 import type { Citation, Message, Resource } from "../messages";
 import { mergeMessage } from "../messages";
+import { RESEARCH_META_RE, stripResearchMeta } from "../utils/strip-research-meta";
 import { parseJSON } from "../utils";
 import {
   clearLogBuffer,
@@ -92,15 +93,6 @@ export function isDeepResearchDebugEnabled(): boolean {
     return localStorage.getItem(DEEP_RESEARCH_DEBUG_STORAGE_KEY) === "1";
   } catch {
     return false;
-  }
-}
-
-export function setDeepResearchDebugEnabled(enabled: boolean) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(DEEP_RESEARCH_DEBUG_STORAGE_KEY, enabled ? "1" : "0");
-  } catch {
-    // Ignore storage errors.
   }
 }
 
@@ -312,14 +304,18 @@ function looksLikePlannerPayload(candidate: string): boolean {
   );
 }
 
+function extractFencedJsonCandidate(raw: string): { candidate: string; fenced: boolean; jsonLike: boolean } {
+  const fencedMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fencedMatch ? fencedMatch[1]?.trim() ?? "" : raw;
+  return { candidate, fenced: !!fencedMatch, jsonLike: /^[\[{]/.test(candidate) };
+}
+
 function extractPlannerTitle(content: string | undefined): string | null {
   const trimmed = (content ?? "").trim();
   if (!trimmed) return null;
 
-  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fencedMatch ? fencedMatch[1]?.trim() ?? "" : trimmed;
-  const looksLikeJsonEnvelope = /^[\[{]/.test(candidate);
-  if (fencedMatch || looksLikeJsonEnvelope || looksLikePlannerPayload(candidate)) {
+  const { candidate, fenced, jsonLike } = extractFencedJsonCandidate(trimmed);
+  if (fenced || jsonLike || looksLikePlannerPayload(candidate)) {
     const parsed = parseJSON<{ title?: string } | null>(candidate, null);
     const title = typeof parsed?.title === "string" ? parsed.title.trim() : "";
     if (title) {
@@ -873,7 +869,9 @@ function extractPersistedResearchMeta(raw: string): {
   }
   const jsonStart = markerIndex + RESEARCH_META_BLOCK_START.length;
   const jsonText = raw.slice(jsonStart, endIndex).trim();
-  const cleaned = raw.slice(0, markerIndex).trimEnd();
+  // Preserve content AFTER the meta block end tag (e.g. PATHLAB_TOOL_CALLS).
+  const afterMeta = raw.slice(endIndex + RESEARCH_META_BLOCK_END.length);
+  const cleaned = raw.slice(0, markerIndex).trimEnd() + afterMeta;
   try {
     const parsed = JSON.parse(jsonText) as PersistedResearchMeta;
     if (!parsed || parsed.version !== 1 || !parsed.researchId || !parsed.kind) {
@@ -1007,11 +1005,9 @@ function parsePlannerContent(content: string): {
     return null;
   }
   // Handle markdown fenced JSON first.
-  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fencedMatch ? fencedMatch[1]?.trim() ?? "" : trimmed;
-  const looksLikeJsonEnvelope = /^[\[{]/.test(candidate);
+  const { candidate, fenced, jsonLike } = extractFencedJsonCandidate(trimmed);
   const hasPlannerHints = looksLikePlannerPayload(candidate);
-  if (!fencedMatch && !looksLikeJsonEnvelope && !hasPlannerHints) {
+  if (!fenced && !jsonLike && !hasPlannerHints) {
     return null;
   }
 
@@ -1120,11 +1116,8 @@ function isGuaranteedFollowUpIntent(content: string | undefined): boolean {
   return false;
 }
 
-const RESEARCH_META_BLOCK_RE =
-  /\n?\[PATHLAB_RESEARCH_META\][\s\S]*?(?:\[\/PATHLAB_RESEARCH_META\]|$)/g;
-
 function sanitizeForStandardAIChat(content: string): string {
-  const withoutResearchMeta = content.replace(RESEARCH_META_BLOCK_RE, "").trim();
+  const withoutResearchMeta = stripResearchMeta(content);
   return sanitizeConfigBlocksForAI(withoutResearchMeta);
 }
 
@@ -1224,19 +1217,19 @@ async function sendMessageViaStandardAIChat(
   } catch (error) {
     const aborted = options.abortSignal?.aborted || isAbortLikeError(error);
     const rawError = error instanceof Error ? error.message : String(error);
-    if (aborted) {
-      assistantMessage = {
-        ...assistantMessage,
-        content:
-          assistantMessage.content.trim().length > 0
-            ? assistantMessage.content
-            : tr("generationCancelled", "Generation cancelled."),
-        contentChunks:
-          assistantMessage.content.trim().length > 0
-            ? assistantMessage.contentChunks
-            : [tr("generationCancelled", "Generation cancelled.")],
-      };
+    const applyFallbackContent = (fallback: string) => {
+      if (assistantMessage.content.trim().length === 0) {
+        assistantMessage = {
+          ...assistantMessage,
+          content: fallback,
+          contentChunks: [fallback],
+        };
+      }
       useStore.getState().updateMessage(assistantMessage);
+    };
+
+    if (aborted) {
+      applyFallbackContent(tr("generationCancelled", "Generation cancelled."));
       await finalizeAssistantMessage();
       return;
     }
@@ -1255,18 +1248,7 @@ async function sendMessageViaStandardAIChat(
           }
           : error,
     });
-    assistantMessage = {
-      ...assistantMessage,
-      content:
-        assistantMessage.content.trim().length > 0
-          ? assistantMessage.content
-          : fallbackError,
-      contentChunks:
-        assistantMessage.content.trim().length > 0
-          ? assistantMessage.contentChunks
-          : [fallbackError],
-    };
-    useStore.getState().updateMessage(assistantMessage);
+    applyFallbackContent(fallbackError);
     await finalizeAssistantMessage();
     toast(fallbackError);
   } finally {
@@ -2131,7 +2113,7 @@ export async function loadConversationFromBackend(conversationId: string): Promi
     const isNonEmptyCachedMsg = (id: string): boolean => {
       const msg = cachedMsgMap.get(id);
       if (!msg) return false;
-      if ((msg.content ?? "").replace(/\[PATHLAB_RESEARCH_META\][\s\S]*?(?:\[\/PATHLAB_RESEARCH_META\]|$)/g, "").trim()) return true;
+      if (stripResearchMeta(msg.content)) return true;
       if (msg.toolCalls?.length) return true;
       // User messages are always meaningful
       if (msg.role === "user") return true;
@@ -2216,6 +2198,53 @@ export async function loadConversationFromBackend(conversationId: string): Promi
         cachedActivityCount,
         backendActivityCount,
       });
+
+      // Even when keeping the cached state, enrich cached messages with data
+      // that the backend has but the cache lacks (e.g. tool calls that were
+      // persisted to DB but not yet in cache when the user navigated away).
+      {
+        const storeNow = useStore.getState();
+        const enriched = new Map(storeNow.messages);
+        let enrichCount = 0;
+        for (const [id, backendMsg] of messages) {
+          const cachedMsg = enriched.get(id);
+          if (!cachedMsg) continue;
+          // Enrich: add tool calls from backend if cached version lacks them
+          if (!cachedMsg.toolCalls?.length && backendMsg.toolCalls?.length) {
+            enriched.set(id, { ...cachedMsg, toolCalls: backendMsg.toolCalls });
+            enrichCount++;
+          }
+        }
+        if (enrichCount > 0) {
+          useStore.setState({ messages: enriched });
+          deepResearchDebugLog("loadConversation", "enriched cached messages from backend", {
+            conversationId,
+            enrichCount,
+          });
+        }
+      }
+
+      // Sync back: when cache has richer content than backend (e.g. a report
+      // that was truncated in the DB because resumeBackgroundResearch didn't
+      // persist), update the backend with the full cached content.
+      {
+        const storeNow = useStore.getState();
+        for (const [id, backendMsg] of messages) {
+          const cachedMsg = storeNow.messages.get(id);
+          if (!cachedMsg || cachedMsg.role === "user") continue;
+          const backendId = storeNow.messageBackendIds.get(id);
+          if (backendId == null) continue;
+          const cachedText = stripResearchMeta(cachedMsg.content);
+          const backendText = stripResearchMeta(backendMsg.content);
+          if (cachedText && backendText && cachedText.length > backendText.length + 100) {
+            void persistMessage(cachedMsg);
+            deepResearchDebugLog("loadConversation", "synced truncated backend message from cache", {
+              conversationId, messageId: id, backendLen: backendText.length, cachedLen: cachedText.length,
+            });
+          }
+        }
+      }
+
       if (attempt < BACKEND_REBUILD_RETRY_MAX) {
         backendRebuildRetryCounts.set(conversationId, attempt + 1);
         // Keep richer cached state for this paint and retry backend sync shortly.
@@ -2296,6 +2325,47 @@ export async function loadConversationFromBackend(conversationId: string): Promi
   } finally {
     _suppressPersist = false;
   }
+}
+
+// ── Shared helpers for stream event processing (sendMessage & resumeBackgroundResearch) ──
+
+function handleCitationsEvent(data: any): void {
+  const ongoingResearchId = useStore.getState().ongoingResearchId;
+  if (ongoingResearchId && data.citations) {
+    useStore.getState().setCitations(ongoingResearchId, data.citations);
+  }
+}
+
+function handleTokenUsageEvent(data: unknown): void {
+  const tokenData = data as TokenUsageEvent["data"];
+  const usage: TokenUsageSummary = {
+    totalPromptTokens: tokenData.total_prompt_tokens,
+    totalCompletionTokens: tokenData.total_completion_tokens,
+    totalTokens: tokenData.total_tokens,
+    totalCalls: tokenData.total_calls,
+    byAgent: tokenData.by_agent,
+  };
+  useStore.getState().setTokenUsage(usage);
+  useStore.getState().accumulateSessionTokens(usage);
+}
+
+function handleCancelledEvent(): void {
+  const cancelledResearchId = useStore.getState().ongoingResearchId;
+  if (cancelledResearchId) {
+    useStore.getState().setResearchCancelled(cancelledResearchId, true);
+  }
+}
+
+function createErrorChatMessage(errorContent: string): Message {
+  return {
+    id: nanoid(),
+    threadId: getThreadId(),
+    role: "assistant",
+    agent: "coordinator",
+    content: errorContent,
+    contentChunks: [errorContent],
+    isStreaming: false,
+  };
 }
 
 export async function sendMessage(
@@ -2599,28 +2669,10 @@ export async function sendMessage(
       }
 
       // Handle citations event: store citations for the current research
-      if (type === "citations") {
-        const ongoingResearchId = useStore.getState().ongoingResearchId;
-        if (ongoingResearchId && data.citations) {
-          useStore.getState().setCitations(ongoingResearchId, data.citations);
-        }
-        continue;
-      }
+      if (type === "citations") { handleCitationsEvent(data); continue; }
 
       // Handle token_usage event: store token usage summary
-      if (type === "token_usage") {
-        const tokenData = data as TokenUsageEvent["data"];
-        const usage: TokenUsageSummary = {
-          totalPromptTokens: tokenData.total_prompt_tokens,
-          totalCompletionTokens: tokenData.total_completion_tokens,
-          totalTokens: tokenData.total_tokens,
-          totalCalls: tokenData.total_calls,
-          byAgent: tokenData.by_agent,
-        };
-        useStore.getState().setTokenUsage(usage);
-        useStore.getState().accumulateSessionTokens(usage);
-        continue;
-      }
+      if (type === "token_usage") { handleTokenUsageEvent(data); continue; }
 
       // Handle error event explicitly to avoid creating malformed messages.
       if (event.type === "error") {
@@ -2650,36 +2702,22 @@ export async function sendMessage(
           rawError,
         });
 
-        // Display error as a chat message (like the normal AI chat page does)
-        // so the user sees a permanent, readable error in the conversation.
-        const errorMessage: Message = {
-          id: nanoid(),
-          threadId: getThreadId(),
-          role: "assistant",
-          agent: "coordinator",
-          content: deepResearchTaskError,
-          contentChunks: [deepResearchTaskError],
-          isStreaming: false,
-        };
-        appendMessage(errorMessage);
+        appendMessage(createErrorChatMessage(deepResearchTaskError));
         errorMessageShown = true;
-
-        // Stop consuming further events for this run to avoid hanging
-        // when backend keeps the stream open after an error event.
         break;
       }
       if (event.type === "cancelled") {
         deepResearchTaskStatus = "cancelled";
-        const cancelledResearchId = useStore.getState().ongoingResearchId;
-        if (cancelledResearchId) {
-          useStore.getState().setResearchCancelled(cancelledResearchId, true);
-        }
+        handleCancelledEvent();
         continue;
       }
 
       // Handle tool_call_result specially: use the message that contains the tool call
       if (type === "tool_call_result") {
-        message = findMessageByToolCallId(data.tool_call_id);
+        // Check pendingUpdates first — tool calls may not yet be flushed to the store
+        // when events arrive rapidly (e.g. during background job replay).
+        message = findMessageByToolCallIdIn(pendingUpdates, data.tool_call_id)
+          ?? findMessageByToolCallId(data.tool_call_id);
         if (message) {
           // Use the found message's ID, not data.id
           messageId = message.id;
@@ -2717,7 +2755,9 @@ export async function sendMessage(
         }
       }
 
-      message ??= getMessage(messageId as string);
+      // Prefer the pending version (has latest tool calls/content from prior
+      // iterations) over the store version which may lag behind by up to 16ms.
+      message ??= pendingUpdates.get(messageId as string) ?? getMessage(messageId as string);
       if (message) {
         const prevAgent = message.agent;
         // Fix stale agent: if the message was created from an event with an
@@ -2787,10 +2827,7 @@ export async function sendMessage(
     if (options.abortSignal?.aborted) {
       abortedByUser = true;
       deepResearchTaskStatus = "cancelled";
-      const cancelledResearchId = useStore.getState().ongoingResearchId;
-      if (cancelledResearchId) {
-        useStore.getState().setResearchCancelled(cancelledResearchId, true);
-      }
+      handleCancelledEvent();
       // Fire-and-forget server-side stop so LangGraph terminates cleanly.
       void stopResearch(getThreadId());
     }
@@ -3044,6 +3081,7 @@ export async function resumeBackgroundResearch(
 
   const conversationId = state.conversationId;
   const isStaleConversation = () => useStore.getState().conversationId !== conversationId;
+  const beforeIds = new Set(state.messageIds);
 
   setResponding(true);
   setGenerationPhase("streaming");
@@ -3095,28 +3133,10 @@ export async function resumeBackgroundResearch(
       }
 
       // Handle citations
-      if (type === "citations") {
-        const ongoingResearchId = useStore.getState().ongoingResearchId;
-        if (ongoingResearchId && (data as any).citations) {
-          useStore.getState().setCitations(ongoingResearchId, (data as any).citations);
-        }
-        continue;
-      }
+      if (type === "citations") { handleCitationsEvent(data); continue; }
 
       // Handle token_usage
-      if (type === "token_usage") {
-        const tokenData = (data as TokenUsageEvent["data"]);
-        const usage: TokenUsageSummary = {
-          totalPromptTokens: tokenData.total_prompt_tokens,
-          totalCompletionTokens: tokenData.total_completion_tokens,
-          totalTokens: tokenData.total_tokens,
-          totalCalls: tokenData.total_calls,
-          byAgent: tokenData.by_agent,
-        };
-        useStore.getState().setTokenUsage(usage);
-        useStore.getState().accumulateSessionTokens(usage);
-        continue;
-      }
+      if (type === "token_usage") { handleTokenUsageEvent(data); continue; }
 
       // Handle error
       if (event.type === "error") {
@@ -3135,26 +3155,14 @@ export async function resumeBackgroundResearch(
             ? err
             : tr("deepResearchError", "Deep research error"));
         deepResearchTaskError = pickDeepResearchErrorMessage(rawError);
-        const errorMessage: Message = {
-          id: nanoid(),
-          threadId: getThreadId(),
-          role: "assistant",
-          agent: "coordinator",
-          content: deepResearchTaskError,
-          contentChunks: [deepResearchTaskError],
-          isStreaming: false,
-        };
-        appendMessage(errorMessage);
+        appendMessage(createErrorChatMessage(deepResearchTaskError));
         errorMessageShown = true;
         break;
       }
 
       if (event.type === "cancelled") {
         deepResearchTaskStatus = "cancelled";
-        const cancelledResearchId = useStore.getState().ongoingResearchId;
-        if (cancelledResearchId) {
-          useStore.getState().setResearchCancelled(cancelledResearchId, true);
-        }
+        handleCancelledEvent();
         continue;
       }
 
@@ -3166,7 +3174,10 @@ export async function resumeBackgroundResearch(
           : undefined;
 
       if (type === "tool_call_result") {
-        message = findMessageByToolCallId((data as any).tool_call_id);
+        // Check pendingUpdates first — tool calls may not yet be flushed to the store
+        // when replayed events arrive rapidly from the background job.
+        message = findMessageByToolCallIdIn(pendingUpdates, (data as any).tool_call_id)
+          ?? findMessageByToolCallId((data as any).tool_call_id);
         if (message) {
           messageId = message.id;
         } else {
@@ -3195,7 +3206,8 @@ export async function resumeBackgroundResearch(
         }
       }
 
-      message ??= getMessage(messageId as string);
+      // Prefer the pending version over the store version (see sendMessage for rationale).
+      message ??= pendingUpdates.get(messageId as string) ?? getMessage(messageId as string);
       if (message) {
         const prevAgent = message.agent;
         if (
@@ -3232,10 +3244,7 @@ export async function resumeBackgroundResearch(
     if (options.abortSignal?.aborted) {
       abortedByUser = true;
       deepResearchTaskStatus = "cancelled";
-      const cancelledResearchId = useStore.getState().ongoingResearchId;
-      if (cancelledResearchId) {
-        useStore.getState().setResearchCancelled(cancelledResearchId, true);
-      }
+      handleCancelledEvent();
       void stopResearch(getThreadId());
     }
     if (deepResearchTaskStatus === "error" && !options.abortSignal?.aborted) {
@@ -3315,6 +3324,49 @@ export async function resumeBackgroundResearch(
         null;
       if (currentResearchId) {
         useStore.getState().setResearchRunStatus(currentResearchId, deepResearchTaskStatus);
+      }
+      // Persist new/updated messages to backend DB.
+      // Without this, messages accumulated during background job replay
+      // only exist in localStorage and are lost on cache clear / device switch.
+      const persistState = useStore.getState();
+      const newIds = persistState.messageIds.filter((id) => !beforeIds.has(id));
+      const persistedIds = new Set<string>();
+      for (const id of newIds) {
+        const msg = persistState.messages.get(id);
+        if (!msg || msg.role === "user") continue;
+        await persistMessage(msg);
+        persistedIds.add(id);
+      }
+      // Also re-persist existing messages that were updated in-place during replay.
+      // The report message may have existed before with partial content.
+      for (const id of beforeIds) {
+        if (persistedIds.has(id)) continue;
+        const msg = persistState.messages.get(id);
+        if (!msg || msg.role === "user") continue;
+        // Only re-persist messages that have a backendId (already in DB) and
+        // are likely to have changed (reporter/activity agents).
+        if (!persistState.messageBackendIds.has(id)) continue;
+        if (msg.agent === "reporter" || msg.agent === "researcher" || msg.agent === "analyst") {
+          await persistMessage(msg);
+          persistedIds.add(id);
+        }
+      }
+      // Re-persist plan and research root to update PATHLAB_RESEARCH_META status.
+      if (currentResearchId) {
+        const planId = persistState.researchPlanIds.get(currentResearchId);
+        if (planId && !persistedIds.has(planId)) {
+          const planMsg = persistState.messages.get(planId);
+          if (planMsg && planMsg.role !== "user") {
+            await persistMessage(planMsg);
+            persistedIds.add(planId);
+          }
+        }
+        if (!persistedIds.has(currentResearchId)) {
+          const rootMsg = persistState.messages.get(currentResearchId);
+          if (rootMsg && rootMsg.role !== "user") {
+            await persistMessage(rootMsg);
+          }
+        }
       }
       persistStoreState();
     } else {
@@ -3401,6 +3453,19 @@ function findMessageByToolCallId(toolCallId: string) {
       }
       return false;
     });
+}
+
+/** Search a local pendingUpdates map for a message containing a given tool call. */
+function findMessageByToolCallIdIn(
+  pending: Map<string, Message>,
+  toolCallId: string,
+): Message | undefined {
+  for (const msg of pending.values()) {
+    if (msg.toolCalls?.some((tc) => tc.id === toolCallId)) {
+      return msg;
+    }
+  }
+  return undefined;
 }
 
 function appendMessage(message: Message) {
@@ -3766,10 +3831,6 @@ export function useResearchMessage(researchId: string) {
       return messageId ? state.messages.get(messageId) : undefined;
     }),
   );
-}
-
-export function getResearchQuery(researchId: string): string {
-  return useStore.getState().researchQueries.get(researchId) ?? "";
 }
 
 export function useMessage(messageId: string | null | undefined) {

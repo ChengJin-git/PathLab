@@ -6,6 +6,7 @@ import { ChevronRight, Search, BookOpenText, Brain, Code2 } from "lucide-react";
 import React, { useMemo, useState, useCallback } from "react";
 
 import { useMessage, useStore } from "../../../lib/deep-research/store";
+import { stripResearchMeta } from "../../../lib/deep-research/utils";
 import { cn } from "../../../lib/utils";
 import { LoadingAnimation } from "../../../components/deep-research/loading-animation";
 import { Markdown } from "../../../components/deep-research/markdown";
@@ -21,18 +22,12 @@ import {
 
 const EMPTY_ACTIVITY_IDS: string[] = [];
 
-/** Strip PATHLAB_RESEARCH_META blocks so empty stub messages are detected. */
-const META_RE = /\[PATHLAB_RESEARCH_META\][\s\S]*?(?:\[\/PATHLAB_RESEARCH_META\]|$)/g;
-function stripMeta(s: string | undefined | null): string {
-  return (s ?? "").replace(META_RE, "").trim();
-}
-
 /** Check if a message has visible content (text after META strip, or tool calls). */
 function hasVisibleContent(msg: Message | undefined): boolean {
   if (!msg) return false;
   const agent = msg.agent ?? "";
   if (agent === "reporter" || agent === "planner") return false;
-  if (stripMeta(msg.content)) return true;
+  if (stripResearchMeta(msg.content)) return true;
   if (!msg.isStreaming && msg.toolCalls?.length) return true;
   return false;
 }
@@ -169,12 +164,13 @@ export function ResearchActivitiesBlock({
       if (manualExpanded[index] !== undefined) return manualExpanded[index];
       // Only one group → always expand
       if (groups.length === 1) return true;
-      // Last group defaults to expanded
+      // Research complete → expand all groups so user can review everything
+      if (!ongoing) return true;
+      // During streaming, only expand the last (active) group
       if (index === groups.length - 1) return true;
-      // Others default to collapsed
       return false;
     },
-    [manualExpanded, groups.length],
+    [manualExpanded, groups.length, ongoing],
   );
 
   if (groups.length === 0 && !ongoing) {
@@ -274,7 +270,7 @@ const ActivityMessage = React.memo(({ messageId }: { messageId: string }) => {
   if (!message?.content) return null;
   const agent = message.agent ?? "";
   if (agent === "reporter" || agent === "planner") return null;
-  const cleanContent = stripMeta(message.content);
+  const cleanContent = stripResearchMeta(message.content);
   if (!cleanContent) return null;
 
   return (

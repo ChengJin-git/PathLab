@@ -1,82 +1,27 @@
-import { useTranslations } from "../../../lib/deep-research/i18n";
 // Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 // SPDX-License-Identifier: MIT
 
-import { parse as bestEffortParse } from "best-effort-json-parser";
-import { LoadingOutlined } from "@ant-design/icons";
-import { motion } from "framer-motion";
-import {
-  Download,
-  Headphones,
-  ChevronDown,
-  ChevronRight,
-  Lightbulb,
-  Wrench,
-  Bot,
-  User,
-} from "lucide-react";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslations } from "../../../lib/deep-research/i18n";
+import React, { useCallback, useEffect, useRef } from "react";
 
-import { updateMessage as apiUpdateMessage } from "../../../api";
-import i18n from "../../../i18n";
-import {
-  OptionButtons,
-  parseOptions,
-  removeOptionsBlock,
-} from "../../../components/chat/OptionButtons";
-import {
-  TaskConfigCard,
-  parseTaskConfig,
-  removeTaskConfigBlock,
-} from "../../../components/chat/TaskConfigCard";
-import { LoadingAnimation } from "../../../components/deep-research/loading-animation";
-import { Markdown } from "../../../components/deep-research/markdown";
-import { RainbowText } from "../../../components/deep-research/rainbow-text";
-import { RollingText } from "../../../components/deep-research/rolling-text";
-import { DatasetRegistrationCard, parseDatasetRegistrationConfig, removeDatasetRegistrationBlock } from "../../../components/chat/DatasetRegistrationCard";
 import {
   ScrollContainer,
   type ScrollContainerRef,
 } from "../../../components/deep-research/scroll-container";
-import { Tooltip } from "../../../components/deep-research/tooltip";
-import { Button } from "../../../components/ui/button";
+import type { Option } from "../../../lib/deep-research/messages";
 import {
-  Card,
-  CardContent,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "../../../components/ui/card";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "../../../components/ui/collapsible";
-import type { Message, Option } from "../../../lib/deep-research/messages";
-import {
-  closeResearch,
   debugDeepResearchStore,
-  flushDeepResearchPersistNow,
   getDeepResearchDebugSnapshot,
   isDeepResearchDebugEnabled,
-  openResearch,
   useLastFeedbackMessageId,
   useLastInterruptMessage,
-  useMessage,
   useMessageIds,
   useRenderableMessageIds,
-  useResearchMessage,
   useStore,
 } from "../../../lib/deep-research/store";
-import { parseJSON } from "../../../lib/deep-research/utils";
 import { cn } from "../../../lib/utils";
 
-import { parsePlannerPayload } from "./utils";
-import { MessageBubble, AssistantStructuredContent } from "./blocks/message-content";
-import { ThoughtBlock } from "./blocks/thought-block";
-import { PlanCard } from "./cards/plan-card";
-import { ResearchCard } from "./cards/research-card";
-import { PodcastCard } from "./cards/podcast-card";
+import { MessageListItem } from "./message-list-item";
 
 
 
@@ -107,14 +52,6 @@ export function MessageListView({
   const interruptMessage = useLastInterruptMessage();
   const waitingForFeedbackMessageId = useLastFeedbackMessageId();
   const responding = useStore((state) => state.responding);
-  const generationPhase = useStore((state) => state.generationPhase);
-  const isThinking = generationPhase === "thinking";
-  const noOngoingResearch = useStore(
-    (state) => state.ongoingResearchId === null,
-  );
-  const ongoingResearchIsOpen = useStore(
-    (state) => state.ongoingResearchId === state.openResearchId,
-  );
   const renderDebugSignatureRef = useRef<string>("");
 
   useEffect(() => {
@@ -252,7 +189,10 @@ export function MessageListView({
         {responding && (() => {
           const lastId = messageIds[messageIds.length - 1];
           const lastMsg = lastId ? messages.get(lastId) : undefined;
-          const showDots = !lastMsg || lastMsg.role === "user" || (lastMsg.role === "assistant" && !(lastMsg.content ?? "").trim());
+          // Don't show dots when the last renderable message is a research root (empty
+          // placeholder for the research card) — the card has its own loading indicator.
+          const isResearchRoot = lastId != null && researchIds.includes(lastId);
+          const showDots = !isResearchRoot && (!lastMsg || lastMsg.role === "user" || (lastMsg.role === "assistant" && !(lastMsg.content ?? "").trim()));
           if (!showDots) return null;
           return (
             <li className="flex justify-start py-2 pl-12">
@@ -272,6 +212,3 @@ export function MessageListView({
     </ScrollContainer>
   );
 }
-
-import { MessageListItem } from "./message-list-item";
-

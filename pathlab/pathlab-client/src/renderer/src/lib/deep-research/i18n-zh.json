@@ -109,12 +109,6 @@
       "greeting": "👋 你好！",
       "description": "欢迎来到 PathLab Research，一个基于前沿语言模型构建的深度研究助手，帮助您搜索网络、浏览信息并处理复杂任务。"
     },
-    "conversationStarters": [
-      "埃菲尔铁塔比世界最高建筑高多少倍？",
-      "特斯拉电池的平均寿命比汽油发动机长多少年？",
-      "生产1公斤牛肉需要多少升水？",
-      "光速比声速快多少倍？"
-    ],
     "inputBox": {
       "deepThinking": "深度思考",
       "deepThinkingTooltip": {
@@ -265,82 +259,6 @@
       "playPause": "播放 / 暂停",
       "moveToNext": "移动到下一步",
       "toggleFullscreen": "切换全屏"
-    }
-  },
-  "landing": {
-    "caseStudies": {
-      "title": "案例研究",
-      "description": "通过回放查看 PathLab Research 的实际应用。",
-      "clickToWatch": "点击观看回放",
-      "cases": [
-        {
-          "title": "埃菲尔铁塔与最高建筑相比有多高？",
-          "description": "该研究比较了埃菲尔铁塔和哈利法塔的高度和全球意义，并使用 Python 代码计算倍数。"
-        },
-        {
-          "title": "GitHub 上最热门的仓库有哪些？",
-          "description": "该研究利用 MCP 服务识别最受欢迎的 GitHub 仓库，并使用搜索引擎详细记录它们。"
-        },
-        {
-          "title": "写一篇关于南京传统菜肴的文章",
-          "description": "该研究通过丰富的内容和图像生动地展示了南京的著名菜肴，揭示了它们隐藏的历史和文化意义。"
-        },
-        {
-          "title": "如何装饰小型出租公寓？",
-          "description": "该研究为读者提供了实用而直接的公寓装饰方法，并配有鼓舞人心的图像。"
-        },
-        {
-          "title": "介绍电影《这个杀手不太冷》",
-          "description": "该研究全面介绍了电影《这个杀手不太冷》，包括其情节、角色和主题。"
-        },
-        {
-          "title": "你如何看待中国的外卖大战？（中文）",
-          "description": "该研究分析了京东和美团之间日益激烈的竞争，突出了它们的策略、技术创新和挑战。"
-        },
-        {
-          "title": "超加工食品与健康有关吗？",
-          "description": "该研究检查了超加工食品消费增加的健康风险，敦促对长期影响和个体差异进行更多研究。"
-        },
-        {
-          "title": "写一篇关于\"你会为你的 AI 双胞胎投保吗？\"的文章",
-          "description": "该研究探讨了为 AI 双胞胎投保的概念，突出了它们的好处、风险、伦理考虑和不断发展的监管。"
-        }
-      ]
-    },
-    "coreFeatures": {
-      "title": "核心功能",
-      "description": "了解是什么让 PathLab Research 如此有效。",
-      "features": [
-        {
-          "name": "深入挖掘，触及更广",
-          "description": "使用高级工具解锁更深层的洞察。我们强大的搜索+爬取和 Python 工具收集全面的数据，提供深入的报告来增强您的研究。"
-        },
-        {
-          "name": "人机协作",
-          "description": "通过简单的自然语言完善您的研究计划或调整重点领域。"
-        },
-        {
-          "name": "Lang 技术栈",
-          "description": "使用 LangChain 和 LangGraph 框架自信地构建。"
-        },
-        {
-          "name": "MCP 集成",
-          "description": "通过无缝的 MCP 集成增强您的研究工作流程并扩展您的工具包。"
-        },
-        {
-          "name": "播客生成",
-          "description": "从报告中即时生成播客。非常适合移动学习或轻松分享发现。"
-        }
-      ]
-    },
-    "multiAgent": {
-      "title": "多智能体架构",
-      "description": "通过我们的监督者 + 交接设计模式体验智能体团队合作。"
-    },
-    "joinCommunity": {
-      "title": "加入 PathLab Research 社区",
-      "description": "贡献精彩想法，塑造 PathLab Research 的未来。协作、创新并产生影响。",
-      "contributeNow": "立即贡献"
     }
   }
 }

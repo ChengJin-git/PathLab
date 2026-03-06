@@ -1,8 +1,6 @@
 // Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 // SPDX-License-Identifier: MIT
 
-import { parse as bestEffortParse } from "best-effort-json-parser";
-
 import type {
   ChatEvent,
   InterruptEvent,
@@ -11,19 +9,9 @@ import type {
   ToolCallResultEvent,
   ToolCallsEvent,
 } from "../api";
-import { deepClone } from "../utils/deep-clone";
 
 import type { Message } from "./types";
-
-function bestEffortParseSilently(input: string): unknown {
-  const prev = bestEffortParse.onExtraToken;
-  bestEffortParse.onExtraToken = undefined;
-  try {
-    return bestEffortParse(input);
-  } finally {
-    bestEffortParse.onExtraToken = prev;
-  }
-}
+import { bestEffortParseSilently } from "../utils/json";
 
 /**
  * Safely parse JSON from streamed tool call argument chunks.
@@ -80,7 +68,7 @@ export function mergeMessage(message: Message, event: ChatEvent) {
       });
     }
   }
-  return deepClone(message);
+  return structuredClone(message);
 }
 
 function mergeTextMessage(message: Message, event: MessageChunkEvent) {

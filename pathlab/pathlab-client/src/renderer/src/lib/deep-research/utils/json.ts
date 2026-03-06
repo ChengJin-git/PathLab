@@ -1,6 +1,6 @@
 import { parse } from "best-effort-json-parser";
 
-function bestEffortParseSilently(input: string): unknown {
+export function bestEffortParseSilently(input: string): unknown {
   const prev = parse.onExtraToken;
   parse.onExtraToken = undefined;
   try {

@@ -73,7 +73,7 @@ export function MessagesBlock({ className }: { className?: string }) {
             onSendMessage={handleSend}
           />
         ) : (
-          <ConversationStarter onSend={handleSend} />
+          <ConversationStarter />
         )}
       </div>
       <div className="pointer-events-none fixed bottom-6 left-0 right-0 z-30 px-4">

@@ -12,13 +12,29 @@ import {
 import { cn } from "../../lib/utils";
 import type { Citation } from "../../lib/deep-research/messages";
 
-// Re-export Citation type as CitationData for backward compatibility
-export type CitationData = Citation;
+export const LINK_STYLE: React.CSSProperties = {
+  color: "#667eea",
+  textDecoration: "underline",
+  textDecorationColor: "rgba(102, 126, 234, 0.3)",
+  cursor: "pointer",
+  transition: "background-color 0.15s, text-decoration-color 0.15s",
+};
+
+export const linkHoverHandlers = {
+  onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
+    e.currentTarget.style.backgroundColor = "rgba(102, 126, 234, 0.08)";
+    e.currentTarget.style.textDecorationColor = "#667eea";
+  },
+  onMouseLeave: (e: React.MouseEvent<HTMLElement>) => {
+    e.currentTarget.style.backgroundColor = "transparent";
+    e.currentTarget.style.textDecorationColor = "rgba(102, 126, 234, 0.3)";
+  },
+};
 
 interface CitationLinkProps {
   href: string;
   children: React.ReactNode;
-  citations: CitationData[];
+  citations: Citation[];
   className?: string;
   id?: string;
 }
@@ -63,6 +79,13 @@ export function CitationLink({
     return { citation: match, index: matchIndex };
   }, [href, citations]);
 
+  const openInNewTab = (e: React.MouseEvent) => {
+    if (!href) return;
+    e.preventDefault();
+    e.stopPropagation();
+    window.open(href, "_blank", "noopener,noreferrer");
+  };
+
   // If no citation data found, render as regular link
   if (!citation) {
     return (
@@ -70,26 +93,38 @@ export function CitationLink({
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        className={cn("text-primary hover:underline", className)}
+        onClick={openInNewTab}
+        style={LINK_STYLE}
+        {...linkHoverHandlers}
+        className={className}
       >
         {children}
       </a>
     );
   }
 
+  // Determine if this is a reference list item (has id="ref-N") vs inline citation
+  const isReferenceItem = !!id;
+
   const handleCitationClick = (e: React.MouseEvent) => {
-    // If it's an internal-looking citation (e.g. [1])
-    // or if the user clicks the citation number in the text
-    // we try to scroll to the reference list at the bottom
+    // Reference list items (id="ref-N") should always open in new tab
+    if (isReferenceItem) {
+      openInNewTab(e);
+      return;
+    }
+
+    // Inline citations (e.g. [1]) scroll to the reference in the list
     if (index !== -1) {
       const targetId = `ref-${index + 1}`;
       const element = document.getElementById(targetId);
       if (element) {
         e.preventDefault();
         element.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
       }
     }
-    // If element not found or index is -1, let the default behavior (open URL) happen
+    // Fallback: open in new tab
+    openInNewTab(e);
   };
 
   return (
@@ -101,10 +136,15 @@ export function CitationLink({
           target="_blank"
           rel="noopener noreferrer"
           onClick={handleCitationClick}
-          className={cn(
-            "text-primary hover:underline inline-flex items-center gap-0.5 cursor-pointer scroll-mt-20",
-            className
-          )}
+          style={{
+            ...LINK_STYLE,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "2px",
+            scrollMarginTop: "5rem",
+          }}
+          {...linkHoverHandlers}
+          className={className}
         >
           {children}
           <span className="text-xs text-muted-foreground ml-0.5">
@@ -125,7 +165,7 @@ export function CitationLink({
 }
 
 interface CitationCardProps {
-  citation: CitationData;
+  citation: Citation;
   compact?: boolean;
 }
 
@@ -216,7 +256,7 @@ export function CitationCard({ citation, compact = false }: CitationCardProps) {
 }
 
 interface CitationListProps {
-  citations: CitationData[];
+  citations: Citation[];
   title?: string;
   className?: string;
 }
@@ -276,7 +316,7 @@ export function CitationList({
 
 interface CitationBadgeProps {
   number: number;
-  citation?: CitationData;
+  citation?: Citation;
   onClick?: () => void;
 }
 

@@ -10,6 +10,7 @@ import {
     useMessage,
     useStore,
 } from "../../../lib/deep-research/store";
+import { stripResearchMeta } from "../../../lib/deep-research/utils";
 import { cn } from "../../../lib/utils";
 
 import { MessageBubble, AssistantStructuredContent } from "./blocks/message-content";
@@ -110,10 +111,7 @@ export function MessageListItem({
     const startOfResearch = useMemo(() => {
         return researchIds.includes(messageId);
     }, [researchIds, messageId]);
-    const trimmedContent = (message?.content ?? "").replace(
-        /\[PATHLAB_RESEARCH_META\][\s\S]*?(?:\[\/PATHLAB_RESEARCH_META\]|$)/g,
-        "",
-    ).replace(
+    const trimmedContent = stripResearchMeta(message?.content).replace(
         /\[TRAINING_CHAT_LINK\][\s\S]*?\[\/TRAINING_CHAT_LINK\]/g,
         "",
     ).trim();
@@ -157,10 +155,7 @@ export function MessageListItem({
     ]);
 
     if (message) {
-        const strippedContent = (message.content ?? "").replace(
-            /\[PATHLAB_RESEARCH_META\][\s\S]*?(?:\[\/PATHLAB_RESEARCH_META\]|$)/g,
-            "",
-        ).trim();
+        const strippedContent = stripResearchMeta(message.content);
         const plannerPayload = parsePlannerPayload(strippedContent);
         const isPlannerLikeMessage =
             message.role === "assistant" &&

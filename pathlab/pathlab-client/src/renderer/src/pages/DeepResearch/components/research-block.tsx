@@ -6,8 +6,6 @@ import { useTranslations } from "../../../lib/deep-research/i18n";
 import {
   Check,
   Copy,
-  Pencil,
-  Undo2,
   X,
   Download,
   FileText,
@@ -15,7 +13,7 @@ import {
   FileImage,
   FileType,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ScrollContainer } from "../../../components/deep-research/scroll-container";
 import { Tooltip } from "../../../components/deep-research/tooltip";
@@ -60,11 +58,6 @@ export function ResearchBlock({
     }
   }, [hasReport]);
 
-  const [editing, setEditing] = useState(false);
-  const handleEdit = useCallback(() => {
-    setEditing((editing) => !editing);
-  }, []);
-
   const {
     isDownloading,
     copied,
@@ -95,16 +88,6 @@ export function ResearchBlock({
             <div className="mb-2 flex w-full flex-wrap items-center justify-end gap-1 sm:gap-2">
               {hasReport && !reportStreaming && (
                 <>
-                  <Tooltip title={t("edit")}>
-                    <Button
-                      className="text-gray-400"
-                      size="icon"
-                      variant="ghost"
-                      onClick={handleEdit}
-                    >
-                      {editing ? <Undo2 /> : <Pencil />}
-                    </Button>
-                  </Tooltip>
                   <Tooltip title={t("copy")}>
                     <Button
                       className="text-gray-400"
@@ -204,7 +187,6 @@ export function ResearchBlock({
                   className="mt-4"
                   researchId={researchId}
                   messageId={reportId}
-                  editing={editing}
                 />
               )}
             </ScrollContainer>

@@ -9,6 +9,7 @@ import { DatasetRegistrationCard, parseDatasetRegistrationConfig, removeDatasetR
 import { Markdown } from "../../../../components/deep-research/markdown";
 import type { Message } from "../../../../lib/deep-research/messages";
 import { useStore } from "../../../../lib/deep-research/store";
+import { stripResearchMeta } from "../../../../lib/deep-research/utils";
 import { cn } from "../../../../lib/utils";
 
 function parseTrainingChatLink(content: string): { conversationId: string; title?: string } | null {
@@ -93,10 +94,7 @@ export function AssistantStructuredContent({
     let displayContent = message.content ?? "";
     // Strip persisted research meta blocks that may leak into display content
     // after backend reload or cache restoration.
-    displayContent = displayContent.replace(
-        /\[PATHLAB_RESEARCH_META\][\s\S]*?(?:\[\/PATHLAB_RESEARCH_META\]|$)/g,
-        "",
-    ).trim();
+    displayContent = stripResearchMeta(displayContent);
     if (options) {
         displayContent = removeOptionsBlock(displayContent);
     }

@@ -21,7 +21,6 @@ export function InputBox({
   onRemoveFeedback,
 }: {
   className?: string;
-  size?: "large" | "normal";
   responding?: boolean;
   feedback?: { option: Option } | null;
   onSend?: (

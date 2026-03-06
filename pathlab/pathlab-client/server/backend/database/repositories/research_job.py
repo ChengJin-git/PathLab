@@ -3,7 +3,7 @@ ResearchJobRepository - Data Access Layer for deep research jobs and events.
 """
 import logging
 from typing import List, Optional, Dict, Any
-from sqlalchemy import select, update, delete, func, desc
+from sqlalchemy import select, update, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -64,16 +64,6 @@ class ResearchJobRepository:
         await db.flush()
 
     @staticmethod
-    async def update_stage(db: AsyncSession, job_id: str, stage: str) -> None:
-        """Update only the current_stage field."""
-        await db.execute(
-            update(ResearchJob)
-            .where(ResearchJob.job_id == job_id)
-            .values(current_stage=stage, updated_at=utc_now())
-        )
-        await db.flush()
-
-    @staticmethod
     async def set_cancel_requested(db: AsyncSession, job_id: str) -> None:
         """Mark cancel_requested = True."""
         await db.execute(
@@ -82,21 +72,6 @@ class ResearchJobRepository:
             .values(cancel_requested=True, updated_at=utc_now())
         )
         await db.flush()
-
-    @staticmethod
-    async def increment_next_seq(db: AsyncSession, job_id: str, count: int) -> int:
-        """Atomically increment next_seq by count, return the old value (start seq)."""
-        result = await db.execute(
-            select(ResearchJob.next_seq).where(ResearchJob.job_id == job_id)
-        )
-        old_seq = result.scalar_one()
-        await db.execute(
-            update(ResearchJob)
-            .where(ResearchJob.job_id == job_id)
-            .values(next_seq=old_seq + count, updated_at=utc_now())
-        )
-        await db.flush()
-        return old_seq
 
     @staticmethod
     async def append_events_batch(

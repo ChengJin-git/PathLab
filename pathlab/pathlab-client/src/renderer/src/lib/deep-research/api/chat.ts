@@ -5,8 +5,7 @@
 import type { MCPServerMetadata } from "../mcp";
 import type { Resource } from "../messages";
 import { fetchStream } from "../sse";
-import { parseJSON } from "../utils";
-import { sleep } from "../utils";
+import { parseJSON, sleep } from "../utils";
 import { getDeepResearchLocale } from "../../../i18n/locale";
 import i18n from "../../../i18n";
 
@@ -85,6 +84,76 @@ async function cancelBackgroundJob(jobId: string): Promise<void> {
   }
 }
 
+async function* pollJobEvents(
+  jobId: string,
+  startCursor: number,
+  options: { abortSignal?: AbortSignal } = {},
+): AsyncGenerator<ChatEvent> {
+  let cursor = startCursor;
+  while (true) {
+    if (options.abortSignal?.aborted) {
+      await cancelBackgroundJob(jobId);
+      return;
+    }
+    const eventsResp = await fetch(
+      resolveServiceURL(`jobs/${jobId}/events?cursor=${cursor}&wait_ms=15000`),
+      {
+        method: "GET",
+        headers: { ...getAuthHeaders() },
+        signal: options.abortSignal,
+      },
+    );
+    if (!eventsResp.ok) {
+      const detail = await readErrorDetail(eventsResp);
+      console.error("[DeepResearch] Failed to poll background job events", {
+        jobId, status: eventsResp.status, detail, cursor,
+      });
+      throw new Error(mapHttpStatusToMessage(eventsResp.status, detail));
+    }
+    const payload = (await eventsResp.json()) as {
+      events: Array<{ event: string; data: unknown }>;
+      next_cursor: number;
+      status?: string;
+      error?: string | null;
+      done: boolean;
+    };
+    let sawErrorEvent = false;
+    let lastErrorFromEvent: string | null = null;
+    for (const item of payload.events || []) {
+      if (item.event === "error" && item.data && typeof item.data === "object") {
+        const err = (item.data as { error?: unknown }).error;
+        if (typeof err === "string" && err.trim()) {
+          sawErrorEvent = true;
+          lastErrorFromEvent = err.trim();
+        }
+      }
+      yield {
+        type: item.event === "message" ? "message_chunk" : item.event,
+        data: item.data,
+      } as ChatEvent;
+    }
+    cursor = payload.next_cursor ?? cursor;
+    yield { type: "cursor_update", data: { cursor } } as ChatEvent;
+    if (payload.done) {
+      if (payload.status === "failed") {
+        const err =
+          lastErrorFromEvent ||
+          (typeof payload.error === "string" && payload.error.trim()
+            ? payload.error.trim()
+            : tr("deepResearchFailed", "Deep research failed."));
+        console.error("[DeepResearch] Background job failed", {
+          jobId, cursor, sawErrorEvent, error: err, payloadError: payload.error,
+        });
+        if (!sawErrorEvent) {
+          throw new Error(err);
+        }
+      }
+      return;
+    }
+    await sleep(80);
+  }
+}
+
 export async function* chatStream(
   userMessage: string,
   params: {
@@ -136,9 +205,7 @@ export async function* chatStream(
       if (!createResp.ok) {
         const detail = await readErrorDetail(createResp);
         console.error("[DeepResearch] Failed to create background job", {
-          status: createResp.status,
-          detail,
-          requestBody,
+          status: createResp.status, detail, requestBody,
         });
         throw new Error(mapHttpStatusToMessage(createResp.status, detail));
       }
@@ -150,78 +217,7 @@ export async function* chatStream(
 
       yield { type: "job_created", data: { job_id: jobId } } as ChatEvent;
 
-      let cursor = 0;
-      while (true) {
-        if (options.abortSignal?.aborted) {
-          await cancelBackgroundJob(jobId);
-          return;
-        }
-        const eventsResp = await fetch(
-          resolveServiceURL(`jobs/${jobId}/events?cursor=${cursor}&wait_ms=15000`),
-          {
-            method: "GET",
-            headers: {
-              ...getAuthHeaders(),
-            },
-            signal: options.abortSignal,
-          },
-        );
-        if (!eventsResp.ok) {
-          const detail = await readErrorDetail(eventsResp);
-          console.error("[DeepResearch] Failed to poll background job events", {
-            jobId,
-            status: eventsResp.status,
-            detail,
-            cursor,
-          });
-          throw new Error(mapHttpStatusToMessage(eventsResp.status, detail));
-        }
-        const payload = (await eventsResp.json()) as {
-          events: Array<{ event: string; data: unknown }>;
-          next_cursor: number;
-          status?: string;
-          error?: string | null;
-          done: boolean;
-        };
-        let sawErrorEvent = false;
-        let lastErrorFromEvent: string | null = null;
-        for (const item of payload.events || []) {
-          if (item.event === "error" && item.data && typeof item.data === "object") {
-            const err = (item.data as { error?: unknown }).error;
-            if (typeof err === "string" && err.trim()) {
-              sawErrorEvent = true;
-              lastErrorFromEvent = err.trim();
-            }
-          }
-          yield {
-            type: item.event === "message" ? "message_chunk" : item.event,
-            data: item.data,
-          } as ChatEvent;
-        }
-        cursor = payload.next_cursor ?? cursor;
-        yield { type: "cursor_update", data: { cursor } } as ChatEvent;
-        if (payload.done) {
-          if (payload.status === "failed") {
-            const err =
-              lastErrorFromEvent ||
-              (typeof payload.error === "string" && payload.error.trim()
-                ? payload.error.trim()
-                : tr("deepResearchFailed", "Deep research failed."));
-            console.error("[DeepResearch] Background job failed", {
-              jobId,
-              cursor,
-              sawErrorEvent,
-              error: err,
-              payloadError: payload.error,
-            });
-            if (!sawErrorEvent) {
-              throw new Error(err);
-            }
-          }
-          return;
-        }
-        await sleep(80);
-      }
+      yield* pollJobEvents(jobId, 0, options);
     } catch (e) {
       if (options.abortSignal?.aborted || isAbortError(e)) {
         if (jobId) {
@@ -235,9 +231,7 @@ export async function* chatStream(
 
   try {
     const stream = fetchStream(resolveServiceURL("chat/stream"), {
-      headers: {
-        ...getAuthHeaders(),
-      },
+      headers: { ...getAuthHeaders() },
       body: JSON.stringify(requestBody),
       signal: options.abortSignal,
     });
@@ -278,78 +272,7 @@ export async function* resumeBackgroundJobStream(
   startCursor: number,
   options: { abortSignal?: AbortSignal } = {},
 ): AsyncGenerator<ChatEvent> {
-  let cursor = startCursor;
-  while (true) {
-    if (options.abortSignal?.aborted) {
-      await cancelBackgroundJob(jobId);
-      return;
-    }
-    const eventsResp = await fetch(
-      resolveServiceURL(`jobs/${jobId}/events?cursor=${cursor}&wait_ms=15000`),
-      {
-        method: "GET",
-        headers: {
-          ...getAuthHeaders(),
-        },
-        signal: options.abortSignal,
-      },
-    );
-    if (!eventsResp.ok) {
-      const detail = await readErrorDetail(eventsResp);
-      console.error("[DeepResearch] Failed to poll background job events (resume)", {
-        jobId,
-        status: eventsResp.status,
-        detail,
-        cursor,
-      });
-      throw new Error(mapHttpStatusToMessage(eventsResp.status, detail));
-    }
-    const payload = (await eventsResp.json()) as {
-      events: Array<{ event: string; data: unknown }>;
-      next_cursor: number;
-      status?: string;
-      error?: string | null;
-      done: boolean;
-    };
-    let sawErrorEvent = false;
-    let lastErrorFromEvent: string | null = null;
-    for (const item of payload.events || []) {
-      if (item.event === "error" && item.data && typeof item.data === "object") {
-        const err = (item.data as { error?: unknown }).error;
-        if (typeof err === "string" && err.trim()) {
-          sawErrorEvent = true;
-          lastErrorFromEvent = err.trim();
-        }
-      }
-      yield {
-        type: item.event === "message" ? "message_chunk" : item.event,
-        data: item.data,
-      } as ChatEvent;
-    }
-    cursor = payload.next_cursor ?? cursor;
-    yield { type: "cursor_update", data: { cursor } } as ChatEvent;
-    if (payload.done) {
-      if (payload.status === "failed") {
-        const err =
-          lastErrorFromEvent ||
-          (typeof payload.error === "string" && payload.error.trim()
-            ? payload.error.trim()
-            : tr("deepResearchFailed", "Deep research failed."));
-        console.error("[DeepResearch] Background job failed (resume)", {
-          jobId,
-          cursor,
-          sawErrorEvent,
-          error: err,
-          payloadError: payload.error,
-        });
-        if (!sawErrorEvent) {
-          throw new Error(err);
-        }
-      }
-      return;
-    }
-    await sleep(80);
-  }
+  yield* pollJobEvents(jobId, startCursor, options);
 }
 
 // Podcast generation
@@ -390,11 +313,6 @@ export async function evaluateReport(params: {
   return res.json();
 }
 
-// Replay utilities (kept for compatibility but not used via gateway)
-export async function fetchReplayTitle() {
-  return undefined;
-}
-
 /**
  * Send a server-side stop request to gracefully terminate an in-progress
  * deep-research LangGraph run. This complements AbortController (client-side)
@@ -417,6 +335,40 @@ export async function stopResearch(threadId: string): Promise<void> {
 }
 
 
+
+const LIGHTWEIGHT_CHAT_PARAMS = {
+  auto_accepted_plan: false,
+  enable_clarification: false,
+  max_clarification_rounds: 1,
+  max_plan_iterations: 1,
+  max_step_num: 1,
+  max_search_results: 1,
+  enable_deep_thinking: false,
+  enable_background_investigation: false as const,
+  enable_web_search: false,
+};
+
+async function accumulateStreamContent(
+  prompt: string,
+  threadId: string,
+  abortSignal?: AbortSignal,
+  maxLen = 4000,
+): Promise<string> {
+  const stream = chatStream(
+    prompt,
+    { thread_id: threadId, ...LIGHTWEIGHT_CHAT_PARAMS },
+    { abortSignal },
+  );
+  let raw = "";
+  for await (const event of stream) {
+    if (event.type !== "message_chunk") continue;
+    const data = event.data as { content?: string; finish_reason?: string };
+    if (data.content) raw += data.content;
+    if (data.finish_reason === "stop") break;
+    if (raw.length > maxLen) { raw = raw.slice(0, maxLen); break; }
+  }
+  return raw;
+}
 
 export interface ResearchIntentDecision {
   startNewResearch: boolean;
@@ -465,55 +417,13 @@ export async function analyzeResearchStartIntentWithLLM(
 
   let raw = "";
   try {
-    const stream = chatStream(
-      classifierInput,
-      {
-        thread_id: `${threadId}_intent_guard`,
-        auto_accepted_plan: false,
-        enable_clarification: false,
-        max_clarification_rounds: 1,
-        max_plan_iterations: 1,
-        max_step_num: 1,
-        max_search_results: 1,
-        enable_deep_thinking: false,
-        enable_background_investigation: false,
-        enable_web_search: false,
-      },
-      { abortSignal },
-    );
-
-    for await (const event of stream) {
-      if (event.type !== "message_chunk") {
-        continue;
-      }
-      const data = event.data as { content?: string; finish_reason?: string };
-      if (data.content) {
-        raw += data.content;
-      }
-      if (data.finish_reason === "stop") {
-        break;
-      }
-      if (raw.length > 4000) {
-        raw = raw.slice(0, 4000);
-        break;
-      }
-    }
+    raw = await accumulateStreamContent(classifierInput, `${threadId}_intent_guard`, abortSignal);
   } catch (error) {
     if (abortSignal?.aborted || isAbortError(error)) {
-      return {
-        startNewResearch: false,
-        confidence: 0,
-        reason: "aborted",
-        raw,
-      };
+      return { startNewResearch: false, confidence: 0, reason: "aborted", raw };
     }
     console.warn("[DeepResearch] intent classifier failed:", error);
-    return {
-      startNewResearch: false,
-      confidence: 0,
-      reason: "classifier unavailable",
-      raw,
-    };
+    return { startNewResearch: false, confidence: 0, reason: "classifier unavailable", raw };
   }
 
   const parsed = parseJSON<{
@@ -559,39 +469,7 @@ export async function generateFixedReplyWithLLM(
 
   let raw = "";
   try {
-    const stream = chatStream(
-      prompt,
-      {
-        thread_id: `${threadId}_fixed_reply_guard`,
-        auto_accepted_plan: false,
-        enable_clarification: false,
-        max_clarification_rounds: 1,
-        max_plan_iterations: 1,
-        max_step_num: 1,
-        max_search_results: 1,
-        enable_deep_thinking: false,
-        enable_background_investigation: false,
-        enable_web_search: false,
-      },
-      { abortSignal },
-    );
-
-    for await (const event of stream) {
-      if (event.type !== "message_chunk") {
-        continue;
-      }
-      const data = event.data as { content?: string; finish_reason?: string };
-      if (data.content) {
-        raw += data.content;
-      }
-      if (data.finish_reason === "stop") {
-        break;
-      }
-      if (raw.length > 4000) {
-        raw = raw.slice(0, 4000);
-        break;
-      }
-    }
+    raw = await accumulateStreamContent(prompt, `${threadId}_fixed_reply_guard`, abortSignal);
   } catch (error) {
     if (abortSignal?.aborted || isAbortError(error)) {
       return { reply: normalized, raw, usedLLM: false };

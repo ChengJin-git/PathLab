@@ -35,12 +35,10 @@ export function ResearchReportBlock({
   className,
   researchId,
   messageId,
-  editing,
 }: {
   className?: string;
   researchId: string;
   messageId: string;
-  editing: boolean;
 }) {
   const message = useMessage(messageId);
   const citations = useCitations(researchId);

@@ -100,6 +100,24 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  // Prevent external URLs from navigating the main window.
+  // If a link somehow bypasses e.preventDefault(), open it externally instead.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    // Allow dev server and file:// URLs (internal navigation)
+    const rendererUrl = process.env['ELECTRON_RENDERER_URL'] ?? ''
+    if (
+      url.startsWith('file://') ||
+      (rendererUrl && url.startsWith(rendererUrl)) ||
+      url.startsWith('http://localhost') ||
+      url.startsWith('http://127.0.0.1')
+    ) {
+      return
+    }
+    // External URL — open in system browser, don't navigate the app
+    event.preventDefault()
+    shell.openExternal(url)
+  })
+
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {

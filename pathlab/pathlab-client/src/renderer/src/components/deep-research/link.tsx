@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { useStore, useToolCalls } from "../../lib/deep-research/store";
 import { parseJSON } from "../../lib/deep-research/utils/json";
 import { Tooltip } from "./tooltip";
+import { LINK_STYLE, linkHoverHandlers } from "./citation";
 import { WarningFilled } from "@ant-design/icons";
 
 export const Link = ({
@@ -48,10 +49,24 @@ export const Link = ({
       : true;
   }, [credibleLinks, href, responding, checkLinkCredibility]);
 
+  const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!href) return;
+    e.preventDefault();
+    e.stopPropagation();
+    window.open(href, "_blank", "noopener,noreferrer");
+  };
+
   const t = useTranslations("common");
   return (
-    <span className="inline-flex items-center gap-1.5">
-      <a href={href} target="_blank" rel="noopener noreferrer">
+    <span style={{ display: "inline" }}>
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={handleClick}
+        style={{ ...LINK_STYLE, borderRadius: "2px" }}
+        {...linkHoverHandlers}
+      >
         {children}
       </a>
       {!isCredible && (

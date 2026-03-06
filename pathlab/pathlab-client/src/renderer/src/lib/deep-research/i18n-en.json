@@ -109,12 +109,6 @@
       "greeting": "👋 Hello, there!",
       "description": "Welcome to PathLab Research, a deep research assistant built on cutting-edge language models, helps you search on web, browse information, and handle complex tasks."
     },
-    "conversationStarters": [
-      "How many times taller is the Eiffel Tower than the tallest building in the world?",
-      "How many years does an average Tesla battery last compared to a gasoline engine?",
-      "How many liters of water are required to produce 1 kg of beef?",
-      "How many times faster is the speed of light compared to the speed of sound?"
-    ],
     "inputBox": {
       "deepThinking": "Deep Thinking",
       "deepThinkingTooltip": {
@@ -265,82 +259,6 @@
       "playPause": "Play / Pause",
       "moveToNext": "Move to the next step",
       "toggleFullscreen": "Toggle fullscreen"
-    }
-  },
-  "landing": {
-    "caseStudies": {
-      "title": "Case Studies",
-      "description": "See PathLab Research in action through replays.",
-      "clickToWatch": "Click to watch replay",
-      "cases": [
-        {
-          "title": "How tall is Eiffel Tower compared to tallest building?",
-          "description": "The research compares the heights and global significance of the Eiffel Tower and Burj Khalifa, and uses Python code to calculate the multiples."
-        },
-        {
-          "title": "What are the top trending repositories on GitHub?",
-          "description": "The research utilized MCP services to identify the most popular GitHub repositories and documented them in detail using search engines."
-        },
-        {
-          "title": "Write an article about Nanjing's traditional dishes",
-          "description": "The study vividly showcases Nanjing's famous dishes through rich content and imagery, uncovering their hidden histories and cultural significance."
-        },
-        {
-          "title": "How to decorate a small rental apartment?",
-          "description": "The study provides readers with practical and straightforward methods for decorating apartments, accompanied by inspiring images."
-        },
-        {
-          "title": "Introduce the movie 'Léon: The Professional'",
-          "description": "The research provides a comprehensive introduction to the movie 'Léon: The Professional', including its plot, characters, and themes."
-        },
-        {
-          "title": "How do you view the takeaway war in China? (in Chinese)",
-          "description": "The research analyzes the intensifying competition between JD and Meituan, highlighting their strategies, technological innovations, and challenges."
-        },
-        {
-          "title": "Are ultra-processed foods linked to health?",
-          "description": "The research examines the health risks of rising ultra-processed food consumption, urging more research on long-term effects and individual differences."
-        },
-        {
-          "title": "Write an article on \"Would you insure your AI twin?\"",
-          "description": "The research explores the concept of insuring AI twins, highlighting their benefits, risks, ethical considerations, and the evolving regulatory."
-        }
-      ]
-    },
-    "coreFeatures": {
-      "title": "Core Features",
-      "description": "Find out what makes PathLab Research effective.",
-      "features": [
-        {
-          "name": "Dive Deeper and Reach Wider",
-          "description": "Unlock deeper insights with advanced tools. Our powerful search + crawling and Python tools gathers comprehensive data, delivering in-depth reports to enhance your study."
-        },
-        {
-          "name": "Human-in-the-loop",
-          "description": "Refine your research plan, or adjust focus areas all through simple natural language."
-        },
-        {
-          "name": "Lang Stack",
-          "description": "Build with confidence using the LangChain and LangGraph frameworks."
-        },
-        {
-          "name": "MCP Integrations",
-          "description": "Supercharge your research workflow and expand your toolkit with seamless MCP integrations."
-        },
-        {
-          "name": "Podcast Generation",
-          "description": "Instantly generate podcasts from reports. Perfect for on-the-go learning or sharing findings effortlessly."
-        }
-      ]
-    },
-    "multiAgent": {
-      "title": "Multi-Agent Architecture",
-      "description": "Experience the agent teamwork with our Supervisor + Handoffs design pattern."
-    },
-    "joinCommunity": {
-      "title": "Join the PathLab Research Community",
-      "description": "Contribute brilliant ideas to shape the future of PathLab Research. Collaborate, innovate, and make impacts.",
-      "contributeNow": "Contribute Now"
     }
   }
 }

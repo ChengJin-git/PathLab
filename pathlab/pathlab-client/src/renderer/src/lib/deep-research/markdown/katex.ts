@@ -28,5 +28,3 @@ export const katexOptions: RehypeKatexOptions = {
   strict: "ignore",
   trust: (context) => context.command === "\\htmlClass" || context.command === "\\href",
 };
-
-export type KatexMacroKey = keyof typeof macros;

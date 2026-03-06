@@ -6,9 +6,6 @@ Most route logic has been moved to separate files in routes/ directory.
 """
 import asyncio
 import httpx
-import os
-import sys
-import importlib
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

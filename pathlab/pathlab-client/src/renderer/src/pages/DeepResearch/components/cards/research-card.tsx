@@ -6,6 +6,7 @@ import { nanoid } from "nanoid";
 import i18n from "../../../../i18n";
 import { createConversation as apiCreateChatConversation, addMessage as apiAddChatMessage, getConversation as apiGetConversation } from "../../../../api";
 import { useTranslations } from "../../../../lib/deep-research/i18n";
+import { stripResearchMeta } from "../../../../lib/deep-research/utils";
 import { useNavigate } from "react-router-dom";
 
 const CHAT_TRAINING_BASE_PROMPT_ZH =
@@ -24,9 +25,7 @@ function getChatTrainingBasePrompt(): string {
 
 /** Clean and clip the report content for use as system-prompt context. */
 function extractReportContext(reportContent: string | undefined): string {
-    const cleaned = (reportContent ?? "")
-        .replace(/\n?\[PATHLAB_RESEARCH_META\][\s\S]*?(?:\[\/PATHLAB_RESEARCH_META\]|$)/g, "")
-        .trim();
+    const cleaned = stripResearchMeta(reportContent);
     if (!cleaned) return "";
     return cleaned.length > REPORT_CONTEXT_MAX_CHARS
         ? `${cleaned.slice(0, REPORT_CONTEXT_MAX_CHARS)}\n...(report truncated)`

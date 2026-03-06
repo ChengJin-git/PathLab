@@ -8,10 +8,8 @@ import { cn } from "../../../lib/utils";
 
 export function ConversationStarter({
   className,
-  onSend: _onSend,
 }: {
   className?: string;
-  onSend?: (message: string) => void;
 }) {
   const { t } = useTranslation();
 

@@ -20,7 +20,8 @@ import { cn } from "../../lib/utils";
 import Image from "./image";
 import { Tooltip } from "./tooltip";
 import { Link } from "./link";
-import { CitationLink, type CitationData } from "./citation";
+import { CitationLink } from "./citation";
+import type { Citation } from "../../lib/deep-research/messages";
 
 export function Markdown({
   className,
@@ -37,7 +38,7 @@ export function Markdown({
   style?: React.CSSProperties;
   animated?: boolean;
   checkLinkCredibility?: boolean;
-  citations?: CitationData[];
+  citations?: Citation[];
 }) {
   // Pre-compute normalized URL map for O(1) lookup
   const citationMap = useMemo(() => {
@@ -76,7 +77,11 @@ export function Markdown({
           return (
             <span
               id={`ref-${index}`}
-              className="font-bold text-primary scroll-mt-20"
+              style={{
+                fontWeight: 700,
+                color: "#667eea",
+                scrollMarginTop: "5rem",
+              }}
             >
               [{index}]
             </span>
@@ -90,7 +95,21 @@ export function Markdown({
           return (
             <a
               href={hrefStr}
-              className="text-primary hover:underline cursor-pointer marker-link"
+              style={{
+                color: "#667eea",
+                cursor: "pointer",
+                textDecoration: "none",
+                borderBottom: "1px dashed rgba(102, 126, 234, 0.4)",
+                transition: "background-color 0.15s, border-color 0.15s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = "rgba(102, 126, 234, 0.08)";
+                e.currentTarget.style.borderBottomColor = "#667eea";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = "transparent";
+                e.currentTarget.style.borderBottomColor = "rgba(102, 126, 234, 0.4)";
+              }}
               onClick={(e) => {
                 e.preventDefault();
                 const targetId = `ref-${linkMatch[1]}`;

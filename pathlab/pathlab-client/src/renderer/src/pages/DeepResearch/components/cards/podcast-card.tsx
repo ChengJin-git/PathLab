@@ -25,14 +25,10 @@ export function PodcastCard({
             return { error: "Invalid podcast data" };
         }
     }, [message.content]);
-    const title = useMemo<string | undefined>(() => data?.title, [data]);
-    const audioUrl = useMemo<string | undefined>(() => data?.audioUrl, [data]);
-    const isGenerating = useMemo(() => {
-        return message.isStreaming;
-    }, [message.isStreaming]);
-    const hasError = useMemo(() => {
-        return data?.error !== undefined;
-    }, [data]);
+    const title = data?.title;
+    const audioUrl = data?.audioUrl;
+    const isGenerating = message.isStreaming;
+    const hasError = data?.error !== undefined;
     const [isPlaying, setIsPlaying] = useState(false);
 
     return (

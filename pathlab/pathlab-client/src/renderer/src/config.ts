@@ -115,9 +115,11 @@ export function getApiBase(): string {
     return import.meta.env.VITE_API_BASE
   }
 
-  // Dynamic port from Electron
+  // Dynamic port from Electron or browser
   if (apiConfig.gatewayPort) {
-    return `http://127.0.0.1:${apiConfig.gatewayPort}`
+    const isElectron = typeof window !== 'undefined' && (window as any).api !== undefined
+    const host = isElectron ? '127.0.0.1' : (hostname || '127.0.0.1')
+    return `http://${host}:${apiConfig.gatewayPort}`
   }
 
   // Default fallback: Use 127.0.0.1 in Electron, hostname in browser
@@ -136,7 +138,9 @@ export function getPreprocessingBase(): string {
   }
 
   if (apiConfig.preprocessingPort) {
-    return `http://127.0.0.1:${apiConfig.preprocessingPort}`
+    const isElectron = typeof window !== 'undefined' && (window as any).api !== undefined
+    const host = isElectron ? '127.0.0.1' : (hostname || '127.0.0.1')
+    return `http://${host}:${apiConfig.preprocessingPort}`
   }
 
   const isElectron = typeof window !== 'undefined' && (window as any).api !== undefined
@@ -153,7 +157,9 @@ export function getAiBase(): string {
   }
 
   if (apiConfig.aiPort) {
-    return `http://127.0.0.1:${apiConfig.aiPort}/api/ai`
+    const isElectron = typeof window !== 'undefined' && (window as any).api !== undefined
+    const host = isElectron ? '127.0.0.1' : (hostname || '127.0.0.1')
+    return `http://${host}:${apiConfig.aiPort}/api/ai`
   }
 
   const isElectron = typeof window !== 'undefined' && (window as any).api !== undefined

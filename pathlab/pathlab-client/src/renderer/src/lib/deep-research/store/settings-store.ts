@@ -135,54 +135,12 @@ export const getChatStreamSettings = () => {
   };
 };
 
-export function setReportStyle(
-  value: "academic" | "popular_science" | "news" | "social_media" | "strategic_investment",
+export function setGeneralSetting<K extends keyof SettingsState["general"]>(
+  key: K,
+  value: SettingsState["general"][K],
 ) {
   useSettingsStore.setState((state) => ({
-    general: {
-      ...state.general,
-      reportStyle: value,
-    },
-  }));
-  saveSettings();
-}
-
-export function setEnableDeepThinking(value: boolean) {
-  useSettingsStore.setState((state) => ({
-    general: {
-      ...state.general,
-      enableDeepThinking: value,
-    },
-  }));
-  saveSettings();
-}
-
-export function setEnableBackgroundInvestigation(value: boolean) {
-  useSettingsStore.setState((state) => ({
-    general: {
-      ...state.general,
-      enableBackgroundInvestigation: value,
-    },
-  }));
-  saveSettings();
-}
-
-export function setEnableClarification(value: boolean) {
-  useSettingsStore.setState((state) => ({
-    general: {
-      ...state.general,
-      enableClarification: value,
-    },
-  }));
-  saveSettings();
-}
-
-export function setEnableWebSearch(value: boolean) {
-  useSettingsStore.setState((state) => ({
-    general: {
-      ...state.general,
-      enableWebSearch: value,
-    },
+    general: { ...state.general, [key]: value },
   }));
   saveSettings();
 }

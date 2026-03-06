@@ -1,5 +1,5 @@
 """
-Research Chat Route - Proxy to Deep Research Agent (agentv2/deep-research)
+Research Chat Route - Proxy to Deep Research Agent (backend/deep-research)
 
 Forwards SSE streams from the deep-research service and converts the event format
 to be compatible with the existing PathLab frontend chat UI.
@@ -222,7 +222,7 @@ def _get_inproc_deep_research_app():
         return _DEEP_RESEARCH_APP
     _ensure_inproc_deep_research_env()
     deep_research_root = (
-        Path(__file__).resolve().parents[2] / "backend" / "agentv2" / "deep-research"
+        Path(__file__).resolve().parents[2] / "backend" / "deep-research"
     )
     if str(deep_research_root) not in sys.path:
         sys.path.insert(0, str(deep_research_root))
@@ -327,7 +327,7 @@ def _has_deep_research_llm_config() -> bool:
     try:
         conf_path = (
             Path(__file__).resolve().parents[2]
-            / "backend" / "agentv2" / "deep-research" / "conf.yaml"
+            / "backend" / "deep-research" / "conf.yaml"
         )
         if conf_path.exists():
             import yaml

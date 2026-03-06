@@ -1,82 +1,17 @@
 export function autoFixMarkdown(markdown: string): string {
-  return autoCloseTrailingLink(markdown);
-}
-
-/**
- * Unescape markdown-escaped characters within math delimiters
- * tiptap-markdown escapes special characters like *, _, [, ] which corrupts math formulas
- * This function restores the original LaTeX by unescaping within $...$ and $$...$$
- */
-export function unescapeLatexInMath(markdown: string): string {
-  let result = markdown;
-
-  // Process inline math: $...$
-  result = result.replace(/\$([^\$]+?)\$/g, (match, mathContent) => {
-    const unescaped = unescapeMarkdownSpecialChars(mathContent);
-    return `$${unescaped}$`;
-  });
-
-  // Process display math: $$...$$
-  result = result.replace(/\$\$([\s\S]+?)\$\$/g, (match, mathContent) => {
-    const unescaped = unescapeMarkdownSpecialChars(mathContent);
-    return `$$${unescaped}$$`;
-  });
-
-  return result;
-}
-
-/**
- * Reverse markdown escaping for special characters
- * Order matters: process \\ last to avoid re-escaping
- */
-function unescapeMarkdownSpecialChars(text: string): string {
-  return text
-    .replace(/\\\*/g, '*')      // \* → *
-    .replace(/\\_/g, '_')       // \_ → _
-    .replace(/\\\[/g, '[')      // \[ → [
-    .replace(/\\\]/g, ']')      // \] → ]
-    .replace(/\\\{/g, '{')      // \{ → {
-    .replace(/\\\}/g, '}')      // \} → }
-    .replace(/\\\\/g, '\\');    // \\ → \
-}
-
-/**
- * Normalize math delimiters for editor consumption
- * Converts display delimiters (\[...\], \\[...\\]) to $$ format
- * Converts inline delimiters (\(...\), \\(...\\)) to $ format
- * This ensures consistent format before loading into Tiptap editor
- */
-export function normalizeMathForEditor(markdown: string): string {
-  let normalized = markdown;
-  
-  // Convert display math - handle double backslash first to avoid conflicts
-  normalized = normalized
-    .replace(/\\\\\[([^\]]*)\\\\\]/g, (_match, content) => `$$${content}$$`)  // \\[...\\] → $$...$$
-    .replace(/\\\[([^\]]*)\\\]/g, (_match, content) => `$$${content}$$`);  // \[...\] → $$...$$
-  
-  // Convert inline math - handle double backslash first to avoid conflicts
-  normalized = normalized
-    .replace(/\\\\\(([^)]*)\\\\\)/g, (_match, content) => `$${content}$`)  // \\(...\\) → $...$
-    .replace(/\\\(([^)]*)\\\)/g, (_match, content) => `$${content}$`);    // \(...\) → $...$
-  
-  // Replace double backslashes with single in math contexts
-  // For inline math: $...$
-  normalized = normalized.replace(
-    /\$([^\$]+?)\$/g,
-    (match, mathContent) => {
-      return `$${mathContent.replace(/\\\\/g, '\\')}$`;
-    }
+  let fixed = markdown;
+  // Convert raw HTML anchor targets (e.g. `<a id="ref-1"></a> [1]`) to the
+  // markdown-compatible format `[[1]](#citation-target-1)` which the Markdown
+  // component's `a` handler renders as a styled anchor with id="ref-1".
+  // react-markdown does not render raw HTML by default, so these tags appear
+  // as literal text without this conversion.
+  fixed = fixed.replace(
+    /<a\s+id=["']ref-(\d+)["']\s*(?:\/>|><\/a>)\s*\[(\d+)\]/g,
+    (_match, _id, num) => `[[${num}]](#citation-target-${num})`,
   );
-  
-  // For display math: $$...$$
-  normalized = normalized.replace(
-    /\$\$([\s\S]+?)\$\$/g,
-    (match, mathContent) => {
-      return `$$${mathContent.replace(/\\\\/g, '\\')}$$`;
-    }
-  );
-
-  return normalized;
+  // Strip any remaining bare HTML anchor tags that weren't followed by [N]
+  fixed = fixed.replace(/<a\s+id=["']ref-\d+["']\s*(?:\/>|><\/a>)\s*/g, "");
+  return autoCloseTrailingLink(fixed);
 }
 
 /**
@@ -149,21 +84,6 @@ function autoCloseTrailingLink(markdown: string): string {
     /\[([^\]]*)$/g,
     (match: string, linkText: string): string => {
       return `[${linkText}]`;
-    },
-  );
-
-  // Fix unclosed images or links missing ")"
-  fixedMarkdown = fixedMarkdown.replace(
-    /!\[([^\]]*)\]\(([^)]*)$/g,
-    (match: string, altText: string, url: string): string => {
-      return `![${altText}](${url})`;
-    },
-  );
-
-  fixedMarkdown = fixedMarkdown.replace(
-    /\[([^\]]*)\]\(([^)]*)$/g,
-    (match: string, linkText: string, url: string): string => {
-      return `[${linkText}](${url})`;
     },
   );
 
