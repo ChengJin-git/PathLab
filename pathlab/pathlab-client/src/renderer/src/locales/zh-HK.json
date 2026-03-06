@@ -1468,10 +1468,24 @@
     "survival": "生存分析",
     "classification": "分類",
     "segmentation": "分割",
+    "dataset": "資料集",
     "caseLevel": "病例級別",
+    "patientLevel": "患者級別",
     "fileLevel": "檔案級別",
+    "filters": {
+      "title": "篩選資料集",
+      "clear": "清除篩選",
+      "summary": "目前顯示 {{shown}} / {{total}} 個資料集",
+      "groups": {
+        "taskType": "任務類型",
+        "dataType": "資料類型",
+        "dataLevel": "資料層級"
+      }
+    },
     "newDataset": "新建資料集",
     "newDatasetDescription": "註冊切片以建立新資料集",
+    "noFilteredDatasets": "沒有符合目前篩選條件的資料集",
+    "noFilteredDatasetsDescription": "請嘗試調整篩選條件，或清除篩選後查看全部資料集。",
     "failedDeleteWsi": "刪除失敗：{{error}}",
     "selectAtLeastOneToDelete": "請至少選擇一個檔案進行刪除",
     "failedDeleteFiles": "刪除檔案失敗：{{error}}",

@@ -1479,10 +1479,24 @@
     "survival": "Survival",
     "classification": "Classification",
     "segmentation": "Segmentation",
+    "dataset": "Dataset",
     "caseLevel": "Case Level",
+    "patientLevel": "Patient Level",
     "fileLevel": "File Level",
+    "filters": {
+      "title": "Filter datasets",
+      "clear": "Clear filters",
+      "summary": "Showing {{shown}} of {{total}} datasets",
+      "groups": {
+        "taskType": "Task Type",
+        "dataType": "Data Type",
+        "dataLevel": "Data Level"
+      }
+    },
     "newDataset": "New Dataset",
     "newDatasetDescription": "Register slides to create a new dataset",
+    "noFilteredDatasets": "No datasets match the current filters",
+    "noFilteredDatasetsDescription": "Try adjusting or clearing the filters to see more datasets.",
     "failedDeleteWsi": "Failed to delete: {{error}}",
     "selectAtLeastOneToDelete": "Please select at least one file to delete",
     "failedDeleteFiles": "Failed to delete files: {{error}}",

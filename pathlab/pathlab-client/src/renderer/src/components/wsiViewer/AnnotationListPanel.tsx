@@ -254,7 +254,7 @@ export function AnnotationListPanel({
       <Card className="overflow-hidden">
         <button
           onClick={() => setShowSummary(!showSummary)}
-          className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 bg-gradient-to-br from-gray-50 to-white w-full text-left"
+          className="flex items-start gap-2.5 px-4 py-3 border-b border-gray-200 bg-gradient-to-br from-gray-50 to-white w-full text-left"
         >
           {!isRemoteSummaryPending && Object.keys(effectiveSummary.counts).length > 0 && (
             <input
@@ -262,30 +262,30 @@ export function AnnotationListPanel({
               checked={allCrossSlideLabelsSelected}
               onChange={(e) => { e.stopPropagation(); toggleSelectAllCrossSlideLabels() }}
               onClick={(e) => e.stopPropagation()}
-              className="w-3.5 h-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+              className="mt-0.5 w-3.5 h-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer flex-shrink-0"
               title={allCrossSlideLabelsSelected ? t('annotation.deselectAll') : t('annotation.selectAll')}
             />
           )}
-          <PackagePlus className="w-4 h-4 text-emerald-500" />
-          <h3 className="m-0 text-sm font-semibold text-gray-900">{t('annotation.crossSlideSummary')}</h3>
-          <div className="ml-auto flex items-center gap-2">
+          <PackagePlus className="mt-0.5 w-4 h-4 text-emerald-500 flex-shrink-0" />
+          <div className="min-w-0 flex flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+            <h3 className="m-0 min-w-0 flex-1 text-sm font-semibold text-gray-900 break-words">{t('annotation.crossSlideSummary')}</h3>
             {selectedCrossSlideLabels.size > 0 && (
               <span
                 onClick={(e) => { e.stopPropagation(); handleBatchDeleteCrossSlide() }}
-                className="flex items-center gap-1 px-2 py-0.5 text-red-500 hover:text-red-600 text-xs transition-colors cursor-pointer"
+                className="flex items-center gap-1 px-2 py-0.5 text-red-500 hover:text-red-600 text-xs transition-colors cursor-pointer flex-shrink-0"
                 title={t('annotation.deleteSelected', { count: selectedCrossSlideCount.total })}
               >
                 <Trash2 className="w-3 h-3" />
                 <span>{selectedCrossSlideCount.total}</span>
               </span>
             )}
-            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+            <span className="max-w-full text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded leading-5 break-words">
               {isRemoteSummaryPending
                 ? t('common.loading')
                 : `${effectiveSummary.totalRegions} ROIs · ${effectiveSummary.totalSlides} ${t('annotation.slides')}`}
             </span>
           </div>
-          {showSummary ? <ChevronUp className="w-3.5 h-3.5 text-gray-400" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />}
+          {showSummary ? <ChevronUp className="mt-0.5 w-3.5 h-3.5 text-gray-400 flex-shrink-0" /> : <ChevronDown className="mt-0.5 w-3.5 h-3.5 text-gray-400 flex-shrink-0" />}
         </button>
         {showSummary && (
           <div className="p-3">
@@ -296,7 +296,7 @@ export function AnnotationListPanel({
             ) : (
               <div className="space-y-1.5">
                 {Object.entries(effectiveSummary.counts).map(([label, data]) => (
-                  <div key={label} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg transition-colors ${selectedCrossSlideLabels.has(label) ? 'bg-emerald-50 ring-1 ring-emerald-200' : 'bg-gray-50'}`}>
+                  <div key={label} className={`flex flex-wrap items-center gap-x-2 gap-y-1 px-2.5 py-1.5 rounded-lg transition-colors ${selectedCrossSlideLabels.has(label) ? 'bg-emerald-50 ring-1 ring-emerald-200' : 'bg-gray-50'}`}>
                     <input
                       type="checkbox"
                       checked={selectedCrossSlideLabels.has(label)}
@@ -304,9 +304,11 @@ export function AnnotationListPanel({
                       className="w-3.5 h-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer flex-shrink-0"
                     />
                     <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-gray-200" style={{ backgroundColor: labelColors[label] || crossSlideSummary?.labels[label]?.color || '#3b82f6' }} />
-                    <span className="flex-1 text-xs text-gray-700 truncate">{label}</span>
-                    <span className="text-[10px] text-gray-500">{data.total} ROIs</span>
-                    <span className="text-[10px] text-gray-400">{data.slides.size} {t('annotation.slides')}</span>
+                    <span className="min-w-0 flex-1 text-xs text-gray-700 break-words">{label}</span>
+                    <div className="ml-auto flex items-center gap-2 text-[10px] leading-4 text-gray-500">
+                      <span>{data.total} ROIs</span>
+                      <span className="text-gray-400">{data.slides.size} {t('annotation.slides')}</span>
+                    </div>
                   </div>
                 ))}
               </div>

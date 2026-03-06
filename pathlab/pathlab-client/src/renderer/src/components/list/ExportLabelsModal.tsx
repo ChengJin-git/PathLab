@@ -70,7 +70,7 @@ export function ExportLabelsModal({ dataset, onConfirm, onCancel }: ExportLabels
               {dataset.task_type === 'survival' ? t('listPage.survival') : 
                dataset.task_type === 'segmentation' ? t('listPage.segmentation') : 
                t('listPage.classification')}
-              {' '}({dataset.aggregation_level === 'case' ? t('listPage.caseLevel') : t('listPage.fileLevel')})
+              {' '}({dataset.aggregation_level === 'case' ? t('listPage.patientLevel') : t('listPage.fileLevel')})
             </p>
             <p className="text-xs sm:text-sm text-gray-600">
               <span className="font-medium">{t('listPage.files')}:</span> {dataset.file_count}

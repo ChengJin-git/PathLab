@@ -13,6 +13,29 @@ import { formatBytes } from '../lib/utils'
 import { useAuth } from '../contexts/AuthContext'
 import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, type ExportLabelsOptions } from '../components/list'
 
+type DatasetTaskFilter = 'all' | 'classification' | 'survival' | 'segmentation'
+type DatasetTypeFilter = 'all' | 'wsi' | 'patch'
+type DatasetLevelFilter = 'all' | 'file' | 'patient'
+
+const getNormalizedDatasetTaskType = (taskType: string): Exclude<DatasetTaskFilter, 'all'> => {
+  if (taskType === 'survival') return 'survival'
+  if (taskType === 'segmentation' || taskType === 'patch_segmentation') return 'segmentation'
+  return 'classification'
+}
+
+const getDatasetVisualType = (dataset: DatasetSummary): 'slides' | 'images' => {
+  if (dataset.data_type === 'wsi') return 'slides'
+  if (dataset.data_type === 'patch') return 'images'
+  if (dataset.file_count === 0) return 'images'
+
+  const avgSize = dataset.total_size / dataset.file_count
+  return avgSize > 20 * 1024 * 1024 ? 'slides' : 'images'
+}
+
+const getDatasetLevelFilterValue = (
+  aggregationLevel: DatasetSummary['aggregation_level']
+): Exclude<DatasetLevelFilter, 'all'> => aggregationLevel === 'case' ? 'patient' : 'file'
+
 export default function ListPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -45,6 +68,9 @@ export default function ListPage() {
   // Search and Filter state
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [datasetTaskFilter, setDatasetTaskFilter] = useState<DatasetTaskFilter>('all')
+  const [datasetTypeFilter, setDatasetTypeFilter] = useState<DatasetTypeFilter>('all')
+  const [datasetLevelFilter, setDatasetLevelFilter] = useState<DatasetLevelFilter>('all')
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
@@ -136,6 +162,22 @@ export default function ListPage() {
   const visibleDatasets = useMemo(() => {
     return datasets.filter(d => !d.dataset_id || !optimisticallyDeletedDatasetIds.has(d.dataset_id))
   }, [datasets, optimisticallyDeletedDatasetIds])
+
+  const filteredDatasets = useMemo(() => {
+    return visibleDatasets.filter((dataset) => {
+      const normalizedTaskType = getNormalizedDatasetTaskType(dataset.task_type)
+      const datasetLevelValue = getDatasetLevelFilterValue(dataset.aggregation_level)
+
+      const matchesTask = datasetTaskFilter === 'all' || normalizedTaskType === datasetTaskFilter
+      const matchesType = datasetTypeFilter === 'all' || dataset.data_type === datasetTypeFilter
+      const matchesLevel = datasetLevelFilter === 'all' || datasetLevelValue === datasetLevelFilter
+
+      return matchesTask && matchesType && matchesLevel
+    })
+  }, [visibleDatasets, datasetTaskFilter, datasetTypeFilter, datasetLevelFilter])
+
+  const hasActiveDatasetFilters =
+    datasetTaskFilter !== 'all' || datasetTypeFilter !== 'all' || datasetLevelFilter !== 'all'
 
   // Load datasets on mount
   useEffect(() => {
@@ -237,17 +279,43 @@ export default function ListPage() {
       await loadWSIList(selectedDatasetId, currentPage, debouncedSearch)
     }
   }
-
-
-
-
-  // Helper function to guess dataset content type based on average file size
-  const getDatasetItemType = (totalSize: number, fileCount: number): 'slides' | 'images' => {
-    if (fileCount === 0) return 'images'
-    const avgSize = totalSize / fileCount
-    // Threshold: 20MB. WSI files are usually much larger, patches are much smaller.
-    return avgSize > 20 * 1024 * 1024 ? 'slides' : 'images'
+  const clearDatasetFilters = () => {
+    setDatasetTaskFilter('all')
+    setDatasetTypeFilter('all')
+    setDatasetLevelFilter('all')
   }
+
+  const renderDatasetFilterGroup = (
+    label: string,
+    value: string,
+    options: Array<{ value: string; label: string }>,
+    onChange: (value: string) => void
+  ) => (
+    <div className="space-y-2.5">
+      <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-[0.18em] text-gray-400">
+        {label}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {options.map((option) => {
+          const selected = option.value === value
+
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => onChange(option.value)}
+              className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap border ${selected
+                ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
+                : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300 hover:text-gray-900 hover:bg-gray-50'
+                }`}
+            >
+              {option.label}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
 
   const handleFileUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return
@@ -955,11 +1023,95 @@ export default function ListPage() {
             </div>
           )}
 
-          {/* Datasets Grid */}
+          {/* Dataset Filters */}
           {!datasetsLoading && !datasetsError && visibleDatasets.length > 0 && (
+            <Card className="border-gray-100 shadow-sm bg-white/80 backdrop-blur-sm">
+              <div className="p-4 sm:p-5 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
+                  <div>
+                    <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-[0.18em] text-gray-400">
+                      {t('listPage.filters.title')}
+                    </p>
+                    <p className="text-sm text-gray-600 mt-1">
+                      {t('listPage.filters.summary', {
+                        shown: filteredDatasets.length,
+                        total: visibleDatasets.length,
+                      })}
+                    </p>
+                  </div>
+
+                  {hasActiveDatasetFilters && (
+                    <button
+                      type="button"
+                      onClick={clearDatasetFilters}
+                      className="self-start sm:self-auto text-sm font-semibold text-indigo-600 hover:text-indigo-700 transition-colors"
+                    >
+                      {t('listPage.filters.clear')}
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                  {renderDatasetFilterGroup(
+                    t('listPage.filters.groups.taskType'),
+                    datasetTaskFilter,
+                    [
+                      { value: 'all', label: t('common.all') },
+                      { value: 'classification', label: t('listPage.classification') },
+                      { value: 'survival', label: t('listPage.survival') },
+                      { value: 'segmentation', label: t('listPage.segmentation') },
+                    ],
+                    (nextValue) => setDatasetTaskFilter(nextValue as DatasetTaskFilter)
+                  )}
+
+                  {renderDatasetFilterGroup(
+                    t('listPage.filters.groups.dataType'),
+                    datasetTypeFilter,
+                    [
+                      { value: 'all', label: t('common.all') },
+                      { value: 'wsi', label: t('listPage.wsi') },
+                      { value: 'patch', label: t('listPage.patch') },
+                    ],
+                    (nextValue) => setDatasetTypeFilter(nextValue as DatasetTypeFilter)
+                  )}
+
+                  {renderDatasetFilterGroup(
+                    t('listPage.filters.groups.dataLevel'),
+                    datasetLevelFilter,
+                    [
+                      { value: 'all', label: t('common.all') },
+                      { value: 'file', label: t('listPage.fileLevel') },
+                      { value: 'patient', label: t('listPage.patientLevel') },
+                    ],
+                    (nextValue) => setDatasetLevelFilter(nextValue as DatasetLevelFilter)
+                  )}
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* Filtered Empty State */}
+          {!datasetsLoading && !datasetsError && visibleDatasets.length > 0 && filteredDatasets.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-16 px-4 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
+              <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
+                <Search className="w-8 h-8 text-gray-400" />
+              </div>
+              <h3 className="text-lg font-medium text-gray-900 mb-1">{t('listPage.noFilteredDatasets')}</h3>
+              <p className="text-sm text-gray-500 max-w-sm text-center mb-5">
+                {t('listPage.noFilteredDatasetsDescription')}
+              </p>
+              <Button variant="outline" onClick={clearDatasetFilters} className="gap-2">
+                {t('listPage.filters.clear')}
+              </Button>
+            </div>
+          )}
+
+          {/* Datasets Grid */}
+          {!datasetsLoading && !datasetsError && filteredDatasets.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6 p-1">
-              {visibleDatasets.map((dataset) => {
-                const itemType = getDatasetItemType(dataset.total_size, dataset.file_count)
+              {filteredDatasets.map((dataset) => {
+                const itemType = getDatasetVisualType(dataset)
+                const normalizedTaskType = getNormalizedDatasetTaskType(dataset.task_type)
 
                 return (
                   <Card
@@ -1076,13 +1228,13 @@ export default function ListPage() {
                         </p>
                         <div className="w-1 h-1 rounded-full bg-slate-300" />
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
-                          dataset.task_type === 'survival'
+                          normalizedTaskType === 'survival'
                             ? 'bg-amber-50 text-amber-700 border border-amber-100/50'
-                            : dataset.task_type === 'segmentation' || dataset.task_type === 'patch_segmentation'
+                            : normalizedTaskType === 'segmentation'
                               ? 'bg-violet-50 text-violet-700 border border-violet-100/50'
                               : 'bg-indigo-50 text-indigo-700 border border-indigo-100/50'
                         }`}>
-                          {dataset.task_type === 'survival' ? t('listPage.survival') : (dataset.task_type === 'segmentation' || dataset.task_type === 'patch_segmentation') ? t('listPage.segmentation') : t('listPage.classification')}
+                          {normalizedTaskType === 'survival' ? t('listPage.survival') : normalizedTaskType === 'segmentation' ? t('listPage.segmentation') : t('listPage.classification')}
                         </span>
                         {itemType === 'slides' && (
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
@@ -1091,7 +1243,7 @@ export default function ListPage() {
                               : 'bg-orange-50 text-orange-700 border border-orange-100/50'
                           }`}>
                             {dataset.aggregation_level === 'case' ? (
-                              <><Users className="w-3 h-3" />{t('listPage.caseLevel')}</>
+                              <><Users className="w-3 h-3" />{t('listPage.patientLevel')}</>
                             ) : (
                               <><FileImage className="w-3 h-3" />{t('listPage.fileLevel')}</>
                             )}
@@ -2052,7 +2204,7 @@ export default function ListPage() {
           editingDatasetSaving={editingDatasetSaving}
           isSlideDataset={(() => {
             const ds = datasets.find(d => d.dataset_id === editingDatasetId)
-            return ds ? getDatasetItemType(ds.total_size, ds.file_count) === 'slides' : false
+            return ds ? getDatasetVisualType(ds) === 'slides' : false
           })()}
           onNameChange={setEditingDatasetName}
           onTypeChange={setEditingDatasetType}
