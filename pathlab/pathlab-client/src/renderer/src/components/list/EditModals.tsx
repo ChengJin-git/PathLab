@@ -24,6 +24,7 @@ export interface EditMetadataModalProps {
   editEventTime: string
   editEventStatus: string
   datasetType?: 'classification' | 'survival' | 'segmentation'
+  visualType?: 'slides' | 'images'
   onEditLabelChange: (v: string) => void
   onEditCaseIdChange: (v: string) => void
   onEditAgeChange: (v: string) => void
@@ -39,6 +40,7 @@ export interface EditMetadataModalProps {
 export function EditMetadataModal({
   editingWSI, editLabel, editCaseId, editAge, editGender, editSource, editEventTime, editEventStatus,
   datasetType,
+  visualType,
   onEditLabelChange, onEditCaseIdChange, onEditAgeChange, onEditGenderChange, onEditSourceChange,
   onEditEventTimeChange, onEditEventStatusChange,
   updating, onCancel, onConfirm,
@@ -49,6 +51,7 @@ export function EditMetadataModal({
   const isClassification = datasetType === 'classification'
   const isSurvival = datasetType === 'survival'
   const isSegmentation = datasetType === 'segmentation'
+  const isImageDataset = visualType === 'images'
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
@@ -59,12 +62,12 @@ export function EditMetadataModal({
             <Edit className="w-6 h-6 sm:w-10 sm:h-10 text-blue-600" />
           </div>
           <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2">{t('listComponents.editModals.editMetadata')}</h3>
-          <p className="text-xs sm:text-sm text-gray-600">{t('listComponents.editModals.updateSlideInfo')}</p>
+          <p className="text-xs sm:text-sm text-gray-600">{t(isImageDataset ? 'listComponents.editModals.updateImageInfo' : 'listComponents.editModals.updateSlideInfo')}</p>
         </div>
 
         {/* WSI ID (read-only) */}
         <div className="mb-3 sm:mb-4">
-          <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.slideId')}</label>
+          <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t(isImageDataset ? 'listComponents.editModals.imageId' : 'listComponents.editModals.slideId')}</label>
           <input type="text" value={editingWSI.wsi_id} disabled
             className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed text-xs sm:text-sm" />
         </div>

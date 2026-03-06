@@ -2318,7 +2318,9 @@
   "listComponents": {
     "editModals": {
       "editMetadata": "編輯元數據",
+      "updateImageInfo": "更新以下圖片資訊",
       "updateSlideInfo": "更新以下切片資訊",
+      "imageId": "圖片 ID",
       "slideId": "切片 ID",
       "labelDiseaseClassification": "標籤 / 疾病分類",
       "labelPlaceholder": "例如：腫瘤、正常、LUAD",

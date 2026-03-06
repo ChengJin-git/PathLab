@@ -812,6 +812,12 @@ export default function ListPage() {
     return patchCount > items.length / 2
   }, [items])
 
+  const selectedDatasetVisualType = React.useMemo<'slides' | 'images'>(() => {
+    const dataset = datasets.find(d => d.dataset_id === selectedDatasetId)
+    if (dataset) return getDatasetVisualType(dataset)
+    return isPatchDataset ? 'images' : 'slides'
+  }, [datasets, selectedDatasetId, isPatchDataset])
+
   // Server-side pagination: totalPages based on server-provided totalCases (or totalCount for non-grouped)
   const totalPages = hasMultiSlideCases
     ? Math.ceil(totalCases / itemsPerPage)
@@ -2147,6 +2153,7 @@ export default function ListPage() {
           editEventTime={editEventTime}
           editEventStatus={editEventStatus}
           datasetType={selectedDatasetType}
+          visualType={selectedDatasetVisualType}
           onEditLabelChange={setEditLabel}
           onEditCaseIdChange={setEditCaseId}
           onEditAgeChange={setEditAge}

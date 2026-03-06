@@ -2382,7 +2382,9 @@
   "listComponents": {
     "editModals": {
       "editMetadata": "Edit Metadata",
+      "updateImageInfo": "Update image information below",
       "updateSlideInfo": "Update slide information below",
+      "imageId": "Image ID",
       "slideId": "Slide ID",
       "labelDiseaseClassification": "Label / Disease Classification",
       "labelPlaceholder": "e.g., Tumor, Normal, LUAD",
