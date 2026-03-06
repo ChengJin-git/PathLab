@@ -44,7 +44,7 @@ from backend.auth import (
     UserUpdate,
     require_admin,
 )
-from backend.auth.schemas import UserReadAdmin
+from backend.auth.schemas import UserReadAdmin, AdminUserUpdate
 from backend.auth.users import get_jwt_strategy
 from backend.common.config import Config
 from ..dependencies import logger
@@ -122,9 +122,10 @@ async def register_user(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Register a new user.
+    Register a new non-admin user.
 
     Unlike the default FastAPI-Users register, this allows non-email usernames.
+    Public registration cannot create admin or superuser accounts.
     """
     from fastapi_users.password import PasswordHelper
     import uuid as uuid_module
@@ -151,8 +152,8 @@ async def register_user(
         email=user_create.email,
         hashed_password=hashed_password,
         password_sha256=password_sha256,  # For secure login
-        is_active=user_create.is_active if user_create.is_active is not None else True,
-        is_superuser=user_create.is_superuser if user_create.is_superuser is not None else False,
+        is_active=True,
+        is_superuser=False,
         is_verified=True,  # Auto-verify since we don't use email verification
         role=user_create.role or "guest",
         nickname=user_create.nickname,
@@ -359,7 +360,7 @@ async def get_user(
 @router.patch("/auth/users/{user_id}", response_model=UserReadAdmin, tags=["User Management"])
 async def update_user(
     user_id: str,
-    user_update: UserUpdate,
+    user_update: AdminUserUpdate,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):

@@ -19,7 +19,7 @@ from .users import (
     UserManager,
 )
 from .models import User
-from .schemas import UserRead, UserCreate, UserUpdate
+from .schemas import UserRead, UserCreate, UserUpdate, AdminUserUpdate
 from .dependencies import (
     require_admin,
     require_pathologist_or_admin,
@@ -43,6 +43,7 @@ __all__ = [
     "UserRead",
     "UserCreate",
     "UserUpdate",
+    "AdminUserUpdate",
     # RBAC Dependencies
     "require_admin",
     "require_pathologist_or_admin",

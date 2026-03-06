@@ -2079,6 +2079,10 @@ async def get_datasets_for_validation(
     in the database. Patch datasets are exempt from this check.
     """
     datasets = await DatasetRepository.get_all(db)
+    elevated_dataset_ids = set()
+    if not user.is_admin():
+        elevated_dataset_ids = set(await _get_elevated_dataset_ids(user, db) or [])
+
     result = []
     for ds in datasets:
         dg = ds.data_group
@@ -2090,6 +2094,12 @@ async def get_datasets_for_validation(
             continue
 
         dataset_id = ds.dataset_id
+
+        if not user.is_admin():
+            owns_dataset = ds.user_id == str(user.id)
+            has_temp_access = dataset_id in elevated_dataset_ids
+            if not owns_dataset and not has_temp_access:
+                continue
 
         # Get WSI IDs
         wsi_ids = await DatasetRepository.get_wsi_ids(db, dataset_id)

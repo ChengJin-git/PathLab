@@ -150,9 +150,10 @@ def check_data_ownership(resource_user_id: Optional[str], current_user: User) ->
     if current_user.is_admin():
         return True
 
-    # If resource has no owner (legacy data), allow access
+    # Legacy resources without an owner are not public.
+    # They must be explicitly handled via admin access or a narrower permission check.
     if resource_user_id is None:
-        return True
+        return False
 
     # Check if user owns the resource
     return resource_user_id == str(current_user.id)
@@ -170,7 +171,6 @@ async def check_wsi_access_permission(
     Returns True if:
     - User is admin (can access all)
     - User owns the WSI (wsi_user_id matches)
-    - WSI has no owner (legacy data)
     - User has valid temporary elevated permission for the WSI's dataset
 
     Args:
@@ -184,10 +184,6 @@ async def check_wsi_access_permission(
     """
     # Admin can access everything
     if user.is_admin():
-        return True
-
-    # If WSI has no owner (legacy data), allow access
-    if wsi_user_id is None:
         return True
 
     # Check if user owns the WSI
@@ -218,7 +214,6 @@ async def check_dataset_access_permission(
     Returns True if:
     - User is admin
     - User owns the dataset
-    - Dataset has no owner (legacy data)
     - User has valid temporary elevated permission for the dataset
     """
     if check_data_ownership(dataset_user_id, user):

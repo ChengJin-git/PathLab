@@ -6,7 +6,7 @@ import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Select } from '../ui/select'
 import {
-  UserListItem, UserUpdateRequest, RegisterRequest, DatasetPermission,
+  UserListItem, AdminUserUpdateRequest, RegisterRequest, DatasetPermission,
   listUsers, updateUser, deleteUser, registerUser, revokeUserAgreement,
   batchActivateUsers, batchDeactivateUsers, batchDeleteUsers,
   getMaintenanceMode, setMaintenanceMode as setMaintenanceModeApi,
@@ -114,7 +114,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
       return
     }
     try {
-      const updateData: UserUpdateRequest = {}
+      const updateData: AdminUserUpdateRequest = {}
       if (editForm.nickname !== (editingUser.nickname || '')) updateData.nickname = editForm.nickname
       if (editForm.role !== editingUser.role) updateData.role = editForm.role as 'admin' | 'pathologist' | 'guest'
       if (editForm.password) updateData.password = editForm.password
@@ -133,13 +133,17 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
     try {
       setCreatingUser(true)
       setUsersError(null)
+      const requestedRole = createForm.role as 'admin' | 'pathologist' | 'guest'
       const data: RegisterRequest = {
         email: createForm.username,
         password: createForm.password,
         nickname: createForm.nickname || undefined,
-        role: createForm.role as 'pathologist' | 'guest'
+        role: requestedRole === 'guest' ? 'guest' : 'pathologist'
       }
-      await registerUser(data)
+      const createdUser = await registerUser(data)
+      if (requestedRole === 'admin') {
+        await updateUser(createdUser.id, { role: 'admin' })
+      }
       setShowCreateUser(false)
       setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist' })
       loadUsers()

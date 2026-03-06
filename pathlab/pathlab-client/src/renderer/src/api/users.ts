@@ -1,6 +1,6 @@
 import { API_BASE } from '../config'
 import { apiFetch } from './client'
-import type { AuthUser, UserUpdateRequest } from './auth'
+import type { AdminUserUpdateRequest, AuthUser } from './auth'
 
 // ============================================================================
 // User Management APIs (Admin only)
@@ -33,7 +33,7 @@ export async function getUserById(userId: string): Promise<AuthUser> {
  * @param data - Update data
  * @throws {ApiError} If request fails or not authorized
  */
-export async function updateUser(userId: string, data: UserUpdateRequest): Promise<AuthUser> {
+export async function updateUser(userId: string, data: AdminUserUpdateRequest): Promise<AuthUser> {
   return apiFetch<AuthUser>(
     `${API_BASE}/auth/users/${userId}`,
     {

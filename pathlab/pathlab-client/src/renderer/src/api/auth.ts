@@ -73,11 +73,17 @@ export interface RegisterRequest {
   role?: 'pathologist' | 'guest'
 }
 
-export interface UserUpdateRequest {
+export interface CurrentUserUpdateRequest {
+  email?: string
   nickname?: string
-  role?: 'admin' | 'pathologist' | 'guest'
   password?: string
+}
+
+export interface AdminUserUpdateRequest extends CurrentUserUpdateRequest {
+  role?: 'admin' | 'pathologist' | 'guest'
   is_active?: boolean
+  is_superuser?: boolean
+  is_verified?: boolean
 }
 
 /**
@@ -197,7 +203,7 @@ export async function getCurrentUser(): Promise<UserInfoResponse> {
  * @returns Updated user
  * @throws {ApiError} If update fails
  */
-export async function updateCurrentUser(data: UserUpdateRequest): Promise<AuthUser> {
+export async function updateCurrentUser(data: CurrentUserUpdateRequest): Promise<AuthUser> {
   return apiFetch<AuthUser>(
     `${API_BASE}/auth/me`,
     {

@@ -9,7 +9,32 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+VALID_ROLES = {"admin", "pathologist", "guest"}
+PUBLIC_REGISTRATION_ROLES = {"pathologist", "guest"}
+
+
+def _normalize_username(value: Optional[str]) -> Optional[str]:
+    """Normalize usernames while preserving optional semantics."""
+    if value is None:
+        return value
+    normalized = value.strip()
+    if len(normalized) == 0:
+        raise ValueError("Username cannot be empty")
+    if len(normalized) > 255:
+        raise ValueError("Username too long (max 255 characters)")
+    return normalized
+
+
+def _validate_role(value: Optional[str], allowed_roles: set[str]) -> Optional[str]:
+    """Validate that a role is in the allowed set."""
+    if value is None:
+        return value
+    if value not in allowed_roles:
+        raise ValueError(f"Role must be one of: {', '.join(sorted(allowed_roles))}")
+    return value
 
 
 class UserRead(BaseModel):
@@ -39,56 +64,60 @@ class UserRead(BaseModel):
 class UserCreate(BaseModel):
     """Schema for creating a new user.
 
+    Public registration schema.
+
     Note: 'email' field is actually username (no email validation).
+    Self-registration may only create non-admin accounts.
     """
+    model_config = ConfigDict(extra="forbid")
+
     email: str = Field(description="Username (stored in email field)")
     password: str = Field(description="User password")
-    is_active: Optional[bool] = True
-    is_superuser: Optional[bool] = False
-    is_verified: Optional[bool] = False
-    role: str = Field(default="guest", description="User role: admin, pathologist, guest")
+    role: str = Field(default="guest", description="User role: pathologist, guest")
     nickname: Optional[str] = Field(default=None, description="Display name")
 
     @field_validator("role")
     @classmethod
     def validate_role(cls, v: str) -> str:
-        """Validate role is one of the allowed values."""
-        valid_roles = {"admin", "pathologist", "guest"}
-        if v not in valid_roles:
-            raise ValueError(f"Role must be one of: {', '.join(valid_roles)}")
-        return v
+        """Validate role is one of the allowed public registration values."""
+        return _validate_role(v, PUBLIC_REGISTRATION_ROLES) or "guest"
 
     @field_validator("email")
     @classmethod
     def validate_username(cls, v: str) -> str:
         """Validate username is not empty and has reasonable length."""
-        if not v or len(v.strip()) == 0:
-            raise ValueError("Username cannot be empty")
-        if len(v) > 255:
-            raise ValueError("Username too long (max 255 characters)")
-        return v.strip()
+        return _normalize_username(v) or ""
 
 
 class UserUpdate(BaseModel):
-    """Schema for updating user data."""
+    """Schema for current user self-service updates."""
+    model_config = ConfigDict(extra="forbid")
+
     password: Optional[str] = Field(default=None, description="New password")
     email: Optional[str] = Field(default=None, description="Username (stored in email field)")
+    nickname: Optional[str] = Field(default=None, description="Display name")
+
+    @field_validator("email")
+    @classmethod
+    def validate_username(cls, v: Optional[str]) -> Optional[str]:
+        """Validate updated username if provided."""
+        return _normalize_username(v)
+
+
+class AdminUserUpdate(UserUpdate):
+    """Schema for admin-managed updates to user accounts."""
+    model_config = ConfigDict(extra="forbid")
+
     is_active: Optional[bool] = None
     is_superuser: Optional[bool] = None
     is_verified: Optional[bool] = None
     role: Optional[str] = Field(default=None, description="User role: admin, pathologist, guest")
-    nickname: Optional[str] = Field(default=None, description="Display name")
 
     @field_validator("role")
     @classmethod
     def validate_role(cls, v: Optional[str]) -> Optional[str]:
         """Validate role is one of the allowed values."""
-        if v is None:
-            return v
-        valid_roles = {"admin", "pathologist", "guest"}
-        if v not in valid_roles:
-            raise ValueError(f"Role must be one of: {', '.join(valid_roles)}")
-        return v
+        return _validate_role(v, VALID_ROLES)
 
 
 class UserReadAdmin(UserRead):
