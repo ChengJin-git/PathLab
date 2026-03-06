@@ -234,11 +234,28 @@ export default function SettingsPage() {
               <p>
                 {t('settings.aboutText2')}
               </p>
-              <p>
-                {t('settings.aboutText3').split('SmartLab')[0]}
-                <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer">SmartLab</a>
-                {t('settings.aboutText3').split('SmartLab')[1] || '.'}
-              </p>
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                <a
+                  href="https://www.smartlab.cse.ust.hk/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center transition-opacity hover:opacity-100 opacity-80"
+                >
+                  <img src="/images/smartlab-logo.svg" alt="SmartLab" className="h-8 sm:h-10 w-auto" />
+                </a>
+                <p className="mt-3 text-sm text-gray-700">{t('settings.aboutText3')}</p>
+                <p className="mt-1 text-xs text-gray-500">
+                  {t('common.copyright')} <a href="https://www.smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer" className="hover:underline">SmartLab</a> · {t('introduction.allRightsReserved')}
+                </p>
+                <a
+                  href="https://www.smartlab.cse.ust.hk/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2 inline-block text-xs text-blue-600 hover:text-blue-700 hover:underline"
+                >
+                  www.smartlab.cse.ust.hk
+                </a>
+              </div>
             </div>
           </Card>
         )}
