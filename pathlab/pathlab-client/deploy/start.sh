@@ -3,12 +3,14 @@
 # Usage: ./start.sh
 
 set -e
+set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 SERVER_DIR="$PROJECT_DIR/server"
 RENDERER_DIR="$PROJECT_DIR/src/renderer"
 LOG_DIR="$PROJECT_DIR/logs"
+FRONTEND_BUILD_LOG="$LOG_DIR/frontend-build.log"
 
 # Auto-detect Python path (conda > venv > system)
 if [ -n "$CONDA_PREFIX" ]; then
@@ -156,7 +158,14 @@ fi
 
 # Build frontend
 cd "$RENDERER_DIR"
-node "$PROJECT_DIR/node_modules/vite/bin/vite.js" build --config vite.config.ts 2>&1 | tail -5
+
+echo "  构建日志: $FRONTEND_BUILD_LOG"
+if ! node "$PROJECT_DIR/node_modules/vite/bin/vite.js" build --config vite.config.ts > "$FRONTEND_BUILD_LOG" 2>&1; then
+    echo -e "${RED}[✗] 前端构建失败！最近日志如下:${NC}"
+    tail -50 "$FRONTEND_BUILD_LOG" || true
+    echo -e "${YELLOW}完整日志:${NC} $FRONTEND_BUILD_LOG"
+    exit 1
+fi
 
 # Copy assets
 cp -r public/assets dist/ 2>/dev/null || true

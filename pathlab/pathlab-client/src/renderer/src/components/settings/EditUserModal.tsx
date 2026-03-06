@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
-import { UserListItem } from '../../api'
+import type { UserListItem } from '../../api/users'
 
 export interface EditUserModalProps {
   user: UserListItem

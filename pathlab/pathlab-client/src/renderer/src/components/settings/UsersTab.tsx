@@ -6,13 +6,15 @@ import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Select } from '../ui/select'
 import {
-  UserListItem, AdminUserUpdateRequest, RegisterRequest, DatasetPermission,
   listUsers, updateUser, deleteUser, registerUser, revokeUserAgreement,
   batchActivateUsers, batchDeactivateUsers, batchDeleteUsers,
   getMaintenanceMode, setMaintenanceMode as setMaintenanceModeApi,
   getMaintenanceNotice, setMaintenanceNotice as setMaintenanceNoticeApi,
   getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, fetchDatasets
 } from '../../api'
+import type { AdminUserUpdateRequest, RegisterRequest } from '../../api/auth'
+import type { DatasetPermission } from '../../api/permissions'
+import type { UserListItem } from '../../api/users'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { EditUserModal } from './EditUserModal'
 import { CreateUserModal } from './CreateUserModal'

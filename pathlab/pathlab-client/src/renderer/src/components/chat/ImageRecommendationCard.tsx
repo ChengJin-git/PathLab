@@ -6,13 +6,13 @@ import {
   fetchWSIList,
   fetchAllResults,
   getThumbnailUrl,
-  getFileType,
   fetchAvailableHeatmaps,
   getPatchCAMImageUrl,
   getHeatmapThumbnailUrl,
   type WSISummary,
   type AvailableHeatmap
 } from '../../api'
+import { getFileType } from '../../constants/fileTypes'
 
 export interface ImageRecommendation {
   query: string
