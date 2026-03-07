@@ -1201,6 +1201,7 @@ async def _handle_recursion_limit_fallback(
     agent_name: str,
     current_step,
     state: State,
+    llm_override: dict | None = None,
 ) -> list:
     """Handle GraphRecursionError with graceful fallback using LLM summary.
 
@@ -1212,6 +1213,7 @@ async def _handle_recursion_limit_fallback(
         agent_name: Name of the agent that hit the limit
         current_step: The current step being executed
         state: Current workflow state
+        llm_override: Optional per-request LLM override to preserve local model routing
 
     Returns:
         list: Messages including the accumulated messages plus the fallback summary
@@ -1247,7 +1249,10 @@ async def _handle_recursion_limit_fallback(
     )
 
     # Get the LLM without tools (strip all tools from binding)
-    fallback_llm = get_llm_by_type(AGENT_LLM_MAP[agent_name])
+    fallback_llm = get_llm_by_type_with_override(
+        AGENT_LLM_MAP[agent_name],
+        llm_override,
+    )
 
     # Call the LLM with the updated messages
     fallback_response = fallback_llm.invoke(fallback_messages)
@@ -1447,6 +1452,7 @@ async def _execute_agent_step(
                     agent_name=agent_name,
                     current_step=current_step,
                     state=state,
+                    llm_override=configurable.llm_override,
                 )
 
                 # Create result dict so the code can continue normally from line 1178
