@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { ArrowLeft } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
@@ -31,7 +31,11 @@ export default function Main() {
 
   const skipNextHydrationRef = useRef<string | null>(null);
   const focusResearchAppliedRef = useRef<string | null>(null);
+  const [pendingHydrationConversationId, setPendingHydrationConversationId] = useState<string | null>(null);
   const conversationId = useStore((state) => state.conversationId);
+  const messageCount = useStore((state) => state.messageIds.length);
+  const researchCount = useStore((state) => state.researchIds.length);
+  const responding = useStore((state) => state.responding);
   const openResearchId = useStore((state) => state.openResearchId);
   const doubleColumnMode = useMemo(
     () => openResearchId !== null,
@@ -63,15 +67,32 @@ export default function Main() {
 
   useEffect(() => {
     if (!isDeepResearchRoute || !urlConversationId) {
+      setPendingHydrationConversationId(null);
       return;
     }
     // Skip one hydration when URL change is initiated by this page right after
     // creating/selecting a local conversation, to avoid clobbering in-flight state.
     if (skipNextHydrationRef.current === urlConversationId) {
       skipNextHydrationRef.current = null;
+      setPendingHydrationConversationId(null);
       return;
     }
-    void loadConversationFromBackend(urlConversationId);
+    let cancelled = false;
+    setPendingHydrationConversationId(urlConversationId);
+    void (async () => {
+      try {
+        await loadConversationFromBackend(urlConversationId);
+      } finally {
+        if (!cancelled) {
+          setPendingHydrationConversationId((current) =>
+            current === urlConversationId ? null : current,
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [urlConversationId, isDeepResearchRoute]);
 
   useEffect(() => {
@@ -110,6 +131,13 @@ export default function Main() {
     focusResearchAppliedRef.current = applyKey;
   }, [navigationState, urlConversationId, conversationId, isDeepResearchRoute]);
 
+  const showConversationHydration = Boolean(
+    isDeepResearchRoute
+    && urlConversationId
+    && pendingHydrationConversationId === urlConversationId
+    && (conversationId !== urlConversationId || (messageCount === 0 && researchCount === 0 && !responding)),
+  );
+
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-gray-50">
       <div className="mx-auto flex w-full max-w-[1500px] px-4 pt-3">
@@ -127,24 +155,36 @@ export default function Main() {
         <div
           className={cn(
             "mx-auto flex min-h-0 flex-1 w-full max-w-[1500px] px-4 pt-3 pb-4",
-            doubleColumnMode ? "gap-6 pb-16" : "justify-center",
+            showConversationHydration ? "justify-center" : doubleColumnMode ? "gap-6 pb-16" : "justify-center",
           )}
         >
-          <MessagesBlock
-            className={cn(
-              "min-w-0 transition-all duration-300 ease-out",
-              !doubleColumnMode && "w-full max-w-4xl",
-              doubleColumnMode && "w-[42%] min-w-[520px]",
-            )}
-          />
-          <ResearchBlock
-            className={cn(
-              "min-w-0 transition-all duration-300 ease-out",
-              !doubleColumnMode && "pointer-events-none w-0 scale-95 opacity-0",
-              doubleColumnMode && "h-[calc(100%-4rem)] w-[58%] self-start",
-            )}
-            researchId={openResearchId}
-          />
+          {showConversationHydration ? (
+            <div className="flex w-full max-w-4xl items-center justify-center">
+              <div className="flex min-h-[320px] w-full flex-col items-center justify-center rounded-3xl border border-gray-200 bg-white/80 px-6 py-12 text-center shadow-sm">
+                <Loader2 className="mb-4 h-8 w-8 animate-spin text-primary-500" />
+                <div className="text-base font-medium text-gray-900">Loading Deep Research...</div>
+                <div className="mt-2 text-sm text-gray-500">Restoring your research conversation.</div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <MessagesBlock
+                className={cn(
+                  "min-w-0 transition-all duration-300 ease-out",
+                  !doubleColumnMode && "w-full max-w-4xl",
+                  doubleColumnMode && "w-[42%] min-w-[520px]",
+                )}
+              />
+              <ResearchBlock
+                className={cn(
+                  "min-w-0 transition-all duration-300 ease-out",
+                  !doubleColumnMode && "pointer-events-none w-0 scale-95 opacity-0",
+                  doubleColumnMode && "h-[calc(100%-4rem)] w-[58%] self-start",
+                )}
+                researchId={openResearchId}
+              />
+            </>
+          )}
         </div>
       </div>
     </div>
