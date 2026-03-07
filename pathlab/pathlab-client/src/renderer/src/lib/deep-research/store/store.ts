@@ -1835,8 +1835,12 @@ export async function loadConversationFromBackend(conversationId: string): Promi
         cancelledResearchIds: new Set<string>(),
         ongoingResearchId: normalizedCachedOngoingResearchId,
         openResearchId: cached.openResearchId ?? null,
-        backgroundJobId: cached.backgroundJobId ?? null,
-        backgroundJobCursor: cached.backgroundJobCursor ?? 0,
+        backgroundJobId: normalizedCachedOngoingResearchId
+          ? (cached.backgroundJobId ?? null)
+          : null,
+        backgroundJobCursor: normalizedCachedOngoingResearchId
+          ? (cached.backgroundJobCursor ?? 0)
+          : 0,
         tokenUsage: cached.tokenUsage ?? null,
         sessionTokenUsage: cached.sessionTokenUsage ?? DEFAULT_SESSION_TOKEN_USAGE,
         responseTiming: cached.responseTiming ?? null,
@@ -1895,8 +1899,10 @@ export async function loadConversationFromBackend(conversationId: string): Promi
       //
       // This runs BEFORE the backend rebuild so the user sees activities
       // immediately instead of waiting for backendLooksIncomplete retries.
-      const cachedJobId = cached.backgroundJobId;
-      const cachedOngoingResearch = cached.ongoingResearchId;
+      const cachedJobId = normalizedCachedOngoingResearchId
+        ? (cached.backgroundJobId ?? null)
+        : null;
+      const cachedOngoingResearch = normalizedCachedOngoingResearchId;
       if (cachedOngoingResearch && cachedJobId && !isStaleLoad()) {
         const stNow = useStore.getState();
         const aIds = stNow.researchActivityIds.get(cachedOngoingResearch) ?? [];
@@ -2501,6 +2507,19 @@ export async function loadConversationFromBackend(conversationId: string): Promi
       );
     }
 
+    const rebuiltBackgroundJobId =
+      cached?.backgroundJobId ?? (!isContextSwitch ? currentStore.backgroundJobId : null) ?? null;
+    const rebuiltBackgroundJobCursor =
+      cached?.backgroundJobCursor ?? (!isContextSwitch ? currentStore.backgroundJobCursor : 0) ?? 0;
+    const normalizedRebuiltOngoingResearchId = normalizeRestoredOngoingResearchId({
+      ongoingResearchId: normalizedOngoingResearchId,
+      backgroundJobId: rebuiltBackgroundJobId,
+      researchIds: normalizedResearchIds,
+      researchReportIds: Array.from(normalizedResearchReportIds.entries()),
+      researchRunStatus: Array.from(normalizedResearchRunStatus.entries()),
+      messages: Array.from(messages.entries()),
+    });
+
     const rebuiltState = {
       conversationId,
       threadId: resolvedConversationThreadId,
@@ -2525,7 +2544,7 @@ export async function loadConversationFromBackend(conversationId: string): Promi
         }
         return derived;
       })(),
-      ongoingResearchId: normalizedOngoingResearchId,
+      ongoingResearchId: normalizedRebuiltOngoingResearchId,
       // If normalization lost the open research ID but the user had a panel open,
       // fall back to the last research in the rebuilt state so the panel stays open.
       openResearchId:
@@ -2533,6 +2552,8 @@ export async function loadConversationFromBackend(conversationId: string): Promi
         (currentOpenResearchId && normalizedResearchIds.length > 0
           ? normalizedResearchIds[normalizedResearchIds.length - 1]!
           : null),
+      backgroundJobId: normalizedRebuiltOngoingResearchId ? rebuiltBackgroundJobId : null,
+      backgroundJobCursor: normalizedRebuiltOngoingResearchId ? rebuiltBackgroundJobCursor : 0,
       tokenUsage: cached?.tokenUsage ?? null,
       sessionTokenUsage: cached?.sessionTokenUsage ?? DEFAULT_SESSION_TOKEN_USAGE,
       responseTiming: cached?.responseTiming ?? null,
@@ -2737,9 +2758,10 @@ export async function loadConversationFromBackend(conversationId: string): Promi
     }
 
     // Check if there is an unfinished background job that needs reconnection.
-    // Use cached values because rebuiltState does not carry backgroundJobId.
+    // rebuiltState now carries only normalized background job info, so avoid
+    // reconnecting from stale raw cache values after a completed research.
     // Skip if eager reconnect already fired from the cache-restore path above.
-    const restoredJobId = cached?.backgroundJobId;
+    const restoredJobId = rebuiltState.backgroundJobId;
     const restoredOngoingResearch = rebuiltState.ongoingResearchId;
     if (restoredOngoingResearch && restoredJobId && !_eagerReconnectFired) {
       const storeNow = useStore.getState();
@@ -3453,6 +3475,14 @@ export async function sendMessage(
       // These messages are created before the streaming response and are NOT in newIds,
       // so they would otherwise never get re-persisted with up-to-date metadata.
       if (currentResearchId) {
+        const finalReportId = syncResearchReportBinding(currentResearchId);
+        if (finalReportId && !persistedIds.has(finalReportId)) {
+          const reportMsg = useStore.getState().messages.get(finalReportId);
+          if (reportMsg && reportMsg.role !== "user") {
+            await persistMessage(reportMsg);
+            persistedIds.add(finalReportId);
+          }
+        }
         const planId = state.researchPlanIds.get(currentResearchId);
         if (planId && !persistedIds.has(planId)) {
           const planMsg = state.messages.get(planId);
@@ -3839,6 +3869,14 @@ export async function resumeBackgroundResearch(
       }
       // Re-persist plan and research root to update PATHLAB_RESEARCH_META status.
       if (currentResearchId) {
+        const finalReportId = syncResearchReportBinding(currentResearchId);
+        if (finalReportId && !persistedIds.has(finalReportId)) {
+          const reportMsg = useStore.getState().messages.get(finalReportId);
+          if (reportMsg && reportMsg.role !== "user") {
+            await persistMessage(reportMsg);
+            persistedIds.add(finalReportId);
+          }
+        }
         const planId = persistState.researchPlanIds.get(currentResearchId);
         if (planId && !persistedIds.has(planId)) {
           const planMsg = persistState.messages.get(planId);

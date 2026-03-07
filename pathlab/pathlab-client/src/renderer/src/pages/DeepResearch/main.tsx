@@ -189,8 +189,12 @@ export default function Main() {
   const showConversationHydration = Boolean(
     isDeepResearchRoute
     && urlConversationId
-    && pendingHydrationConversationId === urlConversationId
-    && (conversationId !== urlConversationId || (messageCount === 0 && researchCount === 0 && !responding)),
+    && !canReuseMountedConversation
+    && (
+      pendingHydrationConversationId === urlConversationId
+      || conversationId !== urlConversationId
+      || (messageCount === 0 && researchCount === 0 && !responding)
+    ),
   );
 
   return (
