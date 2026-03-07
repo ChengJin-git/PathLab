@@ -1280,62 +1280,6 @@ function isLikelyReportContent(content: string): boolean {
   return headingCount >= 1 || paragraphCount >= 3;
 }
 
-function isLikelyStreamingReportContent(content: string): boolean {
-  const trimmed = stripResearchMeta(content).trim();
-  if (trimmed.length < 80) {
-    return false;
-  }
-
-  const headingCount =
-    (trimmed.match(/(?:^|\n)#{1,4}\s+/g)?.length ?? 0) +
-    (trimmed.match(/(?:^|\n)(?:概述|详细分析|关键要点|总结|建议|结论)\s*/g)?.length ?? 0);
-  const paragraphCount = trimmed.split(/\n\s*\n/).filter((p) => p.trim().length > 20).length;
-  const inlineCitationCount = countInlineCitationMarkers(trimmed);
-
-  return (
-    headingCount >= 1 ||
-    (inlineCitationCount >= 1 && paragraphCount >= 2) ||
-    trimmed.startsWith("# ") ||
-    trimmed.startsWith("## ")
-  );
-}
-
-function shouldPromoteMessageToReporter(message: Message): boolean {
-  if (message.agent === "reporter") {
-    return true;
-  }
-
-  if (
-    message.role !== "assistant" ||
-    message.agent === "planner" ||
-    message.agent === "coordinator" ||
-    !message.content
-  ) {
-    return false;
-  }
-
-  if (
-    message.agent &&
-    message.agent !== "researcher" &&
-    message.agent !== "analyst" &&
-    message.agent !== "coder"
-  ) {
-    return false;
-  }
-
-  return message.finishReason
-    ? isLikelyReportContent(message.content)
-    : isLikelyStreamingReportContent(message.content);
-}
-
-function withReporterAgentIfNeeded(message: Message): Message {
-  if (!shouldPromoteMessageToReporter(message) || message.agent === "reporter") {
-    return message;
-  }
-
-  return { ...message, agent: "reporter" };
-}
-
 function countInlineCitationMarkers(content: string): number {
   const bodyContent = stripMarkdownReferenceSection(content);
   const normalized = bodyContent.replace(/\]\(#(?:cite-|ref-?)?\d+\)/gi, "]");
@@ -3290,7 +3234,15 @@ export async function sendMessage(
         ) {
           message = { ...message, agent: "planner" };
         }
-        message = withReporterAgentIfNeeded(message);
+        if (
+          message.finishReason &&
+          message.agent !== "reporter" &&
+          message.agent !== "planner" &&
+          message.content &&
+          isLikelyReportContent(message.content)
+        ) {
+          message = { ...message, agent: "reporter" };
+        }
         // Retroactive research binding: when agent was corrected from
         // unknown/missing to an execution agent, appendMessage() at creation
         // time would have skipped the research binding.  Create it now.
@@ -3731,7 +3683,15 @@ export async function resumeBackgroundResearch(
         ) {
           message = { ...message, agent: "planner" };
         }
-        message = withReporterAgentIfNeeded(message);
+        if (
+          message.finishReason &&
+          message.agent !== "reporter" &&
+          message.agent !== "planner" &&
+          message.content &&
+          isLikelyReportContent(message.content)
+        ) {
+          message = { ...message, agent: "reporter" };
+        }
         if (
           message.agent &&
           message.agent !== prevAgent &&
@@ -3984,7 +3944,17 @@ function appendMessage(message: Message) {
 }
 
 function updateMessage(message: Message) {
-  const nextMessage = withReporterAgentIfNeeded(message);
+  let nextMessage = message;
+  if (
+    nextMessage.finishReason &&
+    nextMessage.agent !== "reporter" &&
+    nextMessage.agent !== "planner" &&
+    nextMessage.role === "assistant" &&
+    nextMessage.content &&
+    isLikelyReportContent(nextMessage.content)
+  ) {
+    nextMessage = { ...nextMessage, agent: "reporter" };
+  }
 
   const ongoingResearchId = getOngoingResearchId();
   if (

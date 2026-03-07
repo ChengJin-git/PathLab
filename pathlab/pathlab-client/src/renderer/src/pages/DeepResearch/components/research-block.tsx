@@ -60,17 +60,16 @@ export function ResearchBlock({
   const reportStreaming = useStore((state) =>
     reportId ? (state.messages.get(reportId)?.isStreaming ?? false) : false,
   );
-  const reportAvailable = !!reportId;
   const researchMessage = useResearchMessage(researchId ?? "");
   const researchRunStatus = useStore((state) =>
     researchId ? state.researchRunStatus.get(researchId) : undefined,
   );
   const ongoingFromStore = useStore((state) => state.ongoingResearchId === researchId);
   const hasCompletedReport = useMemo(() => {
-    if (!reportAvailable) return false;
+    if (!hasReport) return false;
     const visibleContent = stripResearchMeta(reportMessage?.content ?? "").trim();
     return visibleContent.length > 0 && !reportStreaming;
-  }, [reportAvailable, reportMessage, reportStreaming]);
+  }, [hasReport, reportMessage, reportStreaming]);
   const ongoing = ongoingFromStore && !hasCompletedReport;
 
   const {
@@ -85,14 +84,14 @@ export function ResearchBlock({
   } = useReportExporter(reportId, researchId ?? undefined);
 
   useEffect(() => {
-    setActiveTab(reportAvailable ? "report" : "activities");
-  }, [researchId, reportAvailable]);
+    setActiveTab(hasReport ? "report" : "activities");
+  }, [researchId, hasReport]);
 
   useEffect(() => {
-    if (reportAvailable && (reportStreaming || hasCompletedReport)) {
+    if (hasCompletedReport) {
       setActiveTab("report");
     }
-  }, [hasCompletedReport, reportAvailable, reportId, reportStreaming, researchId]);
+  }, [hasCompletedReport, reportId, researchId]);
 
   const title = useMemo(() => {
     if (!researchMessage) {
@@ -257,7 +256,7 @@ export function ResearchBlock({
                   <TabsTrigger
                     className="whitespace-nowrap rounded-full px-3 py-1.5 text-sm text-gray-600 data-[state=active]:bg-white data-[state=active]:text-gray-900 data-[state=active]:shadow-sm disabled:cursor-not-allowed disabled:border-transparent disabled:bg-transparent disabled:text-gray-300 disabled:opacity-100 disabled:shadow-none sm:px-6"
                     value="report"
-                    disabled={!reportAvailable}
+                      disabled={!hasReport}
                   >
                     <FileText className="h-4 w-4" />
                     {t("report")}
@@ -296,7 +295,7 @@ export function ResearchBlock({
               scrollShadowColor="#f8fafc"
               autoScrollToBottom={!hasCompletedReport}
             >
-              {reportAvailable && reportId && researchId && (
+              {reportId && researchId && (
                 <ResearchReportBlock
                   className="mt-3 sm:mt-4"
                   researchId={researchId}
