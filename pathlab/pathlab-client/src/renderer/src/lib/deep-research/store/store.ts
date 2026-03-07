@@ -1309,7 +1309,12 @@ function isQualifiedResearchReportCandidate(
   message: Message | undefined,
   citationsCount = 0,
 ): message is Message {
-  if (!message || message.role !== "assistant" || message.agent === "planner") {
+  if (
+    !message ||
+    message.role !== "assistant" ||
+    message.agent === "planner" ||
+    message.isStreaming
+  ) {
     return false;
   }
 
@@ -4222,7 +4227,6 @@ function appendResearchActivity(message: Message, researchIdOverride?: string) {
       });
     }
     if (message.agent === "reporter") {
-      setResearchReportBinding(researchId, message.id);
       if (!message.isStreaming) {
         syncResearchReportBinding(researchId);
       }

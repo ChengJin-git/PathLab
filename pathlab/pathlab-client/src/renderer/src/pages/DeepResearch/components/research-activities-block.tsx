@@ -28,7 +28,7 @@ function hasVisibleContent(msg: Message | undefined, reportId?: string): boolean
   if (!msg) return false;
   const agent = msg.agent ?? "";
   if (agent === "planner") return false;
-  if (agent === "reporter") return false;
+  if (agent === "reporter" && msg.id === reportId) return false;
   const visibleText = stripInternalToolReplayContent(stripResearchMeta(msg.content ?? ""));
   if (visibleText) return true;
   if (msg.toolCalls?.length) return true;
@@ -56,7 +56,7 @@ function groupActivitiesByAgent(
     const msg = messages.get(id);
     const agent = msg?.agent ?? "researcher";
 
-    // Skip planner and reporter content — formal report rendering belongs in the report tab.
+    // Skip planner content. Reporter drafts stay visible here until they are bound as the formal report.
     if (agent === "planner") continue;
     if (!hasVisibleContent(msg, reportId)) continue;
 
