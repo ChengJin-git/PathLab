@@ -277,7 +277,7 @@ export function RetrieverToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
                                     } : undefined}
                                 >
                                     <FileText size={32} />
-                                    {doc.title} (chunk-{i},size-{doc.content.length})
+                                    {doc.title} ({t("retrievedChunkInfo", { chunk: i + 1, size: doc.content.length })})
                                 </motion.li>
                             );
                         })}
@@ -368,7 +368,7 @@ export function PythonToolCallResult({ result }: { result: string }) {
                         boxShadow: "none",
                     }}
                 >
-                    {error ?? stdout ?? "(empty)"}
+                    {error ?? stdout ?? t("emptyOutput")}
                 </SyntaxHighlighter>
             </div>
         </>
@@ -378,33 +378,41 @@ export function PythonToolCallResult({ result }: { result: string }) {
 // Friendly display names and icons for known tool functions
 export const TOOL_DISPLAY_MAP: Record<
     string,
-    { label: string; icon: React.ReactNode; description: string }
+    { labelKey: string; icon: React.ReactNode; descriptionKey: string }
 > = {
     validate_url: {
-        label: "Verifying source authenticity",
+        labelKey: "toolLabelValidateUrl",
         icon: <ShieldCheck size={16} className="mr-2 text-blue-500" />,
-        description: "Checking if the web page is accessible and trustworthy",
+        descriptionKey: "toolDescriptionValidateUrl",
     },
     crawl_tool: {
-        label: "Reading web page",
+        labelKey: "toolLabelCrawlTool",
         icon: <Globe size={16} className="mr-2 text-green-500" />,
-        description: "Extracting content from the web page",
+        descriptionKey: "toolDescriptionCrawlTool",
     },
     web_search: {
-        label: "Searching the web",
+        labelKey: "toolLabelWebSearch",
         icon: <Search size={16} className="mr-2 text-purple-500" />,
-        description: "Performing a web search query",
+        descriptionKey: "toolDescriptionWebSearch",
     },
     python_repl_tool: {
-        label: "Running code analysis",
+        labelKey: "toolLabelPythonReplTool",
         icon: <Wrench size={16} className="mr-2 text-orange-500" />,
-        description: "Executing Python code for data analysis",
+        descriptionKey: "toolDescriptionPythonReplTool",
     },
 };
 
-export function getToolDisplay(toolName: string) {
+export function getToolDisplay(
+    toolName: string,
+    t: (key: string, params?: Record<string, unknown>) => string,
+) {
     if (TOOL_DISPLAY_MAP[toolName]) {
-        return TOOL_DISPLAY_MAP[toolName];
+        const toolDisplay = TOOL_DISPLAY_MAP[toolName];
+        return {
+            label: t(toolDisplay.labelKey),
+            icon: toolDisplay.icon,
+            description: t(toolDisplay.descriptionKey),
+        };
     }
     // Generate a friendly name from snake_case function name
     const friendlyName = toolName
@@ -413,12 +421,14 @@ export function getToolDisplay(toolName: string) {
     return {
         label: friendlyName,
         icon: <PencilRuler size={16} className="mr-2 text-gray-500" />,
-        description: `Running tool: ${toolName}`,
+        description: t("toolDescriptionRunningTool", { toolName }),
     };
 }
 
 /** Try to render a user-friendly summary from tool call result JSON */
 export function MCPToolResultSummary({ result }: { result: string }) {
+    // @ts-ignore - i18n shim
+    const t = useTranslations("chat.research");
     const parsed = useMemo(() => {
         try {
             return JSON.parse(result);
@@ -448,7 +458,7 @@ export function MCPToolResultSummary({ result }: { result: string }) {
                     <XCircle size={14} className="shrink-0 text-red-500" />
                 )}
                 <span className={isValid ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
-                    {isValid ? "Source verified" : "Source unavailable"}
+                    {isValid ? t("sourceVerified") : t("sourceUnavailable")}
                 </span>
                 {url && (
                     <span className="text-muted-foreground max-w-[400px] truncate text-xs">
@@ -486,15 +496,17 @@ export function MCPToolResultSummary({ result }: { result: string }) {
     const keys = Object.keys(parsed);
     return (
         <p className="text-muted-foreground text-sm">
-            Returned {keys.length} field{keys.length !== 1 ? "s" : ""}: {keys.slice(0, 5).join(", ")}
+            {t("returnedFields", { count: keys.length, fields: keys.slice(0, 5).join(", ") })}
             {keys.length > 5 ? "…" : ""}
         </p>
     );
 }
 
 export function MCPToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
+    // @ts-ignore - i18n shim
+    const t = useTranslations("chat.research");
     const tool = useMemo(() => findMCPTool(toolCall.name), [toolCall.name]);
-    const display = useMemo(() => getToolDisplay(toolCall.name), [toolCall.name]);
+    const display = useMemo(() => getToolDisplay(toolCall.name, t), [toolCall.name, t]);
     const { resolvedTheme } = useTheme();
     const isRunning = toolCall.result === undefined;
 
@@ -526,7 +538,7 @@ export function MCPToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
                                     {/* Raw JSON details (collapsed) */}
                                     <details className="group">
                                         <summary className="text-muted-foreground cursor-pointer text-xs hover:underline">
-                                            Show raw data
+                                            {t("showRawData")}
                                         </summary>
                                         <div className="bg-accent mt-1 max-h-[300px] max-w-[560px] overflow-y-auto rounded-md text-sm">
                                             <SyntaxHighlighter

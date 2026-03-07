@@ -143,7 +143,19 @@ export function PlanCard({
             : !isPlanAttachedToResearch || !isAttachedResearchCompleted
                 ? PLAN_FALLBACK_OPTIONS
                 : [];
-    const showActions = !message.isStreaming && actionOptions.length > 0;
+    const localizedActionOptions = useMemo(
+        () => actionOptions.map((option) => {
+            if (option.value === "accepted") {
+                return { ...option, text: t("startResearch") };
+            }
+            if (option.value === "edit_plan" || option.value === "replan") {
+                return { ...option, text: t("modifyPlan") };
+            }
+            return option;
+        }),
+        [actionOptions, t],
+    );
+    const showActions = !message.isStreaming && localizedActionOptions.length > 0;
     const lockedByResearchStarted =
         allowRestartActions ? false : hasResearchStartedForPlan || hasStartedResearchBeforeThisPlan;
     const effectiveSubmittedAction =
@@ -175,8 +187,8 @@ export function PlanCard({
         }
 
         // Fallback text when no previous user query can be recovered.
-        return "Continue with the approved research plan.";
-    }, [message.id]);
+        return t("continueApprovedPlan");
+    }, [message.id, t]);
 
     const handleAccept = useCallback(async () => {
         if (onSendMessage) {
@@ -232,7 +244,7 @@ export function PlanCard({
                                                             </Markdown>
                                                             {step.tools && step.tools.length > 0 && (
                                                                 <Tooltip
-                                                                    title={`Uses ${step.tools.length} MCP tool${step.tools.length > 1 ? "s" : ""}`}
+                                                                    title={t("mcpToolCount", { count: step.tools.length })}
                                                                 >
                                                                     <div className="flex items-center gap-1 rounded-full bg-blue-100 px-2 py-1 text-xs text-blue-800">
                                                                         <Wrench size={12} />
@@ -265,7 +277,7 @@ export function PlanCard({
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ duration: 0.3, delay: 0.3 }}
                                 >
-                                    {actionOptions.map((option) => (
+                                    {localizedActionOptions.map((option) => (
                                         <Button
                                             key={option.value}
                                             variant={

@@ -3,6 +3,7 @@
 
 import { useTranslations } from "../../../lib/deep-research/i18n";
 import React, { useCallback, useEffect, useRef } from "react";
+import { User } from "lucide-react";
 
 import {
   ScrollContainer,
@@ -22,6 +23,7 @@ import {
 import { cn } from "../../../lib/utils";
 
 import { MessageListItem } from "./message-list-item";
+import { ConversationStarter } from "./conversation-starter";
 
 
 
@@ -31,6 +33,8 @@ export function MessageListView({
   onFeedback,
   onSendMessage,
   onNewChat,
+  draftPreviewText,
+  showConversationStarter,
 }: {
   className?: string;
   onFeedback?: (feedback: { option: Option }) => void;
@@ -39,6 +43,8 @@ export function MessageListView({
     options?: { interruptFeedback?: string },
   ) => void;
   onNewChat?: () => void;
+  draftPreviewText?: string;
+  showConversationStarter?: boolean;
 }) {
   // @ts-ignore - i18n shim
   const t = useTranslations("chat.research");
@@ -55,6 +61,7 @@ export function MessageListView({
   const waitingForFeedbackMessageId = useLastFeedbackMessageId();
   const responding = useStore((state) => state.responding);
   const renderDebugSignatureRef = useRef<string>("");
+  const trimmedDraftPreviewText = draftPreviewText?.trim() ?? "";
 
   useEffect(() => {
     if (!isDeepResearchDebugEnabled()) return;
@@ -176,6 +183,12 @@ export function MessageListView({
       ref={scrollContainerRef}
     >
       <ul className="mx-auto flex w-full max-w-4xl flex-col px-4 pt-6 pb-40">
+        {showConversationStarter && messageIds.length === 0 && (
+          <li>
+            <ConversationStarter className="min-h-[calc(100vh-20rem)]" />
+          </li>
+        )}
+
         {messageIds.map((messageId) => (
           <MessageListItem
             key={messageId}
@@ -188,6 +201,22 @@ export function MessageListView({
             onToggleResearch={handleToggleResearch}
           />
         ))}
+
+        {trimmedDraftPreviewText && (
+          <li className="mb-6 flex flex-row-reverse items-start gap-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
+            <div className="flex-shrink-0">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary-400 to-primary-600 shadow-md ring-2 ring-white">
+                <User className="h-5 w-5 text-white" />
+              </div>
+            </div>
+            <div className="flex min-w-0 max-w-[80%] flex-1 flex-col items-end">
+              <div className="max-h-[120px] overflow-y-auto rounded-[20px] rounded-tr-sm bg-gradient-to-br from-primary-400 to-primary-500 px-5 py-3.5 text-[15px] leading-7 text-white opacity-80 shadow-sm selection:bg-white/30">
+                <div className="whitespace-pre-wrap break-words">{trimmedDraftPreviewText}</div>
+              </div>
+            </div>
+          </li>
+        )}
+
         {/* Thinking indicator — show bouncing dots when AI is responding but hasn't streamed content yet */}
         {responding && (() => {
           const lastId = messageIds[messageIds.length - 1];

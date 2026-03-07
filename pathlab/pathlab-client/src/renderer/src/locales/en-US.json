@@ -129,7 +129,9 @@
     "untitledTask": "Untitled Task"
   },
   "deepResearchPage": {
-    "backToAIChat": "Back to AI Chat"
+    "backToAIChat": "Back to AI Chat",
+    "loadingDeepResearch": "Loading Deep Research...",
+    "restoringConversation": "Restoring your research conversation."
   },
   "loginPage": {
     "title": "Digital Pathology",

@@ -25,7 +25,9 @@ export function MessagesBlock({ className }: { className?: string }) {
   const messageCount = messageIds.length;
   const responding = useStore((state) => state.responding);
   const [feedback, setFeedback] = useState<{ option: Option } | null>(null);
+  const [draftPreviewText, setDraftPreviewText] = useState("");
   const abortControllerRef = useRef<AbortController | null>(null);
+  const hasDraftPreview = draftPreviewText.trim().length > 0;
   const handleSend = useCallback(
     async (
       message: string,
@@ -83,6 +85,16 @@ export function MessagesBlock({ className }: { className?: string }) {
             onFeedback={handleFeedback}
             onSendMessage={handleSend}
             onNewChat={handleStartNewAIChat}
+            draftPreviewText={draftPreviewText}
+          />
+        ) : hasDraftPreview ? (
+          <MessageListView
+            className="flex h-full"
+            onFeedback={handleFeedback}
+            onSendMessage={handleSend}
+            onNewChat={handleStartNewAIChat}
+            draftPreviewText={draftPreviewText}
+            showConversationStarter
           />
         ) : (
           <ConversationStarter />
@@ -97,6 +109,7 @@ export function MessagesBlock({ className }: { className?: string }) {
             onSend={handleSend}
             onCancel={handleCancel}
             onRemoveFeedback={handleRemoveFeedback}
+            onDraftChange={setDraftPreviewText}
           />
           <div className="mt-2 text-center text-xs text-gray-400/80 font-medium px-4 leading-relaxed">
             {tGlobal("aiChat.disclaimer")}

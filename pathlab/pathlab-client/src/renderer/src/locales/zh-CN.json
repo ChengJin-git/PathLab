@@ -129,7 +129,9 @@
     "untitledTask": "未命名任务"
   },
   "deepResearchPage": {
-    "backToAIChat": "返回 AI 对话"
+    "backToAIChat": "返回 AI 对话",
+    "loadingDeepResearch": "正在加载 Deep Research...",
+    "restoringConversation": "正在恢复你的研究对话。"
   },
   "loginPage": {
     "title": "",

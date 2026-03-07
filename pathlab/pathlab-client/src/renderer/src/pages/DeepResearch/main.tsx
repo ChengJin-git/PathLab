@@ -162,8 +162,8 @@ export default function Main() {
             <div className="flex w-full max-w-4xl items-center justify-center">
               <div className="flex min-h-[320px] w-full flex-col items-center justify-center rounded-3xl border border-gray-200 bg-white/80 px-6 py-12 text-center shadow-sm">
                 <Loader2 className="mb-4 h-8 w-8 animate-spin text-primary-500" />
-                <div className="text-base font-medium text-gray-900">Loading Deep Research...</div>
-                <div className="mt-2 text-sm text-gray-500">Restoring your research conversation.</div>
+                <div className="text-base font-medium text-gray-900">{t("deepResearchPage.loadingDeepResearch")}</div>
+                <div className="mt-2 text-sm text-gray-500">{t("deepResearchPage.restoringConversation")}</div>
               </div>
             </div>
           ) : (

@@ -94,9 +94,9 @@ export function useReportExporter(reportId?: string, researchId?: string) {
                         `</li>`,
                 )
                 .join("\n");
-            return `<hr style="margin: 32px 0 16px; border: none; border-top: 1px solid #ccc;" />\n<h2 style="font-size: 18px; font-weight: 600; margin-bottom: 10px;">References</h2>\n<ol style="font-size: 12px; line-height: 1.6; padding-left: 24px; color: #444;">\n${items}\n</ol>`;
+            return `<hr style="margin: 32px 0 16px; border: none; border-top: 1px solid #ccc;" />\n<h2 style="font-size: 18px; font-weight: 600; margin-bottom: 10px;">${t("references")}</h2>\n<ol style="font-size: 12px; line-height: 1.6; padding-left: 24px; color: #444;">\n${items}\n</ol>`;
         },
-        [],
+        [t],
     );
 
     // Download report as HTML
@@ -113,7 +113,7 @@ export function useReportExporter(reportId?: string, researchId?: string) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Research Report</title>
+  <title>${t("reportTitle")}</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; }
     h1, h2, h3 { color: #333; }

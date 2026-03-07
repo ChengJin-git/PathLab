@@ -23,6 +23,7 @@ export function InputBox({
   onSend,
   onCancel,
   onRemoveFeedback,
+  onDraftChange,
 }: {
   className?: string;
   responding?: boolean;
@@ -37,6 +38,7 @@ export function InputBox({
   ) => void;
   onCancel?: () => void;
   onRemoveFeedback?: () => void;
+  onDraftChange?: (draft: string) => void;
 }) {
   const { config } = useConfig();
   const { t: tGlobal } = useTranslation();
@@ -60,6 +62,10 @@ export function InputBox({
     }
     return "";
   });
+
+  useEffect(() => {
+    onDraftChange?.(currentPrompt);
+  }, [currentPrompt, onDraftChange]);
 
   // Auto-focus when feedback is set (e.g. user clicked "Edit plan")
   useEffect(() => {

@@ -228,32 +228,6 @@ export default function AIChatPage() {
     }
   }, [])
 
-  const resetChatView = useCallback((options?: {
-    currentConversationId?: string | null
-    reportContext?: string
-    showWelcomeHero?: boolean
-  }) => {
-    abortControllerRef.current?.abort()
-    stopVoiceSession()
-    userScrolledAwayRef.current = false
-    scrollRestoredRef.current = false
-    skipConversationLoadRef.current = false
-    initialMessageSent.current = false
-    sessionStorage.removeItem('ai-chat-conversation-id')
-    sessionStorage.removeItem('ai-chat-scroll-position')
-    setMessages([])
-    setCurrentConversationId(options?.currentConversationId ?? null)
-    reportContextRef.current = options?.reportContext
-    setInput('')
-    inputRef.current = ''
-    setImageAttachments([])
-    setFileAttachments([])
-    setShowWelcomeHero(options?.showWelcomeHero ?? true)
-    setFeedbacks(new Map())
-    setHelpfulnessFeedbacks(new Map())
-    scrollToTop()
-  }, [scrollToTop, stopVoiceSession])
-
   const preserveAiChatReturnContext = useCallback(() => {
     const aiConversationId = currentConversationId || urlConversationId || null
 
@@ -331,6 +305,32 @@ export default function AIChatPage() {
   const voiceSessionActive = voiceState !== 'idle'
   const realtimeIsRecording = voiceState === 'recording'
   const realtimeIsConnecting = voiceState === 'connecting'
+
+  const resetChatView = useCallback((options?: {
+    currentConversationId?: string | null
+    reportContext?: string
+    showWelcomeHero?: boolean
+  }) => {
+    abortControllerRef.current?.abort()
+    stopVoiceSession()
+    userScrolledAwayRef.current = false
+    scrollRestoredRef.current = false
+    skipConversationLoadRef.current = false
+    initialMessageSent.current = false
+    sessionStorage.removeItem('ai-chat-conversation-id')
+    sessionStorage.removeItem('ai-chat-scroll-position')
+    setMessages([])
+    setCurrentConversationId(options?.currentConversationId ?? null)
+    reportContextRef.current = options?.reportContext
+    setInput('')
+    inputRef.current = ''
+    setImageAttachments([])
+    setFileAttachments([])
+    setShowWelcomeHero(options?.showWelcomeHero ?? true)
+    setFeedbacks(new Map())
+    setHelpfulnessFeedbacks(new Map())
+    scrollToTop()
+  }, [scrollToTop, stopVoiceSession])
 
   // Pre-compute CSV content mapping: assistant message ID -> most recent CSV from any previous user message
   // Uses O(n) single pass: track the most recent CSV as we iterate forward.

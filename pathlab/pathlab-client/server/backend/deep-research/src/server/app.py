@@ -296,6 +296,7 @@ load_qdrant_examples()
 
 in_memory_store = InMemoryStore()
 graph = build_graph_with_memory()
+default_graph_checkpointer = getattr(graph, "checkpointer", None)
 
 
 @app.post("/api/chat/stream")
@@ -1122,8 +1123,18 @@ async def _astream_workflow_generator(
                 "falling back to in-memory graph execution"
             )
 
-    logger.debug(f"[{safe_thread_id}] No usable checkpointer configured, using in-memory graph")
-    graph.checkpointer = None
+    if default_graph_checkpointer is not None:
+        logger.info(
+            f"[{safe_thread_id}] No usable persistent checkpointer configured; "
+            "falling back to built-in in-memory checkpointer"
+        )
+        graph.checkpointer = default_graph_checkpointer
+    else:
+        logger.warning(
+            f"[{safe_thread_id}] Graph has no built-in checkpointer; "
+            "resume/edit-plan may be unavailable"
+        )
+        graph.checkpointer = None
     graph.store = in_memory_store
     logger.debug(f"[{safe_thread_id}] Starting to stream graph events")
     async for event in _stream_graph_events(
