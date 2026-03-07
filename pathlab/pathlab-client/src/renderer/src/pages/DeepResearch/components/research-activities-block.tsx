@@ -306,7 +306,7 @@ const ActivityMessage = React.memo(({ messageId, reportId }: { messageId: string
   if (!message?.content) return null;
   const agent = message.agent ?? "";
   if (agent === "planner") return null;
-  if (agent === "reporter") return null;
+  if (agent === "reporter" && message.id === reportId) return null;
   const cleanContent = stripInternalToolReplayContent(stripResearchMeta(message.content));
   if (!cleanContent) return null;
 
