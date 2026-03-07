@@ -44,6 +44,14 @@ import { cn } from "../../../../lib/utils";
 
 const __pageCache = new LRUCache<string, string>({ max: 100 });
 
+export function hasToolExecutionEvidence(toolCall: ToolCallRuntime): boolean {
+    return toolCall.started === true || toolCall.result !== undefined || toolCall.status !== undefined;
+}
+
+export function isToolCallRunning(toolCall: ToolCallRuntime): boolean {
+    return toolCall.started === true && toolCall.result === undefined && toolCall.status === undefined;
+}
+
 function getHostname(url?: string): string {
     if (!url) return "";
     try {
@@ -293,10 +301,13 @@ export function WebSearchToolCall({
 }) {
     // @ts-ignore - i18n shim
     const t = useTranslations("chat.research");
+    void messageIsStreaming;
+    void messageFinishReason;
     const query = useMemo(() => {
         const maybeQuery = (toolCall.args as { query?: unknown } | undefined)?.query;
         return typeof maybeQuery === "string" ? maybeQuery : "";
     }, [toolCall.args]);
+    const canRender = useMemo(() => hasToolExecutionEvidence(toolCall), [toolCall]);
     const resultStatus = useMemo(
         () => getToolResultStatus(toolCall.result, toolCall.status),
         [toolCall.result, toolCall.status],
@@ -339,8 +350,11 @@ export function WebSearchToolCall({
     );
     const visibleResultCount = pageResults.length + imageResults.length;
     const hasResultPayload = toolCall.result !== undefined;
-    const awaitingToolResult = messageIsStreaming || messageFinishReason === "tool_calls";
+    const awaitingToolResult = isToolCallRunning(toolCall);
     const searchState = useMemo<WebSearchState>(() => {
+        if (!canRender) {
+            return "completed";
+        }
         if (!hasResultPayload) {
             return awaitingToolResult ? "searching" : "completed";
         }
@@ -359,6 +373,10 @@ export function WebSearchToolCall({
             : getSearchEmptyCopy(searchState, t, resultSummary),
         [resultSummary, searchState, t],
     );
+
+    if (!canRender) {
+        return null;
+    }
 
     return (
         <ToolCallSection
@@ -505,13 +523,20 @@ export function CrawlToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
         [toolCall.result, toolCall.status],
     );
     const crawlSummary = useMemo(() => getToolResultSummary(toolCall.result), [toolCall.result]);
+    const running = useMemo(() => isToolCallRunning(toolCall), [toolCall]);
+    const canRender = useMemo(() => hasToolExecutionEvidence(toolCall), [toolCall]);
     const displayUrl = crawlData?.url || url;
+
+    if (!canRender) {
+        return null;
+    }
+
     return (
         <ToolCallSection
             header={(
                 <RainbowText
                     className="flex items-center text-sm font-semibold text-gray-900"
-                    animated={toolCall.result === undefined}
+                    animated={running}
                 >
                     <BookOpenText size={16} className="mr-2 text-emerald-500" />
                     <span>{t("reading")}</span>
@@ -561,9 +586,8 @@ export function CrawlToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
 export function RetrieverToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
     // @ts-ignore - i18n shim
     const t = useTranslations("chat.research");
-    const searching = useMemo(() => {
-        return toolCall.result === undefined;
-    }, [toolCall.result]);
+    const searching = useMemo(() => isToolCallRunning(toolCall), [toolCall]);
+    const canRender = useMemo(() => hasToolExecutionEvidence(toolCall), [toolCall]);
     const retrievalStatus = useMemo(
         () => getToolResultStatus(toolCall.result, toolCall.status),
         [toolCall.result, toolCall.status],
@@ -575,6 +599,10 @@ export function RetrieverToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
         return extractToolResultItems<{ id: string; title: string; content: string }>(toolCall.result);
     }, [toolCall.result]);
     const keywords = useMemo(() => (toolCall.args as { keywords: string }).keywords, [toolCall.args]);
+
+    if (!canRender) {
+        return null;
+    }
 
     return (
         <ToolCallSection
@@ -655,12 +683,18 @@ export function PythonToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
         return (toolCall.args as { code?: string }).code;
     }, [toolCall.args]);
     const { resolvedTheme } = useTheme();
+    const running = useMemo(() => isToolCallRunning(toolCall), [toolCall]);
+
+    if (!hasToolExecutionEvidence(toolCall)) {
+        return null;
+    }
+
     return (
         <ToolCallSection
             header={(
                 <div className="flex items-center text-sm font-semibold text-gray-900">
                     <PythonOutlined className="mr-2" />
-                    <RainbowText animated={toolCall.result === undefined}>
+                    <RainbowText animated={running}>
                         {t("runningPythonCode")}
                     </RainbowText>
                 </div>
@@ -896,7 +930,11 @@ export function MCPToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
     const tool = useMemo(() => findMCPTool(toolCall.name), [toolCall.name]);
     const display = useMemo(() => getToolDisplay(toolCall.name, t), [toolCall.name, t]);
     const { resolvedTheme } = useTheme();
-    const isRunning = toolCall.result === undefined;
+    const isRunning = isToolCallRunning(toolCall);
+
+    if (!hasToolExecutionEvidence(toolCall)) {
+        return null;
+    }
 
     return (
         <section className="mt-3 px-4">

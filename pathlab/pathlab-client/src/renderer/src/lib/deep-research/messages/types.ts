@@ -38,6 +38,7 @@ export interface ToolCallRuntime {
   name: string;
   args: Record<string, unknown>;
   argsChunks?: string[];
+  started?: boolean;
   result?: string;
   status?: "success" | "error";
 }

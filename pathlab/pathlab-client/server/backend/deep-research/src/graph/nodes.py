@@ -1761,6 +1761,7 @@ async def _setup_and_execute_agent_step(
 
     llm_token_limit = get_llm_token_limit_by_type(AGENT_LLM_MAP[agent_type])
     pre_model_hook = partial(ContextManager(llm_token_limit, 3).compress_messages)
+    thread_id = _thread_id_from_config(config)
     agent = create_agent(
         agent_type,
         agent_type,
@@ -1770,6 +1771,7 @@ async def _setup_and_execute_agent_step(
         interrupt_before_tools=configurable.interrupt_before_tools,
         locale=locale,
         llm_override=configurable.llm_override,
+        thread_id=thread_id,
     )
     return await _execute_agent_step(state, agent, agent_type, config)
 

@@ -27,7 +27,7 @@ interface GenericEvent<T extends string, D extends object> {
   data: {
     id: string;
     thread_id: string;
-    agent: "coordinator" | "planner" | "researcher" | "coder" | "reporter";
+    agent: "coordinator" | "planner" | "researcher" | "coder" | "reporter" | "analyst";
     role: "user" | "assistant" | "tool";
     finish_reason?: "stop" | "tool_calls" | "interrupt";
   } & D;
@@ -66,6 +66,15 @@ export interface ToolCallResultEvent
       tool_call_id: string;
       content?: string;
       tool_status?: "success" | "error";
+    }
+  > { }
+
+export interface ToolStartedEvent
+  extends GenericEvent<
+    "tool_started",
+    {
+      tool_call_id: string;
+      tool_name?: string;
     }
   > { }
 
@@ -142,6 +151,7 @@ export type ChatEvent =
   | MessageChunkEvent
   | ToolCallsEvent
   | ToolCallChunksEvent
+  | ToolStartedEvent
   | ToolCallResultEvent
   | InterruptEvent
   | CitationsEvent
