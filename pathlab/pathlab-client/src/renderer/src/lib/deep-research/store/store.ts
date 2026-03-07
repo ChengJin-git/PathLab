@@ -3974,18 +3974,23 @@ function updateMessage(message: Message) {
     nextMessage = { ...nextMessage, agent: "reporter" };
   }
 
-  const ongoingResearchId = getOngoingResearchId();
-  if (
-    ongoingResearchId &&
-    nextMessage.agent === "reporter"
-  ) {
-    appendResearchActivity(nextMessage);
+  useStore.getState().updateMessage(nextMessage);
 
-    if (!nextMessage.isStreaming) {
-      useStore.getState().setOngoingResearch(null);
+  if (nextMessage.agent === "reporter") {
+    const reporterResearchId =
+      findResearchIdByMessageId(nextMessage.id) ?? getOngoingResearchId();
+
+    if (reporterResearchId) {
+      // Persist the latest reporter content/state before syncing report binding.
+      // Otherwise syncResearchReportBinding() may read a stale streaming version
+      // from state.messages and fail to promote the final reporter message.
+      appendResearchActivity(nextMessage, reporterResearchId);
+
+      if (!nextMessage.isStreaming && getOngoingResearchId() === reporterResearchId) {
+        useStore.getState().setOngoingResearch(null);
+      }
     }
   }
-  useStore.getState().updateMessage(nextMessage);
 }
 
 function applyMessageUpdates(messages: Iterable<Message>) {
