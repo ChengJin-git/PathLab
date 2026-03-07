@@ -150,7 +150,7 @@
     "donate": "捐赠",
     "enterUsername": "请输入用户名",
     "enterPassword": "请输入密码",
-    "buildVersion": "版本 v1.0.0-stable"
+    "buildVersion": "版本 v1.1.0-stable"
   },
   "settings": {
     "title": "设置",
@@ -176,7 +176,9 @@
     "gatewayService": "网关服务",
     "wsiService": "WSI 服务",
     "aiService": "AI 服务",
-    "about": "关于",
+    "about": {
+      "title": "关于"
+    },
     "aboutText1Part1": "PathLab",
     "aboutText1Part2": " 是一个 AI 驱动的病理学分析平台，用于病理学图像分析。",
     "aboutText2": "该平台整合了最先进的深度学习模型与直观的 AI 助手，帮助研究人员设置和运行病理学分析任务。",

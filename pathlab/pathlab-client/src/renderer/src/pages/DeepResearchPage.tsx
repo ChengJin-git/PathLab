@@ -1,5 +1,4 @@
 import React, { Suspense } from 'react'
-import { Toaster } from 'sonner'
 
 import Main from './DeepResearch/main'
 
@@ -15,7 +14,6 @@ export default function DeepResearchPage() {
       >
         <Main />
       </Suspense>
-      <Toaster />
     </div>
   )
 }

@@ -2,12 +2,16 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
 import { VitePWA } from 'vite-plugin-pwa'
+import packageJson from '../../package.json'
 
 // Standalone Vite config for web-only build (no Electron)
 // Usage: cd src/renderer && npx vite build
 export default defineConfig({
   root: '.',
   base: '/',
+  define: {
+    __APP_VERSION__: JSON.stringify(packageJson.version)
+  },
   plugins: [
     react(),
     VitePWA({

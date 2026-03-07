@@ -150,7 +150,7 @@
     "donate": "Donate",
     "enterUsername": "Enter your username",
     "enterPassword": "Enter your password",
-    "buildVersion": "Build v1.0.0-stable"
+    "buildVersion": "Build v1.1.0-stable"
   },
   "settings": {
     "title": "Settings",
@@ -176,7 +176,9 @@
     "gatewayService": "Gateway Service",
     "wsiService": "WSI Service",
     "aiService": "AI Service",
-    "about": "About",
+    "about": {
+      "title": "About"
+    },
     "aboutText1Part1": "PathLab",
     "aboutText1Part2": " is an AI-powered pathology analysis platform for pathology image analysis.",
     "aboutText2": "The platform integrates state-of-the-art deep learning models with an intuitive AI assistant to help researchers set up and run pathology analysis tasks.",

@@ -33,6 +33,7 @@ export default function SettingsPage() {
   const navigate = useNavigate()
   const { isAdmin, isLoading: authLoading, user: currentUser } = useAuth()
   const { t } = useTranslation()
+  const platformVersion = `v${__APP_VERSION__}`
 
   // Redirect non-admin users to AI chat
   useEffect(() => {
@@ -193,7 +194,7 @@ export default function SettingsPage() {
             <div className="space-y-3">
               <div className="flex justify-between py-2 border-b border-gray-100">
                 <span className="text-sm font-medium text-gray-700">{t('settings.platformVersion')}</span>
-                <span className="text-sm text-gray-600">v1.0.0</span>
+                <span className="text-sm text-gray-600">{platformVersion}</span>
               </div>
               {(['gateway', 'wsi', 'ai'] as const).map((service) => (
                 <div key={service} className={`flex justify-between py-2 ${service !== 'ai' ? 'border-b border-gray-100' : ''}`}>
@@ -226,7 +227,7 @@ export default function SettingsPage() {
             <div>
               <h2 className="text-lg sm:text-xl font-semibold text-gray-900 flex items-center">
                 <BookOpen className="w-5 h-5 sm:w-6 sm:h-6 mr-2 sm:mr-3 text-gray-700" />
-                {t('settings.about')}
+                {t('settings.about.title')}
               </h2>
 
               <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.9fr)] lg:gap-8">

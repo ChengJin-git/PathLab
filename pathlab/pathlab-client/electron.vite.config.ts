@@ -2,6 +2,7 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
 import { VitePWA } from 'vite-plugin-pwa'
+import packageJson from './package.json'
 
 export default defineConfig({
   main: {
@@ -27,6 +28,9 @@ export default defineConfig({
   renderer: {
     root: 'src/renderer',
     base: './',
+    define: {
+      __APP_VERSION__: JSON.stringify(packageJson.version)
+    },
     server: {
       host: '0.0.0.0'
     },
