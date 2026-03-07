@@ -13,6 +13,7 @@ export interface ReferenceCardProps {
   icon: string
   title: string
   url: string
+  sourceId?: string
   source: string
   type: 'paper' | 'webpage'
 }
@@ -46,6 +47,7 @@ export function parseReferenceCard(content: string): ReferenceCardProps | null {
       icon: config.icon || '📄',
       title: config.title,
       url: config.url,
+      sourceId: config.source_id || config.sourceid,
       source: config.source || 'Unknown',
       type: (config.type === 'webpage' ? 'webpage' : 'paper') as 'paper' | 'webpage'
     }
@@ -236,7 +238,7 @@ export const ReferenceCardList = React.memo(function ReferenceCardList({
         {t('chatComponents.referenceCard.references')}
       </div>
       {cards.map((card, index) => (
-        <ReferenceCard key={`${card.url}-${index}`} {...card} />
+        <ReferenceCard key={`${card.sourceId || card.url}-${index}`} {...card} />
       ))}
     </div>
   )

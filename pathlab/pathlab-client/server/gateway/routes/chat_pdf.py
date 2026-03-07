@@ -1845,6 +1845,7 @@ def format_reference_card(
     display_type = "paper" if is_academic else "webpage"
 
     icon = source_icons.get(source_type, "📚")
+    source_id = _get_url_hash(url)
 
     if source_type == "arxiv":
         arxiv_id = ""
@@ -1855,6 +1856,7 @@ def format_reference_card(
 icon: {icon}
 title: {title}
 url: {url}
+source_id: {source_id}
 source: arXiv ({arxiv_id})
 type: paper
 [/REFERENCE]"""
@@ -1871,6 +1873,7 @@ type: paper
 icon: {icon}
 title: {title}
 url: {url}
+source_id: {source_id}
 source: {source_label}
 type: {display_type}
 [/REFERENCE]"""

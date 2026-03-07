@@ -698,6 +698,7 @@ def _extract_images_from_content(content) -> list[str]:
 def _extract_citation_contexts(
     ai_response: str, article_pdf_content: str,
     per_paper_content: dict[int, str] | None = None,
+    per_paper_source_ids: dict[int, str] | None = None,
 ) -> dict | None:
     """Extract citation contexts from AI response using BM25 paragraph search.
 
@@ -714,7 +715,7 @@ def _extract_citation_contexts(
     papers don't collide.
 
     Returns a dict keyed by ``"N-pY"`` or ``"N-bare"`` with
-    ``{page, context}`` values, or ``None`` if no citations are found.
+    ``{page, context, source_id?}`` values, or ``None`` if no citations are found.
     """
     import math
     from collections import Counter
@@ -749,13 +750,51 @@ def _extract_citation_contexts(
     def _best_paragraph(page_text: str, query: str, max_len: int = 200) -> str:
         """BM25-rank paragraphs of *page_text* against *query*,
         return the best-matching snippet truncated to *max_len* chars."""
+        def _clean_snippet_text(text: str) -> str:
+            text = re.sub(r'^\s*--- Page \d+ ---\s*$', '', text, flags=re.MULTILINE)
+            text = re.sub(r'^\s*!\[[^\]]*\]\([^\)]+\)\s*$', '', text, flags=re.MULTILINE)
+            text = re.sub(r'https?://[^\s)\]]+', '', text).strip()
+            text = re.sub(r'\s+', ' ', text)
+            return text.strip()
+
+        def _is_low_value_paragraph(text: str) -> bool:
+            compact = _clean_snippet_text(text)
+            if not compact:
+                return True
+            lower = compact.lower()
+            if compact.count('@') >= 2:
+                return True
+            if any(marker in lower for marker in (
+                'correspondence:',
+                'corresponding author',
+                'orcid',
+                'all rights reserved',
+            )):
+                return True
+            if len(compact) <= 140 and re.match(r'^(figure|fig\.?|table)\s*[0-9ivx]+', lower):
+                return True
+            affiliation_hits = sum(lower.count(token) for token in (
+                'department of',
+                'university',
+                'hospital',
+                'institute',
+            ))
+            if affiliation_hits >= 2 and len(re.findall(r'[\.!?]', compact)) <= 1:
+                return True
+            return False
+
         paragraphs = [p.strip() for p in re.split(r'\n{2,}', page_text) if p.strip()]
         if not paragraphs:
-            return page_text[:max_len].strip()
+            return _clean_snippet_text(page_text)[:max_len].strip()
 
         q_tokens = _tokenize_for_search(query)
         if not q_tokens:
-            return paragraphs[0][:max_len]
+            for paragraph in paragraphs:
+                cleaned = _clean_snippet_text(paragraph)
+                if cleaned and not _is_low_value_paragraph(paragraph):
+                    return cleaned[:max_len]
+            cleaned_page = _clean_snippet_text(page_text)
+            return cleaned_page[:max_len] if cleaned_page else paragraphs[0][:max_len]
 
         para_tokens = [_tokenize_for_search(p) for p in paragraphs]
         N = len(paragraphs)
@@ -769,6 +808,7 @@ def _extract_citation_contexts(
                 df[qt] += 1
 
         best_score, best_idx = -1.0, 0
+        best_non_noise_score, best_non_noise_idx = -1.0, None
         for idx, tl in enumerate(para_tokens):
             tf = Counter(tl)
             dl = len(tl)
@@ -782,12 +822,19 @@ def _extract_citation_contexts(
             if score > best_score:
                 best_score = score
                 best_idx = idx
+            if not _is_low_value_paragraph(paragraphs[idx]) and score > best_non_noise_score:
+                best_non_noise_score = score
+                best_non_noise_idx = idx
 
-        best_text = paragraphs[best_idx]
-        # Strip URLs — they add no value in a tooltip snippet and clutter the display
-        best_text = re.sub(r'https?://[^\s)\]]+', '', best_text).strip()
-        # Collapse multiple spaces left after URL removal
-        best_text = re.sub(r'  +', ' ', best_text)
+        chosen_idx = best_idx
+        if best_non_noise_idx is not None and (
+            _is_low_value_paragraph(paragraphs[best_idx]) or best_non_noise_score > 0
+        ):
+            chosen_idx = best_non_noise_idx
+
+        best_text = _clean_snippet_text(paragraphs[chosen_idx])
+        if not best_text:
+            best_text = _clean_snippet_text(page_text)
         snippet = best_text[:max_len].strip()
         if len(best_text) > max_len:
             snippet += "…"
@@ -841,9 +888,11 @@ def _extract_citation_contexts(
         else:
             query = ai_response[:160]
 
+        source_id = per_paper_source_ids.get(paper_idx) if per_paper_source_ids else None
         contexts[key] = {
             "page": unique_pages[0],
             "context": _best_paragraph(page_content, query),
+            **({"source_id": source_id} if source_id else {}),
         }
 
     # ── Bare [N] citations — BM25 on full paper content ──────────────────
@@ -871,9 +920,11 @@ def _extract_citation_contexts(
         else:
             query = ai_response[:160]
 
+        source_id = per_paper_source_ids.get(paper_idx) if per_paper_source_ids else None
         contexts[key] = {
             "page": 0,  # no specific page
             "context": _best_paragraph(full_content, query),
+            **({"source_id": source_id} if source_id else {}),
         }
 
     return contexts if contexts else None
@@ -1243,6 +1294,8 @@ After saving, return here and start chatting!"""
     current_messages = messages.copy()
     article_pdf_content: str | None = None  # raw PDF markdown (with page markers) for citation context extraction
     _per_paper_pdf_content: dict[int, str] | None = None  # per-paper content for multi-paper follow-ups
+    _per_paper_source_ids: dict[int, str] | None = None  # stable source ids aligned with per-paper content
+    _current_read_reference_card: str | None = None
 
     # ── Pre-populate PDF context for follow-up citation support ──────────
     # When conversation history contains [PDF_CONTEXT] blocks (from prior
@@ -1253,10 +1306,12 @@ After saving, return here and start chatting!"""
     _followup_pdf_urls = _collect_pdf_urls_from_contexts(messages)
     if _followup_pdf_urls:
         _per_paper_pdf_content = {}
+        _per_paper_source_ids = {}
         for idx, url in enumerate(_followup_pdf_urls, 1):
             cached_md = get_cached_markdown(url)
             if cached_md:
                 _per_paper_pdf_content[idx] = cached_md
+            _per_paper_source_ids[idx] = _get_url_hash(url)
             meta = get_cached_pdf_meta(url) or {}
             title = meta.get('title', 'Unknown')
             src_type = detect_source_type(url)
@@ -1339,7 +1394,12 @@ After saving, return here and start chatting!"""
             # Inject CITATION_CONTEXTS before [DONE] if article was read
             if article_pdf_content:
                 try:
-                    ctx = _extract_citation_contexts(full_response, article_pdf_content, _per_paper_pdf_content)
+                    ctx = _extract_citation_contexts(
+                        full_response,
+                        article_pdf_content,
+                        _per_paper_pdf_content,
+                        _per_paper_source_ids,
+                    )
                     if ctx:
                         ctx_block = f"[CITATION_CONTEXTS]{json.dumps(ctx, ensure_ascii=False)}[/CITATION_CONTEXTS]"
                         yield f"data: {json.dumps({'content': ctx_block})}\n\n"
@@ -1350,8 +1410,11 @@ After saving, return here and start chatting!"""
             # citationMap with paper title/URL for InlineCitation tooltips.
             # Without this, the streaming early-return would skip the
             # _followup_reference_cards emission at the end of the function.
-            if _followup_reference_cards:
-                ref_block = "\n".join(_followup_reference_cards)
+            reference_cards_to_emit = list(_followup_reference_cards)
+            if _current_read_reference_card and _current_read_reference_card not in reference_cards_to_emit:
+                reference_cards_to_emit.append(_current_read_reference_card)
+            if reference_cards_to_emit:
+                ref_block = "\n".join(reference_cards_to_emit)
                 yield f"data: {json.dumps({'content': ref_block})}\n\n"
 
             yield "data: [DONE]\n\n"
@@ -1679,6 +1742,8 @@ After saving, return here and start chatting!"""
                     content = _replace_images_with_fig_aliases(content, _first_read_url_hash)
                     # Save raw PDF content (with page markers) for citation context extraction
                     article_pdf_content = content
+                    _per_paper_pdf_content = {1: content}
+                    _per_paper_source_ids = {1: _first_read_url_hash}
                     # Head + tail truncation for long articles
                     _PDF_MAX_CHARS = 40000
                     _PDF_HEAD_CHARS = 28000
@@ -1713,6 +1778,14 @@ After saving, return here and start chatting!"""
                     ]
                     if pdf_result.get("reference_card"):
                         article_parts.append(pdf_result["reference_card"])
+                        _current_read_reference_card = pdf_result["reference_card"]
+                    else:
+                        _current_read_reference_card = format_reference_card(
+                            article_title,
+                            article_url,
+                            str(pdf_result.get("source_type") or detect_source_type(article_url)),
+                            bool(pdf_result.get("is_academic", False)),
+                        )
 
                     article_text = "\n".join(article_parts)
 
@@ -1835,7 +1908,12 @@ After saving, return here and start chatting!"""
     # Inject CITATION_CONTEXTS before [DONE] if article was read
     if article_pdf_content and final_response_text:
         try:
-            ctx = _extract_citation_contexts(final_response_text, article_pdf_content, _per_paper_pdf_content)
+            ctx = _extract_citation_contexts(
+                final_response_text,
+                article_pdf_content,
+                _per_paper_pdf_content,
+                _per_paper_source_ids,
+            )
             if ctx:
                 ctx_block = f"[CITATION_CONTEXTS]{json.dumps(ctx, ensure_ascii=False)}[/CITATION_CONTEXTS]"
                 yield f"data: {json.dumps({'content': ctx_block})}\n\n"
@@ -1844,8 +1922,11 @@ After saving, return here and start chatting!"""
 
     # Emit reference cards for follow-up messages so frontend can build
     # citationMap with paper title/URL for InlineCitation tooltips.
-    if _followup_reference_cards:
-        ref_block = "\n".join(_followup_reference_cards)
+    reference_cards_to_emit = list(_followup_reference_cards)
+    if _current_read_reference_card and _current_read_reference_card not in reference_cards_to_emit:
+        reference_cards_to_emit.append(_current_read_reference_card)
+    if reference_cards_to_emit:
+        ref_block = "\n".join(reference_cards_to_emit)
         yield f"data: {json.dumps({'content': ref_block})}\n\n"
 
     yield "data: [DONE]\n\n"

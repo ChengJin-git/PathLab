@@ -219,6 +219,7 @@ export function removeContextLimitBlock(content: string): string {
 export interface CitationContext {
   page: number
   context: string
+  sourceId?: string
 }
 
 /**
@@ -231,7 +232,28 @@ export function parseCitationContexts(
   const match = content.match(/\[CITATION_CONTEXTS\]([\s\S]*?)\[\/CITATION_CONTEXTS\]/)
   if (!match) return null
   try {
-    return JSON.parse(match[1].trim())
+    const parsed = JSON.parse(match[1].trim())
+    if (!parsed || typeof parsed !== 'object') return null
+
+    const normalized: Record<string, CitationContext> = {}
+    Object.entries(parsed).forEach(([key, value]) => {
+      if (!value || typeof value !== 'object') return
+      const raw = value as Record<string, unknown>
+      const rawPage = raw.page
+      const page = typeof rawPage === 'number'
+        ? rawPage
+        : parseInt(String(rawPage ?? '0'), 10) || 0
+      normalized[key] = {
+        page,
+        context: typeof raw.context === 'string' ? raw.context : '',
+        sourceId: typeof raw.source_id === 'string'
+          ? raw.source_id
+          : typeof raw.sourceId === 'string'
+            ? raw.sourceId
+            : undefined
+      }
+    })
+    return normalized
   } catch {
     return null
   }
@@ -254,6 +276,30 @@ export function isInternalOnlyMessage(content: string): boolean {
   stripped = removeSubmitTaskBlock(stripped)
   stripped = removeCancelTaskNowBlock(stripped)
   return stripped.trim() === ''
+}
+
+function getHostnameFromUrl(url?: string): string {
+  if (!url) return ''
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return ''
+  }
+}
+
+function findReferenceCardForCitation(
+  referenceCards: ReturnType<typeof parseAllReferenceCards> | null,
+  key: string,
+  sourceId?: string
+) {
+  if (!referenceCards?.length) return undefined
+  if (sourceId) {
+    const matchBySourceId = referenceCards.find(card => card.sourceId === sourceId)
+    if (matchBySourceId) return matchBySourceId
+  }
+  const paperIdxMatch = key.match(/^(\d+)-/)
+  const paperIdx = paperIdxMatch ? parseInt(paperIdxMatch[1]) : 1
+  return referenceCards[paperIdx - 1] ?? referenceCards[0]
 }
 
 
@@ -357,24 +403,19 @@ const AssistantMessage = React.memo(function AssistantMessage({
     // 1) Web search results — index is 1-based ordinal
     if (webSearchResult?.results) {
       webSearchResult.results.forEach((r, i) => {
-        let source = 'Unknown'
-        try { source = new URL(r.url).hostname.replace(/^www\./, '') } catch { /* ignore */ }
+        const source = getHostnameFromUrl(r.url) || 'Unknown'
         map.set(i + 1, { title: r.title, url: r.url, snippet: r.snippet, source })
       })
     }
     // 2) Article citation contexts — keyed "N-p.X" (normalized), renumbered sequentially
-    //    Use the paper index from the key (e.g. "2-p.5" → paper 2) to look up the
-    //    correct reference card, so multi-paper conversations don't mix up tooltips.
+    //    Prefer backend-provided stable sourceId over transient paper numbering,
+    //    then fall back to paper index for backward compatibility.
     if (citationContexts && articleCitationRenumber) {
       for (const [key, ctx] of Object.entries(citationContexts)) {
         const seqIdx = articleCitationRenumber.get(key)
         if (!seqIdx) continue
-        // Extract paper index from key: "N-p.X" → N (1-based)
-        const paperIdxMatch = key.match(/^(\d+)-/)
-        const paperIdx = paperIdxMatch ? parseInt(paperIdxMatch[1]) : 1
-        // Use the reference card for this paper (fall back to first card)
-        const refCard = referenceCards?.[paperIdx - 1] ?? referenceCards?.[0]
-        const refSource = refCard?.url ? (() => { try { return new URL(refCard.url).hostname.replace(/^www\./, '') } catch { return '' } })() : ''
+        const refCard = findReferenceCardForCitation(referenceCards, key, ctx.sourceId)
+        const refSource = getHostnameFromUrl(refCard?.url)
         // Extract page info from key (e.g. "1-p.2" → "p.2", "1-p.2-3" → "p.2-3", "1-p.2,p.4" → "p.2,p.4")
         const pageFromKey = key.replace(/^\d+-/, '')
         map.set(seqIdx, {
@@ -393,10 +434,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
     if (articleCitationRenumber && referenceCards?.length) {
       for (const [key, seqIdx] of articleCitationRenumber.entries()) {
         if (map.has(seqIdx)) continue
-        const paperIdxMatch = key.match(/^(\d+)-/)
-        const paperIdx = paperIdxMatch ? parseInt(paperIdxMatch[1]) : 1
-        const refCard = referenceCards[paperIdx - 1] ?? referenceCards[0]
-        const refSource = refCard?.url ? (() => { try { return new URL(refCard.url).hostname.replace(/^www\./, '') } catch { return '' } })() : ''
+        const refCard = findReferenceCardForCitation(referenceCards, key)
+        const refSource = getHostnameFromUrl(refCard?.url)
         const pageFromKey = key.replace(/^\d+-/, '')
         map.set(seqIdx, {
           title: refCard?.title || '',
@@ -420,7 +459,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
         seenBare.add(idx)
         const refCard = referenceCards[idx - 1] ?? referenceCards[0]
         if (!refCard) continue
-        const refSource = refCard.url ? (() => { try { return new URL(refCard.url).hostname.replace(/^www\./, '') } catch { return '' } })() : ''
+        const refSource = getHostnameFromUrl(refCard.url)
         map.set(idx, {
           title: refCard.title,
           url: refCard.url,
