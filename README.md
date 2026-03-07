@@ -1,50 +1,42 @@
 # PathLab
 
-PathLab 是一个面向数字病理研究的桌面 / Web 一体化代码库，当前实现采用 **Electron + React 前端** 与 **Python FastAPI sidecar** 的组合架构。
-
-## 当前代码现状
-
-- 前端代码位于 `pathlab/pathlab-client/src/renderer/src`
-- Electron 主进程与 preload 位于 `pathlab/pathlab-client/src/main`、`src/preload`
-- Python 统一入口位于 `pathlab/pathlab-client/server/main.py`
-- 该入口会拉起 3 个 FastAPI 服务：
-  - Gateway
-  - Preprocessing
-  - AI
-- Gateway 当前目录下有 **29 个路由文件**，其中 `main.py` 直接注册 **16 个顶层 router`
-- 数据库当前可见的 ORM 表为 **17 个**：`models.py` 中 16 个业务表 + `backend/auth/models.py` 中的 `users`
+PathLab 是一个面向数字病理研究的桌面 / Web 一体化代码库，当前主应用位于 `pathlab/pathlab-client/`，采用 **Electron + React 渲染层 + Python FastAPI sidecar** 的组合架构。
 
 ## 运行形态
 
 | 场景 | 入口 | 端口策略 |
 |------|------|----------|
-| 浏览器 / 调试 | `PATHLAB_DEBUG=1` 下的 Python 服务 + Vite / Electron 开发流 | 固定 `6100 / 6101 / 6102` |
-| Electron 打包运行 | `server/main.py` 被主进程拉起 | 自动发现可用端口，并把 Gateway 端口通知前端 |
-| 部署脚本 | `deploy/start.sh` / `deploy/hot-reload.sh` | 固定 `6100 / 6101 / 6102` |
+| Electron 开发 | `npm run dev` | Python sidecar 默认自动分配可用端口，并把 Gateway 端口通过 IPC 通知前端 |
+| Electron 打包 / 预览 | `npm run build:*` / `npm run start` | 与桌面运行一致，默认使用 sidecar 动态端口 |
+| 固定端口调试 | `PATHLAB_DEBUG=1 python server/main.py` | 固定 `5100 / 5101 / 5102` |
+| Web / 运维部署脚本 | `deploy/start.sh` / `deploy/hot-reload.sh` | 固定 `6100 / 6101 / 6102` |
 
 ## 当前能力概览
 
-- 用户认证、角色控制、单设备 JWT 会话控制
-- WSI 切片管理、缩略图 / DZI / 瓦片阅片
-- AI 对话、会话持久化、PDF 辅助阅读与引用上下文
-- 训练任务、推理任务、结果分析、热图与分割相关结果查看
-- 存储统计、迁移、孤立文件 / 孤立记录清理
-- 浏览器模式 PWA 与 Electron 桌面模式双运行方式
+- 本地认证、角色控制、JWT 会话与用户 `nonce` 单设备控制
+- WSI / patch 文件管理、缩略图、DZI、瓦片阅片与热图/分割结果查看
+- AI Chat、会话持久化、PDF 辅助阅读与引用上下文
+- Deep Research 多步研究工作流与研究作业持久化
+- 训练系统：19 个特征提取器、8 个 MIL 聚合器，覆盖 WSI 分类 / WSI 生存 / Patch 分类 / Patch 分割
+- WSI 分类推理、结果查看、报告导出
+- 存储统计、迁移、批量导入、派生数据重置、孤立文件 / 孤立记录清理
+- 浏览器构建（PWA）与 Electron 桌面模式双运行方式
 
 ## 仓库结构
 
 ```text
 pathlab/
-└── pathlab-client/
-    ├── src/
-    │   ├── main/            # Electron 主进程
-    │   ├── preload/         # Electron preload
-    │   └── renderer/        # React 前端构建目录
-    ├── server/
-    │   ├── main.py          # Python sidecar 统一入口
-    │   ├── gateway/         # 对外网关
-    │   └── backend/         # AI / 预处理 / 数据库 / 存储 / 认证等内部模块
-    └── deploy/              # 固定端口部署脚本与 Nginx / systemd 模板
+├── pathlab-client/
+│   ├── src/
+│   │   ├── main/            # Electron 主进程
+│   │   ├── preload/         # Electron preload / IPC 桥接
+│   │   └── renderer/        # React + Vite 前端
+│   ├── server/
+│   │   ├── main.py          # Python sidecar 统一入口
+│   │   ├── gateway/         # 对外 API 网关
+│   │   └── backend/         # AI / 预处理 / 数据库 / 存储 / 认证 / Deep Research 共享模块
+│   └── deploy/              # 固定端口部署脚本与 Nginx / systemd 模板
+└── pathlab-server/          # 当前仓库中为空目录
 ```
 
 ## 文档入口
@@ -57,4 +49,5 @@ pathlab/
 - [Storage Management](pathlab/pathlab-client/server/backend/storage/README.md)
 - [Frontend](pathlab/pathlab-client/src/renderer/README.md)
 - [Frontend Source](pathlab/pathlab-client/src/renderer/src/README.md)
+- [Deep Research Snapshot](pathlab/pathlab-client/server/backend/deep-research/README.md)
 - [Deployment](pathlab/pathlab-client/deploy/README.md)

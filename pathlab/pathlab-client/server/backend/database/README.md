@@ -12,7 +12,7 @@
 
 ## 当前 ORM 表现状
 
-当前代码里可直接看到 **17 个 ORM 表**：
+当前代码里可直接看到 **19 个可见 ORM 表**：
 
 ### 业务表（`models.py`）
 
@@ -32,38 +32,42 @@
 14. `dataset_permissions`
 15. `storage_tasks`
 16. `segmentation_annotations`
+17. `research_jobs`
+18. `research_job_events`
 
 ### 认证表（`backend/auth/models.py`）
 
-17. `users`
+19. `users`
 
 ## 与旧文档相比的关键变化
 
 - 标注表当前是 `segmentation_annotations`，不是旧文档里的 `annotation_drafts`
+- 新增了 Deep Research 相关表：`research_jobs`、`research_job_events`
 - 当前 README 不再把 `accesstoken` 记作项目里明确可见的独立 ORM 模型
 - 认证更贴近“JWT + users + nonce 控制”的实现方式
 
 ## Repository 现状
 
-`repositories/` 当前按业务拆分，主要包括：
+`repositories/__init__.py` 当前统一导出的主要仓储包括：
 
-- `AIResultRepository`
-- `AnnotationRepository`
-- `ChatRepository`
 - `DataGroupRepository`
 - `DatasetRepository`
+- `WSIRepository`
+- `AITaskRepository`
+- `AIResultRepository`
+- `ChatRepository`
+- `FeedbackRepository`
 - `ExportTaskRepository`
-- `PermissionRepository`
-- `StorageTaskRepository`
-- `TaskRepository`
-- `TrainingLogRepository`
 - `TrainingTaskRepository`
 - `TrainedModelRepository`
-- `UserRepository`
-- `WSIRepository`
-- `WSIRepositoryStorageMixin`
+- `TrainingLogRepository`
+- `DatasetPermissionRepository`
+- `StorageTaskRepository`
+- `OrphanedRecordsRepository`
+- `SegmentationAnnotationRepository`
+- `ResearchJobRepository`
 
-这意味着当前仓储层已经覆盖用户、任务、WSI、聊天、结果、权限、训练日志、存储任务与标注等主要实体。
+这些仓储已经覆盖用户外围业务、任务、WSI、聊天、结果、权限、训练日志、存储任务、标注与研究作业等主要实体。
 
 ## 初始化与使用方式
 
@@ -76,6 +80,7 @@
 - 如果关心认证表与用户字段：看 `../auth/`
 - 如果关心文件系统与数据库的一致性：看 `../storage/README.md`
 - 如果关心业务 API 如何写入这些表：看 `../../gateway/README.md`
+- 如果关心研究作业如何落库：看 `../deep-research/README.md` 与 `../../gateway/routes/research_chat.py`
 
 ## 相关文档
 

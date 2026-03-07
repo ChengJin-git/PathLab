@@ -17,18 +17,20 @@
 - Preprocessing: `6101`
 - AI: `6102`
 
-这与 `PATHLAB_DEBUG=1` 下的 Python 服务端口保持一致，便于浏览器调试与反向代理配置复用。
+这套端口是**部署专用固定端口**；它不同于 `PATHLAB_DEBUG=1 python server/main.py` 默认使用的 `5100 / 5101 / 5102`。
 
 ## `start.sh` 当前行为
 
 `./deploy/start.sh` 会执行以下动作：
 
-1. 停掉占用 6100 / 6101 / 6102 的旧进程
+1. 清理占用 `6100 / 6101 / 6102` 的旧进程
 2. 读取 `server/.env`（如果存在）
 3. 检查 / 启动 Redis
-4. 构建前端静态资源到 `src/renderer/dist`
-5. 以固定端口启动 `server/main.py`
-6. 将日志写入 `logs/`
+4. 在缺少 `node_modules` 时自动执行 `npm install --silent`
+5. 使用 `src/renderer/vite.config.ts` 构建前端静态资源到 `src/renderer/dist`
+6. 导出 `PATHLAB_DEBUG=1` 与 `GATEWAY_PORT / PREPROCESSING_PORT / AI_PORT`
+7. 启动 `server/main.py`
+8. 将日志写入 `logs/`
 
 该脚本是“直接执行型”的，不需要再传 `start` 子命令。
 
@@ -43,16 +45,21 @@
 - `ai`
 - `all`
 
-它会在不整体重装环境的前提下，按目标服务重启对应组件，并继续使用固定端口。
+当前实现中：
+
+- `frontend` 会重新构建 `src/renderer/dist`，然后原子替换目录
+- `gateway` / `preprocessing` / `ai` 会分别用 `uvicorn` 重启指定服务
+- `backend` 会按 `ai -> preprocessing -> gateway` 顺序滚动重启
 
 ## Nginx 配置现状
 
 `nginx/pathlab.conf` 与 `nginx/pathlab-http-only.conf` 当前大致遵循：
 
-- `/` → 前端构建产物
-- `/api/` → `http://127.0.0.1:6100`
-- `/preprocessing/` → `http://127.0.0.1:6101`
-- `/ai/` → `http://127.0.0.1:6102`
+- `/` → `src/renderer/dist`
+- `/api/` → `http://127.0.0.1:6100/`
+- `/preprocessing/` → `http://127.0.0.1:6101/`
+- `/ai/` → `http://127.0.0.1:6102/api/ai/`
+- `/ai/health` → `http://127.0.0.1:6102/health`
 
 HTTPS 版本额外包含证书配置；HTTP-only 版本仅保留反向代理与静态资源规则。
 
@@ -64,6 +71,7 @@ HTTPS 版本额外包含证书配置；HTTP-only 版本仅保留反向代理与�
 - `GATEWAY_PORT=6100`
 - `PREPROCESSING_PORT=6101`
 - `AI_PORT=6102`
+- `PATHLAB_UPLOADS_DIR=/path/to/pathlab-client/uploads`
 
 因此 systemd 模板与 shell 部署脚本的端口策略是一致的。
 

@@ -5,12 +5,13 @@ This directory stores the static image assets bundled with PathLab's local OpenS
 ## What is here
 
 - Navigation control icons used by the WSI viewer
-- Assets copied into the frontend build output for direct browser/Electron loading
+- Assets served from Vite `public/` and copied into frontend build output for browser / Electron loading
 
 ## How PathLab uses it
 
 - The viewer UI is wrapped by `src/renderer/src/components/WSIViewer.tsx`
-- The preprocessing service provides DZI descriptors and tiles; these assets only provide the viewer chrome
+- The full-screen viewer entry is `src/renderer/src/pages/WSIViewerPage.tsx`
+- The preprocessing service provides DZI descriptors and tiles; these assets only provide viewer chrome and controls
 - Project-specific viewer behavior is documented in the frontend READMEs, not here
 
 ## Maintenance note
