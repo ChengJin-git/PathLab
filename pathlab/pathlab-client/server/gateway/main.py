@@ -45,8 +45,12 @@ from backend.common.config import Config
 
 # Import research chat router (deep-research proxy)
 research_chat_router = None
+shutdown_inproc_deep_research_app = None
 try:
-    from gateway.routes.research_chat import router as research_chat_router
+    from gateway.routes.research_chat import (
+        router as research_chat_router,
+        _shutdown_inproc_deep_research_app as shutdown_inproc_deep_research_app,
+    )
     logger.info("✅ Research chat router loaded successfully")
     print("✅ Research chat router loaded successfully")
 except Exception as e:
@@ -55,6 +59,7 @@ except Exception as e:
     import traceback
     traceback.print_exc()
     research_chat_router = None
+    shutdown_inproc_deep_research_app = None
 
 
 @asynccontextmanager
@@ -126,6 +131,11 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down task queue manager...")
     await shutdown_task_queue()
     logger.info("✓ Task queue manager stopped")
+
+    if shutdown_inproc_deep_research_app is not None:
+        logger.info("Shutting down in-process deep-research app...")
+        await shutdown_inproc_deep_research_app()
+        logger.info("✓ In-process deep-research app stopped")
 
     logger.info("Closing database connections...")
     await close_db()

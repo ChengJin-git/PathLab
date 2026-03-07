@@ -228,6 +228,32 @@ export default function AIChatPage() {
     }
   }, [])
 
+  const resetChatView = useCallback((options?: {
+    currentConversationId?: string | null
+    reportContext?: string
+    showWelcomeHero?: boolean
+  }) => {
+    abortControllerRef.current?.abort()
+    stopVoiceSession()
+    userScrolledAwayRef.current = false
+    scrollRestoredRef.current = false
+    skipConversationLoadRef.current = false
+    initialMessageSent.current = false
+    sessionStorage.removeItem('ai-chat-conversation-id')
+    sessionStorage.removeItem('ai-chat-scroll-position')
+    setMessages([])
+    setCurrentConversationId(options?.currentConversationId ?? null)
+    reportContextRef.current = options?.reportContext
+    setInput('')
+    inputRef.current = ''
+    setImageAttachments([])
+    setFileAttachments([])
+    setShowWelcomeHero(options?.showWelcomeHero ?? true)
+    setFeedbacks(new Map())
+    setHelpfulnessFeedbacks(new Map())
+    scrollToTop()
+  }, [scrollToTop, stopVoiceSession])
+
   const preserveAiChatReturnContext = useCallback(() => {
     const aiConversationId = currentConversationId || urlConversationId || null
 
@@ -347,7 +373,12 @@ export default function AIChatPage() {
   // Restore conversation from URL (supports page refresh)
   // Also supports legacy sessionStorage restore for backward compatibility
   useEffect(() => {
-    const state = location.state as { forceNewChat?: boolean; preCreatedConversationId?: string; reportContext?: string } | null
+    const state = location.state as {
+      forceNewChat?: boolean
+      preCreatedConversationId?: string
+      reportContext?: string
+      initialMessage?: string
+    } | null
 
     // Priority 1: Load from URL if conversationId is present
     if (urlConversationId) {
@@ -372,11 +403,12 @@ export default function AIChatPage() {
     // Explicit new chat handoff (e.g. from Deep Research start training):
     // skip legacy restore and ensure we start from a clean chat state.
     if (state?.forceNewChat) {
-      sessionStorage.removeItem('ai-chat-conversation-id')
-      sessionStorage.removeItem('ai-chat-scroll-position')
-      if (state.reportContext) reportContextRef.current = state.reportContext
+      resetChatView({
+        currentConversationId: state.preCreatedConversationId ?? null,
+        reportContext: state.reportContext,
+        showWelcomeHero: !(state.preCreatedConversationId || state.initialMessage)
+      })
       if (state?.preCreatedConversationId) {
-        setCurrentConversationId(state.preCreatedConversationId)
         skipConversationLoadRef.current = true
         navigate(`/dashboard/${state.preCreatedConversationId}`, { replace: true })
       }
@@ -389,7 +421,7 @@ export default function AIChatPage() {
       handleLoadConversation(savedConversationId)
       sessionStorage.removeItem('ai-chat-conversation-id')
     }
-  }, [urlConversationId, location.state])
+  }, [urlConversationId, location.state, navigate, resetChatView])
 
   // Restore scroll position after messages are loaded (when returning from another page).
   // Depends on messages.length instead of messages to avoid re-running on every streaming chunk.
@@ -452,19 +484,7 @@ export default function AIChatPage() {
   }, [location, toggleVoiceSession, navigate])
 
   const handleNewChat = () => {
-    userScrolledAwayRef.current = false
-    scrollRestoredRef.current = false
-    sessionStorage.removeItem('ai-chat-scroll-position')
-    setMessages([])
-    setCurrentConversationId(null)
-    reportContextRef.current = undefined
-    setInput('')
-    setImageAttachments([])
-    setFileAttachments([])
-    setShowWelcomeHero(true)
-    setFeedbacks(new Map())
-    setHelpfulnessFeedbacks(new Map())
-    scrollToTop()
+    resetChatView()
     // Update URL to base path (remove conversationId from URL)
     if (urlConversationId) {
       navigate('/dashboard', { replace: true })

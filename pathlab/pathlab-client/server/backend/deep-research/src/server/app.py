@@ -124,6 +124,18 @@ _mongo_checkpointer: Optional[Any] = None
 from contextlib import asynccontextmanager
 
 
+def _postgres_checkpoint_deps_available() -> bool:
+    return (
+        AsyncPostgresSaver is not None
+        and AsyncConnectionPool is not None
+        and dict_row is not None
+    )
+
+
+def _mongodb_checkpoint_deps_available() -> bool:
+    return AsyncMongoDBSaver is not None
+
+
 @asynccontextmanager
 async def lifespan(app):
     """
@@ -149,16 +161,9 @@ async def lifespan(app):
     else:
         # Initialize PostgreSQL connection pool
         if checkpoint_url.startswith("postgresql://"):
-            if AsyncPostgresSaver is None:
+            if not _postgres_checkpoint_deps_available():
                 logger.warning(
-                    "PostgreSQL checkpoint plugin is not available; "
-                    "continuing without checkpoint persistence."
-                )
-                _pg_pool = None
-                _pg_checkpointer = None
-            elif AsyncConnectionPool is None or dict_row is None:
-                logger.warning(
-                    "psycopg/psycopg_pool is not available; "
+                    "PostgreSQL checkpoint dependencies are not available; "
                     "continuing without PostgreSQL checkpoint persistence."
                 )
                 _pg_pool = None
@@ -204,7 +209,7 @@ async def lifespan(app):
 
         # Initialize MongoDB connection pool
         elif checkpoint_url.startswith("mongodb://"):
-            if AsyncMongoDBSaver is None:
+            if not _mongodb_checkpoint_deps_available():
                 raise RuntimeError(
                     "MongoDB checkpoint persistence is configured but "
                     "'langgraph.checkpoint.mongodb' is not available."
@@ -1056,25 +1061,32 @@ async def _astream_workflow_generator(
 
         # Fallback to per-request PostgreSQL connection if global pool not available
         elif checkpoint_url.startswith("postgresql://"):
-            logger.info(f"[{safe_thread_id}] Global pool unavailable, creating per-request PostgreSQL connection")
-            connection_kwargs = {
-                "autocommit": True,
-                "row_factory": "dict_row",
-                "prepare_threshold": 0,
-            }
-            async with AsyncConnectionPool(
-                checkpoint_url, kwargs=connection_kwargs
-            ) as conn:
-                checkpointer = AsyncPostgresSaver(conn)
-                await checkpointer.setup()
-                graph.checkpointer = checkpointer
-                graph.store = in_memory_store
-                logger.debug(f"[{safe_thread_id}] Starting to stream graph events")
-                async for event in _stream_graph_events(
-                    graph, workflow_input, workflow_config, thread_id
-                ):
-                    yield event
-                logger.debug(f"[{safe_thread_id}] Graph event streaming completed")
+            if _postgres_checkpoint_deps_available():
+                logger.info(f"[{safe_thread_id}] Global pool unavailable, creating per-request PostgreSQL connection")
+                connection_kwargs = {
+                    "autocommit": True,
+                    "row_factory": dict_row,
+                    "prepare_threshold": 0,
+                }
+                async with AsyncConnectionPool(
+                    checkpoint_url, kwargs=connection_kwargs
+                ) as conn:
+                    checkpointer = AsyncPostgresSaver(conn)
+                    await checkpointer.setup()
+                    graph.checkpointer = checkpointer
+                    graph.store = in_memory_store
+                    logger.debug(f"[{safe_thread_id}] Starting to stream graph events")
+                    async for event in _stream_graph_events(
+                        graph, workflow_input, workflow_config, thread_id
+                    ):
+                        yield event
+                    logger.debug(f"[{safe_thread_id}] Graph event streaming completed")
+                return
+
+            logger.warning(
+                f"[{safe_thread_id}] PostgreSQL checkpoint dependencies unavailable; "
+                "falling back to in-memory graph execution"
+            )
 
         # Try to use global MongoDB checkpointer first
         elif checkpoint_url.startswith("mongodb://") and _mongo_checkpointer:
@@ -1090,27 +1102,35 @@ async def _astream_workflow_generator(
 
         # Fallback to per-request MongoDB connection if global pool not available
         elif checkpoint_url.startswith("mongodb://"):
-            logger.info(f"[{safe_thread_id}] Global pool unavailable, creating per-request MongoDB connection")
-            async with AsyncMongoDBSaver.from_conn_string(
-                checkpoint_url
-            ) as checkpointer:
-                graph.checkpointer = checkpointer
-                graph.store = in_memory_store
-                logger.debug(f"[{safe_thread_id}] Starting to stream graph events")
-                async for event in _stream_graph_events(
-                    graph, workflow_input, workflow_config, thread_id
-                ):
-                    yield event
-                logger.debug(f"[{safe_thread_id}] Graph event streaming completed")
-    else:
-        logger.debug(f"[{safe_thread_id}] No checkpointer configured, using in-memory graph")
-        # Use graph without checkpointer
-        logger.debug(f"[{safe_thread_id}] Starting to stream graph events")
-        async for event in _stream_graph_events(
-            graph, workflow_input, workflow_config, thread_id
-        ):
-            yield event
-        logger.debug(f"[{safe_thread_id}] Graph event streaming completed")
+            if _mongodb_checkpoint_deps_available():
+                logger.info(f"[{safe_thread_id}] Global pool unavailable, creating per-request MongoDB connection")
+                async with AsyncMongoDBSaver.from_conn_string(
+                    checkpoint_url
+                ) as checkpointer:
+                    graph.checkpointer = checkpointer
+                    graph.store = in_memory_store
+                    logger.debug(f"[{safe_thread_id}] Starting to stream graph events")
+                    async for event in _stream_graph_events(
+                        graph, workflow_input, workflow_config, thread_id
+                    ):
+                        yield event
+                    logger.debug(f"[{safe_thread_id}] Graph event streaming completed")
+                return
+
+            logger.warning(
+                f"[{safe_thread_id}] MongoDB checkpoint dependencies unavailable; "
+                "falling back to in-memory graph execution"
+            )
+
+    logger.debug(f"[{safe_thread_id}] No usable checkpointer configured, using in-memory graph")
+    graph.checkpointer = None
+    graph.store = in_memory_store
+    logger.debug(f"[{safe_thread_id}] Starting to stream graph events")
+    async for event in _stream_graph_events(
+        graph, workflow_input, workflow_config, thread_id
+    ):
+        yield event
+    logger.debug(f"[{safe_thread_id}] Graph event streaming completed")
 
 
 def _make_event(event_type: str, data: dict[str, any]):

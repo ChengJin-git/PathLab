@@ -38,6 +38,9 @@ USE_INPROC_DEEP_RESEARCH = os.environ.get(
 ).lower() in ("1", "true", "yes", "on")
 INPROC_DEEP_RESEARCH_BASE_URL = "http://deep-research.local"
 _DEEP_RESEARCH_APP = None
+_DEEP_RESEARCH_LIFESPAN = None
+_DEEP_RESEARCH_LIFESPAN_STARTED = False
+_DEEP_RESEARCH_LIFESPAN_LOCK = asyncio.Lock()
 
 # In-memory dict only for asyncio.Task references (needed for cancel)
 _running_tasks: dict[str, asyncio.Task] = {}
@@ -156,6 +159,7 @@ async def _stream_inproc_sse(app, path: str, body: dict):
     request_complete = False
     disconnect_event = asyncio.Event()
     body_queue: asyncio.Queue = asyncio.Queue()
+    saw_response_body = False
 
     async def receive():
         nonlocal request_complete
@@ -167,7 +171,9 @@ async def _stream_inproc_sse(app, path: str, body: dict):
         return {"type": "http.disconnect"}
 
     async def send(message):
+        nonlocal saw_response_body
         if message["type"] == "http.response.body":
+            saw_response_body = True
             chunk = message.get("body", b"")
             if chunk:
                 await body_queue.put(chunk)
@@ -179,6 +185,12 @@ async def _stream_inproc_sse(app, path: str, body: dict):
             await app(scope, receive, send)
         except Exception as exc:
             logger.warning(f"[ResearchChat] In-proc ASGI app error: {exc}")
+            if not saw_response_body:
+                await body_queue.put(
+                    _make_research_error_event(
+                        f"In-process deep research error: {exc}"
+                    ).encode("utf-8")
+                )
         finally:
             # Ensure the consumer always terminates
             await body_queue.put(None)
@@ -229,6 +241,52 @@ def _get_inproc_deep_research_app():
     _DEEP_RESEARCH_APP = deep_research_app
     logger.info("[ResearchChat] In-process deep-research app initialized")
     return _DEEP_RESEARCH_APP
+
+
+async def _ensure_inproc_deep_research_started():
+    global _DEEP_RESEARCH_LIFESPAN, _DEEP_RESEARCH_LIFESPAN_STARTED
+
+    app = _get_inproc_deep_research_app()
+    if _DEEP_RESEARCH_LIFESPAN_STARTED:
+        return app
+
+    async with _DEEP_RESEARCH_LIFESPAN_LOCK:
+        if _DEEP_RESEARCH_LIFESPAN_STARTED:
+            return app
+
+        router = getattr(app, "router", None)
+        lifespan_context = getattr(router, "lifespan_context", None)
+        if lifespan_context is None:
+            logger.warning(
+                "[ResearchChat] In-process deep-research app has no lifespan context; "
+                "continuing without explicit startup"
+            )
+            _DEEP_RESEARCH_LIFESPAN_STARTED = True
+            return app
+
+        lifespan_cm = lifespan_context(app)
+        await lifespan_cm.__aenter__()
+        _DEEP_RESEARCH_LIFESPAN = lifespan_cm
+        _DEEP_RESEARCH_LIFESPAN_STARTED = True
+        logger.info("[ResearchChat] In-process deep-research lifespan started")
+        return app
+
+
+async def _shutdown_inproc_deep_research_app() -> None:
+    global _DEEP_RESEARCH_LIFESPAN, _DEEP_RESEARCH_LIFESPAN_STARTED
+
+    if not _DEEP_RESEARCH_LIFESPAN_STARTED or _DEEP_RESEARCH_LIFESPAN is None:
+        return
+
+    async with _DEEP_RESEARCH_LIFESPAN_LOCK:
+        lifespan_cm = _DEEP_RESEARCH_LIFESPAN
+        if not _DEEP_RESEARCH_LIFESPAN_STARTED or lifespan_cm is None:
+            return
+
+        _DEEP_RESEARCH_LIFESPAN = None
+        _DEEP_RESEARCH_LIFESPAN_STARTED = False
+        await lifespan_cm.__aexit__(None, None, None)
+        logger.info("[ResearchChat] In-process deep-research lifespan stopped")
 
 
 def _deep_research_api_url(path: str) -> str:
@@ -465,7 +523,7 @@ async def _run_background_research_job(job_id: str, deep_research_body: dict):
 
     try:
         if USE_INPROC_DEEP_RESEARCH:
-            app = _get_inproc_deep_research_app()
+            app = await _ensure_inproc_deep_research_started()
             await _process_sse_bytes(
                 _stream_inproc_sse(app, _deep_research_api_url("chat/stream"), deep_research_body)
             )
@@ -600,7 +658,7 @@ async def research_chat_stream_raw(
                 # Stream directly from the in-process ASGI app using an
                 # asyncio.Queue so that SSE chunks are forwarded immediately
                 # instead of being buffered by httpx.ASGITransport.
-                app = _get_inproc_deep_research_app()
+                app = await _ensure_inproc_deep_research_started()
                 async for chunk in _stream_inproc_sse(app, _deep_research_api_url("chat/stream"), body):
                     yield chunk
             else:
@@ -1141,7 +1199,7 @@ async def research_chat_stream(
 
         try:
             if USE_INPROC_DEEP_RESEARCH:
-                app = _get_inproc_deep_research_app()
+                app = await _ensure_inproc_deep_research_started()
                 async for evt in _parse_and_convert_sse(
                     _stream_inproc_sse(app, _deep_research_api_url("chat/stream"), deep_research_body)
                 ):
