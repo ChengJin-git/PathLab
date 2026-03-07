@@ -261,7 +261,7 @@ export default function Layout({ children }: LayoutProps) {
         <div className="flex-1 flex overflow-hidden">
           <ConversationSidebar />
           <main className="flex-1 min-w-0 overflow-hidden relative">
-            <AnimatePresence mode="wait">
+            <AnimatePresence mode="sync">
               <motion.div
                 key={location.pathname.split('/')[1]}
                 initial={{ opacity: 0 }}

@@ -30,7 +30,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, ReduceLROnPlateau, OneCycleLR
 import segmentation_models_pytorch as smp
 from sklearn.metrics import confusion_matrix
@@ -492,6 +492,7 @@ class SegmentationTrainer:
         gradient_clip = training_cfg.get("gradient_clip", 1.0)
         accumulation_steps = training_cfg.get("gradient_accumulation_steps", 1)
         scheduler_type = training_cfg.get("scheduler", "cosine_warm_restarts").lower()
+        amp_device_type = torch.device(self.device).type
         
         total_loss = 0.0
         accumulated_stats = None
@@ -509,7 +510,7 @@ class SegmentationTrainer:
             
             # Mixed precision forward pass
             if use_amp:
-                with autocast():
+                with autocast(device_type=amp_device_type):
                     outputs = model(images)
                     loss = self.loss_fn(outputs, masks)
                     loss = loss / accumulation_steps  # Scale loss for accumulation
@@ -589,6 +590,7 @@ class SegmentationTrainer:
         model.eval()
         training_cfg = self.config.get("training", {})
         use_amp = training_cfg.get("use_amp", True) and self.device != "cpu"
+        amp_device_type = torch.device(self.device).type
         
         total_loss = 0.0
         accumulated_stats = None
@@ -604,7 +606,7 @@ class SegmentationTrainer:
                 masks = masks.to(self.device)
                 
                 if use_amp:
-                    with autocast():
+                    with autocast(device_type=amp_device_type):
                         outputs = model(images)
                         loss = self.loss_fn(outputs, masks)
                 else:
@@ -731,7 +733,7 @@ class SegmentationTrainer:
         scheduler = self._build_scheduler(optimizer, train_loader)
         
         # Mixed precision scaler
-        scaler = GradScaler() if use_amp else None
+        scaler = GradScaler(device=torch.device(self.device).type) if use_amp else None
         
         # Training history
         history = {

@@ -7,7 +7,6 @@ import { ArrowLeft } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
-import { Button } from "../../components/ui/button";
 import { loadConversationFromBackend, openResearch, resetDeepResearchSession, useStore } from "../../lib/deep-research/store";
 import { cn } from "../../lib/utils";
 
@@ -19,6 +18,12 @@ export default function Main() {
   const location = useLocation();
   const { t } = useTranslation();
   const { conversationId: urlConversationId } = useParams<{ conversationId?: string }>();
+  const navigationState = location.state as {
+    focusResearchId?: string;
+    focusConversationId?: string;
+    returnToAIChatConversationId?: string;
+  } | null;
+  const isDeepResearchRoute = location.pathname.startsWith("/deep-research");
   const forceNewSession = useMemo(
     () => new URLSearchParams(location.search).get("new") === "1",
     [location.search],
@@ -34,19 +39,30 @@ export default function Main() {
   );
 
   const handleBackToAIChat = useCallback(() => {
+    const returnToAIChatConversationId =
+      navigationState?.returnToAIChatConversationId?.trim() ||
+      sessionStorage.getItem("ai-chat-conversation-id")?.trim() ||
+      "";
+
+    if (returnToAIChatConversationId) {
+      sessionStorage.removeItem("ai-chat-conversation-id");
+      navigate(`/dashboard/${returnToAIChatConversationId}`);
+      return;
+    }
+
     navigate("/dashboard");
-  }, [navigate]);
+  }, [navigate, navigationState]);
 
   useEffect(() => {
-    if (!forceNewSession) {
+    if (!isDeepResearchRoute || !forceNewSession) {
       return;
     }
     resetDeepResearchSession();
-    navigate("/deep-research", { replace: true });
-  }, [forceNewSession, navigate]);
+    navigate("/deep-research", { replace: true, state: location.state });
+  }, [forceNewSession, navigate, location.state, isDeepResearchRoute]);
 
   useEffect(() => {
-    if (!urlConversationId) {
+    if (!isDeepResearchRoute || !urlConversationId) {
       return;
     }
     // Skip one hydration when URL change is initiated by this page right after
@@ -56,10 +72,10 @@ export default function Main() {
       return;
     }
     void loadConversationFromBackend(urlConversationId);
-  }, [urlConversationId]);
+  }, [urlConversationId, isDeepResearchRoute]);
 
   useEffect(() => {
-    if (forceNewSession) {
+    if (!isDeepResearchRoute || forceNewSession) {
       return;
     }
     // Respect explicit URL navigation (e.g. clicking a history item).
@@ -70,16 +86,15 @@ export default function Main() {
       return;
     }
     skipNextHydrationRef.current = conversationId;
-    navigate(`/deep-research/${conversationId}`, { replace: true });
-  }, [conversationId, urlConversationId, navigate, forceNewSession]);
+    navigate(`/deep-research/${conversationId}`, { replace: true, state: location.state });
+  }, [conversationId, urlConversationId, navigate, forceNewSession, location.state, isDeepResearchRoute]);
 
   useEffect(() => {
-    const state = location.state as {
-      focusResearchId?: string;
-      focusConversationId?: string;
-    } | null;
-    const focusResearchId = state?.focusResearchId?.trim();
-    const focusConversationId = state?.focusConversationId?.trim();
+    if (!isDeepResearchRoute) {
+      return;
+    }
+    const focusResearchId = navigationState?.focusResearchId?.trim();
+    const focusConversationId = navigationState?.focusConversationId?.trim();
     if (!focusResearchId) {
       return;
     }
@@ -93,21 +108,20 @@ export default function Main() {
     }
     openResearch(focusResearchId);
     focusResearchAppliedRef.current = applyKey;
-  }, [location.state, urlConversationId, conversationId]);
+  }, [navigationState, urlConversationId, conversationId, isDeepResearchRoute]);
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-gray-50">
       <div className="mx-auto flex w-full max-w-[1500px] px-4 pt-3">
-        <Button
-          variant="outline"
-          size="sm"
+        <button
+          type="button"
           onClick={handleBackToAIChat}
           aria-label={t("deepResearchPage.backToAIChat")}
-          className="gap-2 border-gray-200/80 bg-white/90 px-4 text-gray-700 shadow-sm backdrop-blur-sm hover:bg-white"
+          className="inline-flex items-center gap-2 rounded-lg px-1 py-1 text-sm font-medium text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-200"
         >
           <ArrowLeft className="h-4 w-4" />
           {t("deepResearchPage.backToAIChat")}
-        </Button>
+        </button>
       </div>
       <div className="flex-1 flex flex-col min-w-0 h-full relative z-10 overflow-hidden">
         <div

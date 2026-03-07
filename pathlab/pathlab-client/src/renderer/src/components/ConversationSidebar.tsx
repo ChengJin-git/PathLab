@@ -122,10 +122,38 @@ export default function ConversationSidebar() {
   }, [])
 
   // Navigate to a conversation based on its type
+  const preserveAIChatReturnContext = useCallback(() => {
+    if (!location.pathname.startsWith('/dashboard') && !location.pathname.startsWith('/ai-chat')) {
+      return null
+    }
+
+    const messagesContainer = document.querySelector('[data-chat-messages-container]') as HTMLElement | null
+    if (messagesContainer) {
+      sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
+    }
+
+    const aiConversationId =
+      urlConversationId
+      || document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
+      || null
+
+    if (aiConversationId) {
+      sessionStorage.setItem('ai-chat-conversation-id', aiConversationId)
+    }
+
+    return aiConversationId
+  }, [location.pathname, urlConversationId])
+
   const openConversation = (targetConversationId: string) => {
     const conv = conversations.find(c => c.conversation_id === targetConversationId)
     const route = conv?.conversation_type === 'ai_chat' ? 'ai-chat' : 'deep-research'
-    navigate(`/${route}/${targetConversationId}`)
+    const returnToAIChatConversationId = route === 'deep-research'
+      ? preserveAIChatReturnContext()
+      : null
+
+    navigate(`/${route}/${targetConversationId}`, {
+      state: returnToAIChatConversationId ? { returnToAIChatConversationId } : undefined
+    })
     if (window.innerWidth < 1024) {
       setShowHistory(false)
     }

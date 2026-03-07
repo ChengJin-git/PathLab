@@ -207,6 +207,20 @@ export default function AIChatPage() {
     })
   }, [])
 
+  const preserveAiChatReturnContext = useCallback(() => {
+    const aiConversationId = currentConversationId || urlConversationId || null
+
+    if (messagesContainerRef.current) {
+      sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainerRef.current.scrollTop))
+    }
+
+    if (aiConversationId) {
+      sessionStorage.setItem('ai-chat-conversation-id', aiConversationId)
+    }
+
+    return aiConversationId
+  }, [currentConversationId, urlConversationId])
+
   // Detect user scroll intent via wheel / touchmove on the messages container.
   // When user scrolls UP → mark as "scrolled away".
   // When user scrolls back to near-bottom → reset so auto-scroll resumes.
@@ -1852,7 +1866,12 @@ export default function AIChatPage() {
 
                   {/* Deep Research Card - Full Width */}
                   <button
-                    onClick={() => navigate('/deep-research?new=1')}
+                    onClick={() => {
+                      const returnToAIChatConversationId = preserveAiChatReturnContext()
+                      navigate('/deep-research?new=1', {
+                        state: returnToAIChatConversationId ? { returnToAIChatConversationId } : undefined
+                      })
+                    }}
                     className="w-full max-w-2xl bg-indigo-50 hover:bg-indigo-100 p-3 sm:p-4 rounded-2xl text-left transition-all duration-200 hover:shadow-md hover:scale-[1.02] group border border-transparent hover:border-gray-200 mt-1 sm:mt-0"
                   >
                     <div className="flex items-start gap-2.5 sm:gap-3">
@@ -1993,15 +2012,13 @@ export default function AIChatPage() {
                                       <button
                                         type="button"
                                         onClick={() => {
-                                          const aiConversationId = currentConversationId || urlConversationId
-                                          if (aiConversationId) {
-                                            sessionStorage.setItem('ai-chat-conversation-id', aiConversationId)
-                                          }
+                                          const returnToAIChatConversationId = preserveAiChatReturnContext()
                                           navigate(`/deep-research/${researchJump.conversationId}`, {
                                             state: {
                                               focusResearchId: researchJump.researchId,
                                               focusConversationId: researchJump.conversationId,
-                                              fromAIChatResearchJump: true
+                                              fromAIChatResearchJump: true,
+                                              ...(returnToAIChatConversationId ? { returnToAIChatConversationId } : {})
                                             }
                                           })
                                         }}
