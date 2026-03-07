@@ -2755,7 +2755,7 @@ async def _run_external_validation_patch_segmentation(
             if not trained_model:
                 raise ValueError(f"Trained model not found: {model_id}")
             checkpoint_path = trained_model.model_path
-            source_task = await TrainingTaskRepository.get_by_id(db, model_task_id)
+            source_task = await TrainingTaskRepository.get_by_id(db, model_task_id) if model_task_id else None
 
         async with logger_manager.session() as (tl, _db):
             await tl.info(f"Patch segmentation: loading model from {checkpoint_path}")
