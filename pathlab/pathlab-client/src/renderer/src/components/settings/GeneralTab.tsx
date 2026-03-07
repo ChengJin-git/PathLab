@@ -347,12 +347,6 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
 	          <div className="grid gap-3">
 	            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
 	              <CardHeader className="pb-1 p-3">
-	                <CardTitle className="flex items-center gap-2 text-base text-slate-900">
-	                  <div className="p-1 bg-slate-100 rounded">
-	                    <Globe className="w-3.5 h-3.5 text-slate-700" />
-	                  </div>
-                    Web Search Providers
-	                </CardTitle>
 	                <CardDescription className="text-xs text-slate-500 space-y-1">
                     <div>{t('settings.general.forWebSearch')}</div>
                     <div className="flex items-center gap-3">
@@ -395,7 +389,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">
-                    TAVILY API KEY
+	                    {t('settings.general.tavilyApiKey')}
                   </Label>
                   <Input
                     type="password"

@@ -640,6 +640,7 @@
       "dashscopeApiKey": "DashScope API Key",
       "forQwen3Asr": "For Qwen3-ASR realtime.",
       "exaApiKey": "Exa Search API Key",
+	      "tavilyApiKey": "Tavily API Key",
       "forWebSearch": "For AI web search capabilities.",
       "searching": "Searching...",
       "searchedPages": "Searched {{count}} pages",

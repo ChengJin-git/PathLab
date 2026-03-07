@@ -640,6 +640,7 @@
       "dashscopeApiKey": "DashScope API 密钥",
       "forQwen3Asr": "用于 Qwen3-ASR 实时语音识别。",
       "exaApiKey": "Exa 搜索 API 密钥",
+	      "tavilyApiKey": "Tavily API 密钥",
       "forWebSearch": "用于 AI 网页搜索功能。",
       "searching": "搜索中...",
       "searchedPages": "已搜索 {{count}} 个网页",

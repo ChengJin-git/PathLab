@@ -640,6 +640,7 @@
       "dashscopeApiKey": "DashScope API 密鑰",
       "forQwen3Asr": "用於 Qwen3-ASR 實時語音識別。",
       "exaApiKey": "Exa 搜尋 API 密鑰",
+	      "tavilyApiKey": "Tavily API 密鑰",
       "forWebSearch": "用於 AI 網頁搜尋功能。",
       "searching": "搜尋中...",
       "searchedPages": "已搜尋 {{count}} 個網頁",
