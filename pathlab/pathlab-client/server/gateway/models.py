@@ -112,18 +112,23 @@ class ChatRequest(BaseModel):
       ]}
     """
     conversation_id: Optional[str] = None  # Optional conversation ID for persistence
+    locale: Optional[str] = None  # Optional locale (e.g., zh-CN, en-US)
     messages: List[Dict]  # Changed from Dict[str, str] to Dict to support multimodal content
+    report_context: Optional[str] = None  # Research report context injected into system prompt
 
 
 class CreateConversationRequest(BaseModel):
     """Request model for creating a conversation"""
     user_id: Optional[str] = "default_user"
     title: Optional[str] = None
+    conversation_type: Optional[str] = "ai_chat"  # "ai_chat" or "deep_research"
+    report_context: Optional[str] = None  # Research report context for training handoff chats
 
 
 class UpdateMessageRequest(BaseModel):
-    """Request model for updating a message's content"""
-    content: str
+    """Request model for updating a message's content/metadata"""
+    content: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class AddMessageRequest(BaseModel):

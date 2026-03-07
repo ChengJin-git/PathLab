@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
-import { PREPROCESSING_BASE, API_BASE } from '../config'
-import { HeatmapData, getAuthToken, getPatchFileImageUrl } from '../api'
+import { getPreprocessingBase } from '../config'
+import { HeatmapData } from '../api'
 import { Plus, Minus, RotateCcw, Maximize, Minimize, Loader2 } from 'lucide-react'
+
+const PREPROCESSING_BASE = getPreprocessingBase()
 
 interface WSIViewerProps {
   wsi_id: string
@@ -13,8 +14,6 @@ interface WSIViewerProps {
   classIdx?: number  // Optional class index for multi-class attention (e.g., CLAM_MB)
   dataLevel?: 'wsi' | 'patch'  // Data level: 'wsi' uses heatmap, 'patch' uses patch_cam
   onHeatmapLoaded?: (data: HeatmapData | null) => void
-  onViewerReady?: (viewer: any) => void  // Expose OSD viewer instance to parent (for annotation overlay)
-  onSlideInfo?: (info: { width: number; height: number }) => void  // Expose slide dimensions to parent
 }
 
 interface DZIInfo {
@@ -131,19 +130,20 @@ export default function WSIViewer({
   foldKey,
   classIdx,
   dataLevel = 'wsi',
-  onHeatmapLoaded,
-  onViewerReady,
-  onSlideInfo,
+  onHeatmapLoaded
 }: WSIViewerProps) {
-  const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<HTMLDivElement>(null)
+  const patchImageRef = useRef<HTMLImageElement>(null)
   const [viewer, setViewer] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
   const [heatmapData, setHeatmapData] = useState<HeatmapData | null>(null)
   const [heatmapLoading, setHeatmapLoading] = useState(false)
   const [isFullScreen, setIsFullScreen] = useState(false)
+  const [isPatch, setIsPatch] = useState(false)
+  const [patchImageUrl, setPatchImageUrl] = useState<string>()
+  const [patchZoom, setPatchZoom] = useState(1)
 
   useEffect(() => {
     if (!viewerRef.current || !wsi_id) return
@@ -153,9 +153,8 @@ export default function WSIViewer({
 
     const initViewer = async () => {
       try {
-        // First, check if this is a patch or WSI (via gateway with auth)
-        const token = getAuthToken()
-        const infoUrl = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/info${token ? '?token=' + encodeURIComponent(token) : ''}`
+        // First, check if this is a patch or WSI
+        const infoUrl = `${PREPROCESSING_BASE}/wsi/${wsi_id}/info`
         const infoResponse = await fetch(infoUrl)
         if (!infoResponse.ok) {
           throw new Error(`Failed to fetch file info: ${infoResponse.status}`)
@@ -164,48 +163,45 @@ export default function WSIViewer({
 
         if (cancelled) return
 
+        // If it's a patch, just display the image directly
+        if (info.is_patch) {
+          setIsPatch(true)
+          setPatchImageUrl(`${PREPROCESSING_BASE}/wsi/${wsi_id}/image`)
+          setLoading(false)
+          return
+        }
+
+        // For WSI, use OpenSeadragon with DZI
+        setIsPatch(false)
+
         // Wait for OpenSeadragon to load
         while (!window.OpenSeadragon && !cancelled) {
           await new Promise((resolve) => setTimeout(resolve, 100))
         }
         if (cancelled) return
 
-        // Determine tile source based on file type
-        let tileSource: any
-        const isImagePatch = info.is_patch
+        // Fetch DZI info from preprocessing service
+        const dziUrl = `${PREPROCESSING_BASE}/wsi/${wsi_id}/dzi`
+        const response = await fetch(dziUrl)
+        if (!response.ok) {
+          throw new Error(`Failed to fetch DZI: ${response.status}`)
+        }
+        const dziXml = await response.text()
+        const dzi = parseDZI(dziXml)
 
-        if (isImagePatch) {
-          // Patch: use OSD simple image tile source (enables annotation + zoom/pan)
-          tileSource = {
-            type: 'image',
-            url: getPatchFileImageUrl(wsi_id)
-          }
-        } else {
-          // WSI: use DZI tile source
-          const dziUrl = `${PREPROCESSING_BASE}/wsi/${wsi_id}/dzi`
-          const response = await fetch(dziUrl)
-          if (!response.ok) {
-            throw new Error(`Failed to fetch DZI: ${response.status}`)
-          }
-          const dziXml = await response.text()
-          const dzi = parseDZI(dziXml)
+        if (cancelled) return
 
-          if (cancelled) return
+        // Build tile URL using frontend's PREPROCESSING_BASE (not from DZI)
+        const tileUrlBase = `${PREPROCESSING_BASE}/wsi/${wsi_id}/tiles`
 
-          // Expose slide dimensions to parent (for annotation coordinate conversion)
-          onSlideInfo?.({ width: dzi.width, height: dzi.height })
-
-          // Build tile URL using frontend's PREPROCESSING_BASE (not from DZI)
-          const tileUrlBase = `${PREPROCESSING_BASE}/wsi/${wsi_id}/tiles`
-
-          tileSource = {
-            width: dzi.width,
-            height: dzi.height,
-            tileSize: dzi.tileSize,
-            tileOverlap: dzi.overlap,
-            getTileUrl: (level: number, x: number, y: number) => {
-              return `${tileUrlBase}/${level}/${x}_${y}.${dzi.format}`
-            }
+        // Create custom tile source with explicit getTileUrl
+        const tileSource = {
+          width: dzi.width,
+          height: dzi.height,
+          tileSize: dzi.tileSize,
+          tileOverlap: dzi.overlap,
+          getTileUrl: (level: number, x: number, y: number) => {
+            return `${tileUrlBase}/${level}/${x}_${y}.${dzi.format}`
           }
         }
 
@@ -216,11 +212,11 @@ export default function WSIViewer({
           animationTime: 0.5,
           blendTime: 0.1,
           constrainDuringPan: true,
-          maxZoomPixelRatio: isImagePatch ? 4 : 2,
+          maxZoomPixelRatio: 2,
           minZoomLevel: 0.5,
           visibilityRatio: 0.5,
           zoomPerScroll: 1.2,
-          showNavigator: !isImagePatch,
+          showNavigator: true,
           navigatorPosition: 'TOP_RIGHT',
           navigatorHeight: '120px',
           navigatorWidth: '180px',
@@ -238,30 +234,19 @@ export default function WSIViewer({
         osdViewer.addHandler('open', () => {
           setLoading(false)
           setError(undefined)
-          // For patches, get image dimensions from OSD after load
-          if (isImagePatch) {
-            const item = osdViewer.world.getItemAt(0)
-            if (item) {
-              const contentSize = item.getContentSize()
-              onSlideInfo?.({ width: contentSize.x, height: contentSize.y })
-            }
-          }
         })
 
         osdViewer.addHandler('open-failed', (event: any) => {
           setLoading(false)
-          setError(isImagePatch
-            ? t('wsiViewerComponents.viewer.failedToLoadImage')
-            : t('wsiViewerComponents.viewer.failedToLoadTiles'))
+          setError('Failed to load tiles')
           console.error('OpenSeadragon failed to open:', event)
         })
 
         setViewer(osdViewer)
-        onViewerReady?.(osdViewer)
       } catch (err: any) {
         if (!cancelled) {
           setLoading(false)
-          setError(err.message || t('wsiViewerComponents.viewer.failedToInitialize'))
+          setError(err.message || 'Failed to initialize viewer')
         }
       }
     }
@@ -271,7 +256,6 @@ export default function WSIViewer({
     return () => {
       cancelled = true
       if (osdViewer) {
-        onViewerReady?.(null)
         osdViewer.destroy()
       }
     }
@@ -467,13 +451,121 @@ export default function WSIViewer({
     }
   }
 
-  // Render OpenSeadragon viewer (used for both WSI and patch images)
+  // Patch zoom handlers
+  const handlePatchZoomIn = () => setPatchZoom((z) => Math.min(z * 1.25, 10))
+  const handlePatchZoomOut = () => setPatchZoom((z) => Math.max(z / 1.25, 0.1))
+  const handlePatchReset = () => setPatchZoom(1)
+
+  // Add non-passive wheel event listener for patch image to allow preventDefault
+  useEffect(() => {
+    const patchImage = patchImageRef.current
+    if (!patchImage || !isPatch) return
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      if (e.deltaY < 0) {
+        setPatchZoom((z) => Math.min(z * 1.25, 10))
+      } else {
+        setPatchZoom((z) => Math.max(z / 1.25, 0.1))
+      }
+    }
+
+    // Use { passive: false } to allow preventDefault
+    patchImage.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      patchImage.removeEventListener('wheel', handleWheel)
+    }
+  }, [isPatch])
+
+  // For patch images, render simple image viewer with zoom
+  if (isPatch && patchImageUrl) {
+    return (
+      <div ref={containerRef} className="relative w-full h-full bg-gray-50 group overflow-hidden">
+        {loading && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50/80 backdrop-blur-sm z-50">
+            <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mb-2" />
+            <span className="text-gray-500 font-medium text-sm">Loading Image...</span>
+          </div>
+        )}
+
+        {error && (
+          <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none">
+            <div className="bg-white/90 backdrop-blur-md px-6 py-4 rounded-xl shadow-xl border border-red-100 text-red-600 font-medium">
+              {error}
+            </div>
+          </div>
+        )}
+
+        {/* Control bar for patch images */}
+        <div className="absolute top-4 left-4 z-[100] flex flex-col gap-2 transition-opacity duration-200">
+          <div className="bg-white/90 backdrop-blur-xl border border-white/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-xl p-1.5 flex items-center gap-1">
+            <button
+              onClick={handlePatchZoomIn}
+              className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
+              title="Zoom In"
+            >
+              <Plus className="w-5 h-5" />
+            </button>
+            <button
+              onClick={handlePatchZoomOut}
+              className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
+              title="Zoom Out"
+            >
+              <Minus className="w-5 h-5" />
+            </button>
+            <div className="w-px h-4 bg-gray-200 mx-1"></div>
+            <button
+              onClick={handlePatchReset}
+              className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
+              title="Reset View"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleFullScreen}
+              className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
+              title={isFullScreen ? "Exit Full Screen" : "Full Screen"}
+            >
+              {isFullScreen ? (
+                <Minimize className="w-4 h-4" />
+              ) : (
+                <Maximize className="w-4 h-4" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Patch image display with zoom and pan */}
+        <div className="w-full h-full overflow-hidden flex items-center justify-center">
+          <img
+            ref={patchImageRef}
+            src={patchImageUrl}
+            alt="Patch Image"
+            className="transition-transform duration-200 max-w-full max-h-full object-contain"
+            style={{
+              cursor: patchZoom > 1 ? 'grab' : 'default',
+              transform: `scale(${patchZoom})`,
+              transformOrigin: 'center center'
+            }}
+            draggable={false}
+            onLoad={() => setLoading(false)}
+            onError={() => {
+              setLoading(false)
+              setError('Failed to load image')
+            }}
+          />
+        </div>
+      </div>
+    )
+  }
+
+  // For WSI images, render OpenSeadragon viewer
   return (
     <div ref={containerRef} className="relative w-full h-full bg-gray-50 group">
       {loading && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50/80 backdrop-blur-sm z-50">
            <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mb-2" />
-           <span className="text-gray-500 font-medium text-sm">{t('wsiViewerComponents.viewer.loadingPreview')}</span>
+           <span className="text-gray-500 font-medium text-sm">Loading Preview...</span>
         </div>
       )}
 
@@ -486,19 +578,19 @@ export default function WSIViewer({
       )}
 
       {/* Custom Control Bar (Apple Style) */}
-      <div className="absolute top-4 left-4 z-20 flex flex-col gap-2 transition-opacity duration-200">
+      <div className="absolute top-4 left-4 z-[100] flex flex-col gap-2 transition-opacity duration-200">
         <div className="bg-white/90 backdrop-blur-xl border border-white/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-xl p-1.5 flex items-center gap-1">
           <button
             onClick={handleZoomIn}
             className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
-            title={t('wsiViewerComponents.viewer.zoomIn')}
+            title="Zoom In"
           >
             <Plus className="w-5 h-5" />
           </button>
           <button
             onClick={handleZoomOut}
             className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
-            title={t('wsiViewerComponents.viewer.zoomOut')}
+            title="Zoom Out"
           >
             <Minus className="w-5 h-5" />
           </button>
@@ -506,14 +598,14 @@ export default function WSIViewer({
           <button
             onClick={handleReset}
             className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
-            title={t('wsiViewerComponents.viewer.resetView')}
+            title="Reset View"
           >
             <RotateCcw className="w-4 h-4" />
           </button>
           <button
             onClick={handleFullScreen}
             className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
-            title={isFullScreen ? t('wsiViewerComponents.viewer.exitFullScreen') : t('wsiViewerComponents.viewer.fullScreen')}
+            title={isFullScreen ? "Exit Full Screen" : "Full Screen"}
           >
             {isFullScreen ? (
               <Minimize className="w-4 h-4" />
@@ -527,7 +619,7 @@ export default function WSIViewer({
         {heatmapLoading && showHeatmap && (
            <div className="bg-white/90 backdrop-blur-xl border border-indigo-100 shadow-lg rounded-xl px-4 py-2.5 flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
              <Loader2 className="w-4 h-4 text-indigo-600 animate-spin" />
-             <span className="text-sm font-medium text-indigo-900">{t('wsiViewerComponents.viewer.loadingHeatmap')}</span>
+             <span className="text-sm font-medium text-indigo-900">Loading Heatmap...</span>
            </div>
         )}
       </div>

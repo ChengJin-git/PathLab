@@ -1,0 +1,1431 @@
+{
+  "app": {
+    "common": {
+      "loading": "載入中...",
+      "cancel": "取消",
+      "delete": "刪除",
+      "save": "儲存",
+      "back": "返回",
+      "confirm": "確認",
+      "search": "搜尋",
+      "viewAll": "查看全部",
+      "noResults": "無結果",
+      "untitled": "未命名",
+      "error": "錯誤",
+      "success": "成功",
+      "retry": "重試",
+      "close": "關閉",
+      "edit": "編輯",
+      "copy": "複製",
+      "download": "下載",
+      "upload": "上傳",
+      "refresh": "重新整理",
+      "next": "下一步",
+      "previous": "上一步",
+      "submit": "提交",
+      "reset": "重設",
+      "on": "開",
+      "off": "關",
+      "yes": "是",
+      "no": "否",
+      "all": "全部",
+      "none": "無",
+      "select": "選擇",
+      "required": "必填",
+      "optional": "可選"
+    },
+    "time": {
+      "justNow": "剛剛",
+      "minutesAgo": "{{count}} 分鐘前",
+      "hoursAgo": "{{count}} 小時前",
+      "daysAgo": "{{count}} 天前"
+    },
+    "status": {
+      "completed": "已完成",
+      "running": "運行中",
+      "pending": "等待中",
+      "failed": "失敗",
+      "cancelled": "已取消",
+      "queued": "排隊中"
+    },
+    "layout": {
+      "settings": "設定",
+      "profileMenu": "個人選單",
+      "signedInAs": "目前登入",
+      "uploadAvatar": "上傳頭像",
+      "deleteAvatar": "刪除頭像",
+      "deleteAvatarConfirm": "確定要刪除頭像嗎？",
+      "logout": "登出",
+      "language": "語言",
+      "languageZhCN": "简体中文",
+      "languageZhHK": "繁體中文",
+      "languageEn": "英文",
+      "user": "使用者"
+    },
+    "notFound": {
+      "title": "404 - 找不到頁面",
+      "backHome": "← 返回首頁"
+    },
+    "chat": {
+      "inputDisclaimer": "PathLab Agent 可能會出錯，請確認重要資訊。",
+      "deepResearch": "深度研究",
+      "newResearchTask": "新建研究任務",
+      "history": "歷史紀錄"
+    },
+    "dashboard": {
+      "greeting": {
+        "morning": "早安",
+        "afternoon": "午安",
+        "evening": "晚安"
+      },
+      "researcher": "研究員",
+      "subtitle": "今天想要探索什麼？",
+      "placeholders": {
+        "short": [
+          "訓練分類器...",
+          "生存模型...",
+          "組織分類...",
+          "驗證模型...",
+          "分析結果..."
+        ],
+        "long": [
+          "例如：訓練一個區分腫瘤和正常組織的分類器...",
+          "例如：為這個佇列建立生存預測模型...",
+          "例如：將組織分為腫瘤、基質和壞死...",
+          "例如：在外部數據集上驗證我的模型...",
+          "例如：分析我訓練模型的表現..."
+        ]
+      },
+      "workflow": "工作流程",
+      "modules": {
+        "dataRepository": {
+          "title": "數據倉庫",
+          "description": "管理已註冊的數據集",
+          "browse": "瀏覽",
+          "register": "註冊"
+        },
+        "analysisLab": {
+          "title": "分析實驗室",
+          "description": "執行和監控任務",
+          "tasks": "任務",
+          "newRun": "新建執行"
+        },
+        "insights": {
+          "title": "洞察與報告",
+          "description": "視覺化研究發現",
+          "reports": "報告"
+        }
+      },
+      "recentData": "最近數據",
+      "recentAnalysis": "最近分析",
+      "noRecentFiles": "暫無最近檔案",
+      "noRecentTasks": "暫無最近任務",
+      "untitledTask": "未命名任務",
+      "failedToSubmit": "提交任務失敗：{{error}}"
+    },
+    "login": {
+      "welcomeBack": "歡迎回來",
+      "username": "使用者名稱",
+      "password": "密碼",
+      "enterUsername": "請輸入使用者名稱",
+      "enterPassword": "請輸入密碼",
+      "pleaseEnterCredentials": "請輸入使用者名稱和密碼",
+      "signIn": "登入",
+      "agenticAIPowered": "Agentic AI 驅動",
+      "heroTitle1": "數位病理",
+      "heroTitle2": "重新定義",
+      "heroDescription": "在保護數據隱私的同時進行訓練、分析和獲取洞察。體驗醫學研究的未來。",
+      "features": {
+        "wsiVisualization": {
+          "title": "WSI 視覺化",
+          "description": "流暢地平移和縮放瀏覽多千兆像素的全切片影像"
+        },
+        "aiAnalysis": {
+          "title": "AI 驅動分析",
+          "description": "訓練和部署深度學習模型進行病理分類"
+        },
+        "privacy": {
+          "title": "隱私優先",
+          "description": "完全符合數據隱私法規，確保您的研究安全。"
+        },
+        "smartAssistant": {
+          "title": "智慧助手",
+          "description": "用自然語言描述您的研究，讓 AI 為您設定任務"
+        }
+      },
+      "supportMission": "支持我們的使命",
+      "helpKeepFree": "幫助我們讓 PathLab 對所有人免費。",
+      "supportQuote": "「沒有您的支持，我們的專案無法持續。」",
+      "donate": "捐贈",
+      "copyright": "© 2026 SmartLab · 受 reCAPTCHA 保護"
+    },
+    "aiChat": {
+      "scenarios": {
+        "freshStart": {
+          "title": "全新開始",
+          "description": "開始一個新的病理研究專案",
+          "prompt": "我想開始一個新的病理研究專案，你能幫我了解有哪些選項嗎？"
+        },
+        "trainModel": {
+          "title": "訓練模型",
+          "description": "我有一個準備好訓練的數據集",
+          "prompt": "我有一組病理影像數據集，想訓練一個深度學習模型。我需要配置什麼？"
+        },
+        "testModel": {
+          "title": "測試模型",
+          "description": "使用訓練好的模型進行推理",
+          "prompt": "我有一個訓練好的模型，想進行推理。該怎麼做？"
+        },
+        "browseImages": {
+          "title": "瀏覽影像",
+          "description": "瀏覽和分析 WSI 或切片",
+          "prompt": "我想瀏覽和分析一些病理影像（WSI 或切片）。你能根據我的需求幫我找到合適的嗎？"
+        },
+        "deepResearch": {
+          "title": "深度研究",
+          "description": "AI 驅動的文獻綜述與規劃報告"
+        }
+      },
+      "welcome": {
+        "title": "你好，我是 PathLab Agent",
+        "description": "您的病理研究 AI 助手。我可以幫助您訓練模型、執行推理和分析全切片影像。"
+      },
+      "history": {
+        "closeHistory": "關閉歷史",
+        "openHistory": "開啟聊天歷史",
+        "title": "歷史紀錄",
+        "deleteAll": "刪除所有歷史",
+        "newTask": "新建研究任務",
+        "loadingConversations": "載入對話中...",
+        "noConversations": "暫無對話",
+        "startNewChat": "開始新對話",
+        "deleteConversation": "刪除對話"
+      },
+      "topBar": {
+        "closeChatHistory": "關閉聊天歷史",
+        "openChatHistory": "開啟聊天歷史",
+        "chat": "對話",
+        "newResearchTask": "新建研究任務",
+        "back": "返回"
+      },
+      "input": {
+        "listening": "正在聆聽...",
+        "placeholder": "描述您的研究任務...",
+        "thinking": "思考中",
+        "stopGenerating": "停止生成"
+      },
+      "actions": {
+        "goodResponse": "好的回覆",
+        "badResponse": "差的回覆",
+        "copy": "複製",
+        "regenerate": "重新生成",
+        "deleteMessage": "刪除此訊息並從這裡繼續"
+      },
+      "deleteModal": {
+        "deleteAllTitle": "刪除所有歷史",
+        "deleteOneTitle": "刪除對話",
+        "deleteAllConfirm": "確定要刪除所有聊天歷史嗎？此操作無法撤銷。",
+        "deleteOneConfirm": "確定要刪除此對話嗎？此操作無法撤銷。",
+        "cancel": "取消",
+        "delete": "刪除"
+      }
+    },
+    "introduction": {
+      "navbar": {
+        "signIn": "登入"
+      },
+      "hero": {
+        "badge": "Agentic AI 驅動",
+        "title1": "數位病理",
+        "title2": "重新定義",
+        "description": "在保護數據隱私的同時進行訓練、分析和獲取洞察。體驗醫學研究的未來。",
+        "learnMore": "了解更多"
+      },
+      "features": {
+        "sectionLabel": "核心能力",
+        "sectionTitle": "數位病理所需的一切",
+        "wsiVisualization": {
+          "title": "WSI 視覺化",
+          "description": "流暢地平移和縮放瀏覽多千兆像素的全切片影像。"
+        },
+        "aiAnalysis": {
+          "title": "AI 驅動分析",
+          "description": "訓練和部署深度學習模型進行病理分類。"
+        },
+        "privacyFirst": {
+          "title": "隱私優先",
+          "description": "完全符合數據隱私法規——您的研究安全無虞。"
+        },
+        "smartAssistant": {
+          "title": "智慧助手",
+          "description": "用自然語言描述您的研究，讓 AI 為您設定任務。"
+        }
+      },
+      "howItWorks": {
+        "sectionLabel": "工作原理",
+        "sectionTitle": "三步從切片到洞察",
+        "uploadSlides": {
+          "title": "上傳切片",
+          "description": "匯入任何主流格式的全切片影像。"
+        },
+        "aiAnalyzes": {
+          "title": "AI 分析",
+          "description": "我們的 AI 智能體流水線處理和分類您的數據。"
+        },
+        "getInsights": {
+          "title": "獲取洞察",
+          "description": "查看結果、生成報告並匯出研究發現。"
+        }
+      },
+      "pricing": {
+        "sectionLabel": "定價",
+        "sectionTitle": "簡單透明的定價",
+        "individual": {
+          "label": "個人版",
+          "price": "免費",
+          "description": "PathLab 在研究預覽期間對個人臨床醫生免費，設有每日使用限制。我們鼓勵個人臨床醫生嘗試使用，探索其功能，並分享回饋。",
+          "features": {
+            "wsiVisualization": "WSI 視覺化",
+            "aiAnalysis": "AI 驅動分析",
+            "privacyCompliant": "隱私優先——符合法規要求",
+            "smartAssistant": "智慧助手"
+          },
+          "donationNote": "幫助我們讓 PathLab 對所有人免費。",
+          "donate": "捐贈",
+          "getStarted": "立即開始"
+        },
+        "enterprise": {
+          "label": "企業版",
+          "price": "定制",
+          "description": "安全的本地部署，根據您的組織需求量身定制。",
+          "features": {
+            "customIntegrations": "自訂整合",
+            "prioritySupport": "優先支援",
+            "ssoAccessControls": "SSO 與存取控制",
+            "enterpriseSecurity": "企業級安全",
+            "multiTenant": "多租戶部署",
+            "dedicatedManager": "專屬客戶經理"
+          },
+          "contactTeam": "聯繫我們的團隊"
+        }
+      },
+      "footer": {
+        "copyright": "© 2026 SmartLab · 保留所有權利"
+      }
+    },
+    "taskList": {
+      "header": {
+        "title": "分析實驗室",
+        "description": "協調、執行和監控 AI 分析任務",
+        "backToDashboard": "返回儀表盤",
+        "newTask": "新建任務"
+      },
+      "stats": {
+        "totalTasks": "總任務數",
+        "running": "執行中",
+        "completed": "已完成",
+        "failed": "失敗",
+        "cancelled": "已取消"
+      },
+      "search": {
+        "placeholder": "搜尋任務...",
+        "clear": "清除搜尋"
+      },
+      "filter": {
+        "all": "全部",
+        "running": "執行中",
+        "completed": "已完成",
+        "failed": "失敗",
+        "cancelled": "已取消"
+      },
+      "selectAll": "全選",
+      "sort": {
+        "label": "排序：",
+        "updated": "更新時間",
+        "created": "建立時間",
+        "name": "名稱"
+      },
+      "batchDelete": "刪除 ({{count}})",
+      "loading": "載入任務中...",
+      "empty": {
+        "title": "未找到任務",
+        "descriptionAll": "建立您的第一個分析任務以開始",
+        "descriptionFiltered": "未找到{{filter}}任務",
+        "createTask": "建立新任務"
+      },
+      "task": {
+        "copyId": "複製 ID",
+        "copied": "已複製！",
+        "data": "數據",
+        "patches": "切片",
+        "slides": "玻片",
+        "extractor": "特徵提取器",
+        "na": "N/A",
+        "model": "模型",
+        "linearProbe": "線性探針",
+        "duration": "耗時",
+        "inProgress": "進行中",
+        "updated": "已更新",
+        "cancelTask": "取消任務",
+        "deleteTask": "刪除任務",
+        "progress": {
+          "patching": "切片中",
+          "extracting": "提取中",
+          "training": "訓練中",
+          "default": "進度"
+        }
+      },
+      "deleteModal": {
+        "titleSingle": "刪除任務？",
+        "titleBatch": "刪除 {{count}} 個任務？",
+        "cannotUndo": "此操作無法撤銷",
+        "batchWarning": "您即將刪除 {{count}} 個任務。所有相關數據將按照所選模式被移除。",
+        "loadingStorage": "載入儲存資訊...",
+        "freesSurface": "釋放空間：",
+        "files": "檔案 ({{count}})",
+        "trainingData": "• 訓練數據 ({{size}})",
+        "logs": "• 日誌 ({{size}})",
+        "models": "• 模型 ({{size}})",
+        "deletionMode": "刪除模式",
+        "standard": "標準（推薦）",
+        "standardDesc": "刪除訓練目錄和日誌。",
+        "keepsModels": "保留已訓練的模型",
+        "complete": "完全刪除",
+        "completeDesc": "刪除所有檔案，包括已訓練的模型。",
+        "irreversible": "不可逆。",
+        "cancel": "取消",
+        "deleting": "刪除中...",
+        "delete": "刪除",
+        "deleteError": "刪除任務失敗，請重試。"
+      }
+    },
+    "tools": {
+      "header": {
+        "title": "洞察與報告",
+        "description": "視覺化研究發現並生成報告。",
+        "backToDashboard": "返回儀表盤"
+      },
+      "customAnalysis": {
+        "title": "自訂分析",
+        "description": "手動配置和執行特定的 AI 模型。"
+      },
+      "resultsViewer": {
+        "title": "結果檢視器",
+        "description": "瀏覽詳細的熱圖和分類結果。"
+      },
+      "reportGenerator": {
+        "title": "報告生成器",
+        "description": "從分析數據建立 PDF 報告。"
+      },
+      "comingSoon": "即將推出"
+    },
+    "newTask": {
+      "title": "新建分析任務",
+      "description": "建立並訓練新的分析模型",
+      "backToDashboard": "返回儀表盤",
+      "errors": {
+        "networkError": "請檢查網路連線後重試。",
+        "wsiError": "請確保所有選中的 WSI 檔案具有有效的標籤。",
+        "gpuError": "需要支援 CUDA 的 GPU。請檢查 GPU 可用性和 CUDA 驅動程式安裝。",
+        "timeoutError": "伺服器回應時間過長，請稍後重試。",
+        "failedDeleteWSI": "刪除 WSI 失敗：{{error}}",
+        "selectSlideToDelete": "請至少選擇一張切片進行刪除",
+        "confirmBatchDelete": "確定要刪除 {{count}} 個選中項目嗎？",
+        "failedBatchDelete": "批次刪除失敗：{{error}}",
+        "failedUpdateMetadata": "更新中繼資料失敗：{{error}}",
+        "selectSlideToEdit": "請至少選擇一張切片進行編輯",
+        "batchEditStarted": "已開始更新 {{count}} 個項目的中繼資料。請在通知中心查看進度。",
+        "failedBatchEdit": "開始批次編輯失敗：{{error}}",
+        "uploadInProgress": "檔案正在上傳或匯入中，無法提交訓練任務。請等待所有上傳完成。",
+        "noPreDefinedSplits": "未找到預定義的資料劃分。請在資料集檢視中上傳劃分 CSV 檔案。"
+      },
+      "validation": {
+        "epochsPositive": "訓練輪數必須大於 0",
+        "epochsHigh": "訓練輪數過高（>200）可能導致過擬合",
+        "lrPositive": "學習率必須大於 0",
+        "lrHigh": "學習率過高（>0.01）可能導致訓練不穩定",
+        "lrLow": "學習率過低（<0.00001）可能導致收斂緩慢",
+        "batchSizePositive": "批次大小必須大於 0",
+        "smallDataset": "資料集較小（<10 個檔案）可能導致泛化能力不足",
+        "classificationMinClasses": "分類任務至少需要 2 個不同的類別。請為切片指定不同的標籤。",
+        "survivalMissingSamples": "生存預測任務需要同時包含事件和刪失樣本。{{missingType}} 有 0 個樣本。",
+        "kFoldExceedsMax": "K={{k}} 超過最大允許值（{{maxK}}）",
+        "kFoldNotAvailable": "K 折交叉驗證不可用",
+        "randomSplitNotAvailable": "隨機劃分不可用"
+      }
+    },
+    "dataList": {
+      "header": {
+        "title": "數據倉庫",
+        "description": "管理您的數據集和影像。",
+        "filesCount": "此數據集中儲存了 {{count}} 個檔案",
+        "loadingFiles": "載入檔案中...",
+        "errorLoadingFiles": "載入檔案出錯",
+        "backToChat": "返回對話",
+        "backToRepository": "返回數據倉庫",
+        "backToDashboard": "返回儀表盤",
+        "registerFiles": "註冊檔案"
+      },
+      "upload": {
+        "title": "正在註冊檔案 ({{success}}/{{total}})",
+        "registering": "註冊中...",
+        "complete": "完成",
+        "failed": "失敗"
+      },
+      "datasets": {
+        "errorLoading": "載入數據集出錯",
+        "noDatasets": "未找到數據集",
+        "noDatasetsDesc": "使用上方按鈕註冊檔案以建立您的第一個數據集。",
+        "wholeSlideImaging": "全切片影像",
+        "patchCollection": "影像塊集合",
+        "survival": "生存分析",
+        "classification": "分類",
+        "caseLevel": "病例級",
+        "slideLevel": "切片級",
+        "editDataset": "編輯數據集",
+        "deleteDataset": "刪除數據集",
+        "newDataset": "新建數據集",
+        "newDatasetDesc": "註冊新檔案以建立集合"
+      },
+      "files": {
+        "noFiles": "此數據集中沒有檔案",
+        "noFilesDesc": "此數據集似乎為空。",
+        "searchPlaceholder": "搜尋檔案...",
+        "noMatch": "沒有匹配的檔案",
+        "noMatchDesc": "嘗試調整搜尋條件",
+        "clearSearch": "清除搜尋"
+      },
+      "table": {
+        "selected": "已選擇 {{count}} 項",
+        "clearSelection": "清除選擇",
+        "edit": "編輯",
+        "delete": "刪除",
+        "slideId": "切片 ID",
+        "type": "類型",
+        "timeMonths": "時間（月）",
+        "status": "狀態",
+        "label": "標籤",
+        "patientInfo": "患者資訊",
+        "action": "操作",
+        "allPageSelected": "已選擇此頁所有 {{count}} 個項目。",
+        "selectAll": "選擇列表中所有 {{count}} 個項目",
+        "allItemsSelected": "已選擇列表中所有 {{count}} 個項目。",
+        "case": "病例：{{id}}",
+        "noCaseId": "無病例 ID",
+        "slidesCount": "{{count}} 張切片",
+        "notSet": "未設定",
+        "event": "事件",
+        "censored": "刪失",
+        "noLabel": "無標籤",
+        "sourcePrefix": "來源：",
+        "notSpecified": "未指定",
+        "viewFile": "查看檔案",
+        "editMetadata": "編輯中繼資料",
+        "deleteFile": "刪除檔案",
+        "wsi": "WSI",
+        "patch": "切塊",
+        "mixed": "混合",
+        "seeSlides": "查看切片",
+        "sourcesCount": "{{count}} 個來源",
+        "collapse": "收起",
+        "expand": "展開",
+        "eventCount": "{{count}} 個事件",
+        "eventsCount": "{{count}} 個事件",
+        "censoredCount": "{{count}} 個刪失"
+      },
+      "pagination": {
+        "showing": "顯示第",
+        "to": "至",
+        "of": "項，共",
+        "cases": "個病例",
+        "slidesTotal": "（共 {{count}} 張切片）",
+        "files": "個檔案",
+        "filtered": "（已篩選）",
+        "goTo": "前往"
+      },
+      "uploadModal": {
+        "title": "設定檔案中繼資料",
+        "description": "為每個檔案添加中繼資料（所有欄位均為可選）",
+        "labelField": "標籤（疾病分類）",
+        "labelPlaceholder": "例如：良性、惡性、1 級",
+        "caseId": "病例 ID",
+        "caseIdPlaceholder": "例如：case_001",
+        "age": "年齡",
+        "agePlaceholder": "例如：45",
+        "gender": "性別",
+        "selectGender": "選擇性別",
+        "male": "男",
+        "female": "女",
+        "unspecified": "未指定",
+        "sourceField": "來源（器官/組織）",
+        "sourcePlaceholder": "例如：子宮頸、肺、乳房",
+        "filesSelected": "已選擇 {{count}} 個檔案",
+        "cancel": "取消",
+        "uploadAll": "上傳所有檔案"
+      },
+      "deleteModal": {
+        "title": "刪除切片？",
+        "cannotUndo": "此操作無法撤銷",
+        "file": "檔案：",
+        "label": "標籤：",
+        "unknown": "未知",
+        "calculatingSize": "正在計算大小...",
+        "reducedStorage": "釋放儲存空間：",
+        "filesToRemove": "將移除的檔案（{{count}}）",
+        "wsiFile": "WSI 檔案（{{size}}）",
+        "coordinatesCache": "座標快取（{{size}}）",
+        "tissueMask": "組織遮罩（{{size}}）",
+        "aiResults": "AI 結果（{{count}} 個檔案，{{size}}）",
+        "features": "特徵（{{count}} 個檔案，{{size}}）",
+        "deletionMode": "刪除模式",
+        "standardDelete": "標準刪除",
+        "standardDeleteDesc": "刪除切片和結果。",
+        "keepsFeatures": "保留訓練特徵",
+        "forFutureResearch": "以供未來研究。",
+        "completeDelete": "完全刪除",
+        "completeDeleteDesc": "永久清除所有數據，包括訓練特徵。",
+        "irreversible": "不可逆。",
+        "attention": "注意：",
+        "attentionDesc": "此永久操作無法撤銷。",
+        "cancel": "取消",
+        "delete": "刪除"
+      },
+      "batchDeleteModal": {
+        "deleteDataset": "刪除數據集？",
+        "deleteMultiple": "刪除多張切片？",
+        "cannotUndo": "此操作無法撤銷",
+        "aboutToDeleteDataset": "您即將刪除數據集",
+        "andAllIts": "及其所有",
+        "filesWord": "個檔案",
+        "aboutToDelete": "您即將刪除",
+        "fileWord": "個檔案",
+        "filesCountWord": "個檔案",
+        "deletionMode": "刪除模式",
+        "standardDelete": "標準刪除",
+        "standardDeleteDesc": "刪除切片和結果。",
+        "keepsFeatures": "保留訓練特徵",
+        "forFutureResearch": "以供未來研究。",
+        "completeDelete": "完全刪除",
+        "completeDeleteDesc": "永久清除所有數據，包括訓練特徵。",
+        "irreversible": "不可逆。",
+        "attention": "注意：",
+        "attentionDesc": "此永久操作無法撤銷。",
+        "cancel": "取消",
+        "deleting": "刪除中...",
+        "delete": "刪除",
+        "deleteCount": "刪除 {{count}} 項"
+      },
+      "editModal": {
+        "title": "編輯中繼資料",
+        "description": "更新切片資訊",
+        "slideId": "切片 ID",
+        "labelField": "標籤（疾病分類）",
+        "labelPlaceholder": "例如：良性、惡性、1 級",
+        "caseId": "病例 ID",
+        "caseIdPlaceholder": "例如：case_001",
+        "age": "年齡",
+        "agePlaceholder": "例如：45",
+        "gender": "性別",
+        "selectGender": "選擇性別",
+        "male": "男",
+        "female": "女",
+        "unspecified": "未指定",
+        "sourceField": "來源（器官/組織）",
+        "sourcePlaceholder": "例如：子宮頸、肺、乳房",
+        "cancel": "取消",
+        "saving": "儲存中...",
+        "saveChanges": "儲存更改"
+      },
+      "batchEditModal": {
+        "title": "批次編輯中繼資料",
+        "description": "更新 {{count}} 張切片",
+        "keepExistingInfo": "留空欄位以保持現有值不變",
+        "labelField": "標籤（疾病分類）",
+        "keepExisting": "保持現有...",
+        "caseId": "病例 ID",
+        "age": "年齡",
+        "agePlaceholder": "現有...",
+        "gender": "性別",
+        "keepExistingOption": "保持現有",
+        "male": "男",
+        "female": "女",
+        "unspecified": "未指定",
+        "sourceField": "來源（器官/組織）",
+        "cancel": "取消",
+        "updating": "更新中...",
+        "updateCount": "更新 {{count}} 項"
+      },
+      "editDatasetModal": {
+        "title": "編輯數據集",
+        "datasetName": "數據集名稱",
+        "datasetNamePlaceholder": "輸入數據集名稱",
+        "analysisType": "分析類型",
+        "classification": "分類",
+        "survival": "生存分析",
+        "typeChangeWarning": "更改類型將修改此數據集中所有切片的中繼資料",
+        "dataLevel": "數據級別",
+        "caseLevel": "病例級",
+        "fileLevel": "檔案級",
+        "dataLevelWarning": "更改數據級別會影響檔案的分析分組方式",
+        "cancel": "取消",
+        "saving": "儲存中...",
+        "saveChanges": "儲存更改"
+      },
+      "alerts": {
+        "failedDeleteWSI": "刪除 WSI 失敗：{{error}}",
+        "selectFileToDelete": "請至少選擇一個檔案進行刪除",
+        "failedDeleteFiles": "刪除檔案失敗：{{error}}",
+        "cannotDeleteUncategorized": "無法刪除未分類數據集",
+        "datasetEmptyOrError": "數據集為空或無法載入",
+        "failedLoadDatasetFiles": "載入數據集檔案失敗：{{error}}",
+        "failedUpdateMetadata": "更新中繼資料失敗：{{error}}",
+        "selectFileToEdit": "請至少選擇一個檔案進行編輯",
+        "failedRenameDataset": "重新命名數據集失敗：{{error}}",
+        "metadataUpdateStarted": "已開始更新 {{count}} 個項目的中繼資料。請在通知中心查看進度。",
+        "failedBatchEdit": "開始批次編輯失敗：{{error}}",
+        "datasetUpdated": "數據集更新成功",
+        "failedUpdateDataset": "更新數據集失敗：{{error}}"
+      }
+    },
+    "taskDetail": {
+      "notFound": {
+        "title": "未找到任務",
+        "description": "您查找的任務不存在或無法載入。",
+        "backToChat": "返回對話",
+        "backToTaskList": "返回任務列表"
+      },
+      "nav": {
+        "backToChat": "返回對話",
+        "tasks": "任務"
+      },
+      "actions": {
+        "rerun": "重新執行",
+        "cancel": "取消"
+      },
+      "info": {
+        "taskId": "任務 ID",
+        "data": "數據",
+        "patches": "切片",
+        "slides": "張切片",
+        "created": "建立時間",
+        "updated": "更新時間",
+        "copied": "已複製！"
+      },
+      "progress": {
+        "title": "執行進度",
+        "overallCompletion": "總體完成度",
+        "patchExtraction": "切片提取",
+        "featureExtraction": "特徵提取",
+        "dataLoading": "資料載入",
+        "modelTraining": "模型訓練",
+        "epoch": "輪次 {{current}}/{{total}}",
+        "patchCount": "{{count}} 個切片"
+      },
+      "error": {
+        "taskFailed": "任務失敗",
+        "gpuMemoryWithSuggestion": "GPU 顯存不足。請將批次大小降低至 {{batchSize}} 或更低後重試。",
+        "gpuMemory": "GPU 顯存不足。請降低批次大小後重試。",
+        "suggestion": "建議：",
+        "vramSuggestion": "建立新任務時，請將特徵批次大小設定為 {{batchSize}} 或更低。",
+        "showTechnicalDetails": "查看技術詳情",
+        "cannotRerunMissingWSI": "無法重新執行：缺少 WSI ID",
+        "cannotRerunMissingConfig": "無法重新執行：缺少配置",
+        "failedToRerun": "重新執行任務失敗，請重試。"
+      },
+      "logs": {
+        "title": "即時日誌",
+        "liveStream": "即時串流",
+        "connecting": "正在連接任務串流..."
+      },
+      "config": {
+        "title": "配置",
+        "preprocessing": "預處理",
+        "modelTraining": "模型與訓練",
+        "saturationThreshold": "飽和度閾值",
+        "maskThreshold": "遮罩閾值",
+        "useOtsu": "使用 Otsu",
+        "extractor": "特徵提取器",
+        "featureBatchSize": "特徵批次大小",
+        "aggregator": "聚合器",
+        "learningRate": "學習率",
+        "epochs": "訓練輪數",
+        "optimizer": "最佳化器",
+        "trainingBatchSize": "訓練批次大小"
+      },
+      "cancelModal": {
+        "title": "取消訓練任務？",
+        "subtitle": "此操作無法撤銷",
+        "warning": "取消此訓練任務將停止目前訓練過程並釋放 GPU 資源。未儲存的進度將遺失。",
+        "keepRunning": "繼續執行",
+        "cancelTask": "取消任務"
+      }
+    },
+    "settingsPage": {
+      "header": {
+        "title": "設定",
+        "description": "配置您的 PathLab 平台",
+        "backToDashboard": "返回儀表盤"
+      },
+      "tabs": {
+        "general": "常規",
+        "tasks": "任務",
+        "models": "模型",
+        "storage": "儲存",
+        "users": "使用者",
+        "feedback": "回饋",
+        "generalDesc": "AI 與 API 配置",
+        "tasksDesc": "任務管理",
+        "modelsDesc": "模型管理",
+        "storageDesc": "儲存與清理",
+        "usersDesc": "使用者管理",
+        "feedbackDesc": "使用者回饋分析"
+      },
+      "systemInfo": {
+        "title": "系統資訊",
+        "refreshStatus": "重新整理狀態",
+        "platformVersion": "平台版本",
+        "version": "v1.0.0",
+        "gatewayService": "閘道服務",
+        "wsiService": "WSI 服務",
+        "aiService": "AI 服務",
+        "online": "線上",
+        "checking": "檢查中...",
+        "offline": "離線"
+      },
+      "about": {
+        "title": "關於",
+        "description1": "PathLab 是一個基於 AI 的病理分析平台，用於全切片影像（WSI）分類和分析。",
+        "description2": "該平台整合了先進的深度學習模型和直覺化的 AI 助手，幫助研究人員設定和執行病理分析任務。"
+      },
+      "dialogs": {
+        "resetFeedbacksTitle": "重設所有回饋",
+        "resetFeedbacksMessage": "確定要刪除所有回饋數據嗎？此操作無法撤銷。",
+        "deleteAll": "全部刪除",
+        "successTitle": "成功",
+        "resetFeedbacksSuccess": "成功刪除了 {{count}} 條回饋。",
+        "ok": "確定",
+        "deleteRecordsTitle": "刪除記錄",
+        "deleteRecordsMessage": "確定要刪除 {{count}} 條不可用檔案記錄嗎？此操作無法撤銷。進度將在通知中心顯示。",
+        "resetDerivedDataTitle": "重設所有衍生資料",
+        "resetDerivedDataMessage": "此操作將刪除所有衍生產物（特徵、座標、遮罩、結果和訓練模型）。原始影像檔案與中繼資料會保留。是否繼續？",
+        "resetDerivedDataConfirm": "重設所有資料",
+        "resetDerivedDataStartedTitle": "任務已啟動",
+        "resetDerivedDataStartedMessage": "重設衍生資料任務已啟動，請在通知中心查看進度。",
+        "unbindDatasetTitle": "解綁資料集",
+        "unbindDatasetMessage": "確定要解綁資料集 \"{{name}}\" 嗎？這將從該資料集中移除所有外部檔案記錄。外部驅動器上的實際檔案不會被刪除。進度將在通知中心顯示。",
+        "unbindFailedTitle": "解綁失敗",
+        "unbindDatasetsTitle": "解綁資料集",
+        "unbindDatasetsMessage": "確定要解綁 {{count}} 個資料集：{{names}} 嗎？這將從這些資料集中移除所有外部檔案記錄。外部驅動器上的實際檔案不會被刪除。進度將在通知中心顯示。",
+        "deleteModelTitle": "刪除模型",
+        "deleteModelMessage": "確定要刪除 \"{{name}}\" 嗎？此操作無法撤銷。",
+        "delete": "刪除",
+        "errorTitle": "錯誤",
+        "failedSaveAI": "儲存 AI 配置失敗",
+        "failedSaveTask": "儲存任務配置失敗",
+        "revokePermissionTitle": "撤銷權限",
+        "revokePermissionMessage": "確定要撤銷該使用者對資料集 \"{{name}}\" 的存取權限嗎？",
+        "revoke": "撤銷",
+        "revokeAllTitle": "撤銷所有權限",
+        "revokeAllMessage": "確定要撤銷 {{user}} 的所有資料集權限嗎？",
+        "revokeAll": "全部撤銷",
+        "deleteUserMessage": "確定要刪除該使用者嗎？"
+      },
+      "validation": {
+        "taskTimeoutRange": "任務逾時時間必須在 60 到 259200 秒之間",
+        "passwordMinLength": "密碼長度至少為 6 個字元",
+        "usernamePasswordRequired": "使用者名稱和密碼為必填項",
+        "selectExistingDataset": "請選擇一個已有資料集",
+        "enterNewDatasetName": "請輸入新資料集的名稱"
+      },
+      "errors": {
+        "failedLoadFeedbacks": "載入回饋失敗",
+        "failedStartExport": "啟動匯出失敗",
+        "failedExportFeedbacks": "匯出回饋失敗",
+        "failedResetFeedbacks": "重設回饋失敗",
+        "failedSetDefault": "設定預設值失敗",
+        "failedUpdateStatus": "更新狀態失敗",
+        "failedLoadModels": "載入模型失敗",
+        "failedLoadStorageStats": "載入儲存統計失敗",
+        "failedLoadStorageConfig": "載入儲存配置失敗",
+        "failedDetectOrphanedFiles": "偵測孤立檔案失敗",
+        "failedCleanupOrphanedFiles": "清理孤立檔案失敗",
+        "failedDetectOrphanedRecords": "偵測孤立記錄失敗",
+        "failedCleanupOrphanedRecords": "清理孤立記錄失敗",
+        "failedLoadUsers": "載入使用者列表失敗",
+        "failedUpdateUser": "更新使用者失敗",
+        "failedCreateUser": "建立使用者失敗",
+        "failedLoadPermissions": "載入權限失敗",
+        "failedGrantPermission": "授予權限失敗",
+        "failedRevokePermission": "撤銷權限失敗",
+        "failedRevokePermissions": "撤銷權限失敗",
+        "failedUpdateQueueConfig": "更新佇列配置失敗",
+        "failedLoadQueueStatus": "載入佇列狀態失敗",
+        "failedScanDirectory": "掃描目錄失敗",
+        "failedStartBatchImport": "啟動批次匯入任務失敗",
+        "failedCheckExternalFiles": "檢查外部檔案失敗",
+        "failedStartDeleteTask": "啟動刪除任務失敗",
+        "failedStartUnbindTask": "啟動解綁任務失敗",
+        "failedStartUnbindTasks": "啟動解綁任務失敗",
+        "failedUpdateStorageConfig": "更新儲存配置失敗",
+        "failedStartMigration": "啟動遷移失敗",
+        "failedStartResetDerivedData": "啟動重設衍生資料任務失敗"
+      },
+      "fileDialog": {
+        "selectScanDirectory": "選擇要掃描 WSI 檔案的目錄",
+        "selectStorageLocation": "選擇儲存位置"
+      }
+    },
+    "resultsViewer": {
+      "loading": "載入任務中...",
+      "header": {
+        "title": "結果分析",
+        "description": "使用可自訂的指標和視覺化分析訓練任務結果",
+        "backToChat": "返回對話",
+        "backToDashboard": "返回儀表盤"
+      },
+      "tabs": {
+        "internalAnalysis": "內部分析",
+        "externalValidation": "外部驗證"
+      },
+      "empty": {
+        "noTasks": "沒有已完成的任務",
+        "noTasksDesc": "完成一個訓練任務後即可分析其結果。",
+        "noAnalysis": "暫無分析",
+        "noAnalysisDesc": "配置指標和圖表，然後執行分析。",
+        "noHistory": "此任務暫無分析歷史"
+      },
+      "external": {
+        "selectModel": "選擇模型",
+        "step1": "步驟 1",
+        "modelDescription": "選擇一個訓練好的模型進行推理。在設定中管理模型。",
+        "selectModelPlaceholder": "選擇模型...",
+        "trainedOn": "訓練資料集：{{name}}",
+        "unknown": "未知",
+        "noActiveModels": "沒有可用模型。請先訓練模型。",
+        "targetDataset": "目標資料集",
+        "step2": "步驟 2",
+        "datasetDescription": "選擇要執行推理的資料集。如需要，將自動提取特徵。",
+        "selectDatasetPlaceholder": "選擇資料集...",
+        "selectModelFirst": "請先選擇模型",
+        "slidesInfo": "{{count}} 張切片 • {{level}}",
+        "noCompatibleDatasets": "沒有相容的資料集",
+        "lookingFor": "查找條件：{{level}} 級別，{{type}} 類型",
+        "survivalType": "生存分析",
+        "classificationType": "分類",
+        "runningValidation": "正在執行驗證...",
+        "runValidation": "執行外部驗證",
+        "validationProgress": "驗證進度",
+        "status": "狀態",
+        "progress": "進度",
+        "wsiProgress": "{{processed}} / {{total}} 張 WSI",
+        "validationCompleted": "驗證完成！",
+        "validationCompletedDesc": "已生成 {{count}} 個推理結果。請在下方配置指標和圖表，然後執行分析。",
+        "validationFailed": "驗證失敗",
+        "runAnalysisOnValidation": "對驗證結果執行分析",
+        "externalResults": "外部驗證結果",
+        "emptyDescription": "在不同任務的資料上測試訓練好的模型。選擇模型來源和特徵來源，然後執行驗證以生成推理結果。",
+        "cannotValidateSameDataset": "不能在訓練所用的同一資料集上進行驗證"
+      },
+      "internal": {
+        "selectTask": "選擇任務",
+        "available": "{{count}} 個可用",
+        "selectTaskPlaceholder": "選擇一個任務...",
+        "resultsCount": "{{count}} 個結果",
+        "noResults": "無結果",
+        "noTasksAvailable": "沒有可用任務"
+      },
+      "config": {
+        "metrics": "指標",
+        "charts": "圖表",
+        "ci95": "95% CI",
+        "note": "注意：",
+        "ciNote": "使用 1000 次 Bootstrap 取樣計算 95% CI 將需要更長時間。",
+        "descriptionLabel": "描述（可選）",
+        "descriptionPlaceholder": "新增關於此分析的備註...",
+        "descriptionPlaceholderExternal": "新增關於此外部驗證分析的備註..."
+      },
+      "actions": {
+        "submitting": "提交中...",
+        "analysisSubmitted": "分析已提交",
+        "runAnalysis": "執行分析",
+        "submittedMessage": "分析已提交！請在背景任務面板中追蹤進度。",
+        "analysisFailed": "分析失敗"
+      },
+      "results": {
+        "analysisHistory": "分析歷史",
+        "latestResult": "最新結果",
+        "showLatest": "顯示最新",
+        "viewHistory": "查看歷史",
+        "samplesCount": "{{count}} 個樣本",
+        "classesCount": "{{count}} 個類別",
+        "deleteTooltip": "刪除此分析",
+        "analysisComplete": "分析完成",
+        "latestAnalysis": "最新分析"
+      },
+      "deleteModal": {
+        "title": "刪除分析",
+        "confirm": "確定要刪除此分析嗎？此操作無法撤銷。",
+        "deleting": "刪除中..."
+      },
+      "details": {
+        "kfoldTitle": "K 折交叉驗證結果（{{folds}} 折）",
+        "aggregatedStats": "彙總統計（均值 ± 標準差）",
+        "showPerFoldDetails": "顯示各折詳情",
+        "fold": "折",
+        "metrics": "指標",
+        "perClassPerformance": "各類別表現",
+        "classColumn": "類別",
+        "precision": "精確率",
+        "sensitivity": "靈敏度",
+        "specificity": "特異度",
+        "f1Score": "F1 分數",
+        "auc": "AUC",
+        "metricNames": {
+          "accuracy": "準確率",
+          "cIndex": "C 指數",
+          "integratedBrierScore": "積分 Brier 分數"
+        },
+        "support": "支持數",
+        "analysisCharts": "分析圖表",
+        "confusionMatrix": "混淆矩陣",
+        "rocCurve": "ROC 曲線",
+        "kfoldLossCurve": "K 折訓練損失曲線",
+        "trainingLossCurve": "訓練損失曲線",
+        "lossCurve": "損失曲線",
+        "kmCurve": "Kaplan-Meier 生存曲線",
+        "kmCurveLabel": "KM 曲線",
+        "metadata": "中繼資料",
+        "downloadSummary": "下載摘要 (JSON)",
+        "rawData": "原始資料",
+        "downloadFullResults": "下載完整結果 (JSON)"
+      },
+      "errors": {
+        "cannotValidateSameDataset": "不能在訓練所用的同一資料集上進行驗證",
+        "failedConnect": "無法連線到伺服器，請重試。",
+        "unknownError": "發生未知錯誤",
+        "failedDeleteAnalysis": "刪除分析失敗：{{error}}",
+        "failedDeleteAnalysisGeneric": "刪除分析失敗，請重試。"
+      }
+    },
+    "upload": {
+      "header": {
+        "title": "註冊檔案",
+        "description": "準備並註冊本地檔案。",
+        "backToChat": "返回對話",
+        "backToDashboard": "返回儀表盤",
+        "back": "返回"
+      },
+      "step1": {
+        "title": "建立資料集",
+        "description": "定義資料集名稱和分析類型以開始使用。",
+        "datasetName": "資料集名稱",
+        "datasetNamePlaceholder": "例如：肺癌試驗 2024",
+        "existingDataset": "已有資料集",
+        "orSelectExisting": "或選擇已有資料集",
+        "existingHint": "此資料集已存在，新檔案將追加到其中。",
+        "newHint": "選擇一個唯一的名稱來標識此切片集合。",
+        "analysisType": "分析類型",
+        "classification": "分類",
+        "classificationDesc": "診斷標籤與類別",
+        "survivalAnalysis": "生存分析",
+        "survivalDesc": "事件時間與狀態追蹤",
+        "dataLevel": "資料層級",
+        "caseLevel": "病例級",
+        "caseLevelDesc": "檔案按病例 ID 分組",
+        "fileLevel": "檔案級",
+        "fileLevelDesc": "每個檔案獨立",
+        "nextChooseFiles": "下一步：選擇檔案"
+      },
+      "step2": {
+        "appendingData": "追加資料",
+        "patchCollection": "圖塊集合",
+        "wsiCollection": "WSI 集合",
+        "dataset": "資料集",
+        "changeInfo": "修改資訊",
+        "labelFileReady": "標籤檔案已就緒",
+        "labelFileLoaded": "{{fileName}} 已載入，包含您的標籤和劃分資訊。",
+        "dropImageFiles": "現在將影像檔案拖放到下方以與 CSV 資料配對。",
+        "dropFilesHere": "將檔案拖放到此處開始",
+        "dropFilesDesc": "支援常見的 WSI 格式和影像檔案。",
+        "browseFiles": "瀏覽檔案",
+        "selectAll": "全選 ({{count}})",
+        "filesCount": "{{count}} 個檔案",
+        "duplicateCount": "{{count}} 個重複",
+        "edit": "編輯",
+        "delete": "刪除",
+        "dropMoreFiles": "拖放更多檔案以新增到列表",
+        "dropToAdd": "拖放以新增檔案",
+        "local": "本地",
+        "selectLocalFiles": "選擇本地檔案",
+        "dataMissing": "資料缺失",
+        "dataMissingTooltip": "缺少資料夾：請拖入 \"{{folderName}}\" 資料夾"
+      },
+      "table": {
+        "fileName": "檔案名稱",
+        "label": "標籤",
+        "eventTime": "事件時間",
+        "status": "狀態",
+        "caseId": "病例 ID",
+        "age": "年齡",
+        "gender": "性別",
+        "source": "來源",
+        "enterLabel": "輸入標籤",
+        "months": "月數",
+        "eventOption": "事件 (1)",
+        "censoredOption": "刪失 (0)",
+        "genderMale": "男",
+        "genderFemale": "女",
+        "genderUnspecified": "?",
+        "select": "選擇"
+      },
+      "bulkEdit": {
+        "title": "批次編輯",
+        "itemsSelected": "已選擇 {{count}} 項",
+        "label": "標籤",
+        "applyLabelPlaceholder": "將標籤套用到所有...",
+        "eventTime": "事件時間",
+        "monthsPlaceholder": "月數...",
+        "status": "狀態",
+        "noChange": "不更改",
+        "eventOption": "事件 (1)",
+        "censoredOption": "刪失 (0)",
+        "caseId": "病例 ID",
+        "batchIdPlaceholder": "批次 ID",
+        "age": "年齡",
+        "agePlaceholder": "年齡",
+        "source": "來源",
+        "gender": "性別",
+        "genderMale": "男性",
+        "genderFemale": "女性",
+        "genderAny": "任意",
+        "cancel": "取消",
+        "applyChanges": "套用更改"
+      },
+      "metadata": {
+        "title": "資料集中繼資料配置",
+        "subtitle": "可選：中繼資料檔案上傳",
+        "template": "範本",
+        "description": "上傳檔案以批次更新中繼資料。支援 CSV 和 Excel (.xlsx) 格式。",
+        "fileFormatTitle": "檔案格式 ({{mode}})：",
+        "fileFormatClassification": "分類",
+        "fileFormatSurvival": "生存分析",
+        "optionalFields": "可選：",
+        "removeFile": "移除檔案",
+        "ready": "就緒",
+        "errorPrefix": "錯誤：",
+        "successPrefix": "成功："
+      },
+      "footer": {
+        "readyPrefix": "準備註冊",
+        "readySuffix": "個檔案。",
+        "page": "第 {{current}} / {{total}} 頁",
+        "cancel": "取消",
+        "uploadCsv": "上傳 CSV",
+        "addToDataset": "新增到資料集",
+        "registerAll": "全部註冊"
+      },
+      "success": {
+        "title": "匯入成功",
+        "description": "資料集資訊已成功更新。",
+        "goToChat": "前往對話",
+        "goToDashboard": "前往儀表盤",
+        "uploadMore": "上傳更多",
+        "summaryTitle": "資料集摘要",
+        "targetDataset": "目標資料集",
+        "action": "操作",
+        "actionValue": "中繼資料/劃分更新 (CSV)",
+        "importResult": "匯入結果"
+      },
+      "validation": {
+        "datasetNameRequired": "資料集名稱為必填項",
+        "failedUploadCsv": "上傳 CSV 失敗",
+        "failedParseCsv": "解析 CSV 失敗：{{error}}",
+        "missingLabels": "驗證失敗：{{count}} 個檔案缺少標籤（已檢查 CSV 和介面）。請檢查檔案名稱配對。",
+        "missingSurvival": "驗證失敗：{{count}} 個檔案缺少事件資訊（已檢查 CSV 和介面）。請檢查檔案名稱配對。",
+        "cannotUploadSplitsNewDataset": "無法為新資料集上傳劃分檔案。請先上傳檔案以建立資料集，然後從資料集頁面上傳劃分。",
+        "excelMultipleSheets": "Excel 檔案包含多個工作表。請使用只有一個工作表的檔案。",
+        "fileEmptyOrNoData": "檔案為空或沒有資料列",
+        "missingFilenameColumn": "檔案必須包含 \"filename\" 欄位",
+        "missingLabelColumn": "分類模式下檔案必須包含 \"label\" 欄位",
+        "missingEventTimeColumn": "生存分析模式下檔案必須包含 \"event_time\" 欄位",
+        "missingEventStatusColumn": "生存分析模式下檔案必須包含 \"event_status\" 欄位",
+        "failedReadFile": "讀取檔案失敗：{{error}}",
+        "failedDownloadTemplate": "下載範本失敗"
+      },
+      "toast": {
+        "uploadingWarning": "檔案上傳中...請勿重新整理或關閉此頁面。您可以在通知面板中追蹤進度。",
+        "skippedUnsupported": "跳過了 {{count}} 個不支援的檔案：{{files}}。僅支援：{{extensions}}",
+        "skippedUnsupportedShort": "跳過了 {{count}} 個不支援的檔案：{{files}}"
+      }
+    },
+    "storage": {
+      "loading": {
+        "message": "正在載入儲存統計..."
+      },
+      "error": {
+        "title": "錯誤",
+        "retry": "重試"
+      },
+      "header": {
+        "title": "儲存管理",
+        "description": "監控和管理系統儲存使用",
+        "refresh": "重新整理"
+      },
+      "totalUsage": {
+        "title": "總儲存使用量",
+        "storageLocation": "儲存位置",
+        "lastUpdated": "上次更新："
+      },
+      "breakdown": {
+        "title": "儲存明細",
+        "file": "個檔案",
+        "files": "個檔案",
+        "totalFiles": "檔案總數",
+        "categories": "類別數",
+        "avgPerCategory": "每類平均"
+      },
+      "categories": {
+        "coordinates": "座標快取",
+        "masks": "組織遮罩",
+        "aiResults": "AI 結果",
+        "featuresCache": "特徵",
+        "training": "訓練特徵",
+        "models": "訓練模型",
+        "logs": "訓練日誌",
+        "wsiFiles": "原始檔案"
+      },
+      "orphaned": {
+        "title": "孤立檔案偵測",
+        "scanning": "掃描中...",
+        "scanButton": "掃描孤立檔案",
+        "filesCount": "{{count}} 個檔案",
+        "updating": "更新中...",
+        "cached": "已快取",
+        "sizeOrphaned": "{{size}} 孤立",
+        "cleanSelected": "清理已選 ({{count}})",
+        "cleanAll": "全部清理",
+        "failedToDelete": "刪除失敗：",
+        "andMore": "... 及其他 {{count}} 項",
+        "categoryInfo": "（{{count}} 個檔案，{{size}}）",
+        "categoryWsiFiles": "原始檔案",
+        "categoryCoordinates": "座標",
+        "categoryMasks": "遮罩",
+        "categoryFeaturesCache": "特徵",
+        "categoryAiResults": "AI 結果",
+        "categoryTrainingDirs": "訓練目錄",
+        "categoryLogs": "日誌"
+      }
+    },
+    "detail": {
+      "loading": {
+        "fileInfo": "正在載入檔案資訊..."
+      },
+      "toolbar": {
+        "backToChat": "返回對話",
+        "back": "返回",
+        "previousSlide": "上一張",
+        "noPreviousSlide": "沒有上一張切片",
+        "nextSlide": "下一張",
+        "noNextSlide": "沒有下一張切片"
+      },
+      "sidebar": {
+        "analysisData": "分析數據",
+        "loadingAnalysis": "正在載入分析數據...",
+        "noAttentionTitle": "暫無注意力數據",
+        "noAttentionDesc": "此切片沒有帶注意力數據的 AI 分析結果。請先執行分析任務。"
+      },
+      "heatmap": {
+        "showHeatmap": "顯示熱圖",
+        "hideHeatmap": "隱藏熱圖",
+        "opacity": "不透明度：",
+        "activation": "激活值：",
+        "lowToHigh": "低 → 高"
+      },
+      "task": {
+        "selectTask": "選擇任務",
+        "available": "{{count}} 個可用",
+        "deleteResults": "刪除 AI 結果",
+        "selectATask": "選擇一個任務...",
+        "noTasks": "暫無可用任務"
+      },
+      "kfold": {
+        "label": "K 折",
+        "folds": "({{count}} 折)"
+      },
+      "prediction": {
+        "riskGroup": "風險分組",
+        "prediction": "預測",
+        "patches": "{{count}} 個切片",
+        "patchHeatmap": "切片熱圖",
+        "riskScore": "風險評分：{{score}}"
+      },
+      "attention": {
+        "attentionClass": "注意力類別",
+        "multiClass": "多類別",
+        "selectAClass": "選擇一個類別...",
+        "classOfTotal": "類別 {{current}} / {{total}}",
+        "classLabel": "類別 {{index}}",
+        "selectClassDesc": "選擇要在切片上視覺化的注意力類別。"
+      },
+      "patchCAM": {
+        "title": "類別激活圖",
+        "description": "熱圖疊加顯示了切片中哪些區域對分類決策貢獻最大。",
+        "heatmapSize": "熱圖尺寸："
+      },
+      "topPatches": {
+        "title": "高注意力區域",
+        "badge": "前 10",
+        "exportTooltip": "匯出前 10 個切片為 ZIP"
+      },
+      "bottomPatches": {
+        "title": "低注意力區域",
+        "badge": "後 10",
+        "exportTooltip": "匯出後 10 個切片為 ZIP"
+      },
+      "deleteModal": {
+        "title": "刪除 AI 結果",
+        "chooseWhat": "選擇要刪除的內容：",
+        "deleteTaskOnly": "僅刪除選中的任務",
+        "removeResultsFor": "移除結果：{{taskName}}",
+        "deleteAllResults": "刪除所有結果",
+        "removeAllResults": "移除此切片的所有 {{count}} 個分析結果",
+        "warningLabel": "警告：",
+        "warningText": "這將永久刪除注意力權重和預測數據。此操作無法撤銷。",
+        "cancel": "取消",
+        "deleting": "刪除中...",
+        "delete": "刪除",
+        "failedDelete": "刪除結果失敗：{{error}}"
+      },
+      "zoom": {
+        "zoomIn": "放大",
+        "zoomOut": "縮小",
+        "resetView": "重設檢視",
+        "fullscreen": "全螢幕"
+      }
+    },
+    "chatComponents": {
+      "csvAction": {
+        "cannotProcess": "無法處理此檔案",
+        "suggestions": "建議：",
+        "fileReady": "檔案已準備好註冊",
+        "rows": "行",
+        "dataset": "資料集",
+        "type": "類型",
+        "labels": "標籤",
+        "processingSteps": "處理步驟：",
+        "applyCorrections": "套用欄位校正",
+        "generateSplit": "生成 7:1:2 劃分（70% 訓練，10% 驗證，20% 測試）",
+        "navigateToRegistration": "使用處理後的 CSV 導航到註冊頁面",
+        "processing": "處理中...",
+        "goToRegistration": "前往註冊頁面",
+        "uploadSuccessful": "上傳成功",
+        "wsiRegistered": "WSI 檔案已註冊。",
+        "splitApplied": "劃分配置已套用。",
+        "uploadFailed": "上傳失敗",
+        "wsiBatchRegistration": "WSI 批次註冊",
+        "splitConfiguration": "劃分配置",
+        "withCorrections": "（含校正）",
+        "correctionsToApply": "需要套用的校正：",
+        "uploading": "上傳中...",
+        "applyCorrectionsAndUpload": "套用校正並上傳",
+        "uploadToPathLab": "上傳到 PathLab"
+      },
+      "analysisConfig": {
+        "loading": "載入分析配置中...",
+        "externalValidation": "外部驗證",
+        "internalAnalysis": "內部分析",
+        "submittedTrackProgress": "分析已提交 - 在背景任務面板中追蹤進度",
+        "validateOnExternal": "在外部資料集上驗證模型",
+        "analyzePerformance": "在留出測試集上分析模型表現",
+        "validationSetup": "驗證設定",
+        "trainingTask": "訓練任務",
+        "missingModelOrDataset": "缺少模型或目標資料集配置",
+        "taskNotFound": "未找到任務",
+        "ensureModelAndDataset": "請確保已提供 model_id 和 data_task_id。",
+        "taskMayBeDeleted": "該任務可能已被刪除或未完成。",
+        "metricsToCalculate": "計算指標",
+        "chartsToGenerate": "生成圖表",
+        "computeCI": "計算 95% 信賴區間（1000 次 Bootstrap 取樣）",
+        "ciDescription": "這可能需要更長時間，但能為所有指標提供統計信賴界限。",
+        "failedToRun": "執行分析失敗",
+        "analysisComplete": "分析已成功完成！",
+        "helpfulQuestion": "您覺得 AI 對設定此分析任務有幫助嗎？",
+        "yes": "是",
+        "no": "否",
+        "thankYou": "感謝您的回饋！",
+        "submitting": "提交中...",
+        "validationStarted": "驗證已啟動",
+        "analysisSubmitted": "分析已提交",
+        "startExternalValidation": "開始外部驗證",
+        "runAnalysis": "執行分析"
+      }
+    },
+    "trainingComponents": {
+      "deleteModal": {
+        "deleteMultiple": "刪除多張切片？",
+        "deleteSlide": "刪除切片？",
+        "deleting": "刪除中...",
+        "deleteCount": "刪除 {{count}} 項",
+        "delete": "刪除",
+        "cannotUndo": "此操作無法撤銷",
+        "filename": "檔案名稱：",
+        "label": "標籤：",
+        "unknown": "未知",
+        "aboutToDelete": "您即將刪除 <strong>{{count}} 個檔案</strong>",
+        "warning": "警告：",
+        "batchWarning": "這將永久刪除所有選中的切片、其檔案、分析結果和關聯資料。",
+        "singleWarning": "這將永久刪除切片檔案、所有分析結果和關聯資料。",
+        "cancel": "取消"
+      },
+      "batchEdit": {
+        "title": "批次編輯中繼資料",
+        "updateSlides": "更新 {{count}} 張切片",
+        "keepExistingNote": "注意：留空欄位以保持現有值不變",
+        "timeMonths": "時間（月）",
+        "status": "狀態（0/1）",
+        "noChange": "不更改",
+        "labelHint": "標籤（疾病分類）",
+        "leaveEmpty": "留空以保持現有值",
+        "caseId": "病例 ID",
+        "age": "年齡",
+        "gender": "性別",
+        "source": "來源（器官/組織）",
+        "cancel": "取消",
+        "updating": "更新中...",
+        "updateCount": "更新 {{count}} 項"
+      }
+    },
+    "reportGenerator": {
+      "loading": "正在載入數據...",
+      "header": {
+        "title": "報告生成器",
+        "description": "生成並匯出分析報告",
+        "backToDashboard": "返回儀表盤"
+      },
+      "config": {
+        "title": "報告配置",
+        "reportTitle": "報告標題",
+        "exportFormat": "匯出格式",
+        "csv": "CSV",
+        "json": "JSON",
+        "markdown": "Markdown",
+        "filterByLabel": "按標籤篩選",
+        "allLabels": "所有標籤",
+        "includeInReport": "報告包含內容",
+        "metadata": "中繼資料（標題、日期、數量）",
+        "summaryStatistics": "匯總統計",
+        "detailedResults": "詳細結果表"
+      },
+      "preview": {
+        "title": "預覽",
+        "totalSlides": "總切片數",
+        "analyzed": "已分析",
+        "accuracy": "準確率"
+      },
+      "generate": {
+        "generating": "正在生成...",
+        "button": "生成並下載報告"
+      }
+    }
+  }
+}

@@ -31,6 +31,8 @@ class GlobalSettingsResponse(BaseModel):
     dashscope_api_key: str
     # Exa Search API key for web search functionality
     exa_api_key: str
+    # Tavily API key for deep research web search
+    tavily_api_key: str
     # Local vLLM settings (OpenAI-compatible server for LLM)
     local_vllm_enabled: bool
     local_vllm_base_url: str
@@ -56,6 +58,8 @@ class GlobalSettingsUpdateRequest(BaseModel):
     dashscope_api_key: Optional[str] = None
     # Exa Search API key
     exa_api_key: Optional[str] = None
+    # Tavily API key
+    tavily_api_key: Optional[str] = None
     # Local vLLM settings
     local_vllm_enabled: Optional[bool] = None
     local_vllm_base_url: Optional[str] = None

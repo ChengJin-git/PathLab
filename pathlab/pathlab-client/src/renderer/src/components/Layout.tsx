@@ -1,10 +1,12 @@
 import React, { useState, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
 import { LogOut, Settings, Camera, Trash2, User as UserIcon, Menu } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useToast } from '../contexts/ToastContext'
 import { Button } from './ui/button'
 import { BackgroundTaskPanel } from './BackgroundTaskPanel'
+import ConversationSidebar from './ConversationSidebar'
 import { InstallPWA } from './InstallPWA'
 import { DisclaimerModal } from './DisclaimerModal'
 import { MaintenanceNoticeModal } from './MaintenanceNoticeModal'
@@ -38,8 +40,8 @@ export default function Layout({ children }: LayoutProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // Check if current page is Dashboard (ChatGPT-style home page)
-  const isAIChatPage = location.pathname.startsWith('/dashboard')
+  // Check if current page is Dashboard (ChatGPT-style home page) or Deep Research
+  const isAIChatPage = location.pathname.startsWith('/dashboard') || location.pathname.startsWith('/ai-chat') || location.pathname.startsWith('/deep-research')
   const isRegisterPage = location.pathname === '/register'
 
   const handleLogout = async () => {
@@ -79,8 +81,8 @@ export default function Layout({ children }: LayoutProps) {
         const errorMessage = err instanceof ApiError
           ? err.message
           : err instanceof Error
-          ? err.message
-          : 'Failed to upload avatar'
+            ? err.message
+            : 'Failed to upload avatar'
         toastError(errorMessage)
       }
     }
@@ -102,8 +104,8 @@ export default function Layout({ children }: LayoutProps) {
       const errorMessage = err instanceof ApiError
         ? err.message
         : err instanceof Error
-        ? err.message
-        : t('layout.avatarUploadFailed')
+          ? err.message
+          : t('layout.avatarUploadFailed')
       toastError(errorMessage)
     }
   }
@@ -255,16 +257,36 @@ export default function Layout({ children }: LayoutProps) {
       </header>
 
       {/* Main Content */}
-      <main
-        className={`flex-1 ${isAIChatPage || location.pathname === '/task-setup'
-          ? 'h-full overflow-hidden'
-          : isRegisterPage
-            ? 'w-full mx-auto p-3 sm:p-6 lg:p-8 h-full overflow-y-auto'
-            : `w-full mx-auto p-3 sm:p-6 lg:p-8`
-          }`}
-      >
-        {children}
-      </main>
+      {isAIChatPage ? (
+        <div className="flex-1 flex overflow-hidden">
+          <ConversationSidebar />
+          <main className="flex-1 min-w-0 overflow-hidden relative">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={location.pathname.split('/')[1]}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15, ease: 'easeInOut' }}
+                className="h-full"
+              >
+                {children}
+              </motion.div>
+            </AnimatePresence>
+          </main>
+        </div>
+      ) : (
+        <main
+          className={`flex-1 ${location.pathname === '/task-setup'
+            ? 'h-full overflow-hidden'
+            : isRegisterPage
+              ? 'w-full mx-auto p-3 sm:p-6 lg:p-8 h-full overflow-y-auto'
+              : `w-full mx-auto p-3 sm:p-6 lg:p-8`
+            }`}
+        >
+          {children}
+        </main>
+      )}
       <InstallPWA />
 
       {/* Disclaimer Modal - shown when user needs to accept agreement */}

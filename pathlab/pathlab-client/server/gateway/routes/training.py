@@ -269,10 +269,11 @@ async def create_training_task(
             "user_id": str(user.id),
             "user_is_admin": user.is_admin(),
         }
+        # Use positional arguments to avoid conflict: submit()'s task_type (for queue) vs pipeline_kwargs' training_task_type (for coro_func)
         await task_queue.submit(
-            task_id=task_id,
-            task_type=TaskType.TRAINING,
-            coro_func=run_training_pipeline,
+            task_id,
+            TaskType.TRAINING,  # This is for queue management (training/inference)
+            run_training_pipeline,
             **pipeline_kwargs
         )
 

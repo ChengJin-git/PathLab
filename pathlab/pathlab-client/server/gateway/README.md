@@ -4,6 +4,11 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 
 ## 当前应用行为
 
+| 模式 | Gateway 端口 | 说明 |
+|------|-------------|------|
+| **网页端** (调试模式) | 5100 (固定) | `npm run dev` 启动，浏览器访问 |
+| **本地端** (打包模式) | 动态分配 | Electron 启动，通过 `PORT=xxxxx` 通知前端 |
+
 - 启动文件：`server/gateway/main.py`
 - Web 框架：FastAPI
 - 启动时会：

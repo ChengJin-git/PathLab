@@ -39,7 +39,8 @@ export async function chatWithAI(
   conversationId?: string,
   onMessageId?: (messageId: number) => void,
   signal?: AbortSignal,
-  onContextLimit?: () => void
+  onContextLimit?: () => void,
+  reportContext?: string
 ): Promise<void> {
   // Get AI configuration from localStorage
   const apiKey = localStorage.getItem('openrouter_api_key') || ''
@@ -73,7 +74,8 @@ export async function chatWithAI(
       headers,
       body: JSON.stringify({
         messages,
-        conversation_id: conversationId
+        conversation_id: conversationId,
+        ...(reportContext ? { report_context: reportContext } : {})
       }),
       signal
     })
@@ -163,6 +165,8 @@ export interface Conversation {
   conversation_id: string
   user_id: string
   title: string
+  conversation_type?: 'ai_chat' | 'deep_research'
+  report_context?: string | null
   created_at: string
   updated_at: string
 }
@@ -185,14 +189,16 @@ export interface ConversationWithMessages extends Conversation {
  * @returns Created conversation
  * @throws {ApiError} If the request fails
  */
-export async function createConversation(title?: string): Promise<Conversation> {
+export async function createConversation(title?: string, conversationType?: 'ai_chat' | 'deep_research', reportContext?: string): Promise<Conversation> {
   return apiFetch<Conversation>(
     `${API_BASE}/conversations`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        title: title || 'New Conversation'
+        title: title || 'New Conversation',
+        conversation_type: conversationType || 'ai_chat',
+        ...(reportContext ? { report_context: reportContext } : {})
       })
     },
     'Failed to create conversation'

@@ -4,6 +4,11 @@
 
 ## 当前启动方式
 
+| 模式 | 端口策略 | 启动方式 | 说明 |
+|------|---------|---------|------|
+| **网页端** (调试模式) | 固定端口 | `python main.py` 或 `npm run dev` | Gateway: 5100, Preprocessing: 5101, AI: 5102 |
+| **本地端** (打包模式) | 动态端口 | Electron 启动 | 自动寻找可用端口，通过 `PORT=xxxxx` 通知 Electron |
+
 ### 统一入口
 
 - 文件：`server/main.py`

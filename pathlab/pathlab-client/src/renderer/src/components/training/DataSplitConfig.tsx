@@ -19,8 +19,11 @@ export interface DataSplitConfigProps {
   setSplitStrategy: (strategy: SplitStrategy) => void
   kFoldSplits: number
   setKFoldSplits: (k: number) => void
+  randomSeed?: number
+  setRandomSeed?: (seed: number) => void
   kFoldValidation: KFoldValidation
   randomSplitValidation: RandomSplitValidation
+  classDistribution?: Record<string, number>
   hasPreDefinedSplits: boolean
   predefinedSplitCounts: { train: number; val: number; test: number }
   selectedDatasetId: string | null

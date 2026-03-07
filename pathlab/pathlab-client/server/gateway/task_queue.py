@@ -141,12 +141,16 @@ class TaskQueueManager:
         
         Args:
             task_id: Unique task identifier
-            task_type: Type of task (training or inference)
+            task_type: Type of task (training or inference) - for queue management
             coro_func: Async function to execute
             *args, **kwargs: Arguments to pass to the function
+                Note: kwargs may contain 'task_type' which is for coro_func (e.g., classification/survival),
+                not for queue management. This is handled correctly.
         """
         # Ensure task_id is passed to coro_func via kwargs
         # (coro_func typically expects task_id as its first argument)
+        # Note: kwargs may contain 'task_type' which is for coro_func (e.g., classification/survival),
+        # not for queue management. This is fine - we keep it in kwargs for coro_func.
         kwargs_with_task_id = {"task_id": task_id, **kwargs}
 
         queued_task = QueuedTask(

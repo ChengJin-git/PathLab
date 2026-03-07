@@ -76,6 +76,20 @@ body {
   scrollbar-width: none; /* Firefox */
 }
 
+/* ── Prose link styling ── */
+.prose a {
+  color: #667eea;
+  text-decoration: underline;
+  text-decoration-color: rgba(102, 126, 234, 0.3);
+  cursor: pointer;
+  transition: background-color 0.15s, text-decoration-color 0.15s;
+}
+
+.prose a:hover {
+  background-color: rgba(102, 126, 234, 0.08);
+  text-decoration-color: #667eea;
+}
+
 /* ── Prose table responsive design ── */
 .prose table {
   border-collapse: separate;
@@ -101,7 +115,6 @@ body {
   padding: 0.5rem 0.875rem;
   color: #334155;
   border-top: 1px solid #f1f5f9;
-  white-space: nowrap;
 }
 
 .prose tbody tr:nth-child(even) {

@@ -1158,6 +1158,7 @@
     "deleteConversation": "Delete conversation",
     "closeChatHistory": "Close chat history",
     "openChatHistory": "Open chat history",
+    "newChat": "New Chat",
     "chat": "Chat",
     "back": "Back",
     "welcomeTitle": "Hello, I'm PathLab Agent",
@@ -1225,6 +1226,12 @@
         "title": "Browse Images",
         "description": "Browse and analyze WSI or patches",
         "prompt": "I want to browse and analyze some pathology images (WSI or patches). Can you help me find the right ones based on my needs?"
+      },
+      "deepResearch": {
+        "title": "Deep Research",
+        "description": "AI-powered literature review and planning report",
+        "welcomeTitle": "Welcome to Deep Research",
+        "welcomeDescription": "Describe your research question and I will help you plan, investigate, and summarize the evidence."
       }
     },
     "taskSuccess": {

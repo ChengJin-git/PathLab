@@ -1,4 +1,5 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, session } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, session, type OpenDialogOptions } from 'electron'
+import { appendFileSync, mkdirSync, existsSync } from 'fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { startPythonSidecar, stopPythonSidecar, getGatewayPort } from './sidecar-manager'
@@ -99,6 +100,24 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  // Prevent external URLs from navigating the main window.
+  // If a link somehow bypasses e.preventDefault(), open it externally instead.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    // Allow dev server and file:// URLs (internal navigation)
+    const rendererUrl = process.env['ELECTRON_RENDERER_URL'] ?? ''
+    if (
+      url.startsWith('file://') ||
+      (rendererUrl && url.startsWith(rendererUrl)) ||
+      url.startsWith('http://localhost') ||
+      url.startsWith('http://127.0.0.1')
+    ) {
+      return
+    }
+    // External URL — open in system browser, don't navigate the app
+    event.preventDefault()
+    shell.openExternal(url)
+  })
+
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -147,21 +166,43 @@ ipcMain.handle('get-gateway-port', () => {
 
 // IPC handler for file selection
 ipcMain.handle('select-files', async (_event, options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => {
-  const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+  const dialogOptions: OpenDialogOptions = {
     title: options?.title || 'Select files',
     properties: ['openFile', 'multiSelections'],
     filters: options?.filters
-  })
+  }
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions)
   if (result.canceled) return []
   return result.filePaths
 })
 
+// IPC handler for appending Deep Research frontend logs to a local file
+ipcMain.handle('append-dr-logs', (_event, text: string) => {
+  try {
+    const logDir = join(process.cwd(), 'server', 'backend', 'logs')
+    if (!existsSync(logDir)) {
+      mkdirSync(logDir, { recursive: true })
+    }
+    const logFile = join(logDir, 'deep-research-frontend.log')
+    appendFileSync(logFile, text, 'utf-8')
+    return true
+  } catch (err) {
+    console.error('[Main] Failed to write DR frontend logs:', err)
+    return false
+  }
+})
+
 // IPC handler for directory selection
 ipcMain.handle('select-directory', async (_event, options?: { title?: string }) => {
-  const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+  const dialogOptions: OpenDialogOptions = {
     title: options?.title || 'Select directory',
     properties: ['openDirectory']
-  })
+  }
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions)
   if (result.canceled || result.filePaths.length === 0) return null
   return result.filePaths[0]
 })

@@ -4,6 +4,11 @@
 
 ## 当前实现概览
 
+| 模式 | 启动方式 | API 地址 | 说明 |
+|------|---------|---------|------|
+| **网页端** (调试模式) | `npm run dev` | `http://localhost:5100` | Vite 热更新，浏览器访问 |
+| **本地端** (打包模式) | Electron 打包 | 动态端口 | 桌面应用，离线可用 |
+
 - 技术栈：React 18 + TypeScript + Vite + Tailwind CSS
 - 路由：浏览器模式使用 `BrowserRouter`，Electron 模式使用 `HashRouter`
 - 国际化：`en-US`、`zh-CN`、`zh-HK`

@@ -11,6 +11,29 @@
 - `server/main.py`：Python sidecar 统一入口
 - `deploy/start.sh` / `deploy/hot-reload.sh`：固定端口部署脚本
 
+## 运行模式
+
+| 模式 | 启动方式 | 适用场景 | 说明 |
+|------|---------|---------|------|
+| **网页端** (调试模式) | `npm run dev` | 开发调试 | Vite 热更新，浏览器访问，固定端口 (5100, 5101, 5102) |
+| **本地端** (打包模式) | `npm run build:linux/win/mac` | 生产部署 | Electron 桌面应用，动态端口发现，离线可用 |
+
+## 功能特性
+
+- **WSI 阅片器**: 基于 OpenSeadragon 的多层级全切片图像可视化
+- **AI Chat 智能助手**: 流式 LLM 对话 (OpenRouter API)，支持会话持久化
+- **🆕 DeepResearch Agent**: 多智能体病理学研究助手 (agentv2 + LangGraph)，支持研究计划制定、执行、报告生成
+- **训练系统**: 19 种特征提取器 + 8 种 MIL 聚合器，全局特征缓存复用
+- **任务类型**: WSI 分类、Patch 分类、Patch 分割、生存预测 (Survival Prediction)
+- **推理分析**: WSI 分类预测、注意力热图可视化、Patch CAM 可视化、分割分析
+- **模型管理**: 训练模型保存、加载、默认模型切换、激活/停用
+- **外部验证**: 支持使用训练好的模型对新数据集进行外部验证
+- **存储管理**: 文件生命周期管理、级联删除、孤立文件检测、存储迁移
+- **GPU 任务队列**: 并发控制、断电恢复、任务状态实时更新 (SSE)
+- **语音识别**: 集成 DashScope Qwen3-ASR 语音转文字
+- **本地认证**: FastAPI-Users + JWT，客户端 SHA256 密码哈希
+- **零配置**: PostgreSQL 数据库 (18 个表)、动态端口发现，开箱即用
+
 ## 当前目录结构
 
 ```text

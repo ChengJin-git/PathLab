@@ -10,11 +10,6 @@ from pathlib import Path
 class Config:
     """Configuration for PathLab services"""
 
-    # ========== Default Ports (for debug mode) ==========
-    DEFAULT_GATEWAY_PORT = 6100
-    DEFAULT_PREPROCESSING_PORT = 6101
-    DEFAULT_AI_PORT = 6102
-
     # ========== Default URLs ==========
     DATABASE_URL_DEFAULT = "postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab"
     REDIS_URL_DEFAULT = "redis://localhost:6379/0"
@@ -27,9 +22,9 @@ class Config:
 
     # Service URLs (internal communication)
     # These will be dynamically set when services start with auto-discovered ports
-    AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", f"http://127.0.0.1:{DEFAULT_AI_PORT}")
-    PREPROCESSING_SERVICE_URL = os.getenv("PREPROCESSING_SERVICE_URL", f"http://127.0.0.1:{DEFAULT_PREPROCESSING_PORT}")
-    GATEWAY_SERVICE_URL = os.getenv("GATEWAY_SERVICE_URL", f"http://127.0.0.1:{DEFAULT_GATEWAY_PORT}")
+    AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://127.0.0.1:5102")
+    PREPROCESSING_SERVICE_URL = os.getenv("PREPROCESSING_SERVICE_URL", "http://127.0.0.1:5101")
+    GATEWAY_SERVICE_URL = os.getenv("GATEWAY_SERVICE_URL", "http://127.0.0.1:5100")
 
     # Cache settings
     SLIDE_CACHE_SIZE = int(os.getenv("SLIDE_CACHE_SIZE", "8"))
@@ -219,25 +214,35 @@ class Config:
                 return value
             return value.lower() in ("true", "1", "yes")
 
-        # Cloudflare Turnstile settings: prioritize environment variables over config file
-        # This allows deployment-time configuration via .env file
+        # Turnstile settings (with reCAPTCHA key fallback for backward compatibility)
         turnstile_enabled_env = os.getenv("TURNSTILE_ENABLED")
+        if turnstile_enabled_env is None:
+            turnstile_enabled_env = os.getenv("RECAPTCHA_ENABLED")
         turnstile_enabled = (
-            str_to_bool(turnstile_enabled_env) if turnstile_enabled_env is not None
-            else data.get("turnstile_enabled", False)
+            str_to_bool(turnstile_enabled_env)
+            if turnstile_enabled_env is not None
+            else data.get("turnstile_enabled", data.get("recaptcha_enabled", False))
         )
 
-        turnstile_site_key = os.getenv("TURNSTILE_SITE_KEY") or data.get("turnstile_site_key", "")
-        turnstile_secret_key = os.getenv("TURNSTILE_SECRET_KEY") or data.get("turnstile_secret_key", "")
+        turnstile_site_key = (
+            os.getenv("TURNSTILE_SITE_KEY")
+            or os.getenv("RECAPTCHA_SITE_KEY")
+            or data.get("turnstile_site_key", data.get("recaptcha_site_key", ""))
+        )
+        turnstile_secret_key = (
+            os.getenv("TURNSTILE_SECRET_KEY")
+            or os.getenv("RECAPTCHA_SECRET_KEY")
+            or data.get("turnstile_secret_key", data.get("recaptcha_secret_key", ""))
+        )
 
         return {
             "openrouter_api_key": data.get("openrouter_api_key", ""),
             "openrouter_base_url": data.get("openrouter_base_url", "https://openrouter.ai/api/v1"),
-            "openrouter_model": data.get("openrouter_model", "qwen/qwen3.5-plus-02-15"),
+            "openrouter_model": data.get("openrouter_model", "qwen/qwen3-vl-235b-a22b-instruct"),
             "huggingface_token": data.get("huggingface_token", ""),
             "dashscope_api_key": data.get("dashscope_api_key", ""),
-            # Exa Search API key for web search functionality
             "exa_api_key": data.get("exa_api_key", ""),
+            "tavily_api_key": data.get("tavily_api_key", ""),
             # Local vLLM settings (OpenAI-compatible server for LLM)
             "local_vllm_enabled": data.get("local_vllm_enabled", False),
             "local_vllm_base_url": data.get("local_vllm_base_url", "http://127.0.0.1:8000/v1"),
@@ -248,10 +253,14 @@ class Config:
             "local_asr_base_url": data.get("local_asr_base_url", "ws://127.0.0.1:8001/api-ws/v1/realtime"),
             "local_asr_model": data.get("local_asr_model", ""),
             "local_asr_api_key": data.get("local_asr_api_key", ""),
-            # Cloudflare Turnstile settings (from environment variables or config file)
+            # Cloudflare Turnstile settings
             "turnstile_enabled": turnstile_enabled,
             "turnstile_site_key": turnstile_site_key,
             "turnstile_secret_key": turnstile_secret_key,
+            # Keep legacy keys for backward compatibility with older callers
+            "recaptcha_enabled": turnstile_enabled,
+            "recaptcha_site_key": turnstile_site_key,
+            "recaptcha_secret_key": turnstile_secret_key,
         }
 
     @classmethod
@@ -263,8 +272,8 @@ class Config:
             "openrouter_model",
             "huggingface_token",
             "dashscope_api_key",
-            # Exa Search API key
             "exa_api_key",
+            "tavily_api_key",
             # Local vLLM settings
             "local_vllm_enabled",
             "local_vllm_base_url",
@@ -279,6 +288,10 @@ class Config:
             "turnstile_enabled",
             "turnstile_site_key",
             "turnstile_secret_key",
+            # Legacy reCAPTCHA settings (still accepted)
+            "recaptcha_enabled",
+            "recaptcha_site_key",
+            "recaptcha_secret_key",
         }
         # Filter to only allowed keys
         filtered = {k: v for k, v in settings.items() if k in allowed_keys}
@@ -315,29 +328,6 @@ class Config:
         """Set maintenance mode status."""
         cls._write_config({"maintenance_mode": enabled})
 
-    # ========== Maintenance Notice (Announcement) ==========
-    @classmethod
-    def get_maintenance_notice(cls) -> dict | None:
-        """Get current maintenance notice. Returns {message, updated_at} or None."""
-        config_data = cls._read_config()
-        return config_data.get("maintenance_notice", None)
-
-    @classmethod
-    def set_maintenance_notice(cls, message: str | None) -> dict | None:
-        """Set or clear maintenance notice. Returns the saved notice or None."""
-        from datetime import datetime, timezone
-        if message and message.strip():
-            notice = {
-                "message": message.strip(),
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }
-            cls._write_config({"maintenance_notice": notice})
-            return notice
-        else:
-            cls._write_config({"maintenance_notice": None})
-            return None
-
 
 # Create singleton instance
 config = Config()
-

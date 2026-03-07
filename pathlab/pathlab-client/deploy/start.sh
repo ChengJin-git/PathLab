@@ -12,6 +12,13 @@ RENDERER_DIR="$PROJECT_DIR/src/renderer"
 LOG_DIR="$PROJECT_DIR/logs"
 FRONTEND_BUILD_LOG="$LOG_DIR/frontend-build.log"
 
+# Avoid proxying localhost WebSocket/HTTP checks (ASR/vLLM health checks).
+# A SOCKS ALL_PROXY can break local ws://127.0.0.1 connections in gateway checks.
+unset ALL_PROXY
+unset all_proxy
+export NO_PROXY="${NO_PROXY:+$NO_PROXY,}127.0.0.1,localhost"
+export no_proxy="${no_proxy:+$no_proxy,}127.0.0.1,localhost"
+
 # Auto-detect Python path (conda > venv > system)
 if [ -n "$CONDA_PREFIX" ]; then
     PYTHON="$CONDA_PREFIX/bin/python3"
@@ -234,4 +241,3 @@ echo ""
 echo -e "  ${YELLOW}查看日志:${NC}  tail -f $LOG_DIR/backend.log"
 echo -e "  ${YELLOW}停止服务:${NC}  kill \$(cat $LOG_DIR/backend.pid)"
 echo ""
-

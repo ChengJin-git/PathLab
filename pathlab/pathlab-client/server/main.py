@@ -5,12 +5,12 @@ This script is the main entry point for the Python backend,
 started by Electron's sidecar-manager.
 
 It launches ALL three services:
-- Gateway (6100) - Main API gateway
-- Preprocessing (6101) - WSI processing, tile serving
-- AI (6102) - Model training and inference
+- Gateway (5100) - Main API gateway
+- Preprocessing (5101) - WSI processing, tile serving
+- AI (5102) - Model training and inference
 
 Modes:
-- Debug mode (PATHLAB_DEBUG=1): Fixed ports 6100, 6101, 6102
+- Debug mode (PATHLAB_DEBUG=1): Fixed ports 5100, 5101, 5102
 - Normal mode: Auto-discover free ports, announce to Electron
 """
 
@@ -26,33 +26,25 @@ ROOT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT_DIR))
 
 from backend.common.port_utils import find_free_port, announce_port
-from backend.common.config import Config
+
+# Default fixed ports for debug mode
+DEFAULT_GATEWAY_PORT = 5100
+DEFAULT_PREPROCESSING_PORT = 5101
+DEFAULT_AI_PORT = 5102
 
 
-
-def run_service(app_module: str, port: int, name: str, workers: int = 1, limit_max_requests: int | None = None):
+def run_service(app_module: str, port: int, name: str):
     """Run a single uvicorn service in a subprocess"""
     import uvicorn
 
-    extra = ""
-    if limit_max_requests:
-        extra = f", limit_max_requests={limit_max_requests}"
-    print(f"[{name}] Starting on port {port} with {workers} worker(s){extra}...", flush=True)
-
-    kwargs: dict = dict(
+    print(f"[{name}] Starting on port {port}...", flush=True)
+    uvicorn.run(
+        app_module,
         host="0.0.0.0",
         port=port,
         log_level="info",
         reload=False,  # Disable reload in subprocess
-        workers=workers,
     )
-    if limit_max_requests:
-        # Recycle workers after N requests to release accumulated C library memory.
-        # This is the standard defence against memory leaks in native (C/C++) extensions
-        # such as the SdpcSlide SDK which can leak internal decoder buffers.
-        kwargs["limit_max_requests"] = limit_max_requests
-
-    uvicorn.run(app_module, **kwargs)
 
 
 def main():
@@ -63,9 +55,9 @@ def main():
 
     if debug_mode:
         # Debug mode: use fixed ports
-        gateway_port = int(os.environ.get("GATEWAY_PORT", Config.DEFAULT_GATEWAY_PORT))
-        preprocessing_port = int(os.environ.get("PREPROCESSING_PORT", Config.DEFAULT_PREPROCESSING_PORT))
-        ai_port = int(os.environ.get("AI_PORT", Config.DEFAULT_AI_PORT))
+        gateway_port = int(os.environ.get("GATEWAY_PORT", DEFAULT_GATEWAY_PORT))
+        preprocessing_port = int(os.environ.get("PREPROCESSING_PORT", DEFAULT_PREPROCESSING_PORT))
+        ai_port = int(os.environ.get("AI_PORT", DEFAULT_AI_PORT))
         print("[Mode] DEBUG - Using fixed ports", flush=True)
     else:
         # Normal mode: auto-discover ports
@@ -135,16 +127,10 @@ def main():
     # Start Preprocessing service in subprocess
     # NOTE: daemon=False allows AI service to spawn DataLoader workers (num_workers > 0)
     # Daemon processes cannot have children due to Python multiprocessing restrictions
-    # Preprocessing uses multiple workers to handle concurrent tile requests
-    # Note: slide_cache/dzg_cache are process-local and won't be shared across workers
-    preprocessing_workers = int(os.environ.get("PREPROCESSING_WORKERS", "4"))
-    # Recycle preprocessing workers every 500 requests to release C library memory leaks
-    # (SdpcSlide SDK accumulates internal buffers that are not fully freed on close).
-    preprocessing_max_requests = int(os.environ.get("PREPROCESSING_MAX_REQUESTS", "500"))
     preprocessing_proc = multiprocessing.Process(
         target=run_service,
         name="Preprocessing",
-        args=("backend.preprocessing.main:app", preprocessing_port, "Preprocessing", preprocessing_workers, preprocessing_max_requests),
+        args=("backend.preprocessing.main:app", preprocessing_port, "Preprocessing"),
         daemon=False
     )
     preprocessing_proc.start()

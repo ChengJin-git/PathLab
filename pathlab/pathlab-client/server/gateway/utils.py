@@ -4,10 +4,9 @@ Utility functions for Gateway service
 import json
 import os
 from pathlib import Path
-import httpx
 from typing import Any, Mapping, Optional
 
-from Aslide import Slide
+import httpx
 from fastapi import HTTPException
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -130,6 +129,16 @@ async def require_no_active_batch_imports(db: AsyncSession, *, detail: str) -> N
     if any(task.task_type == "batch_import" for task in active_storage_tasks):
         raise HTTPException(status_code=400, detail=detail)
 
+# Optional Aslide import - gateway must stay bootable even when native
+# slide libs are unavailable on the current OS/architecture (e.g. macOS).
+try:
+    from Aslide import Slide
+    ASLIDE_AVAILABLE = True
+except Exception as e:
+    Slide = None
+    ASLIDE_AVAILABLE = False
+    logger.warning(f"Aslide unavailable ({e}) - WSI property extraction will use defaults")
+
 
 async def cancel_ai_service_training(task_id: str) -> None:
     """
@@ -144,7 +153,9 @@ async def cancel_ai_service_training(task_id: str) -> None:
             await client.delete(f"{AI_SERVICE_URL}/api/ai/training/{task_id}")
             logger.info(f"Sent cancellation request to AI service for task {task_id}")
     except httpx.TimeoutException:
-        logger.info(f"Cancellation request sent to AI service for task {task_id} (fire-and-forget)")
+        logger.info(
+            f"Cancellation request sent to AI service for task {task_id} (fire-and-forget)"
+        )
     except Exception as e:
         logger.warning(f"Failed to send cancellation to AI service for task {task_id}: {e}")
 
@@ -255,6 +266,12 @@ def extract_wsi_properties(wsi_path: str) -> dict:
     except Exception:
         file_size = 0
 
+    # If Aslide is not available, return defaults with file size
+    if not ASLIDE_AVAILABLE:
+        default_props["file_size"] = file_size
+        logger.info(f"Aslide not available, using default props for {os.path.basename(wsi_path)}")
+        return default_props
+
     try:
         with Slide(wsi_path) as slide:
             # Extract properties - start with file_size which is already retrieved
@@ -313,4 +330,3 @@ def extract_wsi_properties(wsi_path: str) -> dict:
         # Still return file_size even if slide reading failed
         default_props["file_size"] = file_size
         return default_props
-

@@ -13,7 +13,7 @@ import { TaskType, DataLevel, SplitStrategy, TrainingStatus, ExtractorOption } f
 
 export interface WSIItem {
   wsi_id: string
-  original_filename?: string
+  original_filename?: string | null
   label?: string | null
   case_id?: string | null
   age?: number | null
@@ -231,4 +231,3 @@ export interface TaskResultStepProps {
   onViewDetails: () => void
   onCreateNew: () => void
 }
-

@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 from typing import List, Dict, AsyncIterator, Optional, Any, Set
 from fastapi import APIRouter, HTTPException, Depends, Request
-from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -1940,10 +1940,13 @@ async def create_conversation(
 ):
     """Create a new conversation for the current user"""
     conversation_id = f"conv_{uuid.uuid4().hex[:16]}"
+    conv_type = req.conversation_type if req.conversation_type in ("ai_chat", "deep_research") else "ai_chat"
     conversation_data = {
         "conversation_id": conversation_id,
         "user_id": str(user.id),  # Use authenticated user's ID
         "title": req.title or "New Conversation",
+        "conversation_type": conv_type,
+        "report_context": req.report_context,
     }
     conversation = await ChatRepository.create_conversation(db, conversation_data)
     await db.commit()
@@ -2554,11 +2557,32 @@ async def chat_with_ai(
                 detected_lang = detect_language(user_text)
                 break
 
+    # Resolve report_context: prefer request field, fall back to DB record
+    report_context = req.report_context
+    if not report_context and req.conversation_id:
+        try:
+            conv_record = await ChatRepository.get_conversation(db, req.conversation_id)
+            if conv_record and conv_record.report_context:
+                report_context = conv_record.report_context
+        except Exception:
+            pass  # Non-critical: proceed without report context
+
     # Add system prompt if not present
     messages = req.messages.copy()
     if not messages or messages[0].get("role") != "system":
         # Load language-specific system prompt from template file
         base_system_prompt = get_chat_system_prompt(detected_lang)
+
+        # Append research report context to system prompt (instead of embedding
+        # it in the first user message on every turn).
+        if report_context:
+            base_system_prompt += (
+                "\n\n[Research Report Context]\n"
+                "The user started this conversation from a deep research report. "
+                "Use this context to guide your responses:\n"
+                f"{report_context}\n"
+                "[/Research Report Context]"
+            )
 
         system_prompt = {
             "role": "system",

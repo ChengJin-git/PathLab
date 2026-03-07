@@ -46,7 +46,7 @@ export default defineConfig({
           enabled: true
         },
         workbox: {
-          maximumFileSizeToCacheInBytes: 10 * 1024 * 1024 // 10 MB
+          maximumFileSizeToCacheInBytes: 20 * 1024 * 1024 // 20 MB
         },
         includeAssets: ['favicon.ico', 'images/*.png'],
         manifest: {
