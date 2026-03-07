@@ -3,6 +3,7 @@
 
 import { memo, useCallback, useEffect, useState } from "react";
 
+import { useTranslations } from "../../lib/deep-research/i18n";
 import { cn } from "../../lib/utils";
 
 import { Tooltip } from "./tooltip";
@@ -22,6 +23,8 @@ function Image({
   alt: string;
   fallback?: React.ReactNode;
 }) {
+  // @ts-ignore - i18n shim
+  const t = useTranslations("chat.research");
   const [isError, setIsError] = useState(false);
 
   useEffect(() => {
@@ -44,7 +47,7 @@ function Image({
       {isError || !src ? (
         fallback
       ) : (
-        <Tooltip title={alt ?? "No caption"}>
+        <Tooltip title={alt ?? t("noCaption")}>
           <img
             className={cn(
               "size-full object-cover",

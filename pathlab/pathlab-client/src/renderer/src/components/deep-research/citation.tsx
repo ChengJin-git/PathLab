@@ -9,6 +9,7 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "../ui/hover-card";
+import { useTranslations } from "../../lib/deep-research/i18n";
 import { cn } from "../../lib/utils";
 import type { Citation } from "../../lib/deep-research/messages";
 
@@ -173,6 +174,8 @@ interface CitationCardProps {
  * Card component displaying citation metadata.
  */
 export function CitationCard({ citation, compact = false }: CitationCardProps) {
+  // @ts-ignore - i18n shim
+  const t = useTranslations("chat.research");
   const {
     title,
     url,
@@ -243,7 +246,7 @@ export function CitationCard({ citation, compact = false }: CitationCardProps) {
       {/* Source type badge */}
       {source_type && (
         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-secondary text-secondary-foreground">
-          {source_type === "web_search" ? "Web" : source_type}
+          {source_type === "web_search" ? t("sourceTypeWeb") : source_type}
         </span>
       )}
 
@@ -266,16 +269,20 @@ interface CitationListProps {
  */
 export function CitationList({
   citations,
-  title = "Sources",
+  title,
   className,
 }: CitationListProps) {
+  // @ts-ignore - i18n shim
+  const t = useTranslations("chat.research");
+  const resolvedTitle = title ?? t("citationSources");
+
   if (!citations || citations.length === 0) {
     return null;
   }
 
   return (
     <div className={cn("space-y-3", className)}>
-      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+      <h3 className="text-sm font-semibold text-foreground">{resolvedTitle}</h3>
       <div className="space-y-2">
         {citations.map((citation, index) => (
           <div

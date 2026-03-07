@@ -12,6 +12,7 @@ import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 
 import { Button } from "../ui/button";
+import { useTranslations } from "../../lib/deep-research/i18n";
 import { rehypeSplitWordsIntoSpans } from "../../lib/deep-research/rehype";
 import { katexOptions } from "../../lib/deep-research/markdown/katex";
 import { autoFixMarkdown, normalizeMathForDisplay } from "../../lib/deep-research/utils/markdown";
@@ -225,9 +226,11 @@ export function Markdown({
 }
 
 function CopyButton({ content }: { content: string }) {
+  // @ts-ignore - i18n shim
+  const t = useTranslations("chat.research");
   const [copied, setCopied] = useState(false);
   return (
-    <Tooltip title="Copy">
+    <Tooltip title={t("copy")}>
       <Button
         variant="outline"
         size="sm"
