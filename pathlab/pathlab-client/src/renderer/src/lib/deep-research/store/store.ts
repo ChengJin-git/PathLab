@@ -3960,6 +3960,22 @@ export function useMessageIds() {
   return useStore(useShallow((state) => state.messageIds));
 }
 
+export function useDeepResearchConversationLocked() {
+  return useStore((state) => {
+    return state.researchIds.some((researchId) => {
+      const reportId = state.researchReportIds.get(researchId);
+      const runStatus = state.researchRunStatus.get(researchId);
+      const reportMessage = reportId ? state.messages.get(reportId) : undefined;
+      const hasFinalizedReport =
+        !!reportMessage &&
+        !reportMessage.isStreaming &&
+        (reportMessage.content ?? "").trim().length > 0;
+
+      return hasFinalizedReport || (runStatus === "success" && !!reportId);
+    });
+  });
+}
+
 export function useRenderableMessageIds() {
   return useStore(
     useShallow((state) => {

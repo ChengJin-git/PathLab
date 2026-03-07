@@ -17,7 +17,7 @@ import { TaskHistoryCard, parseTaskHistoryConfig, type CachedTaskData, removeTas
 import { removeVoiceControlBlock } from "../../../../components/chat/VoiceControlBlock";
 import { Markdown } from "../../../../components/deep-research/markdown";
 import type { Message } from "../../../../lib/deep-research/messages";
-import { useStore } from "../../../../lib/deep-research/store";
+import { useDeepResearchConversationLocked, useStore } from "../../../../lib/deep-research/store";
 import { stripResearchMeta } from "../../../../lib/deep-research/utils";
 import { cn } from "../../../../lib/utils";
 
@@ -133,6 +133,7 @@ export function AssistantStructuredContent({
         [message.content],
     );
     const responding = useStore((state) => state.responding);
+    const conversationLocked = useDeepResearchConversationLocked();
     const deepResearchConversationId = useStore((state) => state.conversationId);
 
     let displayContent = message.content ?? "";
@@ -405,7 +406,7 @@ export function AssistantStructuredContent({
                 <OptionButtons
                     options={options}
                     onSelect={(text) => onSendMessage?.(text)}
-                    disabled={responding}
+                    disabled={responding || conversationLocked}
                 />
             )}
             {taskConfig && (
