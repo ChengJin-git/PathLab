@@ -1,19 +1,20 @@
 // Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 // SPDX-License-Identifier: MIT
 
-import { Loader2, Mic, MicOff, Paperclip, Pencil, Send, Square, X } from "lucide-react";
+import { Pencil, X } from "lucide-react";
 import { type ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { AudioVisualizer } from "../../../components/common/AudioVisualizer";
+import { ChatInputShell } from "../../../components/common/ChatInputShell";
+import { VoiceSessionOverlay } from "../../../components/common/VoiceSessionOverlay";
 import MessageInput, {
   type MessageInputRef,
 } from "../../../components/deep-research/message-input";
 import { useConfig } from "../../../lib/deep-research/api/hooks";
 import { useTranslations } from "../../../lib/deep-research/i18n";
 import type { Option, Resource } from "../../../lib/deep-research/messages";
+import { useStore } from "../../../lib/deep-research/store";
 import { useVoiceSession } from "../../../lib/useVoiceSession";
-import { cn } from "../../../lib/utils";
 
 export function InputBox({
   className,
@@ -31,6 +32,7 @@ export function InputBox({
     options?: {
       interruptFeedback?: string;
       resources?: Array<Resource>;
+      voiceSessionActive?: boolean;
     },
   ) => void;
   onCancel?: () => void;
@@ -44,6 +46,17 @@ export function InputBox({
   const [currentPrompt, setCurrentPrompt] = useState("");
   const [voiceAwaitingResponse, setVoiceAwaitingResponse] = useState(false);
   const [voiceResponseStarted, setVoiceResponseStarted] = useState(false);
+  const generationPhase = useStore((state) => state.generationPhase);
+  const latestAssistantContent = useStore((state) => {
+    for (let i = state.messageIds.length - 1; i >= 0; i -= 1) {
+      const messageId = state.messageIds[i];
+      const message = messageId ? state.messages.get(messageId) : undefined;
+      if (message?.role === "assistant") {
+        return message.content ?? "";
+      }
+    }
+    return "";
+  });
 
   // Auto-focus when feedback is set (e.g. user clicked "Edit plan")
   useEffect(() => {
@@ -72,12 +85,13 @@ export function InputBox({
           onSend(message, {
             interruptFeedback: feedback?.option.value,
             resources,
+            voiceSessionActive: voiceSessionActive,
           });
           onRemoveFeedback?.();
         }
       }
     },
-    [responding, onCancel, onSend, feedback, onRemoveFeedback],
+    [responding, onCancel, onSend, feedback, onRemoveFeedback, voiceSessionActive],
   );
 
   const {
@@ -87,6 +101,7 @@ export function InputBox({
     toggle: toggleVoiceSession,
     stop: stopVoiceSession,
     forceSend: voiceForceSend,
+    notifyResponseComplete: notifyVoiceResponseComplete,
   } = useVoiceSession({
     onTranscript: (transcript) => {
       const next = currentPrompt.trim().length
@@ -124,9 +139,15 @@ export function InputBox({
     if (!responding && voiceResponseStarted) {
       setVoiceAwaitingResponse(false);
       setVoiceResponseStarted(false);
-      stopVoiceSession();
+      notifyVoiceResponseComplete(latestAssistantContent);
     }
-  }, [responding, stopVoiceSession, voiceAwaitingResponse, voiceResponseStarted]);
+  }, [
+    latestAssistantContent,
+    notifyVoiceResponseComplete,
+    responding,
+    voiceAwaitingResponse,
+    voiceResponseStarted,
+  ]);
 
   const handleVoiceSessionToggle = useCallback(() => {
     if (voiceSessionActive) {
@@ -180,71 +201,34 @@ export function InputBox({
   }, [appendToInput]);
 
   return (
-    <div className={cn("relative group", className)}>
-      {feedback && (
-        <div className="mb-2 flex items-center gap-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800 animate-in fade-in slide-in-from-bottom-2 duration-200">
+    <ChatInputShell
+      className={className}
+      topContent={feedback ? (
+        <div className="mb-2 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 animate-in fade-in slide-in-from-bottom-2 duration-200">
           <Pencil className="h-3.5 w-3.5 shrink-0" />
           <span className="flex-1">{feedback.option.text}</span>
           <button
             type="button"
-            className="shrink-0 rounded-full p-0.5 hover:bg-amber-200/60 transition-colors"
+            className="shrink-0 rounded-full p-0.5 transition-colors hover:bg-amber-200/60"
             onClick={() => onRemoveFeedback?.()}
           >
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
-      )}
-      <div
-        className={cn(
-          "relative flex min-h-[56px] items-center border bg-white/80 py-1.5 pl-4 pr-[104px] sm:pr-[120px] backdrop-blur-xl transition-all duration-300 rounded-[28px]",
-          feedback
-            ? "border-amber-300 shadow-[0_8px_32px_rgba(0,0,0,0.12)]"
-            : (realtimeIsRecording || realtimeIsConnecting || voiceSessionActive)
-              ? "border-primary-300 shadow-[0_0_0_4px_rgba(102,126,234,0.15)] bg-white/90"
-              : "border-gray-200/50 hover:border-gray-300/80 hover:shadow-[0_8px_40px_rgba(0,0,0,0.15)] shadow-[0_8px_32px_rgba(0,0,0,0.12)]",
-        )}
-      >
+      ) : null}
+      shellTone={feedback ? "feedback" : voiceSessionActive ? "voice" : "default"}
+      editor={(
         <MessageInput
-          className={cn(
-            "min-h-[52px] w-full px-0 pt-0 transition-opacity duration-200",
-            voiceSessionActive && "pointer-events-none opacity-0",
-          )}
+          className="min-h-[52px] w-full px-0 pt-0"
           placeholder={feedback ? t("modifyPlanPlaceholder") : undefined}
           ref={inputRef}
           config={config}
           onEnter={handleSendMessage}
           onChange={setCurrentPrompt}
         />
-        {(realtimeIsRecording || realtimeIsConnecting) && (
-          <div className="pointer-events-none absolute left-4 right-[140px] top-0 bottom-0 flex items-center">
-            {realtimePartialText ? (
-              <div className="flex w-full items-center gap-2 overflow-hidden text-[15px] leading-relaxed text-gray-700">
-                <span className="truncate">{realtimePartialText}</span>
-                <span className="inline-flex flex-shrink-0 gap-0.5">
-                  <span className="h-1.5 w-1.5 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: "0ms" }} />
-                  <span className="h-1.5 w-1.5 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: "150ms" }} />
-                  <span className="h-1.5 w-1.5 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: "300ms" }} />
-                </span>
-              </div>
-            ) : (
-              <AudioVisualizer
-                stream={realtimeMediaStream}
-                isActive={realtimeIsRecording}
-                className="h-12 w-full opacity-80"
-              />
-            )}
-          </div>
-        )}
-        {voiceSessionActive && !realtimeIsRecording && !realtimeIsConnecting && voiceAwaitingResponse && (
-          <div className="pointer-events-none absolute left-4 right-[140px] top-0 bottom-0 flex items-center justify-center">
-            <span className="flex items-center gap-2 text-sm font-medium text-primary-600 animate-pulse">
-              <div className="h-2 w-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: "0ms" }} />
-              <div className="h-2 w-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: "150ms" }} />
-              <div className="h-2 w-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: "300ms" }} />
-              {tGlobal("aiChat.thinking")}
-            </span>
-          </div>
-        )}
+      )}
+      editorHidden={voiceSessionActive}
+      hiddenInput={(
         <input
           ref={fileInputRef}
           type="file"
@@ -253,90 +237,40 @@ export function InputBox({
           onChange={handleFileSelect}
           className="hidden"
         />
-        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1 sm:gap-1.5">
-          {!realtimeIsRecording && !realtimeIsConnecting && !voiceSessionActive && (
-            <button
-              type="button"
-              className="rounded-full p-2 text-gray-400 transition-all hover:bg-gray-100 hover:text-gray-600 active:scale-95 sm:p-2.5 disabled:opacity-50"
-              title={tGlobal("aiChat.attachFile")}
-              aria-label={tGlobal("aiChat.attachFile")}
-              onClick={() => fileInputRef.current?.click()}
-              disabled={responding}
-            >
-              <Paperclip className="h-4 w-4 sm:h-5 sm:w-5" />
-            </button>
-          )}
-          <button
-            type="button"
-            className={cn(
-              "rounded-full p-2 transition-all duration-300 active:scale-95 sm:p-2.5",
-              realtimeIsRecording
-                ? "bg-red-50 text-red-500 hover:bg-red-100"
-                : realtimeIsConnecting
-                  ? "bg-primary-50 text-primary-500"
-                  : voiceSessionActive
-                    ? "bg-primary-500 text-white shadow-md"
-                    : "text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50",
-            )}
-            title={voiceSessionActive || realtimeIsRecording ? tGlobal("aiChat.stopVoiceInput") : tGlobal("aiChat.voiceInput")}
-            aria-label={voiceSessionActive || realtimeIsRecording ? tGlobal("aiChat.stopVoiceInput") : tGlobal("aiChat.voiceInput")}
-            onClick={handleVoiceSessionToggle}
-            disabled={responding && !voiceSessionActive}
-          >
-            {realtimeIsConnecting ? (
-              <Loader2 className="h-4 w-4 animate-spin sm:h-5 sm:w-5" />
-            ) : realtimeIsRecording ? (
-              <Square className="h-3.5 w-3.5 sm:h-4 sm:w-4" fill="currentColor" />
-            ) : voiceSessionActive ? (
-              <MicOff className="h-4 w-4 sm:h-5 sm:w-5" />
-            ) : (
-              <Mic className="h-4 w-4 sm:h-5 sm:w-5" />
-            )}
-          </button>
-          {responding ? (
-            <button
-              type="button"
-              className="rounded-full p-2 sm:p-2.5 transition-all duration-300 shadow-sm bg-gray-800 text-white hover:bg-gray-900 shadow-md active:scale-95"
-              onClick={handleCancelResponse}
-            >
-              <Square className="h-3.5 w-3.5 sm:h-4 sm:w-4" fill="currentColor" />
-            </button>
-          ) : realtimeIsRecording ? (
-            <button
-              type="button"
-              className={cn(
-                "rounded-full p-2 sm:p-2.5 transition-all duration-300 shadow-sm",
-                !realtimePartialText?.trim()
-                  ? "cursor-not-allowed bg-gray-100 text-gray-300"
-                  : "bg-primary-600 text-white shadow-md hover:bg-primary-700 active:scale-95",
-              )}
-              disabled={!realtimePartialText?.trim()}
-              aria-label={tGlobal("aiChat.sendVoiceMessage")}
-              onClick={() => {
-                setVoiceAwaitingResponse(true);
-                setVoiceResponseStarted(false);
-                voiceForceSend(realtimePartialText);
-              }}
-            >
-              <Send className="h-4 w-4 sm:h-5 sm:w-5" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className={cn(
-                "rounded-full p-2 sm:p-2.5 transition-all duration-300 shadow-sm",
-                currentPrompt.trim().length === 0
-                  ? "cursor-not-allowed bg-gray-100 text-gray-300"
-                  : "bg-primary-600 text-white shadow-md hover:bg-primary-700 active:scale-95",
-              )}
-              disabled={currentPrompt.trim().length === 0}
-              onClick={() => inputRef.current?.submit()}
-            >
-              <Send className="h-4 w-4 sm:h-5 sm:w-5" />
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
+      )}
+      overlay={(
+        <VoiceSessionOverlay
+          partialText={realtimePartialText}
+          mediaStream={realtimeMediaStream}
+          isRecording={realtimeIsRecording}
+          isConnecting={realtimeIsConnecting}
+          isThinking={voiceSessionActive && generationPhase === "thinking"}
+          thinkingLabel={tGlobal("aiChat.thinking")}
+        />
+      )}
+      showAttachButton={!realtimeIsRecording && !realtimeIsConnecting && !voiceSessionActive}
+      onAttachClick={() => fileInputRef.current?.click()}
+      attachLabel={tGlobal("aiChat.attachFile")}
+      attachDisabled={responding}
+      voiceButtonState={realtimeIsRecording ? "recording" : realtimeIsConnecting ? "connecting" : voiceSessionActive ? "active" : "idle"}
+      onVoiceToggle={handleVoiceSessionToggle}
+      voiceLabel={tGlobal("aiChat.voiceInput")}
+      stopVoiceLabel={tGlobal("aiChat.stopVoiceInput")}
+      voiceDisabled={responding && !voiceSessionActive}
+      responding={responding}
+      onStopResponding={handleCancelResponse}
+      stopRespondingLabel={tGlobal("aiChat.stopGenerating")}
+      showVoiceSendButton={realtimeIsRecording}
+      onVoiceSend={() => {
+        setVoiceAwaitingResponse(true);
+        setVoiceResponseStarted(false);
+        voiceForceSend(realtimePartialText);
+      }}
+      voiceSendDisabled={!realtimePartialText?.trim()}
+      voiceSendLabel={tGlobal("aiChat.sendVoiceMessage")}
+      onSend={() => inputRef.current?.submit()}
+      sendDisabled={currentPrompt.trim().length === 0}
+      sendLabel={tGlobal("aiChat.sendMessage")}
+    />
   );
 }

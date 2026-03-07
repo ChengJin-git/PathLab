@@ -16,6 +16,7 @@ class State(MessagesState):
 
     # Runtime Variables
     locale: str = "en-US"
+    voice_session_active: bool = False
     research_topic: str = ""
     clarified_research_topic: str = (
         ""  # Complete/final clarified topic with all clarification rounds

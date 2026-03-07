@@ -12,6 +12,7 @@ import { OptionButtons, parseOptions, removeOptionsBlock } from "../../../../com
 import { QuickAnalysisViewer, parseQuickAnalysisConfig, type CachedAnalysisData, removeQuickAnalysisConfigBlock } from "../../../../components/chat/QuickAnalysisViewer";
 import { TaskConfigCard, parseTaskConfig, removeTaskConfigBlock } from "../../../../components/chat/TaskConfigCard";
 import { TaskHistoryCard, parseTaskHistoryConfig, type CachedTaskData, removeTaskHistoryConfigBlock } from "../../../../components/chat/TaskHistoryCard";
+import { removeVoiceControlBlock } from "../../../../components/chat/VoiceControlBlock";
 import { Markdown } from "../../../../components/deep-research/markdown";
 import type { Message } from "../../../../lib/deep-research/messages";
 import { useStore } from "../../../../lib/deep-research/store";
@@ -143,6 +144,7 @@ export function AssistantStructuredContent({
     if (trainingChatLink) {
         displayContent = removeTrainingChatLinkBlock(displayContent);
     }
+    displayContent = removeVoiceControlBlock(displayContent);
 
     // If the message only contained a training chat link (no other content or cards), render nothing.
     const hasVisibleContent =

@@ -18,11 +18,12 @@ import { useVoiceSession } from '../lib/useVoiceSession'
 import { formatFileSize } from '../lib/utils'
 import * as XLSX from 'xlsx'
 import {
-  Send, Loader2, Bot, User, Trash2,
-  Mic, MicOff, Paperclip, X, Sparkles, FileSpreadsheet,
-  ThumbsUp, ThumbsDown, Square, ChevronRight
+  Bot, User, Trash2,
+  Paperclip, X, Sparkles, FileSpreadsheet,
+  ThumbsUp, ThumbsDown, ChevronRight
 } from 'lucide-react'
-import { AudioVisualizer } from '../components/common/AudioVisualizer'
+import { ChatInputShell } from '../components/common/ChatInputShell'
+import { VoiceSessionOverlay } from '../components/common/VoiceSessionOverlay'
 
 // Extracted modules
 import AssistantMessage, { parseSubmitTask, parseCancelTaskNow, isInternalOnlyMessage, removeContextLimitBlock } from '../components/chat/AssistantMessage'
@@ -937,7 +938,7 @@ export default function AIChatPage() {
               : m
           )
         )
-      }, reportContextRef.current)
+      }, reportContextRef.current, { voiceSessionActive })
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         if (isTimeoutAbort) {
@@ -1033,7 +1034,7 @@ export default function AIChatPage() {
         options?.onFinally?.()
       }
     }
-  }, [t])
+  }, [t, voiceSessionActive])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -2204,19 +2205,9 @@ export default function AIChatPage() {
         <div className="fixed bottom-6 left-0 right-0 px-4 z-30 pointer-events-none lg:left-[var(--sidebar-width,288px)] transition-[left] duration-300 ease-in-out">
           <div className="max-w-4xl mx-auto pointer-events-auto">
             <form ref={formRef} id="chat-form" onSubmit={handleSubmit} className="relative group">
-              <div className={`
-                relative flex flex-col
-                bg-white/80 backdrop-blur-xl
-                rounded-[28px] shadow-[0_8px_32px_rgba(0,0,0,0.12)]
-                border transition-all duration-300
-                ${voiceSessionActive
-                  ? 'border-primary-300 shadow-[0_0_0_4px_rgba(102,126,234,0.15)] bg-white/90'
-                  : 'border-gray-200/50 hover:border-gray-300/80 hover:shadow-[0_8px_40px_rgba(0,0,0,0.15)]'
-                }
-                min-h-[56px] py-1.5
-              `}>
-                {/* Inline Attachments Preview */}
-                {(imageAttachments.length > 0 || fileAttachments.length > 0) && (
+              <ChatInputShell
+                shellTone={voiceSessionActive ? 'voice' : 'default'}
+                attachmentsPreview={(imageAttachments.length > 0 || fileAttachments.length > 0) ? (
                   <div className="flex flex-wrap gap-2 px-4 pt-2.5 pb-1 animate-in fade-in slide-in-from-bottom-1 duration-200">
                     {imageAttachments.map((attachment) => (
                       <div key={attachment.id} className="relative group/thumb flex-shrink-0">
@@ -2257,29 +2248,24 @@ export default function AIChatPage() {
                       </div>
                     ))}
                   </div>
-                )}
-
-                <div className="relative flex items-center min-h-[52px] pl-4 pr-[104px] sm:pr-[120px]">
+                ) : null}
+                editor={(
                   <textarea
                     ref={textareaRef}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder={voiceSessionActive ? t('aiChat.listening') : t('aiChat.inputPlaceholder')}
-                    className={`
-                    w-full bg-transparent border-none focus:outline-none resize-none 
-                    text-gray-900 placeholder-gray-400 transition-all 
-                    text-[15px] leading-relaxed py-2.5 scrollbar-hide
-                    ${(realtimeIsRecording || voiceSessionActive) ? 'opacity-0' : 'opacity-100'}
-                  `}
+                    placeholder={t('aiChat.inputPlaceholder')}
+                    className="w-full resize-none border-none bg-transparent py-2.5 text-[15px] leading-relaxed text-gray-900 placeholder-gray-400 focus:outline-none scrollbar-hide"
                     rows={1}
                     style={{ maxHeight: '150px' }}
                     disabled={isGenerating}
                     autoFocus
                     aria-label={t('aiChat.messageInput')}
                   />
-
-                  {/* Hidden file input */}
+                )}
+                editorHidden={voiceSessionActive}
+                hiddenInput={(
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -2288,130 +2274,37 @@ export default function AIChatPage() {
                     onChange={handleFileSelect}
                     className="hidden"
                   />
-
-                  {/* Voice Visualizer Overlay with Realtime Transcript */}
-                  {(realtimeIsRecording || realtimeIsConnecting) && (
-                    <div className="absolute left-4 right-[140px] top-0 bottom-0 flex items-center pointer-events-none">
-                      {realtimePartialText ? (
-                        // Show realtime transcript when available
-                        <div className="w-full flex items-center gap-2 text-gray-700 text-[15px] leading-relaxed overflow-hidden">
-                          <span className="truncate">{realtimePartialText}</span>
-                          <span className="flex-shrink-0 inline-flex gap-0.5">
-                            <span className="w-1.5 h-1.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                            <span className="w-1.5 h-1.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                            <span className="w-1.5 h-1.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                          </span>
-                        </div>
-                      ) : (
-                        // Show audio visualizer when no transcript yet
-                        <AudioVisualizer stream={realtimeMediaStream} isActive={realtimeIsRecording} className="w-full h-12 opacity-80" />
-                      )}
-                    </div>
-                  )}
-
-                  {/* Voice Session Waiting State */}
-                  {voiceSessionActive && !realtimeIsRecording && isLoading && (
-                    <div className="absolute left-4 right-[140px] top-0 bottom-0 flex items-center justify-center pointer-events-none">
-                      <span className="flex items-center gap-2 text-sm text-primary-600 font-medium animate-pulse">
-                        <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '0ms' }} />
-                        <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '150ms' }} />
-                        <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '300ms' }} />
-                        {t('aiChat.thinking')}
-                      </span>
-                    </div>
-                  )}
-
-
-                  <div className="absolute right-1.5 bottom-1.5 flex items-center gap-1 sm:gap-1.5">
-                    {/* File Upload - hidden during voice recording */}
-                    {!realtimeIsRecording && !realtimeIsConnecting && !voiceSessionActive && (
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={isGenerating}
-                        className="p-2 sm:p-2.5 rounded-full transition-all text-gray-400 hover:text-gray-600 hover:bg-gray-100 active:scale-95 disabled:opacity-50"
-                        aria-label={t('aiChat.attachFile')}
-                      >
-                        <Paperclip className="w-4 h-4 sm:w-5 sm:h-5" />
-                      </button>
-                    )}
-
-                    {/* Voice Button */}
-                    <button
-                      type="button"
-                      onClick={toggleVoiceSession}
-                      disabled={isGenerating && !voiceSessionActive}
-                      aria-label={voiceSessionActive || realtimeIsRecording ? t('aiChat.stopVoiceInput') : t('aiChat.voiceInput')}
-                      className={`
-                      p-2 sm:p-2.5 rounded-full transition-all duration-300 active:scale-95
-                      ${realtimeIsRecording
-                          ? 'bg-red-50 text-red-500 hover:bg-red-100'
-                          : realtimeIsConnecting
-                            ? 'bg-primary-50 text-primary-500'
-                            : voiceSessionActive
-                              ? 'bg-primary-500 text-white shadow-md'
-                              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-                        }
-                    `}
-                    >
-                      {realtimeIsConnecting ? (
-                        <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
-                      ) : realtimeIsRecording ? (
-                        <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="currentColor" />
-                      ) : voiceSessionActive ? (
-                        <MicOff className="w-4 h-4 sm:w-5 sm:h-5" />
-                      ) : (
-                        <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
-                      )}
-                    </button>
-
-                    {/* Send / Stop Button */}
-                    {isGenerating ? (
-                      <button
-                        type="button"
-                        onClick={handleStopGeneration}
-                        className="p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm bg-gray-800 text-white hover:bg-gray-900 shadow-md active:scale-95"
-                        title={t('aiChat.stopGenerating')}
-                        aria-label={t('aiChat.stopGenerating')}
-                      >
-                        <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="currentColor" />
-                      </button>
-                    ) : realtimeIsRecording ? (
-                      /* Force-send partial transcript during recording */
-                      <button
-                        type="button"
-                        onClick={() => voiceForceSend(realtimePartialText)}
-                        disabled={!realtimePartialText?.trim()}
-                        aria-label={t('aiChat.sendVoiceMessage')}
-                        className={`
-                        p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm
-                        ${!realtimePartialText?.trim()
-                            ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
-                            : 'bg-primary-600 text-white hover:bg-primary-700 shadow-md active:scale-95'
-                          }
-                      `}
-                      >
-                        <Send className="w-4 h-4 sm:w-5 sm:h-5" />
-                      </button>
-                    ) : (
-                      <button
-                        type="submit"
-                        disabled={!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0}
-                        aria-label={t('aiChat.sendMessage')}
-                        className={`
-                          p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm
-                          ${!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0
-                            ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
-                            : 'bg-primary-600 text-white hover:bg-primary-700 shadow-md active:scale-95'
-                          }
-                      `}
-                      >
-                        <Send className="w-4 h-4 sm:w-5 sm:h-5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
+                )}
+                overlay={(
+                  <VoiceSessionOverlay
+                    partialText={realtimePartialText}
+                    mediaStream={realtimeMediaStream}
+                    isRecording={realtimeIsRecording}
+                    isConnecting={realtimeIsConnecting}
+                    isThinking={voiceSessionActive && !realtimeIsRecording && isLoading}
+                    thinkingLabel={t('aiChat.thinking')}
+                  />
+                )}
+                showAttachButton={!realtimeIsRecording && !realtimeIsConnecting && !voiceSessionActive}
+                onAttachClick={() => fileInputRef.current?.click()}
+                attachLabel={t('aiChat.attachFile')}
+                attachDisabled={isGenerating}
+                voiceButtonState={realtimeIsRecording ? 'recording' : realtimeIsConnecting ? 'connecting' : voiceSessionActive ? 'active' : 'idle'}
+                onVoiceToggle={toggleVoiceSession}
+                voiceLabel={t('aiChat.voiceInput')}
+                stopVoiceLabel={t('aiChat.stopVoiceInput')}
+                voiceDisabled={isGenerating && !voiceSessionActive}
+                responding={isGenerating}
+                onStopResponding={handleStopGeneration}
+                stopRespondingLabel={t('aiChat.stopGenerating')}
+                showVoiceSendButton={realtimeIsRecording}
+                onVoiceSend={() => voiceForceSend(realtimePartialText)}
+                voiceSendDisabled={!realtimePartialText?.trim()}
+                voiceSendLabel={t('aiChat.sendVoiceMessage')}
+                sendDisabled={!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0}
+                sendLabel={t('aiChat.sendMessage')}
+                sendButtonType="submit"
+              />
             </form>
 
             <div className="mt-2 text-center text-xs text-gray-400/80 font-medium px-4 leading-relaxed">

@@ -40,7 +40,10 @@ export async function chatWithAI(
   onMessageId?: (messageId: number) => void,
   signal?: AbortSignal,
   onContextLimit?: () => void,
-  reportContext?: string
+  reportContext?: string,
+  requestOptions?: {
+    voiceSessionActive?: boolean
+  }
 ): Promise<void> {
   // Get AI configuration from localStorage
   const apiKey = localStorage.getItem('openrouter_api_key') || ''
@@ -75,6 +78,7 @@ export async function chatWithAI(
       body: JSON.stringify({
         messages,
         conversation_id: conversationId,
+        ...(requestOptions?.voiceSessionActive ? { voice_session_active: true } : {}),
         ...(reportContext ? { report_context: reportContext } : {})
       }),
       signal

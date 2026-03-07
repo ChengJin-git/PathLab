@@ -30,6 +30,7 @@ export function MessagesBlock({ className }: { className?: string }) {
       options?: {
         interruptFeedback?: string;
         resources?: Array<Resource>;
+        voiceSessionActive?: boolean;
       },
     ) => {
       const abortController = new AbortController();
@@ -41,6 +42,7 @@ export function MessagesBlock({ className }: { className?: string }) {
             interruptFeedback:
               options?.interruptFeedback ?? feedback?.option.value,
             resources: options?.resources,
+            voiceSessionActive: options?.voiceSessionActive,
           },
           {
             abortSignal: abortController.signal,

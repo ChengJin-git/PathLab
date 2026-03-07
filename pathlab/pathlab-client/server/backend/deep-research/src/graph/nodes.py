@@ -236,6 +236,7 @@ def preserve_state_meta_fields(state: State) -> dict:
     """
     return {
         "locale": state.get("locale", "en-US"),
+        "voice_session_active": state.get("voice_session_active", False),
         "research_topic": state.get("research_topic", ""),
         "clarified_research_topic": state.get("clarified_research_topic", ""),
         "clarification_history": state.get("clarification_history", []),
@@ -916,6 +917,7 @@ def coordinator_node(
                         "locale": locale,
                         "research_topic": research_topic,
                         "resources": configurable.resources,
+                        "voice_session_active": state.get("voice_session_active", False),
                         "clarification_rounds": clarification_rounds,
                         "clarification_history": clarification_history,
                         "clarified_research_topic": clarified_topic,
@@ -1011,6 +1013,7 @@ def coordinator_node(
         update={
             "messages": messages,
             "locale": locale,
+            "voice_session_active": state.get("voice_session_active", False),
             "research_topic": research_topic,
             "clarified_research_topic": clarified_research_topic_value,
             "resources": configurable.resources,

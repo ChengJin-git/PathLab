@@ -330,6 +330,7 @@ async def chat_stream(request: ChatRequest):
             request.enable_clarification,
             request.max_clarification_rounds,
             request.locale,
+            request.voice_session_active,
             request.interrupt_before_tools,
             request.llm_override.model_dump() if request.llm_override else None,
         ),
@@ -936,6 +937,7 @@ async def _astream_workflow_generator(
     enable_clarification: bool,
     max_clarification_rounds: int,
     locale: str = "en-US",
+    voice_session_active: bool = False,
     interrupt_before_tools: Optional[List[str]] = None,
     llm_override: Optional[dict] = None,
 ):
@@ -987,6 +989,7 @@ async def _astream_workflow_generator(
         "enable_clarification": enable_clarification,
         "max_clarification_rounds": max_clarification_rounds,
         "locale": locale,
+        "voice_session_active": voice_session_active,
         "stop_requested": False,
         "stop_reason": "",
     }
@@ -996,7 +999,13 @@ async def _astream_workflow_generator(
         resume_msg = f"[{interrupt_feedback}]"
         if messages:
             resume_msg += f" {messages[-1]['content']}"
-        workflow_input = Command(resume=resume_msg)
+        workflow_input = Command(
+            resume=resume_msg,
+            update={
+                "voice_session_active": voice_session_active,
+                "locale": locale,
+            },
+        )
 
     # Prepare workflow config
     logger.debug(

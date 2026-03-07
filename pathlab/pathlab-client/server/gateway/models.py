@@ -114,6 +114,7 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None  # Optional conversation ID for persistence
     locale: Optional[str] = None  # Optional locale (e.g., zh-CN, en-US)
     messages: List[Dict]  # Changed from Dict[str, str] to Dict to support multimodal content
+    voice_session_active: Optional[bool] = False  # Whether this turn is part of an active voice session
     report_context: Optional[str] = None  # Research report context injected into system prompt
 
 

@@ -51,6 +51,9 @@ class ChatRequest(BaseModel):
     locale: Optional[str] = Field(
         "en-US", description="Language locale for the conversation (e.g., en-US, zh-CN)"
     )
+    voice_session_active: Optional[bool] = Field(
+        False, description="Whether the current turn is part of an active voice session"
+    )
     max_plan_iterations: Optional[int] = Field(
         1, description="The maximum number of plan iterations"
     )

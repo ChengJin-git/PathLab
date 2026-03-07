@@ -991,6 +991,7 @@ async def research_chat_stream(
         "messages": req.messages,
         "thread_id": req.conversation_id or "__default__",
         "locale": req.locale or "zh-CN",
+        "voice_session_active": bool(req.voice_session_active),
         # Default settings for normal chat (no deep research)
         "auto_accepted_plan": True,
         "enable_background_investigation": False,

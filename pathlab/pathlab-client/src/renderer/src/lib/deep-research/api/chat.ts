@@ -158,6 +158,7 @@ export async function* chatStream(
   params: {
     thread_id: string;
     conversation_id?: string;
+    voice_session_active?: boolean;
     resources?: Array<Resource>;
     auto_accepted_plan: boolean;
     enable_clarification?: boolean;

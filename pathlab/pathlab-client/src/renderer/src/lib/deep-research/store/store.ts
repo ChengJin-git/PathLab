@@ -1140,7 +1140,7 @@ function buildStandardAIChatMessagesFromStore(): StandardChatMessage[] {
 
 async function sendMessageViaStandardAIChat(
   conversationId: string | null,
-  options: { abortSignal?: AbortSignal } = {},
+  options: { abortSignal?: AbortSignal; voiceSessionActive?: boolean } = {},
 ): Promise<void> {
   const startTime = Date.now();
   useStore.getState().setTokenUsage(null);
@@ -1212,6 +1212,8 @@ async function sendMessageViaStandardAIChat(
       undefined,
       options.abortSignal,
       () => setGenerationPhase("pdf_waiting"),
+      undefined,
+      { voiceSessionActive: options.voiceSessionActive },
     );
     await finalizeAssistantMessage();
   } catch (error) {
@@ -2373,9 +2375,11 @@ export async function sendMessage(
   {
     interruptFeedback,
     resources,
+    voiceSessionActive,
   }: {
     interruptFeedback?: string;
     resources?: Array<Resource>;
+    voiceSessionActive?: boolean;
   } = {},
   options: { abortSignal?: AbortSignal } = {},
 ) {
@@ -2425,7 +2429,10 @@ export async function sendMessage(
       interruptFeedback: interruptFeedback ?? null,
       contentPreview: (content ?? "").slice(0, 120),
     });
-    await sendMessageViaStandardAIChat(conversationId, options);
+    await sendMessageViaStandardAIChat(conversationId, {
+      abortSignal: options.abortSignal,
+      voiceSessionActive,
+    });
     return;
   }
 
@@ -2525,6 +2532,7 @@ export async function sendMessage(
     {
       thread_id: conversationId ?? getThreadId(),
       conversation_id: conversationId ?? undefined,
+      voice_session_active: voiceSessionActive,
       interrupt_feedback: interruptFeedback,
       resources,
       auto_accepted_plan: settings.autoAcceptedPlan,

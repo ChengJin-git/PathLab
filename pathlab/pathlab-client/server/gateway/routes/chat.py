@@ -2638,6 +2638,33 @@ async def chat_with_ai(
                 "[/Research Report Context]"
             )
 
+        if req.voice_session_active:
+            if detected_lang == "zh_CN":
+                base_system_prompt += (
+                    "\n\n[Voice Session Active]\n"
+                    "用户当前正在进行语音对话，这一轮必须启用 VOICE_CONTROL 规则。"
+                    "你在每次回复结尾都必须追加一个 [VOICE_CONTROL] JSON block，"
+                    "并根据当前对话决定 action 为 continue 或 stop。\n"
+                    "[/Voice Session Active]"
+                )
+            elif detected_lang == "zh_HK":
+                base_system_prompt += (
+                    "\n\n[Voice Session Active]\n"
+                    "用戶目前正在進行語音對話，這一輪必須啟用 VOICE_CONTROL 規則。"
+                    "你在每次回覆結尾都必須附加一個 [VOICE_CONTROL] JSON block，"
+                    "並根據目前對話決定 action 為 continue 或 stop。\n"
+                    "[/Voice Session Active]"
+                )
+            else:
+                base_system_prompt += (
+                    "\n\n[Voice Session Active]\n"
+                    "The user is currently in an active voice session for this turn. "
+                    "The VOICE_CONTROL rules are active now. You must append exactly one "
+                    "[VOICE_CONTROL] JSON block at the end of every response and set action "
+                    "to continue or stop based on the conversation state.\n"
+                    "[/Voice Session Active]"
+                )
+
         system_prompt = {
             "role": "system",
             "content": base_system_prompt + user_data_context
