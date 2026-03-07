@@ -8,6 +8,7 @@ import {
 import { deleteConversation, getConversations, type Conversation } from '../api'
 import { listActiveResearchJobs } from '../lib/deep-research/api/chat'
 import { resetDeepResearchSession, useStore } from '../lib/deep-research/store'
+import { stripResearchMeta } from '../lib/deep-research/utils/strip-research-meta'
 import { cn } from '../lib/utils'
 
 export default function ConversationSidebar() {
@@ -33,6 +34,13 @@ export default function ConversationSidebar() {
 
   // Active research jobs from zustand store
   const activeResearchJobs = useStore((state) => state.activeResearchJobs)
+  const currentConversationHasCompletedReport = useStore((state) => {
+    return state.researchIds.some((researchId) => {
+      const reportId = state.researchReportIds.get(researchId)
+      const reportMessage = reportId ? state.messages.get(reportId) : undefined
+      return stripResearchMeta(reportMessage?.content ?? '').trim().length > 0
+    })
+  })
 
   // Derive current conversation ID from URL
   const currentConversationId = urlConversationId || null
@@ -214,6 +222,7 @@ export default function ConversationSidebar() {
   // For deep-research pages, also check the zustand store's conversationId
   // (which gets set before the URL updates).
   const storeConversationId = useStore((state) => state.conversationId)
+  const isViewingDeepResearchConversation = location.pathname.startsWith('/deep-research')
   const activeConversationId = currentConversationId
     || (location.pathname.startsWith('/deep-research') ? storeConversationId : null)
 
@@ -338,6 +347,16 @@ export default function ConversationSidebar() {
             ) : (
               <div className="space-y-2">
                 {conversations.map((conv) => (
+                  (() => {
+                    const shouldSuppressActiveJobIndicator =
+                      isViewingDeepResearchConversation
+                      && conv.conversation_id === storeConversationId
+                      && currentConversationHasCompletedReport
+                    const activeResearchJob = shouldSuppressActiveJobIndicator
+                      ? undefined
+                      : activeResearchJobs.get(conv.conversation_id)
+
+                    return (
                   <div
                     key={conv.conversation_id}
                     onClick={() => openConversation(conv.conversation_id)}
@@ -358,12 +377,12 @@ export default function ConversationSidebar() {
                         )}>
                           {conv.title || t('aiChat.untitledConversation')}
                         </h3>
-                        {activeResearchJobs.has(conv.conversation_id) ? (
+                        {activeResearchJob ? (
                           <div className="flex items-center gap-1.5 text-xs text-blue-600">
                             <Loader2 className="w-3 h-3 animate-spin" />
                             <span>
                               {(() => {
-                                const stage = activeResearchJobs.get(conv.conversation_id)?.currentStage
+                                const stage = activeResearchJob.currentStage
                                 const stageLabels: Record<string, string> = {
                                   coordinating: t('aiChat.researchStages.coordinating'),
                                   planning: t('aiChat.researchStages.planning'),
@@ -398,6 +417,8 @@ export default function ConversationSidebar() {
                       </button>
                     </div>
                   </div>
+                    )
+                  })()
                 ))}
               </div>
             )}

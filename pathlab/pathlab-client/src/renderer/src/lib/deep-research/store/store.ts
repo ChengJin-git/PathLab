@@ -3038,12 +3038,8 @@ export async function sendMessage(
           message.agent !== prevAgent &&
           isDeepResearchExecutionAgent(message.agent as string)
         ) {
-          if (!getOngoingResearchId()) {
-            appendResearch(message.id);
-            openResearch(message.id);
-          }
-          appendResearchActivity(message);
-          if (!deepResearchTaskStarted) {
+          const bindResult = bindExecutionMessageToResearch(message, { openIfCreated: true });
+          if (!deepResearchTaskStarted && (bindResult.created || !!getOngoingResearchId())) {
             ensureDeepResearchTaskStarted();
           }
         }
@@ -3488,11 +3484,7 @@ export async function resumeBackgroundResearch(
           message.agent !== prevAgent &&
           isDeepResearchExecutionAgent(message.agent as string)
         ) {
-          if (!getOngoingResearchId()) {
-            appendResearch(message.id);
-            openResearch(message.id);
-          }
-          appendResearchActivity(message);
+          bindExecutionMessageToResearch(message, { openIfCreated: true });
         }
         pendingUpdates.set(message.id, message);
         scheduleUpdate();
@@ -3732,37 +3724,10 @@ function findMessageByToolCallIdIn(
 }
 
 function appendMessage(message: Message) {
-  if (
-    message.agent === "coder" ||
-    message.agent === "reporter" ||
-    message.agent === "researcher" ||
-    message.agent === "analyst"
-  ) {
-    if (!getOngoingResearchId()) {
-      const id = message.id;
-      appendResearch(id);
-      openResearch(id);
-    }
-    appendResearchActivity(message);
+  if (isDeepResearchExecutionAgent(message.agent)) {
+    bindExecutionMessageToResearch(message, { openIfCreated: true });
   }
   useStore.getState().appendMessage(message);
-}
-
-// Track which research IDs have already received the post-report guidance message.
-// This prevents duplicates when updateMessage is called multiple times for the same message.
-const injectedPostReportGuidanceResearchIds = new Set<string>();
-
-function buildPostReportGuidanceContent(): string {
-  const heading = tr(
-    "postReportGuidanceHeading",
-    "报告已生成！接下来您希望做什么？",
-  );
-  const opt1 = tr("postReportOptionTraining", "使用 AI 训练深度学习模型");
-  const opt2 = tr("postReportOptionAnalysis", "分析相关病理图像数据");
-  const opt3 = tr("postReportOptionExport", "导出报告（PDF / Markdown）");
-  const opt4 = tr("postReportOptionNewResearch", "发起新的研究课题");
-  const opt5 = tr("postReportOptionAskQuestion", "针对报告内容提问");
-  return `${heading}\n\n[OPTIONS]\n- ${opt1}\n- ${opt2}\n- ${opt3}\n- ${opt4}\n- ${opt5}\n[/OPTIONS]`;
 }
 
 function updateMessage(message: Message) {
@@ -3787,26 +3752,6 @@ function updateMessage(message: Message) {
 
     if (!nextMessage.isStreaming) {
       useStore.getState().setOngoingResearch(null);
-
-      // Inject post-report guidance message only once per research run.
-      if (!injectedPostReportGuidanceResearchIds.has(ongoingResearchId)) {
-        injectedPostReportGuidanceResearchIds.add(ongoingResearchId);
-        const guidanceContent = buildPostReportGuidanceContent();
-        const guidanceMessage: Message = {
-          id: nanoid(),
-          threadId: nextMessage.threadId ?? getThreadId(),
-          role: "assistant",
-          agent: "coordinator",
-          content: guidanceContent,
-          contentChunks: [guidanceContent],
-          isStreaming: false,
-        };
-        // Use a microtask to ensure the reporter message update is committed first.
-        Promise.resolve().then(() => {
-          appendMessage(guidanceMessage);
-          void persistMessage(guidanceMessage);
-        });
-      }
     }
   }
   useStore.getState().updateMessage(nextMessage);
@@ -3820,6 +3765,126 @@ function applyMessageUpdates(messages: Iterable<Message>) {
 
 function getOngoingResearchId() {
   return useStore.getState().ongoingResearchId;
+}
+
+function findResearchIdByMessageId(messageId: string): string | null {
+  const state = useStore.getState();
+
+  if (state.researchIds.includes(messageId)) {
+    return messageId;
+  }
+
+  for (const [researchId, planId] of state.researchPlanIds.entries()) {
+    if (planId === messageId) {
+      return researchId;
+    }
+  }
+
+  for (const [researchId, reportId] of state.researchReportIds.entries()) {
+    if (reportId === messageId) {
+      return researchId;
+    }
+  }
+
+  for (const [researchId, activityIds] of state.researchActivityIds.entries()) {
+    if (activityIds.includes(messageId)) {
+      return researchId;
+    }
+  }
+
+  return null;
+}
+
+function hasCompletedResearchInConversation(): boolean {
+  const state = useStore.getState();
+  return state.researchIds.some((researchId) => {
+    const runStatus = state.researchRunStatus.get(researchId);
+    return state.researchReportIds.has(researchId) || runStatus === "success";
+  });
+}
+
+function findLatestBindableResearchId(): string | null {
+  const state = useStore.getState();
+  const reversedResearchIds = [...state.researchIds].reverse();
+
+  const latestCompletedResearchId = reversedResearchIds.find((researchId) => {
+    const reportId = state.researchReportIds.get(researchId);
+    const reportMessage = reportId ? state.messages.get(reportId) : undefined;
+    const runStatus = state.researchRunStatus.get(researchId);
+    const visibleReport = stripResearchMeta(reportMessage?.content ?? "").trim().length > 0;
+
+    return visibleReport || (runStatus === "success" && !!reportId);
+  });
+
+  if (latestCompletedResearchId) {
+    return latestCompletedResearchId;
+  }
+
+  const latestStartedResearchId = reversedResearchIds.find((researchId) => {
+    const runStatus = state.researchRunStatus.get(researchId);
+    const reportId = state.researchReportIds.get(researchId);
+    const hasExecutionActivity = (state.researchActivityIds.get(researchId) ?? []).some((messageId) => {
+      const message = state.messages.get(messageId);
+      return !!message && message.agent !== "planner";
+    });
+
+    return (
+      state.ongoingResearchId === researchId ||
+      !!reportId ||
+      hasExecutionActivity ||
+      runStatus === "running" ||
+      runStatus === "success" ||
+      runStatus === "error" ||
+      runStatus === "cancelled"
+    );
+  });
+
+  return latestStartedResearchId ?? null;
+}
+
+function bindExecutionMessageToResearch(
+  message: Message,
+  options: { openIfCreated?: boolean } = {},
+): { researchId: string | null; created: boolean } {
+  const existingResearchId = findResearchIdByMessageId(message.id);
+  if (existingResearchId) {
+    appendResearchActivity(message, existingResearchId);
+    return { researchId: existingResearchId, created: false };
+  }
+
+  const ongoingResearchId = getOngoingResearchId();
+  if (ongoingResearchId) {
+    appendResearchActivity(message, ongoingResearchId);
+    return { researchId: ongoingResearchId, created: false };
+  }
+
+  const fallbackResearchId = findLatestBindableResearchId();
+  if (fallbackResearchId) {
+    appendResearchActivity(message, fallbackResearchId);
+    deepResearchDebugLog("researchMapping", "rebound execution message to existing research", {
+      messageId: message.id,
+      agent: message.agent ?? null,
+      researchId: fallbackResearchId,
+      researchIds: useStore.getState().researchIds.slice(-5),
+    });
+    return { researchId: fallbackResearchId, created: false };
+  }
+
+  if (hasCompletedResearchInConversation()) {
+    deepResearchDebugLog("researchMapping", "skip creating new research from execution message after completion", {
+      messageId: message.id,
+      agent: message.agent ?? null,
+      researchIds: useStore.getState().researchIds.slice(-5),
+    });
+    return { researchId: null, created: false };
+  }
+
+  appendResearch(message.id);
+  if (options.openIfCreated) {
+    openResearch(message.id);
+  }
+  appendResearchActivity(message, message.id);
+  return { researchId: message.id, created: true };
 }
 
 function appendResearch(researchId: string) {
@@ -3930,8 +3995,8 @@ function ensureResearchCardFromAcceptedPlan(): string | null {
   return researchRootId;
 }
 
-function appendResearchActivity(message: Message) {
-  const researchId = getOngoingResearchId();
+function appendResearchActivity(message: Message, researchIdOverride?: string) {
+  const researchId = researchIdOverride ?? getOngoingResearchId();
   if (researchId) {
     const researchActivityIds = useStore.getState().researchActivityIds;
     const current = researchActivityIds.get(researchId) ?? [];
@@ -3944,12 +4009,22 @@ function appendResearchActivity(message: Message) {
       });
     }
     if (message.agent === "reporter") {
-      useStore.setState({
-        researchReportIds: new Map(useStore.getState().researchReportIds).set(
-          researchId,
-          message.id,
-        ),
-      });
+      const existingReportId = useStore.getState().researchReportIds.get(researchId);
+      const existingReportMessage = existingReportId ? getMessage(existingReportId) : undefined;
+      const hasCompletedExistingReport =
+        !!existingReportId &&
+        !!existingReportMessage &&
+        stripResearchMeta(existingReportMessage.content ?? "").trim().length > 0 &&
+        !existingReportMessage.isStreaming;
+
+      if (!hasCompletedExistingReport || existingReportId === message.id) {
+        useStore.setState({
+          researchReportIds: new Map(useStore.getState().researchReportIds).set(
+            researchId,
+            message.id,
+          ),
+        });
+      }
       useStore.getState().setResearchCancelled(researchId, false);
     }
     deepResearchDebugLog("researchMapping", "appendResearchActivity", {

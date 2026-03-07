@@ -27,6 +27,21 @@ export function MessagesBlock({ className }: { className?: string }) {
   const responding = useStore((state) => state.responding);
   const conversationLocked = useDeepResearchConversationLocked();
   const conversationLockPhase = useStore((state) => {
+    const latestCompletedResearchId = [...state.researchIds].reverse().find((researchId) => {
+      const reportId = state.researchReportIds.get(researchId);
+      const reportMessage = reportId ? state.messages.get(reportId) : undefined;
+      const runStatus = state.researchRunStatus.get(researchId);
+
+      return (
+        (!!reportMessage && (reportMessage.content ?? "").trim().length > 0) ||
+        (runStatus === "success" && !!reportId)
+      );
+    });
+
+    if (latestCompletedResearchId) {
+      return "reportGenerated" as const;
+    }
+
     const hasAcceptedPlanSubmission =
       state.responding &&
       Array.from(state.planActionLocks.values()).some((action) => action === "accepted");
@@ -34,7 +49,7 @@ export function MessagesBlock({ className }: { className?: string }) {
       return "researching" as const;
     }
 
-    const latestStartedResearchId = [...state.researchIds].reverse().find((researchId) => {
+    const latestStartedResearchId = latestCompletedResearchId ?? [...state.researchIds].reverse().find((researchId) => {
       const runStatus = state.researchRunStatus.get(researchId);
       const reportId = state.researchReportIds.get(researchId);
       const hasExecutionActivity = (state.researchActivityIds.get(researchId) ?? []).some((messageId) => {
