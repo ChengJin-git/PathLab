@@ -1,10 +1,12 @@
 // Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 // SPDX-License-Identifier: MIT
 
+import { AlertTriangle, Plus } from "lucide-react";
 import { nanoid } from "nanoid";
 import React, { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { addMessage as apiAddMessage, updateMessage as apiUpdateMessage } from "../../../../api";
+import { parseContextLimit, removeContextLimitBlock } from "../../../../components/chat/AssistantMessage";
 import { AnalysisConfigCard, parseAnalysisConfig, type AgentAnalysisConfig, removeAnalysisConfigBlock } from "../../../../components/chat/AnalysisConfigCard";
 import { DatasetRegistrationCard, parseDatasetRegistrationConfig, removeDatasetRegistrationBlock } from "../../../../components/chat/DatasetRegistrationCard";
 import { NavigationCard, parseNavigateBlock, removeNavigateBlock } from "../../../../components/chat/NavigationCard";
@@ -76,12 +78,14 @@ export function MessageBubble({
 export function AssistantStructuredContent({
     message,
     onSendMessage,
+    onNewChat,
 }: {
     message: Message;
     onSendMessage?: (
         message: string,
         options?: { interruptFeedback?: string },
     ) => void;
+    onNewChat?: () => void;
 }) {
     const { t } = useTranslation();
     const options = useMemo(() => parseOptions(message.content ?? ""), [message.content]);
@@ -111,6 +115,10 @@ export function AssistantStructuredContent({
     );
     const trainingChatLink = useMemo(
         () => parseTrainingChatLink(message.content ?? ""),
+        [message.content],
+    );
+    const contextLimitReached = useMemo(
+        () => parseContextLimit(message.content ?? ""),
         [message.content],
     );
     const responding = useStore((state) => state.responding);
@@ -144,6 +152,9 @@ export function AssistantStructuredContent({
     if (trainingChatLink) {
         displayContent = removeTrainingChatLinkBlock(displayContent);
     }
+    if (contextLimitReached) {
+        displayContent = removeContextLimitBlock(displayContent);
+    }
     displayContent = removeVoiceControlBlock(displayContent);
 
     // If the message only contained a training chat link (no other content or cards), render nothing.
@@ -155,7 +166,8 @@ export function AssistantStructuredContent({
         quickAnalysisConfig ||
         taskHistoryConfig ||
         navigateBlock ||
-        datasetRegistrationConfig;
+        datasetRegistrationConfig ||
+        contextLimitReached;
     if (!hasVisibleContent && trainingChatLink) {
         return null;
     }
@@ -430,6 +442,33 @@ export function AssistantStructuredContent({
                     navigationSource="deep-research"
                     deepResearchConversationId={deepResearchConversationId ?? undefined}
                 />
+            )}
+            {contextLimitReached && !responding && (
+                <div className="my-4 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 p-4 shadow-sm">
+                    <div className="flex items-start gap-3">
+                        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-amber-100">
+                            <AlertTriangle className="h-4 w-4 text-amber-600" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-amber-800">
+                                {t("aiChat.contextLimit.title")}
+                            </p>
+                            <p className="mt-1 text-xs text-amber-600">
+                                {t("aiChat.contextLimit.description")}
+                            </p>
+                        </div>
+                    </div>
+                    {onNewChat && (
+                        <button
+                            type="button"
+                            onClick={onNewChat}
+                            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-amber-700 hover:shadow-md"
+                        >
+                            <Plus className="h-4 w-4" />
+                            {t("aiChat.contextLimit.newResearch")}
+                        </button>
+                    )}
+                </div>
             )}
             {datasetRegistrationConfig && (
                 <DatasetRegistrationCard

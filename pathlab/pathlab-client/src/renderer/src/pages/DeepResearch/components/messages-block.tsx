@@ -3,10 +3,11 @@ import { useTranslations } from "../../../lib/deep-research/i18n";
 // SPDX-License-Identifier: MIT
 
 import { useCallback, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { Button } from "../../../components/ui/button";
 import type { Option, Resource } from "../../../lib/deep-research/messages";
-import { sendMessage, useMessageIds, useStore } from "../../../lib/deep-research/store";
+import { resetDeepResearchSession, sendMessage, useMessageIds, useStore } from "../../../lib/deep-research/store";
 import { cn } from "../../../lib/utils";
 
 import { ConversationStarter } from "./conversation-starter";
@@ -17,6 +18,7 @@ import { useTranslation } from "react-i18next";
 
 export function MessagesBlock({ className }: { className?: string }) {
   const { t: tGlobal } = useTranslation();
+  const navigate = useNavigate();
   // @ts-ignore - i18n shim
   const t = useTranslations("chat.messages");
   const messageIds = useMessageIds();
@@ -65,6 +67,13 @@ export function MessagesBlock({ className }: { className?: string }) {
   const handleRemoveFeedback = useCallback(() => {
     setFeedback(null);
   }, [setFeedback]);
+  const handleStartNewAIChat = useCallback(() => {
+    resetDeepResearchSession();
+    navigate("/dashboard", {
+      replace: true,
+      state: { forceNewChat: true },
+    });
+  }, [navigate]);
   return (
     <div className={cn("flex h-full min-h-0 flex-col", className)}>
       <div className="min-h-0 flex-1 overflow-hidden">
@@ -73,6 +82,7 @@ export function MessagesBlock({ className }: { className?: string }) {
             className="flex h-full"
             onFeedback={handleFeedback}
             onSendMessage={handleSend}
+            onNewChat={handleStartNewAIChat}
           />
         ) : (
           <ConversationStarter />

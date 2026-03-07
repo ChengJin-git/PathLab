@@ -4,6 +4,7 @@ import { AudioVisualizer } from './AudioVisualizer'
 
 interface VoiceSessionOverlayProps {
   partialText: string
+  pendingText?: string
   mediaStream: MediaStream | null
   isRecording: boolean
   isConnecting: boolean
@@ -13,6 +14,7 @@ interface VoiceSessionOverlayProps {
 
 export function VoiceSessionOverlay({
   partialText,
+  pendingText,
   mediaStream,
   isRecording,
   isConnecting,
@@ -39,6 +41,19 @@ export function VoiceSessionOverlay({
               className="h-12 w-full opacity-80"
             />
           )}
+        </div>
+      )}
+
+      {!!pendingText && !isRecording && !isConnecting && !isThinking && (
+        <div className="pointer-events-none absolute left-4 right-[140px] top-0 bottom-0 flex items-center">
+          <div className="flex w-full items-center gap-2 overflow-hidden text-[15px] leading-relaxed text-gray-700">
+            <span className="truncate">{pendingText}</span>
+            <span className="inline-flex flex-shrink-0 gap-0.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '0ms' }} />
+              <span className="h-1.5 w-1.5 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '150ms' }} />
+              <span className="h-1.5 w-1.5 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+            </span>
+          </div>
         </div>
       )}
 

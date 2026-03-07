@@ -43,7 +43,10 @@ export function InputBox({
   const t = useTranslations("messageInput");
   const inputRef = useRef<MessageInputRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const currentPromptRef = useRef("");
+  const voiceStateRef = useRef("idle");
   const [currentPrompt, setCurrentPrompt] = useState("");
+  const [pendingVoiceDraft, setPendingVoiceDraft] = useState("");
   const [voiceAwaitingResponse, setVoiceAwaitingResponse] = useState(false);
   const [voiceResponseStarted, setVoiceResponseStarted] = useState(false);
   const generationPhase = useStore((state) => state.generationPhase);
@@ -66,33 +69,59 @@ export function InputBox({
   }, [feedback]);
 
   const appendToInput = useCallback((text: string) => {
-    const next = currentPrompt.trim().length
-      ? `${currentPrompt}\n${text}`
+    const base = currentPromptRef.current.trim();
+    const next = base.length
+      ? `${base}\n${text}`
       : text;
     inputRef.current?.setContent(next);
+    currentPromptRef.current = next;
     setCurrentPrompt(next);
-  }, [currentPrompt]);
+  }, []);
 
   const handleSendMessage = useCallback(
     (message: string, resources: Array<Resource>) => {
       if (responding) {
         onCancel?.();
-      } else {
-        if (message.trim() === "") {
-          return;
-        }
-        if (onSend) {
-          onSend(message, {
-            interruptFeedback: feedback?.option.value,
-            resources,
-            voiceSessionActive: voiceSessionActive,
-          });
-          onRemoveFeedback?.();
-        }
+        return;
+      }
+
+      const trimmed = message.trim();
+      if (trimmed === "") {
+        return;
+      }
+
+      if (onSend) {
+        onSend(trimmed, {
+          interruptFeedback: feedback?.option.value,
+          resources,
+          voiceSessionActive: voiceStateRef.current !== "idle",
+        });
+        currentPromptRef.current = "";
+        setCurrentPrompt("");
+        onRemoveFeedback?.();
       }
     },
-    [responding, onCancel, onSend, feedback, onRemoveFeedback, voiceSessionActive],
+    [responding, onCancel, onSend, feedback, onRemoveFeedback],
   );
+
+  const submitVoiceDraft = useCallback((next: string) => {
+    const trimmed = next.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    inputRef.current?.setContent(trimmed);
+    currentPromptRef.current = trimmed;
+    setCurrentPrompt(trimmed);
+    setPendingVoiceDraft(trimmed);
+    setVoiceAwaitingResponse(true);
+    setVoiceResponseStarted(false);
+
+    setTimeout(() => {
+      handleSendMessage(trimmed, []);
+      inputRef.current?.setContent("");
+    }, 50);
+  }, [handleSendMessage]);
 
   const {
     voiceState,
@@ -104,25 +133,23 @@ export function InputBox({
     notifyResponseComplete: notifyVoiceResponseComplete,
   } = useVoiceSession({
     onTranscript: (transcript) => {
-      const next = currentPrompt.trim().length
-        ? `${currentPrompt} ${transcript}`
+      const base = currentPromptRef.current.trim();
+      const next = base.length
+        ? `${base} ${transcript}`
         : transcript;
-      inputRef.current?.setContent(next);
-      setCurrentPrompt(next);
-      setVoiceAwaitingResponse(true);
-      setVoiceResponseStarted(false);
-      setTimeout(() => {
-        inputRef.current?.submit();
-      }, 80);
+      submitVoiceDraft(next);
     },
     onError: (error) => {
       console.error("[DeepResearch Voice] Error:", error);
+      setPendingVoiceDraft("");
       setVoiceAwaitingResponse(false);
       setVoiceResponseStarted(false);
     },
     silenceDurationMs: 800,
     maxRecordingSeconds: 120,
   });
+
+  voiceStateRef.current = voiceState;
 
   const voiceSessionActive = voiceState !== "idle";
   const realtimeIsRecording = voiceState === "recording";
@@ -133,10 +160,12 @@ export function InputBox({
       return;
     }
     if (responding && !voiceResponseStarted) {
+      setPendingVoiceDraft("");
       setVoiceResponseStarted(true);
       return;
     }
     if (!responding && voiceResponseStarted) {
+      setPendingVoiceDraft("");
       setVoiceAwaitingResponse(false);
       setVoiceResponseStarted(false);
       notifyVoiceResponseComplete(latestAssistantContent);
@@ -151,6 +180,7 @@ export function InputBox({
 
   const handleVoiceSessionToggle = useCallback(() => {
     if (voiceSessionActive) {
+      setPendingVoiceDraft("");
       setVoiceAwaitingResponse(false);
       setVoiceResponseStarted(false);
     }
@@ -160,6 +190,7 @@ export function InputBox({
   const handleCancelResponse = useCallback(() => {
     onCancel?.();
     if (voiceSessionActive) {
+      setPendingVoiceDraft("");
       setVoiceAwaitingResponse(false);
       setVoiceResponseStarted(false);
       stopVoiceSession();
@@ -224,7 +255,10 @@ export function InputBox({
           ref={inputRef}
           config={config}
           onEnter={handleSendMessage}
-          onChange={setCurrentPrompt}
+          onChange={(next) => {
+            currentPromptRef.current = next;
+            setCurrentPrompt(next);
+          }}
         />
       )}
       editorHidden={voiceSessionActive}
@@ -241,10 +275,11 @@ export function InputBox({
       overlay={(
         <VoiceSessionOverlay
           partialText={realtimePartialText}
+          pendingText={pendingVoiceDraft}
           mediaStream={realtimeMediaStream}
           isRecording={realtimeIsRecording}
           isConnecting={realtimeIsConnecting}
-          isThinking={voiceSessionActive && generationPhase === "thinking"}
+          isThinking={voiceSessionActive && !realtimeIsRecording && !realtimeIsConnecting && (generationPhase === "thinking" || (voiceAwaitingResponse && !voiceResponseStarted))}
           thinkingLabel={tGlobal("aiChat.thinking")}
         />
       )}
@@ -261,11 +296,7 @@ export function InputBox({
       onStopResponding={handleCancelResponse}
       stopRespondingLabel={tGlobal("aiChat.stopGenerating")}
       showVoiceSendButton={realtimeIsRecording}
-      onVoiceSend={() => {
-        setVoiceAwaitingResponse(true);
-        setVoiceResponseStarted(false);
-        voiceForceSend(realtimePartialText);
-      }}
+      onVoiceSend={() => voiceForceSend(realtimePartialText)}
       voiceSendDisabled={!realtimePartialText?.trim()}
       voiceSendLabel={tGlobal("aiChat.sendVoiceMessage")}
       onSend={() => inputRef.current?.submit()}

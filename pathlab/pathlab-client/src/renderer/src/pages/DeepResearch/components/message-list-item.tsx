@@ -85,6 +85,7 @@ export function MessageListItem({
     interruptMessage,
     onFeedback,
     onSendMessage,
+    onNewChat,
     onToggleResearch,
 }: {
     className?: string;
@@ -96,6 +97,7 @@ export function MessageListItem({
         message: string,
         options?: { interruptFeedback?: string },
     ) => void;
+    onNewChat?: () => void;
     onToggleResearch?: () => void;
 }) {
     const showRestartPlan = useStore((state) =>
@@ -255,6 +257,7 @@ export function MessageListItem({
                                 <AssistantStructuredContent
                                     message={message}
                                     onSendMessage={onSendMessage}
+                                    onNewChat={onNewChat}
                                 />
                             ) : (
                                 <div className="flex w-full flex-col break-words">

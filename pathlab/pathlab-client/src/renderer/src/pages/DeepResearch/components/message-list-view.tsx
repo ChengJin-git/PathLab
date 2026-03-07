@@ -30,6 +30,7 @@ export function MessageListView({
   className,
   onFeedback,
   onSendMessage,
+  onNewChat,
 }: {
   className?: string;
   onFeedback?: (feedback: { option: Option }) => void;
@@ -37,6 +38,7 @@ export function MessageListView({
     message: string,
     options?: { interruptFeedback?: string },
   ) => void;
+  onNewChat?: () => void;
 }) {
   // @ts-ignore - i18n shim
   const t = useTranslations("chat.research");
@@ -182,6 +184,7 @@ export function MessageListView({
             interruptMessage={interruptMessage}
             onFeedback={onFeedback}
             onSendMessage={onSendMessage}
+            onNewChat={onNewChat}
             onToggleResearch={handleToggleResearch}
           />
         ))}

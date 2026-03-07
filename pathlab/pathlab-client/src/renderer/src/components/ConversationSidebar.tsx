@@ -159,10 +159,13 @@ export default function ConversationSidebar() {
     }
   }
 
-  // New chat → reset deep research session + navigate to dashboard
+  // New chat → reset DR state and force AI Chat welcome page (do not restore old session)
   const handleNewChat = () => {
     resetDeepResearchSession()
-    navigate('/dashboard', { replace: true })
+    navigate('/dashboard', {
+      replace: true,
+      state: { forceNewChat: true }
+    })
     if (window.innerWidth < 1024) {
       setShowHistory(false)
     }
