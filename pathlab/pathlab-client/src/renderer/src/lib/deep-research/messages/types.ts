@@ -48,6 +48,7 @@ export interface Resource {
 }
 
 export interface Citation {
+  number?: number;
   url: string;
   title: string;
   description?: string;

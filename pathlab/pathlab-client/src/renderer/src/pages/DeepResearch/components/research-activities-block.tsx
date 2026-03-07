@@ -29,7 +29,7 @@ function hasVisibleContent(msg: Message | undefined): boolean {
   const agent = msg.agent ?? "";
   if (agent === "reporter" || agent === "planner") return false;
   if (stripResearchMeta(msg.content)) return true;
-  if (!msg.isStreaming && msg.toolCalls?.length) return true;
+  if (msg.toolCalls?.length) return true;
   return false;
 }
 
@@ -317,12 +317,19 @@ ActivityMessage.displayName = "ActivityMessage";
 const ActivityListItem = React.memo(({ messageId }: { messageId: string }) => {
   const message = useMessage(messageId);
   if (message) {
-    if (!message.isStreaming && message.toolCalls?.length) {
+    if (message.toolCalls?.length) {
       const toolCallComponents = message.toolCalls
         .filter(toolCall => !(typeof toolCall.result === "string" && toolCall.result?.startsWith("Error")))
         .map(toolCall => {
           if (toolCall.name === "web_search") {
-            return <WebSearchToolCall key={toolCall.id} toolCall={toolCall} />;
+            return (
+              <WebSearchToolCall
+                key={toolCall.id}
+                toolCall={toolCall}
+                messageIsStreaming={Boolean(message.isStreaming)}
+                messageFinishReason={message.finishReason}
+              />
+            );
           } else if (toolCall.name === "crawl_tool") {
             return <CrawlToolCall key={toolCall.id} toolCall={toolCall} />;
           } else if (toolCall.name === "python_repl_tool") {

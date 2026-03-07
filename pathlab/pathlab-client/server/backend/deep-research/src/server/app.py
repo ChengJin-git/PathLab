@@ -607,6 +607,12 @@ async def _process_message_chunk(message_chunk, message_metadata, thread_id, age
         logger.debug(f"[{safe_thread_id}] Processing ToolMessage")
         tool_call_id = message_chunk.tool_call_id
         event_stream_message["tool_call_id"] = tool_call_id
+        if event_stream_message.get("content") in (None, ""):
+            logger.warning(
+                f"[{safe_thread_id}] ToolMessage returned empty content | "
+                f"tool={getattr(message_chunk, 'name', 'unknown')} | "
+                f"tool_call_id={sanitize_log_input(tool_call_id or 'unknown', max_length=100)}"
+            )
         
         # Validate tool_call_id for debugging
         if tool_call_id:

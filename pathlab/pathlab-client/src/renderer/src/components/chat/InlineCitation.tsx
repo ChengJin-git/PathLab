@@ -4,8 +4,9 @@
  * Renders a small numbered badge (e.g. [1] or [2, p.3]) that shows a tooltip
  * on hover with title, source, and snippet excerpt. Clicking opens the URL.
  */
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React from 'react'
 import { ExternalLink } from 'lucide-react'
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '../ui/hover-card'
 
 export interface InlineCitationProps {
   index: number
@@ -26,11 +27,6 @@ const InlineCitation = React.memo(function InlineCitation({
   url,
   variant = 'badge'
 }: InlineCitationProps) {
-  const [showTooltip, setShowTooltip] = useState(false)
-  const [tooltipStyle, setTooltipStyle] = useState<React.CSSProperties>({})
-  const badgeRef = useRef<HTMLSpanElement>(null)
-  const tooltipRef = useRef<HTMLDivElement>(null)
-
   // Build label text — badge shows only the number; page info is in the tooltip
   const label = `${index}`
 
@@ -43,75 +39,52 @@ const InlineCitation = React.memo(function InlineCitation({
       : snippet
     : undefined
 
-  // Calculate tooltip position to stay within viewport
-  const updateTooltipPosition = useCallback(() => {
-    if (!badgeRef.current || !tooltipRef.current) return
-    const badgeRect = badgeRef.current.getBoundingClientRect()
-    const tooltipEl = tooltipRef.current
-    const tooltipWidth = tooltipEl.offsetWidth
-    const viewportWidth = window.innerWidth
-
-    const style: React.CSSProperties = {}
-
-    // Horizontal: center on badge, but clamp within viewport
-    let left = badgeRect.left + badgeRect.width / 2 - tooltipWidth / 2
-    if (left < 8) left = 8
-    if (left + tooltipWidth > viewportWidth - 8) left = viewportWidth - 8 - tooltipWidth
-    style.left = left
-    style.position = 'fixed'
-
-    // Vertical: prefer above the badge, fall back to below
-    const tooltipHeight = tooltipEl.offsetHeight
-    if (badgeRect.top - tooltipHeight - 6 > 0) {
-      style.top = badgeRect.top - tooltipHeight - 6
-    } else {
-      style.top = badgeRect.bottom + 6
-    }
-
-    setTooltipStyle(style)
-  }, [])
-
-  useEffect(() => {
-    if (showTooltip) updateTooltipPosition()
-  }, [showTooltip, updateTooltipPosition])
-
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
     if (url) window.open(url, '_blank', 'noopener,noreferrer')
   }
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLSpanElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      if (url) window.open(url, '_blank', 'noopener,noreferrer')
+    }
+  }
+
   const labelContent = variant === 'text' ? `[${label}]` : label
+  const hasTooltipContent = Boolean(title || truncatedSnippet || pageInfo || source)
+
+  const trigger = (
+    <span
+      className={variant === 'text'
+        ? "mx-[0.08rem] inline text-[0.95em] font-medium leading-none text-primary-600/90 cursor-pointer select-none align-[0.02em] hover:text-primary-700"
+        : "inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 mx-0.5 text-[11px] font-medium leading-none rounded-md cursor-pointer select-none bg-primary-50 text-primary-600 border border-primary-200 hover:bg-primary-100 hover:border-primary-300 hover:shadow-sm transition-all duration-150 align-baseline"
+      }
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
+      aria-label={title || `Citation ${index}`}
+    >
+      {labelContent}
+    </span>
+  )
+
+  if (!hasTooltipContent) {
+    return trigger
+  }
 
   return (
-    <>
-      <span
-        ref={badgeRef}
-        className={variant === 'text'
-          ? "mx-[0.08rem] inline text-[0.95em] font-medium leading-none text-primary-600/90 cursor-pointer select-none align-[0.02em] hover:text-primary-700"
-          : "inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 mx-0.5 text-[11px] font-medium leading-none rounded-md cursor-pointer select-none bg-primary-50 text-primary-600 border border-primary-200 hover:bg-primary-100 hover:border-primary-300 hover:shadow-sm transition-all duration-150 align-baseline"
-        }
-        onMouseEnter={() => setShowTooltip(true)}
-        onMouseLeave={() => setShowTooltip(false)}
-        onClick={handleClick}
-        role="button"
-        tabIndex={0}
-        aria-label={title || `Citation ${index}`}
+    <HoverCard openDelay={120} closeDelay={80}>
+      <HoverCardTrigger asChild>{trigger}</HoverCardTrigger>
+      <HoverCardContent
+        className="z-[9999] w-72 max-w-[calc(100vw-16px)] rounded-xl border border-gray-200 bg-white p-3 shadow-lg"
+        side="top"
+        align="center"
+        sideOffset={8}
+        collisionPadding={8}
       >
-        {labelContent}
-      </span>
-
-      {/* Tooltip rendered via portal-like fixed positioning */}
-      {showTooltip && (title || truncatedSnippet || pageInfo) && (
-        <div
-          ref={tooltipRef}
-          style={tooltipStyle}
-          className="fixed z-[9999] w-72 max-w-[calc(100vw-16px)] p-3 rounded-xl
-            bg-white border border-gray-200 shadow-lg
-            pointer-events-none animate-in fade-in duration-150"
-          onMouseEnter={() => setShowTooltip(true)}
-          onMouseLeave={() => setShowTooltip(false)}
-        >
           {pageInfo ? (
             /* ── Article citation layout: page + snippet prominent, title/URL compact ── */
             <>
@@ -160,9 +133,8 @@ const InlineCitation = React.memo(function InlineCitation({
               )}
             </>
           )}
-        </div>
-      )}
-    </>
+      </HoverCardContent>
+    </HoverCard>
   )
 })
 

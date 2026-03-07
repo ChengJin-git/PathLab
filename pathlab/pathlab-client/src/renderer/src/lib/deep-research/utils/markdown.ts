@@ -14,6 +14,68 @@ export function autoFixMarkdown(markdown: string): string {
   return autoCloseTrailingLink(fixed);
 }
 
+export function linkifyBareInlineCitations(markdown: string): string {
+  const lines = markdown.split("\n");
+  let inCodeBlock = false;
+  let inReferenceSection = false;
+
+  return lines.map((line) => {
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      inCodeBlock = !inCodeBlock;
+      return line;
+    }
+
+    if (!inCodeBlock) {
+      if (/^#{1,6}\s+(references|key citations)\s*$/i.test(trimmed)) {
+        inReferenceSection = true;
+        return line;
+      }
+
+      if (inReferenceSection && /^#{1,6}\s+/.test(trimmed)) {
+        inReferenceSection = false;
+      }
+    }
+
+    if (inCodeBlock || inReferenceSection) {
+      return line;
+    }
+
+    let nextLine = line;
+
+    nextLine = nextLine.replace(
+      /\[(\d{1,3}(?:\s*,\s*\d{1,3})+)\](?!\()/g,
+      (_match, inner: string) => inner
+        .split(",")
+        .map((value) => {
+          const index = value.trim();
+          return `[${index}](#cite-${index})`;
+        })
+        .join(""),
+    );
+
+    nextLine = nextLine.replace(
+      /\[\[(\d{1,3})(?:\s*,\s*(p\.?[^\]]+))?\]\](?!\()/gi,
+      (_match, index: string, pageInfo?: string) => pageInfo
+        ? `[[${index}, ${pageInfo.trim()}]](#cite-${index})`
+        : `[[${index}]](#cite-${index})`,
+    );
+
+    nextLine = nextLine.replace(
+      /\[(\d{1,3}),\s*(p\.?[^\]]+)\](?!\()/gi,
+      (_match, index: string, pageInfo: string) => `[${index}, ${pageInfo.trim()}](#cite-${index})`,
+    );
+
+    nextLine = nextLine.replace(
+      /\[(\d{1,3})\](?!\()/g,
+      (_match, index: string) => `[${index}](#cite-${index})`,
+    );
+
+    return nextLine;
+  }).join("\n");
+}
+
 /**
  * Normalize math delimiters for display consumption
  * Ensures all math delimiters are in $$ format for remarkMath/rehypeKatex

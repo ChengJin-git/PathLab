@@ -13,7 +13,7 @@ import {
     XCircle,
 } from "lucide-react";
 import { useTheme } from "next-themes";
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import SyntaxHighlighter from "react-syntax-highlighter";
 import { docco } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { dark } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -31,7 +31,7 @@ import {
 import { Skeleton } from "../../../../components/ui/skeleton";
 import { useTranslations } from "../../../../lib/deep-research/i18n";
 import { findMCPTool } from "../../../../lib/deep-research/mcp";
-import type { ToolCallRuntime } from "../../../../lib/deep-research/messages";
+import type { Message, ToolCallRuntime } from "../../../../lib/deep-research/messages";
 import { parseJSON } from "../../../../lib/deep-research/utils";
 import { cn } from "../../../../lib/utils";
 
@@ -78,14 +78,98 @@ type SearchResult =
         image_description: string;
     };
 
-export function WebSearchToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
+type WebSearchState = "searching" | "completed" | "no_results" | "sync_missing";
+
+function getSearchSnippet(content?: string): string {
+    if (!content) return "";
+    return content.replace(/\s+/g, " ").trim();
+}
+
+function SearchStatusBadge({
+    status,
+    t,
+}: {
+    status: "searching" | "completed" | "no_results";
+    t: (key: string, params?: Record<string, unknown>) => string;
+}) {
+    const statusConfig = {
+        searching: {
+            label: t("searchStatusSearching"),
+            className: "border-blue-100 bg-blue-50 text-blue-700",
+        },
+        completed: {
+            label: t("searchStatusCompleted"),
+            className: "border-emerald-100 bg-emerald-50 text-emerald-700",
+        },
+        no_results: {
+            label: t("searchStatusNoResults"),
+            className: "border-gray-200 bg-white text-gray-600",
+        },
+    } satisfies Record<"searching" | "completed" | "no_results", { label: string; className: string }>;
+    const config = statusConfig[status];
+
+    return (
+        <span
+            className={cn(
+                "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium",
+                config.className,
+            )}
+        >
+            {config.label}
+        </span>
+    );
+}
+
+function SearchResultSkeletonCard({ index }: { index: number }) {
+    return (
+        <div
+            className="rounded-2xl border border-gray-200/80 bg-white px-3 py-3 shadow-sm"
+            style={{ animationDelay: `${index * 0.08}s` }}
+        >
+            <div className="flex items-start gap-3">
+                <Skeleton className="h-9 w-9 shrink-0 rounded-xl bg-gray-100" />
+                <div className="min-w-0 flex-1 space-y-2">
+                    <Skeleton className="h-4 w-5/6 rounded-md bg-gray-100" />
+                    <Skeleton className="h-4 w-2/3 rounded-md bg-gray-100" />
+                    <Skeleton className="h-3 w-1/3 rounded-md bg-gray-100" />
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function SearchEmptyState({
+    title,
+    description,
+}: {
+    title: string;
+    description: string;
+}) {
+    return (
+        <div className="flex min-h-[112px] flex-col items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-gray-50/70 px-6 py-8 text-center">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-gray-400 shadow-sm ring-1 ring-gray-200">
+                <Search size={18} />
+            </div>
+            <div className="mt-3 text-sm font-medium text-gray-700">{title}</div>
+            <div className="mt-1 text-xs leading-5 text-gray-500">{description}</div>
+        </div>
+    );
+}
+
+export function WebSearchToolCall({
+    toolCall,
+    messageIsStreaming = false,
+    messageFinishReason,
+}: {
+    toolCall: ToolCallRuntime;
+    messageIsStreaming?: boolean;
+    messageFinishReason?: Message["finishReason"];
+}) {
     // @ts-ignore - i18n shim
     const t = useTranslations("chat.research");
-    const searching = useMemo(() => {
-        return toolCall.result === undefined;
-    }, [toolCall.result]);
+    const query = useMemo(() => (toolCall.args as { query: string }).query, [toolCall.args]);
     const searchResults = useMemo<SearchResult[]>(() => {
-        let results: SearchResult[] | undefined = undefined;
+        let results: SearchResult[] = [];
 
         try {
             if (toolCall.result) {
@@ -93,7 +177,7 @@ export function WebSearchToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
             }
         } catch (error) {
             console.warn("Failed to parse search results:", error);
-            results = undefined;
+            results = [];
         }
 
         if (Array.isArray(results)) {
@@ -117,32 +201,57 @@ export function WebSearchToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
         () => searchResults?.filter((result) => result.type === "image"),
         [searchResults],
     );
-    const query = useMemo(() => (toolCall.args as { query: string }).query, [toolCall.args]);
+    const visibleResultCount = pageResults.length + imageResults.length;
+    const awaitingToolResult = messageIsStreaming || messageFinishReason === "tool_calls";
+    const searchState = useMemo<WebSearchState>(() => {
+        if (toolCall.result === undefined) {
+            return awaitingToolResult ? "searching" : "sync_missing";
+        }
+        return visibleResultCount > 0 ? "completed" : "no_results";
+    }, [awaitingToolResult, toolCall.result, visibleResultCount]);
+    const displayState = searchState === "sync_missing" ? "completed" : searchState;
+    const resultMeta = useMemo(() => {
+        if (displayState !== "completed" || visibleResultCount === 0) return null;
+        return t("searchSourceCount", { count: visibleResultCount });
+    }, [displayState, t, visibleResultCount]);
+
+    useEffect(() => {
+        if (searchState === "sync_missing") {
+            console.warn("[DeepResearch] Web search tool call settled without result payload", {
+                toolCallId: toolCall.id,
+                query,
+                finishReason: messageFinishReason,
+            });
+        }
+    }, [messageFinishReason, query, searchState, toolCall.id]);
 
     return (
         <ToolCallSection
             header={(
-                <div className="min-w-0">
-                    <RainbowText
-                        className="flex items-center text-sm font-semibold text-gray-900"
-                        animated={searchResults === undefined}
-                    >
-                        <Search size={16} className="mr-2 text-blue-500" />
-                        <span>{t("searchingFor")}</span>
-                    </RainbowText>
-                    <p className="mt-1 break-words pl-6 text-sm leading-6 text-gray-600">{query}</p>
+                <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                        <RainbowText
+                            className="flex items-center text-sm font-semibold text-gray-900"
+                            animated={displayState === "searching"}
+                        >
+                            <Search size={16} className="mr-2 text-blue-500" />
+                            <span>{t("searchingFor")}</span>
+                        </RainbowText>
+                        <p className="mt-1 break-words pl-6 text-sm leading-6 text-gray-600">{query}</p>
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1 pt-0.5">
+                        <SearchStatusBadge status={displayState} t={t} />
+                        {resultMeta && <span className="text-xs text-gray-500">{resultMeta}</span>}
+                    </div>
                 </div>
             )}
             bodyClassName="space-y-3"
         >
-            {searching && (
+            {displayState === "searching" && (
                 <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    {[...Array(6)].map((_, i) => (
+                    {[...Array(3)].map((_, i) => (
                         <li key={`search-result-${i}`}>
-                            <Skeleton
-                                className="h-24 w-full rounded-xl bg-gradient-to-br from-gray-100 to-gray-200"
-                                style={{ animationDelay: `${i * 0.15}s` }}
-                            />
+                            <SearchResultSkeletonCard index={i} />
                         </li>
                     ))}
                 </ul>
@@ -164,7 +273,7 @@ export function WebSearchToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
                                 } : undefined}
                             >
                                 <a
-                                    className="group flex min-h-[92px] items-start gap-3 rounded-xl border border-gray-200 bg-white px-3 py-3 transition-all hover:border-gray-300 hover:bg-gray-50"
+                                    className="group flex min-h-[112px] items-start gap-3 rounded-2xl border border-gray-200/80 bg-white px-3.5 py-3.5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-md"
                                     href={searchResult.url}
                                     target="_blank"
                                     rel="noopener noreferrer"
@@ -175,12 +284,17 @@ export function WebSearchToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
                                         title={searchResult.title}
                                     />
                                     <div className="min-w-0 flex-1">
-                                        <div className="line-clamp-3 text-sm font-medium leading-6 text-gray-900 transition-colors group-hover:text-gray-700">
+                                        <div className="line-clamp-2 text-sm font-medium leading-6 text-gray-900 transition-colors group-hover:text-gray-700">
                                             {searchResult.title}
                                         </div>
-                                        <div className="mt-1 truncate text-xs text-gray-500">
-                                            {getHostname(searchResult.url)}
+                                        <div className="mt-1 inline-flex max-w-full items-center rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">
+                                            <span className="truncate">{getHostname(searchResult.url)}</span>
                                         </div>
+                                        {getSearchSnippet(searchResult.content) && (
+                                            <div className="mt-2 line-clamp-2 text-xs leading-5 text-gray-500">
+                                                {getSearchSnippet(searchResult.content)}
+                                            </div>
+                                        )}
                                     </div>
                                 </a>
                             </motion.li>
@@ -227,6 +341,13 @@ export function WebSearchToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
                         );
                     })}
                 </ul>
+            )}
+
+            {(displayState === "no_results" || searchState === "sync_missing") && visibleResultCount === 0 && (
+                <SearchEmptyState
+                    title={displayState === "no_results" ? t("searchStatusNoResults") : t("searchEmptyTitle")}
+                    description={t("searchEmptyDescription")}
+                />
             )}
         </ToolCallSection>
     );

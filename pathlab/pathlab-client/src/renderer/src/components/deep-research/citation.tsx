@@ -128,31 +128,37 @@ export function CitationLink({
     openInNewTab(e);
   };
 
+  const anchor = (
+    <a
+      id={id}
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={handleCitationClick}
+      style={{
+        ...LINK_STYLE,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "2px",
+        scrollMarginTop: "5rem",
+      }}
+      {...linkHoverHandlers}
+      className={className}
+    >
+      {children}
+      <span className="text-xs text-muted-foreground ml-0.5">
+        <ExternalLink className="h-3 w-3 inline" />
+      </span>
+    </a>
+  );
+
+  if (isReferenceItem) {
+    return anchor;
+  }
+
   return (
     <HoverCard openDelay={200} closeDelay={100}>
-      <HoverCardTrigger asChild>
-        <a
-          id={id}
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={handleCitationClick}
-          style={{
-            ...LINK_STYLE,
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "2px",
-            scrollMarginTop: "5rem",
-          }}
-          {...linkHoverHandlers}
-          className={className}
-        >
-          {children}
-          <span className="text-xs text-muted-foreground ml-0.5">
-            <ExternalLink className="h-3 w-3 inline" />
-          </span>
-        </a>
-      </HoverCardTrigger>
+      <HoverCardTrigger asChild>{anchor}</HoverCardTrigger>
       <HoverCardContent
         className="w-80 p-4"
         side="top"

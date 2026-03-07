@@ -15,7 +15,7 @@ import { Button } from "../ui/button";
 import { useTranslations } from "../../lib/deep-research/i18n";
 import { rehypeSplitWordsIntoSpans } from "../../lib/deep-research/rehype";
 import { katexOptions } from "../../lib/deep-research/markdown/katex";
-import { autoFixMarkdown, normalizeMathForDisplay } from "../../lib/deep-research/utils/markdown";
+import { autoFixMarkdown, linkifyBareInlineCitations, normalizeMathForDisplay } from "../../lib/deep-research/utils/markdown";
 import { cn } from "../../lib/utils";
 
 import InlineCitation from "../chat/InlineCitation";
@@ -76,6 +76,19 @@ export function Markdown({
   checkLinkCredibility?: boolean;
   citations?: Citation[];
 }) {
+  const citationNumberMap = useMemo(() => {
+    const map = new Map<number, Citation>();
+    citations?.forEach((citation, index) => {
+      const citationNumber = typeof (citation as Citation & { number?: unknown }).number === "number"
+        ? (citation as Citation & { number: number }).number
+        : index + 1;
+      if (!map.has(citationNumber)) {
+        map.set(citationNumber, citation);
+      }
+    });
+    return map;
+  }, [citations]);
+
   // Pre-compute normalized URL map for O(1) lookup
   const citationMap = useMemo(() => {
     const map = new Map<string, number>();
@@ -127,11 +140,11 @@ export function Markdown({
         }
 
         // Handle inline citation links (rendered in text)
-        // Format: [[n]](#ref-n), [n](#ref1), [n](#1)
-        const linkMatch = hrefStr.match(/^#(?:ref-?)?(\d+)$/);
+        // Format: [[n]](#cite-n), [[n]](#ref-n), [n](#ref1), [n](#1)
+        const linkMatch = hrefStr.match(/^#(?:cite-|ref-?)?(\d+)$/);
         if (linkMatch) {
           const index = Number(linkMatch[1]);
-          const citation = citations[index - 1];
+          const citation = citationNumberMap.get(index) ?? citations[index - 1];
 
           return (
             <InlineCitation
@@ -147,9 +160,10 @@ export function Markdown({
 
         if (inlineCitation && citations.length > 0) {
           const matchedCitationIndex = citationMap.get(hrefStr);
+          const numberedCitation = citationNumberMap.get(inlineCitation.index);
           const fallbackCitationIndex = inlineCitation.index - 1;
           const resolvedCitationIndex = matchedCitationIndex ?? fallbackCitationIndex;
-          const citation = citations[resolvedCitationIndex];
+          const citation = numberedCitation ?? citations[resolvedCitationIndex];
 
           if (citation || (inlineCitation.index >= 1 && inlineCitation.index <= citations.length)) {
             return (
@@ -228,7 +242,15 @@ export function Markdown({
       ),
       ...(customComponents || {}),
     };
-  }, [checkLinkCredibility, citations, citationMap, customComponents]);
+  }, [checkLinkCredibility, citations, citationMap, citationNumberMap, customComponents]);
+
+  const displayMarkdown = useMemo(() => {
+    const normalizedMarkdown = dropMarkdownQuote(normalizeMathForDisplay(children ?? "")) ?? "";
+    const linkifiedMarkdown = citations.length > 0
+      ? linkifyBareInlineCitations(normalizedMarkdown)
+      : normalizedMarkdown;
+    return autoFixMarkdown(linkifiedMarkdown);
+  }, [children, citations]);
 
   const rehypePlugins = useMemo<NonNullable<ReactMarkdownOptions["rehypePlugins"]>>(() => {
     const plugins: NonNullable<ReactMarkdownOptions["rehypePlugins"]> = [[
@@ -248,9 +270,7 @@ export function Markdown({
         components={components}
         {...props}
       >
-        {autoFixMarkdown(
-          dropMarkdownQuote(normalizeMathForDisplay(children ?? "")) ?? "",
-        )}
+        {displayMarkdown}
       </ReactMarkdown>
       {enableCopy && typeof children === "string" && (
         <div className="flex">
