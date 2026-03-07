@@ -29,6 +29,7 @@ class GlobalSettingsResponse(BaseModel):
     openrouter_model: str
     huggingface_token: str
     dashscope_api_key: str
+    search_provider: str
     # Exa Search API key for web search functionality
     exa_api_key: str
     # Tavily API key for deep research web search
@@ -56,6 +57,7 @@ class GlobalSettingsUpdateRequest(BaseModel):
     openrouter_model: Optional[str] = None
     huggingface_token: Optional[str] = None
     dashscope_api_key: Optional[str] = None
+    search_provider: Optional[str] = None
     # Exa Search API key
     exa_api_key: Optional[str] = None
     # Tavily API key
@@ -124,6 +126,9 @@ async def update_global_settings(
 
     if not updates:
         raise HTTPException(status_code=400, detail="No settings provided to update")
+
+    if "search_provider" in updates and updates["search_provider"] not in {"exa", "tavily"}:
+        raise HTTPException(status_code=400, detail="search_provider must be either 'exa' or 'tavily'")
 
     settings = Config.update_global_settings(updates)
     return GlobalSettingsResponse(**settings)

@@ -639,6 +639,12 @@
       "modelNameHint": "Model name will be appended as ?model=... to the URL",
       "dashscopeApiKey": "DashScope API Key",
       "forQwen3Asr": "For Qwen3-ASR realtime.",
+      "searchProvider": "Search Provider",
+      "searchProviderHelp": "AI Chat and Deep Research will use the same web search provider selected here.",
+      "searchProviderOptions": {
+        "exa": "Exa",
+        "tavily": "Tavily"
+      },
       "exaApiKey": "Exa Search API Key",
 	      "tavilyApiKey": "Tavily API Key",
       "forWebSearch": "For AI web search capabilities.",

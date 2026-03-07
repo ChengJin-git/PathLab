@@ -76,6 +76,8 @@ export interface GeneralTabProps {
   closeConfirmDialog: () => void
 }
 
+type SearchProvider = 'exa' | 'tavily'
+
 export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTabProps) {
   const { t } = useTranslation()
   // Remote LLM state
@@ -84,6 +86,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [model, setModel] = useState('qwen/qwen3.5-plus-02-15')
   const [huggingfaceToken, setHuggingfaceToken] = useState('')
   const [dashscopeApiKey, setDashscopeApiKey] = useState('')
+  const [searchProvider, setSearchProvider] = useState<SearchProvider>('exa')
   // Exa Search API key for web search
   const [exaApiKey, setExaApiKey] = useState('')
   // Tavily API Key for deep research web search
@@ -155,6 +158,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       const s = await getGlobalSettings()
       setApiKey(s.openrouter_api_key); setBaseUrl(s.openrouter_base_url); setModel(s.openrouter_model)
       setHuggingfaceToken(s.huggingface_token); setDashscopeApiKey(s.dashscope_api_key)
+      setSearchProvider((s.search_provider || 'exa') as SearchProvider)
       setExaApiKey(s.exa_api_key || '')
       setTavilyApiKey(s.tavily_api_key || '')
       setLocalVllmEnabled(s.local_vllm_enabled); setLocalVllmBaseUrl(s.local_vllm_base_url)
@@ -186,6 +190,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       await updateGlobalSettings({
         openrouter_api_key: apiKey, openrouter_base_url: baseUrl, openrouter_model: model,
         huggingface_token: huggingfaceToken, dashscope_api_key: dashscopeApiKey,
+        search_provider: searchProvider,
         exa_api_key: exaApiKey,
         tavily_api_key: tavilyApiKey,
         local_vllm_enabled: localVllmEnabled, local_vllm_base_url: localVllmBaseUrl,
@@ -347,6 +352,20 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
 		          <div className="grid gap-3 items-start">
 	            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
 		              <CardContent className="space-y-2.5 p-3">
+                <div className="space-y-1">
+                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">
+                    {t('settings.general.searchProvider')}
+                  </Label>
+                  <select
+                    value={searchProvider}
+                    onChange={(e) => setSearchProvider(e.target.value as SearchProvider)}
+                    className="flex h-8 w-full rounded-md border border-slate-300 bg-background px-3 py-1 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value="exa">{t('settings.general.searchProviderOptions.exa')}</option>
+                    <option value="tavily">{t('settings.general.searchProviderOptions.tavily')}</option>
+                  </select>
+                  <p className="text-xs text-slate-500">{t('settings.general.searchProviderHelp')}</p>
+                </div>
                 <div className="space-y-1">
                   <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">
                     {t('settings.general.exaApiKey')}

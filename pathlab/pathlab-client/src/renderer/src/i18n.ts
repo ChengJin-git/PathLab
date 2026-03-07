@@ -5,9 +5,9 @@ import enUS from './locales/en-US.json'
 import zhCN from './locales/zh-CN.json'
 import zhHK from './locales/zh-HK.json'
 
-import drEnUS from './lib/deep-research/i18n-en.json'
-import drZhCN from './lib/deep-research/i18n-zh.json'
-import drZhHK from './lib/deep-research/i18n-zh-HK.json'
+import drEnUS from './lib/deep-research/en.json'
+import drZhCN from './lib/deep-research/zh-CN.json'
+import drZhHK from './lib/deep-research/zh-HK.json'
 
 function deepMerge(target: any, source: any): any {
   if (typeof target !== 'object' || target === null || Array.isArray(target)) return source;
@@ -49,13 +49,21 @@ const getInitialLanguage = (): string => {
   return 'en-US'
 }
 
+export const getDeepResearchLocale = (
+  language: string = i18n.resolvedLanguage || i18n.language || getInitialLanguage()
+): 'zh-CN' | 'en-US' => {
+  return language.startsWith('en') ? 'en-US' : 'zh-CN'
+}
+
 i18n
   .use(initReactI18next)
   .init({
     resources: {
-      'en-US': { translation: deepMerge(enUS, drEnUS) },
-      'zh-CN': { translation: deepMerge(zhCN, drZhCN) },
-      'zh-HK': { translation: deepMerge(zhHK, drZhHK) }
+      // Keep deep-research-only keys, but let the main app locales remain the
+      // source of truth for any overlapping translations.
+      'en-US': { translation: deepMerge(drEnUS, enUS) },
+      'zh-CN': { translation: deepMerge(drZhCN, zhCN) },
+      'zh-HK': { translation: deepMerge(drZhHK, zhHK) }
     },
     lng: getInitialLanguage(),
     fallbackLng: 'en-US',

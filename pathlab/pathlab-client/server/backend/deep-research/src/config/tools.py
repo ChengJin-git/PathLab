@@ -10,6 +10,7 @@ load_dotenv()
 
 
 class SearchEngine(enum.Enum):
+    EXA = "exa"
     TAVILY = "tavily"
     INFOQUEST = "infoquest"
     DUCKDUCKGO = "duckduckgo"
@@ -27,6 +28,12 @@ class CrawlerEngine(enum.Enum):
 
 # Tool configuration
 SELECTED_SEARCH_ENGINE = os.getenv("SEARCH_API", SearchEngine.TAVILY.value)
+
+
+def get_selected_search_engine(default: str = SearchEngine.TAVILY.value) -> str:
+    configured = os.getenv("SEARCH_API", default)
+    valid = {engine.value for engine in SearchEngine}
+    return configured if configured in valid else default
 
 class RAGProvider(enum.Enum):
     DIFY = "dify"

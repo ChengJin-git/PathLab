@@ -639,6 +639,12 @@
       "modelNameHint": "模型名称将以 ?model=... 附加到 URL",
       "dashscopeApiKey": "DashScope API 密钥",
       "forQwen3Asr": "用于 Qwen3-ASR 实时语音识别。",
+      "searchProvider": "搜索供应商",
+      "searchProviderHelp": "AI Chat 与 Deep Research 将统一使用这里选择的网页搜索供应商。",
+      "searchProviderOptions": {
+        "exa": "Exa",
+        "tavily": "Tavily"
+      },
       "exaApiKey": "Exa 搜索 API 密钥",
 	      "tavilyApiKey": "Tavily API 密钥",
       "forWebSearch": "用于 AI 网页搜索功能。",

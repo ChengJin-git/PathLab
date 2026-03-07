@@ -21,8 +21,9 @@ from langchain_community.utilities import (
     WikipediaAPIWrapper,
 )
 
-from src.config import SELECTED_SEARCH_ENGINE, SearchEngine, load_yaml_config
+from src.config import SearchEngine, get_selected_search_engine, load_yaml_config
 from src.tools.decorators import create_logged_tool
+from src.tools.exa_search.exa_search_results import ExaSearchResults
 from src.tools.infoquest_search.infoquest_search_results import InfoQuestSearchResults
 from src.tools.tavily_search.tavily_search_results_with_images import (
     TavilySearchWithImages,
@@ -31,6 +32,7 @@ from src.tools.tavily_search.tavily_search_results_with_images import (
 logger = logging.getLogger(__name__)
 
 # Create logged versions of the search tools
+LoggedExaSearch = create_logged_tool(ExaSearchResults)
 LoggedTavilySearch = create_logged_tool(TavilySearchWithImages)
 LoggedInfoQuestSearch = create_logged_tool(InfoQuestSearchResults)
 LoggedDuckDuckGoSearch = create_logged_tool(DuckDuckGoSearchResults)
@@ -48,10 +50,17 @@ def get_search_config():
 
 
 # Get the selected search tool
-def get_web_search_tool(max_search_results: int):
+def get_web_search_tool(max_search_results: int, search_engine: Optional[str] = None):
     search_config = get_search_config()
+    selected_search_engine = search_engine or get_selected_search_engine()
 
-    if SELECTED_SEARCH_ENGINE == SearchEngine.TAVILY.value:
+    if selected_search_engine == SearchEngine.EXA.value:
+        return LoggedExaSearch(
+            name="web_search",
+            max_results=max_search_results,
+            exa_api_key=os.getenv("EXA_API_KEY", ""),
+        )
+    elif selected_search_engine == SearchEngine.TAVILY.value:
         # Get all Tavily search parameters from configuration with defaults
         include_domains: Optional[List[str]] = search_config.get("include_domains", [])
         exclude_domains: Optional[List[str]] = search_config.get("exclude_domains", [])
@@ -81,7 +90,7 @@ def get_web_search_tool(max_search_results: int):
             include_domains=include_domains,
             exclude_domains=exclude_domains,
         )
-    elif SELECTED_SEARCH_ENGINE == SearchEngine.INFOQUEST.value:
+    elif selected_search_engine == SearchEngine.INFOQUEST.value:
         time_range = search_config.get("time_range", -1)
         site = search_config.get("site", "")
         logger.info(
@@ -92,12 +101,12 @@ def get_web_search_tool(max_search_results: int):
             time_range=time_range,
             site=site,
         )
-    elif SELECTED_SEARCH_ENGINE == SearchEngine.DUCKDUCKGO.value:
+    elif selected_search_engine == SearchEngine.DUCKDUCKGO.value:
         return LoggedDuckDuckGoSearch(
             name="web_search",
             num_results=max_search_results,
         )
-    elif SELECTED_SEARCH_ENGINE == SearchEngine.BRAVE_SEARCH.value:
+    elif selected_search_engine == SearchEngine.BRAVE_SEARCH.value:
         return LoggedBraveSearch(
             name="web_search",
             search_wrapper=BraveSearchWrapper(
@@ -105,7 +114,7 @@ def get_web_search_tool(max_search_results: int):
                 search_kwargs={"count": max_search_results},
             ),
         )
-    elif SELECTED_SEARCH_ENGINE == SearchEngine.SERPER.value:
+    elif selected_search_engine == SearchEngine.SERPER.value:
         return LoggedSerperSearch(
             name="web_search",
             api_wrapper=GoogleSerperAPIWrapper(
@@ -113,7 +122,7 @@ def get_web_search_tool(max_search_results: int):
                 serper_api_key=os.getenv("SERPER_API_KEY", ""),
             ),
         )
-    elif SELECTED_SEARCH_ENGINE == SearchEngine.ARXIV.value:
+    elif selected_search_engine == SearchEngine.ARXIV.value:
         return LoggedArxivSearch(
             name="web_search",
             api_wrapper=ArxivAPIWrapper(
@@ -122,14 +131,14 @@ def get_web_search_tool(max_search_results: int):
                 load_all_available_meta=True,
             ),
         )
-    elif SELECTED_SEARCH_ENGINE == SearchEngine.SEARX.value:
+    elif selected_search_engine == SearchEngine.SEARX.value:
         return LoggedSearxSearch(
             name="web_search",
             wrapper=SearxSearchWrapper(
                 k=max_search_results,
             ),
         )
-    elif SELECTED_SEARCH_ENGINE == SearchEngine.WIKIPEDIA.value:
+    elif selected_search_engine == SearchEngine.WIKIPEDIA.value:
         wiki_lang = search_config.get("wikipedia_lang", "en")
         wiki_doc_content_chars_max = search_config.get(
             "wikipedia_doc_content_chars_max", 4000
@@ -144,4 +153,4 @@ def get_web_search_tool(max_search_results: int):
             ),
         )
     else:
-        raise ValueError(f"Unsupported search engine: {SELECTED_SEARCH_ENGINE}")
+        raise ValueError(f"Unsupported search engine: {selected_search_engine}")

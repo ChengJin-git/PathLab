@@ -6,8 +6,7 @@ import type { MCPServerMetadata } from "../mcp";
 import type { Resource } from "../messages";
 import { fetchStream } from "../sse";
 import { parseJSON, sleep } from "../utils";
-import { getDeepResearchLocale } from "../../../i18n/locale";
-import i18n from "../../../i18n";
+import i18n, { getDeepResearchLocale } from "../../../i18n";
 
 import { resolveServiceURL, getAuthHeaders } from "./resolve-service-url";
 import type { ChatEvent } from "./types";

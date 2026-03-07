@@ -60,6 +60,7 @@ class Configuration:
     enable_web_search: bool = (
         True  # Whether to enable web search, set to False to use only local RAG
     )
+    search_provider: str = "tavily"  # Search provider for web search tools
     interrupt_before_tools: list[str] = field(
         default_factory=list
     )  # List of tool names to interrupt before execution

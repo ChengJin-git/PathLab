@@ -8,7 +8,6 @@ import App from './App'
 import './index.css'
 import './i18n'
 import { initializeApiConfig, updateApiBase } from './config'
-import './i18n'
 
 // Use the base URL from Vite config
 const basename = import.meta.env.BASE_URL

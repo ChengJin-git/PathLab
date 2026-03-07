@@ -29,12 +29,10 @@ from src.tools import (
     get_all_pathlab_tools,
     get_url_validator_tool,
 )
-from src.tools.search import LoggedTavilySearch
 from src.utils.context_manager import ContextManager, validate_message_content
 from src.utils.json_utils import repair_json_output, sanitize_tool_response
 from src.graph.stop_control import is_stop_requested
 
-from ..config import SELECTED_SEARCH_ENGINE, SearchEngine
 from .types import State
 from .utils import (
     build_clarified_topic_from_history,
@@ -363,52 +361,47 @@ def background_investigation_node(state: State, config: RunnableConfig):
 
     query = state.get("clarified_research_topic") or state.get("research_topic")
     background_investigation_results = []
-    
-    if SELECTED_SEARCH_ENGINE == SearchEngine.TAVILY.value:
-        searched_content = LoggedTavilySearch(
-            max_results=configurable.max_search_results
-        ).invoke(query)
-        # check if the searched_content is a tuple, then we need to unpack it
-        if isinstance(searched_content, tuple):
-            searched_content = searched_content[0]
-        
-        # Handle string JSON response (new format from fixed Tavily tool)
-        if isinstance(searched_content, str):
-            try:
-                parsed = json.loads(searched_content)
-                if isinstance(parsed, dict) and "error" in parsed:
-                    logger.error(f"Tavily search error: {parsed['error']}")
-                    background_investigation_results = []
-                elif isinstance(parsed, list):
-                    background_investigation_results = [
-                        f"## {elem.get('title', 'Untitled')}\n\n{elem.get('content', 'No content')}" 
-                        for elem in parsed
-                    ]
-                else:
-                    logger.error(f"Unexpected Tavily response format: {searched_content}")
-                    background_investigation_results = []
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse Tavily response as JSON: {searched_content}")
+
+    searched_content = get_web_search_tool(
+        configurable.max_search_results,
+        configurable.search_provider,
+    ).invoke(query)
+
+    if isinstance(searched_content, tuple):
+        searched_content = searched_content[0]
+
+    if isinstance(searched_content, str):
+        try:
+            parsed = json.loads(searched_content)
+            if isinstance(parsed, dict) and "error" in parsed:
+                logger.error(f"Search error: {parsed['error']}")
                 background_investigation_results = []
-        # Handle legacy list format
-        elif isinstance(searched_content, list):
-            background_investigation_results = [
-                f"## {elem['title']}\n\n{elem['content']}" for elem in searched_content
-            ]
-            return {
-                "background_investigation_results": "\n\n".join(
-                    background_investigation_results
-                )
-            }
-        else:
-            logger.error(
-                f"Tavily search returned malformed response: {searched_content}"
-            )
+            elif isinstance(parsed, list):
+                background_investigation_results = [
+                    f"## {elem.get('title', 'Untitled')}\n\n{elem.get('content', elem.get('desc', 'No content'))}"
+                    for elem in parsed
+                ]
+            else:
+                logger.error(f"Unexpected search response format: {searched_content}")
+                background_investigation_results = []
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse search response as JSON: {searched_content}")
             background_investigation_results = []
+    elif isinstance(searched_content, list):
+        background_investigation_results = [
+            f"## {elem.get('title', 'Untitled')}\n\n{elem.get('content', elem.get('desc', 'No content'))}"
+            for elem in searched_content
+        ]
+        return {
+            "background_investigation_results": "\n\n".join(
+                background_investigation_results
+            )
+        }
     else:
-        background_investigation_results = get_web_search_tool(
-            configurable.max_search_results
-        ).invoke(query)
+        logger.error(
+            f"Search tool returned malformed response: {searched_content}"
+        )
+        background_investigation_results = []
     
     return {
         "background_investigation_results": json.dumps(
@@ -1701,7 +1694,10 @@ async def researcher_node(
     
     # Add web search and crawl tools only if web search is enabled
     if configurable.enable_web_search:
-        tools.extend([get_web_search_tool(configurable.max_search_results), crawl_tool])
+        tools.extend([
+            get_web_search_tool(configurable.max_search_results, configurable.search_provider),
+            crawl_tool,
+        ])
         # Add URL validator tool for verifying links
         tools.append(get_url_validator_tool())
         logger.debug("[researcher_node] Added URL validator tool")

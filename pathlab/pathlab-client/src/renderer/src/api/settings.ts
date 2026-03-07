@@ -12,6 +12,7 @@ export interface GlobalSettings {
   openrouter_model: string
   huggingface_token: string
   dashscope_api_key: string
+  search_provider: 'exa' | 'tavily'
   // Exa Search API key for web search functionality
   exa_api_key: string
   // Tavily API key for deep research web search

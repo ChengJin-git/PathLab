@@ -1113,6 +1113,49 @@ async def _execute_exa_search(query: str, exa_api_key: str, num_results: int = 5
         }
 
 
+async def _execute_tavily_search(query: str, tavily_api_key: str, num_results: int = 5) -> Dict:
+    """Execute Tavily search and normalize results to the frontend schema."""
+    headers = {
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            "https://api.tavily.com/search",
+            headers=headers,
+            json={
+                "api_key": tavily_api_key,
+                "query": query,
+                "max_results": num_results,
+                "search_depth": "advanced",
+                "include_answer": False,
+                "include_raw_content": False,
+                "include_images": False,
+                "topic": "general",
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        results = []
+        for item in data.get("results", []):
+            snippet = (item.get("content") or item.get("raw_content") or "")[:2000]
+            results.append({
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "snippet": snippet,
+            })
+
+        return {
+            "query": query,
+            "results": results,
+        }
+
+
+def _resolve_chat_search_provider(global_settings: Dict[str, Any]) -> str:
+    return Config.resolve_search_provider(global_settings)
+
+
 # ── Client disconnect detection for immediate cancellation ──────────────────
 
 class ClientDisconnectedError(Exception):
@@ -1240,8 +1283,10 @@ async def stream_ai_response(
     openrouter_base_url = base_url or global_settings.get("openrouter_base_url") or os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     openrouter_model = model or global_settings.get("openrouter_model") or os.environ.get("OPENROUTER_MODEL", "qwen/qwen3.5-plus-02-15")
 
-    # Exa search settings
+    search_provider = _resolve_chat_search_provider(global_settings)
+    # Search provider settings
     exa_api_key = global_settings.get("exa_api_key", "")
+    tavily_api_key = global_settings.get("tavily_api_key", "")
 
     # Determine which API to use
     use_local = False
@@ -1527,20 +1572,24 @@ After saving, return here and start chatting!"""
             ]
             continue
 
-        # #2: AI wants to search but Exa API key is not configured
-        if search_match and not exa_api_key:
-            logger.warning("AI requested [WEB_SEARCH] but no Exa API key is configured")
+        active_search_api_key = exa_api_key if search_provider == "exa" else tavily_api_key
+
+        # #2: AI wants to search but the selected search provider is not configured
+        if search_match and not active_search_api_key:
+            logger.warning(
+                f"AI requested [WEB_SEARCH] but no {search_provider} API key is configured"
+            )
             current_messages = current_messages + [
                 {"role": "assistant", "content": full_response},
                 {"role": "user", "content": (
-                    "Web search is currently unavailable (API key not configured). "
+                    f"Web search is currently unavailable ({search_provider} API key not configured). "
                     "Please answer the user's question using your existing knowledge. "
                     "Do NOT attempt to use [WEB_SEARCH] again."
                 )}
             ]
             continue
 
-        if search_match and exa_api_key:
+        if search_match and active_search_api_key:
             # #4: Enforce search count limit
             _search_count += 1
             if _search_count > _MAX_SEARCHES:
@@ -1572,10 +1621,15 @@ After saving, return here and start chatting!"""
             search_status = json.dumps({"query": query, "reason": reason})
             yield f"data: {json.dumps({'content': f'[SEARCH_STATUS]{search_status}[/SEARCH_STATUS]'})}\n\n"
 
-            # Execute Exa search
+            # Execute configured web search provider
             try:
+                search_coro = (
+                    _execute_exa_search(query, exa_api_key, num_results=ai_num_results)
+                    if search_provider == "exa"
+                    else _execute_tavily_search(query, tavily_api_key, num_results=ai_num_results)
+                )
                 search_results = await _run_or_cancel_on_disconnect(
-                    _execute_exa_search(query, exa_api_key, num_results=ai_num_results),
+                    search_coro,
                     request,
                 )
 
@@ -1585,7 +1639,7 @@ After saving, return here and start chatting!"""
 
                 # #1/#5: Handle empty search results explicitly
                 if not search_results["results"]:
-                    logger.info(f"Exa search returned 0 results for query: {query}")
+                    logger.info(f"{search_provider} search returned 0 results for query: {query}")
                     # Emit empty result to frontend so search card shows "no results"
                     web_search_result_block = json.dumps(search_results)
                     yield f"data: {json.dumps({'content': f'[WEB_SEARCH_RESULT]{web_search_result_block}[/WEB_SEARCH_RESULT]'})}\n\n"
@@ -1636,11 +1690,11 @@ After saving, return here and start chatting!"""
                 continue
 
             except ClientDisconnectedError:
-                logger.info("Client disconnected during Exa search — stopping")
+                logger.info(f"Client disconnected during {search_provider} search — stopping")
                 return
             except httpx.TimeoutException:
                 # #3: Search timeout — update frontend card and let AI answer with existing knowledge
-                logger.warning(f"Exa search timed out for query: {query}")
+                logger.warning(f"{search_provider} search timed out for query: {query}")
                 failed_status = json.dumps({"query": query, "reason": reason, "status": "timeout"})
                 yield f"data: {json.dumps({'content': f'[SEARCH_STATUS]{failed_status}[/SEARCH_STATUS]'})}\n\n"
                 current_messages = current_messages + [
@@ -1653,7 +1707,7 @@ After saving, return here and start chatting!"""
                 ]
                 continue
             except Exception as e:
-                logger.error(f"Exa search error: {e}")
+                logger.error(f"{search_provider} search error: {e}")
                 # Emit failed status so frontend search card updates
                 failed_status = json.dumps({"query": query, "reason": reason, "status": "error"})
                 yield f"data: {json.dumps({'content': f'[SEARCH_STATUS]{failed_status}[/SEARCH_STATUS]'})}\n\n"

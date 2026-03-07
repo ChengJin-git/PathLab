@@ -355,27 +355,41 @@ def _has_llm_settings_configured() -> bool:
     return False
 
 
-def _apply_tavily_api_key_override_from_settings() -> None:
+def _apply_search_settings_overrides_from_settings() -> str:
     """
-    Keep process-level TAVILY_API_KEY aligned with global settings so
-    in-process deep-research requests use the configured key.
+    Keep process-level search provider and API keys aligned with global settings
+    so in-process deep-research requests use the configured provider.
+
+    Returns the resolved provider for downstream request-body injection.
     """
     try:
         settings = Config.get_global_settings()
-        configured = (settings.get("tavily_api_key") or "").strip()
+        provider = Config.resolve_search_provider(settings)
+        exa_configured = (settings.get("exa_api_key") or "").strip()
+        tavily_configured = (settings.get("tavily_api_key") or "").strip()
     except Exception as e:
-        logger.warning(f"[ResearchChat] Failed to read tavily_api_key from settings: {e}")
-        return
+        logger.warning(f"[ResearchChat] Failed to read search settings: {e}")
+        return "exa"
 
-    env_key = "TAVILY_API_KEY"
-    current = os.environ.get(env_key)
-    if configured:
-        if current != configured:
-            os.environ[env_key] = configured
-            logger.info("[ResearchChat] Using Tavily API Key override from settings")
-    elif current:
-        os.environ.pop(env_key, None)
-        logger.info("[ResearchChat] Cleared Tavily API Key override")
+    if os.environ.get("SEARCH_API") != provider:
+        os.environ["SEARCH_API"] = provider
+        logger.info(f"[ResearchChat] Using search provider override from settings: {provider}")
+
+    key_overrides = {
+        "EXA_API_KEY": exa_configured,
+        "TAVILY_API_KEY": tavily_configured,
+    }
+    for env_key, configured in key_overrides.items():
+        current = os.environ.get(env_key)
+        if configured:
+            if current != configured:
+                os.environ[env_key] = configured
+                logger.info(f"[ResearchChat] Using {env_key} override from settings")
+        elif current:
+            os.environ.pop(env_key, None)
+            logger.info(f"[ResearchChat] Cleared {env_key} override")
+
+    return provider
 
 
 async def _resolve_llm_override_from_settings() -> Optional[dict]:
@@ -542,7 +556,7 @@ async def research_chat_stream_raw(
     Used by the dedicated Deep Research page which handles its own event parsing.
     """
 
-    _apply_tavily_api_key_override_from_settings()
+    search_provider = _apply_search_settings_overrides_from_settings()
     llm_override = await _resolve_llm_override_from_settings()
 
     # Build request body - pass through all fields from the request.
@@ -566,6 +580,7 @@ async def research_chat_stream_raw(
     _normalize_thread_id(body)
     if llm_override:
         body["llm_override"] = llm_override
+    body["search_provider"] = search_provider
 
     # Early check: ensure an LLM is configured (like the normal AI chat page does).
     if not llm_override and not _has_deep_research_llm_config() and not _has_llm_settings_configured():
@@ -654,10 +669,11 @@ async def create_research_job(
 
     _normalize_thread_id(body)
 
-    _apply_tavily_api_key_override_from_settings()
+    search_provider = _apply_search_settings_overrides_from_settings()
     llm_override = await _resolve_llm_override_from_settings()
     if llm_override:
         body["llm_override"] = llm_override
+    body["search_provider"] = search_provider
 
     job_id = str(uuid4())
 
@@ -967,6 +983,7 @@ async def research_chat_stream(
       message_chunk events → data: {"content": "..."}\n\n
     """
 
+    search_provider = _apply_search_settings_overrides_from_settings()
     llm_override = await _resolve_llm_override_from_settings()
 
     # Build deep-research request body
@@ -980,6 +997,7 @@ async def research_chat_stream(
         "enable_deep_thinking": False,
         "enable_clarification": False,
         "enable_web_search": True,
+        "search_provider": search_provider,
         "max_plan_iterations": 1,
         "max_step_num": 3,
         "max_search_results": 3,

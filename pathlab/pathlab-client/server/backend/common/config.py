@@ -204,6 +204,32 @@ class Config:
     # These settings are shared across all users
 
     @classmethod
+    def resolve_search_provider(cls, settings: dict | None = None) -> str:
+        """Resolve the effective global search provider.
+
+        Priority:
+        1. Explicit ``search_provider`` setting when present and valid
+        2. Infer from which API key is configured
+        3. Fall back to ``exa`` to preserve existing AI Chat behavior
+        """
+        source = settings if settings is not None else cls._read_config()
+        configured = str(source.get("search_provider", "") or "").strip().lower()
+        if configured in {"exa", "tavily"}:
+            return configured
+
+        has_exa = bool(str(source.get("exa_api_key", "") or "").strip())
+        has_tavily = bool(str(source.get("tavily_api_key", "") or "").strip())
+        if has_exa and not has_tavily:
+            return "exa"
+        if has_tavily and not has_exa:
+            return "tavily"
+        if has_exa:
+            return "exa"
+        if has_tavily:
+            return "tavily"
+        return "exa"
+
+    @classmethod
     def get_global_settings(cls) -> dict:
         """Get all global settings."""
         data = cls._read_config()
@@ -241,6 +267,7 @@ class Config:
             "openrouter_model": data.get("openrouter_model", "qwen/qwen3-vl-235b-a22b-instruct"),
             "huggingface_token": data.get("huggingface_token", ""),
             "dashscope_api_key": data.get("dashscope_api_key", ""),
+            "search_provider": cls.resolve_search_provider(data),
             "exa_api_key": data.get("exa_api_key", ""),
             "tavily_api_key": data.get("tavily_api_key", ""),
             # Local vLLM settings (OpenAI-compatible server for LLM)
@@ -272,6 +299,7 @@ class Config:
             "openrouter_model",
             "huggingface_token",
             "dashscope_api_key",
+            "search_provider",
             "exa_api_key",
             "tavily_api_key",
             # Local vLLM settings

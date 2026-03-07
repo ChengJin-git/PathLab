@@ -75,6 +75,9 @@ class ChatRequest(BaseModel):
     enable_web_search: Optional[bool] = Field(
         True, description="Whether to enable web search, set to False to use only local RAG"
     )
+    search_provider: Optional[str] = Field(
+        None, description="Selected web search provider (e.g. exa or tavily)"
+    )
     report_style: Optional[ReportStyle] = Field(
         ReportStyle.ACADEMIC, description="The style of the report"
     )
