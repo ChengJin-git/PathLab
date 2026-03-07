@@ -229,7 +229,7 @@ export default function Main() {
                 className={cn(
                   "min-w-0 transition-all duration-300 ease-out",
                   !showDesktopResearchPanel && "w-full max-w-[980px]",
-                  showDesktopResearchPanel && "w-[43%] min-w-[520px] max-w-[720px]",
+                  showDesktopResearchPanel && "w-[43%] min-w-[360px] max-w-[720px]",
                 )}
               />
               {showDesktopResearchPanel && (

@@ -271,7 +271,7 @@ export function MessageListItem({
             if (content) {
                 return (
                     <motion.li
-                        className="mb-6"
+                        className="mb-6 w-full max-w-full overflow-hidden"
                         key={messageId}
                         id={`dr-msg-${messageId}`}
                         initial={{ opacity: 0, y: 24 }}

@@ -43,6 +43,26 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
+_INTERNAL_OBSERVATION_MARKERS = (
+    "[ERROR]",
+    "[WARNING]",
+    "[VALIDATION WARNING]",
+    "Error Details:\n",
+    "Please check the logs for more information.",
+)
+
+
+def _is_user_facing_observation(observation: str) -> bool:
+    """Exclude internal execution errors and warnings from user-facing reports."""
+    if not observation or not observation.strip():
+        return False
+    normalized = observation.strip()
+    return not any(marker in normalized for marker in _INTERNAL_OBSERVATION_MARKERS)
+
+
+def _filter_user_facing_observations(observations: list[str]) -> list[str]:
+    return [observation for observation in observations if _is_user_facing_observation(observation)]
+
 
 def _hoist_system_messages(messages: list) -> list:
     """Move all system messages to the beginning of the list.
@@ -1031,7 +1051,7 @@ def reporter_node(state: State, config: RunnableConfig):
     """Reporter node that write a final report."""
     if _is_stop_requested(state, config):
         logger.info("Stop requested at reporter node, returning stop summary.")
-        observations = state.get("observations", [])
+        observations = _filter_user_facing_observations(state.get("observations", []))
         stop_reason = state.get("stop_reason") or "Research stopped by user."
         summary_lines = [
             "# Research Stopped",
@@ -1063,7 +1083,7 @@ def reporter_node(state: State, config: RunnableConfig):
         "locale": state.get("locale", "en-US"),
     }
     invoke_messages = apply_prompt_template("reporter", input_, configurable, input_.get("locale", "en-US"))
-    observations = state.get("observations", [])
+    observations = _filter_user_facing_observations(state.get("observations", []))
     
     # Get collected citations for the report
     citations = state.get("citations", [])
@@ -1515,7 +1535,7 @@ async def _execute_agent_step(
                         name=agent_name,
                     )
                 ],
-                "observations": observations + [detailed_error],
+                "observations": observations,
                 "citations": error_citations,
                 **preserve_state_meta_fields(state),
             },
@@ -1532,26 +1552,17 @@ async def _execute_agent_step(
     
     logger.debug(f"{agent_name.capitalize()} full response: {response_content}")
 
-    # Validate web search usage for researcher agent if enforcement is enabled
-    web_search_validated = True
-    should_validate = agent_name == "researcher"
-    validation_info = ""
-
-    if should_validate:
+    # Validate web search usage for researcher agent if enforcement is enabled.
+    # Keep this as an internal log signal only; do not surface it in reports.
+    if agent_name == "researcher":
         # Check if enforcement is enabled in configuration
         configurable = Configuration.from_runnable_config(config) if config else Configuration()
         # Skip validation if web search is disabled (user intentionally disabled it)
         if configurable.enforce_researcher_search and configurable.enable_web_search:
-            web_search_validated = validate_web_search_usage(result["messages"], agent_name)
-            
-            # If web search was not used, add a warning to the response
-            if not web_search_validated:
-                logger.warning(f"[VALIDATION] Researcher did not use web_search tool. Adding reminder to response.")
-                # Add validation information to observations
-                validation_info = (
-                    "\n\n[WARNING] This research was completed without using the web_search tool. "
-                    "Please verify that the information provided is accurate and up-to-date."
-                    "\n\n[VALIDATION WARNING] Researcher did not use the web_search tool as recommended."
+            if not validate_web_search_usage(result["messages"], agent_name):
+                logger.warning(
+                    "[VALIDATION] Researcher did not use web_search tool. "
+                    "Skipping user-facing warning and keeping this as an internal log only."
                 )
 
     # Update the step with the execution result
@@ -1591,7 +1602,7 @@ async def _execute_agent_step(
             update={
                 **preserve_state_meta_fields(state),
                 "messages": agent_messages,
-                "observations": observations + [response_content + validation_info],
+                "observations": observations + [response_content],
                 "citations": merged_citations,
                 "stop_requested": True,
                 "stop_reason": state.get("stop_reason", "Stopped by user"),
@@ -1603,7 +1614,7 @@ async def _execute_agent_step(
         update={
             **preserve_state_meta_fields(state),
             "messages": agent_messages,
-            "observations": observations + [response_content + validation_info],
+            "observations": observations + [response_content],
             "citations": merged_citations,  # Store merged citations based on existing state and new tool results
         },
         goto="research_team",

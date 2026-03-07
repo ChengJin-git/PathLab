@@ -84,8 +84,8 @@ export function ResearchBlock({
   } = useReportExporter(reportId, researchId ?? undefined);
 
   useEffect(() => {
-    setActiveTab("activities");
-  }, [researchId]);
+    setActiveTab(hasReport ? "report" : "activities");
+  }, [researchId, hasReport]);
 
   useEffect(() => {
     if (hasCompletedReport) {

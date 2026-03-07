@@ -13,7 +13,7 @@ import {
     XCircle,
 } from "lucide-react";
 import { useTheme } from "next-themes";
-import React, { useEffect, useMemo } from "react";
+import React, { useMemo } from "react";
 import SyntaxHighlighter from "react-syntax-highlighter";
 import { docco } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { dark } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -78,7 +78,7 @@ type SearchResult =
         image_description: string;
     };
 
-type WebSearchState = "searching" | "completed" | "no_results" | "sync_missing";
+type WebSearchState = "searching" | "completed" | "no_results";
 
 function getSearchSnippet(content?: string): string {
     if (!content) return "";
@@ -167,7 +167,10 @@ export function WebSearchToolCall({
 }) {
     // @ts-ignore - i18n shim
     const t = useTranslations("chat.research");
-    const query = useMemo(() => (toolCall.args as { query: string }).query, [toolCall.args]);
+    const query = useMemo(() => {
+        const maybeQuery = (toolCall.args as { query?: unknown } | undefined)?.query;
+        return typeof maybeQuery === "string" ? maybeQuery : "";
+    }, [toolCall.args]);
     const searchResults = useMemo<SearchResult[]>(() => {
         let results: SearchResult[] = [];
 
@@ -175,8 +178,7 @@ export function WebSearchToolCall({
             if (toolCall.result) {
                 results = parseJSON(toolCall.result, []);
             }
-        } catch (error) {
-            console.warn("Failed to parse search results:", error);
+        } catch {
             results = [];
         }
 
@@ -202,28 +204,18 @@ export function WebSearchToolCall({
         [searchResults],
     );
     const visibleResultCount = pageResults.length + imageResults.length;
+    const hasResultPayload = toolCall.result !== undefined;
     const awaitingToolResult = messageIsStreaming || messageFinishReason === "tool_calls";
     const searchState = useMemo<WebSearchState>(() => {
-        if (toolCall.result === undefined) {
-            return awaitingToolResult ? "searching" : "sync_missing";
+        if (!hasResultPayload) {
+            return awaitingToolResult ? "searching" : "completed";
         }
         return visibleResultCount > 0 ? "completed" : "no_results";
-    }, [awaitingToolResult, toolCall.result, visibleResultCount]);
-    const displayState = searchState === "sync_missing" ? "completed" : searchState;
+    }, [awaitingToolResult, hasResultPayload, visibleResultCount]);
     const resultMeta = useMemo(() => {
-        if (displayState !== "completed" || visibleResultCount === 0) return null;
+        if (searchState !== "completed" || visibleResultCount === 0) return null;
         return t("searchSourceCount", { count: visibleResultCount });
-    }, [displayState, t, visibleResultCount]);
-
-    useEffect(() => {
-        if (searchState === "sync_missing") {
-            console.warn("[DeepResearch] Web search tool call settled without result payload", {
-                toolCallId: toolCall.id,
-                query,
-                finishReason: messageFinishReason,
-            });
-        }
-    }, [messageFinishReason, query, searchState, toolCall.id]);
+    }, [searchState, t, visibleResultCount]);
 
     return (
         <ToolCallSection
@@ -232,22 +224,22 @@ export function WebSearchToolCall({
                     <div className="min-w-0">
                         <RainbowText
                             className="flex items-center text-sm font-semibold text-gray-900"
-                            animated={displayState === "searching"}
+                            animated={searchState === "searching"}
                         >
                             <Search size={16} className="mr-2 text-blue-500" />
                             <span>{t("searchingFor")}</span>
                         </RainbowText>
-                        <p className="mt-1 break-words pl-6 text-sm leading-6 text-gray-600">{query}</p>
+                        {query && <p className="mt-1 break-words pl-6 text-sm leading-6 text-gray-600">{query}</p>}
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1 pt-0.5">
-                        <SearchStatusBadge status={displayState} t={t} />
+                        <SearchStatusBadge status={searchState} t={t} />
                         {resultMeta && <span className="text-xs text-gray-500">{resultMeta}</span>}
                     </div>
                 </div>
             )}
             bodyClassName="space-y-3"
         >
-            {displayState === "searching" && (
+            {searchState === "searching" && (
                 <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {[...Array(3)].map((_, i) => (
                         <li key={`search-result-${i}`}>
@@ -343,9 +335,9 @@ export function WebSearchToolCall({
                 </ul>
             )}
 
-            {(displayState === "no_results" || searchState === "sync_missing") && visibleResultCount === 0 && (
+            {searchState === "no_results" && hasResultPayload && visibleResultCount === 0 && (
                 <SearchEmptyState
-                    title={displayState === "no_results" ? t("searchStatusNoResults") : t("searchEmptyTitle")}
+                    title={t("searchStatusNoResults")}
                     description={t("searchEmptyDescription")}
                 />
             )}

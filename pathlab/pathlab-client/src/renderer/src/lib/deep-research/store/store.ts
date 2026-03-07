@@ -270,6 +270,40 @@ function isDeepResearchExecutionAgent(agent?: string): boolean {
   );
 }
 
+function normalizeDeepResearchAgent(agent?: string): Message["agent"] | undefined {
+  switch (agent) {
+    case "coordinator":
+    case "planner":
+    case "researcher":
+    case "coder":
+    case "reporter":
+    case "podcast":
+    case "analyst":
+      return agent;
+    default:
+      return undefined;
+  }
+}
+
+function getDeepResearchEventAgent(data: unknown): Message["agent"] | undefined {
+  if (!data || typeof data !== "object") {
+    return undefined;
+  }
+
+  const nodeAgent = normalizeDeepResearchAgent(
+    typeof (data as { langgraph_node?: unknown }).langgraph_node === "string"
+      ? (data as { langgraph_node: string }).langgraph_node
+      : undefined,
+  );
+  const eventAgent = normalizeDeepResearchAgent(
+    typeof (data as { agent?: unknown }).agent === "string"
+      ? (data as { agent: string }).agent
+      : undefined,
+  );
+
+  return nodeAgent ?? eventAgent;
+}
+
 function deriveDeepResearchTaskTitle(
   content: string | undefined,
   interruptFeedback: string | undefined,
@@ -2805,7 +2839,7 @@ export async function sendMessage(
       }
       // Batch update message status
       if (pendingUpdates.size > 0) {
-        useStore.getState().updateMessages(Array.from(pendingUpdates.values()));
+        applyMessageUpdates(pendingUpdates.values());
         pendingUpdates.clear();
       }
     }, 16); // ~60fps
@@ -2863,10 +2897,7 @@ export async function sendMessage(
         setGenerationPhase("streaming");
       }
       let message: Message | undefined;
-      const eventAgent =
-        data && typeof data === "object" && "agent" in data && typeof data.agent === "string"
-          ? data.agent
-          : undefined;
+      const eventAgent = getDeepResearchEventAgent(data);
 
       // Only create a background task once the graph enters actual research execution
       // (not when it is still in planner-only phase).
@@ -2948,7 +2979,7 @@ export async function sendMessage(
           message = {
             id: messageId as string,
             threadId: (data as any)?.thread_id,
-            agent: (data as any)?.agent,
+            agent: eventAgent,
             role: (data as any)?.role,
             content: "",
             contentChunks: [],
@@ -2971,11 +3002,7 @@ export async function sendMessage(
         // carries the correct agent name, propagate it.  This can happen in
         // flat LangGraph graphs where the first streaming chunk arrives with
         // an empty namespace tuple and missing langgraph_node metadata.
-        if (
-          eventAgent &&
-          (eventAgent as string) !== "unknown" &&
-          (!message.agent || (message.agent as string) === "unknown")
-        ) {
+        if (eventAgent && message.agent !== eventAgent) {
           message = { ...message, agent: eventAgent };
         }
         message = mergeMessage(message, event);
@@ -2988,6 +3015,15 @@ export async function sendMessage(
           looksLikePlannerPayload(message.content)
         ) {
           message = { ...message, agent: "planner" };
+        }
+        if (
+          message.finishReason &&
+          message.agent !== "reporter" &&
+          message.agent !== "planner" &&
+          message.content &&
+          isLikelyReportContent(message.content)
+        ) {
+          message = { ...message, agent: "reporter" };
         }
         // Retroactive research binding: when agent was corrected from
         // unknown/missing to an execution agent, appendMessage() at creation
@@ -3144,9 +3180,12 @@ export async function sendMessage(
     // Ensure all pending updates are processed.
     if (updateTimer) clearTimeout(updateTimer);
     if (!stale && pendingUpdates.size > 0) {
-      useStore.getState().updateMessages(
-        finalizePendingStreamingMessages(pendingUpdates.values()),
-      );
+      const finalizedPendingUpdates = finalizePendingStreamingMessages(pendingUpdates.values());
+      if (abortedByUser) {
+        useStore.getState().updateMessages(finalizedPendingUpdates);
+      } else {
+        applyMessageUpdates(finalizedPendingUpdates);
+      }
     }
     if (!stale) {
       closeAllStreamingMessagesInStore();
@@ -3314,7 +3353,7 @@ export async function resumeBackgroundResearch(
         return;
       }
       if (pendingUpdates.size > 0) {
-        useStore.getState().updateMessages(Array.from(pendingUpdates.values()));
+        applyMessageUpdates(pendingUpdates.values());
         pendingUpdates.clear();
       }
     }, 16);
@@ -3379,10 +3418,7 @@ export async function resumeBackgroundResearch(
 
       // Handle tool_call_result
       let message: Message | undefined;
-      const eventAgent =
-        data && typeof data === "object" && "agent" in data && typeof data.agent === "string"
-          ? data.agent
-          : undefined;
+      const eventAgent = getDeepResearchEventAgent(data);
 
       if (type === "tool_call_result") {
         // Check pendingUpdates first — tool calls may not yet be flushed to the store
@@ -3405,7 +3441,7 @@ export async function resumeBackgroundResearch(
           message = {
             id: messageId as string,
             threadId: (data as any)?.thread_id,
-            agent: (data as any)?.agent,
+            agent: eventAgent,
             role: (data as any)?.role,
             content: "",
             contentChunks: [],
@@ -3421,11 +3457,7 @@ export async function resumeBackgroundResearch(
       message ??= pendingUpdates.get(messageId as string) ?? getMessage(messageId as string);
       if (message) {
         const prevAgent = message.agent;
-        if (
-          eventAgent &&
-          (eventAgent as string) !== "unknown" &&
-          (!message.agent || (message.agent as string) === "unknown")
-        ) {
+        if (eventAgent && message.agent !== eventAgent) {
           message = { ...message, agent: eventAgent };
         }
         message = mergeMessage(message, event as ChatEvent);
@@ -3436,6 +3468,15 @@ export async function resumeBackgroundResearch(
           looksLikePlannerPayload(message.content)
         ) {
           message = { ...message, agent: "planner" };
+        }
+        if (
+          message.finishReason &&
+          message.agent !== "reporter" &&
+          message.agent !== "planner" &&
+          message.content &&
+          isLikelyReportContent(message.content)
+        ) {
+          message = { ...message, agent: "reporter" };
         }
         if (
           message.agent &&
@@ -3525,9 +3566,12 @@ export async function resumeBackgroundResearch(
       // Finalize pending updates
       if (updateTimer) clearTimeout(updateTimer);
       if (pendingUpdates.size > 0) {
-        useStore.getState().updateMessages(
-          finalizePendingStreamingMessages(pendingUpdates.values()),
-        );
+        const finalizedPendingUpdates = finalizePendingStreamingMessages(pendingUpdates.values());
+        if (abortedByUser) {
+          useStore.getState().updateMessages(finalizedPendingUpdates);
+        } else {
+          applyMessageUpdates(finalizedPendingUpdates);
+        }
       }
       closeAllStreamingMessagesInStore();
       // Mark research run status
@@ -3717,35 +3761,56 @@ function buildPostReportGuidanceContent(): string {
 }
 
 function updateMessage(message: Message) {
+  let nextMessage = message;
+  if (
+    nextMessage.finishReason &&
+    nextMessage.agent !== "reporter" &&
+    nextMessage.agent !== "planner" &&
+    nextMessage.role === "assistant" &&
+    nextMessage.content &&
+    isLikelyReportContent(nextMessage.content)
+  ) {
+    nextMessage = { ...nextMessage, agent: "reporter" };
+  }
+
   const ongoingResearchId = getOngoingResearchId();
   if (
     ongoingResearchId &&
-    message.agent === "reporter" &&
-    !message.isStreaming
+    nextMessage.agent === "reporter"
   ) {
-    useStore.getState().setOngoingResearch(null);
+    appendResearchActivity(nextMessage);
 
-    // Inject post-report guidance message only once per research run.
-    if (!injectedPostReportGuidanceResearchIds.has(ongoingResearchId)) {
-      injectedPostReportGuidanceResearchIds.add(ongoingResearchId);
-      const guidanceContent = buildPostReportGuidanceContent();
-      const guidanceMessage: Message = {
-        id: nanoid(),
-        threadId: message.threadId ?? getThreadId(),
-        role: "assistant",
-        agent: "coordinator",
-        content: guidanceContent,
-        contentChunks: [guidanceContent],
-        isStreaming: false,
-      };
-      // Use a microtask to ensure the reporter message update is committed first.
-      Promise.resolve().then(() => {
-        appendMessage(guidanceMessage);
-        void persistMessage(guidanceMessage);
-      });
+    if (!nextMessage.isStreaming) {
+      useStore.getState().setOngoingResearch(null);
+
+      // Inject post-report guidance message only once per research run.
+      if (!injectedPostReportGuidanceResearchIds.has(ongoingResearchId)) {
+        injectedPostReportGuidanceResearchIds.add(ongoingResearchId);
+        const guidanceContent = buildPostReportGuidanceContent();
+        const guidanceMessage: Message = {
+          id: nanoid(),
+          threadId: nextMessage.threadId ?? getThreadId(),
+          role: "assistant",
+          agent: "coordinator",
+          content: guidanceContent,
+          contentChunks: [guidanceContent],
+          isStreaming: false,
+        };
+        // Use a microtask to ensure the reporter message update is committed first.
+        Promise.resolve().then(() => {
+          appendMessage(guidanceMessage);
+          void persistMessage(guidanceMessage);
+        });
+      }
     }
   }
-  useStore.getState().updateMessage(message);
+  useStore.getState().updateMessage(nextMessage);
+}
+
+function applyMessageUpdates(messages: Iterable<Message>) {
+  for (const message of messages) {
+    updateMessage(message);
+  }
 }
 
 function getOngoingResearchId() {
