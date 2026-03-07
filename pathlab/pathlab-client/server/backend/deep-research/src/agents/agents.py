@@ -72,6 +72,7 @@ def create_agent(
     interrupt_before_tools: Optional[List[str]] = None,
     locale: str = "en-US",
     llm_override: dict = None,
+    thread_id: str = "",
 ):
     """Factory function to create agents with consistent configuration.
 
@@ -92,14 +93,19 @@ def create_agent(
         f"with {len(tools)} tools and template '{prompt_template}'"
     )
     
-    # Wrap tools with interrupt logic if specified
+    # Wrap tools so the backend can distinguish announced tool intent from
+    # tools that actually began execution.
     processed_tools = tools
-    if interrupt_before_tools:
+    if tools:
         logger.info(
             f"Creating agent '{agent_name}' with tool-specific interrupts: {interrupt_before_tools}"
         )
         logger.debug(f"Wrapping {len(tools)} tools for agent '{agent_name}'")
-        processed_tools = wrap_tools_with_interceptor(tools, interrupt_before_tools)
+        processed_tools = wrap_tools_with_interceptor(
+            tools,
+            interrupt_before_tools,
+            thread_id=thread_id,
+        )
         logger.debug(f"Agent '{agent_name}' tool wrapping completed")
     else:
         logger.debug(f"Agent '{agent_name}' has no interrupt-before-tools configured")

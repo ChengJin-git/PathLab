@@ -5,6 +5,7 @@ import type {
   ChatEvent,
   InterruptEvent,
   MessageChunkEvent,
+  ToolStartedEvent,
   ToolCallChunksEvent,
   ToolCallResultEvent,
   ToolCallsEvent,
@@ -46,6 +47,8 @@ export function mergeMessage(message: Message, event: ChatEvent) {
     mergeTextMessage(message, event);
   } else if (event.type === "tool_calls" || event.type === "tool_call_chunks") {
     mergeToolCallMessage(message, event);
+  } else if (event.type === "tool_started") {
+    mergeToolStartedMessage(message, event);
   } else if (event.type === "tool_call_result") {
     mergeToolCallResultMessage(message, event);
   } else if (event.type === "interrupt") {
@@ -160,8 +163,21 @@ function mergeToolCallResultMessage(
     (toolCall) => toolCall.id === event.data.tool_call_id,
   );
   if (toolCall) {
+    toolCall.started = true;
     toolCall.result = event.data.content;
     toolCall.status = event.data.tool_status;
+  }
+}
+
+function mergeToolStartedMessage(
+  message: Message,
+  event: ToolStartedEvent,
+) {
+  const toolCall = message.toolCalls?.find(
+    (candidate) => candidate.id === event.data.tool_call_id,
+  );
+  if (toolCall) {
+    toolCall.started = true;
   }
 }
 

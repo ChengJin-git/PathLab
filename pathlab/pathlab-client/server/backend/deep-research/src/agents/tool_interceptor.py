@@ -8,6 +8,7 @@ from typing import Any, List, Optional
 from langchain_core.tools import BaseTool
 from langgraph.types import interrupt
 
+from src.server.tool_events import notify_tool_started
 from src.utils.log_sanitizer import (
     sanitize_feedback,
     sanitize_log_input,
@@ -17,10 +18,21 @@ from src.utils.log_sanitizer import (
 logger = logging.getLogger(__name__)
 
 
+def _clone_tool(tool: BaseTool) -> BaseTool:
+    model_copy = getattr(tool, "model_copy", None)
+    if callable(model_copy):
+        return model_copy(deep=True)
+    return tool
+
+
 class ToolInterceptor:
     """Intercepts tool calls and triggers interrupts for specified tools."""
 
-    def __init__(self, interrupt_before_tools: Optional[List[str]] = None):
+    def __init__(
+        self,
+        interrupt_before_tools: Optional[List[str]] = None,
+        thread_id: Optional[str] = None,
+    ):
         """Initialize the interceptor with list of tools to interrupt before.
 
         Args:
@@ -28,6 +40,7 @@ class ToolInterceptor:
                                     If None or empty, no interrupts are triggered.
         """
         self.interrupt_before_tools = interrupt_before_tools or []
+        self.thread_id = thread_id or ""
         logger.info(
             f"ToolInterceptor initialized with interrupt_before_tools: {self.interrupt_before_tools}"
         )
@@ -89,12 +102,14 @@ class ToolInterceptor:
         Returns:
             BaseTool: The wrapped tool with interrupt capability
         """
-        original_func = tool.func
+        original_func = getattr(tool, "func", None)
+        original_run = getattr(tool, "_run", None)
+        original_coroutine = getattr(tool, "coroutine", None)
+        original_arun = getattr(tool, "_arun", None)
         safe_tool_name = sanitize_tool_name(tool.name)
         logger.debug(f"Wrapping tool '{safe_tool_name}' with interrupt capability")
 
-        def intercepted_func(*args: Any, **kwargs: Any) -> Any:
-            """Execute the tool with interrupt check."""
+        def before_execution(*args: Any, **kwargs: Any) -> Any:
             tool_name = tool.name
             safe_tool_name_local = sanitize_tool_name(tool_name)
             logger.debug(f"[ToolInterceptor] Executing tool: {safe_tool_name_local}")
@@ -143,7 +158,21 @@ class ToolInterceptor:
 
                 logger.info(f"[ToolInterceptor] User approved execution of tool '{safe_tool_name_local}', proceeding")
 
-            # Execute the original tool
+            if interceptor.thread_id:
+                notify_tool_started(interceptor.thread_id, tool_name)
+
+            return None
+
+        def intercepted_func(*args: Any, **kwargs: Any) -> Any:
+            """Execute tool.func with interrupt check."""
+            safe_tool_name_local = sanitize_tool_name(tool.name)
+            early_result = before_execution(*args, **kwargs)
+            if early_result is not None:
+                return early_result
+
+            if not callable(original_func):
+                raise RuntimeError(f"Tool '{tool.name}' does not expose callable func")
+
             try:
                 logger.debug(f"[ToolInterceptor] Calling original function for tool '{safe_tool_name_local}'")
                 result = original_func(*args, **kwargs)
@@ -155,16 +184,84 @@ class ToolInterceptor:
                 logger.error(f"[ToolInterceptor] Error executing tool '{safe_tool_name_local}': {str(e)}")
                 raise
 
+        def intercepted_run(*args: Any, **kwargs: Any) -> Any:
+            """Execute tool._run with interrupt check."""
+            safe_tool_name_local = sanitize_tool_name(tool.name)
+            early_result = before_execution(*args, **kwargs)
+            if early_result is not None:
+                return early_result
+
+            if not callable(original_run):
+                raise RuntimeError(f"Tool '{tool.name}' does not expose callable _run")
+
+            try:
+                logger.debug(f"[ToolInterceptor] Calling original _run for tool '{safe_tool_name_local}'")
+                result = original_run(*args, **kwargs)
+                logger.info(f"[ToolInterceptor] Tool '{safe_tool_name_local}' execution completed successfully")
+                result_len = len(str(result))
+                logger.debug(f"[ToolInterceptor] Tool result length: {result_len}")
+                return result
+            except Exception as e:
+                logger.error(f"[ToolInterceptor] Error executing tool '{safe_tool_name_local}': {str(e)}")
+                raise
+
+        async def intercepted_coroutine(*args: Any, **kwargs: Any) -> Any:
+            safe_tool_name_local = sanitize_tool_name(tool.name)
+            early_result = before_execution(*args, **kwargs)
+            if early_result is not None:
+                return early_result
+
+            if not callable(original_coroutine):
+                raise RuntimeError(f"Tool '{tool.name}' does not expose callable coroutine")
+
+            try:
+                logger.debug(f"[ToolInterceptor] Calling original coroutine for tool '{safe_tool_name_local}'")
+                result = await original_coroutine(*args, **kwargs)
+                logger.info(f"[ToolInterceptor] Tool '{safe_tool_name_local}' execution completed successfully")
+                result_len = len(str(result))
+                logger.debug(f"[ToolInterceptor] Tool result length: {result_len}")
+                return result
+            except Exception as e:
+                logger.error(f"[ToolInterceptor] Error executing tool '{safe_tool_name_local}': {str(e)}")
+                raise
+
+        async def intercepted_arun(*args: Any, **kwargs: Any) -> Any:
+            safe_tool_name_local = sanitize_tool_name(tool.name)
+            early_result = before_execution(*args, **kwargs)
+            if early_result is not None:
+                return early_result
+
+            if not callable(original_arun):
+                raise RuntimeError(f"Tool '{tool.name}' does not expose callable _arun")
+
+            try:
+                logger.debug(f"[ToolInterceptor] Calling original _arun for tool '{safe_tool_name_local}'")
+                result = await original_arun(*args, **kwargs)
+                logger.info(f"[ToolInterceptor] Tool '{safe_tool_name_local}' execution completed successfully")
+                result_len = len(str(result))
+                logger.debug(f"[ToolInterceptor] Tool result length: {result_len}")
+                return result
+            except Exception as e:
+                logger.error(f"[ToolInterceptor] Error executing tool '{safe_tool_name_local}': {str(e)}")
+                raise
+
         # Replace the function and update the tool
         # Use object.__setattr__ to bypass Pydantic validation
-        logger.debug(f"Attaching intercepted function to tool '{safe_tool_name}'")
-        object.__setattr__(tool, "func", intercepted_func)
+        if callable(original_func):
+            logger.debug(f"Attaching intercepted function to tool '{safe_tool_name}'")
+            object.__setattr__(tool, "func", intercepted_func)
 
-        # Also ensure the tool's _run method is updated if it exists
-        if hasattr(tool, '_run'):
+        if callable(original_run):
             logger.debug(f"Also wrapping _run method for tool '{safe_tool_name}'")
-            # Wrap _run to ensure interception is applied regardless of invocation method
-            object.__setattr__(tool, "_run", intercepted_func)
+            object.__setattr__(tool, "_run", intercepted_run)
+
+        if callable(original_coroutine):
+            logger.debug(f"Also wrapping coroutine for tool '{safe_tool_name}'")
+            object.__setattr__(tool, "coroutine", intercepted_coroutine)
+
+        if callable(original_arun):
+            logger.debug(f"Also wrapping _arun method for tool '{safe_tool_name}'")
+            object.__setattr__(tool, "_arun", intercepted_arun)
 
         return tool
 
@@ -210,7 +307,9 @@ class ToolInterceptor:
 
 
 def wrap_tools_with_interceptor(
-    tools: List[BaseTool], interrupt_before_tools: Optional[List[str]] = None
+    tools: List[BaseTool],
+    interrupt_before_tools: Optional[List[str]] = None,
+    thread_id: Optional[str] = None,
 ) -> List[BaseTool]:
     """Wrap multiple tools with interrupt logic.
 
@@ -221,19 +320,19 @@ def wrap_tools_with_interceptor(
     Returns:
         List[BaseTool]: List of wrapped tools
     """
-    if not interrupt_before_tools:
-        logger.debug("No tool interrupts configured, returning tools as-is")
+    if not interrupt_before_tools and not thread_id:
+        logger.debug("No tool interception configured, returning tools as-is")
         return tools
 
     logger.info(
-        f"Wrapping {len(tools)} tools with interrupt logic for: {interrupt_before_tools}"
+        f"Wrapping {len(tools)} tools with intercept logic for: {interrupt_before_tools}"
     )
-    interceptor = ToolInterceptor(interrupt_before_tools)
+    interceptor = ToolInterceptor(interrupt_before_tools, thread_id=thread_id)
 
     wrapped_tools = []
     for tool in tools:
         try:
-            wrapped_tool = ToolInterceptor.wrap_tool(tool, interceptor)
+            wrapped_tool = ToolInterceptor.wrap_tool(_clone_tool(tool), interceptor)
             wrapped_tools.append(wrapped_tool)
             logger.debug(f"Wrapped tool: {tool.name}")
         except Exception as e:

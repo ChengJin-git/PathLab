@@ -86,6 +86,12 @@ from src.server.chat_request import (
 from src.server.eval_request import EvaluateReportRequest, EvaluateReportResponse
 from src.server.config_request import ConfigResponse
 from src.server.mcp_request import MCPServerMetadataRequest, MCPServerMetadataResponse
+from src.server.tool_events import (
+    clear_thread_tool_events,
+    drain_started_tool_events,
+    mark_tool_finished,
+    register_pending_tool_calls,
+)
 from src.server.mcp_utils import load_mcp_tools
 from src.server.rag_request import (
     RAGConfigResponse,
@@ -621,6 +627,7 @@ async def _process_message_chunk(message_chunk, message_metadata, thread_id, age
         if tool_call_id:
             safe_tool_id = sanitize_log_input(tool_call_id, max_length=100)
             logger.debug(f"[{safe_thread_id}] ToolMessage with tool_call_id: {safe_tool_id}")
+            mark_tool_finished(thread_id, tool_call_id)
         else:
             logger.warning(f"[{safe_thread_id}] ToolMessage received without tool_call_id")
         
@@ -637,6 +644,12 @@ async def _process_message_chunk(message_chunk, message_metadata, thread_id, age
             safe_tool_names = [sanitize_tool_name(tc.get('name', 'unknown')) for tc in message_chunk.tool_calls]
             logger.debug(f"[{safe_thread_id}] AIMessageChunk has complete tool_calls: {safe_tool_names}")
             event_stream_message["tool_calls"] = message_chunk.tool_calls
+            register_pending_tool_calls(
+                thread_id,
+                str(event_stream_message.get("id", "")),
+                str(event_stream_message.get("agent", agent_name)),
+                message_chunk.tool_calls,
+            )
             
             # Process tool_call_chunks with proper index-based grouping
             processed_chunks = _process_tool_call_chunks(
@@ -759,6 +772,7 @@ async def _stream_graph_events(
     try:
         event_count = 0
         last_state_update = None  # Track the last state update to get final citations
+        clear_thread_tool_events(thread_id)
         
         async for agent, _, event_data in graph_instance.astream(
             workflow_input,
@@ -767,6 +781,8 @@ async def _stream_graph_events(
             subgraphs=True,
         ):
             event_count += 1
+            for started_event in drain_started_tool_events(thread_id):
+                yield _make_event("tool_started", started_event)
             safe_agent = sanitize_agent_name(agent)
             logger.debug(f"[{safe_thread_id}] Graph event #{event_count} received from agent: {safe_agent}")
             
@@ -852,6 +868,9 @@ async def _stream_graph_events(
                 message_chunk, message_metadata, thread_id, agent
             ):
                 yield event
+
+        for started_event in drain_started_tool_events(thread_id):
+            yield _make_event("tool_started", started_event)
         
         # After streaming completes, try to get citations
         # First check if we collected any during streaming
@@ -932,6 +951,8 @@ async def _stream_graph_events(
                 "error": user_error,
             },
         )
+    finally:
+        clear_thread_tool_events(thread_id)
 
 
 async def _astream_workflow_generator(

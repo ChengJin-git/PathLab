@@ -15,6 +15,7 @@ import type { Message } from "../../../lib/deep-research/messages";
 
 import {
   CrawlToolCall,
+  hasToolExecutionEvidence,
   MCPToolCall,
   PythonToolCall,
   RetrieverToolCall,
@@ -31,7 +32,7 @@ function hasVisibleContent(msg: Message | undefined, reportId?: string): boolean
   if (agent === "reporter" && msg.id === reportId) return false;
   const visibleText = stripInternalToolReplayContent(stripResearchMeta(msg.content ?? ""));
   if (visibleText) return true;
-  if (msg.toolCalls?.length) return true;
+  if (msg.toolCalls?.some(hasToolExecutionEvidence)) return true;
   return false;
 }
 
@@ -121,6 +122,7 @@ function useGroupSummary(
       if (hasVisibleContent(msg)) visibleCount++;
       if (!msg.toolCalls) continue;
       for (const tc of msg.toolCalls) {
+        if (!hasToolExecutionEvidence(tc)) continue;
         if (tc.name === "web_search") searches++;
         else if (tc.name === "crawl_tool") crawls++;
         else if (tc.name === "python_repl_tool") pyRuns++;
@@ -337,6 +339,7 @@ const ActivityListItem = React.memo(({ messageId }: { messageId: string }) => {
   if (message) {
     if (message.toolCalls?.length) {
       const toolCallComponents = message.toolCalls
+        .filter(hasToolExecutionEvidence)
         .map(toolCall => {
           if (toolCall.name === "web_search") {
             return (

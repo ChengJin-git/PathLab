@@ -27,7 +27,7 @@ import {
   stopResearch,
 } from "../api/chat";
 import type { ChatEvent, TokenUsageEvent } from "../api/types";
-import type { Citation, Message, Resource } from "../messages";
+import type { Citation, Message, Resource, ToolCallRuntime } from "../messages";
 import { mergeMessage } from "../messages";
 import { stripMarkdownReferenceSection } from "../utils/markdown";
 import { RESEARCH_META_RE, stripResearchMeta } from "../utils/strip-research-meta";
@@ -953,13 +953,21 @@ interface PersistedToolCall {
   id: string;
   name: string;
   args: Record<string, unknown>;
+  started?: boolean;
   result?: string;
   status?: "success" | "error";
+}
+
+function hasExecutableToolCallEvidence(toolCall: ToolCallRuntime): boolean {
+  return toolCall.started === true || toolCall.result != null || toolCall.status != null;
 }
 
 function serializeToolCalls(toolCalls: import("../messages").ToolCallRuntime[]): string {
   const compact: PersistedToolCall[] = toolCalls.map((tc) => {
     const entry: PersistedToolCall = { id: tc.id, name: tc.name, args: tc.args };
+    if (tc.started) {
+      entry.started = true;
+    }
     if (tc.result != null) {
       entry.result =
         tc.result.length > TOOL_RESULT_MAX_LEN
@@ -993,6 +1001,7 @@ function extractPersistedToolCalls(raw: string): {
         id: tc.id,
         name: tc.name,
         args: tc.args ?? {},
+        started: tc.started,
         result: tc.result,
         status: tc.status,
       })),
@@ -1665,7 +1674,8 @@ async function persistMessage(message: Message): Promise<void> {
   if (backendId == null && role === "assistant") {
     const { content: textOnly } = extractPersistedResearchMeta(persistedContent);
     const { content: realText } = extractPersistedToolCalls(textOnly);
-    if (!realText.trim() && !message.toolCalls?.length) {
+    const hasPersistableToolCalls = message.toolCalls?.some(hasExecutableToolCallEvidence) ?? false;
+    if (!realText.trim() && !hasPersistableToolCalls) {
       const meta = buildResearchMetaForMessage(message);
       if (meta?.kind === "activity") {
         return; // skip empty activity stub
@@ -3113,6 +3123,7 @@ export async function sendMessage(
         (type === "message_chunk" ||
           type === "tool_calls" ||
           type === "tool_call_chunks" ||
+          type === "tool_started" ||
           type === "tool_call_result" ||
           type === "interrupt")
       ) {
@@ -3172,12 +3183,13 @@ export async function sendMessage(
         continue;
       }
 
-      // Handle tool_call_result specially: use the message that contains the tool call
-      if (type === "tool_call_result") {
+      // Handle tool execution lifecycle events specially: use the message that contains the tool call
+      if (type === "tool_call_result" || type === "tool_started") {
         // Check pendingUpdates first — tool calls may not yet be flushed to the store
         // when events arrive rapidly (e.g. during background job replay).
-        message = findMessageByToolCallIdIn(pendingUpdates, data.tool_call_id)
-          ?? findMessageByToolCallId(data.tool_call_id);
+        const toolCallId = (data as { tool_call_id: string }).tool_call_id;
+        message = findMessageByToolCallIdIn(pendingUpdates, toolCallId)
+          ?? findMessageByToolCallId(toolCallId);
         if (message) {
           // Use the found message's ID, not data.id
           messageId = message.id;
@@ -3635,15 +3647,16 @@ export async function resumeBackgroundResearch(
         continue;
       }
 
-      // Handle tool_call_result
+      // Handle tool execution lifecycle events
       let message: Message | undefined;
       const eventAgent = getDeepResearchEventAgent(data);
 
-      if (type === "tool_call_result") {
+      if (type === "tool_call_result" || type === "tool_started") {
         // Check pendingUpdates first — tool calls may not yet be flushed to the store
         // when replayed events arrive rapidly from the background job.
-        message = findMessageByToolCallIdIn(pendingUpdates, (data as any).tool_call_id)
-          ?? findMessageByToolCallId((data as any).tool_call_id);
+        const toolCallId = (data as { tool_call_id: string }).tool_call_id;
+        message = findMessageByToolCallIdIn(pendingUpdates, toolCallId)
+          ?? findMessageByToolCallId(toolCallId);
         if (message) {
           messageId = message.id;
         } else {
