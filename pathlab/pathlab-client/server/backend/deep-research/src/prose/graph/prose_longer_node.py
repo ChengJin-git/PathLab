@@ -18,7 +18,11 @@ def prose_longer_node(state: ProseState):
     model = get_llm_by_type(AGENT_LLM_MAP["prose_writer"])
     prose_content = model.invoke(
         [
-            SystemMessage(content=get_prompt_template("prose/prose_longer")),
+            SystemMessage(
+                content=get_prompt_template(
+                    "prose/prose_longer", locale=state.get("locale", "en-US")
+                )
+            ),
             HumanMessage(content=f"The existing text is: {state['content']}"),
         ],
     )

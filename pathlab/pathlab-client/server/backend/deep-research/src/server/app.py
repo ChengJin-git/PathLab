@@ -1237,7 +1237,7 @@ async def generate_podcast(request: GeneratePodcastRequest):
         report_content = request.content
         print(report_content)
         workflow = build_podcast_graph()
-        final_state = workflow.invoke({"input": report_content})
+        final_state = workflow.invoke({"input": report_content, "locale": request.locale})
         audio_bytes = final_state["output"]
         return Response(content=audio_bytes, media_type="audio/mp3")
     except Exception as e:
@@ -1275,6 +1275,7 @@ async def generate_prose(request: GenerateProseRequest):
                 "content": request.prompt,
                 "option": request.option,
                 "command": request.command,
+                "locale": request.locale,
             },
             stream_mode="messages",
             subgraphs=True,
@@ -1354,6 +1355,7 @@ async def enhance_prompt(request: EnhancePromptRequest):
                 "prompt": request.prompt,
                 "context": request.context,
                 "report_style": report_style,
+                "locale": request.locale,
             }
         )
         return {"result": final_state["output"]}

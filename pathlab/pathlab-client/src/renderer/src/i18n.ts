@@ -51,8 +51,24 @@ const getInitialLanguage = (): string => {
 
 export const getDeepResearchLocale = (
   language: string = i18n.resolvedLanguage || i18n.language || getInitialLanguage()
-): 'zh-CN' | 'en-US' => {
-  return language.startsWith('en') ? 'en-US' : 'zh-CN'
+): 'en-US' | 'zh-CN' | 'zh-HK' => {
+  if (language.startsWith('en')) {
+    return 'en-US'
+  }
+
+  if (
+    language.startsWith('zh-HK') ||
+    language.startsWith('zh-TW') ||
+    language.startsWith('zh-Hant')
+  ) {
+    return 'zh-HK'
+  }
+
+  if (language.startsWith('zh')) {
+    return 'zh-CN'
+  }
+
+  return 'en-US'
 }
 
 i18n

@@ -291,7 +291,7 @@ export async function generatePodcast(content: string): Promise<string> {
       "Content-Type": "application/json",
       ...getAuthHeaders(),
     },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, locale: getDeepResearchLocale() }),
   });
   if (!res.ok) {
     throw new Error(`Failed to generate podcast: ${res.statusText}`);

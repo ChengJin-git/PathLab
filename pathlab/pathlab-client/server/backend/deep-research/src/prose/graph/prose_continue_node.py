@@ -18,7 +18,11 @@ def prose_continue_node(state: ProseState):
     model = get_llm_by_type(AGENT_LLM_MAP["prose_writer"])
     prose_content = model.invoke(
         [
-            SystemMessage(content=get_prompt_template("prose/prose_continue")),
+            SystemMessage(
+                content=get_prompt_template(
+                    "prose/prose_continue", locale=state.get("locale", "en-US")
+                )
+            ),
             HumanMessage(content=state["content"]),
         ],
     )

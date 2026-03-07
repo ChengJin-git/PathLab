@@ -28,7 +28,7 @@ function hasVisibleContent(msg: Message | undefined, reportId?: string): boolean
   if (!msg) return false;
   const agent = msg.agent ?? "";
   if (agent === "planner") return false;
-  if (agent === "reporter" && msg.id === reportId) return false;
+  if (agent === "reporter") return false;
   const visibleText = stripInternalToolReplayContent(stripResearchMeta(msg.content ?? ""));
   if (visibleText) return true;
   if (msg.toolCalls?.length) return true;
@@ -56,7 +56,7 @@ function groupActivitiesByAgent(
     const msg = messages.get(id);
     const agent = msg?.agent ?? "researcher";
 
-    // Skip planner and the currently selected formal report; keep reporter drafts in activities.
+    // Skip planner and reporter content — formal report rendering belongs in the report tab.
     if (agent === "planner") continue;
     if (!hasVisibleContent(msg, reportId)) continue;
 
@@ -306,7 +306,7 @@ const ActivityMessage = React.memo(({ messageId, reportId }: { messageId: string
   if (!message?.content) return null;
   const agent = message.agent ?? "";
   if (agent === "planner") return null;
-  if (agent === "reporter" && messageId === reportId) return null;
+  if (agent === "reporter") return null;
   const cleanContent = stripInternalToolReplayContent(stripResearchMeta(message.content));
   if (!cleanContent) return null;
 

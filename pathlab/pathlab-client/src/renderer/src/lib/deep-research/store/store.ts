@@ -1009,6 +1009,7 @@ interface PersistedResearchMeta {
   researchId: string;
   kind: ResearchMetaKind;
   agent?: Message["agent"];
+  activityIndex?: number;
   query?: string;
   status?: string;
   planActionLock?: "accepted" | "replan";
@@ -1128,11 +1129,13 @@ function buildResearchMetaForMessage(message: Message): PersistedResearchMeta | 
   }
   const runStatus = state.researchRunStatus.get(researchId);
   const planActionLock = state.planActionLocks.get(message.id);
+  const activityIndex = (state.researchActivityIds.get(researchId) ?? []).indexOf(message.id);
   return {
     version: 1,
     researchId,
     kind,
     agent: message.agent,
+    activityIndex: activityIndex >= 0 ? activityIndex : undefined,
     query: kind === "research_root" ? state.researchQueries.get(researchId) : undefined,
     status: runStatus,
     planActionLock,
@@ -1277,6 +1280,62 @@ function isLikelyReportContent(content: string): boolean {
   return headingCount >= 1 || paragraphCount >= 3;
 }
 
+function isLikelyStreamingReportContent(content: string): boolean {
+  const trimmed = stripResearchMeta(content).trim();
+  if (trimmed.length < 80) {
+    return false;
+  }
+
+  const headingCount =
+    (trimmed.match(/(?:^|\n)#{1,4}\s+/g)?.length ?? 0) +
+    (trimmed.match(/(?:^|\n)(?:概述|详细分析|关键要点|总结|建议|结论)\s*/g)?.length ?? 0);
+  const paragraphCount = trimmed.split(/\n\s*\n/).filter((p) => p.trim().length > 20).length;
+  const inlineCitationCount = countInlineCitationMarkers(trimmed);
+
+  return (
+    headingCount >= 1 ||
+    (inlineCitationCount >= 1 && paragraphCount >= 2) ||
+    trimmed.startsWith("# ") ||
+    trimmed.startsWith("## ")
+  );
+}
+
+function shouldPromoteMessageToReporter(message: Message): boolean {
+  if (message.agent === "reporter") {
+    return true;
+  }
+
+  if (
+    message.role !== "assistant" ||
+    message.agent === "planner" ||
+    message.agent === "coordinator" ||
+    !message.content
+  ) {
+    return false;
+  }
+
+  if (
+    message.agent &&
+    message.agent !== "researcher" &&
+    message.agent !== "analyst" &&
+    message.agent !== "coder"
+  ) {
+    return false;
+  }
+
+  return message.finishReason
+    ? isLikelyReportContent(message.content)
+    : isLikelyStreamingReportContent(message.content);
+}
+
+function withReporterAgentIfNeeded(message: Message): Message {
+  if (!shouldPromoteMessageToReporter(message) || message.agent === "reporter") {
+    return message;
+  }
+
+  return { ...message, agent: "reporter" };
+}
+
 function countInlineCitationMarkers(content: string): number {
   const bodyContent = stripMarkdownReferenceSection(content);
   const normalized = bodyContent.replace(/\]\(#(?:cite-|ref-?)?\d+\)/gi, "]");
@@ -1369,15 +1428,9 @@ function chooseResearchReportMessageId(params: {
   }).id;
 }
 
-function syncResearchReportBinding(researchId: string): string | null {
+function setResearchReportBinding(researchId: string, nextReportId: string | null): string | null {
   const state = useStore.getState();
   const previousReportId = state.researchReportIds.get(researchId) ?? null;
-  const nextReportId = chooseResearchReportMessageId({
-    messages: state.messages,
-    activityIds: state.researchActivityIds.get(researchId) ?? [],
-    existingReportId: previousReportId ?? undefined,
-    citationsCount: state.researchCitations.get(researchId)?.length ?? 0,
-  });
 
   if (previousReportId === nextReportId) {
     return nextReportId;
@@ -1400,6 +1453,23 @@ function syncResearchReportBinding(researchId: string): string | null {
   }
 
   return nextReportId;
+}
+
+function syncResearchReportBinding(researchId: string): string | null {
+  const state = useStore.getState();
+  const previousReportId = state.researchReportIds.get(researchId) ?? null;
+  const nextReportId = chooseResearchReportMessageId({
+    messages: state.messages,
+    activityIds: state.researchActivityIds.get(researchId) ?? [],
+    existingReportId: previousReportId ?? undefined,
+    citationsCount: state.researchCitations.get(researchId)?.length ?? 0,
+  });
+
+  if (previousReportId === nextReportId) {
+    return nextReportId;
+  }
+
+  return setResearchReportBinding(researchId, nextReportId);
 }
 
 function isLikelyResearchActivityContent(content: string): boolean {
@@ -1961,6 +2031,8 @@ export async function loadConversationFromBackend(conversationId: string): Promi
     const researchQueries = new Map<string, string>();
     const researchCitations = new Map<string, Citation[]>(useStore.getState().researchCitations);
     const researchRunStatus = new Map<string, DeepResearchTaskStatus>();
+    const persistedActivityOrderByResearch = new Map<string, Map<string, number>>();
+    const researchMessagesMissingActivityIndex = new Set<string>();
     const planActionLocks = new Map<string, "accepted" | "replan">();
     let latestRunStatusWithoutResearch: DeepResearchTaskStatus | null = null;
     let lastUserContent = "";
@@ -1982,6 +2054,13 @@ export async function loadConversationFromBackend(conversationId: string): Promi
       if (!current.includes(messageId)) {
         researchActivityIds.set(researchId, [...current, messageId]);
       }
+    };
+    const recordPersistedActivityOrder = (researchId: string, messageId: string, activityIndex: number) => {
+      const current = persistedActivityOrderByResearch.get(researchId) ?? new Map<string, number>();
+      if (!current.has(messageId)) {
+        current.set(messageId, activityIndex);
+      }
+      persistedActivityOrderByResearch.set(researchId, current);
     };
 
     const orderedMessages = [...(conv.messages ?? [])].sort((a, b) => a.id - b.id);
@@ -2040,6 +2119,11 @@ export async function loadConversationFromBackend(conversationId: string): Promi
 
       if (meta) {
         ensureResearch(meta.researchId);
+        if (Number.isInteger(meta.activityIndex) && (meta.activityIndex as number) >= 0) {
+          recordPersistedActivityOrder(meta.researchId, id, meta.activityIndex as number);
+        } else {
+          researchMessagesMissingActivityIndex.add(id);
+        }
         if (Array.isArray(meta.citations) && meta.citations.length > 0 && !researchCitations.has(meta.researchId)) {
           researchCitations.set(meta.researchId, meta.citations);
         }
@@ -2248,10 +2332,36 @@ export async function loadConversationFromBackend(conversationId: string): Promi
     const normalizedRestartPlanShownResearchIds = new Set<string>();
     const normalizedPlanActionLocks = new Map<string, "accepted" | "replan">();
     const messageOrder = new Map(messageIds.map((id, index) => [id, index]));
-    const sortActivityIdsByMessageOrder = (ids: string[]) =>
-      Array.from(new Set(ids)).sort(
-        (a, b) => (messageOrder.get(a) ?? Number.MAX_SAFE_INTEGER) - (messageOrder.get(b) ?? Number.MAX_SAFE_INTEGER),
-      );
+    const cachedBackendIdByMessageId = new Map<string, string>();
+    for (const [cachedMessageId, backendId] of cached?.messageBackendIds ?? []) {
+      cachedBackendIdByMessageId.set(cachedMessageId, String(backendId));
+    }
+    const cachedActivityOrderByResearch = new Map<string, Map<string, number>>();
+    for (const [cachedResearchId, cachedActivityIds] of cached?.researchActivityIds ?? []) {
+      const order = new Map<string, number>();
+      for (const cachedActivityId of cachedActivityIds ?? []) {
+        const normalizedMessageId = cachedBackendIdByMessageId.get(cachedActivityId) ?? cachedActivityId;
+        if (!validMessageIds.has(normalizedMessageId) || order.has(normalizedMessageId)) {
+          continue;
+        }
+        order.set(normalizedMessageId, order.size);
+      }
+      if (order.size > 0) {
+        cachedActivityOrderByResearch.set(cachedResearchId, order);
+      }
+    }
+    const sortActivityIdsForResearch = (researchId: string, ids: string[]) => {
+      const persistedOrder = persistedActivityOrderByResearch.get(researchId);
+      const cachedOrder = cachedActivityOrderByResearch.get(researchId);
+      return Array.from(new Set(ids)).sort((a, b) => {
+        const aOrder = persistedOrder?.get(a) ?? cachedOrder?.get(a) ?? (messageOrder.get(a) ?? Number.MAX_SAFE_INTEGER);
+        const bOrder = persistedOrder?.get(b) ?? cachedOrder?.get(b) ?? (messageOrder.get(b) ?? Number.MAX_SAFE_INTEGER);
+        if (aOrder !== bOrder) {
+          return aOrder - bOrder;
+        }
+        return (messageOrder.get(a) ?? Number.MAX_SAFE_INTEGER) - (messageOrder.get(b) ?? Number.MAX_SAFE_INTEGER);
+      });
+    };
     const cachedRestartPlanShownList = cached?.restartPlanShownResearchIds ?? [];
     const cachedRestartPlanShownSet = new Set(cachedRestartPlanShownList);
     for (const [messageId, action] of planActionLocks.entries()) {
@@ -2277,7 +2387,7 @@ export async function loadConversationFromBackend(conversationId: string): Promi
       if (reportId && validMessageIds.has(reportId)) {
         return reportId;
       }
-      const activities = sortActivityIdsByMessageOrder(researchActivityIds.get(researchId) ?? []);
+      const activities = sortActivityIdsForResearch(researchId, researchActivityIds.get(researchId) ?? []);
       const firstNonPlanner = activities.find((id) => {
         const msg = messages.get(id);
         return msg && msg.agent !== "planner";
@@ -2336,7 +2446,7 @@ export async function loadConversationFromBackend(conversationId: string): Promi
             merged.push(id);
           }
         }
-        normalizedResearchActivityIds.set(normalizedResearchId, sortActivityIdsByMessageOrder(merged));
+        normalizedResearchActivityIds.set(normalizedResearchId, sortActivityIdsForResearch(oldResearchId, merged));
       }
 
       const citations = researchCitations.get(oldResearchId);
@@ -2380,7 +2490,7 @@ export async function loadConversationFromBackend(conversationId: string): Promi
       for (const id of fragmentActivities) {
         if (!merged.includes(id)) merged.push(id);
       }
-      normalizedResearchActivityIds.set(targetRid, sortActivityIdsByMessageOrder(merged));
+      normalizedResearchActivityIds.set(targetRid, sortActivityIdsForResearch(targetRid, merged));
       normalizedResearchActivityIds.delete(rid);
 
       // Merge citations
@@ -2648,6 +2758,24 @@ export async function loadConversationFromBackend(conversationId: string): Promi
       messageCount: rebuiltState.messageIds.length,
       researchCount: rebuiltState.researchIds.length,
     });
+    if (researchMessagesMissingActivityIndex.size > 0) {
+      void (async () => {
+        for (const messageId of researchMessagesMissingActivityIndex) {
+          if (latestRequestedConversationId !== conversationId) {
+            return;
+          }
+          const message = useStore.getState().messages.get(messageId);
+          if (!message || message.role === "user") {
+            continue;
+          }
+          await persistMessage(message);
+        }
+        deepResearchDebugLog("loadConversation", "backfilled activity order metadata", {
+          conversationId,
+          count: researchMessagesMissingActivityIndex.size,
+        });
+      })();
+    }
 
     // Check if there is an unfinished background job that needs reconnection.
     // Use cached values because rebuiltState does not carry backgroundJobId.
@@ -3162,15 +3290,7 @@ export async function sendMessage(
         ) {
           message = { ...message, agent: "planner" };
         }
-        if (
-          message.finishReason &&
-          message.agent !== "reporter" &&
-          message.agent !== "planner" &&
-          message.content &&
-          isLikelyReportContent(message.content)
-        ) {
-          message = { ...message, agent: "reporter" };
-        }
+        message = withReporterAgentIfNeeded(message);
         // Retroactive research binding: when agent was corrected from
         // unknown/missing to an execution agent, appendMessage() at creation
         // time would have skipped the research binding.  Create it now.
@@ -3611,15 +3731,7 @@ export async function resumeBackgroundResearch(
         ) {
           message = { ...message, agent: "planner" };
         }
-        if (
-          message.finishReason &&
-          message.agent !== "reporter" &&
-          message.agent !== "planner" &&
-          message.content &&
-          isLikelyReportContent(message.content)
-        ) {
-          message = { ...message, agent: "reporter" };
-        }
+        message = withReporterAgentIfNeeded(message);
         if (
           message.agent &&
           message.agent !== prevAgent &&
@@ -3872,17 +3984,7 @@ function appendMessage(message: Message) {
 }
 
 function updateMessage(message: Message) {
-  let nextMessage = message;
-  if (
-    nextMessage.finishReason &&
-    nextMessage.agent !== "reporter" &&
-    nextMessage.agent !== "planner" &&
-    nextMessage.role === "assistant" &&
-    nextMessage.content &&
-    isLikelyReportContent(nextMessage.content)
-  ) {
-    nextMessage = { ...nextMessage, agent: "reporter" };
-  }
+  const nextMessage = withReporterAgentIfNeeded(message);
 
   const ongoingResearchId = getOngoingResearchId();
   if (
@@ -4150,7 +4252,10 @@ function appendResearchActivity(message: Message, researchIdOverride?: string) {
       });
     }
     if (message.agent === "reporter") {
-      syncResearchReportBinding(researchId);
+      setResearchReportBinding(researchId, message.id);
+      if (!message.isStreaming) {
+        syncResearchReportBinding(researchId);
+      }
       useStore.getState().setResearchCancelled(researchId, false);
     }
     deepResearchDebugLog("researchMapping", "appendResearchActivity", {

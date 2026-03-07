@@ -160,6 +160,11 @@ export function PlanCard({
         allowRestartActions ? false : hasResearchStartedForPlan || hasStartedResearchBeforeThisPlan;
     const effectiveSubmittedAction =
         allowRestartActions ? null : submittedAction ?? (lockedByResearchStarted ? "accepted" : null);
+    const showStartResearchNotice =
+        showActions
+        && !allowRestartActions
+        && effectiveSubmittedAction === null
+        && localizedActionOptions.some((option) => option.value === "accepted");
     const persistPlanActionLock = useCallback(
         async (action: "accepted" | "replan") => {
             useStore.getState().setPlanActionLock(message.id, action);
@@ -269,50 +274,57 @@ export function PlanCard({
                                 )}
                             </div>
                         </CardContent>
-                        <CardFooter className="flex justify-end">
+                        <CardFooter className="flex flex-col items-end gap-2">
                             {showActions && (
-                                <motion.div
-                                    className="flex gap-2"
-                                    initial={{ opacity: 0, y: 12 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={{ duration: 0.3, delay: 0.3 }}
-                                >
-                                    {localizedActionOptions.map((option) => (
-                                        <Button
-                                            key={option.value}
-                                            variant={
-                                                effectiveSubmittedAction === option.value
-                                                    ? "secondary"
-                                                    : option.value === "accepted"
-                                                        ? "default"
-                                                        : "outline"
-                                            }
-                                            disabled={
-                                                effectiveSubmittedAction !== null ||
-                                                (hasInterruptOptions ? !waitForFeedback : false)
-                                            }
-                                            onClick={() => {
-                                                if (effectiveSubmittedAction !== null) {
-                                                    return;
+                                <>
+                                    {showStartResearchNotice && (
+                                        <div className="max-w-md text-right text-xs leading-5 text-gray-500">
+                                            {t("startResearchNotice")}
+                                        </div>
+                                    )}
+                                    <motion.div
+                                        className="flex gap-2"
+                                        initial={{ opacity: 0, y: 12 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        transition={{ duration: 0.3, delay: 0.3 }}
+                                    >
+                                        {localizedActionOptions.map((option) => (
+                                            <Button
+                                                key={option.value}
+                                                variant={
+                                                    effectiveSubmittedAction === option.value
+                                                        ? "secondary"
+                                                        : option.value === "accepted"
+                                                            ? "default"
+                                                            : "outline"
                                                 }
-                                                if (!allowRestartActions) {
-                                                    void persistPlanActionLock(
-                                                        option.value === "accepted" ? "accepted" : "replan",
-                                                    );
+                                                disabled={
+                                                    effectiveSubmittedAction !== null ||
+                                                    (hasInterruptOptions ? !waitForFeedback : false)
                                                 }
-                                                if (option.value === "accepted") {
-                                                    void handleAccept();
-                                                } else {
-                                                    onFeedback?.({
-                                                        option,
-                                                    });
-                                                }
-                                            }}
-                                        >
-                                            {option.text}
-                                        </Button>
-                                    ))}
-                                </motion.div>
+                                                onClick={() => {
+                                                    if (effectiveSubmittedAction !== null) {
+                                                        return;
+                                                    }
+                                                    if (!allowRestartActions) {
+                                                        void persistPlanActionLock(
+                                                            option.value === "accepted" ? "accepted" : "replan",
+                                                        );
+                                                    }
+                                                    if (option.value === "accepted") {
+                                                        void handleAccept();
+                                                    } else {
+                                                        onFeedback?.({
+                                                            option,
+                                                        });
+                                                    }
+                                                }}
+                                            >
+                                                {option.text}
+                                            </Button>
+                                        ))}
+                                    </motion.div>
+                                </>
                             )}
                         </CardFooter>
                     </Card>

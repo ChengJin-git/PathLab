@@ -13,18 +13,24 @@ from src.crawler.readability_extractor import ReadabilityExtractor
 
 logger = logging.getLogger(__name__)
 
-ACCESS_CHALLENGE_MARKERS = (
-    "checking your browser",
-    "before accessing",
-    "recaptcha",
-    "captcha",
-    "cf-challenge",
-    "cf browser verification",
-    "cloudflare",
+ACCESS_CHALLENGE_STRONG_MARKERS = (
+    "checking your browser before accessing",
+    "checking if the site connection is secure",
+    "please enable javascript and cookies to continue",
     "verify you are human",
-    "security check",
+    "are you human?",
+    "press and hold to confirm you are a human",
+    "recaptcha challenge",
+    "/cdn-cgi/challenge-platform",
+    "cf-challenge",
+)
+
+ACCESS_CHALLENGE_WEAK_MARKERS = (
+    "browser verification",
     "bot verification",
-    "please enable javascript and cookies",
+    "captcha",
+    "recaptcha",
+    "access denied",
 )
 
 
@@ -153,7 +159,18 @@ def is_access_challenge_content(content: str | None) -> bool:
         return False
 
     normalized = re.sub(r"\s+", " ", content).strip().lower()
-    return any(marker in normalized for marker in ACCESS_CHALLENGE_MARKERS)
+    if any(marker in normalized for marker in ACCESS_CHALLENGE_STRONG_MARKERS):
+        return True
+
+    weak_hit_count = sum(
+        1 for marker in ACCESS_CHALLENGE_WEAK_MARKERS if marker in normalized
+    )
+    if weak_hit_count < 2:
+        return False
+
+    # Avoid classifying long, otherwise readable pages as blocked just because
+    # they include CDN/security/vendor strings in scripts or footer content.
+    return len(normalized) < 1800
 
 
 class Crawler:

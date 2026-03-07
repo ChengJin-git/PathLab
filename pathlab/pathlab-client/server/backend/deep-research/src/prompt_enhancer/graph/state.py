@@ -12,4 +12,5 @@ class PromptEnhancerState(TypedDict):
     prompt: str  # Original prompt to enhance
     context: Optional[str]  # Additional context
     report_style: Optional[ReportStyle]  # Report style preference
+    locale: Optional[str]  # Language locale for prompt template selection
     output: Optional[str]  # Enhanced prompt result

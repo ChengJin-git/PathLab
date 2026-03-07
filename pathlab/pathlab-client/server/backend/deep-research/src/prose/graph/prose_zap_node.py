@@ -18,7 +18,11 @@ def prose_zap_node(state: ProseState):
     model = get_llm_by_type(AGENT_LLM_MAP["prose_writer"])
     prose_content = model.invoke(
         [
-            SystemMessage(content=get_prompt_template("prose/prose_zap")),
+            SystemMessage(
+                content=get_prompt_template(
+                    "prose/prose_zap", locale=state.get("locale", "en-US")
+                )
+            ),
             HumanMessage(
                 content=f"For this text: {state['content']}.\nYou have to respect the command: {state['command']}"
             ),

@@ -23,7 +23,11 @@ def script_writer_node(state: PodcastState):
     base_model = get_llm_by_type(AGENT_LLM_MAP["podcast_script_writer"])
 
     messages = [
-        SystemMessage(content=get_prompt_template("podcast/podcast_script_writer")),
+        SystemMessage(
+            content=get_prompt_template(
+                "podcast/podcast_script_writer", locale=state.get("locale", "en-US")
+            )
+        ),
         HumanMessage(content=state["input"]),
     ]
 

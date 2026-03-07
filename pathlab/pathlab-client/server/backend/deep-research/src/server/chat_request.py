@@ -119,12 +119,15 @@ class TTSRequest(BaseModel):
 
 class GeneratePodcastRequest(BaseModel):
     content: str = Field(..., description="The content of the podcast")
+    locale: str = Field(
+        "en-US", description="Language locale for the conversation (e.g., en-US, zh-CN, zh-HK)"
+    )
 
 
 class GeneratePPTRequest(BaseModel):
     content: str = Field(..., description="The content of the ppt")
     locale: str = Field(
-        "en-US", description="Language locale for the conversation (e.g., en-US, zh-CN)"
+        "en-US", description="Language locale for the conversation (e.g., en-US, zh-CN, zh-HK)"
     )
 
 
@@ -133,6 +136,9 @@ class GenerateProseRequest(BaseModel):
     option: str = Field(..., description="The option of the prose writer")
     command: Optional[str] = Field(
         "", description="The user custom command of the prose writer"
+    )
+    locale: str = Field(
+        "en-US", description="Language locale for the conversation (e.g., en-US, zh-CN, zh-HK)"
     )
 
 
@@ -143,6 +149,9 @@ class EnhancePromptRequest(BaseModel):
     )
     report_style: Optional[str] = Field(
         "academic", description="The style of the report"
+    )
+    locale: str = Field(
+        "en-US", description="Language locale for the conversation (e.g., en-US, zh-CN, zh-HK)"
     )
 
 

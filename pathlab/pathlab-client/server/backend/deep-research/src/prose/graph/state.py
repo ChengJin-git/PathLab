@@ -9,6 +9,7 @@ class ProseState(MessagesState):
 
     # The content of the prose
     content: str = ""
+    locale: str = ""
 
     # Prose writer option: continue, improve, shorter, longer, fix, zap
     option: str = ""

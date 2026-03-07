@@ -1164,7 +1164,14 @@
       "registerData": "註冊資料"
     },
     "deleteAllHistory": "刪除所有歷史記錄",
-    "newResearchTask": "新建研究任務",
+    "researchStages": {
+      "coordinating": "協調中...",
+      "planning": "規劃中...",
+      "researching": "調研中...",
+      "coding": "編碼中...",
+      "writingReport": "撰寫報告中..."
+    },
+    "newResearchTask": "新增研究任務",
     "loadingConversations": "正在載入對話...",
     "noConversationsYet": "暫無對話",
     "startNewChat": "開始新對話",
@@ -1189,7 +1196,15 @@
     "contextLimit": {
       "title": "上下文長度已達上限",
       "description": "當前對話已過長，AI 無法有效處理。為確保最佳回答質素，請開始新的對話。",
-      "newResearch": "新建研究"
+      "newResearch": "新增研究"
+    },
+    "researchHandoff": {
+      "reportContextSummary": "已附帶研究報告上下文（預設摺疊）",
+      "eyebrow": "深度研究來源",
+      "title": "附帶研究卡片",
+      "description": "此回答基於一條深度研究結果生成，你可以返回原研究卡片繼續查看報告與活動。",
+      "open": "打開研究卡片",
+      "openHint": "查看原報告與研究過程"
     },
     "disclaimer": "PathLab 智能助手可能會出錯，請注意核實重要資訊。",
     "uploadedExcelWarning": "\n\n📎 **上傳的 Excel：{{name}}**\n **警告：此檔案有多個工作表（{{sheets}}）**\n請僅將資料工作表另存為單獨的 CSV 檔案並重新上傳。",
@@ -1222,17 +1237,17 @@
       "startFresh": {
         "title": "全新開始",
         "description": "開啟一個新的病理學研究項目",
-        "prompt": "我想開始一個新的人工智能病理學研究項目，你能幫我了解有哪些選項或者調研看看最近有什麽值得研究的方向嗎？"
+        "prompt": "我想開始一個新的人工智能病理學研究項目，你能幫我了解有哪些選項，或者調研一下最近有什麼值得研究的方向嗎？"
       },
       "trainModel": {
         "title": "訓練模型",
         "description": "我有資料集，準備開始訓練",
-        "prompt": "我有一批病理圖像資料集，想要訓練一個深度學習模型，需要配置哪些參數？"
+        "prompt": "我有一批病理圖像資料集，想訓練一個深度學習模型，需要配置哪些參數？"
       },
       "testModel": {
         "title": "測試模型",
         "description": "使用已訓練的模型進行推理",
-        "prompt": "我有一個已訓練好的模型，想要執行推理，該如何操作？"
+        "prompt": "我有一個已訓練好的模型，想執行推理，該如何操作？"
       },
       "browseImages": {
         "title": "瀏覽圖像",
@@ -1241,9 +1256,9 @@
       },
       "deepResearch": {
         "title": "深度研究",
-        "description": "AI 驅動的文獻综述與規劃報告",
+        "description": "AI 驅動的文獻綜述與規劃報告",
         "welcomeTitle": "歡迎使用深度研究",
-        "welcomeDescription": "描述您的研究問題，我將協助您制定計劃、開展調查並總結證據。"
+        "welcomeDescription": "描述你的研究問題，我將協助你制定計劃、開展調查並總結證據。"
       }
     },
     "taskSuccess": {

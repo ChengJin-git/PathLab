@@ -192,6 +192,7 @@
       "errorGeneratingPodcast": "Error when generating podcast. Please try again.",
       "downloadPodcast": "Download podcast",
       "startResearch": "Start Research",
+      "startResearchNotice": "Deep Research may take a while. After it starts, you can switch to other pages and come back anytime to check the progress.",
       "restartResearch": "Restart Research",
       "modifyPlan": "Modify Plan",
       "continueApprovedPlan": "Continue with the approved research plan.",
