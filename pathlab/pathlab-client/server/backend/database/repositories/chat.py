@@ -53,6 +53,24 @@ class ChatRepository:
         return result.scalars().all()
 
     @staticmethod
+    async def update_conversation_title(
+        db: AsyncSession,
+        conversation_id: str,
+        title: str
+    ) -> Optional[ChatConversation]:
+        """Update a conversation's title"""
+        result = await db.execute(
+            select(ChatConversation).where(ChatConversation.conversation_id == conversation_id)
+        )
+        conversation = result.scalar_one_or_none()
+        if conversation:
+            conversation.title = title
+            conversation.updated_at = utc_now()
+            await db.flush()
+            await db.refresh(conversation)
+        return conversation
+
+    @staticmethod
     async def add_message(db: AsyncSession, message_data: Dict) -> ChatMessage:
         """Add a message to a conversation"""
         message = ChatMessage(**message_data)

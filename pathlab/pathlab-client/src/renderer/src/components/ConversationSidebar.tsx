@@ -365,13 +365,15 @@ export default function ConversationSidebar() {
                               {(() => {
                                 const stage = activeResearchJobs.get(conv.conversation_id)?.currentStage
                                 const stageLabels: Record<string, string> = {
-                                  coordinating: 'Coordinating...',
-                                  planning: 'Planning...',
-                                  researching: 'Researching...',
-                                  coding: 'Coding...',
-                                  writing_report: 'Writing report...',
+                                  coordinating: t('aiChat.researchStages.coordinating'),
+                                  planning: t('aiChat.researchStages.planning'),
+                                  researching: t('aiChat.researchStages.researching'),
+                                  coding: t('aiChat.researchStages.coding'),
+                                  writing_report: t('aiChat.researchStages.writingReport'),
                                 }
-                                return stage && stageLabels[stage] ? stageLabels[stage] : 'Researching...'
+                                return stage && stageLabels[stage]
+                                  ? stageLabels[stage]
+                                  : t('aiChat.researchStages.researching')
                               })()}
                             </span>
                           </div>

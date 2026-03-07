@@ -249,6 +249,25 @@ export async function getConversation(conversationId: string): Promise<Conversat
 }
 
 /**
+ * Update a conversation title
+ * @param conversationId - Conversation ID
+ * @param title - New conversation title
+ * @returns Updated conversation
+ * @throws {ApiError} If the request fails
+ */
+export async function updateConversationTitle(conversationId: string, title: string): Promise<Conversation> {
+  return apiFetch<Conversation>(
+    `${API_BASE}/conversations/${conversationId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title })
+    },
+    'Failed to update conversation title'
+  )
+}
+
+/**
  * Delete a conversation
  * @param conversationId - Conversation ID
  * @throws {ApiError} If the request fails

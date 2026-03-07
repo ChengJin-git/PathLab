@@ -126,6 +126,11 @@ class CreateConversationRequest(BaseModel):
     report_context: Optional[str] = None  # Research report context for training handoff chats
 
 
+class UpdateConversationRequest(BaseModel):
+    """Request model for updating a conversation"""
+    title: Optional[str] = None
+
+
 class UpdateMessageRequest(BaseModel):
     """Request model for updating a message's content/metadata"""
     content: Optional[str] = None

@@ -6,6 +6,7 @@ import {
   chatWithAI,
   createConversation,
   getConversation,
+  updateConversationTitle,
   updateMessage,
   addMessage,
   deleteMessagesFrom,
@@ -26,7 +27,14 @@ import { ChatInputShell } from '../components/common/ChatInputShell'
 import { VoiceSessionOverlay } from '../components/common/VoiceSessionOverlay'
 
 // Extracted modules
-import AssistantMessage, { parseSubmitTask, parseCancelTaskNow, isInternalOnlyMessage, removeContextLimitBlock } from '../components/chat/AssistantMessage'
+import AssistantMessage, {
+  parseSubmitTask,
+  parseCancelTaskNow,
+  parseConversationTitle,
+  isInternalOnlyMessage,
+  removeContextLimitBlock,
+  removeConversationTitleBlock
+} from '../components/chat/AssistantMessage'
 import { sanitizeConfigBlocksForAI, isPdfContextMessage } from '../lib/chatMessageParser'
 import { SCENARIO_CARDS } from '../constants/scenarios'
 
@@ -81,6 +89,13 @@ interface ResearchJumpPayload {
   title?: string
 }
 
+interface TrainingChatLinkPayload {
+  conversationId: string
+  title?: string
+}
+
+const MAX_RECOMMENDED_CONVERSATION_TITLE_LENGTH = 160
+
 function parseTaggedBlock(content: string, tag: string): string | null {
   const match = content.match(new RegExp(`\\[${tag}\\]([\\s\\S]*?)\\[\\/${tag}\\]`, 'i'))
   if (!match) return null
@@ -118,6 +133,59 @@ function parseResearchJumpBlock(content: string): ResearchJumpPayload | null {
   } catch {
     return null
   }
+}
+
+function parseTrainingChatLinkBlock(content: string): TrainingChatLinkPayload | null {
+  const raw = parseTaggedBlock(content, 'TRAINING_CHAT_LINK')
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw)
+    const conversationId =
+      typeof parsed?.conversation_id === 'string'
+        ? parsed.conversation_id.trim()
+        : ''
+    if (!conversationId) {
+      return null
+    }
+    return {
+      conversationId,
+      title:
+        typeof parsed?.title === 'string' && parsed.title.trim().length > 0
+          ? parsed.title.trim()
+          : undefined
+    }
+  } catch {
+    return null
+  }
+}
+
+function replaceTrainingChatLinkTitle(content: string, nextTitle: string): string {
+  return content.replace(/\[TRAINING_CHAT_LINK\]([\s\S]*?)\[\/TRAINING_CHAT_LINK\]/i, (match, jsonPayload) => {
+    try {
+      const parsed = JSON.parse((jsonPayload ?? '').trim())
+      if (!parsed || typeof parsed !== 'object' || typeof parsed.conversation_id !== 'string') {
+        return match
+      }
+      parsed.title = nextTitle
+      return `[TRAINING_CHAT_LINK]\n${JSON.stringify(parsed, null, 2)}\n[/TRAINING_CHAT_LINK]`
+    } catch {
+      return match
+    }
+  })
+}
+
+function normalizeConversationTitle(rawTitle: string | null | undefined): string | null {
+  if (!rawTitle) return null
+  const normalized = rawTitle
+    .replace(/\s+/g, ' ')
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
+    .trim()
+
+  if (!normalized) return null
+
+  return normalized.length > MAX_RECOMMENDED_CONVERSATION_TITLE_LENGTH
+    ? normalized.slice(0, MAX_RECOMMENDED_CONVERSATION_TITLE_LENGTH).trim()
+    : normalized
 }
 
 interface AIChatNavigationState {
@@ -342,6 +410,32 @@ export default function AIChatPage() {
     setHelpfulnessFeedbacks(new Map())
     scrollToTop()
   }, [scrollToTop, stopVoiceSession])
+
+  const syncDeepResearchTrainingLinkTitle = useCallback(async (chatConversationId: string, nextTitle: string) => {
+    const researchJump = messagesRef.current
+      .filter(message => message.role === 'user')
+      .map(message => parseResearchJumpBlock(message.content))
+      .find((value): value is ResearchJumpPayload => value !== null)
+
+    if (!researchJump?.conversationId) return
+
+    try {
+      const deepResearchConversation = await getConversation(researchJump.conversationId)
+      const linkedMessage = deepResearchConversation.messages.find(message => {
+        const payload = parseTrainingChatLinkBlock(message.content)
+        return payload?.conversationId === chatConversationId
+      })
+
+      if (!linkedMessage) return
+
+      const updatedContent = replaceTrainingChatLinkTitle(linkedMessage.content, nextTitle)
+      if (updatedContent === linkedMessage.content) return
+
+      await updateMessage(researchJump.conversationId, linkedMessage.id, updatedContent)
+    } catch (error) {
+      console.warn('Failed to sync deep research training link title:', error)
+    }
+  }, [])
 
   // Pre-compute CSV content mapping: assistant message ID -> most recent CSV from any previous user message
   // Uses O(n) single pass: track the most recent CSV as we iterate forward.
@@ -1072,13 +1166,29 @@ export default function AIChatPage() {
           setTimeout(async () => {
             const finalMsg = messagesRef.current.find(m => m.id === finalTrackingId)
             if (!finalMsg || !finalMsg.content) return
+            const suggestedTitle = normalizeConversationTitle(parseConversationTitle(finalMsg.content))
+            const cleanedContent = removeConversationTitleBlock(finalMsg.content)
+            const contentToPersist = cleanedContent || finalMsg.content
+
+            if (cleanedContent !== finalMsg.content) {
+              setMessages(prev => prev.map(m =>
+                m.id === finalTrackingId ? { ...m, content: cleanedContent } : m
+              ))
+            }
+
             const numericId = parseInt(finalTrackingId, 10)
             const isBackendId = !isNaN(numericId) && numericId < 1000000000
             try {
+              if (suggestedTitle) {
+                await updateConversationTitle(conversationId, suggestedTitle)
+                window.dispatchEvent(new CustomEvent('conversations-changed'))
+                void syncDeepResearchTrainingLinkTitle(conversationId, suggestedTitle)
+              }
+
               if (isBackendId) {
-                await updateMessage(conversationId, numericId, finalMsg.content)
+                await updateMessage(conversationId, numericId, contentToPersist)
               } else {
-                const saved = await addMessage(conversationId, 'assistant', finalMsg.content)
+                const saved = await addMessage(conversationId, 'assistant', contentToPersist)
                 setMessages(prev => prev.map(m =>
                   m.id === finalTrackingId ? { ...m, id: String(saved.id) } : m
                 ))
@@ -1092,7 +1202,7 @@ export default function AIChatPage() {
         options?.onFinally?.()
       }
     }
-  }, [t, voiceSessionActive])
+  }, [syncDeepResearchTrainingLinkTitle, t, voiceSessionActive])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -1293,6 +1403,8 @@ export default function AIChatPage() {
     cleaned = removePdfParseStatusBlock(cleaned)
     // Remove CONTEXT_LIMIT block - UI-only warning card
     cleaned = removeContextLimitBlock(cleaned)
+    // Remove CONVERSATION_TITLE block - internal title recommendation only
+    cleaned = removeConversationTitleBlock(cleaned)
     return cleaned.trim()
   }, [])
 

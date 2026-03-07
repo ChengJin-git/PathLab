@@ -14,6 +14,7 @@ const CHAT_TRAINING_BASE_PROMPT_ZH =
     "我有一组病理图像数据集，想训练一个深度学习模型。我需要配置什么？";
 const CHAT_TRAINING_PROMPT_KEY = "app.aiChat.scenarios.trainModel.prompt";
 const REPORT_CONTEXT_MAX_CHARS = 4000;
+const DEFAULT_CHAT_TITLE = "New Conversation";
 
 function getChatTrainingBasePrompt(): string {
     const translated = i18n.t(CHAT_TRAINING_PROMPT_KEY, {
@@ -279,6 +280,8 @@ export function ResearchCard({
             t("uploadDataFirst"),
             "First guide the user to upload/select dataset, then help complete training setup.",
             "When needed, provide structured [DATASET_REGISTRATION] and [TASK_CONFIG] blocks.",
+            "In your first reply only, include one hidden [CONVERSATION_TITLE]...[/CONVERSATION_TITLE] block with a concise conversation title based on the actual training goal.",
+            "The title should be natural and specific, and must not use generic prefixes like 'Training:' or 'Chat'.",
         ].join("\n");
         // Report context is now passed separately and injected into the system prompt
         // by the backend, instead of being embedded in the user message on every turn.
@@ -296,12 +299,14 @@ export function ResearchCard({
         // Pre-create AI Chat conversation so we can link back to it
         let preCreatedConversationId: string | undefined;
         try {
-            // Prefer the report's H1 title, fall back to the plan title
-            const reportH1 = reportMessage?.content?.match(/^#\s+(.+)$/m)?.[1]?.trim();
-            const resolvedTitle = reportH1 || title;
-            const chatTitle = resolvedTitle ? `Training: ${resolvedTitle}` : "Training Chat";
+            const chatTitle = i18n.t("aiChat.untitledConversation", {
+                defaultValue: DEFAULT_CHAT_TITLE,
+            });
             const newConv = await apiCreateChatConversation(chatTitle, undefined, reportContext || undefined);
             preCreatedConversationId = newConv.conversation_id;
+            if (typeof window !== "undefined") {
+                window.dispatchEvent(new CustomEvent("conversations-changed"));
+            }
 
             // Append a link message in the Deep Research conversation
             const storeState = useStore.getState();

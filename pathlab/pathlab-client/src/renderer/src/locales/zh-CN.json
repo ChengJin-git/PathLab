@@ -1157,6 +1157,13 @@
     "daysAgo": "{{count}}天前",
     "closeHistory": "关闭历史记录",
     "history": "历史记录",
+    "researchStages": {
+      "coordinating": "协调中...",
+      "planning": "规划中...",
+      "researching": "调研中...",
+      "coding": "编码中...",
+      "writingReport": "撰写报告中..."
+    },
     "sidebar": {
       "tools": "工具",
       "dataRepository": "数据仓库",

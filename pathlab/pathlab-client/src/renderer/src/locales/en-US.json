@@ -1157,6 +1157,13 @@
     "daysAgo": "{{count}}d ago",
     "closeHistory": "Close history",
     "history": "History",
+    "researchStages": {
+      "coordinating": "Coordinating...",
+      "planning": "Planning...",
+      "researching": "Researching...",
+      "coding": "Coding...",
+      "writingReport": "Writing report..."
+    },
     "sidebar": {
       "tools": "Tools",
       "dataRepository": "Data Repository",

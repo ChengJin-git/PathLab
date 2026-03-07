@@ -1369,6 +1369,9 @@ async function ensureConversationId(seedContent?: string): Promise<string | null
     // Keep deep-research thread stable per conversation so interrupt resume works
     // even after page reload/navigation.
     useStore.setState({ threadId: created.conversation_id });
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("conversations-changed"));
+    }
     return created.conversation_id;
   } catch (error) {
     console.warn("[DeepResearch] Failed to create conversation:", error);

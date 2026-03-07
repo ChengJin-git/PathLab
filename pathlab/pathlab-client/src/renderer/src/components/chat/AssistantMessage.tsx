@@ -117,7 +117,8 @@ const SPECIAL_BLOCK_TAGS = [
   'SEARCH_STATUS',
   'WEB_SEARCH_RESULT',
   'WEB_SEARCH',
-  'CITATION_CONTEXTS'
+  'CITATION_CONTEXTS',
+  'CONVERSATION_TITLE'
 ]
 
 /**
@@ -213,6 +214,19 @@ export function removeContextLimitBlock(content: string): string {
   return content.replace(/\[CONTEXT_LIMIT\][\s\S]*?\[\/CONTEXT_LIMIT\]/gi, '').trim()
 }
 
+// Parse [CONVERSATION_TITLE] block - hidden conversation title suggestion
+export function parseConversationTitle(content: string): string | null {
+  const match = content.match(/\[CONVERSATION_TITLE\]([\s\S]*?)\[\/CONVERSATION_TITLE\]/i)
+  if (!match) return null
+  const value = (match[1] ?? '').trim()
+  return value.length > 0 ? value : null
+}
+
+// Remove [CONVERSATION_TITLE] block from content
+export function removeConversationTitleBlock(content: string): string {
+  return content.replace(/\[CONVERSATION_TITLE\][\s\S]*?\[\/CONVERSATION_TITLE\]/gi, '').trim()
+}
+
 // ── Citation Contexts (article reading) ─────────────────────────────────────
 
 /** Parsed citation context for a single [N, p.Y] reference. */
@@ -275,6 +289,7 @@ export function isInternalOnlyMessage(content: string): boolean {
   stripped = removeVoiceControlBlock(stripped)
   stripped = removeSubmitTaskBlock(stripped)
   stripped = removeCancelTaskNowBlock(stripped)
+  stripped = removeConversationTitleBlock(stripped)
   return stripped.trim() === ''
 }
 
@@ -606,6 +621,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
   displayContent = displayContent.replace(/\[READ_ARTICLE\][\s\S]*?\[\/READ_ARTICLE\]/g, '').trim()
   // Remove CONTEXT_LIMIT block - rendered as a card
   if (contextLimitReached) displayContent = removeContextLimitBlock(displayContent)
+  // Remove CONVERSATION_TITLE block - internal title recommendation only
+  displayContent = removeConversationTitleBlock(displayContent)
   // Remove VOICE_CONTROL block - it's for internal use only
   displayContent = removeVoiceControlBlock(displayContent)
   // Remove SUBMIT_TASK block - it's for internal use only (voice command to trigger submit)
@@ -1100,6 +1117,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
           'PDF_PARSE_STATUS',
           'WEB_SEARCH',
           'READ_ARTICLE',
+          'CONVERSATION_TITLE',
           'VOICE_CONTROL',
           'SUBMIT_TASK',
           'CANCEL_TASK_NOW'

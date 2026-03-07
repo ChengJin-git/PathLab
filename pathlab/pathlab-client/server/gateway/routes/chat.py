@@ -26,7 +26,7 @@ from backend.common.config import Config
 from backend.common.gpu_utils import get_gpu_summary_for_prompt
 from ..dependencies import logger
 from ..prompts import get_chat_system_prompt, format_user_data_context, detect_language
-from ..models import ChatRequest, CreateConversationRequest, UpdateMessageRequest, AddMessageRequest
+from ..models import ChatRequest, CreateConversationRequest, UpdateConversationRequest, UpdateMessageRequest, AddMessageRequest
 from .chat_pdf import (
     is_pdf_url, process_pdf_url, get_pdf_image_path,
     search_pdf_pages, get_cached_markdown, get_cached_pdf_meta, _split_md_into_pages,
@@ -2042,6 +2042,33 @@ async def get_conversation(
         **conversation.to_dict(),
         "messages": [msg.to_dict() for msg in sorted_messages]
     }
+
+
+@router.patch("/conversations/{conversation_id}")
+async def update_conversation(
+    conversation_id: str,
+    req: UpdateConversationRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update a conversation's title. Users can only update their own conversations."""
+    conversation = await ChatRepository.get_conversation(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if not check_data_ownership(conversation.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to update this conversation")
+
+    next_title = (req.title or "").strip()
+    if not next_title:
+        raise HTTPException(status_code=400, detail="Conversation title cannot be empty")
+
+    updated = await ChatRepository.update_conversation_title(db, conversation_id, next_title)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    await db.commit()
+    return updated.to_dict()
 
 
 @router.delete("/conversations/{conversation_id}")
