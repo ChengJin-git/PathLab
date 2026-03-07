@@ -121,6 +121,8 @@ export default function ResultsViewerPage() {
   const taskIdFromState = (location.state as { selectedTaskId?: string } | null)?.selectedTaskId
   const initialSelectedTaskId = taskIdFromUrl || taskIdFromState || null
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
+  const fromDeepResearch = (location.state as { fromDeepResearch?: boolean } | null)?.fromDeepResearch === true
+  const deepResearchConversationId = (location.state as { deepResearchConversationId?: string } | null)?.deepResearchConversationId
 
   const [tasks, setTasks] = useState<TrainingTask[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialSelectedTaskId)
@@ -726,6 +728,14 @@ export default function ResultsViewerPage() {
     )
   }
 
+  const handleBackNavigation = () => {
+    if (fromDeepResearch && deepResearchConversationId) {
+      navigate(`/deep-research/${deepResearchConversationId}`)
+      return
+    }
+    navigate('/dashboard')
+  }
+
   return (
     <div className="max-w-[1600px] mx-auto px-4 sm:px-6">
       <PageHeader
@@ -734,11 +744,11 @@ export default function ResultsViewerPage() {
       >
         <Button
           variant="outline"
-          onClick={() => navigate('/dashboard')}
+          onClick={handleBackNavigation}
           className="gap-2"
         >
           <ArrowLeft className="w-4 h-4" />
-          {t('resultsPage.backToDashboard')}
+          {fromDeepResearch ? t('common.back') : t('resultsPage.backToDashboard')}
         </Button>
       </PageHeader>
 

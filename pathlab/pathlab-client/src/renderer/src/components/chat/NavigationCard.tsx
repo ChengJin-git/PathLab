@@ -31,6 +31,8 @@ interface NavigationCardProps {
   config: NavigationConfig
   csvContent?: string
   csvFileName?: string
+  navigationSource?: 'ai-chat' | 'deep-research'
+  deepResearchConversationId?: string
 }
 
 /**
@@ -68,7 +70,13 @@ export function removeNavigateBlock(content: string): string {
  * NavigationCard component - renders a clickable card to navigate to another page
  * Used by AI Chat to guide users to Registration Page or Task Detail Page
  */
-export function NavigationCard({ config, csvContent, csvFileName }: NavigationCardProps) {
+export function NavigationCard({
+  config,
+  csvContent,
+  csvFileName,
+  navigationSource = 'ai-chat',
+  deepResearchConversationId
+}: NavigationCardProps) {
   const { t } = useTranslation()
   const navigate = useNavigate()
 
@@ -76,19 +84,28 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
   const resolvedDescription = config.descriptionKey ? t(config.descriptionKey) : config.description
 
   const handleNavigate = () => {
-    // Save scroll position and conversation ID before navigating
-    const messagesContainer = document.querySelector('[data-chat-messages-container]')
-    if (messagesContainer) {
-      sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
-    }
-    // Save current conversation ID from the data attribute
-    const conversationId = document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
-    if (conversationId) {
-      sessionStorage.setItem('ai-chat-conversation-id', conversationId)
+    if (navigationSource === 'ai-chat') {
+      // Save scroll position and conversation ID before navigating
+      const messagesContainer = document.querySelector('[data-chat-messages-container]')
+      if (messagesContainer) {
+        sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
+      }
+      // Save current conversation ID from the data attribute
+      const conversationId = document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
+      if (conversationId) {
+        sessionStorage.setItem('ai-chat-conversation-id', conversationId)
+      }
     }
 
-    // Build navigation state
-    const state: Record<string, unknown> = { ...config.state, fromAIChat: true }
+    const state: Record<string, unknown> = { ...config.state }
+    if (navigationSource === 'deep-research') {
+      state.fromDeepResearch = true
+      if (deepResearchConversationId) {
+        state.deepResearchConversationId = deepResearchConversationId
+      }
+    } else {
+      state.fromAIChat = true
+    }
 
     // If we have CSV content from the chat, include it
     if (csvContent && csvFileName) {

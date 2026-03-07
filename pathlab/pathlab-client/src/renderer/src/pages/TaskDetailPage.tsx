@@ -26,6 +26,8 @@ export default function TaskDetailPage() {
   const location = useLocation()
   const { isAdmin } = useAuth()
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
+  const fromDeepResearch = (location.state as { fromDeepResearch?: boolean } | null)?.fromDeepResearch === true
+  const deepResearchConversationId = (location.state as { deepResearchConversationId?: string } | null)?.deepResearchConversationId
   const [task, setTask] = useState<TaskDetail | null>(null)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -373,6 +375,26 @@ export default function TaskDetailPage() {
     }
   }
 
+  const handleBackNavigation = () => {
+    if (fromDeepResearch && deepResearchConversationId) {
+      navigate(`/deep-research/${deepResearchConversationId}`)
+      return
+    }
+    navigate(fromAIChat ? '/dashboard' : '/task-list')
+  }
+
+  const backLabel = fromDeepResearch
+    ? t('common.back')
+    : fromAIChat
+      ? t('taskDetail.backToChat')
+      : t('taskDetail.backToTaskList')
+
+  const headerBackLabel = fromDeepResearch
+    ? t('common.back')
+    : fromAIChat
+      ? t('taskDetail.backToChat')
+      : t('taskDetail.tasks')
+
   if (loading && !task) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -411,8 +433,8 @@ export default function TaskDetailPage() {
         <AlertCircle className="w-12 h-12 text-red-500" />
         <div className="text-xl font-semibold text-gray-900">{title}</div>
         <p className="text-gray-500 text-center max-w-xl">{description}</p>
-        <Button onClick={() => navigate(fromAIChat ? '/dashboard' : '/task-list')} variant="outline">
-          {fromAIChat ? t('taskDetail.backToChat') : t('taskDetail.backToTaskList')}
+        <Button onClick={handleBackNavigation} variant="outline">
+          {backLabel}
         </Button>
       </div>
     )
@@ -436,13 +458,13 @@ export default function TaskDetailPage() {
       <div className="mb-4 sm:mb-6">
         <Button
           variant="ghost"
-          onClick={() => navigate(fromAIChat ? '/dashboard' : '/task-list')}
+          onClick={handleBackNavigation}
           className="mb-1 sm:mb-2 pl-0 hover:bg-transparent hover:text-gray-900 text-gray-500 text-xs sm:text-base"
         >
           <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-          {fromAIChat ? t('taskDetail.backToChat') : t('taskDetail.tasks')}
+          {headerBackLabel}
         </Button>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex-1 min-w-0">

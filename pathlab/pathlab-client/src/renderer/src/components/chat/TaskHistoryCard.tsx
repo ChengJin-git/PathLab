@@ -33,6 +33,8 @@ interface TaskHistoryCardProps {
   config: AgentTaskHistoryConfig
   onError?: (error: string) => void
   onDataLoaded?: (tasks: CachedTaskData[]) => void
+  navigationSource?: 'ai-chat' | 'deep-research'
+  deepResearchConversationId?: string
 }
 
 export function parseTaskHistoryConfig(content: string): AgentTaskHistoryConfig | null {
@@ -83,7 +85,13 @@ function formatDate(dateStr: string | null): string {
   })
 }
 
-export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCardProps) {
+export function TaskHistoryCard({
+  config,
+  onError,
+  onDataLoaded,
+  navigationSource = 'ai-chat',
+  deepResearchConversationId
+}: TaskHistoryCardProps) {
   const { t } = useTranslation()
   const hasCachedData = config.cached_tasks && config.cached_tasks.length > 0
 
@@ -277,15 +285,28 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
   }
 
   const handleTaskClick = (taskId: string) => {
-    const messagesContainer = document.querySelector('[data-chat-messages-container]')
-    if (messagesContainer) {
-      sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
+    if (navigationSource === 'ai-chat') {
+      const messagesContainer = document.querySelector('[data-chat-messages-container]')
+      if (messagesContainer) {
+        sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
+      }
+      const conversationId = document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
+      if (conversationId) {
+        sessionStorage.setItem('ai-chat-conversation-id', conversationId)
+      }
     }
-    const conversationId = document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
-    if (conversationId) {
-      sessionStorage.setItem('ai-chat-conversation-id', conversationId)
+
+    const state: Record<string, unknown> = {}
+    if (navigationSource === 'deep-research') {
+      state.fromDeepResearch = true
+      if (deepResearchConversationId) {
+        state.deepResearchConversationId = deepResearchConversationId
+      }
+    } else {
+      state.fromAIChat = true
     }
-    navigate(`/results?task=${taskId}`, { state: { fromAIChat: true } })
+
+    navigate(`/results?task=${taskId}`, { state })
   }
 
   if (isLoading) {

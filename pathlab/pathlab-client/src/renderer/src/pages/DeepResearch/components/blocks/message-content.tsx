@@ -1,11 +1,17 @@
 // Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 // SPDX-License-Identifier: MIT
 
+import { nanoid } from "nanoid";
 import React, { useCallback, useMemo } from "react";
-import { updateMessage as apiUpdateMessage } from "../../../../api";
-import { OptionButtons, parseOptions, removeOptionsBlock } from "../../../../components/chat/OptionButtons";
-import { TaskConfigCard, parseTaskConfig, removeTaskConfigBlock } from "../../../../components/chat/TaskConfigCard";
+import { useTranslation } from "react-i18next";
+import { addMessage as apiAddMessage, updateMessage as apiUpdateMessage } from "../../../../api";
+import { AnalysisConfigCard, parseAnalysisConfig, type AgentAnalysisConfig, removeAnalysisConfigBlock } from "../../../../components/chat/AnalysisConfigCard";
 import { DatasetRegistrationCard, parseDatasetRegistrationConfig, removeDatasetRegistrationBlock } from "../../../../components/chat/DatasetRegistrationCard";
+import { NavigationCard, parseNavigateBlock, removeNavigateBlock } from "../../../../components/chat/NavigationCard";
+import { OptionButtons, parseOptions, removeOptionsBlock } from "../../../../components/chat/OptionButtons";
+import { QuickAnalysisViewer, parseQuickAnalysisConfig, type CachedAnalysisData, removeQuickAnalysisConfigBlock } from "../../../../components/chat/QuickAnalysisViewer";
+import { TaskConfigCard, parseTaskConfig, removeTaskConfigBlock } from "../../../../components/chat/TaskConfigCard";
+import { TaskHistoryCard, parseTaskHistoryConfig, type CachedTaskData, removeTaskHistoryConfigBlock } from "../../../../components/chat/TaskHistoryCard";
 import { Markdown } from "../../../../components/deep-research/markdown";
 import type { Message } from "../../../../lib/deep-research/messages";
 import { useStore } from "../../../../lib/deep-research/store";
@@ -76,9 +82,26 @@ export function AssistantStructuredContent({
         options?: { interruptFeedback?: string },
     ) => void;
 }) {
+    const { t } = useTranslation();
     const options = useMemo(() => parseOptions(message.content ?? ""), [message.content]);
     const taskConfig = useMemo(
         () => parseTaskConfig(message.content ?? ""),
+        [message.content],
+    );
+    const analysisConfig = useMemo(
+        () => parseAnalysisConfig(message.content ?? ""),
+        [message.content],
+    );
+    const quickAnalysisConfig = useMemo(
+        () => parseQuickAnalysisConfig(message.content ?? ""),
+        [message.content],
+    );
+    const taskHistoryConfig = useMemo(
+        () => parseTaskHistoryConfig(message.content ?? ""),
+        [message.content],
+    );
+    const navigateBlock = useMemo(
+        () => parseNavigateBlock(message.content ?? ""),
         [message.content],
     );
     const datasetRegistrationConfig = useMemo(
@@ -90,6 +113,7 @@ export function AssistantStructuredContent({
         [message.content],
     );
     const responding = useStore((state) => state.responding);
+    const deepResearchConversationId = useStore((state) => state.conversationId);
 
     let displayContent = message.content ?? "";
     // Strip persisted research meta blocks that may leak into display content
@@ -101,6 +125,18 @@ export function AssistantStructuredContent({
     if (taskConfig) {
         displayContent = removeTaskConfigBlock(displayContent);
     }
+    if (analysisConfig) {
+        displayContent = removeAnalysisConfigBlock(displayContent);
+    }
+    if (quickAnalysisConfig) {
+        displayContent = removeQuickAnalysisConfigBlock(displayContent);
+    }
+    if (taskHistoryConfig) {
+        displayContent = removeTaskHistoryConfigBlock(displayContent);
+    }
+    if (navigateBlock) {
+        displayContent = removeNavigateBlock(displayContent);
+    }
     if (datasetRegistrationConfig) {
         displayContent = removeDatasetRegistrationBlock(displayContent);
     }
@@ -109,40 +145,89 @@ export function AssistantStructuredContent({
     }
 
     // If the message only contained a training chat link (no other content or cards), render nothing.
-    const hasVisibleContent = displayContent.trim() || options || taskConfig || datasetRegistrationConfig;
+    const hasVisibleContent =
+        displayContent.trim() ||
+        options ||
+        taskConfig ||
+        analysisConfig ||
+        quickAnalysisConfig ||
+        taskHistoryConfig ||
+        navigateBlock ||
+        datasetRegistrationConfig;
     if (!hasVisibleContent && trainingChatLink) {
         return null;
     }
 
-    const handleTaskSubmitSuccess = useCallback(
-        async (taskId: string) => {
-            const nextContent = injectSubmittedTaskId(message.content ?? "", taskId);
-            if (nextContent !== message.content) {
-                useStore.getState().updateMessage({
-                    ...message,
+    const persistUpdatedContent = useCallback(
+        async (nextContent: string, warningPrefix: string) => {
+            const state = useStore.getState();
+            const currentMessage = state.messages.get(message.id) ?? message;
+
+            if (nextContent !== currentMessage.content) {
+                state.updateMessage({
+                    ...currentMessage,
                     content: nextContent,
                     contentChunks: [nextContent],
                 });
             }
 
-            const state = useStore.getState();
             const conversationId = state.conversationId;
             const backendId = state.messageBackendIds.get(message.id);
             if (!conversationId || backendId == null) {
                 return;
             }
+
             try {
                 await apiUpdateMessage(conversationId, backendId, nextContent);
             } catch (error) {
-                console.warn("[DeepResearch] Failed to persist TASK_CONFIG submission:", error);
+                console.warn(`${warningPrefix}:`, error);
             }
         },
         [message],
     );
 
+    const appendAssistantMessage = useCallback(
+        async (content: string) => {
+            const state = useStore.getState();
+            if (!state.threadId) {
+                return;
+            }
+
+            const nextMessage: Message = {
+                id: nanoid(),
+                threadId: state.threadId,
+                role: "assistant",
+                content,
+                contentChunks: [content],
+            };
+            state.appendMessage(nextMessage);
+
+            if (!state.conversationId) {
+                return;
+            }
+
+            try {
+                const saved = await apiAddMessage(state.conversationId, "assistant", content);
+                useStore.getState().setMessageBackendId(nextMessage.id, saved.id);
+            } catch (error) {
+                console.warn("[DeepResearch] Failed to persist appended assistant message:", error);
+            }
+        },
+        [],
+    );
+
+    const handleTaskSubmitSuccess = useCallback(
+        async (taskId: string) => {
+            const currentContent = useStore.getState().messages.get(message.id)?.content ?? message.content ?? "";
+            const nextContent = injectSubmittedTaskId(currentContent, taskId);
+            await persistUpdatedContent(nextContent, "[DeepResearch] Failed to persist TASK_CONFIG submission");
+        },
+        [message.id, message.content, persistUpdatedContent],
+    );
+
     const handleRegistrationSuccess = useCallback(
         async (taskId: string, fileCount: number, datasetName: string, mode: 'existing' | 'new') => {
-            const currentContent = message.content ?? "";
+            const currentContent = useStore.getState().messages.get(message.id)?.content ?? message.content ?? "";
             const nextContent = currentContent.replace(
                 /\[DATASET_REGISTRATION\]([\s\S]*?)\[\/DATASET_REGISTRATION\]/,
                 (_match, json) => {
@@ -158,32 +243,117 @@ export function AssistantStructuredContent({
                     }
                 }
             );
-
-            if (nextContent !== currentContent) {
-                useStore.getState().updateMessage({
-                    ...message,
-                    content: nextContent,
-                    contentChunks: [nextContent],
-                });
-
-                const state = useStore.getState();
-                const conversationId = state.conversationId;
-                const backendId = state.messageBackendIds.get(message.id);
-                if (conversationId && backendId != null) {
-                    try {
-                        await apiUpdateMessage(conversationId, backendId, nextContent);
-                    } catch (error) {
-                        console.warn("[DeepResearch] Failed to persist DATASET_REGISTRATION submission:", error);
-                    }
-                }
-            }
+            await persistUpdatedContent(nextContent, "[DeepResearch] Failed to persist DATASET_REGISTRATION submission");
 
             const successMsg = mode === 'new'
                 ? `Started uploading ${fileCount} files to new dataset "${datasetName}". What should we do next?`
                 : `Started uploading ${fileCount} files to existing dataset. What should we do next?`;
             onSendMessage?.(successMsg);
         },
-        [message, onSendMessage],
+        [message.id, message.content, onSendMessage, persistUpdatedContent],
+    );
+
+    const handleAnalysisSubmitSuccess = useCallback(
+        async (taskId: string, analysisId: string) => {
+            const currentContent = useStore.getState().messages.get(message.id)?.content ?? message.content ?? "";
+            const nextContent = currentContent.replace(
+                /\[ANALYSIS_CONFIG\]([\s\S]*?)\[\/ANALYSIS_CONFIG\]/,
+                (_match, json) => {
+                    try {
+                        const config = JSON.parse(json.trim()) as AgentAnalysisConfig;
+                        if (analysisId) {
+                            config.submitted_analysis_id = analysisId;
+                        } else {
+                            config.external_validation_task_id = taskId;
+                        }
+                        return `[ANALYSIS_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/ANALYSIS_CONFIG]`;
+                    } catch {
+                        return _match;
+                    }
+                },
+            );
+            await persistUpdatedContent(nextContent, "[DeepResearch] Failed to persist ANALYSIS_CONFIG submission");
+
+            const isExternalValidation = !analysisId;
+            let quickAnalysisBlock = "";
+            if (isExternalValidation) {
+                const currentConfig = parseAnalysisConfig(nextContent) ?? parseAnalysisConfig(currentContent);
+                if (currentConfig) {
+                    const quickConfig: Record<string, unknown> = {
+                        task_id: taskId,
+                        task_name: currentConfig.target_name || currentConfig.task_name || taskId,
+                        metrics: currentConfig.metrics || [],
+                        charts: currentConfig.charts || [],
+                        is_external_validation: true,
+                    };
+                    if (currentConfig.compute_bootstrap_ci) {
+                        quickConfig.compute_bootstrap_ci = true;
+                    }
+                    if (currentConfig.bootstrap_ci_metrics) {
+                        quickConfig.bootstrap_ci_metrics = currentConfig.bootstrap_ci_metrics;
+                    }
+                    quickAnalysisBlock = `\n\n[QUICK_ANALYSIS_CONFIG]\n${JSON.stringify(quickConfig, null, 2)}\n[/QUICK_ANALYSIS_CONFIG]`;
+                }
+            }
+
+            const successContent = isExternalValidation
+                ? `${t("aiChat.taskSuccess.externalValidationStarted", { taskId })}${quickAnalysisBlock}\n\n[NAVIGATE]\n${JSON.stringify({
+                    target: "/results",
+                    state: { selectedTaskId: taskId, pageMode: "external-validation" },
+                    buttonTextKey: "aiChat.taskSuccess.viewResults",
+                    descriptionKey: "aiChat.taskSuccess.validationResultsDesc",
+                }, null, 2)}\n[/NAVIGATE]`
+                : `${t("aiChat.taskSuccess.analysisCompleted")}\n\n[NAVIGATE]\n${JSON.stringify({
+                    target: "/results",
+                    state: { selectedTaskId: taskId },
+                    buttonTextKey: "aiChat.taskSuccess.viewAnalysisResults",
+                    descriptionKey: "aiChat.taskSuccess.analysisResultsDesc",
+                }, null, 2)}\n[/NAVIGATE]`;
+
+            await appendAssistantMessage(successContent);
+        },
+        [appendAssistantMessage, message.id, message.content, persistUpdatedContent, t],
+    );
+
+    const handleTaskHistoryDataLoaded = useCallback(
+        async (data: CachedTaskData[]) => {
+            const currentContent = useStore.getState().messages.get(message.id)?.content ?? message.content ?? "";
+            const nextContent = currentContent.replace(
+                /\[TASK_HISTORY_CONFIG\]([\s\S]*?)\[\/TASK_HISTORY_CONFIG\]/,
+                (_match, json) => {
+                    try {
+                        const config = JSON.parse(json.trim()) as Record<string, unknown>;
+                        config.cached_tasks = data;
+                        config.cached_at = new Date().toISOString();
+                        return `[TASK_HISTORY_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/TASK_HISTORY_CONFIG]`;
+                    } catch {
+                        return _match;
+                    }
+                },
+            );
+            await persistUpdatedContent(nextContent, "[DeepResearch] Failed to persist TASK_HISTORY_CONFIG cache");
+        },
+        [message.id, message.content, persistUpdatedContent],
+    );
+
+    const handleQuickAnalysisDataLoaded = useCallback(
+        async (data: CachedAnalysisData) => {
+            const currentContent = useStore.getState().messages.get(message.id)?.content ?? message.content ?? "";
+            const nextContent = currentContent.replace(
+                /\[QUICK_ANALYSIS_CONFIG\]([\s\S]*?)\[\/QUICK_ANALYSIS_CONFIG\]/,
+                (_match, json) => {
+                    try {
+                        const config = JSON.parse(json.trim()) as Record<string, unknown>;
+                        config.cached_data = data;
+                        return `[QUICK_ANALYSIS_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/QUICK_ANALYSIS_CONFIG]`;
+                    } catch {
+                        return _match;
+                    }
+                },
+            );
+            await persistUpdatedContent(nextContent, "[DeepResearch] Failed to persist QUICK_ANALYSIS_CONFIG cache");
+        },
+        [message.id, message.content, persistUpdatedContent],
     );
 
     return (
@@ -220,6 +390,43 @@ export function AssistantStructuredContent({
                         console.warn("[DeepResearch] TASK_CONFIG submit error:", error);
                     }}
                     messageId={message.id}
+                />
+            )}
+            {analysisConfig && (
+                <AnalysisConfigCard
+                    config={analysisConfig}
+                    onSubmitSuccess={handleAnalysisSubmitSuccess}
+                    onSubmitError={(error) => {
+                        console.warn("[DeepResearch] ANALYSIS_CONFIG submit error:", error);
+                    }}
+                    messageId={message.id}
+                />
+            )}
+            {quickAnalysisConfig && (
+                <QuickAnalysisViewer
+                    config={quickAnalysisConfig}
+                    onError={(error) => {
+                        console.warn("[DeepResearch] QUICK_ANALYSIS_CONFIG load error:", error);
+                    }}
+                    onDataLoaded={handleQuickAnalysisDataLoaded}
+                />
+            )}
+            {taskHistoryConfig && (
+                <TaskHistoryCard
+                    config={taskHistoryConfig}
+                    onError={(error) => {
+                        console.warn("[DeepResearch] TASK_HISTORY_CONFIG load error:", error);
+                    }}
+                    onDataLoaded={handleTaskHistoryDataLoaded}
+                    navigationSource="deep-research"
+                    deepResearchConversationId={deepResearchConversationId ?? undefined}
+                />
+            )}
+            {navigateBlock && (
+                <NavigationCard
+                    config={navigateBlock}
+                    navigationSource="deep-research"
+                    deepResearchConversationId={deepResearchConversationId ?? undefined}
                 />
             )}
             {datasetRegistrationConfig && (
