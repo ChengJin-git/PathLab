@@ -12,6 +12,7 @@ import {
   FileCode,
   FileImage,
   FileType,
+  FileSearch,
   Sparkles,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -60,6 +61,7 @@ export function ResearchBlock({
     researchId ? state.researchRunStatus.get(researchId) : undefined,
   );
   const ongoing = useStore((state) => state.ongoingResearchId === researchId);
+
   useEffect(() => {
     if (hasReport) {
       setActiveTab("report");
@@ -77,12 +79,10 @@ export function ResearchBlock({
     handleDownloadImage,
   } = useReportExporter(reportId, researchId ?? undefined);
 
-  // When the research id changes, set the active tab to activities
+  // When the research changes, start from activities first.
   useEffect(() => {
-    if (!hasReport) {
-      setActiveTab("activities");
-    }
-  }, [hasReport, researchId]);
+    setActiveTab("activities");
+  }, [researchId]);
 
   const title = useMemo(() => {
     if (!researchMessage) {
@@ -223,22 +223,43 @@ export function ResearchBlock({
               <div className="flex w-full justify-center">
                 <TabsList className="max-w-full rounded-full bg-gray-100/80 p-1 shadow-inner">
                   <TabsTrigger
-                    className="whitespace-nowrap rounded-full px-4 sm:px-6 data-[state=active]:bg-white data-[state=active]:text-gray-900"
+                    className="whitespace-nowrap rounded-full px-4 sm:px-6 text-gray-600 data-[state=active]:bg-white data-[state=active]:text-gray-900 data-[state=active]:shadow-sm"
+                    value="activities"
+                  >
+                    <FileSearch className="h-4 w-4" />
+                    {t("activities")}
+                  </TabsTrigger>
+                  <TabsTrigger
+                    className="whitespace-nowrap rounded-full px-4 sm:px-6 text-gray-600 data-[state=active]:bg-white data-[state=active]:text-gray-900 data-[state=active]:shadow-sm disabled:cursor-not-allowed disabled:border-transparent disabled:bg-transparent disabled:text-gray-300 disabled:opacity-100 disabled:shadow-none"
                     value="report"
                     disabled={!hasReport}
                   >
+                    <FileText className="h-4 w-4" />
                     {t("report")}
-                  </TabsTrigger>
-                  <TabsTrigger
-                    className="whitespace-nowrap rounded-full px-4 sm:px-6 data-[state=active]:bg-white data-[state=active]:text-gray-900"
-                    value="activities"
-                  >
-                    {t("activities")}
                   </TabsTrigger>
                 </TabsList>
               </div>
             </div>
           </div>
+          <TabsContent
+            className="h-full min-h-0 flex-grow px-4 pb-4 pt-2 sm:px-6"
+            value="activities"
+            forceMount
+            hidden={activeTab !== "activities"}
+          >
+            <ScrollContainer
+              className="h-full pb-8"
+              scrollShadowColor="#f8fafc"
+              autoScrollToBottom={!hasReport || reportStreaming}
+            >
+              {researchId && (
+                <ResearchActivitiesBlock
+                  className="mt-4"
+                  researchId={researchId}
+                />
+              )}
+            </ScrollContainer>
+          </TabsContent>
           <TabsContent
             className="h-full min-h-0 flex-grow px-4 pb-4 pt-2 sm:px-6"
             value="report"
@@ -255,25 +276,6 @@ export function ResearchBlock({
                   className="mt-4"
                   researchId={researchId}
                   messageId={reportId}
-                />
-              )}
-            </ScrollContainer>
-          </TabsContent>
-          <TabsContent
-            className="h-full min-h-0 flex-grow px-4 pb-4 pt-2 sm:px-6"
-            value="activities"
-            forceMount
-            hidden={activeTab !== "activities"}
-          >
-            <ScrollContainer
-              className="h-full pb-8"
-              scrollShadowColor="#f8fafc"
-              autoScrollToBottom={!hasReport || reportStreaming}
-            >
-              {researchId && (
-                <ResearchActivitiesBlock
-                  className="mt-4"
-                  researchId={researchId}
                 />
               )}
             </ScrollContainer>

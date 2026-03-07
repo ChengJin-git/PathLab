@@ -909,8 +909,9 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         user_id = task.user_id
         preprocessing_config = task.preprocessing_config or {}
 
-        # Mark task as training
-        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=50)
+        # Patch-level tasks use the same 66-100 backend progress range as patch classification.
+        # Frontend maps that range back to 0-100 for display.
+        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=66)
         await training_logger.info(
             f"[Training] Starting Patch Segmentation ({req.architecture}/{req.backbone})",
             {"task_type": "patch_segmentation", "architecture": req.architecture,
@@ -971,9 +972,17 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
             config=config,
         )
 
+        event_loop = asyncio.get_running_loop()
+
         # Run sync training in thread pool to avoid blocking event loop
         results = await asyncio.to_thread(
-            trainer.train_model, req.epochs, req.lr, req.early_stopping_patience
+            trainer.train_model,
+            req.epochs,
+            req.lr,
+            req.early_stopping_patience,
+            scoped_logger,
+            scoped_session.get_session_maker(),
+            event_loop,
         )
 
         # Build TrainResponse from results dict

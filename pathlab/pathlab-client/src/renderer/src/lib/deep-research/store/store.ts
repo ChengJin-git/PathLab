@@ -982,6 +982,18 @@ const ERROR_MESSAGE_PATTERNS = [
   /^Research failed/i,
 ];
 
+const STANDALONE_RESEARCH_ERROR_PATTERNS = [
+  /^❌\s*\*\*Research Error\*\*/i,
+  /^\*\*Research Error\*\*/i,
+  /^Research Error\b/i,
+];
+
+function isLikelyStandaloneResearchErrorMessage(content: string): boolean {
+  const trimmed = content.trim();
+  if (!trimmed) return false;
+  return STANDALONE_RESEARCH_ERROR_PATTERNS.some((re) => re.test(trimmed));
+}
+
 function isLikelyCoordinatorContent(content: string): boolean {
   if (!content) return false;
   if (COORDINATOR_BLOCK_MARKERS.some((marker) => content.includes(marker))) {
@@ -3876,10 +3888,21 @@ export function useRenderableMessageIds() {
       }
       // Research roots are themselves bound
       for (const rid of state.researchIds) boundToResearchSet.add(rid);
+      const hasFailedResearchRoot = state.researchIds.some(
+        (rid) => state.researchRunStatus.get(rid) === "error",
+      );
 
       return state.messageIds.filter((messageId) => {
         const message = state.messages.get(messageId);
         if (!message) return false;
+
+        if (
+          hasFailedResearchRoot &&
+          message.agent === "coordinator" &&
+          isLikelyStandaloneResearchErrorMessage(message.content ?? "")
+        ) {
+          return false;
+        }
 
         const isPlanner = message.agent === "planner";
         const isPodcast = message.agent === "podcast";

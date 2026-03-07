@@ -36,6 +36,8 @@ import segmentation_models_pytorch as smp
 from sklearn.metrics import confusion_matrix
 
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
+from backend.ai.schemas.base import TaskStatus
+from backend.ai.tasks.training_utils import safe_update_progress as _safe_update_progress
 from backend.ai.utils.segmentation_dataset import SegmentationDataset, get_transforms
 from backend.ai.segmentors import Segmentor
 
@@ -177,6 +179,45 @@ class SegmentationTrainer:
         merged_config = copy.deepcopy(__default_config__)
         deep_update(merged_config, config)
         return merged_config
+
+    def _dispatch_async_to_loop(
+        self,
+        coro,
+        event_loop: Optional[asyncio.AbstractEventLoop],
+    ) -> None:
+        """Run an async coroutine on the main event loop from the worker thread."""
+        if event_loop is None:
+            return
+        future = asyncio.run_coroutine_threadsafe(coro, event_loop)
+        future.result()
+
+    def _log_info(
+        self,
+        message: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        task_logger: Any = None,
+        event_loop: Optional[asyncio.AbstractEventLoop] = None,
+    ) -> None:
+        if metadata:
+            logger.info(f"{message} | {metadata}")
+        else:
+            logger.info(message)
+
+        if task_logger is not None and event_loop is not None:
+            self._dispatch_async_to_loop(task_logger.info(message, metadata), event_loop)
+
+    def _update_progress(
+        self,
+        progress: int,
+        session_maker: Any = None,
+        event_loop: Optional[asyncio.AbstractEventLoop] = None,
+    ) -> None:
+        if session_maker is None or event_loop is None:
+            return
+        self._dispatch_async_to_loop(
+            _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress),
+            event_loop,
+        )
 
     
     def build_loaders(self) -> Tuple[DataLoader, DataLoader, Optional[DataLoader]]:
@@ -690,6 +731,9 @@ class SegmentationTrainer:
         epochs: Optional[int] = None,
         lr: Optional[float] = None,
         early_stopping_patience: Optional[int] = None,
+        task_logger: Any = None,
+        session_maker: Any = None,
+        event_loop: Optional[asyncio.AbstractEventLoop] = None,
     ) -> Dict[str, Any]:
         """
         Train the segmentation model with high-performance training techniques.
@@ -724,9 +768,28 @@ class SegmentationTrainer:
         # Build data loaders
         train_loader, val_loader, test_loader = self.build_loaders()
         
-        logger.info(f"Training on {len(train_loader.dataset)} samples, validating on {len(val_loader.dataset)} samples")
-        logger.info(f"Using device: {self.device}, AMP: {use_amp}")
-        logger.info(f"Architecture: {self.config['architecture']}, Backbone: {self.config['backbone']}")
+        self._log_info(
+            f"Training on {len(train_loader.dataset)} samples, validating on {len(val_loader.dataset)} samples",
+            {
+                "train_count": len(train_loader.dataset),
+                "val_count": len(val_loader.dataset),
+                "test_count": len(test_loader.dataset) if test_loader is not None else 0,
+            },
+            task_logger,
+            event_loop,
+        )
+        self._log_info(
+            f"Using device: {self.device}, AMP: {use_amp}",
+            {"device": self.device, "use_amp": use_amp},
+            task_logger,
+            event_loop,
+        )
+        self._log_info(
+            f"Architecture: {self.config['architecture']}, Backbone: {self.config['backbone']}",
+            {"architecture": self.config["architecture"], "backbone": self.config["backbone"]},
+            task_logger,
+            event_loop,
+        )
         
         # Build optimizer and scheduler
         optimizer = self._build_optimizer(self.model)
@@ -810,21 +873,44 @@ class SegmentationTrainer:
             epoch_time = time.time() - epoch_start_time
             
             # Logging
-            logger.info(
-                f"Epoch {epoch}/{epochs} | "
-                f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | "
-                f"Val IoU: {val_metrics.get('iou', 0):.4f} | "
-                f"Val Dice: {val_metrics.get('dice', 0):.4f} | "
-                f"LR: {current_lr:.2e} | "
-                f"Time: {epoch_time:.1f}s"
+            epoch_metadata = {
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "val_loss": val_loss,
+                "val_iou": val_metrics.get("iou", 0.0),
+                "val_dice": val_metrics.get("dice", 0.0),
+                "lr": current_lr,
+                "epoch_time_seconds": round(epoch_time, 1),
+            }
+            self._log_info(
+                f"Epoch {epoch}/{epochs} - train_loss: {train_loss:.4f}, "
+                f"val_loss: {val_loss:.4f}, val_iou: {val_metrics.get('iou', 0):.4f}, "
+                f"val_dice: {val_metrics.get('dice', 0):.4f}, lr: {current_lr:.2e}, "
+                f"time: {epoch_time:.1f}s",
+                epoch_metadata,
+                task_logger,
+                event_loop,
             )
+
+            # For patch-level tasks, frontend maps backend 66-100 to UI 0-100.
+            # Reserve 66-90 for epoch training progress and leave 90-100 for finalization.
+            progress = 66 + int(epoch / epochs * 24)
+            self._update_progress(progress, session_maker, event_loop)
             
             # Early stopping check
             if epochs_without_improvement >= patience:
-                logger.info(
+                self._log_info(
                     f"Early stopping triggered at epoch {epoch}. "
                     f"No improvement for {patience} epochs. "
-                    f"Best {monitor_metric}: {best_metric:.4f} at epoch {best_epoch}"
+                    f"Best {monitor_metric}: {best_metric:.4f} at epoch {best_epoch}",
+                    {
+                        "epoch": epoch,
+                        "best_epoch": best_epoch,
+                        "best_metric": best_metric,
+                        "monitor_metric": monitor_metric,
+                    },
+                    task_logger,
+                    event_loop,
                 )
                 break
         
@@ -835,17 +921,30 @@ class SegmentationTrainer:
                 self.model.load_decoder_state_dict(best_state_dict)
             else:
                 self.model.load_state_dict(best_state_dict)
-            logger.info(f"Restored best model from epoch {best_epoch}")
+            self._log_info(
+                f"Restored best model from epoch {best_epoch}",
+                {"best_epoch": best_epoch, "best_metric": best_metric, "monitor_metric": monitor_metric},
+                task_logger,
+                event_loop,
+            )
         
         # Final evaluation on test set if available
         test_metrics = None
         if test_loader is not None:
             test_loss, test_metrics = self._validate(self.model, test_loader)
-            logger.info(
+            self._log_info(
                 f"Test Results | Loss: {test_loss:.4f} | "
                 f"IoU: {test_metrics.get('iou', 0):.4f} | "
                 f"Dice: {test_metrics.get('dice', 0):.4f} | "
-                f"Accuracy: {test_metrics.get('accuracy', 0):.4f}"
+                f"Accuracy: {test_metrics.get('accuracy', 0):.4f}",
+                {
+                    "test_loss": test_loss,
+                    "test_iou": test_metrics.get("iou", 0.0),
+                    "test_dice": test_metrics.get("dice", 0.0),
+                    "test_accuracy": test_metrics.get("accuracy", 0.0),
+                },
+                task_logger,
+                event_loop,
             )
         
         total_time = time.time() - start_time
@@ -861,9 +960,17 @@ class SegmentationTrainer:
             "config": self.config,
         }
         
-        logger.info(
+        self._log_info(
             f"Training completed in {total_time/60:.1f} minutes. "
-            f"Best {monitor_metric}: {best_metric:.4f} at epoch {best_epoch}"
+            f"Best {monitor_metric}: {best_metric:.4f} at epoch {best_epoch}",
+            {
+                "total_training_time_seconds": round(total_time, 1),
+                "best_epoch": best_epoch,
+                "best_metric": best_metric,
+                "monitor_metric": monitor_metric,
+            },
+            task_logger,
+            event_loop,
         )
         
         return results

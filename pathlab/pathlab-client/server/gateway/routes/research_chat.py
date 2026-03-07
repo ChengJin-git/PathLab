@@ -455,6 +455,7 @@ async def _resolve_llm_override_from_settings() -> Optional[dict]:
     try:
         settings = Config.get_global_settings()
         local_vllm_enabled = settings.get("local_vllm_enabled", False)
+        openrouter_api_key = settings.get("openrouter_api_key", "")
 
         if local_vllm_enabled and settings.get("local_vllm_base_url"):
             vllm_base_url = settings.get("local_vllm_base_url", "")
@@ -466,15 +467,19 @@ async def _resolve_llm_override_from_settings() -> Optional[dict]:
                 llm_override = {"base_url": vllm_base_url, "model": vllm_model, "api_key": vllm_api_key}
                 logger.info(f"[ResearchChat] Using local vLLM: {vllm_base_url}, model={vllm_model}")
             else:
-                logger.warning("[ResearchChat] Local vLLM enabled but no model specified and auto-detect failed")
-        elif settings.get("openrouter_api_key"):
+                logger.warning(
+                    "[ResearchChat] Local vLLM enabled but no model specified and auto-detect failed; "
+                    "falling back to OpenRouter if configured"
+                )
+
+        if not llm_override and openrouter_api_key:
             llm_override = {
                 "base_url": settings.get("openrouter_base_url", "https://openrouter.ai/api/v1"),
                 "model": settings.get("openrouter_model", ""),
-                "api_key": settings.get("openrouter_api_key", ""),
+                "api_key": openrouter_api_key,
             }
             logger.info(f"[ResearchChat] Using OpenRouter: model={llm_override.get('model')}")
-        else:
+        elif not llm_override:
             logger.info("[ResearchChat] No LLM override from settings, using deep-research defaults (conf.yaml)")
     except Exception as e:
         logger.warning(f"[ResearchChat] Failed to read global settings: {e}")
