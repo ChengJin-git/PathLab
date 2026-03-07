@@ -15,6 +15,7 @@ import {
 import type { ChatMessage as StandardChatMessage } from "../../../api/chat";
 import i18n from "../../../i18n";
 import { sanitizeConfigBlocksForAI } from "../../chatMessageParser";
+import { interpolateLegacyPlaceholders } from "../i18n";
 
 import {
   analyzeResearchStartIntentWithLLM,
@@ -149,7 +150,10 @@ function tr(
   defaultValue: string,
   params?: Record<string, string | number>,
 ): string {
-  return i18n.t(`chat.research.${key}`, { ...params, defaultValue }) as string;
+  return interpolateLegacyPlaceholders(
+    i18n.t(`chat.research.${key}`, { ...params, defaultValue }) as string,
+    params,
+  );
 }
 
 function getAlignedAIChatErrorFallback(): string {
@@ -3962,16 +3966,35 @@ export function useMessageIds() {
 
 export function useDeepResearchConversationLocked() {
   return useStore((state) => {
+    const hasAcceptedPlanSubmission =
+      state.responding &&
+      Array.from(state.planActionLocks.values()).some(
+        (action) => action === "accepted",
+      );
+
+    if (hasAcceptedPlanSubmission) {
+      return true;
+    }
+
     return state.researchIds.some((researchId) => {
       const reportId = state.researchReportIds.get(researchId);
       const runStatus = state.researchRunStatus.get(researchId);
-      const reportMessage = reportId ? state.messages.get(reportId) : undefined;
-      const hasFinalizedReport =
-        !!reportMessage &&
-        !reportMessage.isStreaming &&
-        (reportMessage.content ?? "").trim().length > 0;
+      const hasExecutionActivity = (state.researchActivityIds.get(researchId) ?? []).some(
+        (messageId) => {
+          const message = state.messages.get(messageId);
+          return !!message && message.agent !== "planner";
+        },
+      );
 
-      return hasFinalizedReport || (runStatus === "success" && !!reportId);
+      return (
+        state.ongoingResearchId === researchId ||
+        !!reportId ||
+        hasExecutionActivity ||
+        runStatus === "running" ||
+        runStatus === "success" ||
+        runStatus === "error" ||
+        runStatus === "cancelled"
+      );
     });
   });
 }

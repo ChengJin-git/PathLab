@@ -3,6 +3,7 @@
  * Communicates directly with deep-research backend (bypassing gateway SSE conversion).
  */
 import type { MCPServerMetadata } from "../mcp";
+import { interpolateLegacyPlaceholders } from "../i18n";
 import type { Resource } from "../messages";
 import { fetchStream } from "../sse";
 import { parseJSON, sleep } from "../utils";
@@ -23,7 +24,10 @@ function tr(
   defaultValue: string,
   params?: Record<string, string | number>,
 ): string {
-  return i18n.t(`chat.research.${key}`, { ...params, defaultValue }) as string;
+  return interpolateLegacyPlaceholders(
+    i18n.t(`chat.research.${key}`, { ...params, defaultValue }) as string,
+    params,
+  );
 }
 
 function mapHttpStatusToMessage(status: number, detail?: string): string {

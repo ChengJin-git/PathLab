@@ -87,6 +87,14 @@ def _build_segmentation_wsi_lookups(wsis) -> Tuple[Dict[str, str], Dict[str, str
 
 
 async def _load_segmentation_coco_payload(db, dataset_id: str) -> dict:
+    dataset_level_record = await SegmentationAnnotationRepository.get_dataset_level_by_dataset(
+        db,
+        dataset_id,
+        include_drafts=False,
+    )
+    if dataset_level_record and isinstance(dataset_level_record.annotations, dict):
+        return dataset_level_record.annotations
+
     records = await SegmentationAnnotationRepository.get_all_by_dataset(
         db,
         dataset_id,
@@ -103,6 +111,29 @@ async def _load_segmentation_coco_payload(db, dataset_id: str) -> dict:
         record.annotations for record in records if isinstance(record.annotations, dict)
     ]
     return merge_coco_datasets(payloads)
+
+
+async def _load_segmentation_training_inputs(
+    db,
+    task_id: str,
+    wsi_ids: List[str],
+) -> Tuple[List, dict, Dict[str, List[str]]]:
+    wsi_map = await WSIRepository.get_by_ids(db, wsi_ids)
+    wsis = [wsi_map[wsi_id] for wsi_id in wsi_ids if wsi_id in wsi_map]
+    if not wsis:
+        raise ValueError("No patch images found for segmentation training task")
+
+    dataset_ids = {wsi.dataset_id for wsi in wsis if wsi.dataset_id}
+    if len(dataset_ids) != 1:
+        raise ValueError("Segmentation training requires all selected images to belong to the same dataset")
+
+    dataset_id = next(iter(dataset_ids))
+    coco_data = await _load_segmentation_coco_payload(db, dataset_id)
+    if not coco_data.get("images"):
+        raise ValueError(f"No finalized COCO annotations found for segmentation dataset {dataset_id}")
+
+    splits_map = await TrainingTaskRepository.get_wsi_ids_by_split(db, task_id)
+    return wsis, coco_data, splits_map
 
 
 def _build_split_coco_payload(
@@ -148,26 +179,13 @@ def _build_split_coco_payload(
     return payload
 
 
-async def _prepare_segmentation_training_dataset(
-    db,
+def _prepare_segmentation_training_dataset(
     task_id: str,
-    wsi_ids: List[str],
+    wsis: List,
+    coco_data: dict,
+    splits_map: Dict[str, List[str]],
     preprocessing_config: Dict,
 ) -> Tuple[Dict, int]:
-    wsi_map = await WSIRepository.get_by_ids(db, wsi_ids)
-    wsis = [wsi_map[wsi_id] for wsi_id in wsi_ids if wsi_id in wsi_map]
-    if not wsis:
-        raise ValueError("No patch images found for segmentation training task")
-
-    dataset_ids = {wsi.dataset_id for wsi in wsis if wsi.dataset_id}
-    if len(dataset_ids) != 1:
-        raise ValueError("Segmentation training requires all selected images to belong to the same dataset")
-
-    dataset_id = next(iter(dataset_ids))
-    coco_data = await _load_segmentation_coco_payload(db, dataset_id)
-    if not coco_data.get("images"):
-        raise ValueError(f"No finalized COCO annotations found for segmentation dataset {dataset_id}")
-
     exact_lookup, stem_lookup = _build_segmentation_wsi_lookups(wsis)
     label_sets = extract_coco_wsi_label_sets(coco_data, exact_lookup, stem_lookup)
     classes = sorted({label for labels in label_sets.values() for label in labels})
@@ -179,7 +197,6 @@ async def _prepare_segmentation_training_dataset(
     if strategy == "k_fold":
         raise ValueError("Patch segmentation training does not support k-fold splits yet")
 
-    splits_map = await TrainingTaskRepository.get_wsi_ids_by_split(db, task_id)
     expected_splits = ["train", "val", "test"]
     if not all(split_name in splits_map for split_name in expected_splits):
         raise ValueError("Segmentation training requires train/val/test split assignments")
@@ -351,35 +368,45 @@ async def run_training_pipeline(
         if data_type == 'patch':
             if training_task_type == "segmentation":
                 preprocessing_config = dict(preprocessing_config or {})
-                # Patch Segmentation: uses architecture + backbone (not feature extractor)
+
+                # Get segmentation-specific training parameters
+                architecture = model_config.get('architecture', 'unet')
+                backbone = model_config.get('backbone', 'resnet50')
+                loss_names = model_config.get('loss_names', ['DiceLoss', 'JaccardLoss'])
+                loss_weights = model_config.get('loss_weights', [0.5, 0.5])
+                _validate_patch_segmentation_loss_names(loss_names)
+                epochs = int(model_config.get('epochs', 100))
+                lr = float(model_config.get('learning_rate', 0.0001))
+                batch_size = int(model_config.get('batch_size', 16))
+                optimizer = model_config.get('optimizer', 'adamw')
+                early_stopping_patience = int(model_config.get('early_stopping_patience', 15))
+                seed = preprocessing_config.get('split_config', {}).get('seed', 42)
+
+                # Keep DB work short: fetch DB-backed inputs in one scoped session,
+                # then build split JSON on disk outside the timed DB session.
                 async with logger_manager.session() as (logger, db):
                     await logger.info("Patch-level segmentation task detected")
-
-                    segmentation_dataset, num_classes = await _prepare_segmentation_training_dataset(
+                    wsis, coco_data, splits_map = await _load_segmentation_training_inputs(
                         db=db,
                         task_id=task_id,
                         wsi_ids=wsi_ids,
-                        preprocessing_config=preprocessing_config,
                     )
-                    preprocessing_config["segmentation_dataset"] = segmentation_dataset
+
+                segmentation_dataset, num_classes = _prepare_segmentation_training_dataset(
+                    task_id=task_id,
+                    wsis=wsis,
+                    coco_data=coco_data,
+                    splits_map=splits_map,
+                    preprocessing_config=preprocessing_config,
+                )
+                preprocessing_config["segmentation_dataset"] = segmentation_dataset
+
+                async with logger_manager.session() as (logger, db):
                     await TrainingTaskRepository.update_preprocessing_config(
                         db,
                         task_id,
                         preprocessing_config,
                     )
-
-                    # Get segmentation-specific training parameters
-                    architecture = model_config.get('architecture', 'unet')
-                    backbone = model_config.get('backbone', 'resnet50')
-                    loss_names = model_config.get('loss_names', ['DiceLoss', 'JaccardLoss'])
-                    loss_weights = model_config.get('loss_weights', [0.5, 0.5])
-                    _validate_patch_segmentation_loss_names(loss_names)
-                    epochs = int(model_config.get('epochs', 100))
-                    lr = float(model_config.get('learning_rate', 0.0001))
-                    batch_size = int(model_config.get('batch_size', 16))
-                    optimizer = model_config.get('optimizer', 'adamw')
-                    early_stopping_patience = int(model_config.get('early_stopping_patience', 15))
-                    seed = preprocessing_config.get('split_config', {}).get('seed', 42)
 
                     await logger.info(
                         "Prepared segmentation dataset splits for training",

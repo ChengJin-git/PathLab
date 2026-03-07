@@ -333,6 +333,10 @@ export function CitationList({
   title,
   className,
 }: CitationListProps) {
+  // @ts-ignore - i18n shim
+  const t = useTranslations("chat.research");
+  const resolvedTitle = title ?? t("references") ?? t("citationSources") ?? "References";
+
   const cards = useMemo<ReferenceCardProps[]>(() => {
     return citations.map((citation) => {
       const type = inferReferenceType(citation);
@@ -352,7 +356,7 @@ export function CitationList({
 
   return (
     <div className={cn("space-y-3", className)}>
-      {title ? <h3 className="text-sm font-semibold text-foreground">{title}</h3> : null}
+      <h3 className="text-sm font-semibold text-foreground">{resolvedTitle}</h3>
       <ReferenceCardList cards={cards} showHeader={false} />
     </div>
   );

@@ -2,8 +2,8 @@ import { useTranslations } from "../../../lib/deep-research/i18n";
 // Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 // SPDX-License-Identifier: MIT
 
-import { CheckCircle2 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import type { Option, Resource } from "../../../lib/deep-research/messages";
@@ -26,6 +26,62 @@ export function MessagesBlock({ className }: { className?: string }) {
   const messageCount = messageIds.length;
   const responding = useStore((state) => state.responding);
   const conversationLocked = useDeepResearchConversationLocked();
+  const conversationLockPhase = useStore((state) => {
+    const hasAcceptedPlanSubmission =
+      state.responding &&
+      Array.from(state.planActionLocks.values()).some((action) => action === "accepted");
+    if (hasAcceptedPlanSubmission) {
+      return "researching" as const;
+    }
+
+    const latestStartedResearchId = [...state.researchIds].reverse().find((researchId) => {
+      const runStatus = state.researchRunStatus.get(researchId);
+      const reportId = state.researchReportIds.get(researchId);
+      const hasExecutionActivity = (state.researchActivityIds.get(researchId) ?? []).some((messageId) => {
+        const message = state.messages.get(messageId);
+        return !!message && message.agent !== "planner";
+      });
+
+      return (
+        state.ongoingResearchId === researchId ||
+        !!reportId ||
+        hasExecutionActivity ||
+        runStatus === "running" ||
+        runStatus === "success" ||
+        runStatus === "error" ||
+        runStatus === "cancelled"
+      );
+    });
+
+    if (!latestStartedResearchId) {
+      return "idle" as const;
+    }
+
+    const reportId = state.researchReportIds.get(latestStartedResearchId);
+    const reportMessage = reportId ? state.messages.get(reportId) : undefined;
+    const runStatus = state.researchRunStatus.get(latestStartedResearchId);
+
+    if (reportMessage?.isStreaming) {
+      return "generatingReport" as const;
+    }
+
+    if (
+      (!!reportMessage && (reportMessage.content ?? "").trim().length > 0) ||
+      (runStatus === "success" && !!reportId)
+    ) {
+      return "reportGenerated" as const;
+    }
+
+    if (runStatus === "cancelled" || state.cancelledResearchIds.has(latestStartedResearchId)) {
+      return "cancelled" as const;
+    }
+
+    if (runStatus === "error") {
+      return "error" as const;
+    }
+
+    return "researching" as const;
+  });
   const [feedback, setFeedback] = useState<{ option: Option } | null>(null);
   const [draftPreviewText, setDraftPreviewText] = useState("");
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -92,6 +148,43 @@ export function MessagesBlock({ className }: { className?: string }) {
       state: { forceNewChat: true },
     });
   }, [navigate]);
+
+  const lockPanelCopy = useMemo(() => {
+    switch (conversationLockPhase) {
+      case "generatingReport":
+        return {
+          title: t("generatingReport"),
+          description: t("singleResearchPerConversation"),
+          icon: <Loader2 className="h-5 w-5 animate-spin" />,
+        };
+      case "reportGenerated":
+        return {
+          title: t("reportGenerated"),
+          description: t("singleResearchPerConversation"),
+          icon: <CheckCircle2 className="h-5 w-5" />,
+        };
+      case "cancelled":
+        return {
+          title: t("researchCancelled"),
+          description: t("singleResearchPerConversation"),
+          icon: <AlertCircle className="h-5 w-5" />,
+        };
+      case "error":
+        return {
+          title: t("researchFailedNetwork"),
+          description: t("singleResearchPerConversation"),
+          icon: <AlertCircle className="h-5 w-5" />,
+        };
+      case "researching":
+      default:
+        return {
+          title: t("researching"),
+          description: t("singleResearchPerConversation"),
+          icon: <Loader2 className="h-5 w-5 animate-spin" />,
+        };
+    }
+  }, [conversationLockPhase, t]);
+
   return (
     <div className={cn("flex h-full min-h-0 flex-col", className)}>
       <div className="min-h-0 flex-1 overflow-hidden">
@@ -119,19 +212,25 @@ export function MessagesBlock({ className }: { className?: string }) {
       <div className="pointer-events-none fixed bottom-6 left-0 right-0 z-30 px-4 lg:left-[var(--sidebar-width,288px)] transition-[left] duration-300 ease-in-out">
         <div className={cn("pointer-events-auto mx-auto w-full", doubleColumnMode ? "max-w-[1500px]" : "max-w-4xl")}>
           <div className={cn(doubleColumnMode ? "w-full lg:w-[43%] lg:min-w-[520px] lg:max-w-[720px]" : "mx-auto w-full max-w-4xl")}>
-            {conversationLocked && !responding ? (
+            {conversationLocked ? (
               <div className="rounded-[28px] border border-emerald-100 bg-white/90 px-4 py-3 shadow-[0_8px_32px_rgba(0,0,0,0.12)] backdrop-blur-xl">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
-                    <CheckCircle2 className="h-5 w-5" />
+                    {lockPanelCopy.icon}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-semibold text-gray-900">{t("reportGenerated")}</div>
-                    <div className="mt-0.5 text-sm text-gray-500">{t("singleResearchPerConversation")}</div>
+                    <div className="text-sm font-semibold text-gray-900">{lockPanelCopy.title}</div>
+                    <div className="mt-0.5 text-sm text-gray-500">{lockPanelCopy.description}</div>
                   </div>
-                  <Button className="shrink-0 rounded-full" size="sm" onClick={handleStartNewAIChat}>
-                    {tGlobal("aiChat.newChat")}
-                  </Button>
+                  {conversationLockPhase === "reportGenerated" ? (
+                    <Button className="shrink-0 rounded-full" size="sm" onClick={handleStartNewAIChat}>
+                      {tGlobal("aiChat.newChat")}
+                    </Button>
+                  ) : responding ? (
+                    <Button className="shrink-0 rounded-full" size="sm" variant="secondary" onClick={handleCancel}>
+                      {tGlobal("aiChat.stopGenerating")}
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             ) : (

@@ -1,5 +1,6 @@
 import { type StreamEvent } from "./StreamEvent";
 import i18n from "../../../i18n";
+import { interpolateLegacyPlaceholders } from "../i18n";
 
 const MAX_BUFFER_SIZE = 1024 * 1024; // 1MB default
 
@@ -8,7 +9,10 @@ function tr(
   defaultValue: string,
   params?: Record<string, string | number>,
 ): string {
-  return i18n.t(`chat.research.${key}`, { ...params, defaultValue }) as string;
+  return interpolateLegacyPlaceholders(
+    i18n.t(`chat.research.${key}`, { ...params, defaultValue }) as string,
+    params,
+  );
 }
 
 function isNetworkLikeError(error: unknown): boolean {

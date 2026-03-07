@@ -174,6 +174,26 @@ class SegmentationAnnotationRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_dataset_level_by_dataset(
+        db: AsyncSession,
+        dataset_id: str,
+        include_drafts: bool = True,
+    ) -> Optional[SegmentationAnnotation]:
+        """Get the dataset-level COCO annotation record for a dataset."""
+        query = (
+            select(SegmentationAnnotation)
+            .where(SegmentationAnnotation.source_dataset_id == dataset_id)
+            .where(SegmentationAnnotation.annotation_id == f"annot_{dataset_id}")
+            .order_by(SegmentationAnnotation.updated_at.desc())
+            .limit(1)
+        )
+        if not include_drafts:
+            query = query.where(SegmentationAnnotation.status != "draft")
+
+        result = await db.execute(query)
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def get_latest_draft_by_dataset_for_user(
         db: AsyncSession,
         dataset_id: str,

@@ -222,7 +222,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
             <h2 className="text-lg font-bold text-slate-900">{t('settings.remoteServices')}</h2>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 items-start md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 items-start md:grid-cols-2 xl:grid-cols-3">
             {/* OpenRouter LLM Card */}
             <Card className="border border-slate-200 shadow-sm transition-shadow hover:shadow-md md:col-span-2 xl:col-span-2">
               <CardHeader className="px-4 pb-2 pt-4 sm:px-5 sm:pb-2.5 sm:pt-5">
@@ -282,64 +282,66 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
               </CardContent>
             </Card>
 
-            {/* DashScope ASR Card */}
-            <Card className="border border-slate-200 shadow-sm transition-shadow hover:shadow-md">
-              <CardHeader className="px-4 pb-2 pt-4 sm:px-5 sm:pb-2.5 sm:pt-5">
-                <CardTitle className="flex items-center gap-2 text-sm font-semibold text-slate-900 sm:text-base">
-                  <div className="p-1 bg-orange-100 rounded">
-                    <Mic className="w-3.5 h-3.5 text-orange-600" />
+            <div className="grid grid-cols-1 gap-4 md:col-span-2 md:grid-cols-2 xl:col-span-1 xl:grid-cols-1">
+              {/* DashScope ASR Card */}
+              <Card className="border border-slate-200 shadow-sm transition-shadow hover:shadow-md">
+                <CardHeader className="px-4 pb-2 pt-4 sm:px-5 sm:pb-2.5 sm:pt-5">
+                  <CardTitle className="flex items-center gap-2 text-sm font-semibold text-slate-900 sm:text-base">
+                    <div className="p-1 bg-orange-100 rounded">
+                      <Mic className="w-3.5 h-3.5 text-orange-600" />
+                    </div>
+                    {t('settings.general.asrDashScope')}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 px-4 pb-4 pt-0 sm:px-5 sm:pb-5">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.dashscopeApiKey')}</Label>
+                    <Input
+                      type="password"
+                      value={dashscopeApiKey}
+                      onChange={(e) => setDashscopeApiKey(e.target.value)}
+                      placeholder="sk-..."
+                      className="h-8 text-sm border-slate-300 focus:border-orange-500 focus:ring-orange-500"
+                    />
+                    <p className="text-xs text-slate-500">
+                      {t('settings.general.forQwen3Asr')}{' '}
+                      <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-orange-600 hover:text-orange-700 font-medium">
+                        {t('common.getKey')}
+                      </a>
+                    </p>
                   </div>
-                  {t('settings.general.asrDashScope')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 px-4 pb-4 pt-0 sm:px-5 sm:pb-5">
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.dashscopeApiKey')}</Label>
-                  <Input
-                    type="password"
-                    value={dashscopeApiKey}
-                    onChange={(e) => setDashscopeApiKey(e.target.value)}
-                    placeholder="sk-..."
-                    className="h-8 text-sm border-slate-300 focus:border-orange-500 focus:ring-orange-500"
-                  />
-                  <p className="text-xs text-slate-500">
-                    {t('settings.general.forQwen3Asr')}{' '}
-                    <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-orange-600 hover:text-orange-700 font-medium">
-                      {t('common.getKey')}
-                    </a>
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
 
-            {/* Shared Credentials Card */}
-            <Card className="border border-slate-200 shadow-sm transition-shadow hover:shadow-md">
-              <CardHeader className="px-4 pb-2 pt-4 sm:px-5 sm:pb-2.5 sm:pt-5">
-                <CardTitle className="flex items-center gap-2 text-sm font-semibold text-slate-900 sm:text-base">
-                  <div className="p-1 bg-amber-100 rounded">
-                    <Key className="w-3.5 h-3.5 text-amber-600" />
+              {/* Shared Credentials Card */}
+              <Card className="border border-slate-200 shadow-sm transition-shadow hover:shadow-md">
+                <CardHeader className="px-4 pb-2 pt-4 sm:px-5 sm:pb-2.5 sm:pt-5">
+                  <CardTitle className="flex items-center gap-2 text-sm font-semibold text-slate-900 sm:text-base">
+                    <div className="p-1 bg-amber-100 rounded">
+                      <Key className="w-3.5 h-3.5 text-amber-600" />
+                    </div>
+                    {t('settings.general.sharedCredentials')}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 px-4 pb-4 pt-0 sm:px-5 sm:pb-5">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">HF TOKEN</Label>
+                    <Input
+                      type="password"
+                      value={huggingfaceToken}
+                      onChange={(e) => setHuggingfaceToken(e.target.value)}
+                      placeholder="hf_..."
+                      className="h-8 text-sm border-slate-300 focus:border-amber-500 focus:ring-amber-500"
+                    />
+                    <p className="text-xs text-slate-500">
+                      <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-amber-600 hover:text-amber-700 font-medium">
+                        {t('common.getToken')}
+                      </a>
+                    </p>
                   </div>
-                  {t('settings.general.sharedCredentials')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 px-4 pb-4 pt-0 sm:px-5 sm:pb-5">
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">HF TOKEN</Label>
-                  <Input
-                    type="password"
-                    value={huggingfaceToken}
-                    onChange={(e) => setHuggingfaceToken(e.target.value)}
-                    placeholder="hf_..."
-                    className="h-8 text-sm border-slate-300 focus:border-amber-500 focus:ring-amber-500"
-                  />
-                  <p className="text-xs text-slate-500">
-                    <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-amber-600 hover:text-amber-700 font-medium">
-                      {t('common.getToken')}
-                    </a>
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </section>
 
