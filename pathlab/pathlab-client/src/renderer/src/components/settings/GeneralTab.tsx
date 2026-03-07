@@ -217,7 +217,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
             <h2 className="text-lg font-bold text-slate-900">{t('settings.remoteServices')}</h2>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+	          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
             {/* OpenRouter LLM Card */}
             <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
               <CardHeader className="pb-1 p-3">
@@ -344,11 +344,9 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
 	            </div>
 	            <h2 className="text-lg font-bold text-slate-900">{t('settings.general.webSearchCard')}</h2>
 	          </div>
-	          <div className="grid gap-3">
+		          <div className="grid gap-3 items-start">
 	            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-	              <CardHeader className="pb-1 p-3">
-	              </CardHeader>
-	              <CardContent className="space-y-2.5 p-3 pt-0">
+		              <CardContent className="space-y-2.5 p-3">
                 <div className="space-y-1">
                   <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">
                     {t('settings.general.exaApiKey')}
