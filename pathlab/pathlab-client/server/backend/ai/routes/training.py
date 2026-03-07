@@ -955,6 +955,13 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         config["dataset"] = segmentation_dataset
         # Always apply num_classes from request (overrides default of 1)
         config.setdefault("dataset", {})["classes"] = req.num_classes
+        segmentation_class_names = list(dict.fromkeys(
+            str(label).strip()
+            for label in (task.classes or [])
+            if str(label).strip()
+        ))
+        if segmentation_class_names:
+            config.setdefault("dataset", {})["class_names"] = segmentation_class_names
 
         trainer = SegmentationTrainer(
             task_id=req.task_id,
@@ -1007,6 +1014,7 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
                 "architecture": req.architecture,
                 "backbone": req.backbone,
                 "task_id": req.task_id,
+                "classes": segmentation_class_names,
             },
         }
         metrics_json_path = Path(save_dir) / "metrics.json"
@@ -1021,7 +1029,7 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
                 "model_name": f"{req.architecture}+{req.backbone}",
                 "model_path": checkpoint_path,
                 "config_path": str(Path(checkpoint_path).parent / "config.json"),
-                "classes": [],  # segmentation categories stored in config
+                "classes": segmentation_class_names,
                 "feature_extractor": req.backbone,
                 "aggregator": req.architecture,
                 "train_metrics": sanitize_for_json({"loss": history.get("train_loss", [])}),

@@ -22,7 +22,7 @@ import random
 import copy
 import time
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple, Callable
+from typing import Dict, List, Any, Optional, Tuple, Callable, Union
 
 import cv2
 import numpy as np
@@ -40,6 +40,8 @@ from backend.ai.utils.segmentation_dataset import SegmentationDataset, get_trans
 from backend.ai.segmentors import Segmentor
 
 logger = logging.getLogger("patch_segmentation_trainer")
+
+SegmentationMetricValue = Union[float, List[float]]
 
 
 __default_config__ = {
@@ -209,7 +211,7 @@ class SegmentationTrainer:
             )
         return train_loader, val_loader, test_loader
     
-    def evaluate_model(self, data_loader: DataLoader) -> Dict[str, float]:
+    def evaluate_model(self, data_loader: DataLoader) -> Dict[str, SegmentationMetricValue]:
         """
         Evaluate the model on the given DataLoader and return metrics.
         """
@@ -284,7 +286,7 @@ class SegmentationTrainer:
         preds: torch.Tensor, 
         targets: torch.Tensor,
         threshold: float = 0.5
-    ) -> Dict[str, float]:
+    ) -> Dict[str, SegmentationMetricValue]:
         """
         Compute comprehensive segmentation metrics.
         
@@ -305,9 +307,19 @@ class SegmentationTrainer:
         fp: torch.Tensor,
         fn: torch.Tensor,
         tn: torch.Tensor,
-    ) -> Dict[str, float]:
+    ) -> Dict[str, SegmentationMetricValue]:
         """Compute segmentation metrics from accumulated confusion stats."""
         metrics = {}
+
+        # get_stats(mode='multilabel') returns per-sample/per-class confusion
+        # counts with shape (N, C). For dataset-level reporting we aggregate over
+        # the sample dimension first so per-class outputs become 1-D lists of
+        # length C instead of nested [sample, class] arrays.
+        if tp.dim() > 1:
+            tp = tp.sum(dim=0)
+            fp = fp.sum(dim=0)
+            fn = fn.sum(dim=0)
+            tn = tn.sum(dim=0)
 
         # Per-class IoU, then average
         iou_per_class = smp.metrics.iou_score(tp, fp, fn, tn, reduction='none')
@@ -459,7 +471,7 @@ class SegmentationTrainer:
         scheduler: Optional[Any],
         scaler: Optional[GradScaler],
         epoch: int,
-    ) -> Tuple[float, Dict[str, float]]:
+    ) -> Tuple[float, Dict[str, SegmentationMetricValue]]:
         """
         Train for one epoch with mixed precision and gradient accumulation.
         
@@ -563,7 +575,7 @@ class SegmentationTrainer:
         self,
         model: nn.Module,
         val_loader: DataLoader,
-    ) -> Tuple[float, Dict[str, float]]:
+    ) -> Tuple[float, Dict[str, SegmentationMetricValue]]:
         """
         Validate the model.
         

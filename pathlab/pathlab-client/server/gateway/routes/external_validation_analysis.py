@@ -10,11 +10,12 @@ import json
 import logging
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Dict
+from typing import Any, Dict, List
 
 from fastapi import HTTPException
 
 from backend.common.config import Config
+from backend.database.repositories import TrainedModelRepository, TrainingTaskRepository
 
 from .analysis_helpers import _get_random_seed_from_task
 from .analysis_metrics import (
@@ -31,6 +32,83 @@ from .analysis_metrics import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_segmentation_class_names(labels: List[Any]) -> List[str]:
+    normalized: List[str] = []
+    seen = set()
+    for label in labels or []:
+        value = str(label).strip()
+        if value and value not in seen:
+            seen.add(value)
+            normalized.append(value)
+    return normalized
+
+
+def _build_segmentation_class_summary(
+    class_names: List[str],
+    results_with_gt: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    import numpy as np
+
+    metric_specs = {
+        "iou_per_class": ("iou", "per_class_iou", "IoU"),
+        "dice_per_class": ("dice", "per_class_dice", "Dice"),
+    }
+
+    class_metrics: Dict[str, Dict[str, float]] = {name: {} for name in class_names}
+    chart_data: Dict[str, Dict[str, Any]] = {}
+    per_class_data: Dict[str, List[Dict[str, float]]] = {}
+
+    for raw_key, (metric_key, chart_key, metric_name) in metric_specs.items():
+        rows = []
+        for result in results_with_gt:
+            values = (result.get("metrics") or {}).get(raw_key)
+            if isinstance(values, list) and values:
+                rows.append([float(v) for v in values])
+
+        if not rows:
+            continue
+
+        arr = np.array(rows, dtype=np.float64)
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+        means = arr.mean(axis=0)
+        stds = arr.std(axis=0)
+
+        if len(class_names) < len(means):
+            class_names.extend(
+                f"Class {index}" for index in range(len(class_names), len(means))
+            )
+            for name in class_names:
+                class_metrics.setdefault(name, {})
+
+        per_class_entries: List[Dict[str, float]] = []
+        for index, class_name in enumerate(class_names[:len(means)]):
+            mean_value = round(float(means[index]), 4)
+            std_value = round(float(stds[index]), 4)
+            class_metrics.setdefault(class_name, {})[metric_key] = mean_value
+            per_class_entries.append({
+                "class_index": index,
+                "class_name": class_name,
+                "mean": mean_value,
+                "std": std_value,
+            })
+
+        per_class_data[raw_key] = per_class_entries
+        chart_data[chart_key] = {
+            "classes": class_names[:len(means)],
+            "means": [round(float(v), 4) for v in means.tolist()],
+            "stds": [round(float(v), 4) for v in stds.tolist()],
+            "metric_name": metric_name,
+        }
+
+    return {
+        "classes": class_names,
+        "class_metrics": {name: metrics for name, metrics in class_metrics.items() if metrics},
+        "chart_data": chart_data,
+        "per_class_data": per_class_data,
+    }
 
 
 async def _run_external_validation_analysis(task, request, db, progress_callback=None, progress_config=None, submitted_by=None):
@@ -382,6 +460,7 @@ async def _run_external_validation_segmentation_analysis(task, request, db, mode
     def _sync_load_segmentation_results():
         _image_results = []
         _num_classes = None
+        _class_names: List[str] = []
 
         if ai_results_dir.exists():
             for wsi_dir in ai_results_dir.iterdir():
@@ -395,16 +474,27 @@ async def _run_external_validation_segmentation_analysis(task, request, db, mode
                                 _image_results.append(data)
                                 if _num_classes is None:
                                     _num_classes = data.get("num_classes", 1)
+                                if not _class_names:
+                                    _class_names = _normalize_segmentation_class_names(data.get("class_names", []))
                         except Exception as e:
                             logger.warning(f"Failed to load segmentation result from {result_file}: {e}")
                             continue
 
-        return _image_results, _num_classes
+        return _image_results, _num_classes, _class_names
 
-    image_results, num_classes = await asyncio.to_thread(_sync_load_segmentation_results)
+    image_results, num_classes, class_names = await asyncio.to_thread(_sync_load_segmentation_results)
 
     if not image_results:
         raise HTTPException(status_code=400, detail="No segmentation results found for this external validation task")
+
+    if not class_names:
+        model_task = await TrainingTaskRepository.get_by_id(db, model_task_id) if model_task_id else None
+        trained_model = await TrainedModelRepository.get_by_id(db, model_config.get("model_id")) if model_config.get("model_id") else None
+        class_names = _normalize_segmentation_class_names(
+            (model_task.classes if model_task else None)
+            or (trained_model.classes if trained_model else None)
+            or []
+        )
 
     if progress_callback:
         await progress_callback(p_start + 5)
@@ -413,7 +503,12 @@ async def _run_external_validation_segmentation_analysis(task, request, db, mode
     has_metrics = any(r.get("has_ground_truth") and r.get("metrics") for r in image_results)
 
     metrics = {}
-    per_class_data = {}
+    per_class_summary = {
+        "classes": class_names,
+        "class_metrics": {},
+        "chart_data": {},
+        "per_class_data": {},
+    }
 
     if has_metrics:
         metric_keys = ["iou", "dice", "accuracy", "precision", "recall"]
@@ -430,21 +525,8 @@ async def _run_external_validation_segmentation_analysis(task, request, db, mode
                     "median": float(np.median(values)),
                     "count": len(values),
                 }
-
-        # Aggregate per-class IoU and Dice
-        for class_key in ["iou_per_class", "dice_per_class"]:
-            all_per_class = [r["metrics"].get(class_key) for r in results_with_gt if r["metrics"].get(class_key)]
-            if all_per_class:
-                arr = np.array(all_per_class)  # (num_images, num_classes)
-                per_class_stats = []
-                for c in range(arr.shape[1] if arr.ndim > 1 else 1):
-                    col = arr[:, c] if arr.ndim > 1 else arr
-                    per_class_stats.append({
-                        "class_index": c,
-                        "mean": float(np.mean(col)),
-                        "std": float(np.std(col)),
-                    })
-                per_class_data[class_key] = per_class_stats
+        per_class_summary = _build_segmentation_class_summary(class_names, results_with_gt)
+        class_names = per_class_summary["classes"]
 
     if progress_callback:
         await progress_callback(60)
@@ -460,21 +542,11 @@ async def _run_external_validation_segmentation_analysis(task, request, db, mode
     chart_data = {}
     chart_paths = {}
 
-    if "per_class_iou" in request.charts and per_class_data.get("iou_per_class"):
-        chart_data["per_class_iou"] = {
-            "classes": [f"Class {s['class_index']}" for s in per_class_data["iou_per_class"]],
-            "means": [s["mean"] for s in per_class_data["iou_per_class"]],
-            "stds": [s["std"] for s in per_class_data["iou_per_class"]],
-            "metric_name": "IoU",
-        }
+    if "per_class_iou" in request.charts and per_class_summary["chart_data"].get("per_class_iou"):
+        chart_data["per_class_iou"] = per_class_summary["chart_data"]["per_class_iou"]
 
-    if "per_class_dice" in request.charts and per_class_data.get("dice_per_class"):
-        chart_data["per_class_dice"] = {
-            "classes": [f"Class {s['class_index']}" for s in per_class_data["dice_per_class"]],
-            "means": [s["mean"] for s in per_class_data["dice_per_class"]],
-            "stds": [s["std"] for s in per_class_data["dice_per_class"]],
-            "metric_name": "Dice",
-        }
+    if "per_class_dice" in request.charts and per_class_summary["chart_data"].get("per_class_dice"):
+        chart_data["per_class_dice"] = per_class_summary["chart_data"]["per_class_dice"]
 
     if progress_callback:
         await progress_callback(80)
@@ -495,9 +567,11 @@ async def _run_external_validation_segmentation_analysis(task, request, db, mode
         "num_samples": len(image_results),
         "num_with_ground_truth": num_with_ground_truth,
         "num_classes": num_classes,
+        "classes": class_names,
         "metrics": flat_metrics,
+        "class_metrics": per_class_summary["class_metrics"],
         "metrics_detailed": metrics,
-        "per_class_data": per_class_data,
+        "per_class_data": per_class_summary["per_class_data"],
         "requested_metrics": request.metrics,
         "requested_charts": request.charts,
         "dataset_id": dataset_id,
@@ -519,6 +593,7 @@ async def _run_external_validation_segmentation_analysis(task, request, db, mode
             "has_ground_truth": r.get("has_ground_truth", False),
             "metrics": r.get("metrics", {}),
             "num_classes": r.get("num_classes"),
+            "class_names": r.get("class_names", []),
             "image_size": r.get("image_size"),
         })
 
@@ -528,9 +603,11 @@ async def _run_external_validation_segmentation_analysis(task, request, db, mode
         "num_samples": len(image_results),
         "num_with_ground_truth": num_with_ground_truth,
         "num_classes": num_classes,
+        "classes": class_names,
         "metrics": flat_metrics,
+        "class_metrics": per_class_summary["class_metrics"],
         "metrics_detailed": metrics,
-        "per_class_data": per_class_data,
+        "per_class_data": per_class_summary["per_class_data"],
         "chart_data": chart_data,
         "wsi_results": per_image_details,
     })

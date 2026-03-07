@@ -1405,6 +1405,7 @@ async def _run_inference_patch_segmentation(
         raise ValueError(f"No trained model found for segmentation task {task_id}")
     trained_model = trained_models[0]  # Most recent
     checkpoint_path = trained_model.model_path
+    class_names = _normalize_label_names(task.classes or trained_model.classes or [])
 
     device = assigned_device if assigned_device else ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -1438,6 +1439,10 @@ async def _run_inference_patch_segmentation(
         return model, config, norm_mean, norm_std, num_classes
 
     model, model_config, norm_mean, norm_std, num_classes = await asyncio.to_thread(_load_model)
+    if not class_names:
+        class_names = _normalize_label_names(
+            (model_config.get("dataset") or {}).get("class_names", [])
+        )
 
     if progress_callback:
         await progress_callback(0.1)
@@ -1614,6 +1619,7 @@ async def _run_inference_patch_segmentation(
                         "task_type": "patch_segmentation",
                         "aggregation_level": "file",
                         "num_classes": num_classes,
+                        "class_names": class_names,
                         "image_size": list(original_size),
                         "pred_mask_file": str(mask_file),
                         "cam_file": str(cam_file),
@@ -1629,6 +1635,7 @@ async def _run_inference_patch_segmentation(
                         "wsi_id": wsi_id,
                         "metrics": per_image_metrics,
                         "has_ground_truth": has_gt,
+                        "class_names": class_names,
                         "pred_mask_file": str(mask_file),
                         "result_file": str(result_file),
                     })
@@ -1656,6 +1663,7 @@ async def _run_inference_patch_segmentation(
                 "task_type": "patch_segmentation",
                 "aggregation_level": "file",
                 "has_ground_truth": r["has_ground_truth"],
+                "class_names": r.get("class_names", []),
                 "metrics": r["metrics"],
                 "pred_mask_file": r["pred_mask_file"],
                 "result_file": r["result_file"],
@@ -2747,6 +2755,7 @@ async def _run_external_validation_patch_segmentation(
             if not trained_model:
                 raise ValueError(f"Trained model not found: {model_id}")
             checkpoint_path = trained_model.model_path
+            source_task = await TrainingTaskRepository.get_by_id(db, model_task_id)
 
         async with logger_manager.session() as (tl, _db):
             await tl.info(f"Patch segmentation: loading model from {checkpoint_path}")
@@ -2781,6 +2790,11 @@ async def _run_external_validation_patch_segmentation(
             return model, config, norm_mean, norm_std, num_classes
 
         model, model_config, norm_mean, norm_std, num_classes = await asyncio.to_thread(_load_model)
+        class_names = _normalize_label_names(
+            (source_task.classes if source_task else None)
+            or trained_model.classes
+            or (model_config.get("dataset") or {}).get("class_names", [])
+        )
 
         await update_task_progress(TaskStatus.PATCHING, 10)
 
@@ -2973,6 +2987,7 @@ async def _run_external_validation_patch_segmentation(
                             "task_type": "patch_segmentation",
                             "aggregation_level": "file",
                             "num_classes": num_classes,
+                            "class_names": class_names,
                             "image_size": list(original_size),
                             "pred_mask_file": str(mask_file),
                             "cam_file": str(cam_file),
@@ -2989,6 +3004,7 @@ async def _run_external_validation_patch_segmentation(
                             "wsi_id": wsi_id,
                             "metrics": per_image_metrics,
                             "has_ground_truth": has_gt,
+                            "class_names": class_names,
                             "pred_mask_file": str(mask_file),
                             "result_file": str(result_file),
                         })
@@ -3019,6 +3035,7 @@ async def _run_external_validation_patch_segmentation(
                         "aggregation_level": "file",
                         "task_type": "patch_segmentation",
                         "has_ground_truth": r["has_ground_truth"],
+                        "class_names": r.get("class_names", []),
                         "metrics": r["metrics"],
                         "pred_mask_file": r["pred_mask_file"],
                         "result_file": r["result_file"],

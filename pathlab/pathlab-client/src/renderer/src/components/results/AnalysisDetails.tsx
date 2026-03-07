@@ -308,6 +308,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
 
       {/* Per-Class Metrics */}
       {!isSurvival && analysis.class_metrics && Object.keys(analysis.class_metrics).length > 0 && (() => {
+        const classMetricsList = Object.values(analysis.class_metrics)
         const perClassColumns = isSegmentation ? [
           { id: 'iou', label: 'IoU', getValue: (m: any) => m.iou || 0, getCIKey: 'iou' },
           { id: 'dice', label: 'Dice', getValue: (m: any) => m.dice || 0, getCIKey: 'dice' },
@@ -322,8 +323,10 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
           { id: 'auc', label: 'AUC', getValue: (m: any) => m.auc || 0, getCIKey: 'auc' }
         ]
         const visibleColumns = perClassColumns.filter(col =>
-          !selectedMetrics || selectedMetrics.length === 0 || selectedMetrics.includes(col.id)
+          (!selectedMetrics || selectedMetrics.length === 0 || selectedMetrics.includes(col.id)) &&
+          (!isSegmentation || classMetricsList.some(metrics => typeof metrics[col.id] === 'number'))
         )
+        const showSupportColumn = !isSegmentation || classMetricsList.some(metrics => typeof metrics.support === 'number')
         if (visibleColumns.length === 0) return null
         return (
         <div className="pt-8">
@@ -339,7 +342,9 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                   {visibleColumns.map(col => (
                     <th key={col.id} className="px-4 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">{col.label}</th>
                   ))}
-                  <th className="px-4 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">{t('analysisDetails.support')}</th>
+                  {showSupportColumn && (
+                    <th className="px-4 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">{t('analysisDetails.support')}</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -360,7 +365,9 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                           </td>
                         )
                       })}
-                      <td className="px-4 py-4 text-center text-gray-500 font-mono">{metrics.support || 0}</td>
+                      {showSupportColumn && (
+                        <td className="px-4 py-4 text-center text-gray-500 font-mono">{metrics.support ?? '-'}</td>
+                      )}
                     </tr>
                   )
                 })}

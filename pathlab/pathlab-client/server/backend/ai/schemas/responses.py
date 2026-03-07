@@ -11,6 +11,9 @@ from pydantic import BaseModel, Field
 from .base import TaskType, TaskStatus
 
 
+MetricScalarOrList = Union[float, List[float]]
+
+
 # =============================================================================
 # Result Types
 # =============================================================================
@@ -46,11 +49,14 @@ class ClassificationResult(BaseModel):
 
 
 class SegmentationResult(BaseModel):
-    """Segmentation result - applicable to wsi_survival and patch_survival"""
+    """Segmentation result - applicable to segmentation tasks"""
     mask_path: str = Field(..., description="Segmentation mask file path")
     num_classes: int = Field(..., description="Number of classes")
     class_names: List[str] = Field(default=[], description="List of class names")
-    metrics: Optional[Dict[str, float]] = Field(None, description="Evaluation metrics")
+    metrics: Optional[Dict[str, Union[float, List[float]]]] = Field(
+        None,
+        description="Evaluation metrics, including scalar or per-class list metrics",
+    )
     
     @classmethod
     def from_raw(
@@ -58,7 +64,7 @@ class SegmentationResult(BaseModel):
         mask_path: str,
         num_classes: int,
         class_names: Optional[List[str]] = None,
-        metrics: Optional[Dict[str, float]] = None,
+        metrics: Optional[Dict[str, Union[float, List[float]]]] = None,
     ) -> "SegmentationResult":
         """Convert from raw output to unified format"""
         return cls(
@@ -91,8 +97,8 @@ class TrainMetrics(BaseModel):
     """Training metrics"""
     loss_history: List[float] = Field(default=[], description="Loss history")
     lr_history: List[float] = Field(default=[], description="Learning rate history")
-    val_metrics: Optional[Dict[str, float]] = Field(None, description="Validation metrics")
-    test_metrics: Optional[Dict[str, float]] = Field(None, description="Test metrics")
+    val_metrics: Optional[Dict[str, MetricScalarOrList]] = Field(None, description="Validation metrics")
+    test_metrics: Optional[Dict[str, MetricScalarOrList]] = Field(None, description="Test metrics")
     best_epoch: Optional[int] = Field(None, description="Best epoch")
     kfold_aggregated: Optional[KFoldAggregated] = Field(None, description="K-Fold aggregated metrics (mean±std)")
 

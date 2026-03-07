@@ -32,6 +32,118 @@ from .analysis_metrics import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_segmentation_class_names(labels: Optional[List[Any]]) -> List[str]:
+    normalized: List[str] = []
+    seen = set()
+    for label in labels or []:
+        value = str(label).strip()
+        if value and value not in seen:
+            seen.add(value)
+            normalized.append(value)
+    return normalized
+
+
+def _resolve_segmentation_class_names(
+    task,
+    seg_metrics: Dict[str, Any],
+    final_metrics: Dict[str, Any],
+    ai_rows: List[AIResult],
+    fallback_model_classes: Optional[List[Any]] = None,
+) -> List[str]:
+    class_names = _normalize_segmentation_class_names(getattr(task, "classes", None))
+    if not class_names:
+        config = seg_metrics.get("config", {}) if isinstance(seg_metrics, dict) else {}
+        class_names = _normalize_segmentation_class_names(
+            config.get("classes") or config.get("class_names")
+        )
+    if not class_names:
+        for row in ai_rows:
+            extra_metadata = row.extra_metadata or {}
+            class_names = _normalize_segmentation_class_names(extra_metadata.get("class_names"))
+            if class_names:
+                break
+    if not class_names:
+        class_names = _normalize_segmentation_class_names(fallback_model_classes)
+
+    num_classes = len(class_names)
+    for key in ("iou_per_class", "dice_per_class"):
+        values = final_metrics.get(key)
+        if isinstance(values, list):
+            num_classes = max(num_classes, len(values))
+
+    if not class_names and num_classes > 0:
+        class_names = [f"Class {index}" for index in range(num_classes)]
+    elif len(class_names) < num_classes:
+        class_names.extend(
+            f"Class {index}" for index in range(len(class_names), num_classes)
+        )
+
+    return class_names
+
+
+def _build_segmentation_class_metrics(
+    class_names: List[str],
+    per_image_metrics: List[Dict[str, Any]],
+    final_metrics: Dict[str, Any],
+) -> Dict[str, Any]:
+    class_metrics: Dict[str, Dict[str, float]] = {name: {} for name in class_names}
+    chart_payloads: Dict[str, Dict[str, Any]] = {}
+
+    metric_specs = {
+        "iou_per_class": ("iou", "per_class_iou", "IoU"),
+        "dice_per_class": ("dice", "per_class_dice", "Dice"),
+    }
+
+    for raw_key, (metric_key, chart_key, metric_name) in metric_specs.items():
+        per_image_rows: List[List[float]] = []
+        for metrics in per_image_metrics:
+            values = metrics.get(raw_key)
+            if isinstance(values, list) and values:
+                per_image_rows.append([float(v) for v in values])
+
+        means: Optional[np.ndarray] = None
+        stds: Optional[np.ndarray] = None
+
+        if per_image_rows:
+            arr = np.array(per_image_rows, dtype=np.float64)
+            if arr.ndim == 1:
+                arr = arr.reshape(-1, 1)
+            means = arr.mean(axis=0)
+            stds = arr.std(axis=0)
+        else:
+            values = final_metrics.get(raw_key)
+            if isinstance(values, list) and values:
+                means = np.array([float(v) for v in values], dtype=np.float64)
+
+        if means is None:
+            continue
+
+        if len(class_names) < len(means):
+            class_names.extend(
+                f"Class {index}" for index in range(len(class_names), len(means))
+            )
+            for name in class_names:
+                class_metrics.setdefault(name, {})
+
+        for index, class_name in enumerate(class_names[:len(means)]):
+            class_metrics.setdefault(class_name, {})[metric_key] = round(float(means[index]), 4)
+
+        chart_payload: Dict[str, Any] = {
+            "classes": class_names[:len(means)],
+            "means": [round(float(v), 4) for v in means.tolist()],
+            "metric_name": metric_name,
+        }
+        if stds is not None:
+            chart_payload["stds"] = [round(float(v), 4) for v in stds.tolist()]
+        chart_payloads[chart_key] = chart_payload
+
+    return {
+        "classes": class_names,
+        "class_metrics": {name: metrics for name, metrics in class_metrics.items() if metrics},
+        "chart_data": chart_payloads,
+    }
+
+
 def _load_segmentation_metrics_sync(task_id: str) -> Optional[Dict[str, Any]]:
     """Load segmentation training metrics from metrics.json.
 
@@ -103,7 +215,7 @@ def _extract_metric_series(metrics_list: list, metric_name: str) -> list:
 
 
 def _calculate_segmentation_bootstrap_ci(
-    per_image_metrics: List[Dict[str, float]],
+    per_image_metrics: List[Dict[str, Any]],
     requested_metrics: List[str],
     n_bootstrap: int = 1000,
     confidence_level: float = 0.95,
@@ -197,6 +309,7 @@ async def _run_segmentation_analysis(
     p_ci_end = progress_config.get("ci_end", 95)
 
     task_id = task.task_id
+    fallback_model_classes: List[Any] = []
 
     # Load training metrics from metrics.json
     seg_metrics = await asyncio.to_thread(_load_segmentation_metrics_sync, task_id)
@@ -206,6 +319,7 @@ async def _run_segmentation_analysis(
         models = await TrainedModelRepository.get_by_task_id(db, task_id)
         if models:
             model = models[0]
+            fallback_model_classes = model.classes or []
             seg_metrics = {
                 "best_val_metrics": model.val_metrics or {},
                 "history": {
@@ -254,7 +368,7 @@ async def _run_segmentation_analysis(
     # Query per-image metrics from AIResult records for bootstrap CI
     # These are populated by _run_inference_patch_segmentation
     # ----------------------------------------------------------------
-    per_image_metrics: List[Dict[str, float]] = []
+    per_image_metrics: List[Dict[str, Any]] = []
 
     # Determine test set WSI IDs (same pattern as classification)
     test_wsi_query = (
@@ -289,6 +403,12 @@ async def _run_segmentation_analysis(
             per_image_metrics.append(metrics_dict)
 
     logger.info(f"Segmentation analysis: loaded {len(per_image_metrics)} per-image metric records from AIResult")
+
+    class_analysis = _build_segmentation_class_metrics(
+        _resolve_segmentation_class_names(task, seg_metrics, final_metrics, ai_rows, fallback_model_classes),
+        per_image_metrics,
+        final_metrics,
+    )
 
     # Override summary_metrics with mean of per-image metrics if available
     if per_image_metrics:
@@ -355,16 +475,20 @@ async def _run_segmentation_analysis(
         "task_type": "segmentation",
         "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z",
         "description": request.description,
+        "num_samples": len(ai_rows),
+        "num_with_ground_truth": len(per_image_metrics),
         "metrics_source": metrics_source,
         "best_epoch": best_epoch,
         "metrics": summary_metrics,
+        "classes": class_analysis["classes"],
+        "class_metrics": class_analysis["class_metrics"],
         "best_val_metrics": best_val_metrics,
         "test_metrics": test_metrics,
         "requested_metrics": request.metrics,
         "requested_charts": request.charts,
         "random_seed": random_seed,
         "submitted_by": submitted_by,
-        "num_images": len(per_image_metrics),
+        "num_images": len(ai_rows),
     }
 
     # Add bootstrap CI if computed
@@ -426,6 +550,12 @@ async def _run_segmentation_analysis(
                 analysis_dir / "dice_curve.png",
                 "Dice Coefficient Curve", "Dice"
             )))
+
+    if "per_class_iou" in request.charts and class_analysis["chart_data"].get("per_class_iou"):
+        chart_data["per_class_iou"] = class_analysis["chart_data"]["per_class_iou"]
+
+    if "per_class_dice" in request.charts and class_analysis["chart_data"].get("per_class_dice"):
+        chart_data["per_class_dice"] = class_analysis["chart_data"]["per_class_dice"]
 
     # Generate all charts in parallel
     if chart_gen_tasks:
