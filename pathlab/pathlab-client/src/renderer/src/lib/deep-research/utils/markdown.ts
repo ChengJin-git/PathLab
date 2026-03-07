@@ -45,14 +45,14 @@ export function linkifyBareInlineCitations(markdown: string): string {
     let nextLine = line;
 
     nextLine = nextLine.replace(
-      /\[(\d{1,3}(?:\s*,\s*\d{1,3})+)\](?!\()/g,
-      (_match, inner: string) => inner
+      /(^|[^\[])(\[(\d{1,3}(?:\s*,\s*\d{1,3})+)\])(?!\(|\])/g,
+      (_match, prefix: string, _full: string, inner: string) => `${prefix}${inner
         .split(",")
         .map((value) => {
           const index = value.trim();
           return `[${index}](#cite-${index})`;
         })
-        .join(""),
+        .join("")}`,
     );
 
     nextLine = nextLine.replace(
@@ -63,13 +63,13 @@ export function linkifyBareInlineCitations(markdown: string): string {
     );
 
     nextLine = nextLine.replace(
-      /\[(\d{1,3}),\s*(p\.?[^\]]+)\](?!\()/gi,
-      (_match, index: string, pageInfo: string) => `[${index}, ${pageInfo.trim()}](#cite-${index})`,
+      /(^|[^\[])(\[(\d{1,3}),\s*(p\.?[^\]]+)\])(?!\(|\])/gi,
+      (_match, prefix: string, _full: string, index: string, pageInfo: string) => `${prefix}[${index}, ${pageInfo.trim()}](#cite-${index})`,
     );
 
     nextLine = nextLine.replace(
-      /\[(\d{1,3})\](?!\()/g,
-      (_match, index: string) => `[${index}](#cite-${index})`,
+      /(^|[^\[])(\[(\d{1,3})\])(?!\(|\])/g,
+      (_match, prefix: string, _full: string, index: string) => `${prefix}[${index}](#cite-${index})`,
     );
 
     return nextLine;

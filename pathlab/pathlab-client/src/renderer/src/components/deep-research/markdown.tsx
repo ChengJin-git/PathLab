@@ -58,6 +58,24 @@ function parseInlineCitationText(text: string): { index: number; pageInfo?: stri
   };
 }
 
+function normalizeTreeLikeText(text: string): string {
+  return text
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+}
+
+function isTreeLikeParagraph(text: string): boolean {
+  const normalized = normalizeTreeLikeText(text);
+  if (!normalized) return false;
+
+  const lines = normalized.split(/\n/).filter((line) => line.trim().length > 0);
+  if (lines.length < 2) return false;
+
+  const markerLines = lines.filter((line) => /[│├└┌┐┬┴─→]|(?:^|\s)[|｜](?:\s|$)/.test(line));
+  return markerLines.length >= 2;
+}
+
 export function Markdown({
   className,
   children,
@@ -240,6 +258,20 @@ export function Markdown({
           <table className="min-w-full">{children}</table>
         </div>
       ),
+      p: ({ children }) => {
+        const text = extractNodeText(children);
+        if (isTreeLikeParagraph(text)) {
+          return (
+            <div className="my-4 overflow-x-auto rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white px-4 py-3 shadow-sm">
+              <pre className="m-0 whitespace-pre font-mono text-[13px] leading-6 text-slate-700">
+                {normalizeTreeLikeText(text)}
+              </pre>
+            </div>
+          );
+        }
+
+        return <p>{children}</p>;
+      },
       ...(customComponents || {}),
     };
   }, [checkLinkCredibility, citations, citationMap, citationNumberMap, customComponents]);

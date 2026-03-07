@@ -21,6 +21,17 @@ import { useStore } from "../../../../lib/deep-research/store";
 import { stripResearchMeta } from "../../../../lib/deep-research/utils";
 import { cn } from "../../../../lib/utils";
 
+function stripModelToolCallMarkup(content: string): string {
+    if (!/<tool_calls?/i.test(content)) {
+        return content;
+    }
+
+    return content
+        .replace(/<tool_calls?>[\s\S]*?(?:<\/tool_calls?>|$)/gi, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+}
+
 function parseTrainingChatLink(content: string): { conversationId: string; title?: string } | null {
     const match = content.match(/\[TRAINING_CHAT_LINK\]([\s\S]*?)\[\/TRAINING_CHAT_LINK\]/i);
     if (!match) return null;
@@ -128,6 +139,7 @@ export function AssistantStructuredContent({
     // Strip persisted research meta blocks that may leak into display content
     // after backend reload or cache restoration.
     displayContent = stripResearchMeta(displayContent);
+    displayContent = stripModelToolCallMarkup(displayContent);
     if (options) {
         displayContent = removeOptionsBlock(displayContent);
     }
