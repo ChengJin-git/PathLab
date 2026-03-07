@@ -7,7 +7,7 @@ import React, { useMemo, useState, useCallback } from "react";
 
 import { useTranslations } from "../../../lib/deep-research/i18n";
 import { useMessage, useStore } from "../../../lib/deep-research/store";
-import { stripResearchMeta } from "../../../lib/deep-research/utils";
+import { stripInternalToolReplayContent, stripResearchMeta } from "../../../lib/deep-research/utils";
 import { cn } from "../../../lib/utils";
 import { LoadingAnimation } from "../../../components/deep-research/loading-animation";
 import { Markdown } from "../../../components/deep-research/markdown";
@@ -28,7 +28,8 @@ function hasVisibleContent(msg: Message | undefined): boolean {
   if (!msg) return false;
   const agent = msg.agent ?? "";
   if (agent === "reporter" || agent === "planner") return false;
-  if (stripResearchMeta(msg.content)) return true;
+  const visibleText = stripInternalToolReplayContent(stripResearchMeta(msg.content ?? ""));
+  if (visibleText) return true;
   if (msg.toolCalls?.length) return true;
   return false;
 }
@@ -298,7 +299,7 @@ const ActivityMessage = React.memo(({ messageId }: { messageId: string }) => {
   if (!message?.content) return null;
   const agent = message.agent ?? "";
   if (agent === "reporter" || agent === "planner") return null;
-  const cleanContent = stripResearchMeta(message.content);
+  const cleanContent = stripInternalToolReplayContent(stripResearchMeta(message.content));
   if (!cleanContent) return null;
 
   return (

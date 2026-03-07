@@ -222,6 +222,10 @@ export async function* chatStream(
       yield { type: "job_created", data: { job_id: jobId } } as ChatEvent;
 
       yield* pollJobEvents(jobId, 0, options);
+      // Background-job mode completed successfully. Do not fall through to the
+      // direct streaming path, otherwise the same accepted research request is
+      // sent a second time and re-triggers the run after report completion.
+      return;
     } catch (e) {
       if (options.abortSignal?.aborted || isAbortError(e)) {
         if (jobId) {

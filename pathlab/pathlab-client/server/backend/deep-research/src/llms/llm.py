@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, get_args
 
 import httpx
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.language_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -19,6 +19,7 @@ from pydantic import PrivateAttr
 from src.config import load_yaml_config
 from src.config.agents import LLMType
 from src.llms.providers.dashscope import ChatDashscope
+from src.tools.result_utils import parse_tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ def _clip_text(value: Any, max_length: int) -> str:
     return text[:max_length].rstrip()
 
 
-def _should_sanitize_local_vllm_web_search(base_url: Any, model_name: Any) -> bool:
+def _should_sanitize_local_vllm_tool_replay(base_url: Any, model_name: Any) -> bool:
     normalized_base = str(base_url or "").strip().lower().rstrip("/")
     normalized_model = str(model_name or "").strip().lower()
     is_local_vllm = normalized_base.endswith("/v1") and any(
@@ -39,31 +40,37 @@ def _should_sanitize_local_vllm_web_search(base_url: Any, model_name: Any) -> bo
 
 
 def _summarize_web_search_tool_content(content: Any) -> str:
-    try:
-        data = json.loads(content) if isinstance(content, str) else content
-    except Exception:
-        fallback = _clip_text(content, 4000)
-        return fallback or "Web search completed, but the result payload could not be summarized."
+    parsed = parse_tool_result(content, "web_search")
+    if not isinstance(parsed, dict):
+        try:
+            data = json.loads(content) if isinstance(content, str) else content
+        except Exception:
+            fallback = _clip_text(content, 4000)
+            return fallback or "Web search completed, but the result payload could not be summarized."
+        if isinstance(data, list):
+            parsed = {"data": {"results": data}}
+        elif isinstance(data, dict):
+            parsed = data
+        else:
+            fallback = _clip_text(data, 4000)
+            return fallback or "Web search completed successfully."
 
-    if isinstance(data, dict):
-        if "error" in data:
-            return f"Web search returned an error: {_clip_text(data.get('error'), 500)}"
-        items = data.get("results", [])
-    elif isinstance(data, list):
-        items = data
-    else:
-        fallback = _clip_text(data, 4000)
-        return fallback or "Web search completed successfully."
-
+    meta = parsed.get("meta") if isinstance(parsed.get("meta"), dict) else {}
+    payload = parsed.get("data") if isinstance(parsed.get("data"), dict) else parsed
+    items = payload.get("results", []) if isinstance(payload, dict) else []
     if not isinstance(items, list):
-        return "Web search completed successfully."
+        items = []
+
+    if meta.get("status") == "error":
+        summary = _clip_text(meta.get("summary") or meta.get("reason") or "", 500)
+        return f"Web search returned an error: {summary}" if summary else "Web search returned an error."
 
     page_results: list[dict[str, str]] = []
     image_count = 0
     for item in items:
         if not isinstance(item, dict):
             continue
-        if item.get("type") == "image_url":
+        if item.get("type") in {"image", "image_url"}:
             image_count += 1
             continue
 
@@ -73,17 +80,47 @@ def _summarize_web_search_tool_content(content: Any) -> str:
         if title or url or snippet:
             page_results.append({"title": title, "url": url, "snippet": snippet})
 
+    status_summary = _clip_text(meta.get("summary") or "", 300)
+    query = _clip_text(payload.get("query") if isinstance(payload, dict) else "", 200)
+    provider = _clip_text(payload.get("provider") if isinstance(payload, dict) else "", 80)
+
     if not page_results and image_count:
-        return (
-            f"Web search returned {image_count} image results. "
+        lines = []
+        if status_summary:
+            lines.append(f"Summary: {status_summary}")
+        if query:
+            lines.append(f"Query: {query}")
+        if provider:
+            lines.append(f"Provider: {provider}")
+        lines.append(
+            f"Web search returned {image_count} image result(s). "
             "Image-only search results were omitted for local model compatibility."
         )
+        return "\n".join(lines)
 
     if not page_results:
-        return "Web search returned no page results."
+        raw_text = _clip_text(payload.get("raw_text") if isinstance(payload, dict) else "", 500)
+        lines = []
+        if status_summary:
+            lines.append(f"Summary: {status_summary}")
+        if query:
+            lines.append(f"Query: {query}")
+        if provider:
+            lines.append(f"Provider: {provider}")
+        if raw_text:
+            lines.append(f"Raw summary: {raw_text}")
+        lines.append("Web search returned no page results.")
+        return "\n".join(lines)
 
     visible_results = page_results[:6]
-    lines = [f"Web search returned {len(page_results)} page results."]
+    lines = []
+    if status_summary:
+        lines.append(f"Summary: {status_summary}")
+    if query:
+        lines.append(f"Query: {query}")
+    if provider:
+        lines.append(f"Provider: {provider}")
+    lines.append(f"Web search returned {len(page_results)} page result(s).")
     for index, result in enumerate(visible_results, start=1):
         lines.append(f"{index}. {result['title']}")
         if result["url"]:
@@ -103,24 +140,194 @@ def _summarize_web_search_tool_content(content: Any) -> str:
     return "\n".join(lines)
 
 
+def _summarize_crawl_tool_content(content: Any) -> str:
+    parsed = parse_tool_result(content, "crawl_tool")
+    if not isinstance(parsed, dict):
+        fallback = _clip_text(content, 4000)
+        return fallback or "Crawl completed, but the result payload could not be summarized."
+
+    meta = parsed.get("meta") if isinstance(parsed.get("meta"), dict) else {}
+    payload = parsed.get("data") if isinstance(parsed.get("data"), dict) else parsed
+
+    summary = _clip_text(meta.get("summary") or "", 300)
+    reason = _clip_text(meta.get("reason") or "", 120)
+    url = _clip_text(payload.get("url") if isinstance(payload, dict) else "", 500)
+    content_length = payload.get("content_length") if isinstance(payload, dict) else None
+    is_pdf = bool(payload.get("is_pdf")) if isinstance(payload, dict) else False
+    content_text = _clip_text(
+        (payload.get("crawled_content") or payload.get("content") or "") if isinstance(payload, dict) else "",
+        2500,
+    )
+
+    lines = []
+    if summary:
+        lines.append(f"Summary: {summary}")
+    if url:
+        lines.append(f"URL: {url}")
+    if reason:
+        lines.append(f"Reason: {reason}")
+    if isinstance(content_length, int):
+        lines.append(f"Content length: {content_length}")
+    if is_pdf:
+        lines.append("PDF content could not be crawled directly.")
+    if content_text:
+        lines.append(f"Extracted content excerpt: {content_text}")
+
+    return "\n".join(lines) or "Crawl completed successfully."
+
+
+def _summarize_generic_tool_content(tool_name: str, content: Any) -> str:
+    try:
+        data = json.loads(content) if isinstance(content, str) else content
+    except Exception:
+        fallback = _clip_text(content, 3000)
+        return fallback or f"Tool '{tool_name}' completed."
+
+    if isinstance(data, dict):
+        fields = []
+        for key in ("summary", "message", "reason", "status", "url", "query", "content", "raw_text"):
+            value = _clip_text(data.get(key), 300) if data.get(key) is not None else ""
+            if value:
+                fields.append(f"{key}: {value}")
+        if fields:
+            return f"Tool '{tool_name}' result:\n" + "\n".join(fields[:8])
+        return f"Tool '{tool_name}' returned structured data."
+
+    if isinstance(data, list):
+        lines = [f"Tool '{tool_name}' returned {len(data)} item(s)."]
+        for index, item in enumerate(data[:5], start=1):
+            if isinstance(item, dict):
+                title = _clip_text(item.get("title") or item.get("name") or item.get("url") or "Item", 160)
+                snippet = _clip_text(item.get("content") or item.get("description") or item.get("snippet") or "", 220)
+                lines.append(f"{index}. {title}")
+                if snippet:
+                    lines.append(f"   {snippet}")
+            else:
+                lines.append(f"{index}. {_clip_text(item, 220)}")
+        return "\n".join(lines)
+
+    fallback = _clip_text(data, 3000)
+    return fallback or f"Tool '{tool_name}' completed."
+
+
+def _summarize_tool_result_content(tool_name: str, content: Any) -> str:
+    tool_summarizers = {
+        "web_search": _summarize_web_search_tool_content,
+        "crawl_tool": _summarize_crawl_tool_content,
+    }
+    summarizer = tool_summarizers.get(tool_name)
+    if summarizer:
+        return summarizer(content)
+    return _summarize_generic_tool_content(tool_name, content)
+
+
+def _summarize_tool_call_args(args: Any) -> str:
+    parsed_args = args
+    if isinstance(parsed_args, str):
+        try:
+            parsed_args = json.loads(parsed_args)
+        except Exception:
+            parsed_args = parsed_args.strip()
+
+    if isinstance(parsed_args, dict):
+        parts = []
+        for index, (key, value) in enumerate(parsed_args.items()):
+            if index >= 4:
+                break
+            parts.append(f"{key}={_clip_text(value, 120)}")
+        return ", ".join(parts)
+
+    if isinstance(parsed_args, list):
+        return ", ".join(_clip_text(item, 120) for item in parsed_args[:4])
+
+    return _clip_text(parsed_args, 240)
+
+
+def _extract_tool_calls_from_message(message: Any) -> list[dict[str, Any]]:
+    if isinstance(message, AIMessage):
+        if getattr(message, "tool_calls", None):
+            return [call for call in message.tool_calls if isinstance(call, dict)]
+
+        raw_tool_calls = message.additional_kwargs.get("tool_calls")
+        if isinstance(raw_tool_calls, list):
+            return [call for call in raw_tool_calls if isinstance(call, dict)]
+
+        function_call = message.additional_kwargs.get("function_call")
+        if isinstance(function_call, dict):
+            return [{"function": function_call}]
+
+    if isinstance(message, dict) and message.get("role") == "assistant":
+        raw_tool_calls = message.get("tool_calls")
+        if isinstance(raw_tool_calls, list):
+            return [call for call in raw_tool_calls if isinstance(call, dict)]
+
+        function_call = message.get("function_call")
+        if isinstance(function_call, dict):
+            return [{"function": function_call}]
+
+    return []
+
+
+def _summarize_assistant_tool_call_message(message: Any) -> str:
+    lines = []
+    original_content = None
+    if isinstance(message, AIMessage):
+        original_content = message.content
+    elif isinstance(message, dict):
+        original_content = message.get("content")
+
+    if isinstance(original_content, str) and original_content.strip():
+        lines.append(_clip_text(original_content, 1000))
+
+    tool_calls = _extract_tool_calls_from_message(message)
+    for call in tool_calls:
+        function_payload = call.get("function") if isinstance(call.get("function"), dict) else {}
+        tool_name = _clip_text(
+            call.get("name") or function_payload.get("name") or "tool",
+            120,
+        )
+        args = call.get("args") if "args" in call else function_payload.get("arguments")
+        args_summary = _summarize_tool_call_args(args)
+        if args_summary:
+            lines.append(f"Called tool: {tool_name} ({args_summary})")
+        else:
+            lines.append(f"Called tool: {tool_name}")
+
+    return "\n".join(lines) or "Called a tool to gather more information."
+
+
 def _sanitize_messages_for_local_vllm(input_: Any) -> Any:
     if not isinstance(input_, list):
         return input_
 
     sanitized_messages = copy.deepcopy(input_)
     sanitized_count = 0
-    for message in sanitized_messages:
-        if isinstance(message, ToolMessage) and getattr(message, "name", None) == "web_search":
-            message.content = _summarize_web_search_tool_content(message.content)
+    flattened_tool_call_count = 0
+    for index, message in enumerate(sanitized_messages):
+        if isinstance(message, ToolMessage):
+            tool_name = getattr(message, "name", None)
+            summary = _summarize_tool_result_content(tool_name or "tool", message.content)
+            sanitized_messages[index] = HumanMessage(content=f"Tool result from {tool_name or 'tool'}:\n{summary}")
             sanitized_count += 1
-        elif isinstance(message, dict) and message.get("role") == "tool" and message.get("name") == "web_search":
-            message["content"] = _summarize_web_search_tool_content(message.get("content"))
+        elif isinstance(message, dict) and message.get("role") == "tool":
+            tool_name = message.get("name") or "tool"
+            summary = _summarize_tool_result_content(tool_name, message.get("content"))
+            sanitized_messages[index] = {"role": "user", "content": f"Tool result from {tool_name}:\n{summary}"}
             sanitized_count += 1
+        elif isinstance(message, AIMessage) and _extract_tool_calls_from_message(message):
+            summary = _summarize_assistant_tool_call_message(message)
+            sanitized_messages[index] = AIMessage(content=summary)
+            flattened_tool_call_count += 1
+        elif isinstance(message, dict) and message.get("role") == "assistant" and _extract_tool_calls_from_message(message):
+            summary = _summarize_assistant_tool_call_message(message)
+            sanitized_messages[index] = {"role": "assistant", "content": summary}
+            flattened_tool_call_count += 1
 
-    if sanitized_count:
+    if sanitized_count or flattened_tool_call_count:
         logger.info(
-            "Sanitized %d web_search tool message(s) for local vLLM/Qwen replay compatibility.",
+            "Sanitized %d tool result message(s) and flattened %d assistant tool-call message(s) for local vLLM/Qwen replay compatibility.",
             sanitized_count,
+            flattened_tool_call_count,
         )
 
     return sanitized_messages
@@ -129,17 +336,17 @@ def _sanitize_messages_for_local_vllm(input_: Any) -> Any:
 class PathLabChatOpenAI(ChatOpenAI):
     """ChatOpenAI variant with request-time compatibility sanitization for local vLLM/Qwen."""
 
-    _sanitize_local_vllm_web_search: bool = PrivateAttr(default=False)
+    _sanitize_local_vllm_tool_replay: bool = PrivateAttr(default=False)
 
     def __init__(self, **kwargs: Any) -> None:
         base_url = kwargs.get("base_url") or kwargs.get("api_base")
         model_name = kwargs.get("model") or kwargs.get("model_name")
         super().__init__(**kwargs)
-        should_sanitize = _should_sanitize_local_vllm_web_search(base_url, model_name)
-        object.__setattr__(self, "_sanitize_local_vllm_web_search", should_sanitize)
+        should_sanitize = _should_sanitize_local_vllm_tool_replay(base_url, model_name)
+        object.__setattr__(self, "_sanitize_local_vllm_tool_replay", should_sanitize)
         if should_sanitize:
             logger.info(
-                "Enabled local vLLM/Qwen web_search replay sanitization for model=%s base_url=%s",
+                "Enabled local vLLM/Qwen tool replay sanitization for model=%s base_url=%s",
                 model_name,
                 base_url,
             )
@@ -151,7 +358,7 @@ class PathLabChatOpenAI(ChatOpenAI):
         stop: list[str] | None = None,
         **kwargs: Any,
     ) -> dict:
-        if self._sanitize_local_vllm_web_search:
+        if self._sanitize_local_vllm_tool_replay:
             input_ = _sanitize_messages_for_local_vllm(input_)
         return super()._get_request_payload(input_, stop=stop, **kwargs)
 

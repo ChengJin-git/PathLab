@@ -18,7 +18,7 @@ import { removeVoiceControlBlock } from "../../../../components/chat/VoiceContro
 import { Markdown } from "../../../../components/deep-research/markdown";
 import type { Message } from "../../../../lib/deep-research/messages";
 import { useDeepResearchConversationLocked, useStore } from "../../../../lib/deep-research/store";
-import { stripResearchMeta } from "../../../../lib/deep-research/utils";
+import { stripInternalToolReplayContent, stripResearchMeta } from "../../../../lib/deep-research/utils";
 import { cn } from "../../../../lib/utils";
 
 function stripModelToolCallMarkup(content: string): string {
@@ -140,6 +140,7 @@ export function AssistantStructuredContent({
     // Strip persisted research meta blocks that may leak into display content
     // after backend reload or cache restoration.
     displayContent = stripResearchMeta(displayContent);
+    displayContent = stripInternalToolReplayContent(displayContent);
     displayContent = stripModelToolCallMarkup(displayContent);
     if (options) {
         displayContent = removeOptionsBlock(displayContent);
