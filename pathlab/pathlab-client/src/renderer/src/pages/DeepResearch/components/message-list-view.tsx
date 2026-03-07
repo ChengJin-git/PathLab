@@ -60,6 +60,7 @@ export function MessageListView({
   const interruptMessage = useLastInterruptMessage();
   const waitingForFeedbackMessageId = useLastFeedbackMessageId();
   const responding = useStore((state) => state.responding);
+  const generationPhase = useStore((state) => state.generationPhase);
   const renderDebugSignatureRef = useRef<string>("");
   const trimmedDraftPreviewText = draftPreviewText?.trim() ?? "";
 
@@ -217,8 +218,8 @@ export function MessageListView({
           </li>
         )}
 
-        {/* Thinking indicator — show bouncing dots when AI is responding but hasn't streamed content yet */}
-        {responding && (() => {
+        {/* Thinking indicator — show bouncing dots only during pre-stream thinking */}
+        {responding && generationPhase === "thinking" && (() => {
           const lastId = messageIds[messageIds.length - 1];
           const lastMsg = lastId ? messages.get(lastId) : undefined;
           // Don't show dots when the last renderable message is a research root (empty

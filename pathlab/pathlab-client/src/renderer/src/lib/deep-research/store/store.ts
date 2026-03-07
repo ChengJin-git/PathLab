@@ -463,6 +463,90 @@ function saveConversationCache(cache: PersistedConversationCache) {
   }
 }
 
+function parseTrainingChatLinkPayload(content: string): { conversation_id: string; title?: string } | null {
+  const match = content.match(/\[TRAINING_CHAT_LINK\]([\s\S]*?)\[\/TRAINING_CHAT_LINK\]/i);
+  if (!match?.[1]) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(match[1].trim()) as { conversation_id?: string; title?: string };
+    return typeof parsed?.conversation_id === "string" && parsed.conversation_id.trim().length > 0
+      ? { conversation_id: parsed.conversation_id.trim(), title: parsed.title }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function replaceTrainingChatLinkTitleInContent(
+  content: string,
+  chatConversationId: string,
+  nextTitle: string,
+): string {
+  return content.replace(/\[TRAINING_CHAT_LINK\]([\s\S]*?)\[\/TRAINING_CHAT_LINK\]/i, (match, jsonPayload) => {
+    try {
+      const parsed = JSON.parse((jsonPayload ?? "").trim()) as { conversation_id?: string; title?: string };
+      if (typeof parsed?.conversation_id !== "string" || parsed.conversation_id.trim() !== chatConversationId) {
+        return match;
+      }
+      parsed.title = nextTitle;
+      return `[TRAINING_CHAT_LINK]\n${JSON.stringify(parsed, null, 2)}\n[/TRAINING_CHAT_LINK]`;
+    } catch {
+      return match;
+    }
+  });
+}
+
+function patchTrainingChatLinkMessages(
+  messages: Array<[string, Message]>,
+  chatConversationId: string,
+  nextTitle: string,
+): { messages: Array<[string, Message]>; updated: boolean } {
+  let updated = false;
+  const patchedMessages = messages.map(([id, message]) => {
+    if (updated) return [id, message] as [string, Message];
+    const payload = parseTrainingChatLinkPayload(message.content ?? "");
+    if (!payload || payload.conversation_id !== chatConversationId) {
+      return [id, message] as [string, Message];
+    }
+    const nextContent = replaceTrainingChatLinkTitleInContent(message.content ?? "", chatConversationId, nextTitle);
+    if (nextContent === message.content) {
+      return [id, message] as [string, Message];
+    }
+    updated = true;
+    return [
+      id,
+      {
+        ...message,
+        content: nextContent,
+        contentChunks: [nextContent],
+      },
+    ] as [string, Message];
+  });
+
+  return { messages: patchedMessages, updated };
+}
+
+function finalizePendingStreamingMessages(messages: Iterable<Message>): Message[] {
+  return Array.from(messages, (message) =>
+    message.isStreaming ? { ...message, isStreaming: false } : message,
+  );
+}
+
+function closeAllStreamingMessagesInStore() {
+  const state = useStore.getState();
+  const updated: Message[] = [];
+  for (const id of state.messageIds) {
+    const message = state.messages.get(id);
+    if (message?.isStreaming) {
+      updated.push({ ...message, isStreaming: false });
+    }
+  }
+  if (updated.length > 0) {
+    useStore.getState().updateMessages(updated);
+  }
+}
+
 function trimConversationCache(
   cache: PersistedConversationCache,
 ): PersistedConversationCache {
@@ -3060,7 +3144,12 @@ export async function sendMessage(
     // Ensure all pending updates are processed.
     if (updateTimer) clearTimeout(updateTimer);
     if (!stale && pendingUpdates.size > 0) {
-      useStore.getState().updateMessages(Array.from(pendingUpdates.values()));
+      useStore.getState().updateMessages(
+        finalizePendingStreamingMessages(pendingUpdates.values()),
+      );
+    }
+    if (!stale) {
+      closeAllStreamingMessagesInStore();
     }
     if (!stale) {
       // Persist newly generated/updated assistant-side messages to shared conversation storage.
@@ -3436,8 +3525,11 @@ export async function resumeBackgroundResearch(
       // Finalize pending updates
       if (updateTimer) clearTimeout(updateTimer);
       if (pendingUpdates.size > 0) {
-        useStore.getState().updateMessages(Array.from(pendingUpdates.values()));
+        useStore.getState().updateMessages(
+          finalizePendingStreamingMessages(pendingUpdates.values()),
+        );
       }
+      closeAllStreamingMessagesInStore();
       // Mark research run status
       const finalState = useStore.getState();
       const currentResearchId =
@@ -3933,6 +4025,66 @@ export function debugDeepResearchStore(message: string, payload?: unknown) {
 
 export function flushDeepResearchPersistNow() {
   persistStoreState();
+}
+
+export function syncDeepResearchTrainingChatLinkTitle(
+  researchConversationId: string,
+  chatConversationId: string,
+  nextTitle: string,
+) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const state = useStore.getState();
+  if (state.conversationId === researchConversationId) {
+    for (const messageId of state.messageIds) {
+      const message = state.messages.get(messageId);
+      if (!message) continue;
+      const payload = parseTrainingChatLinkPayload(message.content ?? "");
+      if (!payload || payload.conversation_id !== chatConversationId) continue;
+
+      const nextContent = replaceTrainingChatLinkTitleInContent(message.content ?? "", chatConversationId, nextTitle);
+      if (nextContent !== message.content) {
+        state.updateMessage({
+          ...message,
+          content: nextContent,
+          contentChunks: [nextContent],
+        });
+        persistStoreState();
+      }
+      break;
+    }
+  }
+
+  const persisted = loadPersistedState();
+  if (persisted?.conversationId === researchConversationId) {
+    const patched = patchTrainingChatLinkMessages(persisted.messages ?? [], chatConversationId, nextTitle);
+    if (patched.updated) {
+      try {
+        localStorage.setItem(STORE_PERSIST_KEY, JSON.stringify({
+          ...persisted,
+          messages: patched.messages,
+        }));
+      } catch {
+        // Ignore storage errors to avoid breaking the chat flow.
+      }
+    }
+  }
+
+  const cache = loadConversationCache();
+  const cachedConversation = cache[researchConversationId];
+  if (cachedConversation) {
+    const patched = patchTrainingChatLinkMessages(cachedConversation.messages ?? [], chatConversationId, nextTitle);
+    if (patched.updated) {
+      cache[researchConversationId] = {
+        ...cachedConversation,
+        messages: patched.messages,
+        updatedAt: Date.now(),
+      };
+      saveConversationCache(trimConversationCache(cache));
+    }
+  }
 }
 
 /**

@@ -17,6 +17,7 @@ import {
 } from '../api'
 import { useVoiceSession } from '../lib/useVoiceSession'
 import { formatFileSize } from '../lib/utils'
+import { syncDeepResearchTrainingChatLinkTitle as syncDeepResearchTrainingChatLinkTitleInStore } from '../lib/deep-research/store/store'
 import * as XLSX from 'xlsx'
 import {
   Bot, User, Trash2,
@@ -418,6 +419,8 @@ export default function AIChatPage() {
       .find((value): value is ResearchJumpPayload => value !== null)
 
     if (!researchJump?.conversationId) return
+
+    syncDeepResearchTrainingChatLinkTitleInStore(researchJump.conversationId, chatConversationId, nextTitle)
 
     try {
       const deepResearchConversation = await getConversation(researchJump.conversationId)

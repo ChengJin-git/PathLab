@@ -30,6 +30,7 @@ import {
 } from "../../../components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
   import { closeResearch, useResearchMessage, useStore } from "../../../lib/deep-research/store";
+import { stripResearchMeta } from "../../../lib/deep-research/utils";
 import { cn } from "../../../lib/utils";
 
   import { parsePlannerPayload } from "./utils";
@@ -53,6 +54,9 @@ export function ResearchBlock({
   const hasReport = useStore((state) =>
     researchId ? state.researchReportIds.has(researchId) : false,
   );
+  const reportMessage = useStore((state) =>
+    reportId ? state.messages.get(reportId) : undefined,
+  );
   const reportStreaming = useStore((state) =>
     reportId ? (state.messages.get(reportId)?.isStreaming ?? false) : false,
   );
@@ -60,13 +64,13 @@ export function ResearchBlock({
   const researchRunStatus = useStore((state) =>
     researchId ? state.researchRunStatus.get(researchId) : undefined,
   );
-  const ongoing = useStore((state) => state.ongoingResearchId === researchId);
-
-  useEffect(() => {
-    if (hasReport) {
-      setActiveTab("report");
-    }
-  }, [hasReport]);
+  const ongoingFromStore = useStore((state) => state.ongoingResearchId === researchId);
+  const hasCompletedReport = useMemo(() => {
+    if (!hasReport) return false;
+    const visibleContent = stripResearchMeta(reportMessage?.content ?? "").trim();
+    return visibleContent.length > 0 && !reportStreaming;
+  }, [hasReport, reportMessage, reportStreaming]);
+  const ongoing = ongoingFromStore && !hasCompletedReport;
 
   const {
     isDownloading,
@@ -79,10 +83,15 @@ export function ResearchBlock({
     handleDownloadImage,
   } = useReportExporter(reportId, researchId ?? undefined);
 
-  // When the research changes, start from activities first.
   useEffect(() => {
     setActiveTab("activities");
   }, [researchId]);
+
+  useEffect(() => {
+    if (hasCompletedReport) {
+      setActiveTab("report");
+    }
+  }, [hasCompletedReport, reportId, researchId]);
 
   const title = useMemo(() => {
     if (!researchMessage) {
@@ -109,7 +118,7 @@ export function ResearchBlock({
   }, [hasReport, ongoing, reportStreaming, researchRunStatus, t]);
 
   const statusClassName = useMemo(() => {
-    if (hasReport && !reportStreaming) {
+    if (hasCompletedReport) {
       return "border-emerald-100 bg-emerald-50 text-emerald-700 hover:bg-emerald-100";
     }
     if (ongoing || reportStreaming || researchRunStatus === "running") {
@@ -122,7 +131,10 @@ export function ResearchBlock({
       return "border-amber-100 bg-amber-50 text-amber-700 hover:bg-amber-100";
     }
     return "border-gray-200 bg-gray-100 text-gray-600 hover:bg-gray-200";
-  }, [hasReport, ongoing, reportStreaming, researchRunStatus]);
+  }, [hasCompletedReport, ongoing, reportStreaming, researchRunStatus]);
+
+  const downloadMenuItemClassName =
+    "min-w-0 cursor-pointer gap-3 rounded-md px-4 py-2 text-sm text-gray-700 transition-colors whitespace-normal break-words hover:bg-gray-50 hover:text-gray-900 focus:bg-gray-50 focus:text-gray-900 sm:whitespace-nowrap";
 
   return (
     <div className={cn("h-full w-full", className)}>
@@ -132,35 +144,33 @@ export function ResearchBlock({
           value={activeTab}
           onValueChange={(value) => setActiveTab(value)}
         >
-          <div className="border-b border-gray-100/80 bg-gradient-to-b from-gray-50/90 to-white px-4 py-4 sm:px-6">
-            <div className="flex flex-col gap-4">
-              <div className="flex items-start justify-between gap-4">
+          <div className="border-b border-gray-100/80 bg-gradient-to-b from-gray-50/90 to-white px-3 py-3 sm:px-6 sm:py-4">
+            <div className="flex flex-col gap-3 sm:gap-4">
+              <div className="flex items-start justify-between gap-3 sm:gap-4">
                 <div className="min-w-0">
-                  <div className="flex items-start gap-3">
-                    <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 shadow-lg">
-                      <Sparkles className="h-5 w-5 text-white" />
+                  <div className="flex items-start gap-2.5 sm:gap-3">
+                    <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 shadow-lg sm:h-10 sm:w-10">
+                      <Sparkles className="h-4.5 w-4.5 text-white sm:h-5 sm:w-5" />
                     </div>
                     <div className="min-w-0">
-                      <div className="truncate text-lg font-semibold text-gray-900">{title}</div>
-                      <div className="mt-2">
+                      <div className="truncate text-base font-semibold text-gray-900 sm:text-lg">{title}</div>
+                      <div className="mt-1.5 sm:mt-2">
                         <Badge className={statusClassName}>{statusLabel}</Badge>
                       </div>
                     </div>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
-                  {hasReport && !reportStreaming && (
+                  {hasCompletedReport && (
                     <>
-                      <Tooltip title={t("copy")}>
-                        <Button
-                          className="rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-                          size="icon"
-                          variant="ghost"
-                          onClick={handleCopy}
-                        >
-                          {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                        </Button>
-                      </Tooltip>
+                      <Button
+                        className="rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                        size="icon"
+                        variant="ghost"
+                        onClick={handleCopy}
+                      >
+                        {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                      </Button>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
@@ -172,16 +182,28 @@ export function ResearchBlock({
                             <Download className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={handleDownloadMarkdown}>
+                        <DropdownMenuContent
+                          align="end"
+                          className="min-w-0 w-[calc(100vw-2rem)] max-w-[220px] rounded-lg border-gray-200 bg-white py-1 shadow-lg sm:w-auto sm:min-w-[160px]"
+                          collisionPadding={16}
+                          sideOffset={6}
+                        >
+                          <DropdownMenuItem
+                            className={downloadMenuItemClassName}
+                            onClick={handleDownloadMarkdown}
+                          >
                             <FileText className="mr-2 h-4 w-4" />
                             {t("downloadMarkdown")}
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={handleDownloadHTML}>
+                          <DropdownMenuItem
+                            className={downloadMenuItemClassName}
+                            onClick={handleDownloadHTML}
+                          >
                             <FileCode className="mr-2 h-4 w-4" />
                             {t("downloadHTML")}
                           </DropdownMenuItem>
                           <DropdownMenuItem
+                            className={downloadMenuItemClassName}
                             onClick={handleDownloadPDF}
                             disabled={isDownloading}
                           >
@@ -189,6 +211,7 @@ export function ResearchBlock({
                             {t("downloadPDF")}
                           </DropdownMenuItem>
                           <DropdownMenuItem
+                            className={downloadMenuItemClassName}
                             onClick={handleDownloadWord}
                             disabled={isDownloading}
                           >
@@ -196,6 +219,7 @@ export function ResearchBlock({
                             {t("downloadWord")}
                           </DropdownMenuItem>
                           <DropdownMenuItem
+                            className={downloadMenuItemClassName}
                             onClick={handleDownloadImage}
                             disabled={isDownloading}
                           >
@@ -223,16 +247,16 @@ export function ResearchBlock({
               <div className="flex w-full justify-center">
                 <TabsList className="max-w-full rounded-full bg-gray-100/80 p-1 shadow-inner">
                   <TabsTrigger
-                    className="whitespace-nowrap rounded-full px-4 sm:px-6 text-gray-600 data-[state=active]:bg-white data-[state=active]:text-gray-900 data-[state=active]:shadow-sm"
+                    className="whitespace-nowrap rounded-full px-3 py-1.5 text-sm text-gray-600 data-[state=active]:bg-white data-[state=active]:text-gray-900 data-[state=active]:shadow-sm sm:px-6"
                     value="activities"
                   >
                     <FileSearch className="h-4 w-4" />
                     {t("activities")}
                   </TabsTrigger>
                   <TabsTrigger
-                    className="whitespace-nowrap rounded-full px-4 sm:px-6 text-gray-600 data-[state=active]:bg-white data-[state=active]:text-gray-900 data-[state=active]:shadow-sm disabled:cursor-not-allowed disabled:border-transparent disabled:bg-transparent disabled:text-gray-300 disabled:opacity-100 disabled:shadow-none"
+                    className="whitespace-nowrap rounded-full px-3 py-1.5 text-sm text-gray-600 data-[state=active]:bg-white data-[state=active]:text-gray-900 data-[state=active]:shadow-sm disabled:cursor-not-allowed disabled:border-transparent disabled:bg-transparent disabled:text-gray-300 disabled:opacity-100 disabled:shadow-none sm:px-6"
                     value="report"
-                    disabled={!hasReport}
+                      disabled={!hasReport}
                   >
                     <FileText className="h-4 w-4" />
                     {t("report")}
@@ -242,38 +266,38 @@ export function ResearchBlock({
             </div>
           </div>
           <TabsContent
-            className="h-full min-h-0 flex-grow px-4 pb-4 pt-2 sm:px-6"
+            className="h-full min-h-0 flex-grow px-3 pb-3 pt-1.5 sm:px-6 sm:pb-4 sm:pt-2"
             value="activities"
             forceMount
             hidden={activeTab !== "activities"}
           >
             <ScrollContainer
-              className="h-full pb-8"
+              className="h-full pb-6 sm:pb-8"
               scrollShadowColor="#f8fafc"
-              autoScrollToBottom={!hasReport || reportStreaming}
+              autoScrollToBottom={!hasCompletedReport}
             >
               {researchId && (
                 <ResearchActivitiesBlock
-                  className="mt-4"
+                  className="mt-3 sm:mt-4"
                   researchId={researchId}
                 />
               )}
             </ScrollContainer>
           </TabsContent>
           <TabsContent
-            className="h-full min-h-0 flex-grow px-4 pb-4 pt-2 sm:px-6"
+            className="h-full min-h-0 flex-grow px-3 pb-3 pt-1.5 sm:px-6 sm:pb-4 sm:pt-2"
             value="report"
             forceMount
             hidden={activeTab !== "report"}
           >
             <ScrollContainer
-              className="h-full pb-8"
+              className="h-full pb-6 sm:pb-8"
               scrollShadowColor="#f8fafc"
-              autoScrollToBottom={!hasReport || reportStreaming}
+              autoScrollToBottom={!hasCompletedReport}
             >
               {reportId && researchId && (
                 <ResearchReportBlock
-                  className="mt-4"
+                  className="mt-3 sm:mt-4"
                   researchId={researchId}
                   messageId={reportId}
                 />

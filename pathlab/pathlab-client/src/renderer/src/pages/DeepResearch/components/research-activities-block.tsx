@@ -153,7 +153,16 @@ export function ResearchActivitiesBlock({
     state.researchActivityIds.get(researchId) ?? EMPTY_ACTIVITY_IDS,
   );
   const messages = useStore((state) => state.messages);
-  const ongoing = useStore((state) => state.ongoingResearchId === researchId);
+  const ongoingFromStore = useStore((state) => state.ongoingResearchId === researchId);
+  const reportId = useStore((state) => state.researchReportIds.get(researchId));
+  const reportMessage = useStore((state) =>
+    reportId ? state.messages.get(reportId) : undefined,
+  );
+  const hasCompletedReport = useMemo(() => {
+    const visibleContent = stripResearchMeta(reportMessage?.content ?? "").trim();
+    return !!reportId && visibleContent.length > 0 && !(reportMessage?.isStreaming ?? false);
+  }, [reportId, reportMessage]);
+  const ongoing = ongoingFromStore && !hasCompletedReport;
 
   const groups = useMemo(
     () => groupActivitiesByAgent(activityIds, messages),
