@@ -139,9 +139,49 @@ def get_web_search_tool(max_search_results: int, search_engine: Optional[str] = 
     tool: BaseTool
 
     if selected_search_engine == SearchEngine.EXA.value:
+        include_domains: Optional[List[str]] = search_config.get("include_domains", [])
+        exclude_domains: Optional[List[str]] = search_config.get("exclude_domains", [])
+        exa_search_type: str = search_config.get("exa_search_type", "auto")
+        exa_category: Optional[str] = search_config.get("exa_category")
+        start_crawl_date: Optional[str] = search_config.get("start_crawl_date")
+        end_crawl_date: Optional[str] = search_config.get("end_crawl_date")
+        start_published_date: Optional[str] = search_config.get("start_published_date")
+        end_published_date: Optional[str] = search_config.get("end_published_date")
+        include_text: Optional[List[str]] = search_config.get("include_text")
+        exclude_text: Optional[List[str]] = search_config.get("exclude_text")
+        moderation: bool = search_config.get("moderation", False)
+        max_content_characters: int = search_config.get("max_content_length_per_page", 4000)
+        max_age_hours: Optional[int] = search_config.get("exa_max_age_hours")
+        livecrawl_timeout: Optional[int] = search_config.get("exa_livecrawl_timeout")
+
+        logger.info(
+            f"Exa search configuration loaded: include_domains={include_domains}, "
+            f"exclude_domains={exclude_domains}, exa_search_type={exa_search_type}, "
+            f"exa_category={exa_category}, start_crawl_date={start_crawl_date}, "
+            f"end_crawl_date={end_crawl_date}, start_published_date={start_published_date}, "
+            f"end_published_date={end_published_date}, include_text={include_text}, "
+            f"exclude_text={exclude_text}, moderation={moderation}, "
+            f"max_content_characters={max_content_characters}, max_age_hours={max_age_hours}, "
+            f"livecrawl_timeout={livecrawl_timeout}"
+        )
+
         tool = LoggedExaSearch(
             name="web_search",
             max_results=max_search_results,
+            max_content_characters=max_content_characters,
+            search_type=exa_search_type,
+            category=exa_category,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+            start_crawl_date=start_crawl_date,
+            end_crawl_date=end_crawl_date,
+            start_published_date=start_published_date,
+            end_published_date=end_published_date,
+            include_text=include_text,
+            exclude_text=exclude_text,
+            moderation=moderation,
+            max_age_hours=max_age_hours,
+            livecrawl_timeout=livecrawl_timeout,
             exa_api_key=os.getenv("EXA_API_KEY", ""),
         )
     elif selected_search_engine == SearchEngine.TAVILY.value:
