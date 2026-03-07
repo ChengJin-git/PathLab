@@ -198,14 +198,34 @@ export default function AIChatPage() {
     return el.scrollHeight - el.scrollTop - el.clientHeight < 150
   }, [])
 
+  const scrollContainerTo = useCallback((target: 'top' | 'bottom') => {
+    if (scrollRafRef.current !== null) {
+      cancelAnimationFrame(scrollRafRef.current)
+    }
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null
+      const el = messagesContainerRef.current
+      if (!el) return
+      el.scrollTo({ top: target === 'top' ? 0 : el.scrollHeight, behavior: 'auto' })
+    })
+  }, [])
+
+  const scrollToTop = useCallback(() => {
+    scrollContainerTo('top')
+  }, [scrollContainerTo])
+
   const scrollToBottom = useCallback(() => {
     // Skip if user has scrolled away — let them read in peace
     if (userScrolledAwayRef.current) return
-    if (scrollRafRef.current !== null) return // already scheduled
-    scrollRafRef.current = requestAnimationFrame(() => {
-      scrollRafRef.current = null
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-    })
+    scrollContainerTo('bottom')
+  }, [scrollContainerTo])
+
+  useEffect(() => {
+    return () => {
+      if (scrollRafRef.current !== null) {
+        cancelAnimationFrame(scrollRafRef.current)
+      }
+    }
   }, [])
 
   const preserveAiChatReturnContext = useCallback(() => {
@@ -309,13 +329,20 @@ export default function AIChatPage() {
   }, [messages.length])
 
   useEffect(() => {
+    if (messages.length === 0) {
+      userScrolledAwayRef.current = false
+      scrollRestoredRef.current = false
+      scrollToTop()
+      return
+    }
+
     // Don't scroll to bottom if we're restoring scroll position
     if (scrollRestoredRef.current) {
       scrollRestoredRef.current = false
       return
     }
     scrollToBottom()
-  }, [messages])
+  }, [messages, scrollToBottom, scrollToTop])
 
   // Restore conversation from URL (supports page refresh)
   // Also supports legacy sessionStorage restore for backward compatibility
@@ -346,6 +373,7 @@ export default function AIChatPage() {
     // skip legacy restore and ensure we start from a clean chat state.
     if (state?.forceNewChat) {
       sessionStorage.removeItem('ai-chat-conversation-id')
+      sessionStorage.removeItem('ai-chat-scroll-position')
       if (state.reportContext) reportContextRef.current = state.reportContext
       if (state?.preCreatedConversationId) {
         setCurrentConversationId(state.preCreatedConversationId)
@@ -424,6 +452,9 @@ export default function AIChatPage() {
   }, [location, toggleVoiceSession, navigate])
 
   const handleNewChat = () => {
+    userScrolledAwayRef.current = false
+    scrollRestoredRef.current = false
+    sessionStorage.removeItem('ai-chat-scroll-position')
     setMessages([])
     setCurrentConversationId(null)
     reportContextRef.current = undefined
@@ -433,6 +464,7 @@ export default function AIChatPage() {
     setShowWelcomeHero(true)
     setFeedbacks(new Map())
     setHelpfulnessFeedbacks(new Map())
+    scrollToTop()
     // Update URL to base path (remove conversationId from URL)
     if (urlConversationId) {
       navigate('/dashboard', { replace: true })

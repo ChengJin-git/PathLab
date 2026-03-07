@@ -40,8 +40,9 @@ export default function Layout({ children }: LayoutProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // Check if current page is Dashboard (ChatGPT-style home page) or Deep Research
-  const isAIChatPage = location.pathname.startsWith('/dashboard') || location.pathname.startsWith('/ai-chat') || location.pathname.startsWith('/deep-research')
+  const isAIChatPage = location.pathname.startsWith('/dashboard') || location.pathname.startsWith('/ai-chat')
+  const isDeepResearchPage = location.pathname.startsWith('/deep-research')
+  const isConversationWorkspacePage = isAIChatPage || isDeepResearchPage
   const isRegisterPage = location.pathname === '/register'
 
   const handleLogout = async () => {
@@ -111,7 +112,7 @@ export default function Layout({ children }: LayoutProps) {
   }
 
   return (
-    <div className={`bg-gray-50 flex flex-col ${isAIChatPage || location.pathname === '/task-setup'
+    <div className={`bg-gray-50 flex flex-col ${isConversationWorkspacePage || location.pathname === '/task-setup'
       ? 'h-screen overflow-hidden'
       : isRegisterPage
         ? 'h-screen' // Allow main to handle scroll
@@ -123,7 +124,7 @@ export default function Layout({ children }: LayoutProps) {
             {/* Logo Area */}
             <div className="flex items-center">
               {/* Mobile hamburger for AI Chat sidebar */}
-              {isAIChatPage && (
+              {isConversationWorkspacePage && (
                 <button
                   onClick={() => window.dispatchEvent(new CustomEvent('toggle-ai-sidebar'))}
                   className="p-2 mr-1 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors lg:hidden"
@@ -257,7 +258,7 @@ export default function Layout({ children }: LayoutProps) {
       </header>
 
       {/* Main Content */}
-      {isAIChatPage ? (
+      {isConversationWorkspacePage ? (
         <div className="flex-1 flex overflow-hidden">
           <ConversationSidebar />
           <main className="flex-1 min-w-0 overflow-hidden relative">
