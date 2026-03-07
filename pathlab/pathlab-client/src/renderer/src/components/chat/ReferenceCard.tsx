@@ -224,9 +224,11 @@ const ReferenceCard = React.memo(function ReferenceCard({
  * ReferenceCardList — renders multiple reference cards
  */
 export const ReferenceCardList = React.memo(function ReferenceCardList({
-  cards
+  cards,
+  showHeader = true,
 }: {
   cards: ReferenceCardProps[]
+  showHeader?: boolean
 }) {
   const { t } = useTranslation()
 
@@ -234,9 +236,11 @@ export const ReferenceCardList = React.memo(function ReferenceCardList({
 
   return (
     <div className="space-y-2 mt-3">
-      <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
-        {t('chatComponents.referenceCard.references')}
-      </div>
+      {showHeader && (
+        <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
+          {t('chatComponents.referenceCard.references')}
+        </div>
+      )}
       {cards.map((card, index) => (
         <ReferenceCard key={`${card.sourceId || card.url}-${index}`} {...card} />
       ))}

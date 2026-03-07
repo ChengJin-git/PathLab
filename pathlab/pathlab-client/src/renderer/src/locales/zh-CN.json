@@ -2363,7 +2363,7 @@
       "taskRenamedSuccess": "任务已成功重命名为\"{{newName}}\"！"
     },
     "referenceCard": {
-      "references": "参考文献",
+      "references": "来源",
       "paper": "论文",
       "webpage": "网页"
     },

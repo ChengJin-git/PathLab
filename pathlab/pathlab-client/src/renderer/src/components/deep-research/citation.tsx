@@ -9,6 +9,10 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "../ui/hover-card";
+import {
+  ReferenceCardList,
+  type ReferenceCardProps,
+} from "../chat/ReferenceCard";
 import { useTranslations } from "../../lib/deep-research/i18n";
 import { cn } from "../../lib/utils";
 import type { Citation } from "../../lib/deep-research/messages";
@@ -270,6 +274,57 @@ interface CitationListProps {
   className?: string;
 }
 
+function inferReferenceType(citation: Citation): "paper" | "webpage" {
+  const domain = (citation.domain ?? "").toLowerCase();
+  const sourceType = (citation.source_type ?? "").toLowerCase();
+
+  if (
+    sourceType.includes("paper") ||
+    sourceType.includes("pdf") ||
+    domain.includes("arxiv") ||
+    domain.includes("pubmed") ||
+    domain.includes("ncbi") ||
+    domain.includes("doi.org") ||
+    domain.includes("acm") ||
+    domain.includes("ieee")
+  ) {
+    return "paper";
+  }
+
+  return "webpage";
+}
+
+function getReferenceSource(citation: Citation): string {
+  const domain = citation.domain ?? "";
+  const normalizedDomain = domain.toLowerCase();
+
+  if (normalizedDomain.includes("arxiv")) return "arXiv";
+  if (normalizedDomain.includes("pmc.ncbi.nlm.nih.gov")) return "PMC";
+  if (normalizedDomain.includes("pubmed.ncbi.nlm.nih.gov")) return "PubMed";
+  if (normalizedDomain.includes("huggingface.co")) return "Hugging Face";
+  if (normalizedDomain.includes("nature.com")) return "Nature";
+
+  if (domain) {
+    return domain.replace(/^www\./i, "");
+  }
+
+  if (citation.source_type === "web_search") {
+    return "Web";
+  }
+
+  return "Unknown";
+}
+
+function getReferenceIcon(citation: Citation, type: "paper" | "webpage"): string {
+  const domain = (citation.domain ?? "").toLowerCase();
+
+  if (domain.includes("arxiv")) return "📚";
+  if (domain.includes("pubmed") || domain.includes("ncbi")) return "🧬";
+  if (domain.includes("huggingface")) return "🤗";
+  if (type === "paper") return "📄";
+  return "🌐";
+}
+
 /**
  * List component for displaying all citations.
  */
@@ -278,9 +333,18 @@ export function CitationList({
   title,
   className,
 }: CitationListProps) {
-  // @ts-ignore - i18n shim
-  const t = useTranslations("chat.research");
-  const resolvedTitle = title ?? t("citationSources");
+  const cards = useMemo<ReferenceCardProps[]>(() => {
+    return citations.map((citation) => {
+      const type = inferReferenceType(citation);
+      return {
+        icon: getReferenceIcon(citation, type),
+        title: citation.title,
+        url: citation.url,
+        source: getReferenceSource(citation),
+        type,
+      };
+    });
+  }, [citations]);
 
   if (!citations || citations.length === 0) {
     return null;
@@ -288,41 +352,8 @@ export function CitationList({
 
   return (
     <div className={cn("space-y-3", className)}>
-      <h3 className="text-sm font-semibold text-foreground">{resolvedTitle}</h3>
-      <div className="space-y-2">
-        {citations.map((citation, index) => (
-          <div
-            key={citation.url || index}
-            className="p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors"
-          >
-            <div className="flex items-start gap-3">
-              <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-medium flex items-center justify-center">
-                {index + 1}
-              </span>
-              <div className="flex-1 min-w-0">
-                <a
-                  href={citation.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm font-medium text-foreground hover:text-primary hover:underline line-clamp-1"
-                >
-                  {citation.title}
-                </a>
-                {citation.domain && (
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {citation.domain}
-                  </p>
-                )}
-                {citation.description && (
-                  <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                    {citation.description}
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+      {title ? <h3 className="text-sm font-semibold text-foreground">{title}</h3> : null}
+      <ReferenceCardList cards={cards} showHeader={false} />
     </div>
   );
 }

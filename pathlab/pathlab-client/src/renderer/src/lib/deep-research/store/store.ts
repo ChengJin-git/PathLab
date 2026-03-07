@@ -379,6 +379,59 @@ function loadPersistedState(): PersistedStoreState | null {
   }
 }
 
+function normalizeRestoredMessages(
+  messages: Array<[string, Message]> | undefined,
+): Array<[string, Message]> {
+  return (messages ?? []).map(([id, message]) => [
+    id,
+    message.isStreaming ? { ...message, isStreaming: false } : message,
+  ]);
+}
+
+function normalizeRestoredOngoingResearchId({
+  ongoingResearchId,
+  backgroundJobId,
+  researchIds,
+  researchReportIds,
+  researchRunStatus,
+  messages,
+}: {
+  ongoingResearchId: string | null | undefined;
+  backgroundJobId?: string | null;
+  researchIds?: string[];
+  researchReportIds?: Array<[string, string]>;
+  researchRunStatus?: Array<[string, DeepResearchTaskStatus]>;
+  messages?: Array<[string, Message]>;
+}): string | null {
+  if (!ongoingResearchId) {
+    return null;
+  }
+
+  const researchIdSet = new Set(researchIds ?? []);
+  if (researchIdSet.size > 0 && !researchIdSet.has(ongoingResearchId)) {
+    return null;
+  }
+
+  const runStatus = new Map(researchRunStatus ?? []).get(ongoingResearchId);
+  if (runStatus && runStatus !== "running") {
+    return null;
+  }
+
+  const reportId = new Map(researchReportIds ?? []).get(ongoingResearchId);
+  if (reportId) {
+    const reportMessage = new Map(messages ?? []).get(reportId);
+    if ((reportMessage?.content ?? "").trim().length > 0 && runStatus !== "running") {
+      return null;
+    }
+  }
+
+  if (!backgroundJobId) {
+    return null;
+  }
+
+  return ongoingResearchId;
+}
+
 function loadConversationCache(): PersistedConversationCache {
   if (typeof window === "undefined") {
     return {};
@@ -419,7 +472,26 @@ function trimConversationCache(
   return Object.fromEntries(trimmed);
 }
 
-const persistedState = loadPersistedState();
+const persistedState = (() => {
+  const loadedState = loadPersistedState();
+  if (!loadedState) {
+    return null;
+  }
+
+  const normalizedMessages = normalizeRestoredMessages(loadedState.messages);
+  return {
+    ...loadedState,
+    messages: normalizedMessages,
+    ongoingResearchId: normalizeRestoredOngoingResearchId({
+      ongoingResearchId: loadedState.ongoingResearchId,
+      backgroundJobId: loadedState.backgroundJobId,
+      researchIds: loadedState.researchIds,
+      researchReportIds: loadedState.researchReportIds,
+      researchRunStatus: loadedState.researchRunStatus,
+      messages: normalizedMessages,
+    }),
+  };
+})();
 const INITIAL_THREAD_ID = persistedState?.threadId || nanoid();
 const DEFAULT_SESSION_TOKEN_USAGE = {
   totalTokens: 0,
@@ -812,6 +884,7 @@ interface PersistedResearchMeta {
   query?: string;
   status?: string;
   planActionLock?: "accepted" | "replan";
+  citations?: Citation[];
 }
 
 function extractDeepResearchRunStatus(
@@ -935,6 +1008,7 @@ function buildResearchMetaForMessage(message: Message): PersistedResearchMeta | 
     query: kind === "research_root" ? state.researchQueries.get(researchId) : undefined,
     status: runStatus,
     planActionLock,
+    citations: kind === "report" ? state.researchCitations.get(researchId) : undefined,
   };
 }
 
@@ -1395,6 +1469,14 @@ export async function loadConversationFromBackend(conversationId: string): Promi
   const currentStore = useStore.getState();
   const isContextSwitch = currentStore.conversationId !== conversationId;
 
+  if (!isContextSwitch && (currentStore.messageIds.length > 0 || currentStore.researchIds.length > 0)) {
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+    persistStoreState();
+  }
+
   // If the store already holds live stream data for this conversation
   // (i.e. not a context switch and still actively responding), skip
   // reloading from cache/backend to avoid overwriting in-flight data.
@@ -1440,12 +1522,16 @@ export async function loadConversationFromBackend(conversationId: string): Promi
       );
       // Clear isStreaming on all cached messages — the stream is no longer
       // active, and stale isStreaming=true prevents tool calls from rendering.
-      const cachedMessages = new Map<string, Message>(cached.messages ?? []);
-      for (const [id, msg] of cachedMessages) {
-        if (msg.isStreaming) {
-          cachedMessages.set(id, { ...msg, isStreaming: false });
-        }
-      }
+      const normalizedCachedMessages = normalizeRestoredMessages(cached.messages);
+      const cachedMessages = new Map<string, Message>(normalizedCachedMessages);
+      const normalizedCachedOngoingResearchId = normalizeRestoredOngoingResearchId({
+        ongoingResearchId: cached.ongoingResearchId,
+        backgroundJobId: cached.backgroundJobId,
+        researchIds: cachedResearchIds,
+        researchReportIds: cachedReportIds,
+        researchRunStatus: cachedRunStatus,
+        messages: normalizedCachedMessages,
+      });
       useStore.setState({
         conversationId,
         threadId: resolvedConversationThreadId,
@@ -1462,7 +1548,7 @@ export async function loadConversationFromBackend(conversationId: string): Promi
         restartPlanShownResearchIds: new Set<string>(cachedRestartPlanShownResearchIds),
         planActionLocks: new Map<string, "accepted" | "replan">(cachedPlanActionLocks),
         cancelledResearchIds: new Set<string>(),
-        ongoingResearchId: cached.ongoingResearchId ?? null,
+        ongoingResearchId: normalizedCachedOngoingResearchId,
         openResearchId: cached.openResearchId ?? null,
         backgroundJobId: cached.backgroundJobId ?? null,
         backgroundJobCursor: cached.backgroundJobCursor ?? 0,
@@ -1617,7 +1703,7 @@ export async function loadConversationFromBackend(conversationId: string): Promi
     const researchReportIds = new Map<string, string>();
     const researchActivityIds = new Map<string, string[]>();
     const researchQueries = new Map<string, string>();
-    const researchCitations = new Map<string, Citation[]>();
+    const researchCitations = new Map<string, Citation[]>(useStore.getState().researchCitations);
     const researchRunStatus = new Map<string, DeepResearchTaskStatus>();
     const planActionLocks = new Map<string, "accepted" | "replan">();
     let latestRunStatusWithoutResearch: DeepResearchTaskStatus | null = null;
@@ -1698,6 +1784,9 @@ export async function loadConversationFromBackend(conversationId: string): Promi
 
       if (meta) {
         ensureResearch(meta.researchId);
+        if (Array.isArray(meta.citations) && meta.citations.length > 0 && !researchCitations.has(meta.researchId)) {
+          researchCitations.set(meta.researchId, meta.citations);
+        }
         if (deepResearchRunStatus && deepResearchRunStatus !== "running") {
           researchRunStatus.set(meta.researchId, deepResearchRunStatus);
         }
@@ -1979,7 +2068,7 @@ export async function loadConversationFromBackend(conversationId: string): Promi
         normalizedResearchActivityIds.set(normalizedResearchId, merged);
       }
 
-      const citations = useStore.getState().researchCitations.get(oldResearchId);
+      const citations = researchCitations.get(oldResearchId);
       if (citations?.length && !normalizedResearchCitations.has(normalizedResearchId)) {
         normalizedResearchCitations.set(normalizedResearchId, citations);
       }
@@ -2344,9 +2433,15 @@ export async function loadConversationFromBackend(conversationId: string): Promi
 // ── Shared helpers for stream event processing (sendMessage & resumeBackgroundResearch) ──
 
 function handleCitationsEvent(data: any): void {
-  const ongoingResearchId = useStore.getState().ongoingResearchId;
+  const state = useStore.getState();
+  const ongoingResearchId = state.ongoingResearchId;
   if (ongoingResearchId && data.citations) {
-    useStore.getState().setCitations(ongoingResearchId, data.citations);
+    state.setCitations(ongoingResearchId, data.citations);
+
+    const reportMessageId = state.researchReportIds.get(ongoingResearchId);
+    if (reportMessageId) {
+      rePersistMessageToBackend(reportMessageId);
+    }
   }
 }
 
@@ -2495,7 +2590,7 @@ export async function sendMessage(
     const threadId = getThreadId();
     const singleResearchPerConversationMessage = tr(
       "singleResearchPerConversation",
-      "为了确保 research 质量，当前对话仅支持一次 Deep Research。如需发起新的研究课题，请新开一个对话。",
+      "为了确保研究质量，当前对话仅支持一次深度研究。如需发起新的研究课题，请新开一个对话。",
     );
     const fixedReplyResult = await generateFixedReplyWithLLM(
       singleResearchPerConversationMessage,

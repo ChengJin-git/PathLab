@@ -1,7 +1,9 @@
 import React, { useMemo, useRef } from "react";
+import { CitationList } from "../../../../components/deep-research/citation";
 import { cn } from "../../../../lib/utils";
 import { Markdown } from "../../../../components/deep-research/markdown";
 import { stripResearchMeta } from "../../../../lib/deep-research/utils";
+import { stripMarkdownReferenceSection } from "../../../../lib/deep-research/utils/markdown";
 import type { Citation } from "../../../../lib/deep-research/messages";
 
 function generateSlug(text: string): string {
@@ -55,7 +57,11 @@ export function ReportLayout({
     className?: string;
 }) {
     const cleanContent = useMemo(() => stripResearchMeta(content), [content]);
-    const headings = useMemo(() => extractHeadings(cleanContent), [cleanContent]);
+    const bodyContent = useMemo(
+        () => stripMarkdownReferenceSection(cleanContent),
+        [cleanContent],
+    );
+    const headings = useMemo(() => extractHeadings(bodyContent), [bodyContent]);
 
     // Heading counter consumed sequentially by react-markdown as it renders h1-h4.
     // Uses the pre-computed headings array so IDs stay stable.
@@ -105,9 +111,12 @@ export function ReportLayout({
                     citations={citations}
                     components={headingComponents}
                 >
-                    {cleanContent}
+                    {bodyContent}
                 </Markdown>
             </div>
+            {citations && citations.length > 0 && (
+                <CitationList className="mt-6" citations={citations} />
+            )}
         </div>
     );
 }

@@ -7,11 +7,13 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
-import { loadConversationFromBackend, openResearch, resetDeepResearchSession, useStore } from "../../lib/deep-research/store";
+import { flushDeepResearchPersistNow, loadConversationFromBackend, openResearch, resetDeepResearchSession, useStore } from "../../lib/deep-research/store";
 import { cn } from "../../lib/utils";
 
 import { MessagesBlock } from "./components/messages-block";
 import { ResearchBlock } from "./components/research-block";
+
+let hasMountedDeepResearchInRuntime = false;
 
 export default function Main() {
   const navigate = useNavigate();
@@ -37,10 +39,26 @@ export default function Main() {
   const researchCount = useStore((state) => state.researchIds.length);
   const responding = useStore((state) => state.responding);
   const openResearchId = useStore((state) => state.openResearchId);
+  const canReuseMountedConversation = useMemo(
+    () => (
+      hasMountedDeepResearchInRuntime
+      && !!urlConversationId
+      && conversationId === urlConversationId
+      && (messageCount > 0 || researchCount > 0)
+    ),
+    [conversationId, messageCount, researchCount, urlConversationId],
+  );
   const doubleColumnMode = useMemo(
     () => openResearchId !== null,
     [openResearchId],
   );
+
+  useEffect(() => {
+    hasMountedDeepResearchInRuntime = true;
+    return () => {
+      flushDeepResearchPersistNow();
+    };
+  }, []);
 
   const handleBackToAIChat = useCallback(() => {
     const returnToAIChatConversationId =
@@ -70,6 +88,10 @@ export default function Main() {
       setPendingHydrationConversationId(null);
       return;
     }
+    if (canReuseMountedConversation) {
+      setPendingHydrationConversationId(null);
+      return;
+    }
     // Skip one hydration when URL change is initiated by this page right after
     // creating/selecting a local conversation, to avoid clobbering in-flight state.
     if (skipNextHydrationRef.current === urlConversationId) {
@@ -93,7 +115,7 @@ export default function Main() {
     return () => {
       cancelled = true;
     };
-  }, [urlConversationId, isDeepResearchRoute]);
+  }, [urlConversationId, isDeepResearchRoute, canReuseMountedConversation]);
 
   useEffect(() => {
     if (!isDeepResearchRoute || forceNewSession) {

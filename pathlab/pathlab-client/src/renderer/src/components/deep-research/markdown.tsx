@@ -197,6 +197,16 @@ export function Markdown({
           }
         }
 
+        if (inlineCitation && /^https?:\/\//i.test(hrefStr)) {
+          return (
+            <InlineCitation
+              index={inlineCitation.index}
+              pageInfo={inlineCitation.pageInfo}
+              url={hrefStr}
+            />
+          );
+        }
+
         // If we have citation data, use CitationLink for enhanced display
         if (citations && citations.length > 0) {
           // Find if this URL is one of our citations

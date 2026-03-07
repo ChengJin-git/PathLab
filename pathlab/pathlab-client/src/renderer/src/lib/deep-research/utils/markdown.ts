@@ -1,3 +1,11 @@
+const REFERENCE_SECTION_HEADING_RE =
+  /^(#{1,6})\s+(references|key citations|sources|bibliography|参考文献|参考资料|引用来源|资料来源)\s*$/i;
+
+function getReferenceSectionHeadingLevel(trimmedLine: string): number | null {
+  const match = trimmedLine.match(REFERENCE_SECTION_HEADING_RE);
+  return match ? match[1].length : null;
+}
+
 export function autoFixMarkdown(markdown: string): string {
   let fixed = markdown;
   // Convert raw HTML anchor targets (e.g. `<a id="ref-1"></a> [1]`) to the
@@ -18,6 +26,7 @@ export function linkifyBareInlineCitations(markdown: string): string {
   const lines = markdown.split("\n");
   let inCodeBlock = false;
   let inReferenceSection = false;
+  let referenceHeadingLevel: number | null = null;
 
   return lines.map((line) => {
     const trimmed = line.trim();
@@ -28,13 +37,21 @@ export function linkifyBareInlineCitations(markdown: string): string {
     }
 
     if (!inCodeBlock) {
-      if (/^#{1,6}\s+(references|key citations)\s*$/i.test(trimmed)) {
+      const headingLevel = getReferenceSectionHeadingLevel(trimmed);
+      if (headingLevel != null) {
         inReferenceSection = true;
+        referenceHeadingLevel = headingLevel;
         return line;
       }
 
-      if (inReferenceSection && /^#{1,6}\s+/.test(trimmed)) {
+      const headingMatch = trimmed.match(/^(#{1,6})\s+/);
+      if (
+        inReferenceSection &&
+        headingMatch &&
+        headingMatch[1].length <= (referenceHeadingLevel ?? 6)
+      ) {
         inReferenceSection = false;
+        referenceHeadingLevel = null;
       }
     }
 
@@ -74,6 +91,51 @@ export function linkifyBareInlineCitations(markdown: string): string {
 
     return nextLine;
   }).join("\n");
+}
+
+export function stripMarkdownReferenceSection(markdown: string): string {
+  const lines = markdown.split("\n");
+  const keptLines: string[] = [];
+  let inCodeBlock = false;
+  let inReferenceSection = false;
+  let referenceHeadingLevel: number | null = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      inCodeBlock = !inCodeBlock;
+      if (!inReferenceSection) {
+        keptLines.push(line);
+      }
+      continue;
+    }
+
+    if (!inCodeBlock) {
+      const headingLevel = getReferenceSectionHeadingLevel(trimmed);
+      if (!inReferenceSection && headingLevel != null) {
+        inReferenceSection = true;
+        referenceHeadingLevel = headingLevel;
+        continue;
+      }
+
+      const headingMatch = trimmed.match(/^(#{1,6})\s+/);
+      if (
+        inReferenceSection &&
+        headingMatch &&
+        headingMatch[1].length <= (referenceHeadingLevel ?? 6)
+      ) {
+        inReferenceSection = false;
+        referenceHeadingLevel = null;
+      }
+    }
+
+    if (!inReferenceSection) {
+      keptLines.push(line);
+    }
+  }
+
+  return keptLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /**
