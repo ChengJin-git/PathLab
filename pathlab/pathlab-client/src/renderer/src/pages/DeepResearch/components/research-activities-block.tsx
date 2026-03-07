@@ -24,10 +24,11 @@ import {
 const EMPTY_ACTIVITY_IDS: string[] = [];
 
 /** Check if a message has visible content (text after META strip, or tool calls). */
-function hasVisibleContent(msg: Message | undefined): boolean {
+function hasVisibleContent(msg: Message | undefined, reportId?: string): boolean {
   if (!msg) return false;
   const agent = msg.agent ?? "";
-  if (agent === "reporter" || agent === "planner") return false;
+  if (agent === "planner") return false;
+  if (agent === "reporter" && msg.id === reportId) return false;
   const visibleText = stripInternalToolReplayContent(stripResearchMeta(msg.content ?? ""));
   if (visibleText) return true;
   if (msg.toolCalls?.length) return true;
@@ -44,6 +45,7 @@ interface ActivityGroup {
 function groupActivitiesByAgent(
   activityIds: string[],
   messages: Map<string, Message>,
+  reportId?: string,
 ): ActivityGroup[] {
   const groups: ActivityGroup[] = [];
   let current: ActivityGroup | null = null;
@@ -54,9 +56,9 @@ function groupActivitiesByAgent(
     const msg = messages.get(id);
     const agent = msg?.agent ?? "researcher";
 
-    // Skip reporter/planner — shown separately; skip empty stubs
-    if (agent === "reporter" || agent === "planner") continue;
-    if (!hasVisibleContent(msg)) continue;
+    // Skip planner and the currently selected formal report; keep reporter drafts in activities.
+    if (agent === "planner") continue;
+    if (!hasVisibleContent(msg, reportId)) continue;
 
     if (!current || current.agent !== agent) {
       current = { agent, activityIds: [id] };
@@ -88,6 +90,8 @@ function getAgentMeta(agent: string, t: (key: string, params?: Record<string, un
       return { ...AGENT_META.analyst, label: t("activityAgentAnalyst") };
     case "coder":
       return { ...AGENT_META.coder, label: t("activityAgentCoder") };
+    case "reporter":
+      return { ...AGENT_META.analyst, label: t("activityAgentAnalyst") };
     default:
       return {
         icon: <BookOpenText size={15} className="text-gray-500" />,
@@ -166,8 +170,8 @@ export function ResearchActivitiesBlock({
   const ongoing = ongoingFromStore && !hasCompletedReport;
 
   const groups = useMemo(
-    () => groupActivitiesByAgent(activityIds, messages),
-    [activityIds, messages],
+    () => groupActivitiesByAgent(activityIds, messages, reportId),
+    [activityIds, messages, reportId],
   );
 
   // Track which groups are expanded.
@@ -203,6 +207,7 @@ export function ResearchActivitiesBlock({
         <ActivityGroupSection
           key={`${group.agent}-${gi}`}
           group={group}
+          reportId={reportId}
           t={t}
           messages={messages}
           expanded={isGroupExpanded(gi)}
@@ -218,6 +223,7 @@ export function ResearchActivitiesBlock({
 
 const ActivityGroupSection = React.memo(({
   group,
+  reportId,
   t,
   messages,
   expanded,
@@ -226,6 +232,7 @@ const ActivityGroupSection = React.memo(({
   ongoing,
 }: {
   group: ActivityGroup;
+  reportId?: string;
   t: (key: string, params?: Record<string, unknown>) => string;
   messages: Map<string, Message>;
   expanded: boolean;
@@ -271,7 +278,7 @@ const ActivityGroupSection = React.memo(({
         <div className="border-t border-gray-100 bg-gray-50/50">
           <ul className="flex flex-col divide-y divide-gray-100">
             {group.activityIds.map((activityId) => (
-              <ActivityItem key={activityId} messageId={activityId} />
+              <ActivityItem key={activityId} messageId={activityId} reportId={reportId} />
             ))}
           </ul>
         </div>
@@ -281,24 +288,25 @@ const ActivityGroupSection = React.memo(({
 });
 ActivityGroupSection.displayName = "ActivityGroupSection";
 
-const ActivityItem = React.memo(({ messageId }: { messageId: string }) => {
+const ActivityItem = React.memo(({ messageId, reportId }: { messageId: string; reportId?: string }) => {
   const message = useMessage(messageId);
-  if (!message || !hasVisibleContent(message)) return null;
+  if (!message || !hasVisibleContent(message, reportId)) return null;
 
   return (
     <li className="px-2 py-2.5 sm:px-3">
-      <ActivityMessage messageId={messageId} />
+      <ActivityMessage messageId={messageId} reportId={reportId} />
       <ActivityListItem messageId={messageId} />
     </li>
   );
 });
 ActivityItem.displayName = "ActivityItem";
 
-const ActivityMessage = React.memo(({ messageId }: { messageId: string }) => {
+const ActivityMessage = React.memo(({ messageId, reportId }: { messageId: string; reportId?: string }) => {
   const message = useMessage(messageId);
   if (!message?.content) return null;
   const agent = message.agent ?? "";
-  if (agent === "reporter" || agent === "planner") return null;
+  if (agent === "planner") return null;
+  if (agent === "reporter" && messageId === reportId) return null;
   const cleanContent = stripInternalToolReplayContent(stripResearchMeta(message.content));
   if (!cleanContent) return null;
 

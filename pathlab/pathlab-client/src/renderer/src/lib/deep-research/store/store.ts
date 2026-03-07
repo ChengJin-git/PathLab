@@ -29,6 +29,7 @@ import {
 import type { ChatEvent, TokenUsageEvent } from "../api/types";
 import type { Citation, Message, Resource } from "../messages";
 import { mergeMessage } from "../messages";
+import { stripMarkdownReferenceSection } from "../utils/markdown";
 import { RESEARCH_META_RE, stripResearchMeta } from "../utils/strip-research-meta";
 import { parseJSON } from "../utils";
 import {
@@ -1276,6 +1277,131 @@ function isLikelyReportContent(content: string): boolean {
   return headingCount >= 1 || paragraphCount >= 3;
 }
 
+function countInlineCitationMarkers(content: string): number {
+  const bodyContent = stripMarkdownReferenceSection(content);
+  const normalized = bodyContent.replace(/\]\(#(?:cite-|ref-?)?\d+\)/gi, "]");
+  const matches = normalized.match(
+    /\[\[(?:\d{1,3})(?:\s*,\s*p\.?[^\]]+)?\]\]|\[(?:\d{1,3})(?:\s*,\s*p\.?[^\]]+)?\]/gi,
+  );
+  return matches?.length ?? 0;
+}
+
+function isFormalResearchReportContent(content: string, citationsCount = 0): boolean {
+  const trimmed = stripResearchMeta(content).trim();
+  if (!isLikelyReportContent(trimmed)) {
+    return false;
+  }
+
+  const bodyContent = stripMarkdownReferenceSection(trimmed);
+  const hasReferenceSection = bodyContent !== trimmed;
+  const inlineCitationCount = countInlineCitationMarkers(trimmed);
+
+  return (
+    inlineCitationCount >= 2 ||
+    (inlineCitationCount >= 1 && (hasReferenceSection || citationsCount > 0))
+  );
+}
+
+function isQualifiedResearchReportCandidate(
+  message: Message | undefined,
+  citationsCount = 0,
+): message is Message {
+  if (!message || message.role !== "assistant" || message.agent === "planner") {
+    return false;
+  }
+
+  const visibleContent = stripResearchMeta(message.content ?? "").trim();
+  if (visibleContent.length <= 80) {
+    return false;
+  }
+
+  return isFormalResearchReportContent(visibleContent, citationsCount);
+}
+
+function getResearchReportCandidateScore(
+  message: Message | undefined,
+  citationsCount = 0,
+): number {
+  if (!message) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  const visibleContent = stripResearchMeta(message.content ?? "").trim();
+  const inlineCitationCount = countInlineCitationMarkers(visibleContent);
+  const hasReferenceSection = stripMarkdownReferenceSection(visibleContent) !== visibleContent;
+
+  return (
+    Math.min(visibleContent.length, 6000) +
+    (message.agent === "reporter" ? 1000 : 0) +
+    (message.isStreaming ? 0 : 100) +
+    inlineCitationCount * 250 +
+    (hasReferenceSection ? 1500 : 0) +
+    (citationsCount > 0 && inlineCitationCount > 0 ? 1200 : 0)
+  );
+}
+
+function chooseResearchReportMessageId(params: {
+  messages: Map<string, Message>;
+  activityIds: string[];
+  existingReportId?: string;
+  citationsCount?: number;
+}): string | null {
+  const { messages, activityIds, existingReportId, citationsCount = 0 } = params;
+  const candidateIds = [...activityIds];
+  if (existingReportId) {
+    candidateIds.push(existingReportId);
+  }
+
+  const qualifiedCandidates = Array.from(new Set(candidateIds))
+    .map((id) => messages.get(id))
+    .filter((message): message is Message =>
+      isQualifiedResearchReportCandidate(message, citationsCount),
+    );
+
+  if (qualifiedCandidates.length === 0) {
+    return null;
+  }
+
+  return qualifiedCandidates.reduce((best, current) => {
+    const bestScore = getResearchReportCandidateScore(best, citationsCount);
+    const currentScore = getResearchReportCandidateScore(current, citationsCount);
+    return currentScore > bestScore ? current : best;
+  }).id;
+}
+
+function syncResearchReportBinding(researchId: string): string | null {
+  const state = useStore.getState();
+  const previousReportId = state.researchReportIds.get(researchId) ?? null;
+  const nextReportId = chooseResearchReportMessageId({
+    messages: state.messages,
+    activityIds: state.researchActivityIds.get(researchId) ?? [],
+    existingReportId: previousReportId ?? undefined,
+    citationsCount: state.researchCitations.get(researchId)?.length ?? 0,
+  });
+
+  if (previousReportId === nextReportId) {
+    return nextReportId;
+  }
+
+  const nextResearchReportIds = new Map(state.researchReportIds);
+  if (nextReportId) {
+    nextResearchReportIds.set(researchId, nextReportId);
+  } else {
+    nextResearchReportIds.delete(researchId);
+  }
+
+  useStore.setState({ researchReportIds: nextResearchReportIds });
+
+  if (previousReportId && previousReportId !== nextReportId) {
+    rePersistMessageToBackend(previousReportId);
+  }
+  if (nextReportId && nextReportId !== previousReportId) {
+    rePersistMessageToBackend(nextReportId);
+  }
+
+  return nextReportId;
+}
+
 function isLikelyResearchActivityContent(content: string): boolean {
   const trimmed = content.trim();
   if (trimmed.length < 120) {
@@ -2054,18 +2180,22 @@ export async function loadConversationFromBackend(conversationId: string): Promi
             (m.content?.trim().length ?? 0) > 80,
         );
       if (candidates.length === 0) {
+        researchReportIds.delete(researchId);
         continue;
       }
-      // Prefer explicit reporter output, otherwise pick the longest assistant content.
-      const reporter = candidates.find((m) => m.agent === "reporter");
-      if (reporter) {
-        researchReportIds.set(researchId, reporter.id);
-        continue;
+
+      const reportMessageId = chooseResearchReportMessageId({
+        messages,
+        activityIds: candidates.map((candidate) => candidate.id),
+        existingReportId: researchReportIds.get(researchId),
+        citationsCount: researchCitations.get(researchId)?.length ?? 0,
+      });
+
+      if (reportMessageId) {
+        researchReportIds.set(researchId, reportMessageId);
+      } else {
+        researchReportIds.delete(researchId);
       }
-      const best = candidates.reduce((acc, cur) =>
-        (cur.content?.length ?? 0) > (acc.content?.length ?? 0) ? cur : acc,
-      );
-      researchReportIds.set(researchId, best.id);
     }
 
     // Prune phantom research entries that were created from empty interrupt
@@ -2564,11 +2694,11 @@ export async function loadConversationFromBackend(conversationId: string): Promi
 
 function handleCitationsEvent(data: any): void {
   const state = useStore.getState();
-  const ongoingResearchId = state.ongoingResearchId;
-  if (ongoingResearchId && data.citations) {
-    state.setCitations(ongoingResearchId, data.citations);
+  const targetResearchId = state.ongoingResearchId ?? findLatestBindableResearchId();
+  if (targetResearchId && data.citations) {
+    state.setCitations(targetResearchId, data.citations);
 
-    const reportMessageId = state.researchReportIds.get(ongoingResearchId);
+    const reportMessageId = syncResearchReportBinding(targetResearchId);
     if (reportMessageId) {
       rePersistMessageToBackend(reportMessageId);
     }
@@ -4009,29 +4139,14 @@ function appendResearchActivity(message: Message, researchIdOverride?: string) {
       });
     }
     if (message.agent === "reporter") {
-      const existingReportId = useStore.getState().researchReportIds.get(researchId);
-      const existingReportMessage = existingReportId ? getMessage(existingReportId) : undefined;
-      const hasCompletedExistingReport =
-        !!existingReportId &&
-        !!existingReportMessage &&
-        stripResearchMeta(existingReportMessage.content ?? "").trim().length > 0 &&
-        !existingReportMessage.isStreaming;
-
-      if (!hasCompletedExistingReport || existingReportId === message.id) {
-        useStore.setState({
-          researchReportIds: new Map(useStore.getState().researchReportIds).set(
-            researchId,
-            message.id,
-          ),
-        });
-      }
+      syncResearchReportBinding(researchId);
       useStore.getState().setResearchCancelled(researchId, false);
     }
     deepResearchDebugLog("researchMapping", "appendResearchActivity", {
       researchId,
       messageId: message.id,
       agent: message.agent,
-      reportBound: message.agent === "reporter",
+      reportBound: useStore.getState().researchReportIds.get(researchId) === message.id,
       activityCount: useStore.getState().researchActivityIds.get(researchId)?.length ?? 0,
     });
   }
