@@ -83,12 +83,15 @@ export default function ConversationSidebar() {
     void loadConversations()
   }, [loadConversations])
 
-  // Reload when sidebar opens or conversation changes
+  // Reload when the sidebar opens.
+  // Do not reload just because the selected conversation changed; opening an
+  // existing history item should keep the current list stable instead of
+  // flashing a loading state.
   useEffect(() => {
     if (showHistory) {
       void loadConversations()
     }
-  }, [showHistory, currentConversationId, loadConversations])
+  }, [showHistory, loadConversations])
 
   // Poll active research jobs every 15 seconds
   useEffect(() => {
