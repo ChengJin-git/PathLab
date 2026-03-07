@@ -128,6 +128,9 @@
     "noRecentTasks": "暂无最近任务",
     "untitledTask": "未命名任务"
   },
+  "deepResearchPage": {
+    "backToAIChat": "返回 AI 对话"
+  },
   "loginPage": {
     "title": "",
     "titleSuffix": "数字病理学",

@@ -128,6 +128,9 @@
     "noRecentTasks": "No recent tasks",
     "untitledTask": "Untitled Task"
   },
+  "deepResearchPage": {
+    "backToAIChat": "Back to AI Chat"
+  },
   "loginPage": {
     "title": "Digital Pathology",
     "titleSuffix": "",

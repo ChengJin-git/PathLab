@@ -41,6 +41,7 @@ export default function App() {
       <Route path="/wsi-list" element={<ProtectedRoute><Layout><ListPage /></Layout></ProtectedRoute>} />
       <Route path="/register" element={<ProtectedRoute><Layout><RegisterPage /></Layout></ProtectedRoute>} />
       <Route path="/results" element={<ProtectedRoute><Layout><ResultsViewerPage /></Layout></ProtectedRoute>} />
+      <Route path="/tools" element={<ProtectedRoute><Layout><ToolsPage /></Layout></ProtectedRoute>} />
       <Route path="/reports" element={<ProtectedRoute><Layout><ReportGeneratorPage /></Layout></ProtectedRoute>} />
 
       {/* DetailPage without Layout (full screen viewer) - Also protected */}
@@ -51,9 +52,9 @@ export default function App() {
         <ProtectedRoute>
           <Layout>
             <div className="flex flex-col items-center justify-center min-h-[60vh]">
-              <h2 className="text-4xl font-bold text-gray-900 mb-4">{t('app.notFound.title')}</h2>
+              <h2 className="text-4xl font-bold text-gray-900 mb-4">{t('common.notFound')}</h2>
               <Link to="/" className="text-primary-600 hover:text-primary-700 font-medium">
-                {t('app.notFound.backHome')}
+                {t('common.backToHome')}
               </Link>
             </div>
           </Layout>

@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: MIT
 
 
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { ArrowLeft } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
+import { Button } from "../../components/ui/button";
 import { loadConversationFromBackend, openResearch, resetDeepResearchSession, useStore } from "../../lib/deep-research/store";
 import { cn } from "../../lib/utils";
 
@@ -14,6 +17,7 @@ import { ResearchBlock } from "./components/research-block";
 export default function Main() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useTranslation();
   const { conversationId: urlConversationId } = useParams<{ conversationId?: string }>();
   const forceNewSession = useMemo(
     () => new URLSearchParams(location.search).get("new") === "1",
@@ -28,6 +32,10 @@ export default function Main() {
     () => openResearchId !== null,
     [openResearchId],
   );
+
+  const handleBackToAIChat = useCallback(() => {
+    navigate("/dashboard");
+  }, [navigate]);
 
   useEffect(() => {
     if (!forceNewSession) {
@@ -88,7 +96,19 @@ export default function Main() {
   }, [location.state, urlConversationId, conversationId]);
 
   return (
-    <div className="flex h-full bg-gray-50 relative overflow-hidden">
+    <div className="relative flex h-full flex-col overflow-hidden bg-gray-50">
+      <div className="mx-auto flex w-full max-w-[1500px] px-4 pt-3">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleBackToAIChat}
+          aria-label={t("deepResearchPage.backToAIChat")}
+          className="gap-2 border-gray-200/80 bg-white/90 px-4 text-gray-700 shadow-sm backdrop-blur-sm hover:bg-white"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          {t("deepResearchPage.backToAIChat")}
+        </Button>
+      </div>
       <div className="flex-1 flex flex-col min-w-0 h-full relative z-10 overflow-hidden">
         <div
           className={cn(
