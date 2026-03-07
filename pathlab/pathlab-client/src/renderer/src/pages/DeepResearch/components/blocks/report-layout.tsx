@@ -72,16 +72,16 @@ export function ReportLayout({
 
         return {
             h1: ({ children, node, ...props }: any) => (
-                <h1 {...props} id={nextId()} className="scroll-mt-20 group relative text-3xl font-bold leading-tight mb-6">{children}</h1>
+                <h1 {...props} id={nextId()} className="scroll-mt-20 text-[2.125rem] font-semibold tracking-tight text-gray-950 mb-8 leading-tight">{children}</h1>
             ),
             h2: ({ children, node, ...props }: any) => (
-                <h2 {...props} id={nextId()} className="scroll-mt-20 group relative text-2xl font-semibold border-b pb-2 mt-10 mb-5">{children}</h2>
+                <h2 {...props} id={nextId()} className="scroll-mt-20 mt-12 mb-5 border-b border-gray-900/20 pb-3 text-[1.75rem] font-semibold tracking-tight text-gray-950">{children}</h2>
             ),
             h3: ({ children, node, ...props }: any) => (
-                <h3 {...props} id={nextId()} className="scroll-mt-20 group relative text-xl font-semibold mt-8 mb-4">{children}</h3>
+                <h3 {...props} id={nextId()} className="scroll-mt-20 mt-8 mb-3 text-xl font-semibold text-gray-900">{children}</h3>
             ),
             h4: ({ children, node, ...props }: any) => (
-                <h4 {...props} id={nextId()} className="scroll-mt-20 group relative text-lg font-medium mt-6 mb-3">{children}</h4>
+                <h4 {...props} id={nextId()} className="scroll-mt-20 mt-6 mb-2 text-base font-semibold text-gray-900">{children}</h4>
             ),
         };
     }, [headings]);
@@ -90,9 +90,18 @@ export function ReportLayout({
         <div className={cn("relative w-full", className)}>
             <div className="report-content w-full break-words [&_table]:w-full [&_table]:overflow-x-auto [&_table]:block" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
                 <Markdown
-                    className="max-w-none"
+                    className="prose-slate max-w-none prose-base
+                        prose-p:my-3 prose-p:leading-8 prose-p:text-gray-700
+                        prose-headings:text-gray-950
+                        prose-strong:font-semibold prose-strong:text-gray-950
+                        prose-ul:my-4 prose-ul:list-disc prose-ul:pl-6
+                        prose-ol:my-4 prose-ol:list-decimal prose-ol:pl-6
+                        prose-li:my-2 prose-li:leading-7 prose-li:text-gray-700
+                        prose-code:rounded prose-code:bg-gray-100 prose-code:px-1.5 prose-code:py-0.5 prose-code:text-[0.9em] prose-code:text-gray-800 prose-code:before:content-none prose-code:after:content-none
+                        prose-pre:my-5 prose-pre:rounded-xl prose-pre:bg-gray-900 prose-pre:p-4 prose-pre:text-gray-100
+                        prose-a:no-underline prose-hr:my-6 prose-blockquote:border-gray-300 prose-blockquote:text-gray-700"
                     animated
-                    checkLinkCredibility
+                    checkLinkCredibility={false}
                     citations={citations}
                     components={headingComponents}
                 >

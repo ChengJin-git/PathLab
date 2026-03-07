@@ -5,7 +5,6 @@ import { useTranslations } from "../../../lib/deep-research/i18n";
 import { useCallback, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { Button } from "../../../components/ui/button";
 import type { Option, Resource } from "../../../lib/deep-research/messages";
 import { resetDeepResearchSession, sendMessage, useMessageIds, useStore } from "../../../lib/deep-research/store";
 import { cn } from "../../../lib/utils";
@@ -28,6 +27,8 @@ export function MessagesBlock({ className }: { className?: string }) {
   const [draftPreviewText, setDraftPreviewText] = useState("");
   const abortControllerRef = useRef<AbortController | null>(null);
   const hasDraftPreview = draftPreviewText.trim().length > 0;
+  const openResearchId = useStore((state) => state.openResearchId);
+  const doubleColumnMode = openResearchId !== null;
   const handleSend = useCallback(
     async (
       message: string,
@@ -101,18 +102,20 @@ export function MessagesBlock({ className }: { className?: string }) {
         )}
       </div>
       <div className="pointer-events-none fixed bottom-6 left-0 right-0 z-30 px-4 lg:left-[var(--sidebar-width,288px)] transition-[left] duration-300 ease-in-out">
-        <div className="pointer-events-auto mx-auto max-w-4xl">
-          <InputBox
-            className="w-full"
-            responding={responding}
-            feedback={feedback}
-            onSend={handleSend}
-            onCancel={handleCancel}
-            onRemoveFeedback={handleRemoveFeedback}
-            onDraftChange={setDraftPreviewText}
-          />
-          <div className="mt-2 text-center text-xs text-gray-400/80 font-medium px-4 leading-relaxed">
-            {tGlobal("aiChat.disclaimer")}
+        <div className={cn("pointer-events-auto mx-auto w-full", doubleColumnMode ? "max-w-[1500px]" : "max-w-4xl")}>
+          <div className={cn(doubleColumnMode ? "w-full lg:w-[43%] lg:min-w-[520px] lg:max-w-[720px]" : "mx-auto w-full max-w-4xl")}>
+            <InputBox
+              className="w-full"
+              responding={responding}
+              feedback={feedback}
+              onSend={handleSend}
+              onCancel={handleCancel}
+              onRemoveFeedback={handleRemoveFeedback}
+              onDraftChange={setDraftPreviewText}
+            />
+            <div className="mt-2 px-4 text-center text-xs font-medium leading-relaxed text-gray-400/80">
+              {tGlobal("aiChat.disclaimer")}
+            </div>
           </div>
         </div>
       </div>

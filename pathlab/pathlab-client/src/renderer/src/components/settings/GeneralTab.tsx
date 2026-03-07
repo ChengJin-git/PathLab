@@ -222,19 +222,19 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
             <h2 className="text-lg font-bold text-slate-900">{t('settings.remoteServices')}</h2>
           </div>
 
-	          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
+          <div className="grid grid-cols-1 gap-4 items-start md:grid-cols-2 xl:grid-cols-4">
             {/* OpenRouter LLM Card */}
-            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-              <CardHeader className="pb-1 p-3">
-                <CardTitle className="flex items-center gap-2 text-base text-slate-900">
+            <Card className="border border-slate-200 shadow-sm transition-shadow hover:shadow-md md:col-span-2 xl:col-span-2">
+              <CardHeader className="px-4 pb-2 pt-4 sm:px-5 sm:pb-2.5 sm:pt-5">
+                <CardTitle className="flex items-center gap-2 text-sm font-semibold text-slate-900 sm:text-base">
                   <div className="p-1 bg-blue-100 rounded">
                     <Server className="w-3.5 h-3.5 text-blue-600" />
                   </div>
                   {t('settings.general.llmOpenRouter')}
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2.5 p-3 pt-0">
-                <div className="space-y-1">
+              <CardContent className="space-y-3 px-4 pb-4 pt-0 sm:px-5 sm:pb-5">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.apiKey')}</Label>
                   <Input
                     type="password"
@@ -249,49 +249,51 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                     </a>
                   </p>
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.baseUrl')}</Label>
-                  <Input
-                    value={baseUrl}
-                    onChange={(e) => setBaseUrl(e.target.value)}
-                    placeholder="https://openrouter.ai/api/v1"
-                    className="h-8 font-mono text-xs border-slate-300 focus:border-blue-500 focus:ring-blue-500"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.model')}</Label>
-                  <select
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    className="h-8 w-full px-2.5 py-1 border border-slate-300 rounded-lg bg-white text-xs text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
-                  >
-                    <optgroup label={t('settings.general.multimodalModels')}>
-                      {MODEL_OPTIONS.filter(m => m.multimodal).map(m => (
-                        <option key={m.id} value={m.id}>{m.label}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label={t('settings.general.textModels')}>
-                      {MODEL_OPTIONS.filter(m => !m.multimodal).map(m => (
-                        <option key={m.id} value={m.id}>{m.label}</option>
-                      ))}
-                    </optgroup>
-                  </select>
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.baseUrl')}</Label>
+                    <Input
+                      value={baseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                      placeholder="https://openrouter.ai/api/v1"
+                      className="h-8 font-mono text-xs border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.model')}</Label>
+                    <select
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      className="h-8 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-900 transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                    >
+                      <optgroup label={t('settings.general.multimodalModels')}>
+                        {MODEL_OPTIONS.filter(m => m.multimodal).map(m => (
+                          <option key={m.id} value={m.id}>{m.label}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label={t('settings.general.textModels')}>
+                        {MODEL_OPTIONS.filter(m => !m.multimodal).map(m => (
+                          <option key={m.id} value={m.id}>{m.label}</option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  </div>
                 </div>
               </CardContent>
             </Card>
 
             {/* DashScope ASR Card */}
-            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-              <CardHeader className="pb-1 p-3">
-                <CardTitle className="flex items-center gap-2 text-base text-slate-900">
+            <Card className="border border-slate-200 shadow-sm transition-shadow hover:shadow-md">
+              <CardHeader className="px-4 pb-2 pt-4 sm:px-5 sm:pb-2.5 sm:pt-5">
+                <CardTitle className="flex items-center gap-2 text-sm font-semibold text-slate-900 sm:text-base">
                   <div className="p-1 bg-orange-100 rounded">
                     <Mic className="w-3.5 h-3.5 text-orange-600" />
                   </div>
                   {t('settings.general.asrDashScope')}
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2.5 p-3 pt-0">
-                <div className="space-y-1">
+              <CardContent className="space-y-3 px-4 pb-4 pt-0 sm:px-5 sm:pb-5">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.dashscopeApiKey')}</Label>
                   <Input
                     type="password"
@@ -311,17 +313,17 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
             </Card>
 
             {/* Shared Credentials Card */}
-            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-              <CardHeader className="pb-1 p-3">
-                <CardTitle className="flex items-center gap-2 text-base text-slate-900">
+            <Card className="border border-slate-200 shadow-sm transition-shadow hover:shadow-md">
+              <CardHeader className="px-4 pb-2 pt-4 sm:px-5 sm:pb-2.5 sm:pt-5">
+                <CardTitle className="flex items-center gap-2 text-sm font-semibold text-slate-900 sm:text-base">
                   <div className="p-1 bg-amber-100 rounded">
                     <Key className="w-3.5 h-3.5 text-amber-600" />
                   </div>
                   {t('settings.general.sharedCredentials')}
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2.5 p-3 pt-0">
-                <div className="space-y-1">
+              <CardContent className="space-y-3 px-4 pb-4 pt-0 sm:px-5 sm:pb-5">
+                <div className="space-y-1.5">
                   <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">HF TOKEN</Label>
                   <Input
                     type="password"

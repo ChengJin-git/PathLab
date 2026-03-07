@@ -32,8 +32,8 @@ export function PodcastCard({
     const [isPlaying, setIsPlaying] = useState(false);
 
     return (
-        <Card className={cn("w-[508px]", className)}>
-            <CardHeader>
+        <Card className={cn("w-full max-w-2xl overflow-hidden border-gray-200/70 bg-white/90 shadow-sm", className)}>
+            <CardHeader className="border-b border-gray-100 bg-gradient-to-r from-primary-50/70 via-white to-white">
                 <div className="text-muted-foreground flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
                         {isGenerating ? <LoadingOutlined /> : <Headphones size={16} />}
@@ -54,7 +54,7 @@ export function PodcastCard({
                     {!hasError && !isGenerating && (
                         <div className="flex">
                             <Tooltip title="Download podcast">
-                                <Button variant="ghost" size="icon" asChild>
+                                <Button variant="ghost" size="icon" asChild className="rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-700">
                                     <a
                                         href={audioUrl}
                                         download={`${(title ?? "podcast").replaceAll(" ", "-")}.mp3`}
@@ -67,12 +67,12 @@ export function PodcastCard({
                     )}
                 </div>
                 <CardTitle>
-                    <div className="text-lg font-medium">
+                    <div className="text-lg font-medium text-gray-900">
                         <RainbowText animated={isGenerating}>{title}</RainbowText>
                     </div>
                 </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="bg-gray-50/40 pt-5">
                 {audioUrl ? (
                     <audio
                         className="w-full"

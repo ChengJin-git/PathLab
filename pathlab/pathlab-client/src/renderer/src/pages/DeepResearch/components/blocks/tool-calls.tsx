@@ -33,8 +33,38 @@ import { useTranslations } from "../../../../lib/deep-research/i18n";
 import { findMCPTool } from "../../../../lib/deep-research/mcp";
 import type { ToolCallRuntime } from "../../../../lib/deep-research/messages";
 import { parseJSON } from "../../../../lib/deep-research/utils";
+import { cn } from "../../../../lib/utils";
 
 const __pageCache = new LRUCache<string, string>({ max: 100 });
+
+function getHostname(url?: string): string {
+    if (!url) return "";
+    try {
+        return new URL(url).hostname.replace(/^www\./, "");
+    } catch {
+        return url;
+    }
+}
+
+function ToolCallSection({
+    header,
+    children,
+    bodyClassName,
+}: {
+    header: React.ReactNode;
+    children?: React.ReactNode;
+    bodyClassName?: string;
+}) {
+    return (
+        <section className="mt-3 px-4">
+            <div className="overflow-hidden rounded-2xl border border-gray-200/70 bg-white shadow-sm">
+                <div className="border-b border-gray-100 bg-gray-50/80 px-4 py-3">{header}</div>
+                {children ? <div className={cn("px-4 py-3", bodyClassName)}>{children}</div> : null}
+            </div>
+        </section>
+    );
+}
+
 type SearchResult =
     | {
         type: "page";
@@ -87,98 +117,118 @@ export function WebSearchToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
         () => searchResults?.filter((result) => result.type === "image"),
         [searchResults],
     );
+    const query = useMemo(() => (toolCall.args as { query: string }).query, [toolCall.args]);
+
     return (
-        <section className="mt-4 pl-4">
-            <div className="font-medium italic">
-                <RainbowText
-                    className="flex items-center"
-                    animated={searchResults === undefined}
-                >
-                    <Search size={16} className={"mr-2"} />
-                    <span>{t("searchingFor")}&nbsp;</span>
-                    <span className="max-w-[500px] overflow-hidden text-ellipsis whitespace-nowrap">
-                        {(toolCall.args as { query: string }).query}
-                    </span>
-                </RainbowText>
-            </div>
-            <div className="pr-4">
-                {pageResults && (
-                    <ul className="mt-2 flex flex-wrap gap-4">
-                        {searching &&
-                            [...Array(6)].map((_, i) => (
-                                <li
-                                    key={`search-result-${i}`}
-                                    className="flex h-40 w-40 gap-2 rounded-md text-sm"
+        <ToolCallSection
+            header={(
+                <div className="min-w-0">
+                    <RainbowText
+                        className="flex items-center text-sm font-semibold text-gray-900"
+                        animated={searchResults === undefined}
+                    >
+                        <Search size={16} className="mr-2 text-blue-500" />
+                        <span>{t("searchingFor")}</span>
+                    </RainbowText>
+                    <p className="mt-1 break-words pl-6 text-sm leading-6 text-gray-600">{query}</p>
+                </div>
+            )}
+            bodyClassName="space-y-3"
+        >
+            {searching && (
+                <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {[...Array(6)].map((_, i) => (
+                        <li key={`search-result-${i}`}>
+                            <Skeleton
+                                className="h-24 w-full rounded-xl bg-gradient-to-br from-gray-100 to-gray-200"
+                                style={{ animationDelay: `${i * 0.15}s` }}
+                            />
+                        </li>
+                    ))}
+                </ul>
+            )}
+
+            {!!pageResults?.length && (
+                <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {pageResults.slice(0, 12).map((searchResult, i) => {
+                        const shouldAnimate = i < 6;
+                        return (
+                            <motion.li
+                                key={`search-result-${i}`}
+                                initial={shouldAnimate ? { opacity: 0, y: 10 } : { opacity: 1, y: 0 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={shouldAnimate ? {
+                                    duration: 0.15,
+                                    delay: Math.min(i * 0.05, 0.3),
+                                    ease: "easeOut",
+                                } : undefined}
+                            >
+                                <a
+                                    className="group flex min-h-[92px] items-start gap-3 rounded-xl border border-gray-200 bg-white px-3 py-3 transition-all hover:border-gray-300 hover:bg-gray-50"
+                                    href={searchResult.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
                                 >
-                                    <Skeleton
-                                        className="to-accent h-full w-full rounded-md bg-gradient-to-tl from-slate-400"
-                                        style={{ animationDelay: `${i * 0.2}s` }}
+                                    <FavIcon
+                                        className="mt-0.5 shrink-0"
+                                        url={searchResult.url}
+                                        title={searchResult.title}
                                     />
-                                </li>
-                            ))}
-                        {pageResults
-                            .filter((result) => result.type === "page")
-                            .slice(0, 20) // Limit displayed results for performance
-                            .map((searchResult, i) => {
-                                const shouldAnimate = i < 6; // Only animate first 6 results
-                                return (
-                                    <motion.li
-                                        key={`search-result-${i}`}
-                                        className="text-muted-foreground bg-accent flex max-w-40 gap-2 rounded-md px-2 py-1 text-sm"
-                                        initial={shouldAnimate ? { opacity: 0, y: 10 } : { opacity: 1, y: 0 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        transition={shouldAnimate ? {
-                                            duration: 0.15, // Reduced from 0.2
-                                            delay: Math.min(i * 0.05, 0.3), // Cap delay at 0.3s
-                                            ease: "easeOut",
-                                        } : undefined}
-                                    >
-                                        <FavIcon
-                                            className="mt-1"
-                                            url={searchResult.url}
-                                            title={searchResult.title}
-                                        />
-                                        <a href={searchResult.url} target="_blank">
+                                    <div className="min-w-0 flex-1">
+                                        <div className="line-clamp-3 text-sm font-medium leading-6 text-gray-900 transition-colors group-hover:text-gray-700">
                                             {searchResult.title}
-                                        </a>
-                                    </motion.li>
-                                );
-                            })}
-                        {imageResults
-                            .slice(0, 10) // Limit displayed images for performance
-                            .map((searchResult, i) => {
-                                const shouldAnimate = i < 4; // Only animate first 4 images
-                                return (
-                                    <motion.li
-                                        key={`search-result-${i}`}
-                                        initial={shouldAnimate ? { opacity: 0, y: 10 } : { opacity: 1, y: 0 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        transition={shouldAnimate ? {
-                                            duration: 0.15,
-                                            delay: Math.min(i * 0.05, 0.2),
-                                            ease: "easeOut",
-                                        } : undefined}
-                                    >
-                                        <a
-                                            className="flex flex-col gap-2 overflow-hidden rounded-md opacity-75 transition-opacity duration-300 hover:opacity-100"
-                                            href={searchResult.image_url}
-                                            target="_blank"
-                                        >
-                                            <Image
-                                                src={searchResult.image_url}
-                                                alt={searchResult.image_description}
-                                                className="bg-accent h-40 w-40 max-w-full rounded-md bg-cover bg-center bg-no-repeat"
-                                                imageClassName="hover:scale-110"
-                                                imageTransition
-                                            />
-                                        </a>
-                                    </motion.li>
-                                );
-                            })}
-                    </ul>
-                )}
-            </div>
-        </section>
+                                        </div>
+                                        <div className="mt-1 truncate text-xs text-gray-500">
+                                            {getHostname(searchResult.url)}
+                                        </div>
+                                    </div>
+                                </a>
+                            </motion.li>
+                        );
+                    })}
+                </ul>
+            )}
+
+            {!!imageResults?.length && (
+                <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {imageResults.slice(0, 6).map((searchResult, i) => {
+                        const shouldAnimate = i < 4;
+                        return (
+                            <motion.li
+                                key={`search-image-${i}`}
+                                initial={shouldAnimate ? { opacity: 0, y: 10 } : { opacity: 1, y: 0 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={shouldAnimate ? {
+                                    duration: 0.15,
+                                    delay: Math.min(i * 0.05, 0.2),
+                                    ease: "easeOut",
+                                } : undefined}
+                            >
+                                <a
+                                    className="group block overflow-hidden rounded-xl border border-gray-200 bg-white transition-all hover:border-gray-300 hover:bg-gray-50"
+                                    href={searchResult.image_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                >
+                                    <Image
+                                        src={searchResult.image_url}
+                                        alt={searchResult.image_description}
+                                        className="h-40 w-full bg-gray-100 bg-cover bg-center bg-no-repeat"
+                                        imageClassName="group-hover:scale-105"
+                                        imageTransition
+                                    />
+                                    {searchResult.image_description && (
+                                        <div className="px-3 py-2 text-xs leading-5 text-gray-600 line-clamp-2">
+                                            {searchResult.image_description}
+                                        </div>
+                                    )}
+                                </a>
+                            </motion.li>
+                        );
+                    })}
+                </ul>
+            )}
+        </ToolCallSection>
     );
 }
 
@@ -191,37 +241,38 @@ export function CrawlToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
     );
     const title = useMemo(() => __pageCache.get(url), [url]);
     return (
-        <section className="mt-4 pl-4">
-            <div>
+        <ToolCallSection
+            header={(
                 <RainbowText
-                    className="flex items-center text-base font-medium italic"
+                    className="flex items-center text-sm font-semibold text-gray-900"
                     animated={toolCall.result === undefined}
                 >
-                    <BookOpenText size={16} className={"mr-2"} />
+                    <BookOpenText size={16} className="mr-2 text-emerald-500" />
                     <span>{t("reading")}</span>
                 </RainbowText>
-            </div>
-            <ul className="mt-2 flex flex-wrap gap-4">
-                <motion.li
-                    className="text-muted-foreground bg-accent flex h-40 w-40 gap-2 rounded-md px-2 py-1 text-sm"
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{
-                        duration: 0.15, // Reduced for better performance
-                        ease: "easeOut",
-                    }}
-                >
-                    <FavIcon className="mt-1" url={url} title={title} />
-                    <a
-                        className="h-full flex-grow overflow-hidden text-ellipsis whitespace-nowrap"
-                        href={url}
-                        target="_blank"
-                    >
+            )}
+        >
+            <motion.a
+                className="group flex items-start gap-3 rounded-xl border border-gray-200 bg-white px-3 py-3 transition-all hover:border-gray-300 hover:bg-gray-50"
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{
+                    duration: 0.15,
+                    ease: "easeOut",
+                }}
+            >
+                <FavIcon className="mt-0.5 shrink-0" url={url} title={title} />
+                <div className="min-w-0 flex-1">
+                    <div className="line-clamp-2 text-sm font-medium leading-6 text-gray-900">
                         {title ?? url}
-                    </a>
-                </motion.li>
-            </ul>
-        </section>
+                    </div>
+                    <div className="mt-1 truncate text-xs text-gray-500">{getHostname(url)}</div>
+                </div>
+            </motion.a>
+        </ToolCallSection>
     );
 }
 
@@ -236,55 +287,59 @@ export function RetrieverToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
     >(() => {
         return toolCall.result ? parseJSON(toolCall.result, []) : [];
     }, [toolCall.result]);
+    const keywords = useMemo(() => (toolCall.args as { keywords: string }).keywords, [toolCall.args]);
+
     return (
-        <section className="mt-4 pl-4">
-            <div className="font-medium italic">
-                <RainbowText className="flex items-center" animated={searching}>
-                    <Search size={16} className={"mr-2"} />
-                    <span>{t("retrievingDocuments")}&nbsp;</span>
-                    <span className="max-w-[500px] overflow-hidden text-ellipsis whitespace-nowrap">
-                        {(toolCall.args as { keywords: string }).keywords}
-                    </span>
-                </RainbowText>
-            </div>
-            <div className="pr-4">
-                {documents && (
-                    <ul className="mt-2 flex flex-wrap gap-4">
-                        {searching &&
-                            [...Array(2)].map((_, i) => (
-                                <li
-                                    key={`search-result-${i}`}
-                                    className="flex h-40 w-40 gap-2 rounded-md text-sm"
-                                >
-                                    <Skeleton
-                                        className="to-accent h-full w-full rounded-md bg-gradient-to-tl from-slate-400"
-                                        style={{ animationDelay: `${i * 0.2}s` }}
-                                    />
-                                </li>
-                            ))}
-                        {documents?.map((doc, i) => {
-                            const shouldAnimate = i < 4; // Only animate first 4 documents
-                            return (
-                                <motion.li
-                                    key={`search-result-${i}`}
-                                    className="text-muted-foreground bg-accent flex max-w-40 gap-2 rounded-md px-2 py-1 text-sm"
-                                    initial={shouldAnimate ? { opacity: 0, y: 10 } : { opacity: 1, y: 0 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={shouldAnimate ? {
-                                        duration: 0.15,
-                                        delay: Math.min(i * 0.05, 0.2),
-                                        ease: "easeOut",
-                                    } : undefined}
-                                >
-                                    <FileText size={32} />
-                                    {doc.title} ({t("retrievedChunkInfo", { chunk: i + 1, size: doc.content.length })})
-                                </motion.li>
-                            );
-                        })}
-                    </ul>
-                )}
-            </div>
-        </section>
+        <ToolCallSection
+            header={(
+                <div className="min-w-0">
+                    <RainbowText className="flex items-center text-sm font-semibold text-gray-900" animated={searching}>
+                        <Search size={16} className="mr-2 text-violet-500" />
+                        <span>{t("retrievingDocuments")}</span>
+                    </RainbowText>
+                    <p className="mt-1 break-words pl-6 text-sm leading-6 text-gray-600">{keywords}</p>
+                </div>
+            )}
+        >
+            <ul className="grid gap-3 sm:grid-cols-2">
+                {searching &&
+                    [...Array(2)].map((_, i) => (
+                        <li key={`search-result-${i}`}>
+                            <Skeleton
+                                className="h-24 w-full rounded-xl bg-gradient-to-br from-gray-100 to-gray-200"
+                                style={{ animationDelay: `${i * 0.2}s` }}
+                            />
+                        </li>
+                    ))}
+                {documents?.map((doc, i) => {
+                    const shouldAnimate = i < 4;
+                    return (
+                        <motion.li
+                            key={`search-result-${i}`}
+                            initial={shouldAnimate ? { opacity: 0, y: 10 } : { opacity: 1, y: 0 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={shouldAnimate ? {
+                                duration: 0.15,
+                                delay: Math.min(i * 0.05, 0.2),
+                                ease: "easeOut",
+                            } : undefined}
+                        >
+                            <div className="flex min-h-[88px] items-start gap-3 rounded-xl border border-gray-200 bg-white px-3 py-3">
+                                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-600">
+                                    <FileText size={18} />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                    <div className="line-clamp-2 text-sm font-medium leading-6 text-gray-900">{doc.title}</div>
+                                    <div className="mt-1 text-xs text-gray-500">
+                                        {t("retrievedChunkInfo", { chunk: i + 1, size: doc.content.length })}
+                                    </div>
+                                </div>
+                            </div>
+                        </motion.li>
+                    );
+                })}
+            </ul>
+        </ToolCallSection>
     );
 }
 
@@ -296,18 +351,18 @@ export function PythonToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
     }, [toolCall.args]);
     const { resolvedTheme } = useTheme();
     return (
-        <section className="mt-4 pl-4">
-            <div className="flex items-center">
-                <PythonOutlined className={"mr-2"} />
-                <RainbowText
-                    className="text-base font-medium italic"
-                    animated={toolCall.result === undefined}
-                >
-                    {t("runningPythonCode")}
-                </RainbowText>
-            </div>
-            <div>
-                <div className="bg-accent mt-2 max-h-[400px] max-w-[calc(100%-120px)] overflow-y-auto rounded-md p-2 text-sm">
+        <ToolCallSection
+            header={(
+                <div className="flex items-center text-sm font-semibold text-gray-900">
+                    <PythonOutlined className="mr-2" />
+                    <RainbowText animated={toolCall.result === undefined}>
+                        {t("runningPythonCode")}
+                    </RainbowText>
+                </div>
+            )}
+            bodyClassName="space-y-4"
+        >
+            <div className="max-h-[400px] overflow-y-auto rounded-xl bg-gray-950 p-2 text-sm">
                     <SyntaxHighlighter
                         language="python"
                         style={resolvedTheme === "dark" ? dark : docco}
@@ -319,10 +374,9 @@ export function PythonToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
                     >
                         {code?.trim() ?? ""}
                     </SyntaxHighlighter>
-                </div>
             </div>
             {toolCall.result && <PythonToolCallResult result={toolCall.result} />}
-        </section>
+        </ToolCallSection>
     );
 }
 
@@ -354,10 +408,10 @@ export function PythonToolCallResult({ result }: { result: string }) {
     }, [result, hasError]);
     return (
         <>
-            <div className="mt-4 font-medium italic">
+            <div className="text-sm font-semibold text-gray-900">
                 {hasError ? t("errorExecutingCode") : t("executionOutput")}
             </div>
-            <div className="bg-accent mt-2 max-h-[400px] max-w-[calc(100%-120px)] overflow-y-auto rounded-md p-2 text-sm">
+            <div className="max-h-[400px] overflow-y-auto rounded-xl border border-gray-200 bg-gray-50 p-2 text-sm">
                 <SyntaxHighlighter
                     language="plaintext"
                     style={resolvedTheme === "dark" ? dark : docco}
@@ -511,8 +565,8 @@ export function MCPToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
     const isRunning = toolCall.result === undefined;
 
     return (
-        <section className="mt-4 pl-4">
-            <div className="w-fit overflow-y-auto rounded-md py-0">
+        <section className="mt-3 px-4">
+            <div className="w-fit overflow-y-auto rounded-2xl border border-gray-200/70 bg-white px-4 py-2 shadow-sm">
                 <Accordion type="single" collapsible className="w-full">
                     <AccordionItem value="item-1">
                         <AccordionTrigger>

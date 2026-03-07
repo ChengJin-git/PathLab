@@ -14,6 +14,7 @@ export interface InlineCitationProps {
   snippet?: string
   pageInfo?: string
   url?: string
+  variant?: 'badge' | 'text'
 }
 
 const InlineCitation = React.memo(function InlineCitation({
@@ -22,7 +23,8 @@ const InlineCitation = React.memo(function InlineCitation({
   source,
   snippet,
   pageInfo,
-  url
+  url,
+  variant = 'badge'
 }: InlineCitationProps) {
   const [showTooltip, setShowTooltip] = useState(false)
   const [tooltipStyle, setTooltipStyle] = useState<React.CSSProperties>({})
@@ -79,15 +81,16 @@ const InlineCitation = React.memo(function InlineCitation({
     if (url) window.open(url, '_blank', 'noopener,noreferrer')
   }
 
+  const labelContent = variant === 'text' ? `[${label}]` : label
+
   return (
     <>
       <span
         ref={badgeRef}
-        className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 mx-0.5
-          text-[11px] font-medium leading-none rounded-md cursor-pointer select-none
-          bg-primary-50 text-primary-600 border border-primary-200
-          hover:bg-primary-100 hover:border-primary-300 hover:shadow-sm
-          transition-all duration-150 align-baseline"
+        className={variant === 'text'
+          ? "mx-[0.08rem] inline text-[0.95em] font-medium leading-none text-primary-600/90 cursor-pointer select-none align-[0.02em] hover:text-primary-700"
+          : "inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 mx-0.5 text-[11px] font-medium leading-none rounded-md cursor-pointer select-none bg-primary-50 text-primary-600 border border-primary-200 hover:bg-primary-100 hover:border-primary-300 hover:shadow-sm transition-all duration-150 align-baseline"
+        }
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
         onClick={handleClick}
@@ -95,7 +98,7 @@ const InlineCitation = React.memo(function InlineCitation({
         tabIndex={0}
         aria-label={title || `Citation ${index}`}
       >
-        {label}
+        {labelContent}
       </span>
 
       {/* Tooltip rendered via portal-like fixed positioning */}

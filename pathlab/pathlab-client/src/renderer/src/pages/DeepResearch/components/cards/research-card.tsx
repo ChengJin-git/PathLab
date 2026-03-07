@@ -8,6 +8,7 @@ import { createConversation as apiCreateChatConversation, addMessage as apiAddCh
 import { useTranslations } from "../../../../lib/deep-research/i18n";
 import { stripResearchMeta } from "../../../../lib/deep-research/utils";
 import { useNavigate } from "react-router-dom";
+import { BookOpenText, Sparkles } from "lucide-react";
 
 const CHAT_TRAINING_BASE_PROMPT_ZH =
     "我有一组病理图像数据集，想训练一个深度学习模型。我需要配置什么？";
@@ -65,8 +66,7 @@ function buildTrainingPrompt(
     }
     return chunks.join("\n\n");
 }
-import { RainbowText } from "../../../../components/deep-research/rainbow-text";
-import { RollingText } from "../../../../components/deep-research/rolling-text";
+import { Badge } from "../../../../components/ui/badge";
 import { Button } from "../../../../components/ui/button";
 import { Card, CardFooter, CardHeader, CardTitle } from "../../../../components/ui/card";
 import { closeResearch, flushDeepResearchPersistNow, openResearch, useResearchMessage, useStore } from "../../../../lib/deep-research/store";
@@ -101,18 +101,30 @@ function TrainingCard({
 
     if (existingTrainingLink) {
         return (
-            <Card className="w-full">
-                <CardHeader>
-                    <CardTitle>
-                        {existingTrainingLink.title || t("startTraining")}
-                    </CardTitle>
+            <Card className="w-full overflow-hidden border-gray-200/70 bg-white/90 shadow-sm">
+                <CardHeader className="border-b border-gray-100 bg-gradient-to-r from-primary-50/70 via-white to-white">
+                    <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary-50 text-primary-600 shadow-sm">
+                            <BookOpenText className="h-5 w-5" />
+                        </div>
+                        <div className="min-w-0">
+                            <div className="mb-2">
+                                <Badge className="border-emerald-100 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">
+                                    {t("continueTraining")}
+                                </Badge>
+                            </div>
+                            <CardTitle className="text-lg font-semibold text-gray-900">
+                                {existingTrainingLink.title || t("startTraining")}
+                            </CardTitle>
+                        </div>
+                    </div>
                 </CardHeader>
-                <CardFooter>
+                <CardFooter className="flex flex-col items-stretch gap-3 bg-gray-50/60 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex w-full items-center gap-2">
-                        <span className="text-muted-foreground flex-grow text-sm">
+                        <span className="flex-grow text-sm text-gray-500">
                             {deleted ? t("trainingDeleted") : t("trainingStarted")}
                         </span>
-                        <Button variant={deleted ? "secondary" : "default"} disabled={deleted} onClick={handleGo}>
+                        <Button variant={deleted ? "secondary" : "default"} disabled={deleted} onClick={handleGo} className="rounded-full">
                             Go
                         </Button>
                     </div>
@@ -122,14 +134,21 @@ function TrainingCard({
     }
 
     return (
-        <Card className="w-full">
-            <CardHeader>
-                <CardTitle>{t("startTraining")}</CardTitle>
+        <Card className="w-full overflow-hidden border-gray-200/70 bg-white/90 shadow-sm">
+            <CardHeader className="border-b border-gray-100 bg-gradient-to-r from-primary-50/70 via-white to-white">
+                <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary-50 text-primary-600 shadow-sm">
+                        <BookOpenText className="h-5 w-5" />
+                    </div>
+                    <div>
+                        <CardTitle className="text-lg font-semibold text-gray-900">{t("startTraining")}</CardTitle>
+                    </div>
+                </div>
             </CardHeader>
-            <CardFooter>
+            <CardFooter className="flex flex-col items-stretch gap-3 bg-gray-50/60 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex w-full items-center gap-2">
-                    <span className="text-muted-foreground flex-grow text-sm">{t("trainingDescription")}</span>
-                    <Button onClick={onStartTraining}>
+                    <span className="flex-grow text-sm text-gray-500">{t("trainingDescription")}</span>
+                    <Button onClick={onStartTraining} className="rounded-full">
                         {t("start")}
                     </Button>
                 </div>
@@ -204,6 +223,18 @@ export function ResearchCard({
         }
         return undefined;
     }, [msg]);
+    const statusClassName = useMemo(() => {
+        if (hasReport && !reportGenerating) {
+            return "border-emerald-100 bg-emerald-50 text-emerald-700 hover:bg-emerald-100";
+        }
+        if (reportGenerating || isActivelyResearching) {
+            return "border-primary-100 bg-primary-50 text-primary-700 hover:bg-primary-100";
+        }
+        if (isCancelled || researchRunStatus === "cancelled") {
+            return "border-gray-200 bg-gray-100 text-gray-600 hover:bg-gray-200";
+        }
+        return "border-amber-100 bg-amber-50 text-amber-700 hover:bg-amber-100";
+    }, [hasReport, isActivelyResearching, isCancelled, reportGenerating, researchRunStatus]);
     const handleOpen = useCallback(() => {
         if (openResearchId === researchId) {
             closeResearch();
@@ -322,40 +353,44 @@ export function ResearchCard({
 
     return (
         <div className={cn("w-full flex flex-col gap-4", className)}>
-            <Card className="w-full">
-                <CardHeader>
-                    <CardTitle>
-                        <RainbowText
-                            animated={
-                                state !== t("reportGenerated") &&
-                                state !== t("researchCancelled") &&
-                                state !== t("researchFailedNetwork")
-                            }
-                        >
-                            {title !== undefined && title !== "" ? title : t("deepResearch")}
-                        </RainbowText>
-                    </CardTitle>
-                </CardHeader>
-                <CardFooter>
-                    <div className="flex w-full items-center gap-2">
-                        <RollingText className="text-muted-foreground flex-grow text-sm">
-                            {state}
-                        </RollingText>
+            <Card className="w-full overflow-hidden border-gray-200/70 bg-white/90 shadow-sm">
+                <CardHeader className="border-b border-gray-100 bg-gradient-to-r from-primary-50/70 via-white to-white">
+                    <div className="flex items-start justify-between gap-4">
+                        <div className="flex min-w-0 items-start gap-3">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 shadow-lg">
+                                <Sparkles className="h-5 w-5 text-white" />
+                            </div>
+                            <div className="min-w-0">
+                                <CardTitle className="truncate text-lg font-semibold text-gray-900">
+                                    {title !== undefined && title !== "" ? title : t("deepResearch")}
+                                </CardTitle>
+                                <div className="mt-2">
+                                    <Badge className={statusClassName}>{state}</Badge>
+                                </div>
+                            </div>
+                        </div>
                         {showActions && (
-                            <>
-                                <Button
-                                    variant={!openResearchId ? "default" : "outline"}
-                                    onClick={handleOpen}
-                                >
-                                    {researchId !== openResearchId ? t("open") : t("close")}
-                                </Button>
-                            </>
+                            <Button
+                                variant={researchId !== openResearchId ? "default" : "secondary"}
+                                onClick={handleOpen}
+                                className="rounded-full"
+                            >
+                                {researchId !== openResearchId ? t("open") : t("close")}
+                            </Button>
                         )}
+                    </div>
+                </CardHeader>
+                <CardFooter className="flex flex-col items-stretch gap-3 bg-gray-50/60 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="w-full text-sm text-gray-500">
+                        {hasReport && !reportGenerating ? t("postReportGuidanceHeading") : t("singleResearchPerConversation")}
+                    </div>
+                    <div className="flex justify-end gap-2">
                         {isFailedState && (
                             <Button
                                 variant={restartLocked ? "secondary" : "default"}
                                 disabled={restartLocked}
                                 onClick={onRestartResearch}
+                                className="rounded-full"
                             >
                                 {t("restartResearch")}
                             </Button>

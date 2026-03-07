@@ -188,7 +188,7 @@ export function ResearchActivitiesBlock({
   }
 
   return (
-    <div className={cn("flex flex-col gap-2 py-4", className)}>
+    <div className={cn("flex flex-col gap-3 py-4", className)}>
       {groups.map((group, gi) => (
         <ActivityGroupSection
           key={`${group.agent}-${gi}`}
@@ -227,33 +227,39 @@ const ActivityGroupSection = React.memo(({
   const summary = useGroupSummary(group.activityIds, messages, t);
 
   return (
-    <div className="rounded-lg border border-border/50 overflow-hidden">
+    <div className="overflow-hidden rounded-2xl border border-gray-200/70 bg-white shadow-sm">
       {/* Group header — always visible */}
       <button
         type="button"
         onClick={onToggle}
         className={cn(
-          "flex w-full items-center gap-2 px-4 py-2.5 text-left transition-colors",
-          "hover:bg-accent/50",
-          expanded && "bg-accent/30",
+          "flex w-full items-start gap-3 px-4 py-3.5 text-left transition-colors",
+          "hover:bg-gray-50",
+          expanded && "bg-gray-50/80",
         )}
       >
         <ChevronRight
           size={14}
           className={cn(
-            "text-muted-foreground shrink-0 transition-transform duration-200",
+            "mt-1 shrink-0 text-gray-400 transition-transform duration-200",
             expanded && "rotate-90",
           )}
         />
-        {meta.icon}
-        <span className="text-sm font-medium">{meta.label}</span>
-        <span className="text-muted-foreground text-xs ml-auto">{summary}</span>
+        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100">
+          {meta.icon}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <span className="text-sm font-semibold text-gray-900">{meta.label}</span>
+            {summary && <span className="text-xs text-gray-500 sm:text-right">{summary}</span>}
+          </div>
+        </div>
       </button>
 
       {/* Group content — only rendered when expanded */}
       {expanded && (
-        <div className="border-t border-border/50">
-          <ul className="flex flex-col divide-y divide-border/50">
+        <div className="border-t border-gray-100 bg-gray-50/50">
+          <ul className="flex flex-col divide-y divide-gray-100">
             {group.activityIds.map((activityId) => (
               <ActivityItem key={activityId} messageId={activityId} />
             ))}
@@ -270,7 +276,7 @@ const ActivityItem = React.memo(({ messageId }: { messageId: string }) => {
   if (!message || !hasVisibleContent(message)) return null;
 
   return (
-    <li className="py-2">
+    <li className="px-2 py-2.5 sm:px-3">
       <ActivityMessage messageId={messageId} />
       <ActivityListItem messageId={messageId} />
     </li>
@@ -287,8 +293,20 @@ const ActivityMessage = React.memo(({ messageId }: { messageId: string }) => {
   if (!cleanContent) return null;
 
   return (
-    <div className="px-4 py-2">
-      <Markdown animated checkLinkCredibility>
+    <div className="rounded-xl border border-gray-200/80 bg-white px-4 py-3 shadow-sm">
+      <Markdown
+        className="prose-slate max-w-none prose-sm
+          prose-p:my-2 prose-p:leading-7 prose-p:text-gray-700
+          prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-headings:text-gray-900
+          prose-ul:my-3 prose-ul:list-disc prose-ul:pl-6
+          prose-ol:my-3 prose-ol:list-decimal prose-ol:pl-6
+          prose-li:my-1.5 prose-li:leading-7 prose-li:text-gray-700
+          prose-code:rounded prose-code:bg-gray-100 prose-code:px-1.5 prose-code:py-0.5 prose-code:text-xs prose-code:text-gray-800 prose-code:before:content-none prose-code:after:content-none
+          prose-pre:my-3 prose-pre:rounded-xl prose-pre:bg-gray-900 prose-pre:p-4 prose-pre:text-gray-100
+          prose-a:no-underline prose-hr:my-4 prose-strong:text-gray-900"
+        animated
+        checkLinkCredibility
+      >
         {cleanContent}
       </Markdown>
     </div>

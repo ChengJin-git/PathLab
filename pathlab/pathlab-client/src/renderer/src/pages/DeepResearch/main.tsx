@@ -140,15 +140,15 @@ export default function Main() {
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-gray-50">
-      <div className="mx-auto flex w-full max-w-[1500px] px-4 pt-3">
+      <div className="mx-auto flex w-full max-w-[1500px] px-4 pt-4">
         <button
           type="button"
           onClick={handleBackToAIChat}
           aria-label={t("deepResearchPage.backToAIChat")}
-          className="inline-flex items-center gap-2 rounded-lg px-1 py-1 text-sm font-medium text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-200"
+          className="inline-flex items-center gap-2 px-1 py-1 text-sm font-medium text-gray-500 transition-colors hover:text-gray-900"
         >
           <ArrowLeft className="h-4 w-4" />
-          {t("deepResearchPage.backToAIChat")}
+          <span>{t("deepResearchPage.backToAIChat")}</span>
         </button>
       </div>
       <div className="flex-1 flex flex-col min-w-0 h-full relative z-10 overflow-hidden">
@@ -160,8 +160,10 @@ export default function Main() {
         >
           {showConversationHydration ? (
             <div className="flex w-full max-w-4xl items-center justify-center">
-              <div className="flex min-h-[320px] w-full flex-col items-center justify-center rounded-3xl border border-gray-200 bg-white/80 px-6 py-12 text-center shadow-sm">
-                <Loader2 className="mb-4 h-8 w-8 animate-spin text-primary-500" />
+              <div className="flex min-h-[320px] w-full flex-col items-center justify-center rounded-[28px] border border-gray-200/70 bg-white/85 px-6 py-12 text-center shadow-sm backdrop-blur-sm">
+                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50 text-primary-600 shadow-sm">
+                  <Loader2 className="h-7 w-7 animate-spin" />
+                </div>
                 <div className="text-base font-medium text-gray-900">{t("deepResearchPage.loadingDeepResearch")}</div>
                 <div className="mt-2 text-sm text-gray-500">{t("deepResearchPage.restoringConversation")}</div>
               </div>
@@ -171,15 +173,15 @@ export default function Main() {
               <MessagesBlock
                 className={cn(
                   "min-w-0 transition-all duration-300 ease-out",
-                  !doubleColumnMode && "w-full max-w-4xl",
-                  doubleColumnMode && "w-[42%] min-w-[520px]",
+                  !doubleColumnMode && "w-full max-w-[980px]",
+                  doubleColumnMode && "w-[43%] min-w-[520px] max-w-[720px]",
                 )}
               />
               <ResearchBlock
                 className={cn(
                   "min-w-0 transition-all duration-300 ease-out",
                   !doubleColumnMode && "pointer-events-none w-0 scale-95 opacity-0",
-                  doubleColumnMode && "h-[calc(100%-4rem)] w-[58%] self-start",
+                  doubleColumnMode && "h-full w-[57%] self-stretch",
                 )}
                 researchId={openResearchId}
               />

@@ -1193,6 +1193,14 @@
       "description": "This conversation has become too long for the AI to process effectively. To ensure the best quality responses, please start a new conversation.",
       "newResearch": "New Research"
     },
+    "researchHandoff": {
+      "reportContextSummary": "Research report context attached (collapsed by default)",
+      "eyebrow": "Source deep research",
+      "title": "Attached research card",
+      "description": "This reply is grounded in a deep research result. You can jump back to the original research card to review the report and activity log.",
+      "open": "Open research card",
+      "openHint": "View the source report and activity trail"
+    },
     "disclaimer": "PathLab Agent can make mistakes. Consider checking important information.",
     "uploadedExcelWarning": "\n\n📎 **Uploaded Excel: {{name}}**\n **Warning: This file has multiple sheets ({{sheets}})**\nPlease save only the data sheet as a separate CSV file and re-upload.",
     "uploadedExcelError": "\n\n📎 **Uploaded Excel: {{name}}**\n **Error: Failed to parse file** - {{error}}",

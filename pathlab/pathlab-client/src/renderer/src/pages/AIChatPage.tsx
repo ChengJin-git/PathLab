@@ -2045,9 +2045,7 @@ export default function AIChatPage() {
                                   {reportContext && (
                                     <details className="mt-3 rounded-xl border border-white/30 bg-white/10 px-3 py-2">
                                       <summary className="cursor-pointer select-none text-xs font-medium text-white/95">
-                                        {t('aiChat.researchHandoff.reportContextSummary', {
-                                          defaultValue: 'Research report context attached (hidden by default)'
-                                        })}
+                                        {t('aiChat.researchHandoff.reportContextSummary')}
                                       </summary>
                                       <div className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words pr-1 text-xs leading-5 text-white/90">
                                         {reportContext}
@@ -2055,11 +2053,22 @@ export default function AIChatPage() {
                                     </details>
                                   )}
                                   {researchJump && (
-                                    <div className="mt-3 rounded-xl border border-white/30 bg-white/10 p-3">
-                                      <div className="mb-2 text-[11px] font-medium text-white/80">
-                                        {t('aiChat.researchHandoff.jumpCardTitle', {
-                                          defaultValue: 'Source deep research'
-                                        })}
+                                    <div className="mt-3 rounded-2xl border border-white/20 bg-white/12 p-3.5 backdrop-blur-sm">
+                                      <div className="flex items-start gap-3">
+                                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/16 text-white shadow-sm ring-1 ring-white/10">
+                                          <Sparkles className="h-4 w-4" />
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                          <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/60">
+                                            {t('aiChat.researchHandoff.eyebrow')}
+                                          </div>
+                                          <div className="mt-1 text-sm font-semibold text-white">
+                                            {t('aiChat.researchHandoff.title')}
+                                          </div>
+                                          <p className="mt-1 text-xs leading-5 text-white/72">
+                                            {t('aiChat.researchHandoff.description')}
+                                          </p>
+                                        </div>
                                       </div>
                                       <button
                                         type="button"
@@ -2074,13 +2083,16 @@ export default function AIChatPage() {
                                             }
                                           })
                                         }}
-                                        className="flex w-full items-center justify-between rounded-lg bg-white/20 px-3 py-2 text-left text-sm font-medium text-white transition-colors hover:bg-white/30"
+                                        className="mt-3 flex w-full items-center justify-between rounded-xl border border-white/18 bg-white/14 px-3.5 py-3 text-left transition-all hover:bg-white/20"
                                       >
-                                        <span className="truncate">
-                                          {researchJump.title || t('aiChat.researchHandoff.jumpButton', {
-                                            defaultValue: 'Open research card'
-                                          })}
-                                        </span>
+                                        <div className="min-w-0">
+                                          <div className="truncate text-sm font-medium text-white">
+                                            {researchJump.title || t('aiChat.researchHandoff.open')}
+                                          </div>
+                                          <div className="mt-0.5 text-xs text-white/65">
+                                            {t('aiChat.researchHandoff.openHint')}
+                                          </div>
+                                        </div>
                                         <ChevronRight className="ml-2 h-4 w-4 flex-shrink-0" />
                                       </button>
                                     </div>

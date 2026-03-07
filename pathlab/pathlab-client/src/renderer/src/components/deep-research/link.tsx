@@ -4,7 +4,6 @@ import { useStore, useToolCalls } from "../../lib/deep-research/store";
 import { parseJSON } from "../../lib/deep-research/utils/json";
 import { Tooltip } from "./tooltip";
 import { LINK_STYLE, linkHoverHandlers } from "./citation";
-import { WarningFilled } from "@ant-design/icons";
 
 export const Link = ({
   href,
@@ -57,23 +56,36 @@ export const Link = ({
   };
 
   const t = useTranslations("common");
+  const linkNode = (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={handleClick}
+      style={{
+        ...LINK_STYLE,
+        borderRadius: "2px",
+        ...(isCredible
+          ? {}
+          : {
+            color: "#b45309",
+            textDecorationColor: "rgba(217, 119, 6, 0.45)",
+            textDecorationStyle: "dotted",
+          }),
+      }}
+      {...linkHoverHandlers}
+    >
+      {children}
+    </a>
+  );
+
   return (
-    <span style={{ display: "inline" }}>
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={handleClick}
-        style={{ ...LINK_STYLE, borderRadius: "2px" }}
-        {...linkHoverHandlers}
-      >
-        {children}
-      </a>
-      {!isCredible && (
-        <Tooltip title={t("linkNotReliable")} delayDuration={300}>
-          <WarningFilled className="text-sx transition-colors hover:!text-yellow-500" />
-        </Tooltip>
-      )}
-    </span>
+    !isCredible ? (
+      <Tooltip title={t("linkNotReliable")} delayDuration={300}>
+        <span style={{ display: "inline" }}>{linkNode}</span>
+      </Tooltip>
+    ) : (
+      <span style={{ display: "inline" }}>{linkNode}</span>
+    )
   );
 };

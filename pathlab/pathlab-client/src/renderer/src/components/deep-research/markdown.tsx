@@ -18,16 +18,51 @@ import { katexOptions } from "../../lib/deep-research/markdown/katex";
 import { autoFixMarkdown, normalizeMathForDisplay } from "../../lib/deep-research/utils/markdown";
 import { cn } from "../../lib/utils";
 
+import InlineCitation from "../chat/InlineCitation";
 import Image from "./image";
 import { Tooltip } from "./tooltip";
 import { Link } from "./link";
 import { CitationLink } from "./citation";
 import type { Citation } from "../../lib/deep-research/messages";
 
+function extractNodeText(node: React.ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return node.map(extractNodeText).join("");
+  }
+  if (node && typeof node === "object" && "props" in node) {
+    return extractNodeText((node as { props?: { children?: React.ReactNode } }).props?.children);
+  }
+  return "";
+}
+
+function parseInlineCitationText(text: string): { index: number; pageInfo?: string } | null {
+  const normalizedText = text.replace(/\u200b/g, "").trim();
+  const pageInfoMatch = normalizedText.match(/p\.?\s*([0-9,\-\s]+)/i);
+  const pageInfo = pageInfoMatch ? `p.${pageInfoMatch[1].trim()}` : undefined;
+
+  const indexMatch =
+    normalizedText.match(/^\[\[(\d+)(?:\s*,\s*p\.?[^\]]+)?\]\]$/) ??
+    normalizedText.match(/^\[(\d+)(?:\s*,\s*p\.?[^\]]+)?\]$/) ??
+    normalizedText.match(/^\^?(\d+)\^?$/);
+
+  if (!indexMatch) {
+    return null;
+  }
+
+  return {
+    index: Number(indexMatch[1]),
+    pageInfo,
+  };
+}
+
 export function Markdown({
   className,
   children,
   style,
+  components: customComponents,
   enableCopy,
   animated = false,
   checkLinkCredibility = false,
@@ -69,6 +104,8 @@ export function Markdown({
     return {
       a: ({ href, children }) => {
         const hrefStr = href ?? "";
+        const childrenText = extractNodeText(children);
+        const inlineCitation = parseInlineCitationText(childrenText);
 
         // Handle citation anchor targets (rendered in Reference list)
         // Format: [[n]](#citation-target-n)
@@ -93,36 +130,39 @@ export function Markdown({
         // Format: [[n]](#ref-n), [n](#ref1), [n](#1)
         const linkMatch = hrefStr.match(/^#(?:ref-?)?(\d+)$/);
         if (linkMatch) {
+          const index = Number(linkMatch[1]);
+          const citation = citations[index - 1];
+
           return (
-            <a
-              href={hrefStr}
-              style={{
-                color: "#667eea",
-                cursor: "pointer",
-                textDecoration: "none",
-                borderBottom: "1px dashed rgba(102, 126, 234, 0.4)",
-                transition: "background-color 0.15s, border-color 0.15s",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = "rgba(102, 126, 234, 0.08)";
-                e.currentTarget.style.borderBottomColor = "#667eea";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = "transparent";
-                e.currentTarget.style.borderBottomColor = "rgba(102, 126, 234, 0.4)";
-              }}
-              onClick={(e) => {
-                e.preventDefault();
-                const targetId = `ref-${linkMatch[1]}`;
-                const element = document.getElementById(targetId);
-                if (element) {
-                  element.scrollIntoView({ behavior: "smooth", block: "start" });
-                }
-              }}
-            >
-              {children}
-            </a>
+            <InlineCitation
+              index={index}
+              title={citation?.title}
+              source={citation?.domain}
+              snippet={citation?.content_snippet ?? citation?.description}
+              pageInfo={inlineCitation?.pageInfo}
+              url={citation?.url}
+            />
           );
+        }
+
+        if (inlineCitation && citations.length > 0) {
+          const matchedCitationIndex = citationMap.get(hrefStr);
+          const fallbackCitationIndex = inlineCitation.index - 1;
+          const resolvedCitationIndex = matchedCitationIndex ?? fallbackCitationIndex;
+          const citation = citations[resolvedCitationIndex];
+
+          if (citation || (inlineCitation.index >= 1 && inlineCitation.index <= citations.length)) {
+            return (
+              <InlineCitation
+                index={inlineCitation.index}
+                title={citation?.title}
+                source={citation?.domain}
+                snippet={citation?.content_snippet ?? citation?.description}
+                pageInfo={inlineCitation.pageInfo}
+                url={citation?.url ?? hrefStr}
+              />
+            );
+          }
         }
 
         // If we have citation data, use CitationLink for enhanced display
@@ -134,9 +174,6 @@ export function Markdown({
             // Heuristic to determine if this is a citation target (in Reference list)
             // vs a citation link (in text).
             // Targets are usually the full title, while links are numbers like [1].
-            const childrenText = Array.isArray(children)
-              ? children.join("")
-              : String(children);
             // Heuristic: inline citation text usually looks like a numeric marker
             // rather than a full title. We treat the following as "inline":
             //   "1", "[1]", "^1^", "[^1]" (with optional surrounding whitespace).
@@ -144,8 +181,7 @@ export function Markdown({
             //   - a bracketed number: "[1]"
             //   - a caret-style number: "1", "^1", "1^", "^1^"
             // and ignores surrounding whitespace.
-            const inlineCitationPattern = /^\s*(?:\[\d+\]|\^?\d+\^?)\s*$/;
-            const isInline = inlineCitationPattern.test(childrenText);
+            const isInline = inlineCitation != null;
 
             return (
               <CitationLink
@@ -190,9 +226,9 @@ export function Markdown({
           <table className="min-w-full">{children}</table>
         </div>
       ),
-      ...(props.components || {}),
+      ...(customComponents || {}),
     };
-  }, [checkLinkCredibility, citations, citationMap, props.components]);
+  }, [checkLinkCredibility, citations, citationMap, customComponents]);
 
   const rehypePlugins = useMemo<NonNullable<ReactMarkdownOptions["rehypePlugins"]>>(() => {
     const plugins: NonNullable<ReactMarkdownOptions["rehypePlugins"]> = [[
