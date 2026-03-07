@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Cloud, Server, Key, Info, CheckCircle, Mic, Search, Power, Globe } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
@@ -347,27 +347,6 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
 	          <div className="grid gap-3">
 	            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
 	              <CardHeader className="pb-1 p-3">
-	                <CardDescription className="text-xs text-slate-500 space-y-1">
-                    <div>{t('settings.general.forWebSearch')}</div>
-                    <div className="flex items-center gap-3">
-                      <a
-                        href="https://exa.ai"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:text-blue-700 font-medium"
-                      >
-                        Exa {t('common.getKey')}
-                      </a>
-                      <a
-                        href="https://app.tavily.com/home"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:text-blue-700 font-medium"
-                      >
-                        Tavily {t('common.getKey')}
-                      </a>
-                    </div>
-	                </CardDescription>
 	              </CardHeader>
 	              <CardContent className="space-y-2.5 p-3 pt-0">
                 <div className="space-y-1">
