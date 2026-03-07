@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
 import { LogOut, Settings, Camera, Trash2, User as UserIcon, Menu } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useToast } from '../contexts/ToastContext'
@@ -259,8 +260,19 @@ export default function Layout({ children }: LayoutProps) {
       {isAIChatPage ? (
         <div className="flex-1 flex overflow-hidden">
           <ConversationSidebar />
-          <main className="flex-1 min-w-0 overflow-hidden">
-            {children}
+          <main className="flex-1 min-w-0 overflow-hidden relative">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={location.pathname.split('/')[1]}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15, ease: 'easeInOut' }}
+                className="h-full"
+              >
+                {children}
+              </motion.div>
+            </AnimatePresence>
           </main>
         </div>
       ) : (

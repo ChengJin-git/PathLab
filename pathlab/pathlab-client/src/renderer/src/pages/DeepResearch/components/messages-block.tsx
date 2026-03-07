@@ -76,7 +76,7 @@ export function MessagesBlock({ className }: { className?: string }) {
           <ConversationStarter />
         )}
       </div>
-      <div className="pointer-events-none fixed bottom-6 left-0 right-0 z-30 px-4">
+      <div className="pointer-events-none fixed bottom-6 left-0 right-0 z-30 px-4 lg:left-[var(--sidebar-width,288px)] transition-[left] duration-300 ease-in-out">
         <div className="pointer-events-auto mx-auto max-w-4xl">
           <InputBox
             className="w-full"
@@ -86,7 +86,7 @@ export function MessagesBlock({ className }: { className?: string }) {
             onCancel={handleCancel}
             onRemoveFeedback={handleRemoveFeedback}
           />
-          <div className="mt-4 pb-2 text-center text-xs text-gray-400">
+          <div className="mt-2 text-center text-xs text-gray-400/80 font-medium px-4 leading-relaxed">
             {tGlobal("aiChat.disclaimer")}
           </div>
         </div>

@@ -37,9 +37,14 @@ export default function ConversationSidebar() {
   // Derive current conversation ID from URL
   const currentConversationId = urlConversationId || null
 
-  // Persist sidebar state
+  // Persist sidebar state & broadcast width via CSS variable
   useEffect(() => {
     localStorage.setItem('ai-chat-sidebar-open', String(showHistory))
+    // Expose sidebar width so fixed-position input boxes can offset their left edge
+    document.documentElement.style.setProperty(
+      '--sidebar-width',
+      showHistory ? '288px' : '56px',   // w-72 = 288px, w-14 = 56px
+    )
   }, [showHistory])
 
   // Listen for mobile sidebar toggle from Layout header hamburger button

@@ -1,7 +1,7 @@
 // Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 // SPDX-License-Identifier: MIT
 
-import { Loader2, Mic, MicOff, Paperclip, Pencil, Send, X } from "lucide-react";
+import { Loader2, Mic, MicOff, Paperclip, Pencil, Send, Square, X } from "lucide-react";
 import { type ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import MessageInput, {
@@ -177,11 +177,13 @@ export function InputBox({
           "relative flex min-h-[56px] items-center border bg-white/80 py-1.5 pl-4 pr-[104px] sm:pr-[120px] backdrop-blur-xl transition-all duration-300 rounded-[28px]",
           feedback
             ? "border-amber-300 shadow-[0_8px_32px_rgba(0,0,0,0.12)]"
-            : "border-gray-200/50 hover:border-gray-300/80 hover:shadow-[0_8px_40px_rgba(0,0,0,0.15)] shadow-[0_8px_32px_rgba(0,0,0,0.12)]",
+            : (realtimeIsRecording || realtimeIsConnecting || isVoiceSessionActive)
+              ? "border-primary-300 shadow-[0_0_0_4px_rgba(102,126,234,0.15)] bg-white/90"
+              : "border-gray-200/50 hover:border-gray-300/80 hover:shadow-[0_8px_40px_rgba(0,0,0,0.15)] shadow-[0_8px_32px_rgba(0,0,0,0.12)]",
         )}
       >
         <MessageInput
-          className="h-[44px] w-full px-0 pt-0"
+          className="min-h-[52px] w-full px-0 pt-0"
           placeholder={feedback ? "Describe how you'd like to modify the plan..." : "Describe your research task..."}
           ref={inputRef}
           loading={loading}
@@ -204,7 +206,7 @@ export function InputBox({
           onChange={handleFileSelect}
           className="hidden"
         />
-        <div className="absolute right-1.5 bottom-1.5 flex items-center gap-1 sm:gap-1.5">
+        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1 sm:gap-1.5">
           <button
             type="button"
             className="rounded-full p-2 text-gray-400 transition-all hover:bg-gray-100 hover:text-gray-600 active:scale-95 sm:p-2.5 disabled:opacity-50"
@@ -217,10 +219,14 @@ export function InputBox({
           <button
             type="button"
             className={cn(
-              "rounded-full p-2 transition-all active:scale-95 sm:p-2.5",
-              realtimeIsRecording || realtimeIsConnecting || isVoiceSessionActive
-                ? "bg-primary-500 text-white shadow-md"
-                : "text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50",
+              "rounded-full p-2 transition-all duration-300 active:scale-95 sm:p-2.5",
+              realtimeIsRecording
+                ? "bg-red-50 text-red-500 hover:bg-red-100"
+                : realtimeIsConnecting
+                  ? "bg-primary-50 text-primary-500"
+                  : isVoiceSessionActive
+                    ? "bg-primary-500 text-white shadow-md"
+                    : "text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:opacity-50",
             )}
             title="Voice input"
             onClick={toggleVoiceSession}
@@ -228,29 +234,37 @@ export function InputBox({
           >
             {realtimeIsConnecting ? (
               <Loader2 className="h-4 w-4 animate-spin sm:h-5 sm:w-5" />
-            ) : realtimeIsRecording || isVoiceSessionActive ? (
+            ) : realtimeIsRecording ? (
+              <Square className="h-3.5 w-3.5 sm:h-4 sm:w-4" fill="currentColor" />
+            ) : isVoiceSessionActive ? (
               <MicOff className="h-4 w-4 sm:h-5 sm:w-5" />
             ) : (
               <Mic className="h-4 w-4 sm:h-5 sm:w-5" />
             )}
           </button>
-          <button
-            type="button"
-            className={cn(
-              "rounded-full p-2 sm:p-2.5 transition-all duration-300 shadow-sm",
-              (!responding && currentPrompt.trim().length === 0)
-                ? "cursor-not-allowed bg-gray-100 text-gray-300"
-                : "bg-primary-600 text-white shadow-md hover:bg-primary-700 active:scale-95",
-            )}
-            disabled={!responding && currentPrompt.trim().length === 0}
-            onClick={() => inputRef.current?.submit()}
-          >
-            {responding ? (
-              <div className="h-4 w-4 rounded-sm bg-gray-500 opacity-80" />
-            ) : (
+          {responding ? (
+            <button
+              type="button"
+              className="rounded-full p-2 sm:p-2.5 transition-all duration-300 shadow-sm bg-gray-800 text-white hover:bg-gray-900 shadow-md active:scale-95"
+              onClick={() => onCancel?.()}
+            >
+              <Square className="h-3.5 w-3.5 sm:h-4 sm:w-4" fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={cn(
+                "rounded-full p-2 sm:p-2.5 transition-all duration-300 shadow-sm",
+                currentPrompt.trim().length === 0
+                  ? "cursor-not-allowed bg-gray-100 text-gray-300"
+                  : "bg-primary-600 text-white shadow-md hover:bg-primary-700 active:scale-95",
+              )}
+              disabled={currentPrompt.trim().length === 0}
+              onClick={() => inputRef.current?.submit()}
+            >
               <Send className="h-4 w-4 sm:h-5 sm:w-5" />
-            )}
-          </button>
+            </button>
+          )}
         </div>
       </div>
     </div>

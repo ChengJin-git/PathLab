@@ -13,21 +13,22 @@
 .deep-research-editor .prose.inline-editor .is-empty.placeholder {
   display: block;
   opacity: 0.65;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 /* Keep Deep Research input text vertically centered in the single-line chat box. */
 .deep-research-editor .ProseMirror {
-  min-height: 44px;
+  min-height: 52px;
   display: flex;
   align-items: center;
-  line-height: 1.45;
+  font-size: 15px;
+  line-height: 1.625;
 }
 
 .deep-research-editor .ProseMirror p {
   width: 100%;
   margin: 0;
-  line-height: 1.45;
+  line-height: 1.625;
 }
 
 .deep-research-editor .ProseMirror::-webkit-scrollbar {
@@ -56,8 +57,7 @@
 
 .deep-research-editor .ProseMirror .is-editor-empty:first-child::before,
 .deep-research-editor .ProseMirror p.is-empty::before {
-  line-height: 1.45;
-  transform: translateY(-1px);
+  line-height: 1.625;
 }
 
 .ProseMirror .mention {
