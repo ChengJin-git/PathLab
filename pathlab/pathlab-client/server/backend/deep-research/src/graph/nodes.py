@@ -32,6 +32,11 @@ from src.tools import (
 from src.utils.context_manager import ContextManager, validate_message_content
 from src.utils.json_utils import repair_json_output, sanitize_tool_response
 from src.graph.stop_control import is_stop_requested
+from src.graph.research_validation import (
+    build_insufficient_research_summary,
+    build_research_retry_feedback,
+    summarize_research_evidence,
+)
 
 from .types import State
 from .utils import (
@@ -264,6 +269,9 @@ def preserve_state_meta_fields(state: State) -> dict:
         "max_clarification_rounds": state.get("max_clarification_rounds", 3),
         "clarification_rounds": state.get("clarification_rounds", 0),
         "resources": state.get("resources", []),
+        "research_step_attempts": state.get("research_step_attempts", {}),
+        "research_step_valid_hits": state.get("research_step_valid_hits", {}),
+        "research_validation_feedback": state.get("research_validation_feedback", {}),
         "stop_requested": state.get("stop_requested", False),
         "stop_reason": state.get("stop_reason", ""),
     }
@@ -1319,10 +1327,12 @@ async def _execute_agent_step(
 
     # Find the first unexecuted step
     current_step = None
+    current_step_index = -1
     completed_steps = []
     for idx, step in enumerate(current_plan.steps):
         if not step.execution_res:
             current_step = step
+            current_step_index = idx
             logger.debug(f"[_execute_agent_step] Found unexecuted step at index {idx}: {step.title}")
             break
         else:
@@ -1355,6 +1365,10 @@ async def _execute_agent_step(
     # system message stays at position 0 throughout the agent's tool loop.
     configurable = Configuration.from_runnable_config(config) if config else None
     locale = state.get("locale", "en-US")
+    current_step_key = f"{current_step_index}:{current_step.title}"
+    validation_feedback = (
+        state.get("research_validation_feedback", {}) or {}
+    ).get(current_step_key)
     system_prompt_text = get_system_prompt_template(
         agent_name, state, configurable, locale
     )
@@ -1389,6 +1403,8 @@ async def _execute_agent_step(
                 content="IMPORTANT: DO NOT include inline citations in the text. Instead, track all sources and include a References section at the end using link reference format. Include an empty line between each citation for better readability. Use this format for each reference:\n- [Source Title](URL)\n\n- [Another Source](URL)",
             )
         )
+        if validation_feedback:
+            agent_input["messages"].append(HumanMessage(content=validation_feedback))
 
     # Invoke the agent
     default_recursion_limit = 25
@@ -1565,10 +1581,6 @@ async def _execute_agent_step(
                     "Skipping user-facing warning and keeping this as an internal log only."
                 )
 
-    # Update the step with the execution result
-    current_step.execution_res = response_content
-    logger.info(f"Step '{current_step.title}' execution completed by {agent_name}")
-
     # Include all messages from agent result to preserve intermediate tool calls/results
     # This ensures multiple web_search calls all appear in the stream, not just the final result
     agent_messages = result.get("messages", [])
@@ -1596,6 +1608,68 @@ async def _execute_agent_step(
             f"Total citations: {len(merged_citations)}"
         )
 
+    updated_attempts = dict(state.get("research_step_attempts", {}) or {})
+    updated_valid_hits = dict(state.get("research_step_valid_hits", {}) or {})
+    updated_feedback = dict(state.get("research_validation_feedback", {}) or {})
+
+    if agent_name == "researcher":
+        minimum_valid_hits = int(getattr(configurable, "min_valid_research_hits", 3) or 3)
+        max_retry_rounds = int(getattr(configurable, "max_research_retry_rounds", 2) or 2)
+        evidence_summary = summarize_research_evidence(agent_messages)
+        total_valid_hits = updated_valid_hits.get(current_step_key, 0) + evidence_summary.valid_hits
+        if total_valid_hits < minimum_valid_hits:
+            next_attempt = updated_attempts.get(current_step_key, 0) + 1
+            updated_attempts[current_step_key] = next_attempt
+            updated_valid_hits[current_step_key] = total_valid_hits
+            logger.warning(
+                "[VALIDATION] Research evidence insufficient for step '%s': %s/%s cumulative valid hits (attempt %s/%s)",
+                current_step.title,
+                total_valid_hits,
+                minimum_valid_hits,
+                next_attempt,
+                max_retry_rounds,
+            )
+            if next_attempt <= max_retry_rounds:
+                updated_feedback[current_step_key] = build_research_retry_feedback(
+                    summary=evidence_summary,
+                    minimum_valid_hits=minimum_valid_hits,
+                    locale=locale,
+                )
+                return Command(
+                    update={
+                        **preserve_state_meta_fields(state),
+                        "messages": agent_messages,
+                        "observations": observations,
+                        "citations": merged_citations,
+                        "research_step_attempts": updated_attempts,
+                        "research_step_valid_hits": updated_valid_hits,
+                        "research_validation_feedback": updated_feedback,
+                    },
+                    goto="research_team",
+                )
+
+            updated_feedback.pop(current_step_key, None)
+            current_step.execution_res = (
+                build_insufficient_research_summary(
+                    summary=evidence_summary,
+                    minimum_valid_hits=minimum_valid_hits,
+                    locale=locale,
+                )
+                + "\n\n"
+                + response_content
+            )
+            updated_attempts.pop(current_step_key, None)
+            updated_valid_hits.pop(current_step_key, None)
+        else:
+            updated_feedback.pop(current_step_key, None)
+            current_step.execution_res = response_content
+            updated_attempts.pop(current_step_key, None)
+            updated_valid_hits.pop(current_step_key, None)
+    else:
+        current_step.execution_res = response_content
+
+    logger.info(f"Step '{current_step.title}' execution completed by {agent_name}")
+
     if _is_stop_requested(state, config):
         logger.info(f"[_execute_agent_step] Stop requested after {agent_name}; handoff to reporter.")
         return Command(
@@ -1604,6 +1678,9 @@ async def _execute_agent_step(
                 "messages": agent_messages,
                 "observations": observations + [response_content],
                 "citations": merged_citations,
+                "research_step_attempts": updated_attempts,
+                "research_step_valid_hits": updated_valid_hits,
+                "research_validation_feedback": updated_feedback,
                 "stop_requested": True,
                 "stop_reason": state.get("stop_reason", "Stopped by user"),
             },
@@ -1616,6 +1693,9 @@ async def _execute_agent_step(
             "messages": agent_messages,
             "observations": observations + [response_content],
             "citations": merged_citations,  # Store merged citations based on existing state and new tool results
+            "research_step_attempts": updated_attempts,
+            "research_step_valid_hits": updated_valid_hits,
+            "research_validation_feedback": updated_feedback,
         },
         goto="research_team",
     )

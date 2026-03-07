@@ -3,7 +3,7 @@
 
 import os
 import httpx
-from typing import Optional
+from typing import Any, Optional
 from src.config import PATHLAB_API_URL
 
 import logging
@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 _cache = {
     "datasets": None,
     "models": None,
+    "datasets_meta": None,
+    "models_meta": None,
     "feature_extractors": None,
     "aggregators": None,
 }
@@ -24,7 +26,11 @@ def get_pathlab_api_url() -> str:
     return os.getenv("PATHLAB_API_URL", PATHLAB_API_URL or "http://localhost:8765")
 
 
-async def fetch_datasets(token: Optional[str] = None) -> list[dict]:
+def _build_result(status: str, items: list[dict], summary: str, **extra: Any) -> dict[str, Any]:
+    return {"status": status, "items": items, "summary": summary, **extra}
+
+
+async def fetch_datasets_result(token: Optional[str] = None) -> dict[str, Any]:
     """
     Fetch available datasets from PathLab API.
     
@@ -46,7 +52,7 @@ async def fetch_datasets(token: Optional[str] = None) -> list[dict]:
                 data = response.json()
                 datasets = data.get("items", [])
                 # Format for prompt display
-                return [
+                items = [
                     {
                         "name": ds.get("dataset_name", "Unknown"),
                         "file_count": ds.get("file_count", 0),
@@ -55,15 +61,36 @@ async def fetch_datasets(token: Optional[str] = None) -> list[dict]:
                     }
                     for ds in datasets
                 ]
+                return _build_result(
+                    "success",
+                    items,
+                    f"Loaded {len(items)} dataset(s) from PathLab.",
+                    http_status=response.status_code,
+                )
             else:
                 logger.warning(f"Failed to fetch datasets: {response.status_code}")
-                return []
+                return _build_result(
+                    "error",
+                    [],
+                    f"PathLab dataset API returned HTTP {response.status_code}.",
+                    reason="http_error",
+                    http_status=response.status_code,
+                )
     except Exception as e:
         logger.error(f"Error fetching datasets from PathLab: {e}")
-        return []
+        return _build_result(
+            "error",
+            [],
+            f"Failed to fetch datasets from PathLab: {e}",
+            reason="request_failed",
+        )
 
 
-async def fetch_trained_models(token: Optional[str] = None) -> list[dict]:
+async def fetch_datasets(token: Optional[str] = None) -> list[dict]:
+    return (await fetch_datasets_result(token))["items"]
+
+
+async def fetch_trained_models_result(token: Optional[str] = None) -> dict[str, Any]:
     """
     Fetch trained models from PathLab API.
     
@@ -84,7 +111,7 @@ async def fetch_trained_models(token: Optional[str] = None) -> list[dict]:
             if response.status_code == 200:
                 data = response.json()
                 models = data.get("items", [])
-                return [
+                items = [
                     {
                         "name": m.get("model_name", "Unknown"),
                         "task_type": m.get("task_type", "classification"),
@@ -94,12 +121,33 @@ async def fetch_trained_models(token: Optional[str] = None) -> list[dict]:
                     }
                     for m in models
                 ]
+                return _build_result(
+                    "success",
+                    items,
+                    f"Loaded {len(items)} model(s) from PathLab.",
+                    http_status=response.status_code,
+                )
             else:
                 logger.warning(f"Failed to fetch models: {response.status_code}")
-                return []
+                return _build_result(
+                    "error",
+                    [],
+                    f"PathLab model API returned HTTP {response.status_code}.",
+                    reason="http_error",
+                    http_status=response.status_code,
+                )
     except Exception as e:
         logger.error(f"Error fetching models from PathLab: {e}")
-        return []
+        return _build_result(
+            "error",
+            [],
+            f"Failed to fetch models from PathLab: {e}",
+            reason="request_failed",
+        )
+
+
+async def fetch_trained_models(token: Optional[str] = None) -> list[dict]:
+    return (await fetch_trained_models_result(token))["items"]
 
 
 def get_supported_feature_extractors() -> list[dict]:
@@ -238,8 +286,12 @@ def get_aggregator_count() -> int:
 
 async def refresh_pathlab_cache(token: Optional[str] = None):
     """Refresh the PathLab data cache."""
-    _cache["datasets"] = await fetch_datasets(token)
-    _cache["models"] = await fetch_trained_models(token)
+    datasets_result = await fetch_datasets_result(token)
+    models_result = await fetch_trained_models_result(token)
+    _cache["datasets"] = datasets_result["items"]
+    _cache["models"] = models_result["items"]
+    _cache["datasets_meta"] = datasets_result
+    _cache["models_meta"] = models_result
     _cache["feature_extractors"] = get_supported_feature_extractors()
     _cache["aggregators"] = get_supported_mil_aggregators()
     logger.info(f"PathLab cache refreshed: {len(_cache['datasets'])} datasets, {len(_cache['models'])} models")

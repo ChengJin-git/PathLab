@@ -607,6 +607,9 @@ async def _process_message_chunk(message_chunk, message_metadata, thread_id, age
         logger.debug(f"[{safe_thread_id}] Processing ToolMessage")
         tool_call_id = message_chunk.tool_call_id
         event_stream_message["tool_call_id"] = tool_call_id
+        tool_status = getattr(message_chunk, "status", None)
+        if tool_status:
+            event_stream_message["tool_status"] = tool_status
         if event_stream_message.get("content") in (None, ""):
             logger.warning(
                 f"[{safe_thread_id}] ToolMessage returned empty content | "

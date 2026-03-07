@@ -953,6 +953,7 @@ interface PersistedToolCall {
   name: string;
   args: Record<string, unknown>;
   result?: string;
+  status?: "success" | "error";
 }
 
 function serializeToolCalls(toolCalls: import("../messages").ToolCallRuntime[]): string {
@@ -963,6 +964,9 @@ function serializeToolCalls(toolCalls: import("../messages").ToolCallRuntime[]):
         tc.result.length > TOOL_RESULT_MAX_LEN
           ? tc.result.slice(0, TOOL_RESULT_MAX_LEN) + "…[truncated]"
           : tc.result;
+    }
+    if (tc.status) {
+      entry.status = tc.status;
     }
     return entry;
   });
@@ -989,6 +993,7 @@ function extractPersistedToolCalls(raw: string): {
         name: tc.name,
         args: tc.args ?? {},
         result: tc.result,
+        status: tc.status,
       })),
     };
   } catch {

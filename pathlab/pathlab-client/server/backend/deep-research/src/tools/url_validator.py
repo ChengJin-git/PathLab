@@ -14,6 +14,12 @@ from langchain_core.callbacks import (
 )
 from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel, Field
+from src.tools.result_utils import (
+    TOOL_STATUS_ERROR,
+    TOOL_STATUS_SUCCESS,
+    build_tool_result,
+    parse_tool_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +133,7 @@ class ValidateURLTool(BaseTool):
     ) -> str:
         """Synchronous URL validation."""
         result = self._validate_url(url)
-        return json.dumps(result, ensure_ascii=False)
+        return self._format_tool_result(result)
     
     async def _arun(
         self,
@@ -164,24 +170,24 @@ class ValidateURLTool(BaseTool):
                         return self._format_response(url, response)
                         
         except asyncio.TimeoutError:
-            return json.dumps({
+            return self._format_tool_result({
                 "url": url,
                 "is_valid": False,
                 "error": "Request timed out"
-            }, ensure_ascii=False)
+            })
         except aiohttp.ClientError as e:
-            return json.dumps({
+            return self._format_tool_result({
                 "url": url,
                 "is_valid": False,
                 "error": f"Connection failed: {str(e)[:100]}"
-            }, ensure_ascii=False)
+            })
         except Exception as e:
             logger.error(f"Unexpected error validating URL {url}: {e}")
-            return json.dumps({
+            return self._format_tool_result({
                 "url": url,
                 "is_valid": False,
                 "error": f"Unexpected error: {str(e)[:100]}"
-            }, ensure_ascii=False)
+            })
     
     def _format_response(self, original_url: str, response) -> str:
         """Format the validation response."""
@@ -205,7 +211,18 @@ class ValidateURLTool(BaseTool):
         if not is_valid:
             result["error"] = f"HTTP {response.status}"
             
-        return json.dumps(result, ensure_ascii=False)
+        return self._format_tool_result(result)
+
+    def _format_tool_result(self, result: dict) -> str:
+        is_valid = bool(result.get("is_valid"))
+        return build_tool_result(
+            tool=self.name,
+            status=TOOL_STATUS_SUCCESS if is_valid else TOOL_STATUS_ERROR,
+            reason=None if is_valid else "validation_failed",
+            summary="Source verified." if is_valid else (result.get("error") or "Source validation failed."),
+            valid_for_research=False,
+            data=result,
+        )
 
 
 # ============== Batch Validation ==============
@@ -250,14 +267,22 @@ class ValidateURLsBatchTool(BaseTool):
         url_list = self._parse_urls(urls)
         
         if not url_list:
-            return json.dumps({"error": "No valid URLs provided"})
+            return build_tool_result(
+                tool=self.name,
+                status=TOOL_STATUS_ERROR,
+                reason="invalid_input",
+                summary="No valid URLs were provided.",
+                valid_for_research=False,
+                data={"results": []},
+            )
         
         validator = ValidateURLTool()
         results = []
         
         for url in url_list[:10]:  # Limit to 10 URLs
             result_str = validator._run(url)
-            results.append(json.loads(result_str))
+            parsed = parse_tool_result(result_str, validator.name)
+            results.append(parsed.get("data", parsed) if isinstance(parsed, dict) else {"url": url, "is_valid": False})
         
         summary = {
             "total": len(results),
@@ -266,7 +291,14 @@ class ValidateURLsBatchTool(BaseTool):
             "results": results
         }
         
-        return json.dumps(summary, ensure_ascii=False)
+        return build_tool_result(
+            tool=self.name,
+            status=TOOL_STATUS_SUCCESS if summary["valid"] else TOOL_STATUS_ERROR,
+            reason=None if summary["valid"] else "validation_failed",
+            summary=f"Validated {summary['total']} URL(s).",
+            valid_for_research=False,
+            data=summary,
+        )
     
     async def _arun(
         self,
@@ -277,7 +309,14 @@ class ValidateURLsBatchTool(BaseTool):
         url_list = self._parse_urls(urls)
         
         if not url_list:
-            return json.dumps({"error": "No valid URLs provided"})
+            return build_tool_result(
+                tool=self.name,
+                status=TOOL_STATUS_ERROR,
+                reason="invalid_input",
+                summary="No valid URLs were provided.",
+                valid_for_research=False,
+                data={"results": []},
+            )
         
         # Limit to 10 URLs to avoid overwhelming servers
         url_list = url_list[:10]
@@ -285,7 +324,8 @@ class ValidateURLsBatchTool(BaseTool):
         async def validate_single(url: str) -> dict:
             validator = ValidateURLTool()
             result_str = await validator._arun(url)
-            return json.loads(result_str)
+            parsed = parse_tool_result(result_str, validator.name)
+            return parsed.get("data", parsed) if isinstance(parsed, dict) else {"url": url, "is_valid": False}
         
         # Run all validations concurrently
         results = await asyncio.gather(
@@ -312,7 +352,14 @@ class ValidateURLsBatchTool(BaseTool):
             "results": processed_results
         }
         
-        return json.dumps(summary, ensure_ascii=False)
+        return build_tool_result(
+            tool=self.name,
+            status=TOOL_STATUS_SUCCESS if summary["valid"] else TOOL_STATUS_ERROR,
+            reason=None if summary["valid"] else "validation_failed",
+            summary=f"Validated {summary['total']} URL(s).",
+            valid_for_research=False,
+            data=summary,
+        )
 
 
 # ============== Factory Functions ==============

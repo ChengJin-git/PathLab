@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.messages import AIMessage, ToolMessage
 
 from .models import CitationMetadata
+from src.tools.result_utils import is_tool_result_envelope, parse_tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -83,17 +84,18 @@ def _extract_from_tool_message(message: ToolMessage) -> List[Dict[str, Any]]:
     if not content:
         return citations
 
-    # Parse JSON content
-    try:
-        if isinstance(content, str):
-            data = json.loads(content)
-        else:
-            data = content
-    except (json.JSONDecodeError, TypeError):
-        logger.debug(
-            f"Could not parse tool message content as JSON: {str(content)[:100]}..."
-        )
-        return citations
+    data = parse_tool_result(content, tool_name)
+    if data is None:
+        try:
+            if isinstance(content, str):
+                data = json.loads(content)
+            else:
+                data = content
+        except (json.JSONDecodeError, TypeError):
+            logger.debug(
+                f"Could not parse tool message content as JSON: {str(content)[:100]}..."
+            )
+            return citations
 
     logger.debug(f"Parsed tool message data type: {type(data).__name__}")
 
@@ -123,8 +125,11 @@ def _extract_from_tool_message(message: ToolMessage) -> List[Dict[str, Any]]:
     # Fallback: Try to detect by data structure
     else:
         # Check if it looks like search results (list of items with url)
-        if isinstance(data, list) and len(data) > 0:
-            first_item = data[0]
+        candidate_results = data
+        if is_tool_result_envelope(data):
+            candidate_results = data.get("data", {}).get("results") or data.get("data", {}).get("documents") or data.get("data", {}).get("items")
+        if isinstance(candidate_results, list) and len(candidate_results) > 0:
+            first_item = candidate_results[0]
             if isinstance(first_item, dict) and "url" in first_item:
                 logger.debug(
                     f"Auto-detected search results format for tool '{tool_name}'"
@@ -166,11 +171,16 @@ def _extract_from_search_results(data: Any) -> List[Dict[str, Any]]:
 
     # Handle dict with results key
     elif isinstance(data, dict):
-        if "error" in data:
+        if is_tool_result_envelope(data):
+            results = data.get("data", {}).get("results", [])
+        else:
+            if "error" in data:
+                logger.warning(f"Search error: {data.get('error')}")
+                return citations
+            results = data.get("results", [])
+        if isinstance(data, dict) and not is_tool_result_envelope(data) and "error" in data:
             logger.warning(f"Search error: {data.get('error')}")
             return citations
-
-        results = data.get("results", [])
         for result in results:
             if isinstance(result, dict) and result.get("type") != "image_url":
                 citation = _result_to_citation(result)
@@ -197,8 +207,8 @@ def _result_to_citation(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return {
         "url": url,
         "title": result.get("title", "Untitled"),
-        "description": result.get("content", ""),
-        "content_snippet": (result.get("content", "") or "")[:500],
+        "description": result.get("content") or result.get("desc", ""),
+        "content_snippet": ((result.get("content") or result.get("desc") or "")[:500]),
         "relevance_score": result.get("score", 0.0),
         "domain": _extract_domain(url),
         "accessed_at": None,  # Will be filled by CitationMetadata
@@ -297,11 +307,12 @@ def _extract_from_crawl_result(data: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(data, dict):
         return None
 
-    url = data.get("url", "")
+    payload = data.get("data", data) if is_tool_result_envelope(data) else data
+    url = payload.get("url", "")
     if not url:
         return None
 
-    content = data.get("crawled_content", "")
+    content = payload.get("crawled_content", "") or payload.get("content", "")
 
     # Extract title using intelligent extraction function
     title = extract_title_from_content(content)

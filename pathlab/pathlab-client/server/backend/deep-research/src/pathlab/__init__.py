@@ -3,7 +3,9 @@
 
 from .api import (
     fetch_datasets,
+    fetch_datasets_result,
     fetch_trained_models,
+    fetch_trained_models_result,
     get_supported_feature_extractors,
     get_supported_mil_aggregators,
     get_datasets_for_prompt,
@@ -17,7 +19,9 @@ from .api import (
 
 __all__ = [
     "fetch_datasets",
+    "fetch_datasets_result",
     "fetch_trained_models",
+    "fetch_trained_models_result",
     "get_supported_feature_extractors",
     "get_supported_mil_aggregators",
     "get_datasets_for_prompt",

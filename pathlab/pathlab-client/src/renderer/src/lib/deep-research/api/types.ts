@@ -65,6 +65,7 @@ export interface ToolCallResultEvent
     {
       tool_call_id: string;
       content?: string;
+      tool_status?: "success" | "error";
     }
   > { }
 

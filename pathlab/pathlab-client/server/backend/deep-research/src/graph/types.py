@@ -33,6 +33,9 @@ class State(MessagesState):
     # Citation metadata collected during research
     # Format: List of citation dictionaries with url, title, description, etc.
     citations: list[dict[str, Any]] = field(default_factory=list)
+    research_step_attempts: dict[str, int] = field(default_factory=dict)
+    research_step_valid_hits: dict[str, int] = field(default_factory=dict)
+    research_validation_feedback: dict[str, str] = field(default_factory=dict)
 
     # Clarification state tracking (disabled by default)
     enable_clarification: bool = (

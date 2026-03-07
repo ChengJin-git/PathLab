@@ -39,6 +39,7 @@ export interface ToolCallRuntime {
   args: Record<string, unknown>;
   argsChunks?: string[];
   result?: string;
+  status?: "success" | "error";
 }
 
 export interface Resource {

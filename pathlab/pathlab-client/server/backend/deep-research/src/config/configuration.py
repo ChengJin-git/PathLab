@@ -48,6 +48,8 @@ class Configuration:
     max_plan_iterations: int = 1  # Maximum number of plan iterations
     max_step_num: int = 3  # Maximum number of steps in a plan
     max_search_results: int = 3  # Maximum number of search results
+    min_valid_research_hits: int = 3  # Minimum number of valid evidence hits before analysis
+    max_research_retry_rounds: int = 2  # Maximum retry rounds when evidence is insufficient
     mcp_settings: dict = None  # MCP settings, including dynamic loaded tools
     report_style: str = ReportStyle.ACADEMIC.value  # Report style
     enable_deep_thinking: bool = False  # Whether to enable deep thinking

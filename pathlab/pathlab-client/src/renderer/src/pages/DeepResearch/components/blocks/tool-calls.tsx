@@ -32,7 +32,14 @@ import { Skeleton } from "../../../../components/ui/skeleton";
 import { useTranslations } from "../../../../lib/deep-research/i18n";
 import { findMCPTool } from "../../../../lib/deep-research/mcp";
 import type { Message, ToolCallRuntime } from "../../../../lib/deep-research/messages";
-import { parseJSON } from "../../../../lib/deep-research/utils";
+import {
+    extractToolResultData,
+    extractToolResultItems,
+    getToolResultReason,
+    getToolResultStatus,
+    getToolResultSummary,
+    safeParseToolResult,
+} from "../../../../lib/deep-research/utils/tool-result";
 import { cn } from "../../../../lib/utils";
 
 const __pageCache = new LRUCache<string, string>({ max: 100 });
@@ -78,7 +85,12 @@ type SearchResult =
         image_description: string;
     };
 
-type WebSearchState = "searching" | "completed" | "no_results";
+type WebSearchState =
+    | "searching"
+    | "completed"
+    | "no_results"
+    | "no_useful_information"
+    | "error";
 
 function getSearchSnippet(content?: string): string {
     if (!content) return "";
@@ -89,7 +101,7 @@ function SearchStatusBadge({
     status,
     t,
 }: {
-    status: "searching" | "completed" | "no_results";
+    status: WebSearchState;
     t: (key: string, params?: Record<string, unknown>) => string;
 }) {
     const statusConfig = {
@@ -105,7 +117,15 @@ function SearchStatusBadge({
             label: t("searchStatusNoResults"),
             className: "border-gray-200 bg-white text-gray-600",
         },
-    } satisfies Record<"searching" | "completed" | "no_results", { label: string; className: string }>;
+        no_useful_information: {
+            label: t("searchStatusNoUsefulInfo"),
+            className: "border-amber-100 bg-amber-50 text-amber-700",
+        },
+        error: {
+            label: t("searchStatusError"),
+            className: "border-red-100 bg-red-50 text-red-700",
+        },
+    } satisfies Record<WebSearchState, { label: string; className: string }>;
     const config = statusConfig[status];
 
     return (
@@ -118,6 +138,112 @@ function SearchStatusBadge({
             {config.label}
         </span>
     );
+}
+
+function ToolResultNotice({
+    status,
+    title,
+    description,
+}: {
+    status: "no_results" | "no_useful_information" | "error";
+    title: string;
+    description: string;
+}) {
+    const icon = status === "error"
+        ? <XCircle size={18} className="text-red-500" />
+        : status === "no_useful_information"
+            ? <Search size={18} className="text-amber-500" />
+            : <Search size={18} className="text-gray-400" />;
+
+    return (
+        <div className="flex items-start gap-3 rounded-xl border border-dashed border-gray-200 bg-gray-50/80 px-4 py-3">
+            <div className="mt-0.5">{icon}</div>
+            <div className="min-w-0">
+                <div className="text-sm font-medium text-gray-800">{title}</div>
+                <div className="mt-1 text-xs leading-5 text-gray-500">{description}</div>
+            </div>
+        </div>
+    );
+}
+
+function getSearchEmptyCopy(
+    status: Exclude<WebSearchState, "searching" | "completed">,
+    t: (key: string, params?: Record<string, unknown>) => string,
+    summary?: string,
+) {
+    if (status === "error") {
+        return {
+            title: t("searchStatusError"),
+            description: summary || t("searchErrorDescription"),
+        };
+    }
+    if (status === "no_useful_information") {
+        return {
+            title: t("searchStatusNoUsefulInfo"),
+            description: summary || t("searchNoUsefulInfoDescription"),
+        };
+    }
+    return {
+        title: t("searchStatusNoResults"),
+        description: summary || t("searchEmptyDescription"),
+    };
+}
+
+function getGenericToolCopy(
+    status: "success" | "no_results" | "no_useful_information" | "error",
+    reason: string | undefined,
+    t: (key: string, params?: Record<string, unknown>) => string,
+    summary?: string,
+) {
+    const reasonDescription = (() => {
+        switch (reason) {
+            case "api_unavailable":
+            case "http_error":
+            case "request_failed":
+            case "provider_error":
+                return t("toolReasonApiUnavailable");
+            case "no_matches":
+                return t("toolReasonNoMatches");
+            case "empty_account":
+                return t("toolReasonEmptyAccount");
+            case "missing_snippets":
+                return t("toolReasonMissingSnippets");
+            case "only_images":
+                return t("toolReasonOnlyImages");
+            case "insufficient_content":
+            case "insufficient_documents":
+                return t("toolReasonInsufficientContent");
+            case "pdf_not_supported":
+                return t("toolReasonPdfNotSupported");
+            case "validation_failed":
+                return t("toolReasonValidationFailed");
+            default:
+                return summary;
+        }
+    })();
+
+    if (status === "error") {
+        return {
+            label: t("toolStatusErrorGeneric"),
+            description: reasonDescription || summary,
+        };
+    }
+    if (status === "no_useful_information") {
+        return {
+            label: t("toolStatusNoUsefulInfoGeneric"),
+            description: reasonDescription || summary,
+        };
+    }
+    if (status === "no_results") {
+        return {
+            label: t("toolStatusNoResultsGeneric"),
+            description: reasonDescription || summary,
+        };
+    }
+    return {
+        label: t("toolStatusCompletedGeneric"),
+        description: reasonDescription || summary,
+    };
 }
 
 function SearchResultSkeletonCard({ index }: { index: number }) {
@@ -171,29 +297,37 @@ export function WebSearchToolCall({
         const maybeQuery = (toolCall.args as { query?: unknown } | undefined)?.query;
         return typeof maybeQuery === "string" ? maybeQuery : "";
     }, [toolCall.args]);
+    const resultStatus = useMemo(
+        () => getToolResultStatus(toolCall.result, toolCall.status),
+        [toolCall.result, toolCall.status],
+    );
+    const resultSummary = useMemo(() => getToolResultSummary(toolCall.result), [toolCall.result]);
     const searchResults = useMemo<SearchResult[]>(() => {
-        let results: SearchResult[] = [];
-
-        try {
-            if (toolCall.result) {
-                results = parseJSON(toolCall.result, []);
+        const rawResults = extractToolResultItems<Record<string, unknown>>(toolCall.result);
+        const normalized = rawResults.flatMap((result) => {
+            if (result.type === "image" && typeof result.image_url === "string") {
+                return [{
+                    type: "image" as const,
+                    image_url: result.image_url,
+                    image_description: typeof result.image_description === "string" ? result.image_description : "",
+                }];
             }
-        } catch {
-            results = [];
-        }
-
-        if (Array.isArray(results)) {
-            results.forEach((result) => {
-                if (result.type === "page") {
-                    __pageCache.set(result.url, result.title);
-                }
-            });
-        } else {
-            // If parsing failed, still try to show something useful
-            results = [];
-        }
-
-        return results;
+            if (typeof result.url === "string") {
+                return [{
+                    type: "page" as const,
+                    title: typeof result.title === "string" ? result.title : t("untitledSource"),
+                    url: result.url,
+                    content: typeof result.content === "string" ? result.content : "",
+                }];
+            }
+            return [];
+        });
+        normalized.forEach((result) => {
+            if (result.type === "page") {
+                __pageCache.set(result.url, result.title);
+            }
+        });
+        return normalized;
     }, [toolCall.result]);
     const pageResults = useMemo(
         () => searchResults?.filter((result) => result.type === "page"),
@@ -210,12 +344,21 @@ export function WebSearchToolCall({
         if (!hasResultPayload) {
             return awaitingToolResult ? "searching" : "completed";
         }
+        if (resultStatus === "error") return "error";
+        if (resultStatus === "no_useful_information") return "no_useful_information";
+        if (resultStatus === "no_results") return "no_results";
         return visibleResultCount > 0 ? "completed" : "no_results";
-    }, [awaitingToolResult, hasResultPayload, visibleResultCount]);
+    }, [awaitingToolResult, hasResultPayload, resultStatus, visibleResultCount]);
     const resultMeta = useMemo(() => {
         if (searchState !== "completed" || visibleResultCount === 0) return null;
         return t("searchSourceCount", { count: visibleResultCount });
     }, [searchState, t, visibleResultCount]);
+    const emptyCopy = useMemo(
+        () => searchState === "searching" || searchState === "completed"
+            ? null
+            : getSearchEmptyCopy(searchState, t, resultSummary),
+        [resultSummary, searchState, t],
+    );
 
     return (
         <ToolCallSection
@@ -335,10 +478,10 @@ export function WebSearchToolCall({
                 </ul>
             )}
 
-            {searchState === "no_results" && hasResultPayload && visibleResultCount === 0 && (
+            {emptyCopy && hasResultPayload && visibleResultCount === 0 && (
                 <SearchEmptyState
-                    title={t("searchStatusNoResults")}
-                    description={t("searchEmptyDescription")}
+                    title={emptyCopy.title}
+                    description={emptyCopy.description}
                 />
             )}
         </ToolCallSection>
@@ -353,6 +496,16 @@ export function CrawlToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
         [toolCall.args],
     );
     const title = useMemo(() => __pageCache.get(url), [url]);
+    const crawlData = useMemo(
+        () => extractToolResultData<{ url?: string; crawled_content?: string; content_length?: number }>(toolCall.result),
+        [toolCall.result],
+    );
+    const crawlStatus = useMemo(
+        () => getToolResultStatus(toolCall.result, toolCall.status),
+        [toolCall.result, toolCall.status],
+    );
+    const crawlSummary = useMemo(() => getToolResultSummary(toolCall.result), [toolCall.result]);
+    const displayUrl = crawlData?.url || url;
     return (
         <ToolCallSection
             header={(
@@ -365,9 +518,10 @@ export function CrawlToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
                 </RainbowText>
             )}
         >
+            <div className="space-y-3">
             <motion.a
                 className="group flex items-start gap-3 rounded-xl border border-gray-200 bg-white px-3 py-3 transition-all hover:border-gray-300 hover:bg-gray-50"
-                href={url}
+                href={displayUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 initial={{ opacity: 0, y: 10 }}
@@ -377,14 +531,29 @@ export function CrawlToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
                     ease: "easeOut",
                 }}
             >
-                <FavIcon className="mt-0.5 shrink-0" url={url} title={title} />
+                <FavIcon className="mt-0.5 shrink-0" url={displayUrl} title={title} />
                 <div className="min-w-0 flex-1">
                     <div className="line-clamp-2 text-sm font-medium leading-6 text-gray-900">
-                        {title ?? url}
+                        {title ?? displayUrl}
                     </div>
-                    <div className="mt-1 truncate text-xs text-gray-500">{getHostname(url)}</div>
+                    <div className="mt-1 truncate text-xs text-gray-500">{getHostname(displayUrl)}</div>
                 </div>
             </motion.a>
+            {crawlStatus === "no_useful_information" && (
+                <ToolResultNotice
+                    status="no_useful_information"
+                    title={t("crawlStatusNoUsefulInfo")}
+                    description={crawlSummary || t("crawlNoUsefulInfoDescription")}
+                />
+            )}
+            {crawlStatus === "error" && (
+                <ToolResultNotice
+                    status="error"
+                    title={t("crawlStatusError")}
+                    description={crawlSummary || t("crawlErrorDescription")}
+                />
+            )}
+            </div>
         </ToolCallSection>
     );
 }
@@ -395,10 +564,15 @@ export function RetrieverToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
     const searching = useMemo(() => {
         return toolCall.result === undefined;
     }, [toolCall.result]);
+    const retrievalStatus = useMemo(
+        () => getToolResultStatus(toolCall.result, toolCall.status),
+        [toolCall.result, toolCall.status],
+    );
+    const retrievalSummary = useMemo(() => getToolResultSummary(toolCall.result), [toolCall.result]);
     const documents = useMemo<
         Array<{ id: string; title: string; content: string }>
     >(() => {
-        return toolCall.result ? parseJSON(toolCall.result, []) : [];
+        return extractToolResultItems<{ id: string; title: string; content: string }>(toolCall.result);
     }, [toolCall.result]);
     const keywords = useMemo(() => (toolCall.args as { keywords: string }).keywords, [toolCall.args]);
 
@@ -414,6 +588,24 @@ export function RetrieverToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
                 </div>
             )}
         >
+            {!searching && documents.length === 0 && retrievalStatus === "no_results" && (
+                <SearchEmptyState
+                    title={t("retrievalStatusNoResults")}
+                    description={retrievalSummary || t("retrievalEmptyDescription")}
+                />
+            )}
+            {!searching && documents.length === 0 && retrievalStatus === "no_useful_information" && (
+                <SearchEmptyState
+                    title={t("retrievalStatusNoUsefulInfo")}
+                    description={retrievalSummary || t("retrievalNoUsefulInfoDescription")}
+                />
+            )}
+            {!searching && documents.length === 0 && retrievalStatus === "error" && (
+                <SearchEmptyState
+                    title={t("retrievalStatusError")}
+                    description={retrievalSummary || t("retrievalErrorDescription")}
+                />
+            )}
             <ul className="grid gap-3 sm:grid-cols-2">
                 {searching &&
                     [...Array(2)].map((_, i) => (
@@ -596,13 +788,12 @@ export function getToolDisplay(
 export function MCPToolResultSummary({ result }: { result: string }) {
     // @ts-ignore - i18n shim
     const t = useTranslations("chat.research");
-    const parsed = useMemo(() => {
-        try {
-            return JSON.parse(result);
-        } catch {
-            return null;
-        }
-    }, [result]);
+    const parsed = useMemo(() => safeParseToolResult(result), [result]);
+    const data = useMemo(() => extractToolResultData(result), [result]);
+    const items = useMemo(() => extractToolResultItems(result), [result]);
+    const status = useMemo(() => getToolResultStatus(result), [result]);
+    const reason = useMemo(() => getToolResultReason(result), [result]);
+    const summary = useMemo(() => getToolResultSummary(result), [result]);
 
     if (!parsed || typeof parsed !== "object") {
         // Fallback: show truncated raw text
@@ -614,9 +805,11 @@ export function MCPToolResultSummary({ result }: { result: string }) {
     }
 
     // Handle validate_url style results: { url, is_valid, ... }
-    if ("is_valid" in parsed || "is_accessible" in parsed) {
-        const isValid = parsed.is_valid ?? parsed.is_accessible ?? parsed.success;
-        const url = parsed.url ?? parsed.link ?? "";
+    if (data && typeof data === "object" && ("is_valid" in data || "is_accessible" in data)) {
+        const isValid = (data as Record<string, unknown>).is_valid
+            ?? (data as Record<string, unknown>).is_accessible
+            ?? (data as Record<string, unknown>).success;
+        const url = ((data as Record<string, unknown>).url ?? (data as Record<string, unknown>).link ?? "") as string;
         return (
             <div className="flex items-center gap-2 text-sm">
                 {isValid ? (
@@ -636,9 +829,37 @@ export function MCPToolResultSummary({ result }: { result: string }) {
         );
     }
 
+    if (status && summary) {
+        const copy = getGenericToolCopy(status, reason, t, summary);
+        const icon = status === "error"
+            ? <XCircle size={14} className="shrink-0 text-red-500" />
+            : status === "no_useful_information"
+                ? <Search size={14} className="shrink-0 text-amber-500" />
+                : status === "no_results"
+                    ? <Search size={14} className="shrink-0 text-gray-400" />
+                    : <CheckCircle2 size={14} className="shrink-0 text-green-500" />;
+        return (
+            <div className="flex items-start gap-2 text-sm">
+                {icon}
+                <div className="min-w-0">
+                    <div className="text-muted-foreground">{copy.label}</div>
+                    {copy.description && (
+                        <div className="text-muted-foreground text-xs leading-5">{copy.description}</div>
+                    )}
+                    {items.length > 0 && (
+                        <div className="text-muted-foreground text-xs">
+                            {t("returnedItemsCount", { count: items.length })}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
     // Handle results with a "content" or "text" or "result" field
+    const record = parsed as Record<string, unknown>;
     const textContent =
-        parsed.content ?? parsed.text ?? parsed.result ?? parsed.output ?? parsed.answer;
+        record.content ?? record.text ?? record.result ?? record.output ?? record.answer;
     if (typeof textContent === "string" && textContent) {
         return (
             <p className="text-muted-foreground text-sm">
@@ -648,19 +869,19 @@ export function MCPToolResultSummary({ result }: { result: string }) {
     }
 
     // Handle results with a "title" field (e.g. search results)
-    if (parsed.title) {
+    if (record.title) {
         return (
             <p className="text-muted-foreground text-sm">
-                <span className="font-medium">{parsed.title}</span>
-                {parsed.description && (
-                    <span className="ml-1">{parsed.description}</span>
+                <span className="font-medium">{String(record.title)}</span>
+                {record.description && (
+                    <span className="ml-1">{String(record.description)}</span>
                 )}
             </p>
         );
     }
 
     // Fallback: show key count
-    const keys = Object.keys(parsed);
+    const keys = Object.keys(record);
     return (
         <p className="text-muted-foreground text-sm">
             {t("returnedFields", { count: keys.length, fields: keys.slice(0, 5).join(", ") })}

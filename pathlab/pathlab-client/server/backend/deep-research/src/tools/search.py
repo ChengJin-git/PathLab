@@ -1,9 +1,10 @@
 # Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 # SPDX-License-Identifier: MIT
 
+import json
 import logging
 import os
-from typing import List, Optional
+from typing import Any, List, Literal, Optional, Type
 
 from langchain_community.tools import (
     BraveSearch,
@@ -20,11 +21,15 @@ from langchain_community.utilities import (
     SearxSearchWrapper,
     WikipediaAPIWrapper,
 )
+from langchain_core.callbacks import AsyncCallbackManagerForToolRun, CallbackManagerForToolRun
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
 
 from src.config import SearchEngine, get_selected_search_engine, load_yaml_config
 from src.tools.decorators import create_logged_tool
 from src.tools.exa_search.exa_search_results import ExaSearchResults
 from src.tools.infoquest_search.infoquest_search_results import InfoQuestSearchResults
+from src.tools.result_utils import build_tool_result, normalize_search_tool_result
 from src.tools.tavily_search.tavily_search_results_with_images import (
     TavilySearchWithImages,
 )
@@ -43,6 +48,84 @@ LoggedSearxSearch = create_logged_tool(SearxSearchRun)
 LoggedWikipediaSearch = create_logged_tool(WikipediaQueryRun)
 
 
+class WebSearchInput(BaseModel):
+    query: str = Field(description="search query to look up")
+
+
+class NormalizedWebSearchTool(BaseTool):
+    name: str = "web_search"
+    description: str = "Perform a web search and return normalized structured results."
+    args_schema: Type[BaseModel] = WebSearchInput
+    response_format: Literal["content_and_artifact"] = "content_and_artifact"
+
+    provider: str
+    inner_tool: BaseTool = Field(exclude=True)
+
+    def _invoke_sync(self, query: str) -> Any:
+        try:
+            return self.inner_tool.invoke({"query": query})
+        except TypeError:
+            return self.inner_tool.invoke(query)
+
+    async def _invoke_async(self, query: str) -> Any:
+        try:
+            return await self.inner_tool.ainvoke({"query": query})
+        except TypeError:
+            return await self.inner_tool.ainvoke(query)
+
+    def _run(
+        self,
+        query: str,
+        run_manager: Optional[CallbackManagerForToolRun] = None,
+    ):
+        try:
+            raw_result = self._invoke_sync(query)
+            normalized = normalize_search_tool_result(
+                raw_result, query=query, provider=self.provider
+            )
+            return json.dumps(normalized, ensure_ascii=False), {
+                "provider": self.provider,
+                "raw_result": raw_result,
+                "normalized": normalized,
+            }
+        except Exception as exc:
+            error_payload = build_tool_result(
+                tool="web_search",
+                status="error",
+                reason="provider_error",
+                summary=f"Search provider failed: {exc}",
+                valid_for_research=False,
+                data={"query": query, "provider": self.provider, "results": []},
+            )
+            return error_payload, {"provider": self.provider, "error": repr(exc)}
+
+    async def _arun(
+        self,
+        query: str,
+        run_manager: Optional[AsyncCallbackManagerForToolRun] = None,
+    ):
+        try:
+            raw_result = await self._invoke_async(query)
+            normalized = normalize_search_tool_result(
+                raw_result, query=query, provider=self.provider
+            )
+            return json.dumps(normalized, ensure_ascii=False), {
+                "provider": self.provider,
+                "raw_result": raw_result,
+                "normalized": normalized,
+            }
+        except Exception as exc:
+            error_payload = build_tool_result(
+                tool="web_search",
+                status="error",
+                reason="provider_error",
+                summary=f"Search provider failed: {exc}",
+                valid_for_research=False,
+                data={"query": query, "provider": self.provider, "results": []},
+            )
+            return error_payload, {"provider": self.provider, "error": repr(exc)}
+
+
 def get_search_config():
     config = load_yaml_config("conf.yaml")
     search_config = config.get("SEARCH_ENGINE", {})
@@ -53,9 +136,10 @@ def get_search_config():
 def get_web_search_tool(max_search_results: int, search_engine: Optional[str] = None):
     search_config = get_search_config()
     selected_search_engine = search_engine or get_selected_search_engine()
+    tool: BaseTool
 
     if selected_search_engine == SearchEngine.EXA.value:
-        return LoggedExaSearch(
+        tool = LoggedExaSearch(
             name="web_search",
             max_results=max_search_results,
             exa_api_key=os.getenv("EXA_API_KEY", ""),
@@ -79,7 +163,7 @@ def get_web_search_tool(max_search_results: int, search_engine: Optional[str] = 
             f"include_images={include_images}, include_image_descriptions={include_image_descriptions}"
         )
 
-        return LoggedTavilySearch(
+        tool = LoggedTavilySearch(
             name="web_search",
             max_results=max_search_results,
             include_answer=include_answer,
@@ -96,18 +180,18 @@ def get_web_search_tool(max_search_results: int, search_engine: Optional[str] = 
         logger.info(
             f"InfoQuest search configuration loaded: time_range={time_range}, site={site}"
         )
-        return LoggedInfoQuestSearch(
+        tool = LoggedInfoQuestSearch(
             name="web_search",
             time_range=time_range,
             site=site,
         )
     elif selected_search_engine == SearchEngine.DUCKDUCKGO.value:
-        return LoggedDuckDuckGoSearch(
+        tool = LoggedDuckDuckGoSearch(
             name="web_search",
             num_results=max_search_results,
         )
     elif selected_search_engine == SearchEngine.BRAVE_SEARCH.value:
-        return LoggedBraveSearch(
+        tool = LoggedBraveSearch(
             name="web_search",
             search_wrapper=BraveSearchWrapper(
                 api_key=os.getenv("BRAVE_SEARCH_API_KEY", ""),
@@ -115,7 +199,7 @@ def get_web_search_tool(max_search_results: int, search_engine: Optional[str] = 
             ),
         )
     elif selected_search_engine == SearchEngine.SERPER.value:
-        return LoggedSerperSearch(
+        tool = LoggedSerperSearch(
             name="web_search",
             api_wrapper=GoogleSerperAPIWrapper(
                 k=max_search_results,
@@ -123,7 +207,7 @@ def get_web_search_tool(max_search_results: int, search_engine: Optional[str] = 
             ),
         )
     elif selected_search_engine == SearchEngine.ARXIV.value:
-        return LoggedArxivSearch(
+        tool = LoggedArxivSearch(
             name="web_search",
             api_wrapper=ArxivAPIWrapper(
                 top_k_results=max_search_results,
@@ -132,7 +216,7 @@ def get_web_search_tool(max_search_results: int, search_engine: Optional[str] = 
             ),
         )
     elif selected_search_engine == SearchEngine.SEARX.value:
-        return LoggedSearxSearch(
+        tool = LoggedSearxSearch(
             name="web_search",
             wrapper=SearxSearchWrapper(
                 k=max_search_results,
@@ -143,7 +227,7 @@ def get_web_search_tool(max_search_results: int, search_engine: Optional[str] = 
         wiki_doc_content_chars_max = search_config.get(
             "wikipedia_doc_content_chars_max", 4000
         )
-        return LoggedWikipediaSearch(
+        tool = LoggedWikipediaSearch(
             name="web_search",
             api_wrapper=WikipediaAPIWrapper(
                 lang=wiki_lang,
@@ -154,3 +238,10 @@ def get_web_search_tool(max_search_results: int, search_engine: Optional[str] = 
         )
     else:
         raise ValueError(f"Unsupported search engine: {selected_search_engine}")
+
+    return NormalizedWebSearchTool(
+        name="web_search",
+        description=tool.description,
+        provider=selected_search_engine,
+        inner_tool=tool,
+    )

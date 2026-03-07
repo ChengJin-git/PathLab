@@ -161,6 +161,7 @@ function mergeToolCallResultMessage(
   );
   if (toolCall) {
     toolCall.result = event.data.content;
+    toolCall.status = event.data.tool_status;
   }
 }
 

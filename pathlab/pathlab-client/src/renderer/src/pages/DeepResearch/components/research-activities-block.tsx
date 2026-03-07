@@ -328,7 +328,6 @@ const ActivityListItem = React.memo(({ messageId }: { messageId: string }) => {
   if (message) {
     if (message.toolCalls?.length) {
       const toolCallComponents = message.toolCalls
-        .filter(toolCall => !(typeof toolCall.result === "string" && toolCall.result?.startsWith("Error")))
         .map(toolCall => {
           if (toolCall.name === "web_search") {
             return (

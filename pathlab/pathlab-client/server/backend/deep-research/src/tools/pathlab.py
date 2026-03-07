@@ -13,12 +13,70 @@ from pydantic import BaseModel, Field
 
 from src.pathlab import (
     fetch_datasets,
+    fetch_datasets_result,
     fetch_trained_models,
+    fetch_trained_models_result,
     get_supported_feature_extractors,
     get_supported_mil_aggregators,
 )
+from src.tools.result_utils import (
+    TOOL_STATUS_ERROR,
+    TOOL_STATUS_NO_RESULTS,
+    TOOL_STATUS_SUCCESS,
+    build_tool_result,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _pathlab_api_result_payload(*, tool: str, query: str, items: list[dict], source_result: dict) -> str:
+    status = source_result.get("status", "success")
+    if status == "error":
+        return build_tool_result(
+            tool=tool,
+            status=TOOL_STATUS_ERROR,
+            reason=source_result.get("reason") or "api_unavailable",
+            summary=source_result.get("summary", "PathLab API is unavailable."),
+            valid_for_research=False,
+            data={"query": query, "items": [], "counts": {"total": 0}},
+        )
+    if not items:
+        return build_tool_result(
+            tool=tool,
+            status=TOOL_STATUS_NO_RESULTS,
+            reason="no_matches" if query else "empty_account",
+            summary=(
+                f"No matching items were found for '{query}'." if query else "No items are currently available in PathLab."
+            ),
+            valid_for_research=False,
+            data={"query": query, "items": [], "counts": {"total": 0}},
+        )
+    return build_tool_result(
+        tool=tool,
+        status=TOOL_STATUS_SUCCESS,
+        summary=f"Found {len(items)} matching item(s).",
+        valid_for_research=True,
+        data={"query": query, "items": items, "counts": {"total": len(items)}},
+    )
+
+
+def _pathlab_static_result_payload(*, tool: str, query: str, items: list[dict], item_label: str) -> str:
+    if not items:
+        return build_tool_result(
+            tool=tool,
+            status=TOOL_STATUS_NO_RESULTS,
+            reason="no_matches",
+            summary=f"No {item_label} matched '{query}'." if query else f"No {item_label} available.",
+            valid_for_research=False,
+            data={"query": query, "items": [], "counts": {"total": 0}},
+        )
+    return build_tool_result(
+        tool=tool,
+        status=TOOL_STATUS_SUCCESS,
+        summary=f"Found {len(items)} {item_label} item(s).",
+        valid_for_research=True,
+        data={"query": query, "items": items, "counts": {"total": len(items)}},
+    )
 
 
 # ============== Search Datasets Tool ==============
@@ -60,26 +118,6 @@ class SearchDatasetsTool(BaseTool):
                 filtered.append(ds)
         return filtered
     
-    def _format_results(self, datasets: list[dict], query: str) -> str:
-        """Format dataset results for the agent."""
-        if not datasets:
-            if query:
-                return f"No datasets found matching '{query}' in the user's PathLab account."
-            return "The user has no datasets in PathLab yet. They need to upload WSI files first, or you can suggest public datasets."
-        
-        lines = [f"Found {len(datasets)} dataset(s) in PathLab:"]
-        for ds in datasets:
-            name = ds.get("name", "Unknown")
-            count = ds.get("file_count", 0)
-            task = ds.get("task_type", "classification")
-            data_level = ds.get("data_level", "file")
-            lines.append(f"  - {name}: {count} files, task={task}, level={data_level}")
-        
-        if query:
-            lines.append(f"\n(Filtered by: '{query}')")
-        
-        return "\n".join(lines)
-
     def _run(
         self,
         query: str,
@@ -87,10 +125,16 @@ class SearchDatasetsTool(BaseTool):
     ) -> str:
         """Synchronous run - uses cached data."""
         from src.pathlab.api import _cache
-        
+
         datasets = _cache.get("datasets", []) or []
+        datasets_meta = _cache.get("datasets_meta") or {"status": "success", "items": datasets}
         filtered = self._filter_datasets(datasets, query)
-        return self._format_results(filtered, query)
+        return _pathlab_api_result_payload(
+            tool=self.name,
+            query=query,
+            items=filtered,
+            source_result=datasets_meta,
+        )
 
     async def _arun(
         self,
@@ -98,13 +142,14 @@ class SearchDatasetsTool(BaseTool):
         run_manager: Optional[AsyncCallbackManagerForToolRun] = None,
     ) -> str:
         """Asynchronous run - fetches fresh data."""
-        try:
-            datasets = await fetch_datasets()
-            filtered = self._filter_datasets(datasets, query)
-            return self._format_results(filtered, query)
-        except Exception as e:
-            logger.error(f"Error searching PathLab datasets: {e}")
-            return f"Error accessing PathLab API: {str(e)}. Please try again later."
+        datasets_result = await fetch_datasets_result()
+        filtered = self._filter_datasets(datasets_result.get("items", []), query)
+        return _pathlab_api_result_payload(
+            tool=self.name,
+            query=query,
+            items=filtered,
+            source_result=datasets_result,
+        )
 
 
 # ============== Search Models Tool ==============
@@ -148,27 +193,6 @@ class SearchModelsTool(BaseTool):
                 filtered.append(m)
         return filtered
     
-    def _format_results(self, models: list[dict], query: str) -> str:
-        """Format model results for the agent."""
-        if not models:
-            if query:
-                return f"No trained models found matching '{query}' in the user's PathLab account."
-            return "The user has no trained models in PathLab yet. They need to train models first using their datasets."
-        
-        lines = [f"Found {len(models)} trained model(s) in PathLab:"]
-        for m in models:
-            name = m.get("name", "Unknown")
-            extractor = m.get("extractor", "Unknown")
-            aggregator = m.get("aggregator", "Unknown")
-            task = m.get("task_type", "classification")
-            default_mark = " [DEFAULT]" if m.get("is_default") else ""
-            lines.append(f"  - {name}: {extractor} + {aggregator}, task={task}{default_mark}")
-        
-        if query:
-            lines.append(f"\n(Filtered by: '{query}')")
-        
-        return "\n".join(lines)
-
     def _run(
         self,
         query: str,
@@ -176,10 +200,16 @@ class SearchModelsTool(BaseTool):
     ) -> str:
         """Synchronous run - uses cached data."""
         from src.pathlab.api import _cache
-        
+
         models = _cache.get("models", []) or []
+        models_meta = _cache.get("models_meta") or {"status": "success", "items": models}
         filtered = self._filter_models(models, query)
-        return self._format_results(filtered, query)
+        return _pathlab_api_result_payload(
+            tool=self.name,
+            query=query,
+            items=filtered,
+            source_result=models_meta,
+        )
 
     async def _arun(
         self,
@@ -187,13 +217,14 @@ class SearchModelsTool(BaseTool):
         run_manager: Optional[AsyncCallbackManagerForToolRun] = None,
     ) -> str:
         """Asynchronous run - fetches fresh data."""
-        try:
-            models = await fetch_trained_models()
-            filtered = self._filter_models(models, query)
-            return self._format_results(filtered, query)
-        except Exception as e:
-            logger.error(f"Error searching PathLab models: {e}")
-            return f"Error accessing PathLab API: {str(e)}. Please try again later."
+        models_result = await fetch_trained_models_result()
+        filtered = self._filter_models(models_result.get("items", []), query)
+        return _pathlab_api_result_payload(
+            tool=self.name,
+            query=query,
+            items=filtered,
+            source_result=models_result,
+        )
 
 
 # ============== Get Supported Extractors Tool ==============
@@ -231,14 +262,12 @@ class GetSupportedExtractorsTool(BaseTool):
                            query_lower in e["source"].lower() or
                            query_lower in e["description"].lower()]
         
-        if not extractors:
-            return f"No feature extractors found matching '{query}'."
-        
-        lines = [f"PathLab supports {len(extractors)} feature extractor(s):"]
-        for e in extractors:
-            lines.append(f"  - {e['name']} ({e['source']}): {e['description']}")
-        
-        return "\n".join(lines)
+        return _pathlab_static_result_payload(
+            tool=self.name,
+            query=query,
+            items=extractors,
+            item_label="feature extractor",
+        )
 
     async def _arun(
         self,
@@ -282,14 +311,12 @@ class GetSupportedAggregatorsTool(BaseTool):
                          if query_lower in a["name"].lower() or 
                             query_lower in a["description"].lower()]
         
-        if not aggregators:
-            return f"No MIL aggregators found matching '{query}'."
-        
-        lines = [f"PathLab supports {len(aggregators)} MIL aggregator(s):"]
-        for a in aggregators:
-            lines.append(f"  - {a['name']}: {a['description']}")
-        
-        return "\n".join(lines)
+        return _pathlab_static_result_payload(
+            tool=self.name,
+            query=query,
+            items=aggregators,
+            item_label="MIL aggregator",
+        )
 
     async def _arun(
         self,
