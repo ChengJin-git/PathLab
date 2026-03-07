@@ -7,7 +7,9 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
-import { flushDeepResearchPersistNow, loadConversationFromBackend, openResearch, resetDeepResearchSession, useStore } from "../../lib/deep-research/store";
+import { Dialog, DialogContent, DialogTitle } from "../../components/ui/dialog";
+import { useTranslations } from "../../lib/deep-research/i18n";
+import { closeResearch, flushDeepResearchPersistNow, loadConversationFromBackend, openResearch, resetDeepResearchSession, useStore } from "../../lib/deep-research/store";
 import { cn } from "../../lib/utils";
 
 import { MessagesBlock } from "./components/messages-block";
@@ -19,6 +21,8 @@ export default function Main() {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
+  // @ts-ignore - i18n shim
+  const tResearch = useTranslations("chat.research");
   const { conversationId: urlConversationId } = useParams<{ conversationId?: string }>();
   const navigationState = location.state as {
     focusResearchId?: string;
@@ -34,6 +38,12 @@ export default function Main() {
   const skipNextHydrationRef = useRef<string | null>(null);
   const focusResearchAppliedRef = useRef<string | null>(null);
   const [pendingHydrationConversationId, setPendingHydrationConversationId] = useState<string | null>(null);
+  const [isMobileViewport, setIsMobileViewport] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return window.matchMedia("(max-width: 1023px)").matches;
+  });
   const conversationId = useStore((state) => state.conversationId);
   const messageCount = useStore((state) => state.messageIds.length);
   const researchCount = useStore((state) => state.researchIds.length);
@@ -52,11 +62,34 @@ export default function Main() {
     () => openResearchId !== null,
     [openResearchId],
   );
+  const showDesktopResearchPanel = doubleColumnMode && !isMobileViewport;
+  const showMobileResearchDrawer = doubleColumnMode && isMobileViewport;
 
   useEffect(() => {
     hasMountedDeepResearchInRuntime = true;
     return () => {
       flushDeepResearchPersistNow();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const mediaQuery = window.matchMedia("(max-width: 1023px)");
+    const updateViewport = () => setIsMobileViewport(mediaQuery.matches);
+    updateViewport();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", updateViewport);
+    } else {
+      mediaQuery.addListener(updateViewport);
+    }
+    return () => {
+      if (typeof mediaQuery.removeEventListener === "function") {
+        mediaQuery.removeEventListener("change", updateViewport);
+      } else {
+        mediaQuery.removeListener(updateViewport);
+      }
     };
   }, []);
 
@@ -177,7 +210,7 @@ export default function Main() {
         <div
           className={cn(
             "mx-auto flex min-h-0 flex-1 w-full max-w-[1500px] px-4 pt-3 pb-4",
-            showConversationHydration ? "justify-center" : doubleColumnMode ? "gap-6 pb-16" : "justify-center",
+            showConversationHydration ? "justify-center" : showDesktopResearchPanel ? "gap-6 pb-16" : "justify-center",
           )}
         >
           {showConversationHydration ? (
@@ -195,22 +228,41 @@ export default function Main() {
               <MessagesBlock
                 className={cn(
                   "min-w-0 transition-all duration-300 ease-out",
-                  !doubleColumnMode && "w-full max-w-[980px]",
-                  doubleColumnMode && "w-[43%] min-w-[520px] max-w-[720px]",
+                  !showDesktopResearchPanel && "w-full max-w-[980px]",
+                  showDesktopResearchPanel && "w-[43%] min-w-[520px] max-w-[720px]",
                 )}
               />
-              <ResearchBlock
-                className={cn(
-                  "min-w-0 transition-all duration-300 ease-out",
-                  !doubleColumnMode && "pointer-events-none w-0 scale-95 opacity-0",
-                  doubleColumnMode && "h-full w-[57%] self-stretch",
-                )}
-                researchId={openResearchId}
-              />
+              {showDesktopResearchPanel && (
+                <ResearchBlock
+                  className="h-full w-[57%] min-w-0 self-stretch transition-all duration-300 ease-out"
+                  researchId={openResearchId}
+                />
+              )}
             </>
           )}
         </div>
       </div>
+      <Dialog open={showMobileResearchDrawer} onOpenChange={(open) => {
+        if (!open) {
+          closeResearch();
+        }
+      }}>
+        <DialogContent
+          showCloseButton={false}
+          aria-describedby={undefined}
+          className="top-auto left-0 right-0 bottom-0 h-[85vh] max-h-[85vh] w-full max-w-none translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-t-[28px] rounded-b-none border-0 bg-transparent p-0 shadow-2xl sm:max-w-none"
+        >
+          <DialogTitle className="sr-only">{tResearch("deepResearch")}</DialogTitle>
+          <div className="flex h-full min-h-0 flex-col bg-transparent">
+            <div className="flex justify-center pt-3 pb-2">
+              <div className="h-1.5 w-12 rounded-full bg-gray-300/90" />
+            </div>
+            <div className="min-h-0 flex-1 px-3 pb-3">
+              <ResearchBlock className="h-full w-full" researchId={openResearchId} />
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
