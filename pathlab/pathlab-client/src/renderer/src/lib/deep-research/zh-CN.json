@@ -13,7 +13,8 @@
   },
   "messageInput": {
     "placeholder": "我能帮你做什么？",
-    "placeholderWithRag": "我能帮你做什么？\n你可以通过 @ 引用 RAG 资源。"
+    "placeholderWithRag": "我能帮你做什么？\n你可以通过 @ 引用 RAG 资源。",
+    "modifyPlanPlaceholder": "请描述你希望如何调整这个计划..."
   },
   "header": {
     "title": "PathLab Research"

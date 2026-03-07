@@ -8,6 +8,7 @@ import MessageInput, {
   type MessageInputRef,
 } from "../../../components/deep-research/message-input";
 import { useConfig } from "../../../lib/deep-research/api/hooks";
+import { useTranslations } from "../../../lib/deep-research/i18n";
 import type { Option, Resource } from "../../../lib/deep-research/messages";
 import { useRealtimeASR } from "../../../lib/useRealtimeASR";
 import { cn } from "../../../lib/utils";
@@ -34,6 +35,7 @@ export function InputBox({
   onRemoveFeedback?: () => void;
 }) {
   const { config, loading } = useConfig();
+  const t = useTranslations("messageInput");
   const inputRef = useRef<MessageInputRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [currentPrompt, setCurrentPrompt] = useState("");
@@ -184,7 +186,7 @@ export function InputBox({
       >
         <MessageInput
           className="min-h-[52px] w-full px-0 pt-0"
-          placeholder={feedback ? "Describe how you'd like to modify the plan..." : "Describe your research task..."}
+          placeholder={feedback ? t("modifyPlanPlaceholder") : undefined}
           ref={inputRef}
           loading={loading}
           config={config}

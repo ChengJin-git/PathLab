@@ -13,7 +13,8 @@
   },
   "messageInput": {
     "placeholder": "What can I do for you?",
-    "placeholderWithRag": "What can I do for you? \nYou may refer to RAG resources by using @."
+    "placeholderWithRag": "What can I do for you? \nYou may refer to RAG resources by using @.",
+    "modifyPlanPlaceholder": "Describe how you'd like to modify the plan..."
   },
   "header": {
     "title": "PathLab Research"

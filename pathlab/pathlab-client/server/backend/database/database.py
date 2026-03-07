@@ -16,6 +16,7 @@ from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 from backend.common.config import Config
+from .migrate_chat_conversations_schema import ensure_chat_conversations_schema
 from .models import Base
 
 logger = logging.getLogger(__name__)
@@ -152,6 +153,7 @@ async def init_db():
     async with engine.begin() as conn:
         # Create all tables
         await conn.run_sync(Base.metadata.create_all)
+        await ensure_chat_conversations_schema(conn)
         logger.info("All tables created/verified successfully")
 
     # Create default admin user if no users exist
