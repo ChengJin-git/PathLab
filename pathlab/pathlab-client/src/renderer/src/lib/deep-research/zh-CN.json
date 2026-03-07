@@ -230,7 +230,7 @@
       "trainingTaskSuffix": "训练任务",
       "trainingFromResearchDesc": "该任务由深度调研生成：{title}。",
       "uploadDataFirst": "下一步：请先上传或选择数据集，然后启动训练。",
-      "singleResearchPerConversation": "为了确保 research 质量，当前对话仅支持一次 Deep Research。如需发起新的研究课题，请新开一个对话。",
+      "singleResearchPerConversation": "为了确保研究质量，当前对话仅支持一次深度研究。如需发起新的研究课题，请新开一个对话。",
       "postReportGuidanceHeading": "报告已生成！接下来您希望做什么？",
       "postReportOptionTraining": "使用 AI 训练深度学习模型",
       "postReportOptionAnalysis": "分析相关病理图像数据",

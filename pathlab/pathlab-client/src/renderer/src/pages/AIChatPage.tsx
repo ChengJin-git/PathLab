@@ -120,6 +120,17 @@ function parseResearchJumpBlock(content: string): ResearchJumpPayload | null {
   }
 }
 
+interface AIChatNavigationState {
+  forceNewChat?: boolean
+  preCreatedConversationId?: string
+  reportContext?: string
+  initialMessage?: string
+  autoStartRecording?: boolean
+  fromDashboard?: boolean
+  fromDeepResearchStartTraining?: boolean
+  restoreAIChatFromSession?: boolean
+}
+
 export default function AIChatPage() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -371,14 +382,9 @@ export default function AIChatPage() {
   }, [messages, scrollToBottom, scrollToTop])
 
   // Restore conversation from URL (supports page refresh)
-  // Also supports legacy sessionStorage restore for backward compatibility
+  // Only restore from sessionStorage when another page explicitly returns to AI Chat.
   useEffect(() => {
-    const state = location.state as {
-      forceNewChat?: boolean
-      preCreatedConversationId?: string
-      reportContext?: string
-      initialMessage?: string
-    } | null
+    const state = location.state as AIChatNavigationState | null
 
     // Priority 1: Load from URL if conversationId is present
     if (urlConversationId) {
@@ -415,7 +421,13 @@ export default function AIChatPage() {
       return
     }
 
-    // Priority 2: Legacy - restore from sessionStorage (for back navigation from other pages)
+    // Priority 2: Explicit restore from sessionStorage (for back navigation from AI-origin pages)
+    if (!state?.restoreAIChatFromSession) {
+      sessionStorage.removeItem('ai-chat-conversation-id')
+      sessionStorage.removeItem('ai-chat-scroll-position')
+      return
+    }
+
     const savedConversationId = sessionStorage.getItem('ai-chat-conversation-id')
     if (savedConversationId) {
       handleLoadConversation(savedConversationId)
@@ -456,13 +468,7 @@ export default function AIChatPage() {
 
   // Handle initial message from navigation state
   useEffect(() => {
-    const state = location.state as {
-      initialMessage?: string
-      autoStartRecording?: boolean
-      fromDashboard?: boolean
-      forceNewChat?: boolean
-      fromDeepResearchStartTraining?: boolean
-    } | null
+    const state = location.state as AIChatNavigationState | null
 
     if (state?.initialMessage && !initialMessageSent.current) {
       initialMessageSent.current = true
@@ -520,7 +526,7 @@ export default function AIChatPage() {
 
       // Update URL to reflect the current conversation (for page refresh support)
       if (urlConversationId !== conversationId) {
-        navigate(`/ai-chat/${conversationId}`, { replace: true })
+        navigate(`/dashboard/${conversationId}`, { replace: true })
       }
 
       // Load feedbacks for this conversation

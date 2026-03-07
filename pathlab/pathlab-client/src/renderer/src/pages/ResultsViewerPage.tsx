@@ -733,7 +733,9 @@ export default function ResultsViewerPage() {
       navigate(`/deep-research/${deepResearchConversationId}`)
       return
     }
-    navigate('/dashboard')
+    navigate('/dashboard', {
+      state: fromAIChat ? { restoreAIChatFromSession: true } : undefined
+    })
   }
 
   return (

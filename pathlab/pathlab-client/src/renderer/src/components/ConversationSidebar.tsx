@@ -146,7 +146,7 @@ export default function ConversationSidebar() {
 
   const openConversation = (targetConversationId: string) => {
     const conv = conversations.find(c => c.conversation_id === targetConversationId)
-    const route = conv?.conversation_type === 'ai_chat' ? 'ai-chat' : 'deep-research'
+    const route = conv?.conversation_type === 'ai_chat' ? 'dashboard' : 'deep-research'
     const returnToAIChatConversationId = route === 'deep-research'
       ? preserveAIChatReturnContext()
       : null

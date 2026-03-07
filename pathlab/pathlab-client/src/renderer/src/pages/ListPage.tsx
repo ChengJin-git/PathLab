@@ -246,7 +246,7 @@ export default function ListPage() {
   const handleBackToDatasets = () => {
     // If we came from AI Chat, go back to AI Chat
     if (fromAIChat) {
-      navigate('/dashboard')
+      navigate('/dashboard', { state: { restoreAIChatFromSession: true } })
       return
     }
     // Otherwise, go back to dataset list

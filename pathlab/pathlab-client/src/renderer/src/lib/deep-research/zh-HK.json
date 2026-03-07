@@ -230,7 +230,7 @@
       "trainingTaskSuffix": "訓練任務",
       "trainingFromResearchDesc": "此任務由深度研究生成：{title}。",
       "uploadDataFirst": "下一步：請先上傳或選擇資料集，然後開始訓練。",
-      "singleResearchPerConversation": "為了確保 research 品質，當前對話僅支援一次 Deep Research。如需發起新的研究課題，請新開一個對話。",
+      "singleResearchPerConversation": "為了確保研究品質，當前對話僅支援一次深度研究。如需發起新的研究課題，請新開一個對話。",
       "postReportGuidanceHeading": "報告已生成！接下來您希望做什麼？",
       "postReportOptionTraining": "使用 AI 訓練深度學習模型",
       "postReportOptionAnalysis": "分析相關病理圖像數據",

@@ -1,22 +1,159 @@
 # Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 # SPDX-License-Identifier: MIT
 
+import copy
+import json
 import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, get_args
 
 import httpx
+from langchain_core.messages import ToolMessage
 from langchain_core.language_models import BaseChatModel
 from langchain_deepseek import ChatDeepSeek
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
+from pydantic import PrivateAttr
 
 from src.config import load_yaml_config
 from src.config.agents import LLMType
 from src.llms.providers.dashscope import ChatDashscope
 
 logger = logging.getLogger(__name__)
+
+
+def _clip_text(value: Any, max_length: int) -> str:
+    text = str(value or "").replace("\r", " ").replace("\n", " ")
+    text = " ".join(text.split())
+    return text[:max_length].rstrip()
+
+
+def _should_sanitize_local_vllm_web_search(base_url: Any, model_name: Any) -> bool:
+    normalized_base = str(base_url or "").strip().lower().rstrip("/")
+    normalized_model = str(model_name or "").strip().lower()
+    is_local_vllm = normalized_base.endswith("/v1") and any(
+        marker in normalized_base for marker in ("127.0.0.1:8000", "localhost:8000")
+    )
+    return is_local_vllm and "qwen" in normalized_model
+
+
+def _summarize_web_search_tool_content(content: Any) -> str:
+    try:
+        data = json.loads(content) if isinstance(content, str) else content
+    except Exception:
+        fallback = _clip_text(content, 4000)
+        return fallback or "Web search completed, but the result payload could not be summarized."
+
+    if isinstance(data, dict):
+        if "error" in data:
+            return f"Web search returned an error: {_clip_text(data.get('error'), 500)}"
+        items = data.get("results", [])
+    elif isinstance(data, list):
+        items = data
+    else:
+        fallback = _clip_text(data, 4000)
+        return fallback or "Web search completed successfully."
+
+    if not isinstance(items, list):
+        return "Web search completed successfully."
+
+    page_results: list[dict[str, str]] = []
+    image_count = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "image_url":
+            image_count += 1
+            continue
+
+        title = _clip_text(item.get("title") or "Untitled", 200)
+        url = _clip_text(item.get("url") or "", 500)
+        snippet = _clip_text(item.get("content") or item.get("raw_content") or "", 300)
+        if title or url or snippet:
+            page_results.append({"title": title, "url": url, "snippet": snippet})
+
+    if not page_results and image_count:
+        return (
+            f"Web search returned {image_count} image results. "
+            "Image-only search results were omitted for local model compatibility."
+        )
+
+    if not page_results:
+        return "Web search returned no page results."
+
+    visible_results = page_results[:6]
+    lines = [f"Web search returned {len(page_results)} page results."]
+    for index, result in enumerate(visible_results, start=1):
+        lines.append(f"{index}. {result['title']}")
+        if result["url"]:
+            lines.append(f"   URL: {result['url']}")
+        if result["snippet"]:
+            lines.append(f"   Snippet: {result['snippet']}")
+
+    if len(page_results) > len(visible_results):
+        lines.append(
+            f"... {len(page_results) - len(visible_results)} additional page results omitted for brevity."
+        )
+    if image_count:
+        lines.append(
+            f"Omitted {image_count} image results for local model compatibility."
+        )
+
+    return "\n".join(lines)
+
+
+def _sanitize_messages_for_local_vllm(input_: Any) -> Any:
+    if not isinstance(input_, list):
+        return input_
+
+    sanitized_messages = copy.deepcopy(input_)
+    sanitized_count = 0
+    for message in sanitized_messages:
+        if isinstance(message, ToolMessage) and getattr(message, "name", None) == "web_search":
+            message.content = _summarize_web_search_tool_content(message.content)
+            sanitized_count += 1
+        elif isinstance(message, dict) and message.get("role") == "tool" and message.get("name") == "web_search":
+            message["content"] = _summarize_web_search_tool_content(message.get("content"))
+            sanitized_count += 1
+
+    if sanitized_count:
+        logger.info(
+            "Sanitized %d web_search tool message(s) for local vLLM/Qwen replay compatibility.",
+            sanitized_count,
+        )
+
+    return sanitized_messages
+
+
+class PathLabChatOpenAI(ChatOpenAI):
+    """ChatOpenAI variant with request-time compatibility sanitization for local vLLM/Qwen."""
+
+    _sanitize_local_vllm_web_search: bool = PrivateAttr(default=False)
+
+    def __init__(self, **kwargs: Any) -> None:
+        base_url = kwargs.get("base_url") or kwargs.get("api_base")
+        model_name = kwargs.get("model") or kwargs.get("model_name")
+        super().__init__(**kwargs)
+        should_sanitize = _should_sanitize_local_vllm_web_search(base_url, model_name)
+        object.__setattr__(self, "_sanitize_local_vllm_web_search", should_sanitize)
+        if should_sanitize:
+            logger.info(
+                "Enabled local vLLM/Qwen web_search replay sanitization for model=%s base_url=%s",
+                model_name,
+                base_url,
+            )
+
+    def _get_request_payload(
+        self,
+        input_: Any,
+        *,
+        stop: list[str] | None = None,
+        **kwargs: Any,
+    ) -> dict:
+        if self._sanitize_local_vllm_web_search:
+            input_ = _sanitize_messages_for_local_vllm(input_)
+        return super()._get_request_payload(input_, stop=stop, **kwargs)
 
 # Cache for LLM instances
 _llm_cache: dict[LLMType, BaseChatModel] = {}
@@ -189,7 +326,7 @@ def _create_llm_use_conf(llm_type: LLMType, conf: Dict[str, Any]) -> BaseChatMod
         # Enable stream_usage to get token usage in streaming responses
         # This sends stream_options={"include_usage": true} in the API request
         merged_conf.setdefault("stream_usage", True)
-        return ChatOpenAI(**merged_conf)
+        return PathLabChatOpenAI(**merged_conf)
 
 
 def get_llm_by_type(llm_type: LLMType) -> BaseChatModel:

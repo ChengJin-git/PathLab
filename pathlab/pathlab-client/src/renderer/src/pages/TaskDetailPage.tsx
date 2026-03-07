@@ -380,7 +380,10 @@ export default function TaskDetailPage() {
       navigate(`/deep-research/${deepResearchConversationId}`)
       return
     }
-    navigate(fromAIChat ? '/dashboard' : '/task-list')
+    navigate(
+      fromAIChat ? '/dashboard' : '/task-list',
+      fromAIChat ? { state: { restoreAIChatFromSession: true } } : undefined
+    )
   }
 
   const backLabel = fromDeepResearch

@@ -79,6 +79,12 @@ export default function RegisterPage() {
   // Checking for initial dataset from navigation state
   const location = useLocation()
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
+  const navigateBackToDashboard = () => {
+    navigate('/dashboard', {
+      state: fromAIChat ? { restoreAIChatFromSession: true } : undefined
+    })
+  }
+
   useEffect(() => {
     if (location.state) {
       if (location.state.datasetName) {
@@ -689,7 +695,7 @@ export default function RegisterPage() {
 
       // Clear the form
       resetUpload()
-      navigate('/dashboard')
+      navigateBackToDashboard()
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : String(error))
     }
@@ -883,14 +889,14 @@ export default function RegisterPage() {
           showValidation={showValidation}
           fromAIChat={fromAIChat}
           onNext={() => setStep(2)}
-          onBack={() => navigate('/dashboard')}
+          onBack={navigateBackToDashboard}
         />
       ) : step === 3 ? (
         <SuccessStep
           datasetName={datasetName}
           splitUploadSuccess={splitUploadSuccess}
           fromAIChat={fromAIChat}
-          onNavigate={() => navigate('/dashboard')}
+          onNavigate={navigateBackToDashboard}
           onReset={resetUpload}
         />
       ) : (
@@ -902,7 +908,7 @@ export default function RegisterPage() {
             >
               <Button
                 variant="outline"
-                onClick={() => navigate('/dashboard')}
+                onClick={navigateBackToDashboard}
                 className="gap-2 h-9 sm:h-10 text-xs sm:text-sm"
               >
                 <ArrowLeft className="w-4 h-4" />
