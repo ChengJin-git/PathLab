@@ -61,7 +61,7 @@ export const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerPro
   }, [autoScrollToBottom, mutableContentRef, mutableScrollRef]);
 
   return (
-    <div className={cn("relative", className)}>
+    <div className={cn("relative min-w-0 max-w-full", className)}>
       {scrollShadow && (
         <>
           <div
@@ -88,8 +88,8 @@ export const ScrollContainer = forwardRef<ScrollContainerRef, ScrollContainerPro
           ></div>
         </>
       )}
-      <ScrollArea ref={scrollRef} className="h-full w-full">
-        <div className="h-fit w-full" ref={contentRef}>
+      <ScrollArea ref={scrollRef} className="h-full w-full min-w-0 max-w-full">
+        <div className="h-fit w-full min-w-0 max-w-full" ref={contentRef}>
           {children}
         </div>
       </ScrollArea>

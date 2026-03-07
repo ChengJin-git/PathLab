@@ -45,7 +45,7 @@ export function ResearchReportBlock({
   const hasContent = (message?.content ?? "").trim().length > 0;
 
   return (
-    <div className={cn("w-full pt-4 pb-8", className)}>
+    <div className={cn("w-full min-w-0 max-w-full pt-4 pb-8", className)}>
       {hasContent ? (
         <ReportLayout
           content={message?.content ?? ""}

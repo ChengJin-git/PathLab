@@ -93,10 +93,10 @@ export function ReportLayout({
     }, [headings]);
 
     return (
-        <div className={cn("relative w-full", className)}>
-            <div className="report-content w-full break-words [&_table]:w-full [&_table]:overflow-x-auto [&_table]:block" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
+        <div className={cn("relative w-full min-w-0 max-w-full", className)}>
+            <div className="report-content w-full min-w-0 max-w-full overflow-x-hidden break-words [&_table]:block [&_table]:w-full [&_table]:overflow-x-auto" style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
                 <Markdown
-                    className="prose-sm sm:prose-base prose-slate max-w-none
+                    className="prose-sm sm:prose-base prose-slate min-w-0 max-w-none
                         prose-p:my-3 prose-p:leading-7 prose-p:text-gray-700 sm:prose-p:leading-8
                         prose-headings:text-gray-950
                         prose-strong:font-semibold prose-strong:text-gray-950

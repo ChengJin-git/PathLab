@@ -137,17 +137,17 @@ export function ResearchBlock({
     "min-w-0 cursor-pointer gap-3 rounded-md px-4 py-2 text-sm text-gray-700 transition-colors whitespace-normal break-words hover:bg-gray-50 hover:text-gray-900 focus:bg-gray-50 focus:text-gray-900 sm:whitespace-nowrap";
 
   return (
-    <div className={cn("h-full w-full", className)}>
-      <Card className="relative h-full w-full overflow-hidden border-gray-200/70 bg-white/90 shadow-sm backdrop-blur-sm">
+    <div className={cn("h-full w-full min-w-0 max-w-full", className)}>
+      <Card className="relative h-full w-full min-w-0 max-w-full overflow-hidden border-gray-200/70 bg-white/90 shadow-sm backdrop-blur-sm">
         <Tabs
-          className="flex h-full w-full flex-col"
+          className="flex h-full w-full min-w-0 flex-col"
           value={activeTab}
           onValueChange={(value) => setActiveTab(value)}
         >
           <div className="border-b border-gray-100/80 bg-gradient-to-b from-gray-50/90 to-white px-3 py-3 sm:px-6 sm:py-4">
             <div className="flex flex-col gap-3 sm:gap-4">
-              <div className="flex items-start justify-between gap-3 sm:gap-4">
-                <div className="min-w-0">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                <div className="min-w-0 flex-1">
                   <div className="flex items-start gap-2.5 sm:gap-3">
                     <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 shadow-lg sm:h-10 sm:w-10">
                       <Sparkles className="h-4.5 w-4.5 text-white sm:h-5 sm:w-5" />
@@ -160,7 +160,7 @@ export function ResearchBlock({
                     </div>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
+                <div className="flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto sm:gap-2">
                   {hasCompletedReport && (
                     <>
                       <Button
@@ -244,8 +244,8 @@ export function ResearchBlock({
                   </Tooltip>
                 </div>
               </div>
-              <div className="flex w-full justify-center">
-                <TabsList className="max-w-full rounded-full bg-gray-100/80 p-1 shadow-inner">
+              <div className="flex w-full justify-center overflow-x-auto">
+                <TabsList className="w-full max-w-full rounded-full bg-gray-100/80 p-1 shadow-inner sm:w-fit">
                   <TabsTrigger
                     className="whitespace-nowrap rounded-full px-3 py-1.5 text-sm text-gray-600 data-[state=active]:bg-white data-[state=active]:text-gray-900 data-[state=active]:shadow-sm sm:px-6"
                     value="activities"

@@ -264,7 +264,7 @@ export function Markdown({
         </div>
       ),
       table: ({ children }) => (
-        <div className="overflow-x-auto my-3 rounded-lg border border-gray-200 shadow-sm">
+        <div className="my-3 max-w-full overflow-x-auto rounded-lg border border-gray-200 shadow-sm">
           <table className="min-w-full">{children}</table>
         </div>
       ),
@@ -272,7 +272,7 @@ export function Markdown({
         const text = extractNodeText(children);
         if (isTreeLikeParagraph(text)) {
           return (
-            <div className="my-4 overflow-x-auto rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white px-4 py-3 shadow-sm">
+            <div className="my-4 max-w-full overflow-x-auto rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white px-4 py-3 shadow-sm">
               <pre className="m-0 whitespace-pre font-mono text-[13px] leading-6 text-slate-700">
                 {normalizeTreeLikeText(text)}
               </pre>
@@ -305,7 +305,7 @@ export function Markdown({
     return plugins;
   }, [animated]);
   return (
-    <div className={cn(className, "prose dark:prose-invert")} style={style}>
+    <div className={cn(className, "prose min-w-0 max-w-full dark:prose-invert")} style={style}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={rehypePlugins}

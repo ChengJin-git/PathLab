@@ -253,12 +253,12 @@ export default function Main() {
           className="top-auto left-0 right-0 bottom-0 h-[88vh] max-h-[88vh] w-full max-w-none translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-t-[24px] rounded-b-none border-0 bg-transparent p-0 shadow-2xl sm:max-w-none sm:rounded-t-[28px]"
         >
           <DialogTitle className="sr-only">{tResearch("deepResearch")}</DialogTitle>
-          <div className="flex h-full min-h-0 flex-col bg-transparent">
+          <div className="flex h-full min-h-0 min-w-0 flex-col bg-transparent">
             <div className="flex justify-center pt-3 pb-2">
               <div className="h-1.5 w-12 rounded-full bg-gray-300/90" />
             </div>
-            <div className="min-h-0 flex-1 px-2 pb-2 sm:px-3 sm:pb-3">
-              <ResearchBlock className="h-full w-full" researchId={openResearchId} />
+            <div className="min-h-0 min-w-0 flex-1 px-2 pb-2 sm:px-3 sm:pb-3">
+              <ResearchBlock className="h-full w-full min-w-0" researchId={openResearchId} />
             </div>
           </div>
         </DialogContent>
