@@ -20,7 +20,6 @@ import "../../styles/prosemirror.css";
 import { resourceSuggestion } from "./resource-suggestion";
 import React, { forwardRef, useEffect, useMemo, useRef } from "react";
 import type { Resource } from "../../lib/deep-research/messages";
-import { LoadingOutlined } from "@ant-design/icons";
 import type { AppConfig } from "../../lib/deep-research/config";
 
 export interface MessageInputRef {
@@ -32,7 +31,6 @@ export interface MessageInputRef {
 export interface MessageInputProps {
   className?: string;
   placeholder?: string;
-  loading?: boolean;
   config?: AppConfig | null;
   onChange?: (markdown: string) => void;
   onEnter?: (message: string, resources: Array<Resource>) => void;
@@ -78,7 +76,7 @@ function formatItem(item: JSONContent): {
 
 const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
   (
-    { className, placeholder, loading, config, onChange, onEnter }: MessageInputProps,
+    { className, placeholder, config, onChange, onEnter }: MessageInputProps,
     ref,
   ) => {
     const t = useTranslations("messageInput");
@@ -170,14 +168,6 @@ const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       }
       return extensions;
     }, [config]);
-
-    if (loading) {
-      return (
-        <div className={["deep-research-editor", className].filter(Boolean).join(" ")}>
-          <LoadingOutlined />
-        </div>
-      );
-    }
 
     return (
       <div className={["deep-research-editor", className].filter(Boolean).join(" ")}>

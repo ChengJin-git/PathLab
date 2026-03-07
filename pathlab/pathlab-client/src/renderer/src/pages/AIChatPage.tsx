@@ -365,16 +365,11 @@ export default function AIChatPage() {
   // Restore scroll position after messages are loaded (when returning from another page).
   // Depends on messages.length instead of messages to avoid re-running on every streaming chunk.
   // Scroll restore only matters when message count changes (initial load / conversation switch).
-  useEffect(() => {
+  useLayoutEffect(() => {
     const savedScrollPosition = sessionStorage.getItem('ai-chat-scroll-position')
     if (savedScrollPosition && messagesContainerRef.current && messages.length > 0) {
-      // Use requestAnimationFrame to ensure DOM is ready after messages render
-      requestAnimationFrame(() => {
-        if (messagesContainerRef.current) {
-          messagesContainerRef.current.scrollTop = parseInt(savedScrollPosition, 10)
-          scrollRestoredRef.current = true
-        }
-      })
+      messagesContainerRef.current.scrollTop = parseInt(savedScrollPosition, 10)
+      scrollRestoredRef.current = true
       sessionStorage.removeItem('ai-chat-scroll-position')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -446,6 +441,10 @@ export default function AIChatPage() {
   const handleLoadConversation = async (conversationId: string) => {
     try {
       const conv = await getConversation(conversationId)
+
+      if (sessionStorage.getItem('ai-chat-scroll-position') !== null) {
+        scrollRestoredRef.current = true
+      }
 
       // Restore report context from conversation record (for reloaded training handoff chats)
       reportContextRef.current = conv.report_context || undefined
