@@ -57,6 +57,19 @@ def crawl_tool(
         article = crawler.crawl(url)
         article_content = compress_crawl_content(article)
         content_length = len(article_content.strip())
+        if article.extraction_reason == "anti_bot_challenge":
+            return build_tool_result(
+                tool="crawl_tool",
+                status=TOOL_STATUS_NO_USEFUL_INFORMATION,
+                reason="anti_bot_challenge",
+                summary="The site returned an anti-bot or browser verification page, so the crawler could not access the article body.",
+                valid_for_research=False,
+                data={
+                    "url": url,
+                    "crawled_content": article_content,
+                    "content_length": content_length,
+                },
+            )
         is_valid = content_length >= MIN_CRAWL_CONTENT_LENGTH
         return build_tool_result(
             tool="crawl_tool",

@@ -91,6 +91,8 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [exaApiKey, setExaApiKey] = useState('')
   // Tavily API Key for deep research web search
   const [tavilyApiKey, setTavilyApiKey] = useState('')
+  // Jina Reader API key for deep research web reading/crawling
+  const [jinaApiKey, setJinaApiKey] = useState('')
   const [aiSaved, setAiSaved] = useState(false)
   const [aiSaving, setAiSaving] = useState(false)
 
@@ -161,6 +163,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       setSearchProvider((s.search_provider || 'exa') as SearchProvider)
       setExaApiKey(s.exa_api_key || '')
       setTavilyApiKey(s.tavily_api_key || '')
+      setJinaApiKey(s.jina_api_key || '')
       setLocalVllmEnabled(s.local_vllm_enabled); setLocalVllmBaseUrl(s.local_vllm_base_url)
       setLocalVllmModel(s.local_vllm_model); setLocalVllmApiKey(s.local_vllm_api_key)
       setLocalAsrEnabled(s.local_asr_enabled); setLocalAsrBaseUrl(s.local_asr_base_url)
@@ -193,6 +196,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         search_provider: searchProvider,
         exa_api_key: exaApiKey,
         tavily_api_key: tavilyApiKey,
+        jina_api_key: jinaApiKey,
         local_vllm_enabled: localVllmEnabled, local_vllm_base_url: localVllmBaseUrl,
         local_vllm_model: localVllmModel, local_vllm_api_key: localVllmApiKey,
         local_asr_enabled: localAsrEnabled, local_asr_base_url: localAsrBaseUrl,
@@ -343,13 +347,13 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
           </div>
         </section>
 
-        {/* Web Search Section */}
+	        {/* Web Research Section */}
 	        <section className="space-y-3">
 	          <div className="flex items-center gap-3">
 	            <div className="p-2 bg-slate-100 rounded-lg">
 	              <Globe className="w-5 h-5 text-slate-700" />
 	            </div>
-	            <h2 className="text-lg font-bold text-slate-900">{t('settings.general.webSearchCard')}</h2>
+	            <h2 className="text-lg font-bold text-slate-900">{t('settings.general.webResearchCard')}</h2>
 	          </div>
 		          <div className="grid gap-3 items-start">
 	            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
@@ -402,6 +406,24 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                     </a>
                   </p>
                 </div>
+	                <div className="space-y-1">
+	                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">
+	                    {t('settings.general.jinaApiKey')}
+	                  </Label>
+	                  <Input
+	                    type="password"
+	                    value={jinaApiKey}
+	                    onChange={(e) => setJinaApiKey(e.target.value)}
+	                    placeholder="jina_..."
+	                    className="h-8 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+	                  />
+	                  <p className="text-xs text-slate-500">
+	                    {t('settings.general.jinaApiKeyHelp')}{' '}
+	                    <a href="https://jina.ai/reader/" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-700 font-medium">
+	                      {t('common.getKey')}
+	                    </a>
+	                  </p>
+	                </div>
               </CardContent>
             </Card>
           </div>

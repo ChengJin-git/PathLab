@@ -34,6 +34,8 @@ class GlobalSettingsResponse(BaseModel):
     exa_api_key: str
     # Tavily API key for deep research web search
     tavily_api_key: str
+    # Jina Reader API key for deep research web reading/crawling
+    jina_api_key: str
     # Local vLLM settings (OpenAI-compatible server for LLM)
     local_vllm_enabled: bool
     local_vllm_base_url: str
@@ -62,6 +64,8 @@ class GlobalSettingsUpdateRequest(BaseModel):
     exa_api_key: Optional[str] = None
     # Tavily API key
     tavily_api_key: Optional[str] = None
+    # Jina Reader API key
+    jina_api_key: Optional[str] = None
     # Local vLLM settings
     local_vllm_enabled: Optional[bool] = None
     local_vllm_base_url: Optional[str] = None

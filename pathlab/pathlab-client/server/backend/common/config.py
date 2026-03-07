@@ -270,6 +270,7 @@ class Config:
             "search_provider": cls.resolve_search_provider(data),
             "exa_api_key": data.get("exa_api_key", ""),
             "tavily_api_key": data.get("tavily_api_key", ""),
+            "jina_api_key": data.get("jina_api_key", ""),
             # Local vLLM settings (OpenAI-compatible server for LLM)
             "local_vllm_enabled": data.get("local_vllm_enabled", False),
             "local_vllm_base_url": data.get("local_vllm_base_url", "http://127.0.0.1:8000/v1"),
@@ -302,6 +303,7 @@ class Config:
             "search_provider",
             "exa_api_key",
             "tavily_api_key",
+            "jina_api_key",
             # Local vLLM settings
             "local_vllm_enabled",
             "local_vllm_base_url",

@@ -2247,6 +2247,11 @@ export async function loadConversationFromBackend(conversationId: string): Promi
     const normalizedResearchRunStatus = new Map<string, DeepResearchTaskStatus>();
     const normalizedRestartPlanShownResearchIds = new Set<string>();
     const normalizedPlanActionLocks = new Map<string, "accepted" | "replan">();
+    const messageOrder = new Map(messageIds.map((id, index) => [id, index]));
+    const sortActivityIdsByMessageOrder = (ids: string[]) =>
+      Array.from(new Set(ids)).sort(
+        (a, b) => (messageOrder.get(a) ?? Number.MAX_SAFE_INTEGER) - (messageOrder.get(b) ?? Number.MAX_SAFE_INTEGER),
+      );
     const cachedRestartPlanShownList = cached?.restartPlanShownResearchIds ?? [];
     const cachedRestartPlanShownSet = new Set(cachedRestartPlanShownList);
     for (const [messageId, action] of planActionLocks.entries()) {
@@ -2266,12 +2271,18 @@ export async function loadConversationFromBackend(conversationId: string): Promi
       }
       const planId = researchPlanIds.get(researchId);
       const reportId = researchReportIds.get(researchId);
-      const activities = researchActivityIds.get(researchId) ?? [];
+      if (planId && validMessageIds.has(planId)) {
+        return planId;
+      }
+      if (reportId && validMessageIds.has(reportId)) {
+        return reportId;
+      }
+      const activities = sortActivityIdsByMessageOrder(researchActivityIds.get(researchId) ?? []);
       const firstNonPlanner = activities.find((id) => {
         const msg = messages.get(id);
         return msg && msg.agent !== "planner";
       });
-      return firstNonPlanner ?? reportId ?? planId ?? activities[0] ?? null;
+      return firstNonPlanner ?? activities[0] ?? null;
     };
 
     for (const oldResearchId of researchIds) {
@@ -2325,7 +2336,7 @@ export async function loadConversationFromBackend(conversationId: string): Promi
             merged.push(id);
           }
         }
-        normalizedResearchActivityIds.set(normalizedResearchId, merged);
+        normalizedResearchActivityIds.set(normalizedResearchId, sortActivityIdsByMessageOrder(merged));
       }
 
       const citations = researchCitations.get(oldResearchId);
@@ -2369,7 +2380,7 @@ export async function loadConversationFromBackend(conversationId: string): Promi
       for (const id of fragmentActivities) {
         if (!merged.includes(id)) merged.push(id);
       }
-      normalizedResearchActivityIds.set(targetRid, merged);
+      normalizedResearchActivityIds.set(targetRid, sortActivityIdsByMessageOrder(merged));
       normalizedResearchActivityIds.delete(rid);
 
       // Merge citations

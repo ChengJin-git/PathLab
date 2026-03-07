@@ -415,8 +415,8 @@ def _has_llm_settings_configured() -> bool:
 
 def _apply_search_settings_overrides_from_settings() -> str:
     """
-    Keep process-level search provider and API keys aligned with global settings
-    so in-process deep-research requests use the configured provider.
+    Keep process-level research provider credentials aligned with global settings
+    so in-process deep-research requests use the configured provider and crawler keys.
 
     Returns the resolved provider for downstream request-body injection.
     """
@@ -425,6 +425,7 @@ def _apply_search_settings_overrides_from_settings() -> str:
         provider = Config.resolve_search_provider(settings)
         exa_configured = (settings.get("exa_api_key") or "").strip()
         tavily_configured = (settings.get("tavily_api_key") or "").strip()
+        jina_configured = (settings.get("jina_api_key") or "").strip()
     except Exception as e:
         logger.warning(f"[ResearchChat] Failed to read search settings: {e}")
         return "exa"
@@ -436,6 +437,7 @@ def _apply_search_settings_overrides_from_settings() -> str:
     key_overrides = {
         "EXA_API_KEY": exa_configured,
         "TAVILY_API_KEY": tavily_configured,
+        "JINA_API_KEY": jina_configured,
     }
     for env_key, configured in key_overrides.items():
         current = os.environ.get(env_key)

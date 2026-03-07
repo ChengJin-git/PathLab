@@ -13,6 +13,20 @@ from src.crawler.readability_extractor import ReadabilityExtractor
 
 logger = logging.getLogger(__name__)
 
+ACCESS_CHALLENGE_MARKERS = (
+    "checking your browser",
+    "before accessing",
+    "recaptcha",
+    "captcha",
+    "cf-challenge",
+    "cf browser verification",
+    "cloudflare",
+    "verify you are human",
+    "security check",
+    "bot verification",
+    "please enable javascript and cookies",
+)
+
 
 def safe_truncate(text: str, max_length: int = 500) -> str:
     """
@@ -134,6 +148,14 @@ def is_html_content(content: str) -> bool:
     return False
 
 
+def is_access_challenge_content(content: str | None) -> bool:
+    if not content or not content.strip():
+        return False
+
+    normalized = re.sub(r"\s+", " ", content).strip().lower()
+    return any(marker in normalized for marker in ACCESS_CHALLENGE_MARKERS)
+
+
 class Crawler:
     def crawl(self, url: str) -> Article:
         # To help LLMs better understand content, we extract clean
@@ -156,6 +178,19 @@ class Crawler:
         # Get the selected crawler tool based on configuration
         crawler_client = self._select_crawler_tool(crawler_config)
         html = self._crawl_with_tool(crawler_client, url)
+
+        if is_access_challenge_content(html):
+            logger.warning(f"Access challenge detected while crawling URL {url}")
+            article = Article(
+                title="Access Challenge",
+                html_content=(
+                    "<p>This site returned an anti-bot or browser verification page, "
+                    "so the crawler could not access the article body.</p>"
+                ),
+                extraction_reason="anti_bot_challenge",
+            )
+            article.url = url
+            return article
         
         # Check if we got valid HTML content
         if not html or not html.strip():
@@ -190,6 +225,9 @@ class Crawler:
             )
             article.url = url
             return article
+
+        if is_access_challenge_content(article.title) or is_access_challenge_content(article.html_content):
+            article.extraction_reason = "anti_bot_challenge"
         
         article.url = url
         return article

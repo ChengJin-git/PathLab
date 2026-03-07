@@ -9,10 +9,12 @@ from markdownify import markdownify as md
 
 class Article:
     url: str
+    extraction_reason: str | None
 
-    def __init__(self, title: str, html_content: str):
+    def __init__(self, title: str, html_content: str, extraction_reason: str | None = None):
         self.title = title
         self.html_content = html_content
+        self.extraction_reason = extraction_reason
 
     def to_markdown(self, including_title: bool = True) -> str:
         markdown = ""
