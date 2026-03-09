@@ -180,12 +180,15 @@ export default function NewTaskPage() {
   // Auto-adjust default parameters when taskType changes
   useEffect(() => {
     if (wizard.taskType === 'survival') {
+      trainingConfig.setLearningRate(TRAINING_DEFAULTS.learningRate)
       trainingConfig.setEpochs(30)
       trainingConfig.setTrainBatchSize(TRAINING_DEFAULTS.batchSize)
     } else if (wizard.taskType === 'segmentation') {
+      trainingConfig.setLearningRate(SEG_TRAINING_DEFAULTS.learningRate)
       trainingConfig.setEpochs(SEG_TRAINING_DEFAULTS.epochs)
       trainingConfig.setTrainBatchSize(SEG_TRAINING_DEFAULTS.batchSize)
     } else {
+      trainingConfig.setLearningRate(TRAINING_DEFAULTS.learningRate)
       trainingConfig.setEpochs(TRAINING_DEFAULTS.epochs)
       trainingConfig.setTrainBatchSize(TRAINING_DEFAULTS.batchSize)
     }
