@@ -37,12 +37,12 @@ from ..models import (
     StartDeleteExternalRequest,
     StartBatchUpdateMetadataRequest,
 )
+from ..scan_sessions import get_scan_session, resolve_scan_selection
 from ..utils import (
     align_dataset_data_type_for_file,
     build_segmentation_annotation_index,
     ensure_segmentation_contract,
     ensure_dataset_segmentation_contract,
-    find_first_path_for_data_type,
     find_matching_segmentation_annotation_path,
     get_file_data_type,
     infer_dataset_data_type_from_paths,
@@ -57,6 +57,7 @@ from backend.common.annotation_summary_cache import (
     rebuild_dataset_annotation_summary_cache,
 )
 from backend.common.config import Config
+from backend.common.file_types import WSI_EXTENSIONS
 
 router = APIRouter()
 
@@ -226,6 +227,7 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                     file_info.get('path', '') if isinstance(file_info, dict) else file_info.path
                     for file_info in files
                 ]
+                anchor_path = None
                 data_type = 'patch'
                 if task_type == 'segmentation':
                     if infer_dataset_data_type_from_paths(batch_file_paths) != 'patch':
@@ -238,7 +240,12 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                     data_type = 'patch'
                     aggregation_level = 'file'
                 elif files:
-                    data_type = infer_dataset_data_type_from_paths(batch_file_paths)
+                    anchor_path = next(
+                        (path for path in batch_file_paths if Path(path).suffix.lower() in WSI_EXTENSIONS),
+                        None,
+                    )
+                    if anchor_path:
+                        data_type = 'wsi'
 
                 try:
                     ensure_segmentation_contract(task_type, data_type, aggregation_level, context='Batch import')
@@ -258,7 +265,6 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                 # Create dataset with group_id
                 dataset = await DatasetRepository.get_or_create(db, dataset_name, group_id=data_group.group_id, user_id=user_id)
                 if dataset_name and files:
-                    anchor_path = find_first_path_for_data_type(batch_file_paths, data_type)
                     if not anchor_path and files:
                         anchor_path = files[0].get('path', '') if isinstance(files[0], dict) else files[0].path
                     dataset = await align_dataset_data_type_for_file(
@@ -1130,6 +1136,24 @@ async def start_batch_import_task(
         if request.task_type == 'segmentation' and request.aggregation_level != 'file':
             raise HTTPException(status_code=400, detail="Segmentation batch import must use aggregation_level='file'")
 
+        if request.scan_id:
+            session = get_scan_session(request.scan_id, str(user.id))
+            if session is None:
+                raise HTTPException(status_code=404, detail="Scan session not found or expired")
+            resolved_files = resolve_scan_selection(
+                session,
+                select_all_valid=request.select_all_valid,
+                selected_paths=request.selected_paths,
+                excluded_paths=request.excluded_paths,
+            )
+            resolved_scan_root = session["directory"]
+        else:
+            resolved_files = [f.model_dump() if hasattr(f, 'model_dump') else f.dict() for f in (request.files or [])]
+            resolved_scan_root = request.scan_root
+
+        if not resolved_files:
+            raise HTTPException(status_code=400, detail="No files selected for batch import")
+
         # Generate task ID
         task_id = f"import_{uuid.uuid4().hex[:16]}"
 
@@ -1137,10 +1161,10 @@ async def start_batch_import_task(
 
         # Prepare params for storage
         params = {
-            "files": [f.model_dump() if hasattr(f, 'model_dump') else f.dict() for f in request.files],
+            "files": resolved_files,
             "dataset_id": request.dataset_id,
             "dataset_name": request.dataset_name,
-            "scan_root": request.scan_root,
+            "scan_root": resolved_scan_root,
             "aggregation_level": request.aggregation_level,
             "task_type": request.task_type,
             "default_label": default_label,
@@ -1170,9 +1194,11 @@ async def start_batch_import_task(
         return {
             "task_id": task_id,
             "message": "Batch import task started",
-            "total_files": len(request.files)
+            "total_files": len(resolved_files)
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to start batch import task: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to start batch import: {str(e)}")

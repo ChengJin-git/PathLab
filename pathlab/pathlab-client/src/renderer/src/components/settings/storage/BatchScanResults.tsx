@@ -1,7 +1,7 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  CheckCircle, AlertCircle, RefreshCw, Upload,
+  CheckCircle, AlertCircle, ChevronLeft, ChevronRight, RefreshCw, Upload,
   Layers, Clock, Info, Grid3X3, FileJson
 } from 'lucide-react'
 import { Button } from '../../ui/button'
@@ -14,7 +14,7 @@ import { DatasetSelection } from './DatasetSelection'
 
 interface BatchScanResultsProps {
   batchScanResult: ScanDirectoryResponse
-  batchSelectedFiles: Set<string>
+  batchSelectedCount: number
   batchDatasetMode: 'existing' | 'new'
   setBatchDatasetMode: (mode: 'existing' | 'new') => void
   batchSelectedDatasetId: string
@@ -27,7 +27,9 @@ interface BatchScanResultsProps {
   setBatchTaskType: (type: 'classification' | 'survival' | 'segmentation') => void
   batchDataLevel: 'case' | 'file'
   setBatchDataLevel: (level: 'case' | 'file') => void
-  handleBatchFileToggle: (path: string) => void
+  handleBatchScanPageChange: (page: number) => Promise<void>
+  isBatchFileSelected: (path: string, valid: boolean) => boolean
+  handleBatchFileToggle: (path: string, valid: boolean) => void
   handleBatchSelectAll: () => void
   handleBatchDeselectAll: () => void
   handleBatchRegister: () => Promise<void>
@@ -36,7 +38,7 @@ interface BatchScanResultsProps {
 
 export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
   batchScanResult,
-  batchSelectedFiles,
+  batchSelectedCount,
   batchDatasetMode,
   setBatchDatasetMode,
   batchSelectedDatasetId,
@@ -49,6 +51,8 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
   setBatchTaskType,
   batchDataLevel,
   setBatchDataLevel,
+  handleBatchScanPageChange,
+  isBatchFileSelected,
   handleBatchFileToggle,
   handleBatchSelectAll,
   handleBatchDeselectAll,
@@ -63,8 +67,8 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
         <div className="text-sm text-gray-600">
           {t('settings.storage.foundFiles', {
             count: batchScanResult.total_count,
-            wsi: batchScanResult.files.filter(f => f.data_type === 'wsi').length,
-            patch: batchScanResult.files.filter(f => f.data_type === 'patch').length,
+            wsi: batchScanResult.wsi_count,
+            patch: batchScanResult.patch_count,
             valid: batchScanResult.valid_count,
             size: formatFileSize(batchScanResult.total_size)
           })}
@@ -102,8 +106,8 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
               >
                 <td className="px-3 py-3">
                   <Checkbox
-                    checked={batchSelectedFiles.has(file.path)}
-                    onCheckedChange={() => handleBatchFileToggle(file.path)}
+                    checked={isBatchFileSelected(file.path, file.valid)}
+                    onCheckedChange={() => handleBatchFileToggle(file.path, file.valid)}
                     disabled={!file.valid}
                   />
                 </td>
@@ -114,7 +118,7 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
                   <span className={`inline-flex px-2 py-0.5 text-xs rounded ${
                     file.data_type === 'wsi' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
                   }`}>
-                    {file.data_type === 'wsi' ? 'WSI' : 'Patch'}
+                    {file.data_type === 'wsi' ? t('settings.storage.wsiType') : t('settings.storage.patchType')}
                   </span>
                 </td>
                 <td className="px-3 py-3">
@@ -157,6 +161,41 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div className="border border-gray-100 rounded-xl bg-gray-50/50 px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="text-xs text-gray-500 font-medium">
+          {t('settings.storage.showingRange', {
+            start: batchScanResult.total_count === 0 ? 0 : (batchScanResult.page - 1) * batchScanResult.page_size + 1,
+            end: Math.min(batchScanResult.page * batchScanResult.page_size, batchScanResult.total_count),
+            total: batchScanResult.total_count,
+          })}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleBatchScanPageChange(batchScanResult.page - 1)}
+            disabled={batchScanResult.page <= 1}
+            title={t('settings.storage.previousPage')}
+            aria-label={t('settings.storage.previousPage')}
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </Button>
+          <span className="text-xs font-medium text-gray-600 px-2">
+            {t('settings.storage.pageIndicator', { page: batchScanResult.page, totalPages: batchScanResult.total_pages })}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleBatchScanPageChange(batchScanResult.page + 1)}
+            disabled={batchScanResult.page >= batchScanResult.total_pages}
+            title={t('settings.storage.nextPage')}
+            aria-label={t('settings.storage.nextPage')}
+          >
+            <ChevronRight className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
 
       <div className="bg-slate-50 rounded-lg p-4 space-y-3 border border-slate-200">
@@ -232,11 +271,11 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
 
       <div className="flex items-center justify-between">
         <div className="text-sm text-gray-600">
-          {t('settings.storage.filesSelected', { count: batchSelectedFiles.size })}
+          {t('settings.storage.filesSelected', { count: batchSelectedCount })}
         </div>
         <Button
           onClick={handleBatchRegister}
-          disabled={batchSelectedFiles.size === 0 || batchRegistering}
+          disabled={batchSelectedCount === 0 || batchRegistering}
           className="gap-2"
         >
           {batchRegistering ? (
@@ -247,7 +286,7 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
           ) : (
             <>
               <Upload className="w-4 h-4" />
-              {t('settings.storage.registerSelected', { count: batchSelectedFiles.size })}
+              {t('settings.storage.registerSelected', { count: batchSelectedCount })}
             </>
           )}
         </Button>

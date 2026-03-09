@@ -913,6 +913,7 @@ class WSIRepository:
         limit: int = 0,
         user_id: Optional[str] = None,
         data_type: Optional[str] = None,
+        search: Optional[str] = None,
         elevated_dataset_ids: Optional[List[str]] = None
     ) -> List[WSISlide]:
         """
@@ -926,6 +927,7 @@ class WSIRepository:
             user_id: Optional user ID filter. If provided, only returns WSI belonging to this user.
                      If None, returns all WSI in the dataset (for admin users).
             data_type: Optional filter - "wsi" for WSI files, "patch" for image files
+            search: Optional search term matched against filename/case/label/source/wsi_id
             elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
                                   If the requested dataset_id is in this list, user_id filter is bypassed.
 
@@ -953,6 +955,10 @@ class WSIRepository:
         if data_type_filter is not None:
             query = query.where(data_type_filter)
 
+        search_filter = WSIRepository._build_search_filter(search)
+        if search_filter is not None:
+            query = query.where(search_filter)
+
         query = query.order_by(desc(WSISlide.created_at)).offset(skip)
         if limit > 0:
             query = query.limit(limit)
@@ -961,11 +967,47 @@ class WSIRepository:
         return result.scalars().all()
 
     @staticmethod
+    async def get_ids_by_dataset(
+        db: AsyncSession,
+        dataset_id: str,
+        user_id: Optional[str] = None,
+        data_type: Optional[str] = None,
+        search: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None,
+    ) -> List[str]:
+        """Get matching WSI IDs in a dataset without loading full slide objects."""
+        query = select(WSISlide.wsi_id)
+
+        if dataset_id == "Uncategorized":
+            query = query.where(WSISlide.dataset_id.is_(None))
+        else:
+            query = query.where(WSISlide.dataset_id == dataset_id)
+
+        if user_id is not None:
+            has_elevated_permission = elevated_dataset_ids and dataset_id in elevated_dataset_ids
+            if not has_elevated_permission:
+                query = query.where(WSISlide.user_id == user_id)
+
+        data_type_filter = WSIRepository._build_data_type_filter(data_type)
+        if data_type_filter is not None:
+            query = query.where(data_type_filter)
+
+        search_filter = WSIRepository._build_search_filter(search)
+        if search_filter is not None:
+            query = query.where(search_filter)
+
+        query = query.order_by(desc(WSISlide.created_at))
+
+        result = await db.execute(query)
+        return [row[0] for row in result.all()]
+
+    @staticmethod
     async def count_by_dataset(
         db: AsyncSession,
         dataset_id: str,
         user_id: Optional[str] = None,
         data_type: Optional[str] = None,
+        search: Optional[str] = None,
         elevated_dataset_ids: Optional[List[str]] = None
     ) -> int:
         """
@@ -977,6 +1019,7 @@ class WSIRepository:
             user_id: Optional user ID filter. If provided, only counts WSI belonging to this user.
                      If None, counts all WSI in the dataset (for admin users).
             data_type: Optional filter - "wsi" for WSI files, "patch" for image files
+            search: Optional search term matched against filename/case/label/source/wsi_id
             elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
                                   If the requested dataset_id is in this list, user_id filter is bypassed.
 
@@ -1003,6 +1046,10 @@ class WSIRepository:
         data_type_filter = WSIRepository._build_data_type_filter(data_type)
         if data_type_filter is not None:
             query = query.where(data_type_filter)
+
+        search_filter = WSIRepository._build_search_filter(search)
+        if search_filter is not None:
+            query = query.where(search_filter)
 
         result = await db.execute(query)
         return result.scalar_one()

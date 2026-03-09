@@ -27,9 +27,10 @@ from backend.auth import User
 from backend.auth.dependencies import require_admin
 from ..dependencies import logger
 from ..models import ScanDirectoryRequest, CheckExternalFilesRequest, DeleteUnavailableFilesRequest
+from ..scan_sessions import build_scan_response, create_scan_session, get_scan_session
 from ..utils import (
     build_segmentation_annotation_index,
-    get_file_data_type,
+    get_scan_file_data_type,
     is_tiff_family,
     resolve_segmentation_annotation_match,
 )
@@ -82,7 +83,7 @@ def _scan_directory_for_wsi(directory: str) -> list:
         # Determine file type: WSI, patch, or skip
         data_type = None
         if ext in WSI_EXTENSIONS or ext in PATCH_EXTENSIONS or is_tiff_family(item):
-            data_type = get_file_data_type(item, file_size)
+            data_type = get_scan_file_data_type(item, file_size)
 
         if data_type is None:
             continue
@@ -203,6 +204,16 @@ async def scan_directory(
     """
     try:
         directory = request.directory_path
+        page = max(1, request.page)
+        page_size = min(max(1, request.page_size), 500)
+
+        if request.scan_id:
+            session = get_scan_session(request.scan_id, str(user.id))
+            if session is None:
+                raise HTTPException(status_code=404, detail="Scan session not found or expired")
+            if session["directory"] != directory:
+                raise HTTPException(status_code=400, detail="Scan session does not match requested directory")
+            return build_scan_response(session, page=page, page_size=page_size)
 
         # Validate directory exists
         if not os.path.exists(directory):
@@ -216,17 +227,8 @@ async def scan_directory(
 
         # Scan directory in thread pool to avoid blocking
         files = await asyncio.to_thread(_scan_directory_for_wsi, directory)
-
-        valid_count = sum(1 for f in files if f["valid"])
-        total_size = sum(f["size"] for f in files)
-
-        return {
-            "directory": directory,
-            "files": files,
-            "total_count": len(files),
-            "valid_count": valid_count,
-            "total_size": total_size,
-        }
+        session = create_scan_session(directory=directory, files=files, user_id=str(user.id))
+        return build_scan_response(session, page=page, page_size=page_size)
 
     except HTTPException:
         raise

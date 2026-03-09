@@ -2,7 +2,7 @@
 Pydantic models for Gateway API requests/responses
 """
 from enum import Enum
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, Dict, List, Any
 from backend.ai.segmentors.specs import is_fm_segmentation_backbone
 
@@ -193,6 +193,9 @@ class MigrationRequest(BaseModel):
 class ScanDirectoryRequest(BaseModel):
     """Request model for scanning a directory for WSI files"""
     directory_path: str
+    scan_id: Optional[str] = None
+    page: int = 1
+    page_size: int = 100
 
 
 class BatchRegisterFileInfo(BaseModel):
@@ -228,10 +231,14 @@ class DeleteUnavailableFilesRequest(BaseModel):
 
 class StartBatchImportRequest(BaseModel):
     """Request model for starting a batch import background task"""
-    files: List[BatchRegisterFileInfo]  # List of file info objects to register
+    files: Optional[List[BatchRegisterFileInfo]] = None  # Optional explicit list of file info objects to register
     dataset_id: Optional[str] = None  # Existing dataset UUID
     dataset_name: Optional[str] = None  # New dataset name (if creating new)
     scan_root: Optional[str] = None  # Directory used during external scan (for segmentation annotation matching)
+    scan_id: Optional[str] = None  # Cached scan session ID for paginated batch import
+    select_all_valid: bool = False  # When scan_id is provided, import all valid files except excluded_paths
+    selected_paths: List[str] = Field(default_factory=list)  # Explicit paths selected from paginated scan results
+    excluded_paths: List[str] = Field(default_factory=list)  # Paths excluded when select_all_valid=True
     aggregation_level: str = "file"  # "case" or "file" - aggregation level
     task_type: str = "classification"  # "classification", "survival", or "segmentation"
     # Classification fields

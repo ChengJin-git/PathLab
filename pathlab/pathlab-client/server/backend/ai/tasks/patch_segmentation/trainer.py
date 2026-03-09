@@ -41,6 +41,7 @@ from backend.ai.schemas.base import TaskStatus
 from backend.ai.tasks.training_utils import safe_update_progress as _safe_update_progress
 from backend.ai.utils.segmentation_dataset import SegmentationDataset, get_transforms
 from backend.ai.segmentors import Segmentor
+from backend.common.redis_client import close_redis
 from backend.database.utils.training_logger import TrainingLogger
 
 logger = logging.getLogger("patch_segmentation_trainer")
@@ -126,6 +127,7 @@ class SegmentationTrainer:
         self.config = self.update_config(config)
         self.task_logger = task_logger
         self._owns_task_logger = task_logger is None
+        self._async_runner: Optional[asyncio.Runner] = None
         segmentor = Segmentor(
             architecture=self.config["architecture"],
             encoder_name=self.config["backbone"],
@@ -214,35 +216,62 @@ class SegmentationTrainer:
             self._owns_task_logger = True
         return self.task_logger
 
+    def _get_async_runner(self) -> asyncio.Runner:
+        """Reuse a single event loop for all async helper calls in sync training."""
+        if self._async_runner is None:
+            self._async_runner = asyncio.Runner()
+        return self._async_runner
+
+    def _run_async(self, coro):
+        """Run async helper code on the trainer-owned event loop."""
+        return self._get_async_runner().run(coro)
+
+    def _close_async_runner(self) -> None:
+        """Close loop-local Redis resources before tearing down the runner."""
+        if self._async_runner is None:
+            return
+
+        try:
+            self._async_runner.run(close_redis())
+        except Exception as exc:
+            logger.debug(f"Failed to close segmentation Redis resources cleanly: {exc}")
+        finally:
+            self._async_runner.close()
+            self._async_runner = None
+
     def _log_info(self, message: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Write a training log entry to the task log stream, with fallback to std logging."""
         try:
-            asyncio.run(self._get_task_logger().info(message, metadata))
+            self._run_async(self._get_task_logger().info(message, metadata))
         except Exception as exc:
             logger.debug(f"Failed to write segmentation task log to stream: {exc}")
             logger.info(message)
 
     def _close_task_logger(self) -> None:
         """Flush and close the per-task logger when training exits."""
-        if self.task_logger is None or not self._owns_task_logger:
-            return
         try:
-            asyncio.run(self.task_logger.close())
+            if self.task_logger is not None and self._owns_task_logger:
+                self._run_async(self.task_logger.close())
         except Exception as exc:
             logger.debug(f"Failed to close segmentation task logger cleanly: {exc}")
         finally:
-            self.task_logger = None
+            if self._owns_task_logger:
+                self.task_logger = None
+            self._close_async_runner()
 
     def _update_training_progress(self, progress: int) -> None:
         """Write segmentation training progress to the shared progress store."""
-        asyncio.run(
-            _safe_update_progress(
-                None,
-                self.task_id,
-                TaskStatus.TRAINING,
-                max(0, min(progress, 100)),
+        try:
+            self._run_async(
+                _safe_update_progress(
+                    None,
+                    self.task_id,
+                    TaskStatus.TRAINING,
+                    max(0, min(progress, 100)),
+                )
             )
-        )
+        except Exception as exc:
+            logger.debug(f"Failed to update segmentation task progress: {exc}")
 
     def _get_num_classes(self) -> int:
         dataset_cfg = self.config.get("dataset", {})

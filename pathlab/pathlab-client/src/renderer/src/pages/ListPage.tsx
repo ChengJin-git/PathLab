@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels } from '../api'
+import { fetchWSIList, fetchWSIIds, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels } from '../api'
 import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -904,13 +904,12 @@ export default function ListPage() {
   // Handle selecting all filtered items (across all pages)
   const handleSelectAllFiltered = async () => {
     try {
-      // Fetch all IDs without loading full data
-      const d = await fetchWSIList(selectedDatasetId!, undefined, {
-        page: 1,
-        page_size: totalCount, // Request all items
-        search: debouncedSearch || undefined,
-      })
-      const allIds = new Set((d.items || []).map((item: any) => item.wsi_id))
+      const d = await fetchWSIIds(
+        selectedDatasetId!,
+        undefined,
+        debouncedSearch || undefined,
+      )
+      const allIds = new Set(d.items || [])
       setSelectedIds(allIds)
     } catch (e) {
       toastError(t('listPage.failedSelectAll'))

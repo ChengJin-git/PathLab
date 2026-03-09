@@ -385,11 +385,23 @@ export interface ScannedWSIFile {
 }
 
 export interface ScanDirectoryResponse {
+  scan_id: string
   directory: string
   files: ScannedWSIFile[]
   total_count: number
   valid_count: number
   total_size: number
+  wsi_count: number
+  patch_count: number
+  page: number
+  page_size: number
+  total_pages: number
+}
+
+export interface ScanDirectoryOptions {
+  scanId?: string
+  page?: number
+  pageSize?: number
 }
 
 /**
@@ -398,13 +410,18 @@ export interface ScanDirectoryResponse {
  * @returns Scanned files with validation info
  * @throws {ApiError} If the request fails
  */
-export async function scanDirectory(directoryPath: string): Promise<ScanDirectoryResponse> {
+export async function scanDirectory(directoryPath: string, options: ScanDirectoryOptions = {}): Promise<ScanDirectoryResponse> {
   return apiFetch<ScanDirectoryResponse>(
     `${API_BASE}/storage/scan-directory`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ directory_path: directoryPath })
+      body: JSON.stringify({
+        directory_path: directoryPath,
+        scan_id: options.scanId,
+        page: options.page ?? 1,
+        page_size: options.pageSize ?? 100,
+      })
     },
     'Failed to scan directory'
   )
@@ -417,10 +434,14 @@ export interface BatchRegisterFileInfo {
 }
 
 export interface BatchRegisterRequest {
-  files: BatchRegisterFileInfo[]
+  files?: BatchRegisterFileInfo[]
   dataset_id?: string
   dataset_name?: string
   scan_root?: string
+  scan_id?: string
+  select_all_valid?: boolean
+  selected_paths?: string[]
+  excluded_paths?: string[]
   aggregation_level?: 'case' | 'file'  // Default: 'file' - how to organize data
   task_type?: 'classification' | 'survival' | 'segmentation'  // Default: 'classification'
   default_label?: string  // Optional default label for classification

@@ -229,11 +229,11 @@ async def list_wsi(
             # ---- No pagination: return ALL files in this dataset ----
             wsi_slides = await WSIRepository.get_by_dataset(
                 db, dataset_id, skip=0, limit=0,
-                user_id=user_id_filter, data_type=data_type,
+                user_id=user_id_filter, data_type=data_type, search=search,
                 elevated_dataset_ids=elevated_dataset_ids,
             )
             total = await WSIRepository.count_by_dataset(
-                db, dataset_id, user_id=user_id_filter, data_type=data_type,
+                db, dataset_id, user_id=user_id_filter, data_type=data_type, search=search,
                 elevated_dataset_ids=elevated_dataset_ids,
             )
             items = await _serialize_dataset_wsi_items(
@@ -320,6 +320,38 @@ async def list_wsi(
             "page_size": page_size,
             "has_multi_slide_cases": False,
         }
+
+
+@router.get("/ids")
+async def list_wsi_ids(
+    dataset_id: str = Query(..., description="Filter by dataset UUID"),
+    data_type: Optional[str] = Query(None, description="Filter by data type: 'wsi' for WSI files, 'patch' for image files"),
+    search: Optional[str] = Query(None, description="Search across filename, case_id, label, source, wsi_id"),
+    user: User = Depends(current_active_user),
+    user_id_filter: Optional[str] = Depends(get_user_id_filter),
+    db: AsyncSession = Depends(get_db)
+):
+    """Return only matching WSI IDs for lightweight bulk selection flows."""
+    elevated_dataset_ids = await get_permitted_dataset_ids(user, db)
+
+    items = await WSIRepository.get_ids_by_dataset(
+        db,
+        dataset_id,
+        user_id=user_id_filter,
+        data_type=data_type,
+        search=search,
+        elevated_dataset_ids=elevated_dataset_ids,
+    )
+    total = await WSIRepository.count_by_dataset(
+        db,
+        dataset_id,
+        user_id=user_id_filter,
+        data_type=data_type,
+        search=search,
+        elevated_dataset_ids=elevated_dataset_ids,
+    )
+
+    return {"items": items, "total": total}
 
 
 @router.get("/datasets")

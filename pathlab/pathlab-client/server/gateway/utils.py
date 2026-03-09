@@ -14,7 +14,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database.repositories import DataGroupRepository, DatasetRepository, StorageTaskRepository
-from backend.common.file_types import TIF_EXTENSIONS, is_patch_file
+from backend.common.file_types import TIF_EXTENSIONS, is_patch_file, is_patch_file_for_scan
 from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 
 
@@ -29,6 +29,10 @@ def is_tiff_family(file_path: str | Path) -> bool:
 
 def get_file_data_type(file_path: str | Path, file_size: int = 0) -> str:
     return "patch" if is_patch_file(str(file_path), file_size) else "wsi"
+
+
+def get_scan_file_data_type(file_path: str | Path, file_size: int = 0) -> str:
+    return "patch" if is_patch_file_for_scan(str(file_path), file_size) else "wsi"
 
 
 def infer_dataset_data_type_from_paths(file_paths: Iterable[str | Path]) -> str:

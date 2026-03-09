@@ -74,6 +74,14 @@ export interface WSIListResponse {
 }
 
 /**
+ * Lightweight WSI ID list response for bulk selection.
+ */
+export interface WSIIdListResponse {
+  items: string[]
+  total: number
+}
+
+/**
  * WSI Upload result
  */
 export interface WSIUploadResult {
@@ -139,7 +147,8 @@ const wsiListCache = createKeyedCache<WSIListResponse>(DEFAULT_CACHE_TTL)
 
 /**
  * Pagination options for fetchWSIList.
- * When provided, the request uses server-side case-level pagination (no caching).
+ * When provided, the request uses an explicit no-cache query.
+ * `page_size=0` means return all matching items.
  * When omitted, all items are returned with caching (page_size=0).
  */
 export interface WSIListPaginationOptions {
@@ -152,7 +161,8 @@ export interface WSIListPaginationOptions {
  * Fetch WSI list from database via Gateway API.
  *
  * Without `options`: returns ALL items (page_size=0) with caching.
- * With `options`: returns a single page of case-grouped items (no caching).
+ * With `options`: performs an explicit query without caching.
+ * Use `page_size=0` to return all matching items while still honoring `search`.
  *
  * @param datasetId - Optional dataset UUID to filter by
  * @param dataLevel - Optional filter: "wsi" for WSI files, "patch" for image files
@@ -173,12 +183,19 @@ export async function fetchWSIList(
   }
 
   if (options) {
-    // Paginated request — no caching
-    params.set('page', String(options.page))
-    params.set('page_size', String(options.page_size))
     if (options.search) {
       params.set('search', options.search)
     }
+
+    if (options.page_size === 0) {
+      params.set('page_size', '0')
+      const url = `${API_BASE}/wsi?${params.toString()}`
+      return apiFetch<WSIListResponse>(url, undefined, 'Failed to load WSI list from database')
+    }
+
+    // Paginated request — no caching
+    params.set('page', String(options.page))
+    params.set('page_size', String(options.page_size))
     const url = `${API_BASE}/wsi?${params.toString()}`
     return apiFetch<WSIListResponse>(url, undefined, 'Failed to load WSI list from database')
   }
@@ -192,6 +209,28 @@ export async function fetchWSIList(
   return wsiListCache.get(cacheKey, () =>
     apiFetch<WSIListResponse>(url, undefined, 'Failed to load WSI list from database')
   )
+}
+
+/**
+ * Fetch only WSI IDs for lightweight bulk selection.
+ * Always uses an explicit no-cache query.
+ */
+export async function fetchWSIIds(
+  datasetId: string,
+  dataLevel?: string,
+  search?: string
+): Promise<WSIIdListResponse> {
+  const params = new URLSearchParams()
+  params.set('dataset_id', datasetId)
+  if (dataLevel) {
+    params.set('data_type', dataLevel)
+  }
+  if (search) {
+    params.set('search', search)
+  }
+
+  const url = `${API_BASE}/wsi/ids?${params.toString()}`
+  return apiFetch<WSIIdListResponse>(url, undefined, 'Failed to load WSI IDs from database')
 }
 
 /**
