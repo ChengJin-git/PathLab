@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import time
 import numpy as np
 import math
 from pathlib import Path
@@ -605,6 +606,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 torch.cuda.empty_cache()  # Release cached GPU memory
                 raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
 
+            epoch_start_time = time.time()
+
             # Run training epoch in thread pool to avoid blocking the event loop.
             # DataLoader iteration triggers torch.load() and GPU ops are blocking.
             running_loss, epoch_preds, count, stop_reason = await asyncio.to_thread(
@@ -659,22 +662,36 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 else:
                     epochs_without_improvement += 1
 
-            log_msg = f"Epoch {epoch}/{epochs} - train_loss: {epoch_loss:.4f}, train_c_index: {train_c_index:.4f}"
+            # Update learning rate before logging so live LR matches the next-epoch optimizer state.
+            scheduler.step()
+            current_lr = optimizer.param_groups[0]["lr"]
+            epoch_time = time.time() - epoch_start_time
 
             # Prepare metadata with train_ and val_ prefixes
-            metadata = {"epoch": epoch, "train_loss": epoch_loss, "train_c_index": train_c_index}
+            metadata = {
+                "epoch": epoch,
+                "train_loss": epoch_loss,
+                "train_c_index": train_c_index,
+                "lr": current_lr,
+                "epoch_time_sec": epoch_time,
+            }
+            log_parts = [
+                f"Epoch {epoch}/{epochs}",
+                f"Train Loss: {epoch_loss:.4f}",
+                f"Train C-Index: {train_c_index:.4f}",
+            ]
             if val_dataset:
-                log_msg += f", val_loss: {val_loss:.4f}, val_c_index: {val_c_index:.4f}"
+                log_parts.append(f"Val Loss: {val_loss:.4f}")
+                log_parts.append(f"Val C-Index: {val_c_index:.4f}")
                 metadata.update({"val_loss": val_loss, "val_c_index": val_c_index})
+            log_parts.append(f"LR: {current_lr:.2e}")
+            log_parts.append(f"Time: {epoch_time:.1f}s")
 
-            await logger.info(log_msg, metadata=metadata)
+            await logger.info(" | ".join(log_parts), metadata=metadata)
 
             # Update progress: training from 66% to 95%, saving from 95% to 100%
             progress = 66 + int(epoch / epochs * 29)
             await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
-
-            # Update learning rate
-            scheduler.step()
 
             # Early stopping check
             if val_dataset and epochs_without_improvement >= early_stopping_patience:
@@ -1272,6 +1289,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     torch.cuda.empty_cache()
                     raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
 
+                epoch_start_time = time.time()
+
                 epoch_loss = running_loss / max(1, len(train_ids))
                 train_c_index = calculate_c_index(train_times, epoch_preds, train_statuses)
                 history["loss"].append(epoch_loss)
@@ -1292,9 +1311,10 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 else:
                     epochs_without_improvement += 1
 
-                # Log epoch progress - format consistent with non-kfold training
-                log_msg = f"[Fold {fold_idx + 1}] Epoch {epoch}/{epochs} - train_loss: {epoch_loss:.4f}, train_c_index: {train_c_index:.4f}"
-                log_msg += f", val_loss: {val_loss:.4f}, val_c_index: {val_c_index:.4f}"
+                # Update learning rate before logging so live LR matches the next-epoch optimizer state.
+                scheduler.step()
+                current_lr = optimizer.param_groups[0]["lr"]
+                epoch_time = time.time() - epoch_start_time
 
                 # Prepare metadata with train_ and val_ prefixes
                 metadata = {
@@ -1303,10 +1323,21 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     "train_loss": epoch_loss,
                     "train_c_index": train_c_index,
                     "val_loss": val_loss,
-                    "val_c_index": val_c_index
+                    "val_c_index": val_c_index,
+                    "lr": current_lr,
+                    "epoch_time_sec": epoch_time,
                 }
+                log_parts = [
+                    f"[Fold {fold_idx + 1}] Epoch {epoch}/{epochs}",
+                    f"Train Loss: {epoch_loss:.4f}",
+                    f"Train C-Index: {train_c_index:.4f}",
+                    f"Val Loss: {val_loss:.4f}",
+                    f"Val C-Index: {val_c_index:.4f}",
+                    f"LR: {current_lr:.2e}",
+                    f"Time: {epoch_time:.1f}s",
+                ]
 
-                await logger.info(log_msg, metadata=metadata)
+                await logger.info(" | ".join(log_parts), metadata=metadata)
 
                 # Progress (66-100% for all folds including saving)
                 # Each fold gets 34/num_folds percent; 70% for training, 30% for saving
@@ -1315,9 +1346,6 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 fold_training_range = int(fold_total_range * 0.7)
                 progress = fold_progress_base + int(epoch / epochs * fold_training_range)
                 await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
-
-                # Update learning rate
-                scheduler.step()
 
                 # Early stopping check
                 if epochs_without_improvement >= early_stopping_patience:

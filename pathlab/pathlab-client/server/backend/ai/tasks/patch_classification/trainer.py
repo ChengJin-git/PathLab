@@ -11,6 +11,7 @@ import json
 import asyncio
 import logging
 import random
+import time
 from typing import Dict, List, Any, Optional, Tuple
 
 import numpy as np
@@ -387,6 +388,8 @@ class PatchClassificationTrainer(BaseTrainer):
                     del class_weights
                 raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
 
+            epoch_start_time = time.time()
+
             # Run training epoch in thread pool to avoid blocking the event loop.
             # GPU operations (forward/backward pass) and DataLoader iteration are blocking.
             running_loss, num_batches, stop_reason = await asyncio.to_thread(
@@ -423,24 +426,37 @@ class PatchClassificationTrainer(BaseTrainer):
                 val_acc = val_metrics["accuracy"]
                 history["val_loss"].append(val_loss)
 
+            # Update learning rate before logging so live LR matches the next-epoch optimizer state.
+            scheduler.step()
+            current_lr = optimizer.param_groups[0]["lr"]
+            epoch_time = time.time() - epoch_start_time
+
             # Prepare metadata with train_ prefix for training loss and val_ prefix for validation metrics
-            metadata = {"epoch": epoch, "train_loss": epoch_loss}
+            metadata = {
+                "epoch": epoch,
+                "train_loss": epoch_loss,
+                "lr": current_lr,
+                "epoch_time_sec": epoch_time,
+            }
+            log_parts = [
+                f"Epoch {epoch}/{epochs}",
+                f"Train Loss: {epoch_loss:.4f}",
+            ]
             if val_loader:
                 metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
+                log_parts.append(f"Val Loss: {val_loss:.4f}")
+                log_parts.append(f"Val Acc: {val_acc:.4f}")
+                if val_metrics.get("auc") is not None:
+                    log_parts.append(f"Val AUC: {val_metrics['auc']:.4f}")
+            log_parts.append(f"LR: {current_lr:.2e}")
+            log_parts.append(f"Time: {epoch_time:.1f}s")
 
-            await logger.info(
-                f"Epoch {epoch}/{epochs} - loss: {epoch_loss:.4f}" +
-                (f", val_loss: {val_loss:.4f}, val_acc: {val_acc:.4f}" if val_loader else ""),
-                metadata
-            )
+            await logger.info(" | ".join(log_parts), metadata)
 
             # Update progress: training from 0% to 90%, saving from 90% to 100%
             # Use epoch (not epoch-1) and enforce a minimum increment for immediate feedback.
             progress = min(90, max(1, int(epoch / epochs * 90)))
             await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
-
-            # Update learning rate
-            scheduler.step()
 
             # Save best model based on accuracy/AUC (higher is better)
             # Fallback to loss (lower is better) if Acc/AUC are unavailable
@@ -673,6 +689,8 @@ class PatchClassificationTrainer(BaseTrainer):
                         del class_weights
                     raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
 
+                epoch_start_time = time.time()
+
                 epoch_loss = running_loss / max(1, num_batches)
                 history["loss"].append(epoch_loss)
 
@@ -704,15 +722,32 @@ class PatchClassificationTrainer(BaseTrainer):
                 else:
                     epochs_without_improvement += 1
 
-                # Log epoch progress - format consistent with non-kfold training
-                # Prepare metadata with train_ prefix for training loss and val_ prefix for validation metrics
-                metadata = {"fold": fold_idx + 1, "epoch": epoch, "train_loss": epoch_loss}
-                metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
+                # Update learning rate before logging so live LR matches the next-epoch optimizer state.
+                scheduler.step()
+                current_lr = optimizer.param_groups[0]["lr"]
+                epoch_time = time.time() - epoch_start_time
 
-                await logger.info(
-                    f"[Fold {fold_idx + 1}] Epoch {epoch}/{epochs} - loss: {epoch_loss:.4f}, val_loss: {val_loss:.4f}, val_acc: {val_acc:.4f}",
-                    metadata
-                )
+                # Log epoch progress - format consistent with segmentation training logs
+                metadata = {
+                    "fold": fold_idx + 1,
+                    "epoch": epoch,
+                    "train_loss": epoch_loss,
+                    "lr": current_lr,
+                    "epoch_time_sec": epoch_time,
+                }
+                metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
+                log_parts = [
+                    f"[Fold {fold_idx + 1}] Epoch {epoch}/{epochs}",
+                    f"Train Loss: {epoch_loss:.4f}",
+                    f"Val Loss: {val_loss:.4f}",
+                    f"Val Acc: {val_acc:.4f}",
+                ]
+                if val_metrics.get("auc") is not None:
+                    log_parts.append(f"Val AUC: {val_metrics['auc']:.4f}")
+                log_parts.append(f"LR: {current_lr:.2e}")
+                log_parts.append(f"Time: {epoch_time:.1f}s")
+
+                await logger.info(" | ".join(log_parts), metadata)
 
                 # Progress update: each fold uses its own slice of the full 0-100% range.
                 # Within each fold, 70% is reserved for training and the remainder for saving.
@@ -721,9 +756,6 @@ class PatchClassificationTrainer(BaseTrainer):
                     fold_progress_start + max(1, int(epoch / epochs * fold_training_range))
                 )
                 await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
-
-                # Update learning rate
-                scheduler.step()
 
                 # Early stopping check
                 if epochs_without_improvement >= early_stopping_patience:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import time
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Union
@@ -860,6 +861,8 @@ class WSIClassificationTrainer(BaseTrainer):
                 torch.cuda.empty_cache()  # Release cached GPU memory
                 raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
 
+            epoch_start_time = time.time()
+
             # Run training epoch in thread pool to avoid blocking the event loop.
             # DataLoader iteration triggers torch.load() and GPU ops are blocking.
             running_loss, stop_reason = await asyncio.to_thread(
@@ -910,26 +913,40 @@ class WSIClassificationTrainer(BaseTrainer):
                 else:
                     epochs_without_improvement += 1
 
-            # Log progress
-            log_msg = f"{run_name} Epoch {epoch}/{epochs} - train_loss: {epoch_loss:.4f}"
-            if val_dataset is not None and len(val_dataset) > 0:
-                log_msg += f", val_loss: {val_metrics['loss']:.4f}, val_acc: {val_metrics['accuracy']:.4f}"
+            # Update learning rate before logging so live LR matches the next-epoch optimizer state.
+            scheduler.step()
+            current_lr = optimizer.param_groups[0]["lr"]
+            epoch_time = time.time() - epoch_start_time
 
             # Prepare metadata with val_ prefix for validation metrics
-            metadata = {"epoch": epoch, "train_loss": epoch_loss}
+            metadata = {
+                "epoch": epoch,
+                "train_loss": epoch_loss,
+                "lr": current_lr,
+                "epoch_time_sec": epoch_time,
+            }
             if fold_idx is not None:
                 metadata["fold"] = fold_idx
+
+            prefix = f"{run_name} " if run_name else ""
+            log_parts = [
+                f"{prefix}Epoch {epoch}/{epochs}",
+                f"Train Loss: {epoch_loss:.4f}",
+            ]
             if val_dataset is not None and len(val_dataset) > 0:
                 metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
-            await logger.info(log_msg, metadata=metadata)
+                log_parts.append(f"Val Loss: {val_metrics['loss']:.4f}")
+                log_parts.append(f"Val Acc: {val_metrics['accuracy']:.4f}")
+                if val_metrics.get("auc") is not None:
+                    log_parts.append(f"Val AUC: {val_metrics['auc']:.4f}")
+            log_parts.append(f"LR: {current_lr:.2e}")
+            log_parts.append(f"Time: {epoch_time:.1f}s")
+            await logger.info(" | ".join(log_parts), metadata=metadata)
 
             # Calculate progress using epoch (not epoch-1) to ensure progress updates immediately from first epoch
             # For patch tasks, frontend maps 66-100 to 0-100, so we need immediate updates
             progress = progress_base + int(epoch / epochs * progress_range)
             await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
-
-            # Update learning rate
-            scheduler.step()
 
             # Early stopping check
             if val_dataset is not None and len(val_dataset) > 0 and epochs_without_improvement >= early_stopping_patience:
