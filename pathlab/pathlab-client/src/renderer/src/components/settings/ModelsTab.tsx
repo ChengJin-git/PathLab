@@ -11,6 +11,8 @@ interface TaskItem {
   task_id: string
   task_name?: string
   name?: string
+  task_type?: string
+  classes?: string[] | null
 }
 
 export interface ModelsTabProps {
@@ -127,6 +129,21 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
     return '—'
   }
 
+  const getDisplayClasses = (model: TrainedModel, task?: TaskItem) => {
+    const taskClasses = Array.isArray(task?.classes)
+      ? task.classes.filter((cls): cls is string => typeof cls === 'string' && cls.trim().length > 0)
+      : []
+    const modelClasses = Array.isArray(model.classes)
+      ? model.classes.filter((cls): cls is string => typeof cls === 'string' && cls.trim().length > 0)
+      : []
+
+    if (task?.task_type === 'segmentation' && taskClasses.length > 0) {
+      return taskClasses
+    }
+
+    return modelClasses
+  }
+
   const totalPages = Math.ceil(modelsTotal / pageSize)
 
   return (
@@ -180,6 +197,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
             {trainedModels.map((model) => {
               const task = tasks.find(item => item.task_id === model.task_id)
               const taskName = task?.name || task?.task_name || t('settings.modelsTab.unknownTask')
+              const displayClasses = getDisplayClasses(model, task)
 
               const metrics = model.val_metrics || {}
               const isSurvival = (metrics as Record<string, unknown>).c_index !== undefined
@@ -236,6 +254,19 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                         <span className="font-mono bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100 text-xs text-gray-500">+{model.aggregator}</span>
                       )}
                    </div>
+
+                   {!isSurvival && displayClasses.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mb-3">
+                        {displayClasses.slice(0, 4).map((cls, idx) => (
+                          <span key={idx} className="inline-flex items-center bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium border border-indigo-100">
+                            {cls}
+                          </span>
+                        ))}
+                        {displayClasses.length > 4 && (
+                          <span className="text-gray-400 font-medium text-xs flex items-center px-1">+{displayClasses.length - 4}</span>
+                        )}
+                      </div>
+                   )}
 
                    {/* Metrics for Mobile */}
                    {Object.keys(metrics).length > 0 && (
@@ -317,6 +348,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                 {trainedModels.map((model) => {
                   const task = tasks.find(item => item.task_id === model.task_id)
                   const taskName = task?.name || task?.task_name || t('settings.modelsTab.unknownTask')
+                  const displayClasses = getDisplayClasses(model, task)
 
                   const metrics = model.val_metrics || {}
                   const isSurvival = (metrics as Record<string, unknown>).c_index !== undefined
@@ -370,17 +402,17 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                         <div className="flex flex-wrap gap-1.5 max-w-[240px]">
                           {isSurvival ? (
                             <span className="inline-flex items-center bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded text-xs font-medium border border-emerald-100">
-                              {t('settings.modelsTab.timeIntervals', { count: model.classes?.length || 4 })}
+                              {t('settings.modelsTab.timeIntervals', { count: displayClasses.length || 4 })}
                             </span>
                           ) : (
                             <>
-                              {model.classes?.slice(0, 4).map((cls, idx) => (
+                              {displayClasses.slice(0, 4).map((cls, idx) => (
                                 <span key={idx} className="inline-flex items-center bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium border border-indigo-100">
                                   {cls}
                                 </span>
                               ))}
-                              {model.classes && model.classes.length > 4 && (
-                                <span className="text-gray-400 font-medium text-xs flex items-center px-1">+{model.classes.length - 4}</span>
+                              {displayClasses.length > 4 && (
+                                <span className="text-gray-400 font-medium text-xs flex items-center px-1">+{displayClasses.length - 4}</span>
                               )}
                             </>
                           )}

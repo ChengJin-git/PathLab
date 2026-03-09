@@ -11,13 +11,14 @@ import { useTranslation } from 'react-i18next'
 
 // Status Badge Component
 function StatusBadge({ status }: { status: 'online' | 'offline' | 'checking' }) {
+  const { t } = useTranslation()
   const statusConfig = {
     online: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', dot: 'bg-emerald-500' },
     checking: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', dot: 'bg-amber-500' },
     offline: { bg: 'bg-slate-100', text: 'text-slate-600', border: 'border-slate-200', dot: 'bg-slate-400' }
   }
   const config = statusConfig[status]
-  const statusText = status === 'online' ? '在线' : status === 'checking' ? '检测中...' : '离线'
+  const statusText = status === 'online' ? t('common.online') : status === 'checking' ? t('common.checking') : t('common.offline')
   return (
     <div className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${config.bg} ${config.text} ${config.border}`}>
       <div className={`w-2 h-2 rounded-full ${config.dot} animate-pulse`} />
