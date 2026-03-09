@@ -27,9 +27,14 @@ from backend.auth import User
 from backend.auth.dependencies import require_admin
 from ..dependencies import logger
 from ..models import ScanDirectoryRequest, CheckExternalFilesRequest, DeleteUnavailableFilesRequest
-from ..utils import build_segmentation_annotation_index, resolve_segmentation_annotation_match
+from ..utils import (
+    build_segmentation_annotation_index,
+    get_file_data_type,
+    is_tiff_family,
+    resolve_segmentation_annotation_match,
+)
 from backend.common.config import Config
-from backend.common.file_types import WSI_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD
+from backend.common.file_types import PATCH_EXTENSIONS, WSI_EXTENSIONS
 
 router = APIRouter()
 
@@ -46,12 +51,15 @@ def _scan_directory_for_wsi(directory: str) -> list:
     Supports:
     - WSI files: .svs, .ndpi, .mrxs, .tmap, etc.
     - Patch files: .jpg, .jpeg, .png, .bmp
-    - TIF/TIFF files: classified by size (>= 100MB = WSI, < 100MB = patch)
+    - TIF/TIFF files: first use slide inspection, then fallback heuristics
+
+    External import applies the TIFF/TIFF dataset rule at scan time as well:
+    if any scanned TIFF/TIFF is classified as WSI, all scanned TIFF/TIFF files
+    are displayed as WSI for this batch preview.
 
     Returns list of dicts with file info including data_type ('wsi' or 'patch').
     """
     import uuid as uuid_module
-    from backend.common.file_types import PATCH_EXTENSIONS
 
     dir_path = Path(directory)
     if not dir_path.exists() or not dir_path.is_dir():
@@ -73,13 +81,8 @@ def _scan_directory_for_wsi(directory: str) -> list:
 
         # Determine file type: WSI, patch, or skip
         data_type = None
-        if ext in WSI_EXTENSIONS:
-            data_type = 'wsi'
-        elif ext in PATCH_EXTENSIONS:
-            data_type = 'patch'
-        elif ext in TIF_EXTENSIONS:
-            # TIF/TIFF: classify by size
-            data_type = 'wsi' if file_size >= SIZE_THRESHOLD else 'patch'
+        if ext in WSI_EXTENSIONS or ext in PATCH_EXTENSIONS or is_tiff_family(item):
+            data_type = get_file_data_type(item, file_size)
 
         if data_type is None:
             continue
@@ -151,6 +154,15 @@ def _scan_directory_for_wsi(directory: str) -> list:
         file_info["size"] = total_size
 
         results.append(file_info)
+
+    tiff_batch_has_wsi = any(
+        file_info["data_type"] == "wsi" and is_tiff_family(file_info["path"])
+        for file_info in results
+    )
+    if tiff_batch_has_wsi:
+        for file_info in results:
+            if is_tiff_family(file_info["path"]):
+                file_info["data_type"] = "wsi"
 
     # Sort by filename for consistent ordering
     results.sort(key=lambda x: x["filename"].lower())
