@@ -215,96 +215,62 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
 
           <Card className="border border-slate-200 shadow-sm overflow-hidden">
             <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
-              {/* Left Column: LLM & Web Search */}
-              <div className="flex flex-col divide-y divide-slate-100 bg-slate-50/30">
-                {/* LLM Settings */}
-                <div className="p-5 space-y-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="p-1.5 bg-blue-100 rounded-md">
-                      <Server className="w-4 h-4 text-blue-600" />
-                    </div>
-                    <h3 className="font-semibold text-slate-900">{t('settings.general.llmOpenRouter')}</h3>
+              {/* Left Column: LLM Settings (Primary) */}
+              <div className="p-5 space-y-4 bg-slate-50/30 h-full">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="p-1.5 bg-blue-100 rounded-md">
+                    <Server className="w-4 h-4 text-blue-600" />
                   </div>
-                  
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.apiKey')}</Label>
-                      <div className="relative">
-                        <Input
-                          type="password"
-                          value={apiKey}
-                          onChange={(e) => setApiKey(e.target.value)}
-                          placeholder="sk-..."
-                          className="h-9 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500 pr-20"
-                        />
-                        <div className="absolute right-2 top-1/2 -translate-y-1/2">
-                          <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:text-blue-700 font-medium hover:underline">
-                            {t('common.getKey')}
-                          </a>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.baseUrl')}</Label>
-                        <Input
-                          value={baseUrl}
-                          onChange={(e) => setBaseUrl(e.target.value)}
-                          placeholder="https://openrouter.ai/api/v1"
-                          className="h-9 font-mono text-xs border-slate-300 focus:border-blue-500 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.model')}</Label>
-                        <select
-                          value={model}
-                          onChange={(e) => setModel(e.target.value)}
-                          className="h-9 w-full px-2.5 border border-slate-300 rounded-md bg-white text-xs text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
-                        >
-                          <optgroup label={t('settings.general.multimodalModels')}>
-                            {MODEL_OPTIONS.filter(m => m.multimodal).map(m => (
-                              <option key={m.id} value={m.id}>{m.label}</option>
-                            ))}
-                          </optgroup>
-                          <optgroup label={t('settings.general.textModels')}>
-                            {MODEL_OPTIONS.filter(m => !m.multimodal).map(m => (
-                              <option key={m.id} value={m.id}>{m.label}</option>
-                            ))}
-                          </optgroup>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
+                  <h3 className="font-semibold text-slate-900">{t('settings.general.llmOpenRouter')}</h3>
                 </div>
-
-                {/* Web Search (Exa) */}
-                <div className="p-5 space-y-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="p-1.5 bg-indigo-100 rounded-md">
-                      <Globe className="w-4 h-4 text-indigo-600" />
-                    </div>
-                    <div className="flex flex-col">
-                      <h3 className="font-semibold text-slate-900">{t('settings.general.webSearchCard')}</h3>
-                      <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wide">Exa AI Search</span>
-                    </div>
-                  </div>
-
+                
+                <div className="space-y-4">
                   <div className="space-y-2">
-                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.exaApiKey')}</Label>
+                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.apiKey')}</Label>
                     <div className="relative">
                       <Input
                         type="password"
-                        value={exaApiKey}
-                        onChange={(e) => setExaApiKey(e.target.value)}
-                        placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                        className="h-9 text-sm border-slate-300 focus:border-indigo-500 focus:ring-indigo-500 pr-20"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        placeholder="sk-..."
+                        className="h-9 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500 pr-20"
                       />
                       <div className="absolute right-2 top-1/2 -translate-y-1/2">
-                        <a href="https://exa.ai" target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-600 hover:text-indigo-700 font-medium hover:underline">
+                        <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:text-blue-700 font-medium hover:underline">
                           {t('common.getKey')}
                         </a>
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.baseUrl')}</Label>
+                      <Input
+                        value={baseUrl}
+                        onChange={(e) => setBaseUrl(e.target.value)}
+                        placeholder="https://openrouter.ai/api/v1"
+                        className="h-9 font-mono text-xs border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.model')}</Label>
+                      <select
+                        value={model}
+                        onChange={(e) => setModel(e.target.value)}
+                        className="h-9 w-full px-2.5 border border-slate-300 rounded-md bg-white text-xs text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                      >
+                        <optgroup label={t('settings.general.multimodalModels')}>
+                          {MODEL_OPTIONS.filter(m => m.multimodal).map(m => (
+                            <option key={m.id} value={m.id}>{m.label}</option>
+                          ))}
+                        </optgroup>
+                        <optgroup label={t('settings.general.textModels')}>
+                          {MODEL_OPTIONS.filter(m => !m.multimodal).map(m => (
+                            <option key={m.id} value={m.id}>{m.label}</option>
+                          ))}
+                        </optgroup>
+                      </select>
                     </div>
                   </div>
                 </div>
@@ -367,6 +333,37 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                       <div className="absolute right-2 top-1/2 -translate-y-1/2">
                         <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-xs text-amber-600 hover:text-amber-700 font-medium hover:underline">
                           {t('common.getToken')}
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Web Search (Exa) */}
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="p-1.5 bg-indigo-100 rounded-md">
+                      <Globe className="w-4 h-4 text-indigo-600" />
+                    </div>
+                    <div className="flex flex-col">
+                      <h3 className="font-semibold text-slate-900">{t('settings.general.webSearchCard')}</h3>
+                      <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wide">Exa AI Search</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.exaApiKey')}</Label>
+                    <div className="relative">
+                      <Input
+                        type="password"
+                        value={exaApiKey}
+                        onChange={(e) => setExaApiKey(e.target.value)}
+                        placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                        className="h-9 text-sm border-slate-300 focus:border-indigo-500 focus:ring-indigo-500 pr-20"
+                      />
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                        <a href="https://exa.ai" target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-600 hover:text-indigo-700 font-medium hover:underline">
+                          {t('common.getKey')}
                         </a>
                       </div>
                     </div>
