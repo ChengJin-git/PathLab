@@ -28,6 +28,7 @@ export interface WSISummary {
   // Split assignment (from CSV upload)
   split: string | null  // "train", "val", "test"
   file_size: number | null
+  data_type?: 'wsi' | 'patch' | null
   created_at: string | null
   // Detail-only fields (present in to_dict() but not in to_summary_dict())
   mpp?: number | null

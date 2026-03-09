@@ -39,6 +39,7 @@ from backend.common.annotation_summary_cache import rebuild_dataset_annotation_s
 router = APIRouter(prefix="/wsi/upload", tags=["WSI Upload"])
 
 ALLOWED_TASK_TYPES = {"classification", "survival", "segmentation"}
+TIFF_EXTENSIONS = {'.tif', '.tiff'}
 
 
 def _resolve_task_type(requested_task_type: Optional[str], dataset_task_type: Optional[str] = None) -> str:
@@ -49,6 +50,133 @@ def _resolve_task_type(requested_task_type: Optional[str], dataset_task_type: Op
             detail="task_type must be 'classification', 'survival', or 'segmentation'",
         )
     return resolved_task_type
+
+
+def _is_tiff_family(file_path: str) -> bool:
+    return Path(file_path).suffix.lower() in TIFF_EXTENSIONS
+
+
+async def _align_dataset_data_type_for_upload(
+    db: AsyncSession,
+    dataset,
+    *,
+    file_path: str,
+    file_data_type: str,
+    task_type: str,
+    context: str,
+):
+    data_group = dataset.data_group
+    if not data_group:
+        raise HTTPException(status_code=400, detail='Dataset has no associated DataGroup')
+
+    if data_group.data_type == file_data_type:
+        return dataset
+
+    if task_type == 'segmentation':
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dataset data_type is '{data_group.data_type}', cannot upload '{file_data_type}' file",
+        )
+
+    if not _is_tiff_family(file_path):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dataset data_type is '{data_group.data_type}', cannot upload '{file_data_type}' file",
+        )
+
+    if data_group.data_type == 'patch' and file_data_type == 'wsi':
+        target_group = await DataGroupRepository.get_or_create(
+            db,
+            data_type='wsi',
+            aggregation_level=data_group.aggregation_level,
+            task_type=data_group.task_type,
+        )
+        dataset.group_id = target_group.group_id
+        await db.flush()
+        logger.info(
+            f"Promoted dataset {dataset.dataset_id} to wsi during {context} because TIFF/TIFF batch contained a WSI"
+        )
+        refreshed = await DatasetRepository.get_by_id(db, dataset.dataset_id)
+        return refreshed or dataset
+
+    if data_group.data_type == 'wsi' and file_data_type == 'patch':
+        return dataset
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Dataset data_type is '{data_group.data_type}', cannot upload '{file_data_type}' file",
+    )
+
+
+def _find_matching_uploaded_segmentation_annotation(
+    associated_files: List[UploadFile],
+    image_name: str,
+) -> Optional[UploadFile]:
+    target_stem = Path(image_name).stem.lower()
+    for associated_file in associated_files or []:
+        associated_name = Path(associated_file.filename or '').name
+        if Path(associated_name).suffix.lower() != '.json':
+            continue
+        if Path(associated_name).stem.lower() == target_stem:
+            return associated_file
+    return None
+
+
+def _build_dataset_segmentation_wsi_lookup(dataset_wsis: List[object]) -> dict[str, object]:
+    stem_lookup: dict[str, Optional[object]] = {}
+    duplicate_stems: set[str] = set()
+
+    for dataset_wsi in dataset_wsis:
+        candidate_name = Path(
+            getattr(dataset_wsi, 'original_filename', None)
+            or getattr(dataset_wsi, 'wsi_path', '')
+        ).name
+        candidate_stem = Path(candidate_name).stem.lower()
+        if not candidate_stem:
+            continue
+
+        if candidate_stem in stem_lookup:
+            duplicate_stems.add(candidate_stem)
+            stem_lookup[candidate_stem] = None
+        else:
+            stem_lookup[candidate_stem] = dataset_wsi
+
+    return {
+        stem: dataset_wsi
+        for stem, dataset_wsi in stem_lookup.items()
+        if stem not in duplicate_stems and dataset_wsi is not None
+    }
+
+
+async def _append_segmentation_annotation_to_existing_dataset(
+    db: AsyncSession,
+    *,
+    dataset_id: str,
+    annotation_name: str,
+    annotation_payload: dict,
+    user_id: str,
+    source: str,
+):
+    dataset_wsis = await WSIRepository.get_by_dataset(db, dataset_id)
+    stem_lookup = _build_dataset_segmentation_wsi_lookup(dataset_wsis)
+    matched_wsi = stem_lookup.get(Path(annotation_name).stem.lower())
+
+    if matched_wsi is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No existing segmentation image found in dataset for annotation '{annotation_name}'",
+        )
+
+    await SegmentationAnnotationRepository.upsert(
+        db,
+        annotation_id=f"annot_{matched_wsi.wsi_id}",
+        user_id=user_id,
+        annotations=annotation_payload,
+        source_dataset_id=dataset_id,
+        status="finalized",
+        source=source,
+    )
+    return matched_wsi
 
 
 @router.post("/csv")
@@ -292,41 +420,43 @@ async def upload_wsi_file(
         # Store original filename for internal reference (including extension)
         original_filename = Path(file.filename).name
         file_extension = Path(file.filename).suffix.lower()
-
-        # Generate UUID-based wsi_id if not provided (for privacy protection)
-        if not wsi_id:
-            wsi_id = str(uuid.uuid4())
-
-        # Check if wsi_id already exists
-        existing = await WSIRepository.get_by_id(db, wsi_id)
-        if existing:
-            raise HTTPException(status_code=400, detail=f"WSI ID already exists: {wsi_id}")
-
-        # Save file to uploads directory using UUID-based filename
-        wsi_files_dir = Path(UPLOADS_DIR) / "wsi_files"
-        wsi_files_dir.mkdir(exist_ok=True, parents=True)
-
-        wsi_path = wsi_files_dir / f"{wsi_id}{file_extension}"
-
-        # Save main WSI file
-        with open(wsi_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        file_size = wsi_path.stat().st_size
-        logger.info(f"Saved WSI file: {wsi_path} ({file_size / (1024**2):.2f} MB)")
-        logger.info(f"Original filename: {original_filename} -> UUID: {wsi_id}")
-
-        file_data_type = 'patch' if is_patch_file(str(wsi_path)) else 'wsi'
         resolved_task_type = _resolve_task_type(task_type)
+        is_json_annotation_upload = file_extension == '.json'
         segmentation_annotation = None
+        wsi_path: Optional[Path] = None
+        file_size = 0
+        file_data_type: Optional[str] = None
 
-        if task_type == 'segmentation':
-            ensure_segmentation_contract(
-                task_type,
-                file_data_type,
-                aggregation_level or 'file',
-                context='WSI upload',
+        if is_json_annotation_upload:
+            segmentation_annotation = load_coco_annotation_bytes(
+                await file.read(),
+                source_name=original_filename,
             )
+        else:
+            # Generate UUID-based wsi_id if not provided (for privacy protection)
+            if not wsi_id:
+                wsi_id = str(uuid.uuid4())
+
+            # Check if wsi_id already exists
+            existing = await WSIRepository.get_by_id(db, wsi_id)
+            if existing:
+                raise HTTPException(status_code=400, detail=f"WSI ID already exists: {wsi_id}")
+
+            # Save file to uploads directory using UUID-based filename
+            wsi_files_dir = Path(UPLOADS_DIR) / "wsi_files"
+            wsi_files_dir.mkdir(exist_ok=True, parents=True)
+
+            wsi_path = wsi_files_dir / f"{wsi_id}{file_extension}"
+
+            # Save main WSI file
+            with open(wsi_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+
+            file_size = wsi_path.stat().st_size
+            logger.info(f"Saved WSI file: {wsi_path} ({file_size / (1024**2):.2f} MB)")
+            logger.info(f"Original filename: {original_filename} -> UUID: {wsi_id}")
+
+            file_data_type = 'patch' if is_patch_file(str(wsi_path), file_size) else 'wsi'
 
         # Handle associated files for special formats (MRXS, TMAP)
         associated_count = 0
@@ -359,7 +489,7 @@ async def upload_wsi_file(
 
                 logger.info(f"Saved {associated_count} TMAP DT files for: {wsi_id}")
 
-        props = extract_wsi_properties(str(wsi_path))
+        props = extract_wsi_properties(str(wsi_path)) if wsi_path is not None else {}
 
         # Resolve dataset_id: use provided dataset_id, or create new dataset from dataset_name
         resolved_dataset_id = None
@@ -378,15 +508,31 @@ async def upload_wsi_file(
                     status_code=400,
                     detail=f"Dataset task_type is '{data_group.task_type}', expected '{task_type}'",
                 )
-            if data_group.data_type != file_data_type:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Dataset data_type is '{data_group.data_type}', cannot upload '{file_data_type}' file",
+            if is_json_annotation_upload:
+                if resolved_task_type != 'segmentation':
+                    raise HTTPException(
+                        status_code=400,
+                        detail='JSON uploads are only supported when appending to an existing segmentation dataset',
+                    )
+            else:
+                existing_dataset = await _align_dataset_data_type_for_upload(
+                    db,
+                    existing_dataset,
+                    file_path=str(wsi_path),
+                    file_data_type=file_data_type,
+                    task_type=resolved_task_type,
+                    context='WSI upload',
                 )
+                data_group = existing_dataset.data_group
             ensure_dataset_segmentation_contract(existing_dataset, context='WSI upload', expected_task_type=resolved_task_type)
             resolved_aggregation_level = data_group.aggregation_level
             resolved_dataset_id = dataset_id
         elif dataset_name:
+            if is_json_annotation_upload:
+                raise HTTPException(
+                    status_code=400,
+                    detail='Segmentation JSON-only upload is only supported when appending to an existing dataset',
+                )
             resolved_aggregation_level = aggregation_level or "file"
             ensure_segmentation_contract(
                 resolved_task_type,
@@ -407,7 +553,48 @@ async def upload_wsi_file(
             dataset = await DatasetRepository.get_or_create(
                 db, dataset_name, group_id=data_group.group_id, user_id=str(user.id)
             )
+            dataset = await _align_dataset_data_type_for_upload(
+                db,
+                dataset,
+                file_path=str(wsi_path),
+                file_data_type=file_data_type,
+                task_type=resolved_task_type,
+                context='WSI upload',
+            )
             resolved_dataset_id = dataset.dataset_id
+
+        if is_json_annotation_upload:
+            if resolved_dataset_id is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail='Segmentation JSON-only upload requires an existing dataset',
+                )
+
+            matched_wsi = await _append_segmentation_annotation_to_existing_dataset(
+                db,
+                dataset_id=resolved_dataset_id,
+                annotation_name=original_filename,
+                annotation_payload=segmentation_annotation,
+                user_id=str(user.id),
+                source='upload_json',
+            )
+            await db.commit()
+
+            if resolved_dataset_id:
+                try:
+                    await rebuild_dataset_annotation_summary_cache(db, resolved_dataset_id)
+                    await db.commit()
+                except Exception as cache_err:
+                    await db.rollback()
+                    logger.warning(f"Failed to refresh annotation summary cache for {resolved_dataset_id}: {cache_err}")
+
+            return {
+                "message": "Segmentation annotation appended successfully",
+                "wsi_id": matched_wsi.wsi_id,
+                "wsi_path": matched_wsi.wsi_path,
+                "file_size": matched_wsi.file_size,
+                "associated_files_count": 0,
+            }
 
         if resolved_task_type == 'segmentation' and segmentation_annotation is None:
             ensure_segmentation_contract(
@@ -416,24 +603,13 @@ async def upload_wsi_file(
                 resolved_aggregation_level,
                 context='WSI upload',
             )
-            if len(associated_files) != 1:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Segmentation upload requires exactly one same-name COCO JSON annotation per image",
+            annotation_upload = _find_matching_uploaded_segmentation_annotation(associated_files, original_filename)
+            if annotation_upload is not None:
+                annotation_name = Path(annotation_upload.filename or '').name
+                segmentation_annotation = load_coco_annotation_bytes(
+                    await annotation_upload.read(),
+                    source_name=annotation_name,
                 )
-            annotation_upload = associated_files[0]
-            annotation_name = Path(annotation_upload.filename or '').name
-            if Path(annotation_name).suffix.lower() != '.json':
-                raise HTTPException(status_code=400, detail='Segmentation annotation must be a .json file')
-            if Path(annotation_name).stem.lower() != Path(original_filename).stem.lower():
-                raise HTTPException(
-                    status_code=400,
-                    detail='Segmentation annotation filename must match the image filename stem',
-                )
-            segmentation_annotation = load_coco_annotation_bytes(
-                await annotation_upload.read(),
-                source_name=annotation_name,
-            )
 
         # Create database record with original_filename for internal reference
         wsi_data = {
@@ -461,7 +637,7 @@ async def upload_wsi_file(
         # with same wsi_id passes the existence check above (PostgreSQL READ COMMITTED)
         try:
             await WSIRepository.create(db, wsi_data)
-            if resolved_task_type == 'segmentation':
+            if resolved_task_type == 'segmentation' and segmentation_annotation is not None:
                 await SegmentationAnnotationRepository.upsert(
                     db,
                     annotation_id=f"annot_{wsi_id}",
@@ -589,11 +765,12 @@ async def upload_wsi_by_path(
 
         wsi_file = Path(req.wsi_path)
         file_extension = wsi_file.suffix.lower()
+        is_json_annotation_path = file_extension == '.json'
 
         # Validate and detect associated files for special formats
         associated_data = {}
 
-        if file_extension == '.mrxs':
+        if not is_json_annotation_path and file_extension == '.mrxs':
             data_folder = _validate_mrxs_data_folder(req.wsi_path)
             if not data_folder:
                 raise HTTPException(
@@ -603,7 +780,7 @@ async def upload_wsi_by_path(
             associated_data['mrxs_data_folder'] = data_folder
             logger.info(f"Found MRXS data folder: {data_folder}")
 
-        elif file_extension == '.tmap':
+        elif not is_json_annotation_path and file_extension == '.tmap':
             dt_files = _find_tmap_data_files(req.wsi_path)
             if dt_files:
                 associated_data['tmap_dt_files'] = dt_files
@@ -611,40 +788,30 @@ async def upload_wsi_by_path(
 
         # Store original filename for internal reference (including extension)
         original_filename = wsi_file.name
-
-        # Generate UUID-based wsi_id if not provided (for privacy protection)
-        if not req.wsi_id:
-            wsi_id = str(uuid.uuid4())
-        else:
-            wsi_id = req.wsi_id
-
-        # Check if WSI already exists in database
-        existing = await WSIRepository.get_by_id(db, wsi_id)
-        if existing:
-            raise HTTPException(status_code=400, detail=f"WSI already exists: {wsi_id}")
-
-        # Get file size
-        file_size = os.path.getsize(req.wsi_path)
-        file_data_type = 'patch' if is_patch_file(req.wsi_path) else 'wsi'
-
-        # Extract WSI properties
-        wsi_props = extract_wsi_properties(req.wsi_path)
-
-        # Generate case_id if not provided
-        case_id = req.case_id or f"case_{wsi_id[:8]}"
-
-        logger.info(f"Registering WSI: {original_filename} -> UUID: {wsi_id}")
-
         resolved_task_type = _resolve_task_type(req.task_type)
         segmentation_annotation = None
-        if req.task_type == 'segmentation':
-            annotation_path = find_matching_segmentation_annotation_path(req.wsi_path)
-            if annotation_path is None:
-                raise HTTPException(
-                    status_code=400,
-                    detail='Segmentation upload requires a same-name COCO JSON annotation beside the image file',
-                )
-            segmentation_annotation = load_coco_annotation_file(annotation_path)
+        file_size = os.path.getsize(req.wsi_path)
+        file_data_type: Optional[str] = None
+        wsi_props = None
+        wsi_id = req.wsi_id
+        case_id = req.case_id
+
+        if is_json_annotation_path:
+            segmentation_annotation = load_coco_annotation_file(req.wsi_path)
+        else:
+            if not wsi_id:
+                wsi_id = str(uuid.uuid4())
+
+            existing = await WSIRepository.get_by_id(db, wsi_id)
+            if existing:
+                raise HTTPException(status_code=400, detail=f"WSI already exists: {wsi_id}")
+
+            wsi_props = extract_wsi_properties(req.wsi_path)
+            file_size = wsi_props.get("file_size", 0)
+            file_data_type = 'patch' if is_patch_file(req.wsi_path, file_size) else 'wsi'
+            case_id = req.case_id or f"case_{wsi_id[:8]}"
+
+            logger.info(f"Registering WSI: {original_filename} -> UUID: {wsi_id}")
 
         # Resolve dataset_id: use provided dataset_id, or create new dataset from dataset_name
         resolved_dataset_id = None
@@ -662,15 +829,31 @@ async def upload_wsi_by_path(
                     status_code=400,
                     detail=f"Dataset task_type is '{data_group.task_type}', expected '{req.task_type}'",
                 )
-            if data_group.data_type != file_data_type:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Dataset data_type is '{data_group.data_type}', cannot register '{file_data_type}' file",
+            if is_json_annotation_path:
+                if resolved_task_type != 'segmentation':
+                    raise HTTPException(
+                        status_code=400,
+                        detail='JSON uploads are only supported when appending to an existing segmentation dataset',
+                    )
+            else:
+                existing_dataset = await _align_dataset_data_type_for_upload(
+                    db,
+                    existing_dataset,
+                    file_path=req.wsi_path,
+                    file_data_type=file_data_type,
+                    task_type=resolved_task_type,
+                    context='WSI path registration',
                 )
+                data_group = existing_dataset.data_group
             ensure_dataset_segmentation_contract(existing_dataset, context='WSI path registration', expected_task_type=resolved_task_type)
             resolved_aggregation_level = data_group.aggregation_level
             resolved_dataset_id = req.dataset_id
         elif req.dataset_name:
+            if is_json_annotation_path:
+                raise HTTPException(
+                    status_code=400,
+                    detail='Segmentation JSON-only upload is only supported when appending to an existing dataset',
+                )
             resolved_aggregation_level = req.aggregation_level or "file"
             ensure_segmentation_contract(
                 resolved_task_type,
@@ -691,7 +874,49 @@ async def upload_wsi_by_path(
             dataset = await DatasetRepository.get_or_create(
                 db, req.dataset_name, group_id=data_group.group_id, user_id=str(user.id)
             )
+            dataset = await _align_dataset_data_type_for_upload(
+                db,
+                dataset,
+                file_path=req.wsi_path,
+                file_data_type=file_data_type,
+                task_type=resolved_task_type,
+                context='WSI path registration',
+            )
             resolved_dataset_id = dataset.dataset_id
+
+        if is_json_annotation_path:
+            if resolved_dataset_id is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail='Segmentation JSON-only upload requires an existing dataset',
+                )
+
+            matched_wsi = await _append_segmentation_annotation_to_existing_dataset(
+                db,
+                dataset_id=resolved_dataset_id,
+                annotation_name=original_filename,
+                annotation_payload=segmentation_annotation,
+                user_id=str(user.id),
+                source='upload_path_json',
+            )
+            await db.commit()
+
+            if resolved_dataset_id:
+                try:
+                    await rebuild_dataset_annotation_summary_cache(db, resolved_dataset_id)
+                    await db.commit()
+                except Exception as cache_err:
+                    await db.rollback()
+                    logger.warning(f"Failed to refresh annotation summary cache for {resolved_dataset_id}: {cache_err}")
+
+            return {
+                "wsi_id": matched_wsi.wsi_id,
+                "wsi_path": matched_wsi.wsi_path,
+                "label": matched_wsi.label,
+                "case_id": matched_wsi.case_id,
+                "file_size": matched_wsi.file_size,
+                "message": "Segmentation annotation appended successfully"
+            }
 
         if resolved_task_type == 'segmentation' and segmentation_annotation is None:
             ensure_segmentation_contract(
@@ -701,12 +926,8 @@ async def upload_wsi_by_path(
                 context='WSI path registration',
             )
             annotation_path = find_matching_segmentation_annotation_path(req.wsi_path)
-            if annotation_path is None:
-                raise HTTPException(
-                    status_code=400,
-                    detail='Segmentation upload requires a same-name COCO JSON annotation beside the image file',
-                )
-            segmentation_annotation = load_coco_annotation_file(annotation_path)
+            if annotation_path is not None:
+                segmentation_annotation = load_coco_annotation_file(annotation_path)
 
         # Create WSI in database with original_filename for internal reference
         wsi_data = {
@@ -734,7 +955,7 @@ async def upload_wsi_by_path(
         # with same wsi_id passes the existence check above (PostgreSQL READ COMMITTED)
         try:
             wsi = await WSIRepository.create(db, wsi_data)
-            if resolved_task_type == 'segmentation':
+            if resolved_task_type == 'segmentation' and segmentation_annotation is not None:
                 await SegmentationAnnotationRepository.upsert(
                     db,
                     annotation_id=f"annot_{wsi_id}",

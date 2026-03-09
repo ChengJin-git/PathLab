@@ -305,7 +305,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
     // Apply data_type filter
     if (rec.filters?.data_type && rec.filters.data_type !== 'all') {
       filtered = filtered.filter(s => {
-        const fileType = getFileType(s.file_extension, s.file_size)
+        const fileType = getFileType(s.file_extension, s.file_size, s.data_type)
         return rec.filters!.data_type === 'wsi'
           ? fileType === 'WSI'
           : fileType === 'Patch'
@@ -359,7 +359,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         // Apply data_type filter
         if (recommendation.filters?.data_type && recommendation.filters.data_type !== 'all') {
           filtered = filtered.filter(s => {
-            const fileType = getFileType(s.file_extension, s.file_size)
+            const fileType = getFileType(s.file_extension, s.file_size, s.data_type)
             return recommendation.filters!.data_type === 'wsi'
               ? fileType === 'WSI'
               : fileType === 'Patch'
@@ -544,7 +544,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         ) : (
           <div className="space-y-4">
             {imagesWithOverlays.map(({ image, overlays }) => {
-              const fileType = getFileType(image.file_extension, image.file_size)
+              const fileType = getFileType(image.file_extension, image.file_size, image.data_type)
               const heatmapOverlays = overlays.filter(o => o.data_type === 'wsi' || o.data_type === 'patch')
               const segmentationOverlays = overlays.filter(o => o.data_type === 'patch_segmentation')
               const latestHeatmap = heatmapOverlays[0]

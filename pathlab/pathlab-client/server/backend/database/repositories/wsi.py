@@ -14,6 +14,10 @@ from ..models import DataGroup, Dataset, WSISlide, utc_now
 from backend.common.file_types import WSI_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD
 
 
+def _dataset_with_group_loader():
+    return selectinload(WSISlide.dataset).selectinload(Dataset.data_group)
+
+
 class WSIRepository:
     """Repository for WSI Slide operations"""
 
@@ -21,7 +25,7 @@ class WSIRepository:
     async def get_by_id_with_dataset(db: AsyncSession, wsi_id: str) -> Optional[WSISlide]:
         """Get WSI by wsi_id with dataset relationship loaded"""
         result = await db.execute(
-            select(WSISlide).options(selectinload(WSISlide.dataset)).where(WSISlide.wsi_id == wsi_id)
+            select(WSISlide).options(_dataset_with_group_loader()).where(WSISlide.wsi_id == wsi_id)
         )
         return result.scalar_one_or_none()
 
@@ -55,7 +59,7 @@ class WSIRepository:
             batch_ids = wsi_ids[i:i + batch_size]
             result = await db.execute(
                 select(WSISlide)
-                .options(selectinload(WSISlide.dataset))
+                .options(_dataset_with_group_loader())
                 .where(WSISlide.wsi_id.in_(batch_ids))
             )
             wsis = result.scalars().all()
@@ -124,7 +128,7 @@ class WSIRepository:
         """
         from sqlalchemy import or_
 
-        query = select(WSISlide).options(selectinload(WSISlide.dataset))
+        query = select(WSISlide).options(_dataset_with_group_loader())
 
         # Apply user_id filter with elevated_dataset_ids support
         if user_id is not None:
@@ -360,16 +364,17 @@ class WSIRepository:
         """
         from sqlalchemy import or_, and_
 
-        if data_type == "wsi":
-            wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
-            tif_conditions = [
-                and_(
-                    or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
-                    WSISlide.file_size >= SIZE_THRESHOLD
-                )
-            ]
-            return or_(*wsi_ext_conditions, *tif_conditions)
-        elif data_type == "patch":
+        def _build_file_level_filter(target_type: str):
+            if target_type == "wsi":
+                wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
+                tif_conditions = [
+                    and_(
+                        or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
+                        WSISlide.file_size >= SIZE_THRESHOLD
+                    )
+                ]
+                return or_(*wsi_ext_conditions, *tif_conditions)
+
             patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
             tif_conditions = [
                 and_(
@@ -381,6 +386,20 @@ class WSIRepository:
                 )
             ]
             return or_(*patch_ext_conditions, *tif_conditions)
+
+        if data_type in {"wsi", "patch"}:
+            file_level_filter = _build_file_level_filter(data_type)
+            dataset_level_filter = WSISlide.dataset.has(
+                Dataset.data_group.has(DataGroup.data_type == data_type)
+            )
+            ungrouped_fallback = and_(
+                or_(
+                    WSISlide.dataset_id.is_(None),
+                    WSISlide.dataset.has(Dataset.group_id.is_(None)),
+                ),
+                file_level_filter,
+            )
+            return or_(dataset_level_filter, ungrouped_fallback)
         return None
 
     @staticmethod
@@ -717,36 +736,9 @@ class WSIRepository:
         """
         from sqlalchemy import or_, and_, case
 
-        # Build file type filter based on data_type
-        if data_type == "wsi":
-            wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
-            tif_conditions = [
-                and_(
-                    or_(
-                        func.lower(WSISlide.wsi_path).like('%' + ext)
-                        for ext in TIF_EXTENSIONS
-                    ),
-                    WSISlide.file_size >= SIZE_THRESHOLD
-                )
-            ]
-            file_filter = or_(*wsi_ext_conditions, *tif_conditions)
-        elif data_type == "patch":
-            patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
-            tif_conditions = [
-                and_(
-                    or_(
-                        func.lower(WSISlide.wsi_path).like('%' + ext)
-                        for ext in TIF_EXTENSIONS
-                    ),
-                    or_(
-                        WSISlide.file_size < SIZE_THRESHOLD,
-                        WSISlide.file_size.is_(None)
-                    )
-                )
-            ]
-            file_filter = or_(*patch_ext_conditions, *tif_conditions)
-        else:
-            file_filter = None
+        # Dataset list should trust stored DataGroup data_type for grouped datasets.
+        # Only uncategorized/ungrouped files fall back to file-level heuristics.
+        file_filter = WSIRepository._build_data_type_filter(data_type)
 
         # Join with Dataset and DataGroup tables to get all info
         query = select(
@@ -940,7 +932,7 @@ class WSIRepository:
         Returns:
             List of WSISlide objects with dataset relationship loaded
         """
-        query = select(WSISlide).options(selectinload(WSISlide.dataset))
+        query = select(WSISlide).options(_dataset_with_group_loader())
 
         if dataset_id == "Uncategorized":
             query = query.where(WSISlide.dataset_id.is_(None))
@@ -1205,7 +1197,7 @@ class WSIRepository:
         if page_case_ids:
             q_files = (
                 select(WSISlide)
-                .options(selectinload(WSISlide.dataset))
+                .options(_dataset_with_group_loader())
                 .where(WSISlide.case_id.in_(page_case_ids), *filters)
                 .order_by(WSISlide.case_id, desc(WSISlide.created_at))
             )
@@ -1233,7 +1225,7 @@ class WSIRepository:
             if no_case_limit > 0:
                 q_no_case = (
                     select(WSISlide)
-                    .options(selectinload(WSISlide.dataset))
+                    .options(_dataset_with_group_loader())
                     .where(WSISlide.case_id.is_(None), *filters)
                     .order_by(desc(WSISlide.created_at))
                     .offset(no_case_offset)

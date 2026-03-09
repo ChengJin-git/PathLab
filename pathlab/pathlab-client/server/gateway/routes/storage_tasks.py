@@ -47,6 +47,7 @@ from backend.common.config import Config
 from backend.common.file_types import is_patch_file
 
 router = APIRouter()
+TIFF_EXTENSIONS = {'.tif', '.tiff'}
 
 # ==============================================================================
 # Storage Task Cancellation Mechanism
@@ -74,6 +75,78 @@ def is_storage_task_cancelled(task_id: str) -> bool:
     Background tasks should call this in their processing loops.
     """
     return task_id in _storage_cancellation_requests
+
+
+def _is_tiff_family(file_path: str) -> bool:
+    return Path(file_path).suffix.lower() in TIFF_EXTENSIONS
+
+
+def _classify_file_data_type(file_path: str, file_size: int = 0) -> str:
+    return 'patch' if is_patch_file(file_path, file_size) else 'wsi'
+
+
+def _infer_dataset_data_type_from_files(files) -> str:
+    for file_info in files:
+        file_path = file_info.get('path', '') if isinstance(file_info, dict) else file_info.path
+        path_obj = Path(file_path)
+        file_size = path_obj.stat().st_size if path_obj.exists() else 0
+        if _classify_file_data_type(file_path, file_size) == 'wsi':
+            return 'wsi'
+    return 'patch'
+
+
+def _find_first_wsi_file_path(files) -> str | None:
+    for file_info in files:
+        file_path = file_info.get('path', '') if isinstance(file_info, dict) else file_info.path
+        path_obj = Path(file_path)
+        file_size = path_obj.stat().st_size if path_obj.exists() else 0
+        if _classify_file_data_type(file_path, file_size) == 'wsi':
+            return file_path
+    return None
+
+
+async def _align_dataset_data_type_for_import(db: AsyncSession, dataset, *, file_path: str, file_data_type: str, task_type: str):
+    data_group = dataset.data_group
+    if not data_group:
+        raise HTTPException(status_code=400, detail='Dataset has no associated DataGroup')
+
+    if data_group.data_type == file_data_type:
+        return dataset
+
+    if task_type == 'segmentation':
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dataset data_type is '{data_group.data_type}', cannot import '{file_data_type}' file",
+        )
+
+    if not _is_tiff_family(file_path):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dataset data_type is '{data_group.data_type}', cannot import '{file_data_type}' file",
+        )
+
+    if data_group.data_type == 'patch' and file_data_type == 'wsi':
+        target_group = await DataGroupRepository.get_or_create(
+            db,
+            data_type='wsi',
+            aggregation_level=data_group.aggregation_level,
+            task_type=data_group.task_type,
+        )
+        dataset.group_id = target_group.group_id
+        await db.flush()
+        refreshed = await DatasetRepository.get_by_id(db, dataset.dataset_id)
+        logger.info(
+            f"Promoted dataset {dataset.dataset_id} to wsi during batch import because TIFF/TIFF files contained a WSI"
+        )
+        return refreshed or dataset
+
+    if data_group.data_type == 'wsi' and file_data_type == 'patch':
+        return dataset
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Dataset data_type is '{data_group.data_type}', cannot import '{file_data_type}' file",
+    )
 
 
 def clear_storage_task_cancellation(task_id: str) -> None:
@@ -177,6 +250,7 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
             # Resolve or create dataset
             resolved_dataset_id = None
             resolved_dataset_name = None
+            target_dataset = None
 
             if task_type == 'segmentation' and aggregation_level != 'file':
                 await StorageTaskRepository.update_status(
@@ -205,14 +279,13 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                     await StorageTaskRepository.update_status(db, task_id, 'failed', error_message=str(exc.detail))
                     await db.commit()
                     return
+                target_dataset = existing_dataset
                 resolved_dataset_id = dataset_id
                 resolved_dataset_name = existing_dataset.name
             elif dataset_name:
-                # Determine data_type from files (default to 'wsi')
-                # Check first file to determine if patch or wsi
-                data_type = 'wsi'
+                data_type = 'patch'
                 if task_type == 'segmentation':
-                    if any(not is_patch_file((f.get('path', '') if isinstance(f, dict) else f.path)) for f in files):
+                    if _infer_dataset_data_type_from_files(files) != 'patch':
                         await StorageTaskRepository.update_status(
                             db, task_id, 'failed',
                             error_message='Segmentation batch import only supports patch/image files with same-name COCO JSON annotations'
@@ -222,9 +295,7 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                     data_type = 'patch'
                     aggregation_level = 'file'
                 elif files:
-                    first_file_path = files[0].get('path', '') if isinstance(files[0], dict) else files[0].path
-                    if is_patch_file(first_file_path):
-                        data_type = 'patch'
+                    data_type = _infer_dataset_data_type_from_files(files)
 
                 try:
                     ensure_segmentation_contract(task_type, data_type, aggregation_level, context='Batch import')
@@ -243,9 +314,21 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
 
                 # Create dataset with group_id
                 dataset = await DatasetRepository.get_or_create(db, dataset_name, group_id=data_group.group_id, user_id=user_id)
+                if dataset_name and files:
+                    anchor_path = _find_first_wsi_file_path(files)
+                    if not anchor_path and files:
+                        anchor_path = files[0].get('path', '') if isinstance(files[0], dict) else files[0].path
+                    dataset = await _align_dataset_data_type_for_import(
+                        db,
+                        dataset,
+                        file_path=anchor_path,
+                        file_data_type=data_type,
+                        task_type=task_type,
+                    )
                 if dataset.user_id != user_id:
                     dataset.user_id = user_id
                     await db.flush()
+                target_dataset = dataset
                 resolved_dataset_id = dataset.dataset_id
                 resolved_dataset_name = dataset.name
             else:
@@ -303,9 +386,19 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                     # Extract properties first to get file_size for type detection
                     props = extract_wsi_properties(file_path)
                     file_size = props.get("file_size", 0)
+                    file_data_type = _classify_file_data_type(file_path, file_size)
+
+                    if target_dataset is not None:
+                        target_dataset = await _align_dataset_data_type_for_import(
+                            db,
+                            target_dataset,
+                            file_path=file_path,
+                            file_data_type=file_data_type,
+                            task_type=task_type,
+                        )
 
                     # Generate ID based on file type (wsi_xxx or patch_xxx)
-                    if is_patch_file(file_path, file_size):
+                    if file_data_type == 'patch':
                         wsi_id = f"patch_{uuid_module.uuid4().hex[:16]}"
                     else:
                         wsi_id = f"wsi_{uuid_module.uuid4().hex[:16]}"
@@ -341,7 +434,7 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                         wsi_data["event_time"] = default_event_time
                         wsi_data["event_status"] = default_event_status
                     elif task_type == 'segmentation':
-                        if not is_patch_file(file_path, file_size):
+                        if file_data_type != 'patch':
                             results.append({
                                 "path": file_path,
                                 "wsi_id": None,

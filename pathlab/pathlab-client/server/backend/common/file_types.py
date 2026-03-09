@@ -13,10 +13,14 @@ Usage:
         is_patch_file,
     )
 """
+import logging
 from typing import FrozenSet
 
-# File size threshold for determining WSI vs Patch for .tif/.tiff files (100 MB)
-SIZE_THRESHOLD: int = 100 * 1024 * 1024
+
+logger = logging.getLogger(__name__)
+
+# File size threshold for determining WSI vs Patch for .tif/.tiff files (32 MB)
+SIZE_THRESHOLD: int = 32 * 1024 * 1024
 
 # WSI file extensions (excluding .tif/.tiff which need size check)
 # These are always treated as WSI files regardless of size
@@ -33,10 +37,38 @@ PATCH_EXTENSIONS: FrozenSet[str] = frozenset({
     '.jpg', '.jpeg', '.png', '.bmp',
 })
 
-# TIFF extensions that require size-based classification
+# TIFF extensions that require slide inspection first, size fallback second
 TIF_EXTENSIONS: FrozenSet[str] = frozenset({
     '.tif', '.tiff',
 })
+
+
+def _inspect_tiff_with_slide(file_path: str):
+    """Return TIFF classification from slide inspection.
+
+    Returns:
+        False if TIFF looks like a WSI,
+        True if TIFF looks like a patch,
+        None if slide inspection failed and caller should use fallback heuristics.
+    """
+    try:
+        from backend.common.slide_utils import load_slide, slide_has_wsi_characteristics
+
+        slide = load_slide(file_path)
+    except Exception as exc:
+        logger.debug("TIFF slide inspection failed for %s, using size fallback: %s", file_path, exc)
+        return None
+
+    try:
+        return not slide_has_wsi_characteristics(slide)
+    except Exception as exc:
+        logger.debug("TIFF feature inspection failed for %s, using size fallback: %s", file_path, exc)
+        return None
+    finally:
+        try:
+            slide.close()
+        except Exception:
+            pass
 
 
 def is_patch_file(file_path: str, file_size: int = 0) -> bool:
@@ -45,7 +77,8 @@ def is_patch_file(file_path: str, file_size: int = 0) -> bool:
 
     Classification rules:
     - Files with PATCH_EXTENSIONS are always patches
-    - .tif/.tiff files < SIZE_THRESHOLD (100MB) are patches
+    - .tif/.tiff files are inspected with ASlide/OpenSlide-compatible metadata first
+    - If inspection is unavailable, .tif/.tiff files < SIZE_THRESHOLD (32MB) are patches
     - Everything else is not a patch
 
     Args:
@@ -62,9 +95,12 @@ def is_patch_file(file_path: str, file_size: int = 0) -> bool:
         if path_lower.endswith(ext):
             return True
 
-    # Check .tif/.tiff with size threshold
+    # Check .tif/.tiff via slide inspection, then size fallback
     for ext in TIF_EXTENSIONS:
         if path_lower.endswith(ext):
+            inspected = _inspect_tiff_with_slide(file_path)
+            if inspected is not None:
+                return inspected
             return file_size < SIZE_THRESHOLD
 
     return False

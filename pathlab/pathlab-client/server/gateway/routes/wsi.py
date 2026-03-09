@@ -40,6 +40,7 @@ from backend.common.annotation_summary_cache import (
     load_dataset_annotation_summary_cache,
     is_dataset_annotation_summary_cache_valid,
 )
+from backend.common.file_types import is_patch_file
 from ..dependencies import logger, storage_manager
 from ..models import DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest
 from ..utils import (
@@ -86,6 +87,14 @@ def _build_segmentation_wsi_lookups(wsis) -> tuple[Dict[str, str], Dict[str, str
         if len(wsi_ids) == 1
     }
     return exact_lookup, stem_lookup
+
+
+def _get_wsi_data_type(wsi) -> str:
+    dataset = getattr(wsi, "dataset", None)
+    data_group = getattr(dataset, "data_group", None) if dataset else None
+    if data_group and data_group.data_type in {"wsi", "patch"}:
+        return data_group.data_type
+    return "patch" if is_patch_file(wsi.wsi_path, wsi.file_size or 0) else "wsi"
 
 
 def _mark_coco_image_matches(
@@ -166,9 +175,11 @@ async def _serialize_dataset_wsi_items(
     user_id_str: str,
 ) -> List[dict]:
     annotation_presence: Dict[str, bool] = {}
+    dataset_data_type: Optional[str] = None
 
     if dataset_id != "Uncategorized":
         dataset = await DatasetRepository.get_by_id(db, dataset_id)
+        dataset_data_type = dataset.data_group.data_type if dataset and dataset.data_group else None
         task_type = dataset.data_group.task_type if dataset and dataset.data_group else None
         if task_type == SEGMENTATION_TASK_TYPE:
             annotation_presence = await _get_segmentation_annotation_presence_map(db, dataset_id, wsi_slides)
@@ -176,6 +187,7 @@ async def _serialize_dataset_wsi_items(
     items = []
     for wsi in wsi_slides:
         item = wsi.to_summary_dict()
+        item["data_type"] = dataset_data_type or _get_wsi_data_type(wsi)
         item["can_delete"] = is_admin or (wsi.user_id == user_id_str)
         if annotation_presence:
             item["has_segmentation_annotation"] = annotation_presence.get(wsi.wsi_id, False)
@@ -300,6 +312,7 @@ async def list_wsi(
         items = []
         for wsi in wsi_slides:
             item = wsi.to_summary_dict()
+            item["data_type"] = _get_wsi_data_type(wsi)
             item["can_delete"] = is_admin or (wsi.user_id == user_id_str)
             items.append(item)
 
@@ -675,6 +688,7 @@ async def get_wsi(
 
     # Build response with can_delete flag
     meta = wsi.to_dict()
+    meta["data_type"] = _get_wsi_data_type(wsi)
     # can_delete: True if admin or user owns the WSI
     meta["can_delete"] = user.is_admin() or (wsi.user_id == str(user.id))
 

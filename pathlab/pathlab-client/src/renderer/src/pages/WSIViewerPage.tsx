@@ -1094,8 +1094,8 @@ export default function WSIViewerPage() {
           </div>
         </div>
         <div className="flex-1 relative bg-gray-100 overflow-hidden">
-          {/* Conditional Viewer: WSI Viewer for WSI-level, Patch Viewer for patch-level / seg mask */}
-          {(isPatchLevel || isPatchSegmentation) ? (
+          {/* Conditional Viewer: WSI Viewer for WSI-level, Patch Viewer for patch-level results */}
+          {isPatchLevel ? (
             // Patch-level heatmap viewer with zoom/pan controls
             // Note: wheel event is handled via useEffect with { passive: false } to allow preventDefault
             <div

@@ -97,6 +97,8 @@ export function DatasetRegistrationCard({
   const [segMissingMasks, setSegMissingMasks] = useState(false)
   const [segmentationJsonFiles, setSegmentationJsonFiles] = useState<Map<string, File>>(new Map())
   const [segmentationDuplicateJsonStems, setSegmentationDuplicateJsonStems] = useState<Set<string>>(new Set())
+  const segmentationJsonOnlyAppend = isSegmentation && mode === 'existing' && localItems.length === 0 && segmentationJsonFiles.size > 0
+  const readyUploadCount = segmentationJsonOnlyAppend ? segmentationJsonFiles.size : localItems.length
 
   const filteredDatasets = useMemo(() => {
     return datasets.filter(dataset => {
@@ -143,14 +145,13 @@ export function DatasetRegistrationCard({
       return
     }
 
-    const { duplicateImageStems, missingImageStems, orphanJsonStems } = summarizeSegmentationMatches(localItems, segmentationJsonFiles)
+    const { duplicateImageStems } = summarizeSegmentationMatches(localItems, segmentationJsonFiles)
     setSegMissingMasks(
       duplicateImageStems.length > 0 ||
-      missingImageStems.length > 0 ||
-      orphanJsonStems.length > 0 ||
+      (mode === 'new' && localItems.length === 0 && segmentationJsonFiles.size > 0) ||
       segmentationDuplicateJsonStems.size > 0
     )
-  }, [isSegmentation, localItems, segmentationJsonFiles, segmentationDuplicateJsonStems])
+  }, [isSegmentation, localItems, mode, segmentationJsonFiles, segmentationDuplicateJsonStems])
 
   const loadDatasets = async () => {
     try {
@@ -249,7 +250,7 @@ export function DatasetRegistrationCard({
       const jsonFiles = isSegmentation ? allFiles.filter(f => f.name.toLowerCase().endsWith('.json')) : []
       const validFiles = allFiles.filter(f => isSupportedName(f.name))
 
-      if (validFiles.length === 0) {
+      if (validFiles.length === 0 && !(isSegmentation && mode === 'existing' && jsonFiles.length > 0)) {
         setValidationErrors([t('chatComponents.datasetRegistration.noValidImages')])
         return
       }
@@ -281,8 +282,15 @@ export function DatasetRegistrationCard({
     }
   }
 
+  const clearSelection = () => {
+    setLocalItems([])
+    setSegmentationJsonFiles(new Map())
+    setSegmentationDuplicateJsonStems(new Set())
+    setValidationErrors([])
+  }
+
   const handleStartUpload = async () => {
-    if (localItems.length === 0) return
+    if (readyUploadCount === 0) return
     setIsUploading(true)
     setValidationErrors([])
 
@@ -299,47 +307,60 @@ export function DatasetRegistrationCard({
       }
 
       if (isSegmentation) {
-        const { duplicateImageStems, missingImageStems, orphanJsonStems } = summarizeSegmentationMatches(localItems, segmentationJsonFiles)
+        const { duplicateImageStems } = summarizeSegmentationMatches(localItems, segmentationJsonFiles)
         if (segmentationDuplicateJsonStems.size > 0) {
           throw new Error(`Duplicate segmentation JSON stems detected: ${Array.from(segmentationDuplicateJsonStems).join(', ')}`)
         }
         if (duplicateImageStems.length > 0) {
           throw new Error(`Duplicate segmentation image stems detected: ${duplicateImageStems.join(', ')}`)
         }
-        if (missingImageStems.length > 0) {
-          throw new Error(`Missing same-name COCO JSON annotations for: ${missingImageStems.join(', ')}`)
-        }
-        if (orphanJsonStems.length > 0) {
-          throw new Error(`Segmentation JSON files without matching images: ${orphanJsonStems.join(', ')}`)
+        if (mode === 'new' && localItems.length === 0) {
+          throw new Error('Segmentation registration requires at least one image file for a new dataset.')
         }
       }
 
-      const uploadTasks: UploadTaskFile[] = localItems.map(item => ({
-        key: item.key,
-        name: item.name,
-        file: item.file,
-        path: item.path,
-        metadata: {
-          dataset_id: mode === 'existing' ? selectedDatasetId : undefined,
-          dataset_name: mode === 'new' ? newDatasetName : undefined,
-          aggregation_level: dataLevel,
-          task_type: config?.upload_mode || 'classification',
-          label: isSegmentation ? undefined : '',
-          case_id: '',
-          age: undefined,
-          gender: '',
-          source: '',
-          event_time: undefined,
-          event_status: undefined
-        },
-        associatedFiles: isSegmentation ? [segmentationJsonFiles.get(getSegmentationStem(item.name))!] : undefined
-      }))
+      const uploadTasks: UploadTaskFile[] = segmentationJsonOnlyAppend
+        ? Array.from(segmentationJsonFiles.values()).map(file => ({
+          key: `seg-json-${file.name}-${file.size}`,
+          name: file.name,
+          file,
+          metadata: {
+            dataset_id: selectedDatasetId,
+            task_type: config?.upload_mode || 'classification',
+          }
+        }))
+        : localItems.map(item => {
+          const matchedSegmentationJson = isSegmentation
+            ? segmentationJsonFiles.get(getSegmentationStem(item.name))
+            : undefined
+
+          return {
+            key: item.key,
+            name: item.name,
+            file: item.file,
+            path: item.path,
+            metadata: {
+              dataset_id: mode === 'existing' ? selectedDatasetId : undefined,
+              dataset_name: mode === 'new' ? newDatasetName : undefined,
+              aggregation_level: dataLevel,
+              task_type: config?.upload_mode || 'classification',
+              label: isSegmentation ? undefined : '',
+              case_id: '',
+              age: undefined,
+              gender: '',
+              source: '',
+              event_time: undefined,
+              event_status: undefined
+            },
+            associatedFiles: matchedSegmentationJson ? [matchedSegmentationJson] : undefined
+          }
+        })
 
       const taskId = await addUploadTask(uploadTasks)
       setUploadStatus('success')
       setSubmittedTaskId(taskId)
       const datasetNameForCallback = mode === 'new' ? newDatasetName : t('chatComponents.datasetRegistration.existingDataset')
-      if (onUploadStarted) onUploadStarted(taskId, localItems.length, datasetNameForCallback, mode)
+      if (onUploadStarted) onUploadStarted(taskId, readyUploadCount, datasetNameForCallback, mode)
       
     } catch (error) {
       console.error('Upload failed', error)
@@ -363,7 +384,7 @@ export function DatasetRegistrationCard({
       <div className="p-5 space-y-5">
         {uploadStatus === 'success' ? (
           (() => {
-            const displayFileCount = config?.submitted_file_count ?? localItems.length
+            const displayFileCount = config?.submitted_file_count ?? readyUploadCount
             const displayDatasetName = config?.submitted_dataset_name ?? (mode === 'new' ? newDatasetName : t('chatComponents.datasetRegistration.existingDataset'))
             const displayMode = config?.submitted_mode ?? mode
 
@@ -395,9 +416,9 @@ export function DatasetRegistrationCard({
                   <div className="flex items-start gap-3 bg-orange-50 border border-orange-200 rounded-lg p-3">
                     <AlertTriangle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
                     <div>
-                      <p className="text-xs text-orange-800 font-medium">Segmentation registration requires strict image/JSON pairing.</p>
+                      <p className="text-xs text-orange-800 font-medium">Segmentation registration uses best-effort JSON matching.</p>
                       <p className="text-xs text-orange-700 mt-1 leading-relaxed">
-                        Put one same-name COCO JSON file next to every image and remove extra / duplicate JSON files before starting registration.
+                        New datasets still require image files. Duplicate image / JSON stems are rejected, matching JSON files are applied when available, and existing segmentation datasets also support JSON-only append by filename stem.
                       </p>
                     </div>
                   </div>
@@ -559,22 +580,22 @@ export function DatasetRegistrationCard({
             <div
               className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors ${
                  isDragging ? 'border-primary-500 bg-primary-50' : 'border-gray-200 hover:border-gray-300'
-              } ${localItems.length > 0 ? 'bg-gray-50' : ''}`}
+              } ${readyUploadCount > 0 ? 'bg-gray-50' : ''}`}
               onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
               onDragLeave={() => setIsDragging(false)}
               onDrop={handleDrop}
             >
-              {localItems.length > 0 ? (
+              {readyUploadCount > 0 ? (
                 <div className="space-y-3">
                   <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto">
                     <CheckCircle className="w-5 h-5 text-blue-600" />
                   </div>
                   <div>
-                    <p className="font-medium text-gray-900">{t('chatComponents.datasetRegistration.filesSelected', { count: localItems.length })}</p>
+                    <p className="font-medium text-gray-900">{t('chatComponents.datasetRegistration.filesSelected', { count: readyUploadCount })}</p>
                     <p className="text-xs text-gray-500">{t('chatComponents.datasetRegistration.readyToRegister')}</p>
                   </div>
                   <button 
-                    onClick={() => setLocalItems([])}
+                    onClick={clearSelection}
                     className="text-xs text-red-600 hover:text-red-700 underline"
                   >
                     {t('chatComponents.datasetRegistration.clearSelection')}
@@ -628,7 +649,7 @@ export function DatasetRegistrationCard({
 
             <button
                onClick={handleStartUpload}
-               disabled={isUploading || localItems.length === 0}
+               disabled={isUploading || readyUploadCount === 0}
                className="w-full py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}

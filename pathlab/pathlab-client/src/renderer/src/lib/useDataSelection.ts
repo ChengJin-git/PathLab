@@ -68,7 +68,7 @@ export interface UseDataSelectionReturn {
   // Additional computed values
   isPatchDataset: boolean
   totalCases: number
-  getFileType: (fileExtension: string | null, fileSize: number | null) => 'WSI' | 'Patch'
+  getFileType: (fileExtension: string | null, fileSize: number | null, authoritativeDataType?: 'wsi' | 'patch' | null) => 'WSI' | 'Patch'
 
   // Pre-defined splits
   hasPreDefinedSplits: boolean
@@ -214,7 +214,7 @@ export function useDataSelection({
   const isPatchDataset = useMemo(() => {
     if (filteredItems.length === 0) return false
     const patchCount = filteredItems.filter(
-      (item) => getFileType(item.file_extension || null, item.file_size || null) === 'Patch'
+      (item) => getFileType(item.file_extension || null, item.file_size || null, item.data_type || null) === 'Patch'
     ).length
     return patchCount > filteredItems.length / 2
   }, [filteredItems])

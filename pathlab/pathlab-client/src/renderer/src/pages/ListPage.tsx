@@ -860,7 +860,7 @@ export default function ListPage() {
   // Check if this is a patch dataset (majority of files are patches)
   const isPatchDataset = React.useMemo(() => {
     if (items.length === 0) return false
-    const patchCount = items.filter(item => getFileType(item.file_extension, item.file_size) === 'Patch').length
+    const patchCount = items.filter(item => getFileType(item.file_extension, item.file_size, item.data_type) === 'Patch').length
     return patchCount > items.length / 2
   }, [items])
 
@@ -1578,7 +1578,7 @@ export default function ListPage() {
                               </td>
                               <td className="px-3 sm:px-6 py-4 sm:py-5">
                                 {(() => {
-                                  const fileType = getFileType(it.file_extension, it.file_size)
+                                  const fileType = getFileType(it.file_extension, it.file_size, it.data_type)
                                   return fileType === 'WSI' ? (
                                     <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">{t('listPage.wsi')}</span>
                                   ) : (
@@ -1689,7 +1689,7 @@ export default function ListPage() {
                               <td className="px-3 sm:px-6 py-4 sm:py-5">
                                 {(() => {
                                   // eslint-disable-next-line
-                                  const types = new Set(slides.map(s => getFileType(s.file_extension, s.file_size)))
+                                  const types = new Set(slides.map(s => getFileType(s.file_extension, s.file_size, s.data_type)))
                                   if (types.has('WSI') && types.has('Patch')) {
                                     return <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">{t('listPage.mixed')}</span>
                                   }
@@ -1800,7 +1800,7 @@ export default function ListPage() {
                                   </td>
                                   <td className="px-3 sm:px-6 py-3 sm:py-4">
                                     {(() => {
-                                      const fileType = getFileType(it.file_extension, it.file_size)
+                                      const fileType = getFileType(it.file_extension, it.file_size, it.data_type)
                                       return fileType === 'WSI' ? (
                                         <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">{t('listPage.wsi')}</span>
                                       ) : (
@@ -1909,7 +1909,7 @@ export default function ListPage() {
                             </td>
                             <td className="px-3 sm:px-6 py-4 sm:py-5">
                               {(() => {
-                                const fileType = getFileType(it.file_extension, it.file_size)
+                                const fileType = getFileType(it.file_extension, it.file_size, it.data_type)
                                 return fileType === 'WSI' ? (
                                   <span className="inline-flex items-center px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-xs font-medium bg-purple-100 text-purple-700 border border-purple-200 whitespace-nowrap">
                                     {t('listPage.wsi')}
