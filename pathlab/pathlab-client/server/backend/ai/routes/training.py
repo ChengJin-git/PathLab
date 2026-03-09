@@ -482,7 +482,6 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
     to prevent connection pool exhaustion during long-running training.
     """
     scoped_session = ScopedSession(req.task_id)
-    scoped_logger = ScopedTrainingLogger(req.task_id)
 
     # Phase 1: Validation - short-lived session
     async with scoped_session.session() as (training_logger, db):
@@ -647,7 +646,6 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
     to prevent connection pool exhaustion during long-running training.
     """
     scoped_session = ScopedSession(req.task_id)
-    scoped_logger = ScopedTrainingLogger(req.task_id)
 
     # Phase 1: Validation - short-lived session
     async with scoped_session.session() as (training_logger, db):
@@ -897,7 +895,6 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
     _validate_patch_segmentation_loss_names(req.loss_names)
 
     scoped_session = ScopedSession(req.task_id)
-    scoped_logger = ScopedTrainingLogger(req.task_id)
 
     # Phase 1: Validation - short-lived session
     async with scoped_session.session() as (training_logger, db):
