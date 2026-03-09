@@ -14,7 +14,7 @@ import traceback
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional, Callable, Tuple
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
@@ -31,6 +31,7 @@ from backend.common.config import Config
 from backend.storage import StorageManager
 from backend.auth import current_active_user, User, get_user_from_header_or_param, get_user_from_token_param
 from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, check_wsi_access_permission
+from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 
 # Analysis modules (extracted from this file for maintainability)
 from .analysis_state import get_analysis_state, AnalysisRequest
@@ -75,6 +76,239 @@ def _extract_segmentation_label_names(categories: List[Dict[str, Any]]) -> List[
         for category in categories
         if category.get("name")
     ])
+
+
+def _coerce_path(path_value: Any) -> Optional[Path]:
+    if not path_value:
+        return None
+    try:
+        return Path(path_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _candidate_metrics_paths(task_id: str, trained_model: Optional[Dict[str, Any]]) -> List[Path]:
+    uploads_dir = Config.get_uploads_dir()
+    candidates: List[Path] = []
+
+    if trained_model:
+        for key in ("model_path", "config_path"):
+            model_related_path = _coerce_path(trained_model.get(key))
+            if model_related_path:
+                candidates.append(model_related_path.parent / "metrics.json")
+
+        model_id = trained_model.get("model_id")
+        if model_id:
+            candidates.append(uploads_dir / "models" / str(model_id) / "metrics.json")
+
+    candidates.extend([
+        uploads_dir / "training" / task_id / "checkpoints" / "metrics.json",
+        uploads_dir / "training" / task_id / "metrics.json",
+    ])
+
+    deduped: List[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        candidate_str = str(candidate)
+        if candidate_str not in seen:
+            deduped.append(candidate)
+            seen.add(candidate_str)
+    return deduped
+
+
+def _derive_companion_artifact_path(result_file: Path, artifact_suffix: str) -> Path:
+    result_name = result_file.name
+    if result_name.endswith("_result.json"):
+        return result_file.with_name(f"{result_name[:-len('_result.json')]}{artifact_suffix}")
+    return result_file.with_name(f"{result_file.stem}{artifact_suffix}")
+
+
+def _expects_wsi_attention(extra_metadata: Optional[Dict[str, Any]]) -> bool:
+    metadata = extra_metadata if isinstance(extra_metadata, dict) else {}
+    if metadata.get("attention_file"):
+        return True
+
+    attention_type = str(metadata.get("attention_type") or "").strip().lower()
+    if attention_type and attention_type != "none":
+        return True
+
+    return metadata.get("attention_shape") is not None
+
+
+def _required_ai_result_artifacts(
+    task_id: str,
+    task_type: str,
+    data_type: str,
+    wsi_id: str,
+    extra_metadata: Optional[Dict[str, Any]],
+) -> List[Tuple[str, Path]]:
+    uploads_dir = Config.get_uploads_dir()
+    result_dir = uploads_dir / "ai_results" / wsi_id
+    metadata = extra_metadata if isinstance(extra_metadata, dict) else {}
+
+    result_file = _coerce_path(metadata.get("result_file")) or (result_dir / f"train_{task_id}_result.json")
+    artifacts: List[Tuple[str, Path]] = [("result_file", result_file)]
+
+    if task_type in ("segmentation", "patch_segmentation"):
+        pred_mask_file = _coerce_path(metadata.get("pred_mask_file")) or _derive_companion_artifact_path(result_file, "_pred_mask.npy")
+        cam_file = _coerce_path(metadata.get("cam_file")) or _derive_companion_artifact_path(result_file, "_cam.npy")
+        artifacts.extend([
+            ("pred_mask_file", pred_mask_file),
+            ("cam_file", cam_file),
+        ])
+        return artifacts
+
+    if data_type == "patch":
+        cam_file = _coerce_path(metadata.get("cam_file")) or _derive_companion_artifact_path(result_file, "_cam.npy")
+        artifacts.append(("cam_file", cam_file))
+        return artifacts
+
+    if _expects_wsi_attention(metadata):
+        attention_file = _coerce_path(metadata.get("attention_file")) or _derive_companion_artifact_path(result_file, "_attention.npy")
+        artifacts.append(("attention_file", attention_file))
+    return artifacts
+
+
+def _collect_missing_ai_result_artifacts(
+    task_id: str,
+    task_type: str,
+    data_type: str,
+    wsi_id: str,
+    extra_metadata: Optional[Dict[str, Any]],
+    sample_limit: int = 10,
+) -> Tuple[int, List[Dict[str, Any]]]:
+    metadata = extra_metadata if isinstance(extra_metadata, dict) else {}
+    missing_artifacts: List[Dict[str, Any]] = []
+    missing_count = 0
+
+    for artifact_name, artifact_path in _required_ai_result_artifacts(task_id, task_type, data_type, wsi_id, metadata):
+        if artifact_path.exists():
+            continue
+        missing_count += 1
+        if len(missing_artifacts) < sample_limit:
+            missing_artifacts.append({
+                "wsi_id": wsi_id,
+                "artifact": artifact_name,
+                "path": str(artifact_path),
+            })
+
+    if data_type != "patch" and _expects_wsi_attention(metadata):
+        coords_file = find_any_cached_coords_for_wsi(Config.get_uploads_dir(), wsi_id)
+        if coords_file is None:
+            missing_count += 1
+            if len(missing_artifacts) < sample_limit:
+                missing_artifacts.append({
+                    "wsi_id": wsi_id,
+                    "artifact": "coords_file",
+                    "path": f"[cache lookup] coords.h5 for {wsi_id}",
+                })
+
+    return missing_count, missing_artifacts
+
+
+def _analysis_requires_training_metrics(task_type: str, charts: Optional[List[str]], is_kfold: bool) -> bool:
+    if is_kfold:
+        return True
+
+    requested_charts = set(charts or [])
+    required_charts = {"loss_curve"}
+    if task_type in ("segmentation", "patch_segmentation"):
+        required_charts.update({"iou_curve", "dice_curve"})
+    return bool(requested_charts & required_charts)
+
+
+def _missing_training_metrics_message(task_id: str, resources: Dict[str, Any], charts: Optional[List[str]], is_kfold: bool) -> str:
+    requested_parts = []
+    requested_charts = sorted(set(charts or []))
+    if requested_charts:
+        requested_parts.append(f"requested charts={', '.join(requested_charts)}")
+    if is_kfold:
+        requested_parts.append("task uses k-fold training summary")
+    requested_detail = "; ".join(requested_parts) if requested_parts else "analysis requires training metrics"
+    metrics_path = resources.get("metrics_file") or "metrics.json"
+    return (
+        f"Training metrics artifact is missing for task {task_id}: {metrics_path}. "
+        f"ResultsViewer cannot build this analysis because {requested_detail}. "
+        "Please restore metrics.json or rerun training."
+    )
+
+
+async def _enrich_single_task_resources(task_id: str, db: AsyncSession, base_resources: Dict[str, Any]) -> Dict[str, Any]:
+    resources = dict(base_resources)
+    resources.setdefault("has_complete_ai_results", resources.get("has_ai_results", False))
+    resources.setdefault("missing_ai_result_artifacts", [])
+    resources.setdefault("missing_ai_result_artifact_count", 0)
+    resources.setdefault("has_training_metrics", False)
+    resources.setdefault("metrics_file", None)
+    resources.setdefault("missing_training_artifacts", [])
+
+    task_meta_query = (
+        select(DataGroup.task_type, DataGroup.data_type)
+        .select_from(TrainingTask)
+        .join(DataGroup, TrainingTask.group_id == DataGroup.group_id)
+        .where(TrainingTask.task_id == task_id)
+    )
+    task_meta = (await db.execute(task_meta_query)).first()
+    if not task_meta:
+        return resources
+
+    task_type, data_type = task_meta
+
+    trained_model_query = (
+        select(TrainedModel.model_id, TrainedModel.model_path, TrainedModel.config_path)
+        .where(TrainedModel.task_id == task_id)
+        .where(TrainedModel.is_active == True)
+    )
+    trained_model_rows = (await db.execute(trained_model_query)).all()
+    trained_model = None
+    if trained_model_rows:
+        trained_model = {
+            "model_id": trained_model_rows[0][0],
+            "model_path": trained_model_rows[0][1],
+            "config_path": trained_model_rows[0][2],
+        }
+
+    metrics_candidates = _candidate_metrics_paths(task_id, trained_model)
+    metrics_file = next((path for path in metrics_candidates if path.exists()), None)
+    resources["metrics_file"] = str(metrics_file or metrics_candidates[0]) if metrics_candidates else None
+    resources["has_training_metrics"] = metrics_file is not None
+    if not resources["has_training_metrics"]:
+        resources["missing_training_artifacts"] = [resources["metrics_file"] or "metrics.json"]
+
+    if resources.get("ai_results_count", 0) <= 0:
+        resources["has_ai_results"] = False
+        resources["has_complete_ai_results"] = False
+        return resources
+
+    ai_result_rows = (
+        await db.execute(
+            select(AIResult.wsi_id, AIResult.extra_metadata)
+            .where(AIResult.task_id == task_id)
+        )
+    ).all()
+
+    missing_artifacts: List[Dict[str, Any]] = []
+    missing_count = 0
+    for wsi_id, extra_metadata in ai_result_rows:
+        row_missing_count, row_missing_artifacts = _collect_missing_ai_result_artifacts(
+            task_id=task_id,
+            task_type=task_type,
+            data_type=data_type,
+            wsi_id=wsi_id,
+            extra_metadata=extra_metadata,
+            sample_limit=max(0, 10 - len(missing_artifacts)),
+        )
+        missing_count += row_missing_count
+        if row_missing_artifacts:
+            missing_artifacts.extend(row_missing_artifacts)
+
+    resources["missing_ai_result_artifact_count"] = missing_count
+    resources["missing_ai_result_artifacts"] = missing_artifacts
+    resources["has_complete_ai_results"] = missing_count == 0
+    if missing_count > 0:
+        resources["has_ai_results"] = False
+
+    return resources
 
 
 async def _get_elevated_dataset_ids(user: User, db: AsyncSession) -> Optional[List[str]]:
@@ -559,7 +793,7 @@ async def _check_task_resources(task_id: str, db: AsyncSession) -> dict:
     For multiple tasks, use _check_task_resources_batch directly for better performance.
     """
     results = await _check_task_resources_batch([task_id], db)
-    return results.get(task_id, {
+    base_resources = results.get(task_id, {
         "has_features": False,
         "has_model": False,
         "model_id": None,
@@ -569,6 +803,7 @@ async def _check_task_resources(task_id: str, db: AsyncSession) -> dict:
         "total_case_count": 0,
         "aggregation_level": "file",
     })
+    return await _enrich_single_task_resources(task_id, db, base_resources)
 
 
 @router.get("/tasks")
@@ -788,7 +1023,14 @@ async def _run_inference_if_needed(
     if not wsi_ids:
         raise ValueError(f"No WSI IDs found for task {task_id}")
 
-    logger.info(f"AI results missing for task {task_id}, running GPU inference...")
+    missing_artifacts = resources.get("missing_ai_result_artifacts") or []
+    if missing_artifacts:
+        logger.info(
+            f"AI result artifacts incomplete for task {task_id}, rerunning GPU inference. "
+            f"examples={missing_artifacts[:3]}"
+        )
+    else:
+        logger.info(f"AI results missing for task {task_id}, running GPU inference...")
 
     if progress_callback:
         await progress_callback(0.05)  # Starting inference
@@ -2492,10 +2734,11 @@ async def start_external_validation(
     uploads_dir = Config.get_uploads_dir()
     existing_results_count = 0
     existing_validation_id = None
+    incomplete_existing_examples: List[Dict[str, Any]] = []
 
     def _check_existing_results():
         """Check for existing external validation results."""
-        nonlocal existing_results_count, existing_validation_id
+        nonlocal existing_results_count, existing_validation_id, incomplete_existing_examples
         for wsi_id in wsi_ids:
             ai_results_dir = uploads_dir / "ai_results" / wsi_id
             if ai_results_dir.exists():
@@ -2506,16 +2749,45 @@ async def start_external_validation(
                             result_data = json.load(f)
                         # Check if this result is from the same model
                         if result_data.get("task_id") == trained_model.task_id:
+                            validation_task_id = result_data.get("validation_task_id")
+                            if not validation_task_id and result_file.name.endswith("_result.json"):
+                                validation_task_id = result_file.name[:-len("_result.json")]
+
+                            result_metadata = dict(result_data)
+                            result_metadata["result_file"] = str(result_file)
+                            derived_attention_file = _derive_companion_artifact_path(result_file, "_attention.npy")
+                            if model_data_type != "patch" and not result_metadata.get("attention_file") and derived_attention_file.exists():
+                                result_metadata["attention_file"] = str(derived_attention_file)
+                                result_metadata.setdefault("attention_type", "derived")
+
+                            missing_count, missing_examples = _collect_missing_ai_result_artifacts(
+                                task_id=validation_task_id or result_file.name[:-len("_result.json")],
+                                task_type=str(result_data.get("task_type") or model_task_type),
+                                data_type=model_data_type,
+                                wsi_id=wsi_id,
+                                extra_metadata=result_metadata,
+                                sample_limit=1,
+                            )
+                            if missing_count > 0:
+                                if len(incomplete_existing_examples) < 5 and missing_examples:
+                                    incomplete_existing_examples.extend(missing_examples)
+                                continue
+
                             existing_results_count += 1
                             # Extract validation_task_id from the result
                             if existing_validation_id is None:
-                                existing_validation_id = result_data.get("validation_task_id")
+                                existing_validation_id = validation_task_id
                             break  # Found result for this WSI, move to next
                     except Exception:
                         continue
         return existing_results_count, existing_validation_id
 
     await asyncio.to_thread(_check_existing_results)
+    if incomplete_existing_examples:
+        logger.info(
+            f"Ignoring incomplete external validation cache entries for model {trained_model.task_id}: "
+            f"examples={incomplete_existing_examples[:3]}"
+        )
 
     # Prepare analysis options (use segmentation-specific defaults if needed)
     if model_is_segmentation:
@@ -4274,6 +4546,21 @@ async def _run_external_validation(
                         wsi_result_dir = ai_results_root / wsi_id
                         wsi_result_dir.mkdir(parents=True, exist_ok=True)
 
+                        if is_case_level:
+                            slide_attn = slide_attentions.get(wsi_id)
+                            slide_raw_attn = slide_raw_attentions.get(wsi_id)
+                        else:
+                            slide_attn = attention
+                            slide_raw_attn = raw_attention
+
+                        attention_shape = list(slide_attn.shape) if hasattr(slide_attn, "shape") else None
+                        if slide_attn is None:
+                            attention_type = "none"
+                        elif getattr(slide_attn, "ndim", None) == 1:
+                            attention_type = "1d"
+                        else:
+                            attention_type = "2d"
+
                         if is_survival:
                             result_data = {
                                 "wsi_id": wsi_id,
@@ -4289,6 +4576,8 @@ async def _run_external_validation(
                                 "event_time": gt_data.get("event_time"),
                                 "event_status": gt_data.get("event_status"),
                                 "bin_edges": bin_edges.tolist() if bin_edges is not None else None,
+                                "attention_type": attention_type,
+                                "attention_shape": attention_shape,
                                 "is_kfold": is_kfold,
                                 "num_folds": num_folds if is_kfold else None,
                             }
@@ -4306,29 +4595,30 @@ async def _run_external_validation(
                                 "ground_truth": gt_label,
                                 "correct": pred_label == gt_label if gt_label != "unknown" else None,
                                 "classes": classes,
+                                "aggregator": aggregator_name,
+                                "attention_type": attention_type,
+                                "attention_shape": attention_shape,
                                 "is_kfold": is_kfold,
                                 "num_folds": num_folds if is_kfold else None,
                             }
 
                         result_file = wsi_result_dir / f"extval_{task_id}_result.json"
+                        attention_file = None
+
+                        if slide_raw_attn is not None:
+                            np.save(wsi_result_dir / f"extval_{task_id}_attention_raw.npy", slide_raw_attn)
+                        if slide_attn is not None:
+                            attention_file = wsi_result_dir / f"extval_{task_id}_attention.npy"
+                            np.save(attention_file, slide_attn)
+
+                        if attention_file is not None:
+                            result_data["attention_file"] = str(attention_file)
+
                         with open(result_file, 'w', encoding='utf-8') as f:
                             json.dump(result_data, f, ensure_ascii=False, indent=2)
 
                         if is_survival:
                             _chunk_result_files.append((str(result_file), wsi_id))
-
-                        # Save attention
-                        if is_case_level:
-                            slide_attn = slide_attentions.get(wsi_id)
-                            slide_raw_attn = slide_raw_attentions.get(wsi_id)
-                        else:
-                            slide_attn = attention
-                            slide_raw_attn = raw_attention
-
-                        if slide_raw_attn is not None:
-                            np.save(wsi_result_dir / f"extval_{task_id}_attention_raw.npy", slide_raw_attn)
-                        if slide_attn is not None:
-                            np.save(wsi_result_dir / f"extval_{task_id}_attention.npy", slide_attn)
 
                         _chunk_saved += 1
 
@@ -4346,6 +4636,9 @@ async def _run_external_validation(
                                 "aggregation_level": agg_level,
                                 "case_id": item_id if is_case_level else None,
                                 "task_type": "survival" if is_survival else "classification",
+                                "attention_type": attention_type,
+                                "attention_shape": attention_shape,
+                                "attention_file": str(attention_file) if attention_file is not None else None,
                                 "result_file": str(result_file),
                             },
                         })
@@ -4772,6 +5065,13 @@ async def run_task_analysis(
     needs_gpu = False
     if not is_external:
         resources = await _check_task_resources(task_id, db)
+        split_config = task.preprocessing_config.get("split_config", {}) if task.preprocessing_config else {}
+        is_kfold = task_type_str not in ("segmentation", "patch_segmentation") and split_config.get("strategy", "random") == "k_fold"
+        if _analysis_requires_training_metrics(task_type_str, request.charts, is_kfold) and not resources.get("has_training_metrics", True):
+            raise HTTPException(
+                status_code=409,
+                detail=_missing_training_metrics_message(task_id, resources, request.charts, is_kfold),
+            )
         needs_gpu = not resources["has_ai_results"]
 
     task_queue = get_task_queue()
@@ -4986,6 +5286,13 @@ async def get_quick_analysis(
 
         # Check if GPU inference is needed (AI results missing)
         resources = await _check_task_resources(task_id, db)
+        split_config = task.preprocessing_config.get("split_config", {}) if task.preprocessing_config else {}
+        is_kfold = quick_task_type_str not in ("segmentation", "patch_segmentation") and split_config.get("strategy", "random") == "k_fold"
+        if _analysis_requires_training_metrics(quick_task_type_str, default_charts, is_kfold) and not resources.get("has_training_metrics", True):
+            raise HTTPException(
+                status_code=409,
+                detail=_missing_training_metrics_message(task_id, resources, default_charts, is_kfold),
+            )
         needs_gpu = not resources["has_ai_results"]
 
         task_queue = get_task_queue()
@@ -5472,6 +5779,8 @@ async def run_analysis_pipeline(
             if task_type_str != "external_validation":
                 # Check if AI results exist
                 resources = await _check_task_resources(task.task_id, db)
+                if _analysis_requires_training_metrics(task_type_str, charts, is_kfold) and not resources.get("has_training_metrics", True):
+                    raise ValueError(_missing_training_metrics_message(task.task_id, resources, charts, is_kfold))
                 needs_gpu_inference = not resources["has_ai_results"]
 
             # Determine progress ranges based on workload
