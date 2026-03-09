@@ -27,6 +27,7 @@ from backend.auth import User
 from backend.auth.dependencies import require_admin
 from ..dependencies import logger
 from ..models import ScanDirectoryRequest, CheckExternalFilesRequest, DeleteUnavailableFilesRequest
+from ..utils import build_segmentation_annotation_index, resolve_segmentation_annotation_match
 from backend.common.config import Config
 from backend.common.file_types import WSI_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD
 
@@ -61,6 +62,7 @@ def _scan_directory_for_wsi(directory: str) -> list:
 
     # Build a set of all items in directory for quick lookup
     all_items = {item.name: item for item in dir_path.iterdir()}
+    annotation_index = build_segmentation_annotation_index(dir_path)
 
     for item in dir_path.iterdir():
         if not item.is_file():
@@ -139,18 +141,11 @@ def _scan_directory_for_wsi(directory: str) -> list:
             if dt_files:
                 file_info["associated_data"] = sorted(dt_files)
 
-        # Check if a matching COCO annotation JSON exists (case-insensitive stem match)
-        stem_lower = item.stem.lower()
-        json_path_exact = item.parent / f"{item.stem}.json"
-        json_path_lower = item.parent / f"{stem_lower}.json"
-        if json_path_exact.exists() or json_path_lower.exists():
-            file_info["has_annotation_json"] = True
-        else:
-            # Case-insensitive scan via all_items
-            for name in all_items:
-                if name.lower() == f"{stem_lower}.json" and all_items[name].is_file():
-                    file_info["has_annotation_json"] = True
-                    break
+        matched_annotation_path, _annotation_error = resolve_segmentation_annotation_match(
+            item,
+            annotation_index=annotation_index,
+        )
+        file_info["has_annotation_json"] = matched_annotation_path is not None
 
         # Update size to include associated files
         file_info["size"] = total_size

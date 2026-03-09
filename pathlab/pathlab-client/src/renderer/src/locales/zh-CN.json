@@ -1553,6 +1553,7 @@
     "timeMonths": "时间（月）",
     "status": "状态",
     "label": "标签",
+    "annotationStatus": "标注状态",
     "patientInfo": "患者信息",
     "action": "操作",
     "allPageSelected": "已选中本页全部 {{count}} 项。",

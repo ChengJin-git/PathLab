@@ -420,6 +420,7 @@ export interface BatchRegisterRequest {
   files: BatchRegisterFileInfo[]
   dataset_id?: string
   dataset_name?: string
+  scan_root?: string
   aggregation_level?: 'case' | 'file'  // Default: 'file' - how to organize data
   task_type?: 'classification' | 'survival' | 'segmentation'  // Default: 'classification'
   default_label?: string  // Optional default label for classification

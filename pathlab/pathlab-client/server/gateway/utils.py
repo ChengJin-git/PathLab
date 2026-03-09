@@ -1,6 +1,7 @@
 """
 Utility functions for Gateway service
 """
+from collections import defaultdict
 import json
 import os
 from pathlib import Path
@@ -63,25 +64,85 @@ def ensure_dataset_segmentation_contract(dataset: Any, *, context: str, expected
     return data_group
 
 
-def find_matching_segmentation_annotation_path(image_path: str | Path) -> Optional[Path]:
-    """Find a same-stem COCO JSON annotation beside an image path."""
-    path_obj = Path(image_path)
-    image_stem = path_obj.stem.lower()
-    json_candidates = [
-        path_obj.parent / f"{path_obj.stem}.json",
-        path_obj.parent / f"{path_obj.stem.lower()}.json",
-    ]
-    for candidate in json_candidates:
-        if candidate.exists() and candidate.is_file():
-            return candidate
+def build_segmentation_annotation_index(search_root: str | Path) -> dict[str, list[Path]]:
+    """Build a case-insensitive stem -> COCO JSON paths index under a directory tree."""
+    root_path = Path(search_root)
+    index: dict[str, list[Path]] = defaultdict(list)
+
+    if not root_path.exists():
+        return {}
 
     try:
-        for sibling in path_obj.parent.iterdir():
-            if sibling.is_file() and sibling.suffix.lower() == '.json' and sibling.stem.lower() == image_stem:
-                return sibling
+        if root_path.is_file():
+            candidates = [root_path] if root_path.suffix.lower() == '.json' else []
+        else:
+            candidates = []
+            for current_root, _dirs, files in os.walk(root_path):
+                for filename in files:
+                    candidate = Path(current_root) / filename
+                    if candidate.suffix.lower() == '.json':
+                        candidates.append(candidate)
     except Exception:
-        return None
-    return None
+        return {}
+
+    for candidate in candidates:
+        index[candidate.stem.lower()].append(candidate)
+
+    return {
+        stem: sorted(paths, key=lambda path: str(path).lower())
+        for stem, paths in index.items()
+    }
+
+
+def resolve_segmentation_annotation_match(
+    image_path: str | Path,
+    *,
+    annotation_index: Optional[Mapping[str, list[Path]]] = None,
+) -> tuple[Optional[Path], Optional[str]]:
+    """Resolve a segmentation COCO JSON match for an image, reporting ambiguity when needed."""
+    path_obj = Path(image_path)
+    image_stem = path_obj.stem.lower()
+
+    if annotation_index is not None:
+        raw_candidates = annotation_index.get(image_stem, [])
+    else:
+        raw_candidates = [
+            path_obj.parent / f"{path_obj.stem}.json",
+            path_obj.parent / f"{path_obj.stem.lower()}.json",
+        ]
+        try:
+            raw_candidates.extend(
+                sibling
+                for sibling in path_obj.parent.iterdir()
+                if sibling.is_file() and sibling.suffix.lower() == '.json' and sibling.stem.lower() == image_stem
+            )
+        except Exception:
+            return None, None
+
+    unique_candidates: dict[str, Path] = {}
+    for candidate in raw_candidates:
+        candidate_path = Path(candidate)
+        if not candidate_path.exists() or not candidate_path.is_file():
+            continue
+        if candidate_path.suffix.lower() != '.json' or candidate_path.stem.lower() != image_stem:
+            continue
+        unique_candidates.setdefault(str(candidate_path).lower(), candidate_path)
+
+    ordered_candidates = sorted(unique_candidates.values(), key=lambda path: str(path).lower())
+    if not ordered_candidates:
+        return None, None
+    if len(ordered_candidates) > 1:
+        return None, (
+            f"Multiple same-name COCO JSON annotations found for '{path_obj.name}'. "
+            "Keep exactly one matching annotation per image stem."
+        )
+    return ordered_candidates[0], None
+
+
+def find_matching_segmentation_annotation_path(image_path: str | Path) -> Optional[Path]:
+    """Find a same-stem COCO JSON annotation beside an image path."""
+    match_path, _error = resolve_segmentation_annotation_match(image_path)
+    return match_path
 
 
 def validate_coco_annotation_payload(payload: Any, *, source_name: str) -> dict:

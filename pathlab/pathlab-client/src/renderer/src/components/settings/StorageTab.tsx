@@ -250,6 +250,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         files: selectedFilesInfo,
         dataset_id: batchDatasetMode === 'existing' ? batchSelectedDatasetId : undefined,
         dataset_name: batchDatasetMode === 'new' ? datasetNameToUse : undefined,
+        scan_root: batchScanResult?.directory,
         aggregation_level: batchDataLevel,
         task_type: batchTaskType
       })

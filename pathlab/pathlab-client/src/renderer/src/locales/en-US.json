@@ -1553,6 +1553,7 @@
     "timeMonths": "Time (months)",
     "status": "Status",
     "label": "Label",
+    "annotationStatus": "Annotation Status",
     "patientInfo": "Patient Info",
     "action": "Action",
     "allPageSelected": "All {{count}} items on this page are selected.",

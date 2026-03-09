@@ -33,9 +33,11 @@ from backend.auth.dependencies import require_admin
 from ..dependencies import logger, storage_manager
 from ..models import StartBatchImportRequest, StartDeleteExternalRequest, StartBatchUpdateMetadataRequest
 from ..utils import (
+    build_segmentation_annotation_index,
     ensure_segmentation_contract,
     ensure_dataset_segmentation_contract,
     find_matching_segmentation_annotation_path,
+    resolve_segmentation_annotation_match,
     load_coco_annotation_file,
     SEGMENTATION_TASK_TYPE,
 )
@@ -159,6 +161,7 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
             files = request_params.get('files', [])
             dataset_id = request_params.get('dataset_id')
             dataset_name = request_params.get('dataset_name')
+            scan_root = request_params.get('scan_root')
             aggregation_level = request_params.get('aggregation_level', 'file')
             task_type = request_params.get('task_type', 'classification')
             default_label = request_params.get('default_label')
@@ -256,6 +259,7 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
             # Get existing files in dataset to check for duplicates
             existing_wsi = await WSIRepository.get_by_dataset(db, resolved_dataset_id, limit=10000, skip=0)
             existing_set = {wsi.original_filename for wsi in existing_wsi}
+            annotation_index = build_segmentation_annotation_index(scan_root) if task_type == 'segmentation' and scan_root else None
 
             # Process each file
             for i, file_info in enumerate(files):
@@ -346,7 +350,23 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                             })
                             failed_count += 1
                             continue
-                        matched_json_path = find_matching_segmentation_annotation_path(file_path)
+                        if annotation_index is not None:
+                            matched_json_path, annotation_error = resolve_segmentation_annotation_match(
+                                file_path,
+                                annotation_index=annotation_index,
+                            )
+                        else:
+                            matched_json_path = find_matching_segmentation_annotation_path(file_path)
+                            annotation_error = None
+                        if annotation_error:
+                            results.append({
+                                "path": file_path,
+                                "wsi_id": None,
+                                "status": "failed",
+                                "message": annotation_error
+                            })
+                            failed_count += 1
+                            continue
                         if matched_json_path is None:
                             results.append({
                                 "path": file_path,
@@ -822,6 +842,7 @@ async def start_batch_import_task(
             "files": [f.model_dump() if hasattr(f, 'model_dump') else f.dict() for f in request.files],
             "dataset_id": request.dataset_id,
             "dataset_name": request.dataset_name,
+            "scan_root": request.scan_root,
             "aggregation_level": request.aggregation_level,
             "task_type": request.task_type,
             "default_label": default_label,
