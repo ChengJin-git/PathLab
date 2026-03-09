@@ -402,6 +402,7 @@ async def extract_features(req: FeatureExtractionRequest):
     to prevent connection pool exhaustion during long-running feature extraction.
     """
     scoped_session = ScopedSession(req.task_id)
+    scoped_logger = ScopedTrainingLogger(req.task_id)
 
     try:
         # Validate training task exists - short-lived session
@@ -453,6 +454,8 @@ async def extract_features(req: FeatureExtractionRequest):
         await handle_training_error_scoped(e, req.task_id, scoped_session, "Feature extraction")
         cleanup_gpu_memory()
         raise
+    finally:
+        await scoped_logger.close()
 
 
 # =============================================================================
@@ -482,6 +485,7 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
     to prevent connection pool exhaustion during long-running training.
     """
     scoped_session = ScopedSession(req.task_id)
+    scoped_logger = ScopedTrainingLogger(req.task_id)
 
     # Phase 1: Validation - short-lived session
     async with scoped_session.session() as (training_logger, db):
@@ -616,6 +620,7 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
         await handle_training_error_scoped(e, req.task_id, scoped_session, "WSI Classification")
 
     finally:
+        await scoped_logger.close()
         await cleanup_training_scoped(req.task_id)
 
 
@@ -646,6 +651,7 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
     to prevent connection pool exhaustion during long-running training.
     """
     scoped_session = ScopedSession(req.task_id)
+    scoped_logger = ScopedTrainingLogger(req.task_id)
 
     # Phase 1: Validation - short-lived session
     async with scoped_session.session() as (training_logger, db):
@@ -728,6 +734,7 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
         await handle_training_error_scoped(e, req.task_id, scoped_session, "WSI Survival")
 
     finally:
+        await scoped_logger.close()
         await cleanup_training_scoped(req.task_id)
 
 
@@ -855,6 +862,7 @@ async def train_patch_classification(req: PatchClassificationTrainRequest) -> Tr
         await handle_training_error_scoped(e, req.task_id, scoped_session, "Patch Classification")
 
     finally:
+        await scoped_logger.close()
         await cleanup_training_scoped(req.task_id)
 
 
