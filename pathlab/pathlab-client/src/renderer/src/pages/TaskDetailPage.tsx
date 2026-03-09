@@ -294,6 +294,7 @@ export default function TaskDetailPage() {
       markTrainingSubmissionPending(taskId, `${task.task_name} (rerun)`)
       void createTrainingTask({
         task_id: taskId,
+        rerun_from_task_id: isAdmin ? task.task_id : undefined,
         task_name: `${task.task_name} (rerun)`,
         task_type: task.task_type,
         data_type: task.data_type,

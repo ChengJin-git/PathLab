@@ -50,6 +50,7 @@ class SplitConfig(BaseModel):
 class TrainingTaskRequest(BaseModel):
     """Request model for creating a training task"""
     task_id: Optional[str] = None  # Client-generated task_id for fire-and-forget submission
+    rerun_from_task_id: Optional[str] = None  # Admin rerun only: preserve owner from source task
     task_name: str
     task_type: str  # "classification", "survival", or "segmentation"
     data_type: str  # "wsi" or "patch"

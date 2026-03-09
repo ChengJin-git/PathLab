@@ -50,6 +50,8 @@ async def create_training_task(
     training tasks are running.
     """
     try:
+        effective_task_owner_user_id = str(user.id)
+
         # Resolve WSI IDs: prefer dataset_id (server-side resolution) over client-provided wsi_ids
         wsi_ids = req.wsi_ids or []
         if not wsi_ids and req.dataset_id:
@@ -66,6 +68,13 @@ async def create_training_task(
 
         # --- Session 1: Read-only validations (fetch WSIs, check permissions, check storage tasks) ---
         async with safe_session() as db:
+            if user.is_admin() and req.rerun_from_task_id:
+                source_task = await TrainingTaskRepository.get_by_id(db, req.rerun_from_task_id)
+                if not source_task:
+                    raise HTTPException(status_code=404, detail="Source training task not found for rerun")
+                if source_task.user_id:
+                    effective_task_owner_user_id = source_task.user_id
+
             # Batch fetch all WSIs in a single query to avoid N+1 problem
             wsi_map = await WSIRepository.get_by_ids_with_dataset(db, wsi_ids)
 
@@ -226,7 +235,7 @@ async def create_training_task(
                 "task_description": req.task_description,
                 "preprocessing_config": req.preprocessing,
                 "model_config": req.model,
-                "user_id": str(user.id),  # Associate with current user
+                "user_id": effective_task_owner_user_id,
             }
 
             # Create training task with pre-fetched WSIs (avoids redundant DB query)
