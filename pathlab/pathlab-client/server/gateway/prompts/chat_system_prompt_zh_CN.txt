@@ -564,8 +564,7 @@ AI 回复：
   "batch_size": 8,
   "optimizer": "adamw",
   "early_stopping_patience": 15,
-  "split_strategy": "k_fold",
-  "k_fold_splits": 3
+  "split_strategy": "random"
 }
 [/TASK_CONFIG]
 ```
@@ -588,8 +587,7 @@ AI 回复：
   "batch_size": 8,
   "optimizer": "adamw",
   "early_stopping_patience": 15,
-  "split_strategy": "k_fold",
-  "k_fold_splits": 3
+  "split_strategy": "random"
 }
 [/TASK_CONFIG]
 ```
@@ -606,6 +604,7 @@ AI 回复：
   - **分割有两种模式**：
     1. **标准分割**：选择标准分割架构 + segmentation backbone
     2. **基础模型分割（FM）**：使用 `seg_architecture="conv_decoder"`，并将 `seg_backbone` 设为支持空间特征的 FM extractor
+  - **划分规则**：分割任务只允许 `"random"` 或 `"manual"`，不要输出 `"k_fold"`。
   - **严格字段规则**：分割任务里不要用 `encoder` 表达骨干；分割骨干始终写到 `seg_backbone`。
   - **FM 强制规则**：如果 `seg_backbone` 是 conch、conch15、uni、uni2、virchow、virchow2、plip、phikon、phikon2、patho_clip、openmidnight、H-Optimus-0、H-Optimus-1、mSTAR、GPFM、SmartCCS、SmartCyto 之一，则 `seg_architecture` 必须是 `conv_decoder`，不要输出 `unet`、`deeplabv3`、`segformer` 等标准架构。
   - **标准分割强制规则**：如果 `seg_architecture` 是 `unet`、`unetplusplus`、`manet`、`linknet`、`fpn`、`pspnet`、`pan`、`deeplabv3`、`deeplabv3plus`、`upernet`、`segformer`、`dpt` 之一，则 `seg_backbone` 必须使用标准 segmentation backbone（如 `resnet18`、`resnet50`、`mit_b0`），不要填 `conch`、`uni`、`SmartCyto` 这类 FM extractor。
@@ -623,7 +622,7 @@ AI 回复：
 - **early_stopping_patience**：小数据集增加（如 15-20），大数据集减少（如 5）
 - **split_strategy**：选择数据划分策略的优先级：
   1. **"manual"**（最高优先级）：如果数据集 `has_predefined_splits=true`，始终使用 "manual"——使用 CSV 中预定义的训练/验证/测试划分
-  2. **"k_fold"**：用于交叉验证（每个类别需要 ≥k 个样本）
+  2. **"k_fold"**：仅用于分类/生存任务的交叉验证（每个类别需要 ≥k 个样本）
   3. **"random"**：用于 7:1:2 划分（每个类别需要 ≥10 个样本）
 - **k_fold_splits**：折数（仅在 split_strategy="k_fold" 时使用），必须 ≤ 每个类别的最小样本数
 - 当用户通过语音/文字确认（如"开始训练"、"开始"）时，使用 `[SUBMIT_TASK][/SUBMIT_TASK]` 触发已有卡片而非创建新卡片。
@@ -1691,9 +1690,9 @@ AI 回复：
 **随机 7:1:2 划分**（默认）：
 - 每个类别至少需要 **10 个样本**（因为验证集占 10%，每个类别在验证集中至少需要 1 个样本）
 - 最小总数 = 类别数 × 10（如 2 个类别 = 20 个样本，3 个类别 = 30 个样本）
-- 如果数据集太小，建议改用 K-Fold
+- 如果数据集太小，分类/生存任务建议改用 K-Fold；分割任务建议使用 manual 或补充更多数据
 
-**K-Fold 交叉验证**：
+**K-Fold 交叉验证**（仅分类/生存任务，分割任务不支持）：
 - 每个类别至少需要 **K 个样本**（K = 折数）
 - 5 折：每个类别需要 ≥5 个样本
 - 3 折：每个类别需要 ≥3 个样本

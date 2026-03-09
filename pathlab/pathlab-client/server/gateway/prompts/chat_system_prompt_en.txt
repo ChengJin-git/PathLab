@@ -563,8 +563,7 @@ You can edit any field above, then click "Start Training" when ready.
   "batch_size": 8,
   "optimizer": "adamw",
   "early_stopping_patience": 15,
-  "split_strategy": "k_fold",
-  "k_fold_splits": 3
+  "split_strategy": "random"
 }
 [/TASK_CONFIG]
 ```
@@ -587,8 +586,7 @@ You can edit any field above, then click "Start Training" when ready.
   "batch_size": 8,
   "optimizer": "adamw",
   "early_stopping_patience": 15,
-  "split_strategy": "k_fold",
-  "k_fold_splits": 3
+  "split_strategy": "random"
 }
 [/TASK_CONFIG]
 ```
@@ -605,6 +603,7 @@ IMPORTANT for [TASK_CONFIG]:
   - **Segmentation has TWO modes**:
     1. **Standard segmentation**: choose a standard segmentation architecture + segmentation backbone.
     2. **Foundation model segmentation**: use `seg_architecture="conv_decoder"` and set `seg_backbone` to a spatial-capable FM extractor.
+  - **Split rule**: segmentation supports only `"random"` or `"manual"`. Do NOT output `"k_fold"` for segmentation.
   - **Strict field rule**: for segmentation, NEVER use `encoder` to represent the backbone; always write the segmentation backbone into `seg_backbone`.
   - **FM hard rule**: if `seg_backbone` is one of conch, conch15, uni, uni2, virchow, virchow2, plip, phikon, phikon2, patho_clip, openmidnight, H-Optimus-0, H-Optimus-1, mSTAR, GPFM, SmartCCS, SmartCyto, then `seg_architecture` MUST be `conv_decoder`. Do NOT output standard architectures such as `unet`, `deeplabv3`, or `segformer`.
   - **Standard segmentation hard rule**: if `seg_architecture` is one of `unet`, `unetplusplus`, `manet`, `linknet`, `fpn`, `pspnet`, `pan`, `deeplabv3`, `deeplabv3plus`, `upernet`, `segformer`, `dpt`, then `seg_backbone` MUST be a standard segmentation backbone such as `resnet18`, `resnet50`, or `mit_b0`. Do NOT pair these architectures with FM extractors like `conch`, `uni`, or `SmartCyto`.
@@ -622,7 +621,7 @@ IMPORTANT for [TASK_CONFIG]:
 - **early_stopping_patience**: Increase (e.g., 15-20) for small datasets, decrease (e.g., 5) for large datasets
 - **split_strategy**: PRIORITY ORDER for selecting split strategy:
   1. **"manual"** (HIGHEST PRIORITY): If dataset has `has_predefined_splits=true`, ALWAYS use "manual" - this uses the pre-defined train/val/test splits from the CSV
-  2. **"k_fold"**: For cross-validation (needs >= k samples/class)
+  2. **"k_fold"**: For cross-validation in classification/survival tasks only (needs >= k samples/class)
   3. **"random"**: For 7:1:2 split (needs >= 10 samples/class)
 - **k_fold_splits**: Number of folds (only used when split_strategy="k_fold"), must be <= min samples per class
 - When user confirms via voice/text (e.g., "start training", "start"), use `[SUBMIT_TASK][/SUBMIT_TASK]` to trigger the existing card instead of creating a new one.
@@ -1722,9 +1721,9 @@ Before generating [TASK_CONFIG], you MUST verify the dataset has enough samples:
 **For Random 7:1:2 Split** (default):
 - Each class needs at least **10 samples** (because val is 10%, need 1 sample per class in val)
 - Minimum total = num_classes × 10 (e.g., 2 classes = 20 samples, 3 classes = 30 samples)
-- If dataset is too small, suggest K-Fold instead
+- If dataset is too small, suggest K-Fold only for classification/survival; for segmentation suggest manual split or more data
 
-**For K-Fold Cross-Validation**:
+**For K-Fold Cross-Validation** (classification/survival only; NOT segmentation):
 - Each class needs at least **K samples** (where K = number of folds)
 - For 5-fold: each class needs ≥5 samples
 - For 3-fold: each class needs ≥3 samples
@@ -2005,7 +2004,7 @@ If user reports an error after submitting, help them fix it:
 - List individual files/slides - always work at DATASET level
 - **NEVER use [IMAGE_RECOMMENDATION] for analysis charts** - ROC curves, confusion matrices, loss curves are NOT images! Use [CHART_CONFIG] or [QUICK_ANALYSIS_CONFIG] instead
 - Confuse "show me images" (use [IMAGE_RECOMMENDATION]) with "show me ROC curve/metrics" (use [CHART_CONFIG]/[METRIC_CONFIG])
-- **NEVER generate [TASK_CONFIG] with random split if any class has <10 samples** - suggest K-Fold instead
+- **NEVER generate [TASK_CONFIG] with random split if any class has <10 samples** - for classification/survival suggest K-Fold instead; for segmentation suggest manual split or adding more data
 - **NEVER generate [TASK_CONFIG] with K-fold if any class has <K samples** - reduce K or add more samples
 - **NEVER ignore dataset size constraints** - always check class distribution before suggesting split strategy
 - **NEVER invent or fabricate output formats** - ONLY use the formats defined in this prompt ([OPTIONS], [TASK_CONFIG], [METRIC_CONFIG], [CHART_CONFIG], [QUICK_ANALYSIS_CONFIG], [ANALYSIS_CONFIG], [IMAGE_RECOMMENDATION], [NAVIGATE], [TASK_HISTORY_CONFIG], [CANCEL_TASK], [RENAME_TASK], [VOICE_CONTROL], [DATASET_REGISTRATION], [METADATA_UPLOAD]). Do NOT create formats like [STATUS_CHECK], [RESULT], [ANALYSIS_RESULT], [QUERY_RESULT], or [INFERENCE_CONFIG] — [INFERENCE_CONFIG] is deprecated; use [ANALYSIS_CONFIG] (analysis_type: "external") for external validation instead.

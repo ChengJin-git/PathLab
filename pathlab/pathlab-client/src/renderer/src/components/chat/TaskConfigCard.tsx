@@ -172,6 +172,22 @@ function normalizeAgentTaskConfig(config: AgentTaskConfig): AgentTaskConfig {
   }
 }
 
+function normalizeSplitStrategy(
+  taskType: AgentTaskConfig['task_type'],
+  splitStrategy: AgentTaskConfig['split_strategy'] | undefined,
+  hasPreDefinedSplits = false,
+): 'random' | 'k_fold' | 'manual' {
+  if (splitStrategy === 'manual') {
+    return hasPreDefinedSplits ? 'manual' : 'random'
+  }
+
+  if (taskType === 'segmentation' && splitStrategy === 'k_fold') {
+    return hasPreDefinedSplits ? 'manual' : 'random'
+  }
+
+  return splitStrategy ?? 'random'
+}
+
 /**
  * Remove [TASK_CONFIG] block from content for display
  */
@@ -224,7 +240,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
 
   // Split strategy state - use agent's recommendation if provided
   const [splitStrategy, setSplitStrategy] = useState<'random' | 'k_fold' | 'manual'>(
-    initialConfig.split_strategy || 'random'
+    normalizeSplitStrategy(initialConfig.task_type, initialConfig.split_strategy)
   )
   const [kFoldSplits, setKFoldSplits] = useState(initialConfig.k_fold_splits || 5)
   const [randomSeed, setRandomSeed] = useState(initialConfig.seed ?? 42)
@@ -262,6 +278,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     () => resolveSegmentationArchitecture(config, resolvedSegBackbone),
     [config, resolvedSegBackbone]
   )
+  const supportsKFold = config.task_type !== 'segmentation'
   const segmentationFmOptions = useMemo(
     () => ENCODER_OPTIONS.filter(option => isSegFmEncoder(option.value)),
     []
@@ -283,6 +300,13 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       onConfigChange?.(nextConfig)
     }
   }, [config, onConfigChange])
+
+  useEffect(() => {
+    const normalizedStrategy = normalizeSplitStrategy(config.task_type, splitStrategy, hasPreDefinedSplits)
+    if (normalizedStrategy !== splitStrategy) {
+      setSplitStrategy(normalizedStrategy)
+    }
+  }, [config.task_type, splitStrategy, hasPreDefinedSplits])
 
   useEffect(() => {
     if (selectedDatasetId && !compatibleDatasets.some(d => d.dataset_id === selectedDatasetId)) {
@@ -368,12 +392,11 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           const counts = found.predefined_split_counts ?? { train: 0, val: 0, test: 0 }
           setHasPreDefinedSplits(hasSplits)
           setPredefinedSplitCounts(counts)
-          if (hasSplits && !initialConfig.split_strategy) {
-            setSplitStrategy('manual')
-          } else if (!hasSplits && initialConfig.split_strategy === 'manual') {
-            // Agent recommended manual split but dataset has no predefined splits — fall back
-            setSplitStrategy('random')
-          }
+          setSplitStrategy(
+            initialConfig.split_strategy
+              ? normalizeSplitStrategy(initialConfig.task_type, initialConfig.split_strategy, hasSplits)
+              : (hasSplits ? 'manual' : 'random')
+          )
         }
       }
     } catch (error) {
@@ -689,7 +712,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
               <span className="text-sm font-medium text-gray-700">{t('chatComponents.taskConfig.splitStrategy')}</span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className={`grid grid-cols-1 gap-2 ${supportsKFold ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
               {/* Random Split */}
               <button
                 type="button"
@@ -710,25 +733,26 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 <p className="text-[10px] text-gray-500 ml-4.5">{t('chatComponents.taskConfig.splitRandomDesc')}</p>
               </button>
 
-              {/* K-Fold */}
-              <button
-                type="button"
-                onClick={() => !isFormDisabled && setSplitStrategy('k_fold')}
-                disabled={isFormDisabled}
-                className={`p-3 rounded-lg border text-left transition-all ${splitStrategy === 'k_fold'
-                  ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
-                  : 'bg-white border-gray-200 hover:border-primary-300'
-                  } ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
-              >
-                <div className="flex items-center gap-1.5 mb-1">
-                  <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${splitStrategy === 'k_fold' ? 'border-primary-600' : 'border-gray-400'
-                    }`}>
-                    {splitStrategy === 'k_fold' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
+              {supportsKFold && (
+                <button
+                  type="button"
+                  onClick={() => !isFormDisabled && setSplitStrategy('k_fold')}
+                  disabled={isFormDisabled}
+                  className={`p-3 rounded-lg border text-left transition-all ${splitStrategy === 'k_fold'
+                    ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
+                    : 'bg-white border-gray-200 hover:border-primary-300'
+                    } ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
+                >
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${splitStrategy === 'k_fold' ? 'border-primary-600' : 'border-gray-400'
+                      }`}>
+                      {splitStrategy === 'k_fold' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
+                    </div>
+                    <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>{t('chatComponents.taskConfig.splitKFold')}</span>
                   </div>
-                  <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>{t('chatComponents.taskConfig.splitKFold')}</span>
-                </div>
-                <p className="text-[10px] text-gray-500 ml-4.5">{t('chatComponents.taskConfig.splitKFoldDesc')}</p>
-              </button>
+                  <p className="text-[10px] text-gray-500 ml-4.5">{t('chatComponents.taskConfig.splitKFoldDesc')}</p>
+                </button>
+              )}
 
               {/* Manual Split (CSV) */}
               <button
