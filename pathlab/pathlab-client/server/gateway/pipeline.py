@@ -36,6 +36,8 @@ _UNSUPPORTED_PATCH_SEGMENTATION_LOSS_TOKENS = frozenset({
     "crossentropyloss",
 })
 
+_PATCH_SEGMENTATION_EXPECTED_SPLITS = ("train", "val", "test")
+
 
 def _normalize_patch_segmentation_loss_name(loss_name: str) -> str:
     return "".join(ch for ch in str(loss_name).lower() if ch.isalnum())
@@ -184,8 +186,7 @@ async def _load_segmentation_training_dataset_inputs(
         raise ValueError("Patch segmentation training does not support k-fold splits yet")
 
     splits_map = await TrainingTaskRepository.get_wsi_ids_by_split(db, task_id)
-    expected_splits = ["train", "val", "test"]
-    if not all(split_name in splits_map for split_name in expected_splits):
+    if not all(split_name in splits_map for split_name in _PATCH_SEGMENTATION_EXPECTED_SPLITS):
         raise ValueError("Segmentation training requires train/val/test split assignments")
 
     return wsis, coco_payloads, splits_map
@@ -219,7 +220,7 @@ def _prepare_segmentation_training_dataset(
     split_dir.mkdir(parents=True, exist_ok=True)
     dataset_config: Dict[str, Dict[str, str]] = {"classes": len(classes), "channels": 3}
 
-    for split_name in expected_splits:
+    for split_name in _PATCH_SEGMENTATION_EXPECTED_SPLITS:
         split_payload = _build_split_coco_payload(
             coco_data,
             set(splits_map.get(split_name, [])),

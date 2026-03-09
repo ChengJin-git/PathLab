@@ -213,123 +213,134 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
             <h2 className="text-lg font-bold text-slate-900">{t('settings.remoteServices')}</h2>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {/* OpenRouter LLM Card */}
-            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-              <CardHeader className="pb-1 p-3">
-                <CardTitle className="flex items-center gap-2 text-base text-slate-900">
-                  <div className="p-1 bg-blue-100 rounded">
-                    <Server className="w-3.5 h-3.5 text-blue-600" />
+          <Card className="border border-slate-200 shadow-sm overflow-hidden">
+            <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
+              {/* Left Column: LLM Settings (Primary) */}
+              <div className="p-5 space-y-4 bg-slate-50/30">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="p-1.5 bg-blue-100 rounded-md">
+                    <Server className="w-4 h-4 text-blue-600" />
                   </div>
-                  {t('settings.general.llmOpenRouter')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2.5 p-3 pt-0">
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.apiKey')}</Label>
-                  <Input
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="sk-..."
-                    className="h-8 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
-                  />
-                  <p className="text-xs text-slate-500">
-                    <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-700 font-medium">
-                      {t('common.getKey')}
-                    </a>
-                  </p>
+                  <h3 className="font-semibold text-slate-900">{t('settings.general.llmOpenRouter')}</h3>
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.baseUrl')}</Label>
-                  <Input
-                    value={baseUrl}
-                    onChange={(e) => setBaseUrl(e.target.value)}
-                    placeholder="https://openrouter.ai/api/v1"
-                    className="h-8 font-mono text-xs border-slate-300 focus:border-blue-500 focus:ring-blue-500"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.model')}</Label>
-                  <select
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    className="h-8 w-full px-2.5 py-1 border border-slate-300 rounded-lg bg-white text-xs text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
-                  >
-                    <optgroup label={t('settings.general.multimodalModels')}>
-                      {MODEL_OPTIONS.filter(m => m.multimodal).map(m => (
-                        <option key={m.id} value={m.id}>{m.label}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label={t('settings.general.textModels')}>
-                      {MODEL_OPTIONS.filter(m => !m.multimodal).map(m => (
-                        <option key={m.id} value={m.id}>{m.label}</option>
-                      ))}
-                    </optgroup>
-                  </select>
-                </div>
-              </CardContent>
-            </Card>
+                
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.apiKey')}</Label>
+                    <div className="relative">
+                      <Input
+                        type="password"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        placeholder="sk-..."
+                        className="h-9 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500 pr-20"
+                      />
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                        <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:text-blue-700 font-medium hover:underline">
+                          {t('common.getKey')}
+                        </a>
+                      </div>
+                    </div>
+                  </div>
 
-            {/* DashScope ASR Card */}
-            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-              <CardHeader className="pb-1 p-3">
-                <CardTitle className="flex items-center gap-2 text-base text-slate-900">
-                  <div className="p-1 bg-orange-100 rounded">
-                    <Mic className="w-3.5 h-3.5 text-orange-600" />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.baseUrl')}</Label>
+                      <Input
+                        value={baseUrl}
+                        onChange={(e) => setBaseUrl(e.target.value)}
+                        placeholder="https://openrouter.ai/api/v1"
+                        className="h-9 font-mono text-xs border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.model')}</Label>
+                      <select
+                        value={model}
+                        onChange={(e) => setModel(e.target.value)}
+                        className="h-9 w-full px-2.5 border border-slate-300 rounded-md bg-white text-xs text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                      >
+                        <optgroup label={t('settings.general.multimodalModels')}>
+                          {MODEL_OPTIONS.filter(m => m.multimodal).map(m => (
+                            <option key={m.id} value={m.id}>{m.label}</option>
+                          ))}
+                        </optgroup>
+                        <optgroup label={t('settings.general.textModels')}>
+                          {MODEL_OPTIONS.filter(m => !m.multimodal).map(m => (
+                            <option key={m.id} value={m.id}>{m.label}</option>
+                          ))}
+                        </optgroup>
+                      </select>
+                    </div>
                   </div>
-                  {t('settings.general.asrDashScope')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2.5 p-3 pt-0">
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.dashscopeApiKey')}</Label>
-                  <Input
-                    type="password"
-                    value={dashscopeApiKey}
-                    onChange={(e) => setDashscopeApiKey(e.target.value)}
-                    placeholder="sk-..."
-                    className="h-8 text-sm border-slate-300 focus:border-orange-500 focus:ring-orange-500"
-                  />
-                  <p className="text-xs text-slate-500">
-                    {t('settings.general.forQwen3Asr')}{' '}
-                    <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-orange-600 hover:text-orange-700 font-medium">
-                      {t('common.getKey')}
-                    </a>
-                  </p>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
 
-            {/* Shared Credentials Card */}
-            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-              <CardHeader className="pb-1 p-3">
-                <CardTitle className="flex items-center gap-2 text-base text-slate-900">
-                  <div className="p-1 bg-amber-100 rounded">
-                    <Key className="w-3.5 h-3.5 text-amber-600" />
+              {/* Right Column: Other Services (Stacked) */}
+              <div className="flex flex-col divide-y divide-slate-100">
+                {/* DashScope ASR */}
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="p-1.5 bg-orange-100 rounded-md">
+                      <Mic className="w-4 h-4 text-orange-600" />
+                    </div>
+                    <h3 className="font-semibold text-slate-900">{t('settings.general.asrDashScope')}</h3>
                   </div>
-                  {t('settings.general.sharedCredentials')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2.5 p-3 pt-0">
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">HF TOKEN</Label>
-                  <Input
-                    type="password"
-                    value={huggingfaceToken}
-                    onChange={(e) => setHuggingfaceToken(e.target.value)}
-                    placeholder="hf_..."
-                    className="h-8 text-sm border-slate-300 focus:border-amber-500 focus:ring-amber-500"
-                  />
-                  <p className="text-xs text-slate-500">
-                    <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-amber-600 hover:text-amber-700 font-medium">
-                      {t('common.getToken')}
-                    </a>
-                  </p>
+                  
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.dashscopeApiKey')}</Label>
+                      <span className="text-xs text-slate-500">
+                        {t('settings.general.forQwen3Asr')}
+                      </span>
+                    </div>
+                    <div className="relative">
+                      <Input
+                        type="password"
+                        value={dashscopeApiKey}
+                        onChange={(e) => setDashscopeApiKey(e.target.value)}
+                        placeholder="sk-..."
+                        className="h-9 text-sm border-slate-300 focus:border-orange-500 focus:ring-orange-500 pr-20"
+                      />
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                        <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-xs text-orange-600 hover:text-orange-700 font-medium hover:underline">
+                          {t('common.getKey')}
+                        </a>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </CardContent>
-            </Card>
-          </div>
+
+                {/* Shared Credentials */}
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="p-1.5 bg-amber-100 rounded-md">
+                      <Key className="w-4 h-4 text-amber-600" />
+                    </div>
+                    <h3 className="font-semibold text-slate-900">{t('settings.general.sharedCredentials')}</h3>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">HF TOKEN</Label>
+                    <div className="relative">
+                      <Input
+                        type="password"
+                        value={huggingfaceToken}
+                        onChange={(e) => setHuggingfaceToken(e.target.value)}
+                        placeholder="hf_..."
+                        className="h-9 text-sm border-slate-300 focus:border-amber-500 focus:ring-amber-500 pr-20"
+                      />
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                        <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-xs text-amber-600 hover:text-amber-700 font-medium hover:underline">
+                          {t('common.getToken')}
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
         </section>
 
         {/* Web Search Section */}
