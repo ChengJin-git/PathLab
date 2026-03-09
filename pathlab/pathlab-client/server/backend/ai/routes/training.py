@@ -785,8 +785,8 @@ async def train_patch_classification(req: PatchClassificationTrainRequest) -> Tr
         user_id = task.user_id
         preprocessing_config = task.preprocessing_config
 
-        # Mark task as training and log start
-        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=66)
+        # Mark task as training from 0% and let the trainer advance it to 100%.
+        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=0)
         split_strategy_desc = _get_split_strategy_description(splits_map, preprocessing_config)
         splits_count_desc = _format_splits_count(splits_map)
         await training_logger.info(
@@ -909,8 +909,8 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         user_id = task.user_id
         preprocessing_config = task.preprocessing_config or {}
 
-        # Mark task as training
-        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=50)
+        # Mark task as training from 0% and let the trainer advance it to 100%.
+        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=0)
         await training_logger.info(
             f"[Training] Starting Patch Segmentation ({req.architecture}/{req.backbone})",
             {"task_type": "patch_segmentation", "architecture": req.architecture,
@@ -931,6 +931,7 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
                 "optimizer": req.optimizer,
                 "early_stopping_patience": req.early_stopping_patience,
             },
+            "monitor_metric": "miou" if req.num_classes > 1 else "iou",
             "save_dir": save_dir,
         }
         segmentation_dataset = preprocessing_config.get("segmentation_dataset")

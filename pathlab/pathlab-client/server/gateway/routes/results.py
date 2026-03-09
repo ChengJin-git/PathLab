@@ -1370,6 +1370,29 @@ def _get_seg_grad_cam_target_layers(model):
     raise ValueError("Cannot determine Grad-CAM target layer for segmentation model")
 
 
+def _build_segmentation_per_image_metrics(
+    iou_per_class,
+    dice_per_class,
+    accuracy,
+    precision,
+    recall,
+) -> Dict[str, Any]:
+    iou_flat = iou_per_class.squeeze(0) if getattr(iou_per_class, "dim", lambda: 0)() > 1 else iou_per_class
+    dice_flat = dice_per_class.squeeze(0) if getattr(dice_per_class, "dim", lambda: 0)() > 1 else dice_per_class
+    num_classes = int(iou_flat.numel()) if hasattr(iou_flat, "numel") else len(iou_flat)
+    primary_iou_key = "miou" if num_classes > 1 else "iou"
+
+    return {
+        primary_iou_key: iou_flat.mean().item(),
+        "iou_per_class": iou_flat.tolist() if iou_flat.dim() > 0 else [iou_flat.item()],
+        "dice": dice_flat.mean().item(),
+        "dice_per_class": dice_flat.tolist() if dice_flat.dim() > 0 else [dice_flat.item()],
+        "accuracy": accuracy.item(),
+        "precision": precision.item(),
+        "recall": recall.item(),
+    }
+
+
 
 async def _run_inference_patch_segmentation(
     task, wsi_ids: List[str], resources: dict, db: AsyncSession,
@@ -1561,18 +1584,13 @@ async def _run_inference_patch_segmentation(
                         precision_val = smp.metrics.precision(tp, fp, fn, tn, reduction='micro')
                         recall_val = smp.metrics.recall(tp, fp, fn, tn, reduction='micro')
 
-                        iou_flat = iou_per_class.squeeze(0) if iou_per_class.dim() > 1 else iou_per_class
-                        dice_flat = dice_per_class.squeeze(0) if dice_per_class.dim() > 1 else dice_per_class
-
-                        per_image_metrics = {
-                            "iou": iou_flat.mean().item(),
-                            "iou_per_class": iou_flat.tolist() if iou_flat.dim() > 0 else [iou_flat.item()],
-                            "dice": dice_flat.mean().item(),
-                            "dice_per_class": dice_flat.tolist() if dice_flat.dim() > 0 else [dice_flat.item()],
-                            "accuracy": accuracy.item(),
-                            "precision": precision_val.item(),
-                            "recall": recall_val.item(),
-                        }
+                        per_image_metrics = _build_segmentation_per_image_metrics(
+                            iou_per_class,
+                            dice_per_class,
+                            accuracy,
+                            precision_val,
+                            recall_val,
+                        )
 
                     # Save prediction mask
                     wsi_result_dir = ai_results_root / wsi_id
@@ -2928,19 +2946,13 @@ async def _run_external_validation_patch_segmentation(
                             precision = smp.metrics.precision(tp, fp, fn, tn, reduction='micro')
                             recall = smp.metrics.recall(tp, fp, fn, tn, reduction='micro')
 
-                            # Flatten (batch, num_classes) -> (num_classes,)
-                            iou_flat = iou_per_class.squeeze(0) if iou_per_class.dim() > 1 else iou_per_class
-                            dice_flat = dice_per_class.squeeze(0) if dice_per_class.dim() > 1 else dice_per_class
-
-                            per_image_metrics = {
-                                "iou": iou_flat.mean().item(),
-                                "iou_per_class": iou_flat.tolist() if iou_flat.dim() > 0 else [iou_flat.item()],
-                                "dice": dice_flat.mean().item(),
-                                "dice_per_class": dice_flat.tolist() if dice_flat.dim() > 0 else [dice_flat.item()],
-                                "accuracy": accuracy.item(),
-                                "precision": precision.item(),
-                                "recall": recall.item(),
-                            }
+                            per_image_metrics = _build_segmentation_per_image_metrics(
+                                iou_per_class,
+                                dice_per_class,
+                                accuracy,
+                                precision,
+                                recall,
+                            )
 
                         # Save prediction mask
                         wsi_result_dir = ai_results_root / wsi_id
@@ -4985,7 +4997,15 @@ async def get_quick_analysis(
     # Filter metrics if requested
     result_metrics = latest_summary.get("metrics", {})
     if requested_metrics:
-        result_metrics = {k: v for k, v in result_metrics.items() if k in requested_metrics or k.replace("macro_", "") in requested_metrics}
+        requested_metric_keys = set(requested_metrics)
+        if "iou" in requested_metric_keys:
+            requested_metric_keys.add("miou")
+        if "miou" in requested_metric_keys:
+            requested_metric_keys.add("iou")
+        result_metrics = {
+            k: v for k, v in result_metrics.items()
+            if k in requested_metric_keys or k.replace("macro_", "") in requested_metric_keys
+        }
 
     # Merge bootstrap CI into metrics if available
     # Frontend expects: MetricValue = number | { value: number; ci_lower: number; ci_upper: number }

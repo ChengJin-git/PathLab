@@ -1422,6 +1422,7 @@
     "metricLabels": {
       "accuracy": "准确率",
       "iou": "IoU",
+      "miou": "mIoU",
       "dice": "Dice",
       "precision": "精确率",
       "recall": "召回率",
@@ -1435,6 +1436,7 @@
     "metricDescriptions": {
       "accuracy": "整体预测准确率",
       "iou": "交并比（Jaccard 指数）",
+      "miou": "分割类别间平均交并比",
       "dice": "用于分割重叠度的 Dice 系数",
       "precision": "阳性预测值",
       "recall": "真阳性率",

@@ -421,14 +421,10 @@ export default function TaskDetailPage() {
   const isPatchLevel = task.data_type === 'patch'
   const isExternalValidation = task.task_type === 'external_validation'
 
-  // Calculate display progress for patch-level tasks
-  // (map 66% - 100% backend progress to 0% - 100% UI progress)
-  // For completed tasks, always show 100%
-  // For cancelled/failed tasks, show the mapped progress at the time of cancellation/failure
-  // External validation tasks use 0-100 directly regardless of data_type
-  const displayProgress = isPatchLevel && !isExternalValidation && task.status !== 'completed'
-    ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
-    : Math.min(task.progress, 100)  // Cap at 100% for safety
+  // Display task progress directly in the standard 0-100 range.
+  const displayProgress = task.status === 'completed'
+    ? 100
+    : Math.max(0, Math.min(task.progress, 100))
 
   return (
     <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6 pb-12">

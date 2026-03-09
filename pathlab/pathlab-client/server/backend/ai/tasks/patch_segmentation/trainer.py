@@ -36,6 +36,8 @@ import segmentation_models_pytorch as smp
 from sklearn.metrics import confusion_matrix
 
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
+from backend.ai.schemas.base import TaskStatus
+from backend.ai.tasks.training_utils import safe_update_progress as _safe_update_progress
 from backend.ai.utils.segmentation_dataset import SegmentationDataset, get_transforms
 from backend.ai.segmentors import Segmentor
 
@@ -86,8 +88,8 @@ __default_config__ = {
         "t_mult": 2,  # Multiplier for restart interval
     },
     
-    "metrics": ['iou', 'dice', 'accuracy', 'f1', 'precision', 'recall'],  # Metrics to track
-    "monitor_metric": 'iou',  # Metric to monitor for saving best model
+    "metrics": ['iou', 'miou', 'dice', 'accuracy', 'f1', 'precision', 'recall'],  # Metrics to track
+    "monitor_metric": 'iou',  # Metric to monitor for saving best model (auto-promotes to miou for multi-class)
     "save_dir": "./checkpoints",  # Directory to save checkpoints
 }
 
@@ -177,6 +179,36 @@ class SegmentationTrainer:
         merged_config = copy.deepcopy(__default_config__)
         deep_update(merged_config, config)
         return merged_config
+
+    def _update_training_progress(self, progress: int) -> None:
+        """Write segmentation training progress to the shared progress store."""
+        asyncio.run(
+            _safe_update_progress(
+                None,
+                self.task_id,
+                TaskStatus.TRAINING,
+                max(0, min(progress, 100)),
+            )
+        )
+
+    def _get_num_classes(self) -> int:
+        dataset_cfg = self.config.get("dataset", {})
+        try:
+            return max(1, int(dataset_cfg.get("classes", 1) or 1))
+        except (TypeError, ValueError):
+            return 1
+
+    def _get_primary_iou_metric_key(self) -> str:
+        return "miou" if self._get_num_classes() > 1 else "iou"
+
+    def _get_primary_iou_metric_label(self) -> str:
+        return "mIoU" if self._get_num_classes() > 1 else "IoU"
+
+    def _get_monitor_metric(self) -> str:
+        configured_metric = self.config.get("monitor_metric")
+        if configured_metric == "iou" and self._get_num_classes() > 1:
+            return "miou"
+        return configured_metric or self._get_primary_iou_metric_key()
 
     
     def build_loaders(self) -> Tuple[DataLoader, DataLoader, Optional[DataLoader]]:
@@ -323,7 +355,8 @@ class SegmentationTrainer:
 
         # Per-class IoU, then average
         iou_per_class = smp.metrics.iou_score(tp, fp, fn, tn, reduction='none')
-        metrics['iou'] = iou_per_class.mean().item()
+        primary_iou_key = self._get_primary_iou_metric_key()
+        metrics[primary_iou_key] = iou_per_class.mean().item()
         metrics['iou_per_class'] = iou_per_class.tolist() if iou_per_class.dim() > 0 else [iou_per_class.item()]
         
         # Dice Score (F1 for segmentation)
@@ -679,7 +712,8 @@ class SegmentationTrainer:
         if is_best:
             best_path = save_dir / "best_model.pth"
             torch.save(checkpoint, best_path)
-            logger.info(f"Saved best model with {self.config.get('monitor_metric', 'iou')}: {metrics.get(self.config.get('monitor_metric', 'iou'), 0):.4f}")
+            monitor_metric = self._get_monitor_metric()
+            logger.info(f"Saved best model with {monitor_metric}: {metrics.get(monitor_metric, 0):.4f}")
         
         return checkpoint_path
         
@@ -713,7 +747,9 @@ class SegmentationTrainer:
         epochs = epochs or training_cfg.get("epochs", 100)
         patience = early_stopping_patience or training_cfg.get("early_stopping_patience", 15)
         use_amp = training_cfg.get("use_amp", True) and self.device != "cpu"
-        monitor_metric = self.config.get("monitor_metric", "iou")
+        monitor_metric = self._get_monitor_metric()
+        primary_iou_metric = self._get_primary_iou_metric_key()
+        primary_iou_label = self._get_primary_iou_metric_label()
         
         if lr is not None:
             training_cfg["lr"] = lr
@@ -725,6 +761,7 @@ class SegmentationTrainer:
         logger.info(f"Training on {len(train_loader.dataset)} samples, validating on {len(val_loader.dataset)} samples")
         logger.info(f"Using device: {self.device}, AMP: {use_amp}")
         logger.info(f"Architecture: {self.config['architecture']}, Backbone: {self.config['backbone']}")
+        self._update_training_progress(0)
         
         # Build optimizer and scheduler
         optimizer = self._build_optimizer(self.model)
@@ -811,11 +848,12 @@ class SegmentationTrainer:
             logger.info(
                 f"Epoch {epoch}/{epochs} | "
                 f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | "
-                f"Val IoU: {val_metrics.get('iou', 0):.4f} | "
+                f"Val {primary_iou_label}: {val_metrics.get(primary_iou_metric, 0):.4f} | "
                 f"Val Dice: {val_metrics.get('dice', 0):.4f} | "
                 f"LR: {current_lr:.2e} | "
                 f"Time: {epoch_time:.1f}s"
             )
+            self._update_training_progress(min(90, max(1, int(epoch / epochs * 90))))
             
             # Early stopping check
             if epochs_without_improvement >= patience:
@@ -841,7 +879,7 @@ class SegmentationTrainer:
             test_loss, test_metrics = self._validate(self.model, test_loader)
             logger.info(
                 f"Test Results | Loss: {test_loss:.4f} | "
-                f"IoU: {test_metrics.get('iou', 0):.4f} | "
+                f"{primary_iou_label}: {test_metrics.get(primary_iou_metric, 0):.4f} | "
                 f"Dice: {test_metrics.get('dice', 0):.4f} | "
                 f"Accuracy: {test_metrics.get('accuracy', 0):.4f}"
             )
@@ -863,6 +901,7 @@ class SegmentationTrainer:
             f"Training completed in {total_time/60:.1f} minutes. "
             f"Best {monitor_metric}: {best_metric:.4f} at epoch {best_epoch}"
         )
+        self._update_training_progress(100)
         
         return results
         

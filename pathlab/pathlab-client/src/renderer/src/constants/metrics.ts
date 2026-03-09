@@ -43,6 +43,7 @@ export const SURVIVAL_METRICS: readonly MetricDefinition[] = [
  */
 export const SEGMENTATION_METRICS: readonly MetricDefinition[] = [
   { id: 'iou', label: 'IoU', description: 'Intersection over Union (Jaccard Index)', labelKey: 'resultsPage.metricLabels.iou', descriptionKey: 'resultsPage.metricDescriptions.iou' },
+  { id: 'miou', label: 'mIoU', description: 'Mean Intersection over Union across segmentation classes', labelKey: 'resultsPage.metricLabels.miou', descriptionKey: 'resultsPage.metricDescriptions.miou' },
   { id: 'dice', label: 'Dice', description: 'Dice coefficient (F1 for segmentation)', labelKey: 'resultsPage.metricLabels.dice', descriptionKey: 'resultsPage.metricDescriptions.dice' },
   { id: 'accuracy', label: 'Accuracy', description: 'Pixel-level accuracy', labelKey: 'resultsPage.metricLabels.accuracy', descriptionKey: 'resultsPage.metricDescriptions.accuracy' },
   { id: 'precision', label: 'Precision', description: 'Pixel-level precision', labelKey: 'resultsPage.metricLabels.precision', descriptionKey: 'resultsPage.metricDescriptions.precision' },
@@ -125,6 +126,7 @@ export const METRIC_COLORS: Record<string, string> = {
   loss: 'text-red-600 bg-red-50 border-red-200',
   // Segmentation-specific metrics
   iou: 'text-cyan-600 bg-cyan-50 border-cyan-200',
+  miou: 'text-cyan-700 bg-cyan-50 border-cyan-300',
   dice: 'text-violet-600 bg-violet-50 border-violet-200',
 }
 
@@ -151,6 +153,7 @@ export const METRIC_ABBREVIATIONS: Record<string, string> = {
   integrated_brier_score: 'IBS',
   // Segmentation-specific
   iou: 'IoU',
+  miou: 'mIoU',
   dice: 'DICE',
 }
 
@@ -229,6 +232,8 @@ export function isPercentageMetric(metricName: string): boolean {
  * Format metric name for display (remove prefixes, capitalize).
  */
 export function formatMetricName(name: string): string {
+  if (name === 'miou') return 'mIoU'
+  if (name === 'iou') return 'IoU'
   return name
     .replace('macro_', '')
     .replace(/_/g, ' ')
@@ -243,5 +248,14 @@ export function formatMetricValue(value: number, metricName: string): string {
     return `${(value * 100).toFixed(2)}%`
   }
   return value.toFixed(4)
+}
+
+export function getSegmentationMetrics(numClasses = 1): readonly MetricDefinition[] {
+  return SEGMENTATION_METRICS.filter(metric => (numClasses > 1 ? metric.id !== 'iou' : metric.id !== 'miou'))
+}
+
+export function getDefaultSegmentationMetrics(numClasses = 1): string[] {
+  const primaryMetric = numClasses > 1 ? 'miou' : 'iou'
+  return [primaryMetric, 'dice', 'accuracy', 'precision', 'recall', 'f1']
 }
 

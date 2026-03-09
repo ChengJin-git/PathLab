@@ -17,7 +17,7 @@ import {
   CLASSIFICATION_CHARTS,
   SURVIVAL_METRICS,
   SURVIVAL_CHARTS,
-  SEGMENTATION_METRICS,
+  getSegmentationMetrics,
   SEGMENTATION_CHARTS,
   EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS,
   EXTERNAL_VALIDATION_SURVIVAL_CHARTS,
@@ -25,7 +25,7 @@ import {
   DEFAULT_CLASSIFICATION_METRICS,
   DEFAULT_CLASSIFICATION_CHARTS,
   DEFAULT_SURVIVAL_METRICS,
-  DEFAULT_SEGMENTATION_METRICS,
+  getDefaultSegmentationMetrics,
   DEFAULT_SEGMENTATION_CHARTS,
   DEFAULT_EXTERNAL_CLASSIFICATION_CHARTS,
   DEFAULT_EXTERNAL_SURVIVAL_CHARTS,
@@ -48,6 +48,11 @@ function authFetchOptions(options: RequestInit = {}): RequestInit {
 }
 
 type PageMode = 'internal-analysis' | 'external-validation'
+
+const getSegmentationClassCount = (task?: Pick<TrainingTask, 'classes'> | null): number => {
+  const classCount = task?.classes?.filter(Boolean).length ?? 0
+  return Math.max(1, classCount)
+}
 
 interface ValidationProgress {
   validation_id: string
@@ -239,7 +244,7 @@ export default function ResultsViewerPage() {
         setSelectedMetrics(['c_index', 'integrated_brier_score'])
         setSelectedCharts(['km_curve', 'loss_curve'])
       } else if (isSegmentationTask(task.task_type)) {
-        setSelectedMetrics([...DEFAULT_SEGMENTATION_METRICS])
+        setSelectedMetrics(getDefaultSegmentationMetrics(getSegmentationClassCount(task)))
         setSelectedCharts([...DEFAULT_SEGMENTATION_CHARTS])
       } else {
         setSelectedMetrics(['accuracy', 'precision', 'sensitivity', 'f1', 'auc', 'specificity'])
@@ -258,7 +263,7 @@ export default function ResultsViewerPage() {
         setSelectedMetrics([...DEFAULT_SURVIVAL_METRICS])
         setSelectedCharts([...DEFAULT_EXTERNAL_SURVIVAL_CHARTS])
       } else if (isSegmentationTask(task.task_type)) {
-        setSelectedMetrics([...DEFAULT_SEGMENTATION_METRICS])
+        setSelectedMetrics(getDefaultSegmentationMetrics(getSegmentationClassCount(task)))
         setSelectedCharts([...DEFAULT_EXTERNAL_SEGMENTATION_CHARTS])
       } else {
         setSelectedMetrics([...DEFAULT_CLASSIFICATION_METRICS])
@@ -815,9 +820,13 @@ export default function ResultsViewerPage() {
                         const metricValue = isSurvival
                           ? metrics?.c_index
                           : isSegmentation
-                            ? (metrics?.iou || metrics?.dice)
+                            ? (metrics?.miou ?? metrics?.iou ?? metrics?.dice)
                             : (metrics?.macro_auc || metrics?.auc)
-                        const metricLabel = isSurvival ? t('resultsPage.cIndex') : isSegmentation ? 'IoU' : t('resultsPage.auc')
+                        const metricLabel = isSurvival
+                          ? t('resultsPage.cIndex')
+                          : isSegmentation
+                            ? (metrics?.miou != null ? 'mIoU' : 'IoU')
+                            : t('resultsPage.auc')
 
                         return (
                           <button
@@ -930,7 +939,7 @@ export default function ResultsViewerPage() {
               <Card className="p-4 sm:p-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.metrics')}</h3>
                 <div className="space-y-3">
-                  {(isSurvivalTask(modelTask?.task_type) ? SURVIVAL_METRICS : isSegmentationTask(modelTask?.task_type) ? SEGMENTATION_METRICS : CLASSIFICATION_METRICS).map(metric => (
+                  {(isSurvivalTask(modelTask?.task_type) ? SURVIVAL_METRICS : isSegmentationTask(modelTask?.task_type) ? getSegmentationMetrics(getSegmentationClassCount(modelTask)) : CLASSIFICATION_METRICS).map(metric => (
                     <div key={metric.id} className="flex items-start gap-3 group">
                       <input
                         type="checkbox"
@@ -1379,7 +1388,7 @@ export default function ResultsViewerPage() {
                 )}
               </h3>
               <div className="space-y-3">
-                {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_METRICS : isSegmentationTask(selectedTask?.task_type) ? SEGMENTATION_METRICS : CLASSIFICATION_METRICS).map(metric => (
+                {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_METRICS : isSegmentationTask(selectedTask?.task_type) ? getSegmentationMetrics(getSegmentationClassCount(selectedTask)) : CLASSIFICATION_METRICS).map(metric => (
                   <div key={metric.id} className="flex items-start gap-3 group">
                     <input
                       type="checkbox"

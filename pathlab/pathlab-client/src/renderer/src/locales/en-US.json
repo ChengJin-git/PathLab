@@ -1422,6 +1422,7 @@
     "metricLabels": {
       "accuracy": "Accuracy",
       "iou": "IoU",
+      "miou": "mIoU",
       "dice": "Dice",
       "precision": "Precision",
       "recall": "Recall",
@@ -1435,6 +1436,7 @@
     "metricDescriptions": {
       "accuracy": "Overall prediction accuracy",
       "iou": "Intersection over Union (Jaccard Index)",
+      "miou": "Mean Intersection over Union across segmentation classes",
       "dice": "Dice coefficient for segmentation overlap",
       "precision": "Positive predictive value",
       "recall": "True positive rate",

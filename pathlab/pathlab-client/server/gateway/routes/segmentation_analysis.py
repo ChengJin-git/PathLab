@@ -214,6 +214,38 @@ def _extract_metric_series(metrics_list: list, metric_name: str) -> list:
     return [m.get(metric_name, 0.0) for m in metrics_list if isinstance(m, dict)]
 
 
+def _is_multiclass_segmentation(
+    class_names: Optional[List[str]],
+    metrics_payloads: List[Optional[Dict[str, Any]]],
+) -> bool:
+    if class_names and len(class_names) > 1:
+        return True
+
+    for metrics in metrics_payloads:
+        if not isinstance(metrics, dict):
+            continue
+        if "miou" in metrics:
+            return True
+        iou_per_class = metrics.get("iou_per_class")
+        if isinstance(iou_per_class, list) and len(iou_per_class) > 1:
+            return True
+
+    return False
+
+
+def _resolve_segmentation_metric_value(metrics: Optional[Dict[str, Any]], metric_key: str) -> Optional[float]:
+    if not isinstance(metrics, dict):
+        return None
+
+    value = metrics.get(metric_key)
+    if value is None and metric_key == "miou":
+        value = metrics.get("iou")
+    elif value is None and metric_key == "iou":
+        value = metrics.get("miou")
+
+    return float(value) if value is not None else None
+
+
 def _calculate_segmentation_bootstrap_ci(
     per_image_metrics: List[Dict[str, Any]],
     requested_metrics: List[str],
@@ -234,13 +266,18 @@ def _calculate_segmentation_bootstrap_ci(
         logger.warning("Bootstrap CI requires at least 2 images")
         return {"metrics_ci": {}, "n_bootstrap": n_bootstrap, "confidence_level": confidence_level}
 
-    # Supported segmentation metrics
-    seg_metric_keys = ["iou", "dice", "accuracy", "precision", "recall"]
-    # Only compute CI for metrics that exist in the data AND were requested
-    available_keys = set()
-    for m in per_image_metrics:
-        available_keys.update(m.keys())
-    target_keys = [k for k in seg_metric_keys if k in available_keys and k in requested_metrics]
+    primary_metric_key = "miou" if _is_multiclass_segmentation(None, per_image_metrics) else "iou"
+    supported_metric_keys = [primary_metric_key, "dice", "accuracy", "precision", "recall"]
+    requested_metric_keys = set(requested_metrics)
+    if primary_metric_key == "miou" and "iou" in requested_metric_keys:
+        requested_metric_keys.add("miou")
+    if primary_metric_key == "iou" and "miou" in requested_metric_keys:
+        requested_metric_keys.add("iou")
+
+    target_keys = [
+        key for key in supported_metric_keys
+        if key in requested_metric_keys and any(_resolve_segmentation_metric_value(m, key) is not None for m in per_image_metrics)
+    ]
 
     if not target_keys:
         return {"metrics_ci": {}, "n_bootstrap": n_bootstrap, "confidence_level": confidence_level}
@@ -248,7 +285,9 @@ def _calculate_segmentation_bootstrap_ci(
     # Build arrays for fast vectorised bootstrap
     arrays: Dict[str, np.ndarray] = {}
     for key in target_keys:
-        arrays[key] = np.array([m.get(key, 0.0) for m in per_image_metrics], dtype=np.float64)
+        arrays[key] = np.array([
+            _resolve_segmentation_metric_value(m, key) or 0.0 for m in per_image_metrics
+        ], dtype=np.float64)
 
     boot_results: Dict[str, List[float]] = {k: [] for k in target_keys}
 
@@ -356,14 +395,6 @@ async def _run_segmentation_analysis(
     metrics_source = "test" if test_metrics else "validation"
 
     # Build summary metrics
-    summary_metrics = {}
-    for key in ("iou", "dice", "accuracy", "precision", "recall", "f1"):
-        if key in final_metrics:
-            summary_metrics[key] = final_metrics[key]
-
-    if progress_callback:
-        await progress_callback(p_start + 10)
-
     # ----------------------------------------------------------------
     # Query per-image metrics from AIResult records for bootstrap CI
     # These are populated by _run_inference_patch_segmentation
@@ -404,16 +435,32 @@ async def _run_segmentation_analysis(
 
     logger.info(f"Segmentation analysis: loaded {len(per_image_metrics)} per-image metric records from AIResult")
 
+    class_names = _resolve_segmentation_class_names(task, seg_metrics, final_metrics, ai_rows, fallback_model_classes)
+    primary_metric_key = "miou" if _is_multiclass_segmentation(class_names, [final_metrics, *per_image_metrics]) else "iou"
+    primary_metric_label = "mIoU" if primary_metric_key == "miou" else "IoU"
+
+    summary_metrics = {}
+    primary_metric_value = _resolve_segmentation_metric_value(final_metrics, primary_metric_key)
+    if primary_metric_value is not None:
+        summary_metrics[primary_metric_key] = round(primary_metric_value, 4)
+    for key in ("dice", "accuracy", "precision", "recall", "f1"):
+        if key in final_metrics:
+            summary_metrics[key] = final_metrics[key]
+
+    if progress_callback:
+        await progress_callback(p_start + 10)
+
     class_analysis = _build_segmentation_class_metrics(
-        _resolve_segmentation_class_names(task, seg_metrics, final_metrics, ai_rows, fallback_model_classes),
+        class_names,
         per_image_metrics,
         final_metrics,
     )
 
     # Override summary_metrics with mean of per-image metrics if available
     if per_image_metrics:
-        for key in ("iou", "dice", "accuracy", "precision", "recall"):
-            values = [m.get(key) for m in per_image_metrics if m.get(key) is not None]
+        for key in (primary_metric_key, "dice", "accuracy", "precision", "recall"):
+            values = [_resolve_segmentation_metric_value(m, key) for m in per_image_metrics]
+            values = [value for value in values if value is not None]
             if values:
                 summary_metrics[key] = round(float(np.mean(values)), 4)
         metrics_source = "per_image"
@@ -517,20 +564,24 @@ async def _run_segmentation_analysis(
 
     # IoU curve
     if "iou_curve" in request.charts and val_metrics_list:
-        train_iou = _extract_metric_series(train_metrics_list, "iou")
-        val_iou = _extract_metric_series(val_metrics_list, "iou")
+        train_iou = _extract_metric_series(train_metrics_list, primary_metric_key)
+        val_iou = _extract_metric_series(val_metrics_list, primary_metric_key)
+        if not train_iou and primary_metric_key == "miou":
+            train_iou = _extract_metric_series(train_metrics_list, "iou")
+        if not val_iou and primary_metric_key == "miou":
+            val_iou = _extract_metric_series(val_metrics_list, "iou")
         if train_iou or val_iou:
             chart_data["iou_curve"] = {
                 "epochs": list(range(1, max(len(train_iou), len(val_iou)) + 1)),
                 "train_values": train_iou,
                 "val_values": val_iou,
-                "metric_name": "IoU",
+                "metric_name": primary_metric_label,
             }
             chart_gen_tasks.append(("iou_curve", run_chart_in_process(
                 _render_metric_curve_sync,
-                "IoU", train_iou, val_iou,
+                primary_metric_label, train_iou, val_iou,
                 analysis_dir / "iou_curve.png",
-                "IoU (Intersection over Union) Curve", "IoU"
+                f"{primary_metric_label} (Intersection over Union) Curve", primary_metric_label
             )))
 
     # Dice curve

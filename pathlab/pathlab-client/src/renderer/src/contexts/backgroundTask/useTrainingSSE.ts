@@ -65,17 +65,10 @@ export function useTrainingSSE(isLoggedIn: boolean, enabled: boolean) {
             // Determine if this is an external validation task
             const isExternalValidation = task.task_type === 'external_validation'
 
-            // Adjust progress for patch-level tasks (skip 66% baseline)
-            let displayProgress = task.progress
-            if (task.data_type === 'patch' && task.status !== 'completed' && task.status !== 'failed') {
-              // Backend starts patch tasks at ~66% (after skipping patching & feature extraction)
-              // We map 66-100% backend range to 0-100% UI range
-              displayProgress = Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
-            } else if (task.status === 'completed') {
+            // Cap progress to the standard 0-100 range for display.
+            let displayProgress = Math.max(0, Math.min(task.progress, 100))
+            if (task.status === 'completed') {
               displayProgress = 100
-            } else {
-              // For non-patch tasks, cap at 100% for safety
-              displayProgress = Math.min(task.progress, 100)
             }
 
             // Use appropriate prefix based on task type

@@ -61,6 +61,7 @@ const METRIC_ICONS: Record<string, React.ReactNode> = {
   integrated_brier_score: <BarChart3 className="w-4 h-4" />,
   // Segmentation-specific metrics
   iou: <Layers className="w-4 h-4" />,
+  miou: <Layers className="w-4 h-4" />,
   dice: <Layers className="w-4 h-4" />,
   mean_iou: <Layers className="w-4 h-4" />,
   mean_dice: <Layers className="w-4 h-4" />,
@@ -162,6 +163,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
   const [analysisStatus, setAnalysisStatus] = useState<string>(hasCachedData ? 'completed' : '')
   const [progress, setProgress] = useState(0)
   const [statusMessage, setStatusMessage] = useState('')
+  const iouCurveTitle = chartData.iou_curve?.metric_name ? `${chartData.iou_curve.metric_name} Curve` : t('chatComponents.quickAnalysis.iouCurve')
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
 
   // Smooth progress animation - gradually interpolate toward target progress
@@ -580,7 +582,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
 
             {/* Desktop View: Stacked */}
             <div className="hidden sm:block space-y-4">
-              {chartData.iou_curve && <MetricCurveChart data={chartData.iou_curve} title={t('chatComponents.quickAnalysis.iouCurve')} />}
+              {chartData.iou_curve && <MetricCurveChart data={chartData.iou_curve} title={iouCurveTitle} />}
               {chartData.dice_curve && <MetricCurveChart data={chartData.dice_curve} title={t('chatComponents.quickAnalysis.diceCurve')} />}
               {chartData.roc_curve && <RocCurveChart data={chartData.roc_curve} title={t('chatComponents.quickAnalysis.rocCurve')} />}
               {chartData.confusion_matrix && <ConfusionMatrixChart data={chartData.confusion_matrix} title={t('chatComponents.quickAnalysis.confusionMatrix')} />}
@@ -647,7 +649,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
                       : 'bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100'
                       }`}
                   >
-                    {t('chatComponents.quickAnalysis.iouCurve')}
+                    {iouCurveTitle}
                   </button>
                 )}
                 {chartData.dice_curve && (
@@ -665,7 +667,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
 
               <div className="min-h-[350px]">
                 {activeTab === 'iou_curve' && chartData.iou_curve && (
-                  <MetricCurveChart data={chartData.iou_curve} title={t('chatComponents.quickAnalysis.iouCurve')} compact={true} />
+                  <MetricCurveChart data={chartData.iou_curve} title={iouCurveTitle} compact={true} />
                 )}
                 {activeTab === 'dice_curve' && chartData.dice_curve && (
                   <MetricCurveChart data={chartData.dice_curve} title={t('chatComponents.quickAnalysis.diceCurve')} compact={true} />

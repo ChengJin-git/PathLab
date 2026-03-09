@@ -648,16 +648,12 @@ export default function TaskListPage() {
                             <div
                               className="bg-gray-900 h-full rounded-full transition-all duration-300"
                               style={{
-                                width: `${task.data_type === 'patch' && task.task_type !== 'external_validation' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
-                                  ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
-                                  : task.progress}%`
+                                width: `${Math.max(0, Math.min(task.progress, 100))}%`
                               }}
                             />
                           </div>
                           <span className="text-[11px] sm:text-sm font-bold text-gray-900 w-8 sm:w-10 text-right">
-                            {task.data_type === 'patch' && task.task_type !== 'external_validation' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
-                              ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
-                              : task.progress}%
+                            {Math.max(0, Math.min(task.progress, 100))}%
                           </span>
                         </div>
                       </div>

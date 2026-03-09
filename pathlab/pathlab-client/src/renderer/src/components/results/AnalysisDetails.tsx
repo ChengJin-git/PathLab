@@ -136,6 +136,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
     'ibs': 'integrated_brier_score',
     // Segmentation-specific
     'iou': 'iou',
+    'miou': 'miou',
     'dice': 'dice',
     'recall': 'recall',
   }
@@ -143,6 +144,8 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
   const shouldShowMetric = (key: string): boolean => {
     if (!selectedMetrics || selectedMetrics.length === 0) return true
     const metricId = metricKeyToId[key]
+    if (metricId === 'iou' && selectedMetrics.includes('miou')) return true
+    if (metricId === 'miou' && selectedMetrics.includes('iou')) return true
     return metricId ? selectedMetrics.includes(metricId) : false
   }
 
@@ -180,6 +183,8 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
 
   const getMetricDisplayName = (key: string) => {
     if (key === 'c_index') return 'C-Index'
+    if (key === 'miou') return 'mIoU'
+    if (key === 'iou') return 'IoU'
     return key.replace('macro_', '').replace(/_/g, ' ')
   }
 
@@ -309,8 +314,12 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
       {/* Per-Class Metrics */}
       {!isSurvival && analysis.class_metrics && Object.keys(analysis.class_metrics).length > 0 && (() => {
         const classMetricsList = Object.values(analysis.class_metrics)
+        const isMetricSelected = (metricId: string, aliases: string[] = []): boolean => {
+          if (!selectedMetrics || selectedMetrics.length === 0) return true
+          return [metricId, ...aliases].some(id => selectedMetrics.includes(id))
+        }
         const perClassColumns = isSegmentation ? [
-          { id: 'iou', label: 'IoU', getValue: (m: any) => m.iou || 0, getCIKey: 'iou' },
+          { id: 'iou', label: 'IoU', aliases: ['miou'], getValue: (m: any) => m.iou || 0, getCIKey: 'iou' },
           { id: 'dice', label: 'Dice', getValue: (m: any) => m.dice || 0, getCIKey: 'dice' },
           { id: 'precision', label: 'Precision', getValue: (m: any) => m.precision || 0, getCIKey: 'precision' },
           { id: 'recall', label: 'Recall', getValue: (m: any) => m.recall || 0, getCIKey: 'recall' },
@@ -323,7 +332,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
           { id: 'auc', label: 'AUC', getValue: (m: any) => m.auc || 0, getCIKey: 'auc' }
         ]
         const visibleColumns = perClassColumns.filter(col =>
-          (!selectedMetrics || selectedMetrics.length === 0 || selectedMetrics.includes(col.id)) &&
+          isMetricSelected(col.id, 'aliases' in col ? (col.aliases || []) : []) &&
           (!isSegmentation || classMetricsList.some(metrics => typeof metrics[col.id] === 'number'))
         )
         const showSupportColumn = !isSegmentation || classMetricsList.some(metrics => typeof metrics.support === 'number')

@@ -434,9 +434,9 @@ class PatchClassificationTrainer(BaseTrainer):
                 metadata
             )
 
-            # Update progress: training from 66% to 90%, saving from 90% to 100%
-            # Use epoch (not epoch-1) to ensure progress updates immediately from first epoch
-            progress = 66 + int(epoch / epochs * 24)
+            # Update progress: training from 0% to 90%, saving from 90% to 100%
+            # Use epoch (not epoch-1) and enforce a minimum increment for immediate feedback.
+            progress = min(90, max(1, int(epoch / epochs * 90)))
             await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
 
             # Update learning rate
@@ -629,6 +629,16 @@ class PatchClassificationTrainer(BaseTrainer):
             best_state_dict = None
             epochs_without_improvement = 0
 
+            # Allocate each fold a contiguous slice of the full 0-100% range.
+            fold_progress_start = round(fold_idx * 100 / num_folds)
+            fold_progress_end = round((fold_idx + 1) * 100 / num_folds)
+            fold_total_range = max(1, fold_progress_end - fold_progress_start)
+            fold_training_range = max(1, round(fold_total_range * 0.7))
+            if fold_training_range > fold_total_range:
+                fold_training_range = fold_total_range
+            fold_saving_base = fold_progress_start + fold_training_range
+            fold_saving_range = max(0, fold_total_range - fold_training_range)
+
             for epoch in range(1, epochs + 1):
                 # Check for cancellation or permission revocation at each epoch start
                 if is_task_cancelled(self.task_id):
@@ -704,12 +714,12 @@ class PatchClassificationTrainer(BaseTrainer):
                     metadata
                 )
 
-                # Progress update: training uses 66-90% (24% total), saving uses 90-100%
-                # Each fold gets equal share of the 24% training range
-                # Use epoch (not epoch-1) to ensure progress updates immediately from first epoch
-                fold_training_range = 24 / num_folds
-                fold_progress_base = 66 + fold_idx * fold_training_range
-                progress = int(fold_progress_base + epoch / epochs * fold_training_range)
+                # Progress update: each fold uses its own slice of the full 0-100% range.
+                # Within each fold, 70% is reserved for training and the remainder for saving.
+                progress = min(
+                    fold_saving_base,
+                    fold_progress_start + max(1, int(epoch / epochs * fold_training_range))
+                )
                 await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
 
                 # Update learning rate
@@ -748,12 +758,7 @@ class PatchClassificationTrainer(BaseTrainer):
                 "num_classes": num_classes,
             }, fold_dir / "classifier_head.pth")
 
-            # Calculate saving progress range for this fold
-            fold_total_range = 34 / num_folds
-            fold_progress_base = 66 + int(fold_idx * fold_total_range)
-            fold_training_range = int(fold_total_range * 0.7)
-            fold_saving_base = fold_progress_base + fold_training_range
-            fold_saving_range = max(1, int(fold_total_range * 0.3))
+            # Continue the same fold-local 0-100% allocation for result saving.
 
             # Save per-image inference results for this fold's VALIDATION set only
             # In K-Fold, each sample should be predicted by the model that didn't see it during training
