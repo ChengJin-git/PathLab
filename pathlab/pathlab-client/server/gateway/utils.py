@@ -6,20 +6,110 @@ import json
 import os
 from pathlib import Path
 import httpx
-from typing import Any, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 from Aslide import Slide
 from fastapi import HTTPException
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database.repositories import StorageTaskRepository
+from backend.database.repositories import DataGroupRepository, DatasetRepository, StorageTaskRepository
+from backend.common.file_types import TIF_EXTENSIONS, is_patch_file
 from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 
 
 SEGMENTATION_TASK_TYPE = "segmentation"
 SEGMENTATION_DATA_TYPE = "patch"
 SEGMENTATION_AGGREGATION_LEVEL = "file"
+
+
+def is_tiff_family(file_path: str | Path) -> bool:
+    return Path(file_path).suffix.lower() in TIF_EXTENSIONS
+
+
+def get_file_data_type(file_path: str | Path, file_size: int = 0) -> str:
+    return "patch" if is_patch_file(str(file_path), file_size) else "wsi"
+
+
+def infer_dataset_data_type_from_paths(file_paths: Iterable[str | Path]) -> str:
+    for file_path in file_paths:
+        path_obj = Path(file_path)
+        file_size = path_obj.stat().st_size if path_obj.exists() else 0
+        if get_file_data_type(path_obj, file_size) == "wsi":
+            return "wsi"
+    return "patch"
+
+
+def find_first_path_for_data_type(file_paths: Iterable[str | Path], target_data_type: str) -> Optional[str]:
+    for file_path in file_paths:
+        path_obj = Path(file_path)
+        file_size = path_obj.stat().st_size if path_obj.exists() else 0
+        if get_file_data_type(path_obj, file_size) == target_data_type:
+            return str(path_obj)
+    return None
+
+
+async def align_dataset_data_type_for_file(
+    db: AsyncSession,
+    dataset: Any,
+    *,
+    file_path: str | Path,
+    file_data_type: str,
+    task_type: str,
+    action: str,
+    context: str,
+) -> Any:
+    data_group = getattr(dataset, "data_group", None)
+    if data_group is None:
+        raise HTTPException(status_code=400, detail=f"{context}: dataset has no associated DataGroup")
+
+    if data_group.data_type == file_data_type:
+        return dataset
+
+    if task_type == SEGMENTATION_TASK_TYPE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dataset data_type is '{data_group.data_type}', cannot {action} '{file_data_type}' file",
+        )
+
+    if not is_tiff_family(file_path):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dataset data_type is '{data_group.data_type}', cannot {action} '{file_data_type}' file",
+        )
+
+    if data_group.data_type == "patch" and file_data_type == "wsi":
+        target_group = await DataGroupRepository.get_or_create(
+            db,
+            data_type="wsi",
+            aggregation_level=data_group.aggregation_level,
+            task_type=data_group.task_type,
+        )
+        dataset.group_id = target_group.group_id
+        await db.flush()
+        logger.info(
+            "Promoted dataset %s to wsi during %s because TIFF/TIFF files contained a WSI",
+            dataset.dataset_id,
+            context,
+        )
+        refreshed = await DatasetRepository.get_by_id(db, dataset.dataset_id)
+        return refreshed or dataset
+
+    if data_group.data_type == "wsi" and file_data_type == "patch":
+        return dataset
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"Dataset data_type is '{data_group.data_type}', cannot {action} '{file_data_type}' file",
+    )
+
+
+def get_effective_wsi_data_type(wsi: Any) -> str:
+    dataset = getattr(wsi, "dataset", None)
+    data_group = getattr(dataset, "data_group", None) if dataset else None
+    if data_group and data_group.data_type in {"wsi", "patch"}:
+        return data_group.data_type
+    return get_file_data_type(getattr(wsi, "wsi_path", ""), getattr(wsi, "file_size", 0) or 0)
 
 
 def ensure_segmentation_contract(

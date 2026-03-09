@@ -972,10 +972,19 @@
       "trainingDirs": "Training Directories",
       "logs": "Logs"
     },
+    "emptyDatasets": {
+      "title": "Empty Dataset Cleanup",
+      "description": "Remove historical dataset records that no longer contain any files. The cleanup runs as a background task so the page stays responsive.",
+      "button": "Cleanup Empty Datasets",
+      "starting": "Starting...",
+      "started": "Started background cleanup for {{count}} empty datasets",
+      "noop": "No empty datasets found"
+    },
     "errors": {
       "loadStatsFailed": "Failed to load storage stats",
       "detectOrphanedFailed": "Failed to detect orphaned files",
-      "cleanupFailed": "Failed to cleanup orphaned files"
+      "cleanupFailed": "Failed to cleanup orphaned files",
+      "cleanupEmptyDatasetsFailed": "Failed to start empty dataset cleanup"
     }
   },
   "newTask": {
@@ -1429,6 +1438,7 @@
       "recall": "Recall",
       "sensitivity": "Sensitivity",
       "specificity": "Specificity",
+      "weighted_kappa": "Weighted Kappa",
       "f1": "F1 Score",
       "auc": "AUC",
       "c_index": "C-Index",
@@ -1443,6 +1453,7 @@
       "recall": "True positive rate",
       "sensitivity": "True positive rate",
       "specificity": "True negative rate",
+      "weighted_kappa": "Quadratic-weighted Cohen's kappa agreement score",
       "f1": "Harmonic mean of precision and recall",
       "auc": "Area under ROC curve",
       "c_index": "Concordance index for survival prediction",
@@ -1488,6 +1499,7 @@
     "noDatasetsDescription": "Register your first dataset to get started with WSI analysis.",
     "editDataset": "Edit Dataset",
     "deleteDataset": "Delete Dataset",
+    "datasetDeleteStarted": "Started deleting dataset \"{{name}}\" in the background",
     "exportLabels": "Export Labels",
     "exportLabelsWithSplit": "Export Labels with Split",
     "exportSuccess": "Labels exported successfully",
@@ -2657,6 +2669,10 @@
       "storage": "Storage",
       "batchImport": "Batch Import",
       "metadataUpdate": "Metadata Update",
+      "deleteDataset": "Delete Dataset",
+      "cleanupEmptyDatasets": "Cleanup Empty Datasets",
+      "unbindDataset": "Unbind Dataset",
+      "resetDerivedData": "Reset Derived Data",
       "deleteExternal": "Delete External",
       "extraction": "Extraction",
       "task": "Task",

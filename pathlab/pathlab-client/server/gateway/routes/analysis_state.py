@@ -240,7 +240,7 @@ def get_analysis_state() -> AnalysisTaskState:
 
 
 class AnalysisRequest(BaseModel):
-    metrics: List[str] = ["accuracy", "precision", "recall", "specificity", "f1", "auc"]
+    metrics: List[str] = ["accuracy", "precision", "recall", "specificity", "f1", "auc", "weighted_kappa"]
     charts: List[str] = ["roc_curve", "confusion_matrix", "loss_curve"]
     description: Optional[str] = None
     bootstrap_ci_metrics: List[str] = []

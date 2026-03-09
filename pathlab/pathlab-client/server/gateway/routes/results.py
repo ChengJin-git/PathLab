@@ -2504,7 +2504,7 @@ class ExternalValidationRequest(BaseModel):
     model_id: str  # TrainedModel ID from the models table
     dataset_id: str   # Dataset whose WSIs will be used for validation
     # Analysis options
-    metrics: Optional[List[str]] = None  # Metrics to compute (default: accuracy, precision, recall, f1, auc)
+    metrics: Optional[List[str]] = None  # Metrics to compute (default: accuracy, precision, recall, f1, auc, weighted_kappa)
     charts: Optional[List[str]] = None  # Charts to generate (default: confusion_matrix, roc_curve)
     compute_bootstrap_ci: Optional[bool] = False  # Whether to compute 95% CI via bootstrap
 
@@ -2794,7 +2794,7 @@ async def start_external_validation(
         analysis_metrics = req.metrics or ["iou", "dice", "accuracy", "precision", "recall"]
         analysis_charts = req.charts or ["per_class_iou", "per_class_dice"]
     else:
-        analysis_metrics = req.metrics or ["accuracy", "precision", "recall", "f1", "auc"]
+        analysis_metrics = req.metrics or ["accuracy", "precision", "recall", "f1", "auc", "weighted_kappa"]
         analysis_charts = req.charts or ["confusion_matrix", "roc_curve"]
     bootstrap_ci_metrics = analysis_metrics if req.compute_bootstrap_ci else []
 
@@ -4847,7 +4847,7 @@ async def _auto_trigger_external_validation_analysis(
             title = f"{source_name} → {target_name}"
 
             # Use provided options or get from model_config or use defaults
-            analysis_metrics = metrics or model_config.get("analysis_metrics") or ["accuracy", "precision", "recall", "f1", "auc"]
+            analysis_metrics = metrics or model_config.get("analysis_metrics") or ["accuracy", "precision", "recall", "f1", "auc", "weighted_kappa"]
             analysis_charts = charts or model_config.get("analysis_charts") or ["confusion_matrix", "roc_curve"]
             analysis_bootstrap_ci = bootstrap_ci_metrics if bootstrap_ci_metrics is not None else (model_config.get("bootstrap_ci_metrics") or [])
 

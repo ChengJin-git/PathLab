@@ -1237,7 +1237,7 @@ You MUST determine the appropriate metrics and charts based on:
 3. **CRITICAL: If user requests 95% confidence intervals**, set `bootstrap_ci_metrics` field (see below)
 
 **For Classification tasks**, available metrics and charts:
-- Metrics: ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"]
+- Metrics: ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"]
 - Charts: ["confusion_matrix", "roc_curve", "loss_curve"]
 
 **For Survival tasks**, available metrics and charts:
@@ -1263,7 +1263,7 @@ I'll run a comprehensive analysis on your model's test set performance.
   "analysis_type": "internal",
   "task_id": "train_abc123",
   "task_name": "Cervical Cancer Classification",
-  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"],
+  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"],
   "charts": ["confusion_matrix", "roc_curve", "loss_curve"],
   "description": "Full analysis on test set"
 }
@@ -1297,10 +1297,10 @@ I'll run the analysis with 95% confidence intervals. This uses 1000 bootstrap sa
   "analysis_type": "internal",
   "task_id": "train_abc123",
   "task_name": "Cervical Cancer Classification",
-  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"],
+  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"],
   "charts": ["confusion_matrix", "roc_curve", "loss_curve"],
   "description": "Full analysis with 95% CI",
-  "bootstrap_ci_metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"]
+  "bootstrap_ci_metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"]
 }
 [/ANALYSIS_CONFIG]
 
@@ -1455,7 +1455,7 @@ I'll validate your model on the external dataset.
   "data_task_id": "dataset_xyz789",
   "source_name": "Lung Cancer Model",
   "target_name": "TCGA-LUAD Dataset",
-  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"],
+  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"],
   "charts": ["confusion_matrix", "roc_curve"],
   "description": "External validation on TCGA dataset"
 }
@@ -1477,10 +1477,10 @@ I'll validate your model on the external dataset with 95% confidence intervals.
   "data_task_id": "train_xyz789",
   "source_name": "Lung Cancer Model",
   "target_name": "TCGA-LUAD Dataset",
-  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"],
+  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"],
   "charts": ["confusion_matrix", "roc_curve"],
   "description": "External validation with bootstrap CI",
-  "bootstrap_ci_metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"]
+  "bootstrap_ci_metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"]
 }
 [/ANALYSIS_CONFIG]
 
@@ -1525,10 +1525,10 @@ Example with 95% CI (DO NOT REMOVE THIS SECTION - it's a duplicate for emphasis)
   "analysis_type": "internal",
   "task_id": "train_abc123",
   "task_name": "Cervical Cancer Classification",
-  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"],
+  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"],
   "charts": ["confusion_matrix", "roc_curve"],
   "description": "Full analysis with 95% CI",
-  "bootstrap_ci_metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"]
+  "bootstrap_ci_metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"]
 }
 [/ANALYSIS_CONFIG]
 
@@ -1608,7 +1608,7 @@ When user asks to **view** specific metrics or charts (e.g., "show me the ROC cu
 - Do NOT use `compute_bootstrap_ci` or `bootstrap_ci_metrics` fields in QUICK_ANALYSIS_CONFIG - they are ignored
 - Example: User says "show me results with 95%CI" but existing results don't have CI → Use [ANALYSIS_CONFIG] with `bootstrap_ci_metrics` to re-run
 
-**Available metrics**: accuracy, precision, sensitivity, specificity, f1, auc (for classification); c_index, integrated_brier_score (for survival)
+**Available metrics**: accuracy, precision, sensitivity, specificity, f1, auc, weighted_kappa (for classification); c_index, integrated_brier_score (for survival)
 **Available charts**:
 - Classification: `roc_curve`, `confusion_matrix`, `loss_curve`
 - Survival Analysis: `km_curve`, `loss_curve`
@@ -1660,7 +1660,7 @@ Here's your external validation configuration:
   "data_task_id": "dataset_xyz789",
   "source_name": "Lung Cancer Classifier",
   "target_name": "Target Dataset Name",
-  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"],
+  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"],
   "charts": ["confusion_matrix", "roc_curve"]
 }
 [/ANALYSIS_CONFIG]

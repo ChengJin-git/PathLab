@@ -114,6 +114,14 @@ const getTypeLabel = (task: BackgroundTask, t: TFunction): string => {
       return t('backgroundTask.typeLabels.batchImport')
     case 'batch_update_metadata':
       return t('backgroundTask.typeLabels.metadataUpdate')
+    case 'delete_dataset':
+      return t('backgroundTask.typeLabels.deleteDataset')
+    case 'cleanup_empty_datasets':
+      return t('backgroundTask.typeLabels.cleanupEmptyDatasets')
+    case 'unbind_dataset':
+      return t('backgroundTask.typeLabels.unbindDataset')
+    case 'reset_derived_data':
+      return t('backgroundTask.typeLabels.resetDerivedData')
     case 'delete_external':
       return t('backgroundTask.typeLabels.deleteExternal')
     case 'extraction':

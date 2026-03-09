@@ -40,10 +40,10 @@ from backend.common.annotation_summary_cache import (
     load_dataset_annotation_summary_cache,
     is_dataset_annotation_summary_cache_valid,
 )
-from backend.common.file_types import is_patch_file
 from ..dependencies import logger, storage_manager
 from ..models import DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest
 from ..utils import (
+    get_effective_wsi_data_type,
     proxy_preprocessing_json,
     ensure_segmentation_contract,
     ensure_dataset_segmentation_contract,
@@ -90,11 +90,7 @@ def _build_segmentation_wsi_lookups(wsis) -> tuple[Dict[str, str], Dict[str, str
 
 
 def _get_wsi_data_type(wsi) -> str:
-    dataset = getattr(wsi, "dataset", None)
-    data_group = getattr(dataset, "data_group", None) if dataset else None
-    if data_group and data_group.data_type in {"wsi", "patch"}:
-        return data_group.data_type
-    return "patch" if is_patch_file(wsi.wsi_path, wsi.file_size or 0) else "wsi"
+    return get_effective_wsi_data_type(wsi)
 
 
 def _mark_coco_image_matches(

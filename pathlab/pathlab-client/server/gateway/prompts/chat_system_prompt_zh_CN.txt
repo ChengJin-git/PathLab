@@ -1242,7 +1242,7 @@ AI 回复：
 3. **关键：如果用户要求 95% 置信区间**，设置 `bootstrap_ci_metrics` 字段（见下文）
 
 **分类任务**可用的指标和图表：
-- 指标：["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"]
+- 指标：["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"]
 - 图表：["confusion_matrix", "roc_curve", "loss_curve"]
 
 **生存任务**可用的指标和图表：
@@ -1269,7 +1269,7 @@ AI 回复：
   "analysis_type": "internal",
   "task_id": "train_abc123",
   "task_name": "宫颈癌分类",
-  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"],
+  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"],
   "charts": ["confusion_matrix", "roc_curve", "loss_curve"],
   "description": "测试集全面分析"
 }
@@ -1303,10 +1303,10 @@ AI 回复：
   "analysis_type": "internal",
   "task_id": "train_abc123",
   "task_name": "宫颈癌分类",
-  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"],
+  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"],
   "charts": ["confusion_matrix", "roc_curve", "loss_curve"],
   "description": "带 95% CI 的全面分析",
-  "bootstrap_ci_metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"]
+  "bootstrap_ci_metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"]
 }
 [/ANALYSIS_CONFIG]
 
@@ -1422,7 +1422,7 @@ AI 回复：
   "data_task_id": "dataset_xyz789",
   "source_name": "肺癌模型",
   "target_name": "TCGA-LUAD 数据集",
-  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"],
+  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"],
   "charts": ["confusion_matrix", "roc_curve"],
   "description": "在 TCGA 数据集上的外部验证"
 }
@@ -1444,10 +1444,10 @@ AI 回复：
   "data_task_id": "train_xyz789",
   "source_name": "肺癌模型",
   "target_name": "TCGA-LUAD 数据集",
-  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"],
+  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"],
   "charts": ["confusion_matrix", "roc_curve"],
   "description": "带 bootstrap CI 的外部验证",
-  "bootstrap_ci_metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"]
+  "bootstrap_ci_metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"]
 }
 [/ANALYSIS_CONFIG]
 
@@ -1494,10 +1494,10 @@ AI 回复：
   "analysis_type": "internal",
   "task_id": "train_abc123",
   "task_name": "宫颈癌分类",
-  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"],
+  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"],
   "charts": ["confusion_matrix", "roc_curve"],
   "description": "带 95% CI 的全面分析",
-  "bootstrap_ci_metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"]
+  "bootstrap_ci_metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"]
 }
 [/ANALYSIS_CONFIG]
 
@@ -1577,7 +1577,7 @@ AI 回复：
 - 不要在 QUICK_ANALYSIS_CONFIG 中使用 `compute_bootstrap_ci` 或 `bootstrap_ci_metrics` 字段——它们会被忽略
 - 示例：用户说"要看带 95%CI 的"但已有结果没有 CI → 使用带 `bootstrap_ci_metrics` 的 [ANALYSIS_CONFIG] 重新运行
 
-**可用指标**：accuracy、precision、sensitivity、specificity、f1、auc（分类）；c_index、integrated_brier_score（生存）
+**可用指标**：accuracy、precision、sensitivity、specificity、f1、auc、weighted_kappa（分类）；c_index、integrated_brier_score（生存）
 **可用图表**：
 - 分类：`roc_curve`、`confusion_matrix`、`loss_curve`
 - 生存分析：`km_curve`、`loss_curve`
@@ -1629,7 +1629,7 @@ AI 回复：
   "data_task_id": "dataset_xyz789",
   "source_name": "肺癌分类器",
   "target_name": "目标数据集名称",
-  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc"],
+  "metrics": ["accuracy", "precision", "sensitivity", "specificity", "f1", "auc", "weighted_kappa"],
   "charts": ["confusion_matrix", "roc_curve"]
 }
 [/ANALYSIS_CONFIG]

@@ -131,6 +131,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
     'f1': 'f1',
     'macro_auc': 'auc',
     'auc': 'auc',
+    'weighted_kappa': 'weighted_kappa',
     'c_index': 'c_index',
     'integrated_brier_score': 'integrated_brier_score',
     'ibs': 'integrated_brier_score',
@@ -174,8 +175,10 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
     }
   }
 
+  const isRawMetric = (key: string) => ['c_index', 'integrated_brier_score', 'ibs', 'weighted_kappa'].includes(key)
+
   const formatMetricValue = (key: string, value: number) => {
-    if (key === 'c_index' || key === 'integrated_brier_score' || key === 'ibs') {
+    if (isRawMetric(key)) {
       return value.toFixed(4)
     }
     return `${(value * 100).toFixed(1)}%`
@@ -185,6 +188,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
     if (key === 'c_index') return 'C-Index'
     if (key === 'miou') return 'mIoU'
     if (key === 'iou') return 'IoU'
+    if (key === 'weighted_kappa') return 'Weighted Kappa'
     return key.replace('macro_', '').replace(/_/g, ' ')
   }
 
@@ -211,7 +215,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                 <div key={key} className="bg-white p-3 rounded-lg border border-purple-200">
                   <p className="text-xs text-gray-500 uppercase">{getMetricDisplayName(key)}</p>
                   <p className="text-lg font-bold text-purple-600">
-                    {key === 'c_index'
+                    {isRawMetric(key)
                       ? `${stats.mean.toFixed(4)} ± ${stats.std.toFixed(4)}`
                       : `${(stats.mean * 100).toFixed(1)}% ± ${(stats.std * 100).toFixed(1)}%`
                     }
@@ -260,7 +264,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                         return (
                           <td key={key} className="py-2 text-center">
                             {val !== undefined
-                              ? (key === 'c_index' ? val.toFixed(4) : `${(val * 100).toFixed(1)}%`)
+                              ? (isRawMetric(key) ? val.toFixed(4) : `${(val * 100).toFixed(1)}%`)
                               : '-'
                             }
                           </td>

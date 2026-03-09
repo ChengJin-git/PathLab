@@ -491,6 +491,22 @@ export function useTaskActions(params: TaskActionsParams) {
         // Storage task: batch_update_metadata
         actualTaskId = taskId.replace('update_', '')
         isStorageTask = true
+      } else if (taskId.startsWith('delete_dataset_')) {
+        // Storage task: delete_dataset
+        actualTaskId = taskId.replace('delete_dataset_', '')
+        isStorageTask = true
+      } else if (taskId.startsWith('cleanup_empty_')) {
+        // Storage task: cleanup_empty_datasets
+        actualTaskId = taskId.replace('cleanup_empty_', '')
+        isStorageTask = true
+      } else if (taskId.startsWith('unbind_dataset_')) {
+        // Storage task: unbind_dataset
+        actualTaskId = taskId.replace('unbind_dataset_', '')
+        isStorageTask = true
+      } else if (taskId.startsWith('reset_')) {
+        // Storage task: reset_derived_data
+        actualTaskId = taskId.replace('reset_', '')
+        isStorageTask = true
       }
 
       // Use different API for storage tasks vs training tasks

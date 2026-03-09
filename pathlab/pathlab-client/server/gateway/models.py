@@ -246,6 +246,12 @@ class StartDeleteExternalRequest(BaseModel):
     wsi_ids: List[str]  # List of WSI IDs to delete
 
 
+class StartDeleteDatasetRequest(BaseModel):
+    """Request model for starting a dataset deletion background task."""
+    dataset_id: str
+    mode: DeletionMode = DeletionMode.STANDARD
+
+
 class StartBatchUpdateMetadataRequest(BaseModel):
     """Request model for starting a batch update metadata background task"""
     wsi_ids: List[str]  # List of WSI IDs to update

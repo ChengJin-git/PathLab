@@ -972,10 +972,19 @@
       "trainingDirs": "训练目录",
       "logs": "日志"
     },
+    "emptyDatasets": {
+      "title": "空数据集清理",
+      "description": "清理数据库中已经没有任何文件的历史数据集记录。该操作会以后台任务执行，不会阻塞页面。",
+      "button": "清理空数据集",
+      "starting": "正在启动...",
+      "started": "已在后台开始清理 {{count}} 个空数据集",
+      "noop": "未发现空数据集"
+    },
     "errors": {
       "loadStatsFailed": "加载存储统计信息失败",
       "detectOrphanedFailed": "检测孤立文件失败",
-      "cleanupFailed": "清理孤立文件失败"
+      "cleanupFailed": "清理孤立文件失败",
+      "cleanupEmptyDatasetsFailed": "启动空数据集清理失败"
     }
   },
   "newTask": {
@@ -1429,6 +1438,7 @@
       "recall": "召回率",
       "sensitivity": "敏感性",
       "specificity": "特异性",
+      "weighted_kappa": "加权 Kappa",
       "f1": "F1 分数",
       "auc": "AUC",
       "c_index": "C-Index",
@@ -1443,6 +1453,7 @@
       "recall": "真阳性率",
       "sensitivity": "真阳性率",
       "specificity": "真阴性率",
+      "weighted_kappa": "二次加权 Cohen's Kappa 一致性评分",
       "f1": "精确率与召回率的调和平均数",
       "auc": "ROC 曲线下面积",
       "c_index": "生存预测的一致性指数",
@@ -1488,6 +1499,7 @@
     "noDatasetsDescription": "注册您的第一个数据集以开始 WSI 分析。",
     "editDataset": "编辑数据集",
     "deleteDataset": "删除数据集",
+    "datasetDeleteStarted": "已在后台开始删除数据集“{{name}}”",
     "exportLabels": "导出标签",
     "exportLabelsWithSplit": "导出标签并划分数据集",
     "exportSuccess": "标签导出成功",
@@ -2606,6 +2618,10 @@
       "storage": "存储",
       "batchImport": "批量导入",
       "metadataUpdate": "元数据更新",
+      "deleteDataset": "删除数据集",
+      "cleanupEmptyDatasets": "清理空数据集",
+      "unbindDataset": "解绑数据集",
+      "resetDerivedData": "重置派生数据",
       "deleteExternal": "删除外部数据",
       "extraction": "提取区域",
       "task": "任务",

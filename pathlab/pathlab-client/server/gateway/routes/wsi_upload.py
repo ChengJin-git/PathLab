@@ -26,20 +26,20 @@ from backend.auth.dependencies import require_pathologist_or_admin
 from ..dependencies import logger, storage_manager, UPLOADS_DIR
 from ..models import UploadByPathRequest
 from ..utils import (
+    align_dataset_data_type_for_file,
     extract_wsi_properties,
     ensure_segmentation_contract,
     ensure_dataset_segmentation_contract,
     find_matching_segmentation_annotation_path,
+    get_file_data_type,
     load_coco_annotation_bytes,
     load_coco_annotation_file,
 )
-from backend.common.file_types import is_patch_file
 from backend.common.annotation_summary_cache import rebuild_dataset_annotation_summary_cache
 
 router = APIRouter(prefix="/wsi/upload", tags=["WSI Upload"])
 
 ALLOWED_TASK_TYPES = {"classification", "survival", "segmentation"}
-TIFF_EXTENSIONS = {'.tif', '.tiff'}
 
 
 def _resolve_task_type(requested_task_type: Optional[str], dataset_task_type: Optional[str] = None) -> str:
@@ -50,62 +50,6 @@ def _resolve_task_type(requested_task_type: Optional[str], dataset_task_type: Op
             detail="task_type must be 'classification', 'survival', or 'segmentation'",
         )
     return resolved_task_type
-
-
-def _is_tiff_family(file_path: str) -> bool:
-    return Path(file_path).suffix.lower() in TIFF_EXTENSIONS
-
-
-async def _align_dataset_data_type_for_upload(
-    db: AsyncSession,
-    dataset,
-    *,
-    file_path: str,
-    file_data_type: str,
-    task_type: str,
-    context: str,
-):
-    data_group = dataset.data_group
-    if not data_group:
-        raise HTTPException(status_code=400, detail='Dataset has no associated DataGroup')
-
-    if data_group.data_type == file_data_type:
-        return dataset
-
-    if task_type == 'segmentation':
-        raise HTTPException(
-            status_code=400,
-            detail=f"Dataset data_type is '{data_group.data_type}', cannot upload '{file_data_type}' file",
-        )
-
-    if not _is_tiff_family(file_path):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Dataset data_type is '{data_group.data_type}', cannot upload '{file_data_type}' file",
-        )
-
-    if data_group.data_type == 'patch' and file_data_type == 'wsi':
-        target_group = await DataGroupRepository.get_or_create(
-            db,
-            data_type='wsi',
-            aggregation_level=data_group.aggregation_level,
-            task_type=data_group.task_type,
-        )
-        dataset.group_id = target_group.group_id
-        await db.flush()
-        logger.info(
-            f"Promoted dataset {dataset.dataset_id} to wsi during {context} because TIFF/TIFF batch contained a WSI"
-        )
-        refreshed = await DatasetRepository.get_by_id(db, dataset.dataset_id)
-        return refreshed or dataset
-
-    if data_group.data_type == 'wsi' and file_data_type == 'patch':
-        return dataset
-
-    raise HTTPException(
-        status_code=400,
-        detail=f"Dataset data_type is '{data_group.data_type}', cannot upload '{file_data_type}' file",
-    )
 
 
 def _find_matching_uploaded_segmentation_annotation(
@@ -456,7 +400,7 @@ async def upload_wsi_file(
             logger.info(f"Saved WSI file: {wsi_path} ({file_size / (1024**2):.2f} MB)")
             logger.info(f"Original filename: {original_filename} -> UUID: {wsi_id}")
 
-            file_data_type = 'patch' if is_patch_file(str(wsi_path), file_size) else 'wsi'
+            file_data_type = get_file_data_type(wsi_path, file_size)
 
         # Handle associated files for special formats (MRXS, TMAP)
         associated_count = 0
@@ -515,12 +459,13 @@ async def upload_wsi_file(
                         detail='JSON uploads are only supported when appending to an existing segmentation dataset',
                     )
             else:
-                existing_dataset = await _align_dataset_data_type_for_upload(
+                existing_dataset = await align_dataset_data_type_for_file(
                     db,
                     existing_dataset,
                     file_path=str(wsi_path),
                     file_data_type=file_data_type,
                     task_type=resolved_task_type,
+                    action='upload',
                     context='WSI upload',
                 )
                 data_group = existing_dataset.data_group
@@ -553,12 +498,13 @@ async def upload_wsi_file(
             dataset = await DatasetRepository.get_or_create(
                 db, dataset_name, group_id=data_group.group_id, user_id=str(user.id)
             )
-            dataset = await _align_dataset_data_type_for_upload(
+            dataset = await align_dataset_data_type_for_file(
                 db,
                 dataset,
                 file_path=str(wsi_path),
                 file_data_type=file_data_type,
                 task_type=resolved_task_type,
+                action='upload',
                 context='WSI upload',
             )
             resolved_dataset_id = dataset.dataset_id
@@ -808,7 +754,7 @@ async def upload_wsi_by_path(
 
             wsi_props = extract_wsi_properties(req.wsi_path)
             file_size = wsi_props.get("file_size", 0)
-            file_data_type = 'patch' if is_patch_file(req.wsi_path, file_size) else 'wsi'
+            file_data_type = get_file_data_type(req.wsi_path, file_size)
             case_id = req.case_id or f"case_{wsi_id[:8]}"
 
             logger.info(f"Registering WSI: {original_filename} -> UUID: {wsi_id}")
@@ -836,12 +782,13 @@ async def upload_wsi_by_path(
                         detail='JSON uploads are only supported when appending to an existing segmentation dataset',
                     )
             else:
-                existing_dataset = await _align_dataset_data_type_for_upload(
+                existing_dataset = await align_dataset_data_type_for_file(
                     db,
                     existing_dataset,
                     file_path=req.wsi_path,
                     file_data_type=file_data_type,
                     task_type=resolved_task_type,
+                    action='register',
                     context='WSI path registration',
                 )
                 data_group = existing_dataset.data_group
@@ -874,12 +821,13 @@ async def upload_wsi_by_path(
             dataset = await DatasetRepository.get_or_create(
                 db, req.dataset_name, group_id=data_group.group_id, user_id=str(user.id)
             )
-            dataset = await _align_dataset_data_type_for_upload(
+            dataset = await align_dataset_data_type_for_file(
                 db,
                 dataset,
                 file_path=req.wsi_path,
                 file_data_type=file_data_type,
                 task_type=resolved_task_type,
+                action='register',
                 context='WSI path registration',
             )
             resolved_dataset_id = dataset.dataset_id

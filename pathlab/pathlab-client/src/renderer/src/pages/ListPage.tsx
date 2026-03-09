@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, invalidateWSIListCache, exportDatasetLabels } from '../api'
+import { fetchWSIList, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels } from '../api'
 import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -150,6 +150,7 @@ export default function ListPage() {
   // Delete dataset - stores dataset_id and name for the dataset to delete
   const [datasetToDeleteId, setDatasetToDeleteId] = useState<string | null>(null)
   const [datasetToDeleteName, setDatasetToDeleteName] = useState<string>('')
+  const [datasetToDeleteFileCount, setDatasetToDeleteFileCount] = useState<number>(0)
   const [deleting, setDeleting] = useState(false)
   // Optimistically hide datasets that are being deleted in background
   const [optimisticallyDeletedDatasetIds, setOptimisticallyDeletedDatasetIds] = useState<Set<string>>(new Set())
@@ -524,21 +525,29 @@ export default function ListPage() {
   }
 
   const handleConfirmBatchDelete = async () => {
-    const idsToDelete = Array.from(selectedIds)
     setDeleting(true)
 
     try {
-      await addDeleteWSITask(idsToDelete, deleteMode)
-      setShowBatchDeleteModal(false)
-      setSelectedIds(new Set())
-
       if (datasetToDeleteId) {
+        await startDeleteDatasetTask({
+          dataset_id: datasetToDeleteId,
+          mode: deleteMode
+        })
+
         // Optimistically hide from UI immediately
         setOptimisticallyDeletedDatasetIds(prev => new Set(prev).add(datasetToDeleteId))
+        setShowBatchDeleteModal(false)
+        setSelectedIds(new Set())
+        toastSuccess(t('listPage.datasetDeleteStarted', { name: datasetToDeleteName }))
         setDatasetToDeleteId(null)
         setDatasetToDeleteName('')
+        setDatasetToDeleteFileCount(0)
         await loadDatasets()
       } else {
+        const idsToDelete = Array.from(selectedIds)
+        await addDeleteWSITask(idsToDelete, deleteMode)
+        setShowBatchDeleteModal(false)
+        setSelectedIds(new Set())
         // List will be refreshed when task completes - we can trigger a delayed refresh
         setTimeout(() => reloadCurrentDataset(), 500)
       }
@@ -549,34 +558,18 @@ export default function ListPage() {
       setDeleting(false)
     }
   }
-
-
-
-  const handleDatasetDeleteClick = async (e: React.MouseEvent, datasetId: string | null, datasetName: string) => {
+  const handleDatasetDeleteClick = (e: React.MouseEvent, datasetId: string | null, datasetName: string, fileCount: number) => {
     e.stopPropagation()
     if (!datasetId) {
       alert(t('listPage.cannotDeleteUncategorized'))
       return
     }
-    setDeleting(true)
-    try {
-      const d = await fetchWSIList(datasetId)
-      if (!d.items || d.items.length === 0) {
-        alert(t('listPage.datasetEmptyOrNotLoaded'))
-        return
-      }
-      const allIds = new Set(d.items.map((it: any) => it.wsi_id))
-      setSelectedIds(allIds)
-      setDatasetToDeleteId(datasetId)
-      setDatasetToDeleteName(datasetName)
-      setDeleteMode('standard')
-      setShowBatchDeleteModal(true)
-    } catch (err) {
-      console.error('Failed to prepare dataset delete:', err)
-      alert(t('listPage.failedLoadDatasetFiles', { error: String(err) }))
-    } finally {
-      setDeleting(false)
-    }
+    setSelectedIds(new Set())
+    setDatasetToDeleteId(datasetId)
+    setDatasetToDeleteName(datasetName)
+    setDatasetToDeleteFileCount(fileCount)
+    setDeleteMode('standard')
+    setShowBatchDeleteModal(true)
   }
 
   const handleEditClick = (wsi: any) => {
@@ -1265,7 +1258,7 @@ export default function ListPage() {
                                   variant="ghost"
                                   size="icon"
                                   className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
-                                  onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name)}
+                                  onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
                   title={t('listPage.deleteDataset')}
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -2158,12 +2151,18 @@ export default function ListPage() {
       {showBatchDeleteModal && (
         <BatchDeleteModal
           selectedIds={selectedIds}
+          selectedCount={datasetToDeleteId ? datasetToDeleteFileCount : selectedIds.size}
           datasetToDeleteId={datasetToDeleteId ?? ''}
           datasetToDeleteName={datasetToDeleteName}
           deleteMode={deleteMode}
           onDeleteModeChange={setDeleteMode}
           deleting={deleting}
-          onCancel={() => setShowBatchDeleteModal(false)}
+          onCancel={() => {
+            setShowBatchDeleteModal(false)
+            setDatasetToDeleteId(null)
+            setDatasetToDeleteName('')
+            setDatasetToDeleteFileCount(0)
+          }}
           onConfirm={handleConfirmBatchDelete}
         />
       )}
