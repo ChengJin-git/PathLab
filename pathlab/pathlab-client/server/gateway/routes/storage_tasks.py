@@ -32,7 +32,13 @@ from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import require_admin
 from ..dependencies import logger, storage_manager
 from ..models import StartBatchImportRequest, StartDeleteExternalRequest, StartBatchUpdateMetadataRequest
-from ..utils import ensure_segmentation_contract, ensure_dataset_segmentation_contract, find_matching_segmentation_annotation_path, load_coco_annotation_file
+from ..utils import (
+    ensure_segmentation_contract,
+    ensure_dataset_segmentation_contract,
+    find_matching_segmentation_annotation_path,
+    load_coco_annotation_file,
+    SEGMENTATION_TASK_TYPE,
+)
 from backend.ai.schemas.base import TaskStatus
 from backend.common.annotation_summary_cache import rebuild_dataset_annotation_summary_cache
 from backend.common.config import Config
@@ -361,7 +367,7 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                             })
                             failed_count += 1
                             continue
-                        wsi_data["label"] = "Segmentation"
+                        wsi_data["label"] = None
                     else:
                         wsi_data["label"] = default_label
 
@@ -665,6 +671,16 @@ async def _run_batch_update_metadata_task(task_id: str, user_id: str, request_pa
             updated_count = 0
             skipped_count = 0
             failed_count = 0
+            dataset_task_type_map = {}
+
+            if new_label is not None and wsi_ids:
+                wsi_map = await WSIRepository.get_by_ids(db, wsi_ids)
+                dataset_ids = sorted({wsi.dataset_id for wsi in wsi_map.values() if wsi.dataset_id})
+                datasets = await DatasetRepository.get_by_ids(db, dataset_ids) if dataset_ids else []
+                dataset_task_type_map = {
+                    dataset.dataset_id: (dataset.data_group.task_type if dataset.data_group else None)
+                    for dataset in datasets
+                }
 
             for i, wsi_id in enumerate(wsi_ids):
                 # Check for cancellation at the start of each iteration
@@ -681,6 +697,15 @@ async def _run_batch_update_metadata_task(task_id: str, user_id: str, request_pa
                             "wsi_id": wsi_id,
                             "status": "failed",
                             "message": "WSI not found"
+                        })
+                        failed_count += 1
+                        continue
+
+                    if new_label is not None and dataset_task_type_map.get(wsi.dataset_id) == SEGMENTATION_TASK_TYPE:
+                        results.append({
+                            "wsi_id": wsi_id,
+                            "status": "failed",
+                            "message": "Segmentation WSIs do not support image-level label updates"
                         })
                         failed_count += 1
                         continue
@@ -899,6 +924,21 @@ async def start_batch_update_metadata_task(
     try:
         if not request.wsi_ids:
             raise HTTPException(status_code=400, detail="No WSI IDs provided")
+
+        if request.label is not None:
+            wsis = await WSIRepository.get_by_ids(db, request.wsi_ids)
+            dataset_ids = sorted({wsi.dataset_id for wsi in wsis.values() if wsi.dataset_id})
+            datasets = await DatasetRepository.get_by_ids(db, dataset_ids) if dataset_ids else []
+            segmentation_dataset_ids = {
+                dataset.dataset_id
+                for dataset in datasets
+                if dataset.data_group and dataset.data_group.task_type == SEGMENTATION_TASK_TYPE
+            }
+            if any(wsi.dataset_id in segmentation_dataset_ids for wsi in wsis.values()):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Segmentation WSIs do not support image-level label updates",
+                )
 
         # Check if at least one field is provided
         has_update = any([

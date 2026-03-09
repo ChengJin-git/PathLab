@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import gc
 import logging
 import random
 import copy
@@ -179,6 +180,28 @@ class SegmentationTrainer:
         merged_config = copy.deepcopy(__default_config__)
         deep_update(merged_config, config)
         return merged_config
+
+    def release_resources(self) -> None:
+        """
+        Release trainer-held references so route-level cleanup can actually free GPU memory.
+
+        Patch segmentation keeps the model and datasets on ``self``. If the route-level
+        ``finally`` runs while those references are still alive, ``torch.cuda.empty_cache()``
+        cannot fully reclaim memory. This method is safe to call multiple times.
+        """
+        for attr_name in ("model", "loss_fn", "train_dataset", "val_dataset", "test_dataset"):
+            if hasattr(self, attr_name):
+                setattr(self, attr_name, None)
+
+        gc.collect()
+        gc.collect()
+
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            except Exception as exc:
+                logger.debug(f"Failed to fully release CUDA memory during segmentation cleanup: {exc}")
 
     def _update_training_progress(self, progress: int) -> None:
         """Write segmentation training progress to the shared progress store."""

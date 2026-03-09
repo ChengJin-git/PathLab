@@ -2266,14 +2266,17 @@ async def chat_with_ai(
             ds_access_type = d.get('access_type', 'own')
             rich_ds = rich_datasets_map.get(ds_id, {})
             ds_task_type = rich_ds.get('task_type') or d.get('group_task_type', 'unknown')
+            is_segmentation_dataset = _is_segmentation_task(ds_task_type) or _is_segmentation_task(d.get('group_task_type'))
+            effective_ds_labels = {} if is_segmentation_dataset else ds_labels
             ds_aggregation_level = rich_ds.get('aggregation_level', '')
             ds_segmentation_labels = _extract_segmentation_label_names(rich_ds.get('coco_categories', []) or [])
             d['task_type'] = ds_task_type
+            d['labels'] = effective_ds_labels
             d['aggregation_level'] = ds_aggregation_level
             d['segmentation_labels'] = ds_segmentation_labels
 
             # Build info parts
-            labels_str = ", ".join([f"{lbl}({cnt})" for lbl, cnt in ds_labels.items()]) if ds_labels else "none"
+            labels_str = ", ".join([f"{lbl}({cnt})" for lbl, cnt in effective_ds_labels.items()]) if effective_ds_labels else "none"
 
             # Format survival data with event_status distribution
             if ds_survival > 0 and ds_event_status:
@@ -2289,12 +2292,12 @@ async def chat_with_ai(
 
             # Determine supported task types based on data
             task_types = []
-            if ds_labels:
+            if effective_ds_labels:
                 task_types.append("classification")
             if ds_survival > 0:
                 task_types.append("survival")
             ds_group_task_type = d.get('group_task_type', '')
-            if ds_group_task_type == 'segmentation':
+            if _is_segmentation_task(ds_group_task_type) or is_segmentation_dataset:
                 task_types.append("segmentation")
             task_types_str = f", supported_tasks=[{', '.join(task_types)}]" if task_types else ""
             aggregation_str = f", aggregation_level={ds_aggregation_level}" if ds_aggregation_level else ""

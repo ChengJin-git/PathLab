@@ -918,6 +918,8 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         )
     # Session closed here - connection released before training starts
 
+    trainer = None
+
     try:
         # Phase 2: Build config and run training in thread pool
         save_dir = str(UPLOADS_DIR / req.task_id / "checkpoints")
@@ -1053,4 +1055,6 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         await handle_training_error_scoped(e, req.task_id, scoped_session, "Patch Segmentation")
 
     finally:
+        if trainer is not None:
+            trainer.release_resources()
         await cleanup_training_scoped(req.task_id)

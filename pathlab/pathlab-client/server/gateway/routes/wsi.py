@@ -36,7 +36,12 @@ from backend.auth.dependencies import (
 from backend.ai.utils.data_splitter import split_case_dataset, split_wsi_dataset
 from ..dependencies import logger, storage_manager
 from ..models import DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest
-from ..utils import proxy_preprocessing_json, ensure_segmentation_contract, ensure_dataset_segmentation_contract
+from ..utils import (
+    proxy_preprocessing_json,
+    ensure_segmentation_contract,
+    ensure_dataset_segmentation_contract,
+    SEGMENTATION_TASK_TYPE,
+)
 
 router = APIRouter(prefix="/wsi", tags=["WSI Management"])
 
@@ -339,6 +344,17 @@ async def update_dataset_type(
             )
             updated_count = result.rowcount
             message = f"Dataset type changed to survival. Set default event_time/status for {updated_count} slides."
+        elif req.task_type == SEGMENTATION_TASK_TYPE:
+            result = await db.execute(
+                sql_update(WSISlide)
+                .where(WSISlide.dataset_id == dataset_id)
+                .values(label=None, event_time=None, event_status=None)
+            )
+            updated_count = result.rowcount
+            message = (
+                f"Dataset type changed to segmentation. Cleared image-level labels and survival metadata "
+                f"for {updated_count} slides."
+            )
         else:
             # Clear event_time and event_status for all WSIs
             result = await db.execute(
@@ -658,6 +674,14 @@ async def update_wsi_metadata(
             forbidden_detail="You don't have permission to update this WSI",
         )
 
+        dataset = await DatasetRepository.get_by_id(db, wsi.dataset_id) if wsi.dataset_id else None
+        dataset_task_type = dataset.data_group.task_type if dataset and dataset.data_group else None
+        if dataset_task_type == SEGMENTATION_TASK_TYPE and req.label is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Segmentation WSIs do not support image-level label updates",
+            )
+
         # Update fields if provided
         if req.label is not None:
             wsi.label = req.label
@@ -859,6 +883,25 @@ async def upload_dataset_splits(
     data_group = dataset.data_group
     aggregation_level = data_group.aggregation_level if data_group else 'file'
     task_type = data_group.task_type if data_group else 'classification'
+    if task_type == SEGMENTATION_TASK_TYPE:
+        label_key = next((h for h in rows[0].keys() if h.strip().lower() == 'label'), None) if rows else None
+        if label_key:
+            invalid_rows = []
+            for row_num, row in enumerate(rows, start=2):
+                label_val = row.get(label_key, '')
+                if isinstance(label_val, str) and label_val.strip():
+                    invalid_rows.append(str(row_num))
+                    if len(invalid_rows) >= 5:
+                        break
+            if invalid_rows:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Segmentation datasets do not support CSV label updates. "
+                        "Remove the 'label' column values and use COCO category labels instead. "
+                        f"Invalid rows: {', '.join(invalid_rows)}"
+                    ),
+                )
     if aggregation_level == 'case' and task_type == 'survival':
         # Group rows by case_id to check for consistency
         case_groups = {}  # case_id -> [(event_time, event_status, filename), ...]
@@ -946,6 +989,8 @@ async def upload_dataset_splits(
 
             val = val.strip()
             if norm_key == 'label':
+                if task_type == SEGMENTATION_TASK_TYPE:
+                    continue
                 target_wsi.label = val
             elif norm_key == 'case_id':
                 target_wsi.case_id = val
