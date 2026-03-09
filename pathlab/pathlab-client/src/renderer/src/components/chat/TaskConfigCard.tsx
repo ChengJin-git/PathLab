@@ -30,6 +30,8 @@ import {
   DEFAULT_SEG_ARCHITECTURE,
   DEFAULT_SEG_BACKBONE,
   DEFAULT_SEG_LOSS_NAMES,
+  FM_SEGMENTATION_ARCHITECTURE,
+  isSegFmEncoder,
   normalizeSegmentationLossConfig,
 } from '../../constants/training'
 
@@ -135,9 +137,38 @@ export function parseTaskConfig(content: string): AgentTaskConfig | null {
       config.seg_loss_weights = normalizedLossConfig.lossWeights
     }
 
-    return config
+    return normalizeAgentTaskConfig(config)
   } catch {
     return null
+  }
+}
+
+function resolveSegmentationBackbone(config: AgentTaskConfig): string {
+  const segBackbone = typeof config.seg_backbone === 'string' ? config.seg_backbone.trim() : ''
+  const encoder = typeof config.encoder === 'string' ? config.encoder.trim() : ''
+  return segBackbone || encoder || DEFAULT_SEG_BACKBONE
+}
+
+function resolveSegmentationArchitecture(config: AgentTaskConfig, backbone?: string): string {
+  const resolvedBackbone = backbone || resolveSegmentationBackbone(config)
+  if (isSegFmEncoder(resolvedBackbone)) {
+    return FM_SEGMENTATION_ARCHITECTURE
+  }
+  const segArchitecture = typeof config.seg_architecture === 'string' ? config.seg_architecture.trim() : ''
+  return segArchitecture || DEFAULT_SEG_ARCHITECTURE
+}
+
+function normalizeAgentTaskConfig(config: AgentTaskConfig): AgentTaskConfig {
+  if (config.task_type !== 'segmentation' && !Array.isArray(config.seg_loss_names)) {
+    return config
+  }
+
+  const normalizedBackbone = resolveSegmentationBackbone(config)
+  return {
+    ...config,
+    data_type: 'patch',
+    seg_backbone: normalizedBackbone,
+    seg_architecture: resolveSegmentationArchitecture(config, normalizedBackbone),
   }
 }
 
@@ -151,7 +182,7 @@ export function removeTaskConfigBlock(content: string): string {
 export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange, messageId, onHelpfulnessFeedback, savedHelpfulnessFeedback, submitTrigger }: TaskConfigCardProps) {
   const { t } = useTranslation()
   const { hasUploadingTasks } = useBackgroundTask()
-  const [config, setConfig] = useState<AgentTaskConfig>(initialConfig)
+  const [config, setConfig] = useState<AgentTaskConfig>(normalizeAgentTaskConfig(initialConfig))
   const [isSubmitting, setIsSubmitting] = useState(false)
   // Initialize submitStatus based on whether task was already submitted (persisted in config)
   // 'pending' = optimistic update, form disabled with positive visual, background work in progress
@@ -175,7 +206,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   useEffect(() => {
     if (initialConfig.submitted_task_id) {
       setSubmitStatus('success')
-      setConfig(initialConfig)
+      setConfig(normalizeAgentTaskConfig(initialConfig))
     }
   }, [initialConfig.submitted_task_id])
 
@@ -221,6 +252,20 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const selectedDataset = useMemo(() => {
     return compatibleDatasets.find(d => d.dataset_id === selectedDatasetId) || null
   }, [compatibleDatasets, selectedDatasetId])
+
+  const resolvedSegBackbone = useMemo(() => resolveSegmentationBackbone(config), [config])
+  const isFmSegmentation = useMemo(
+    () => config.task_type === 'segmentation' && isSegFmEncoder(resolvedSegBackbone),
+    [config.task_type, resolvedSegBackbone]
+  )
+  const resolvedSegArchitecture = useMemo(
+    () => resolveSegmentationArchitecture(config, resolvedSegBackbone),
+    [config, resolvedSegBackbone]
+  )
+  const segmentationFmOptions = useMemo(
+    () => ENCODER_OPTIONS.filter(option => isSegFmEncoder(option.value)),
+    []
+  )
 
   // Load available datasets on mount
   useEffect(() => {
@@ -426,7 +471,9 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           // Note: tile_size removed - auto-determined by PrePATH-style tiling
           level: config.pyramid_level ?? DEFAULT_PYRAMID_LEVEL,
           // Feature extraction
-          feature_extractor: config.encoder ?? DEFAULT_EXTRACTOR,
+          feature_extractor: config.task_type === 'segmentation'
+            ? resolvedSegBackbone
+            : (config.encoder ?? DEFAULT_EXTRACTOR),
           feature_batch_size: config.feature_batch_size ?? DEFAULT_FEATURE_BATCH_SIZE,
           use_gpu: true,
           // Tissue segmentation parameters (WSI only)
@@ -437,8 +484,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         },
         model: config.task_type === 'segmentation' ? {
           aggregator: '',  // Not used for segmentation
-          architecture: config.seg_architecture ?? DEFAULT_SEG_ARCHITECTURE,
-          backbone: config.seg_backbone ?? DEFAULT_SEG_BACKBONE,
+          architecture: resolvedSegArchitecture,
+          backbone: resolvedSegBackbone,
           loss_names: normalizedSegLossConfig.lossNames,
           loss_weights: normalizedSegLossConfig.lossWeights,
           learning_rate: config.learning_rate ?? SEG_TRAINING_DEFAULTS.learningRate,
@@ -770,32 +817,42 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.segArchitecture')}</label>
-                <select
-                  value={config.seg_architecture || DEFAULT_SEG_ARCHITECTURE}
-                  onChange={(e) => updateConfig('seg_architecture', e.target.value)}
-                  disabled={isFormDisabled}
-                  className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${disabledSelectClass}`}
-                >
-                  {SEGMENTATION_ARCHITECTURES.map(arch => (
-                    <option key={arch.id} value={arch.id}>{arch.name}</option>
-                  ))}
-                </select>
+                {isFmSegmentation ? (
+                  <div className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-gray-700">
+                    Conv Decoder (FM)
+                  </div>
+                ) : (
+                  <select
+                    value={resolvedSegArchitecture}
+                    onChange={(e) => updateConfig('seg_architecture', e.target.value)}
+                    disabled={isFormDisabled}
+                    className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${disabledSelectClass}`}
+                  >
+                    {SEGMENTATION_ARCHITECTURES.map(arch => (
+                      <option key={arch.id} value={arch.id}>{arch.name}</option>
+                    ))}
+                  </select>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.segBackbone')}</label>
                 <select
-                  value={config.seg_backbone || DEFAULT_SEG_BACKBONE}
+                  value={resolvedSegBackbone}
                   onChange={(e) => updateConfig('seg_backbone', e.target.value)}
                   disabled={isFormDisabled}
                   className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${disabledSelectClass}`}
                 >
-                  {BACKBONE_GROUPS.map(group => (
-                    <optgroup key={group} label={group}>
-                      {SEGMENTATION_BACKBONES.filter(bb => bb.group === group).map(bb => (
-                        <option key={bb.id} value={bb.id}>{bb.name}</option>
-                      ))}
-                    </optgroup>
-                  ))}
+                  {isFmSegmentation
+                    ? segmentationFmOptions.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))
+                    : BACKBONE_GROUPS.map(group => (
+                      <optgroup key={group} label={group}>
+                        {SEGMENTATION_BACKBONES.filter(bb => bb.group === group).map(bb => (
+                          <option key={bb.id} value={bb.id}>{bb.name}</option>
+                        ))}
+                      </optgroup>
+                    ))}
                 </select>
               </div>
             </div>

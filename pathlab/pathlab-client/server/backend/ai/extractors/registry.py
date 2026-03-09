@@ -148,6 +148,16 @@ def list_extractors() -> List[str]:
     return list(_EXTRACTOR_LAZY_REGISTRY.keys())
 
 
+def extractor_supports_spatial(name: str) -> bool:
+    """Return whether the registered extractor advertises spatial features.
+
+    This is a lightweight metadata lookup used by gateway / validation code so
+    they do not need to instantiate the extractor or import heavy model stacks.
+    """
+    metadata = _EXTRACTOR_METADATA.get(name, {})
+    return bool(metadata.get("supports_spatial", False))
+
+
 def get_available_extractors() -> List[Dict[str, Any]]:
     """Return detailed metadata for all registered extractors."""
     results = []

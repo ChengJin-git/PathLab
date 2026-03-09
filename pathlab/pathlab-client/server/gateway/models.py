@@ -2,8 +2,9 @@
 Pydantic models for Gateway API requests/responses
 """
 from enum import Enum
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from typing import Optional, Dict, List, Any
+from backend.ai.segmentors.specs import is_fm_segmentation_backbone
 
 
 
@@ -59,6 +60,37 @@ class TrainingTaskRequest(BaseModel):
     model: Dict  # {aggregator, learning_rate, epochs, optimizer, batch_size}
     huggingface_token: Optional[str] = None  # HuggingFace token for gated models
     split_config: Optional[SplitConfig] = None
+
+    @model_validator(mode="after")
+    def validate_segmentation_mode(self):
+        if self.task_type != "segmentation":
+            return self
+
+        if self.data_type != "patch":
+            raise ValueError("Segmentation tasks must use data_type='patch'.")
+
+        model = self.model or {}
+        architecture = str(model.get("architecture") or "").strip()
+        backbone = str(model.get("backbone") or "").strip()
+
+        if not architecture or not backbone:
+            raise ValueError("Segmentation tasks must provide model.architecture and model.backbone.")
+
+        if "encoder" in model:
+            raise ValueError("Segmentation tasks must use model.backbone instead of model.encoder.")
+
+        is_fm_backbone = is_fm_segmentation_backbone(backbone)
+        if is_fm_backbone and architecture != "conv_decoder":
+            raise ValueError(
+                f"Segmentation FM backbone '{backbone}' requires model.architecture='conv_decoder'."
+            )
+
+        if architecture == "conv_decoder" and not is_fm_backbone:
+            raise ValueError(
+                f"Segmentation architecture 'conv_decoder' requires an FM backbone, got '{backbone}'."
+            )
+
+        return self
 
 
 class TrainingTaskUpdateRequest(BaseModel):

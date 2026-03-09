@@ -252,7 +252,7 @@ export interface TrainingTaskConfig {
   preprocessing: {
     // Note: tile_size removed - auto-determined by PrePATH-style tiling based on WSI magnification
     level?: number
-    feature_extractor: string
+    feature_extractor: string  // Classification/WSI extractor; for segmentation should mirror model.backbone for metadata consistency
     feature_batch_size: number
     use_gpu: boolean
     // Tissue segmentation parameters
@@ -270,7 +270,7 @@ export interface TrainingTaskConfig {
   model: {
     aggregator: string
     classifier?: string  // Classifier head for patch-level: linear, mlp, attention
-    backbone?: string  // For patch-level tasks
+    backbone?: string  // Patch classification extractor or segmentation seg_backbone
     learning_rate: number
     epochs: number
     optimizer: string
@@ -278,7 +278,7 @@ export interface TrainingTaskConfig {
     auto_balance?: boolean  // Auto-balance class weights for imbalanced datasets
     early_stopping_patience?: number  // Number of epochs to wait before early stopping
     // Segmentation-specific fields
-    architecture?: string      // Segmentation architecture (unet, deeplabv3, etc.)
+    architecture?: string      // Segmentation architecture; MUST be conv_decoder when backbone is an FM extractor
     loss_names?: string[]      // Segmentation loss function names
     loss_weights?: number[]    // Segmentation loss function weights
   }

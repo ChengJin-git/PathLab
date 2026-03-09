@@ -24,9 +24,15 @@ from backend.auth import current_active_user, User
 from backend.auth.dependencies import check_data_ownership, get_user_id_filter, get_user_from_header_or_param
 from backend.common.config import Config
 from backend.common.gpu_utils import get_gpu_summary_for_prompt
+from backend.ai.segmentors.specs import is_fm_segmentation_backbone
 from ..dependencies import logger
 from ..prompts import get_chat_system_prompt, format_user_data_context, detect_language
-from ..models import ChatRequest, CreateConversationRequest, UpdateMessageRequest, AddMessageRequest
+from ..models import (
+    ChatRequest,
+    CreateConversationRequest,
+    UpdateMessageRequest,
+    AddMessageRequest,
+)
 from .chat_pdf import (
     is_pdf_url, process_pdf_url, get_pdf_image_path,
     search_pdf_pages, get_cached_markdown, get_cached_pdf_meta, _split_md_into_pages,
@@ -55,6 +61,65 @@ def _extract_segmentation_label_names(categories: List[Dict[str, Any]]) -> List[
         for category in categories
         if category.get("name")
     ])
+
+
+def _clean_optional_str(value: Any) -> str:
+    return str(value).strip() if isinstance(value, str) else ""
+
+
+def _normalize_segmentation_task_config(task_config: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(task_config)
+    normalized["data_type"] = "patch"
+
+    seg_backbone = _clean_optional_str(task_config.get("seg_backbone"))
+    encoder = _clean_optional_str(task_config.get("encoder"))
+    seg_architecture = _clean_optional_str(task_config.get("seg_architecture"))
+
+    seg_backbone_is_fm = is_fm_segmentation_backbone(seg_backbone)
+    encoder_is_fm = is_fm_segmentation_backbone(encoder)
+
+    if seg_backbone_is_fm:
+        resolved_backbone = seg_backbone
+    elif encoder_is_fm:
+        resolved_backbone = encoder
+    else:
+        resolved_backbone = seg_backbone or encoder
+
+    if resolved_backbone:
+        normalized["seg_backbone"] = resolved_backbone
+
+    if is_fm_segmentation_backbone(resolved_backbone):
+        normalized["seg_architecture"] = "conv_decoder"
+    elif seg_architecture:
+        normalized["seg_architecture"] = seg_architecture
+
+    normalized.pop("encoder", None)
+    return normalized
+
+
+def _normalize_task_config_blocks(response_text: str) -> str:
+    if "[TASK_CONFIG]" not in response_text:
+        return response_text
+
+    pattern = re.compile(r'\[TASK_CONFIG\](.*?)\[/TASK_CONFIG\]', re.DOTALL)
+
+    def _replace(match: re.Match[str]) -> str:
+        raw_json = match.group(1).strip()
+        try:
+            task_config = json.loads(raw_json)
+        except json.JSONDecodeError:
+            return match.group(0)
+
+        if not isinstance(task_config, dict):
+            return match.group(0)
+
+        if _is_segmentation_task(task_config.get("task_type")):
+            task_config = _normalize_segmentation_task_config(task_config)
+
+        normalized_json = json.dumps(task_config, ensure_ascii=False, indent=2)
+        return f"[TASK_CONFIG]\n{normalized_json}\n[/TASK_CONFIG]"
+
+    return pattern.sub(_replace, response_text)
 
 
 def _get_segmentation_model_spec(model: Any, training_task: Optional[TrainingTask]) -> Dict[str, str | bool]:
@@ -1841,6 +1906,15 @@ After saving, return here and start chatting!"""
                 # can detect any follow-up tool calls (e.g. [WEB_SEARCH]).
                 continue
 
+        normalized_response = _normalize_task_config_blocks(full_response)
+        if normalized_response != full_response:
+            full_response = normalized_response
+            if is_streaming_to_client:
+                yield f"data: {json.dumps({'content': '__CLEAR_CONTENT__'})}\n\n"
+                _CHUNK_SIZE = 80
+                for i in range(0, len(full_response), _CHUNK_SIZE):
+                    yield f"data: {json.dumps({'content': full_response[i:i+_CHUNK_SIZE]})}\n\n"
+
         # No tool requested — break out of loop
         break
 
@@ -2742,7 +2816,10 @@ async def chat_with_ai(
                         try:
                             data = json.loads(chunk[6:])
                             if "content" in data and data["content"] is not None:
-                                full_response += data["content"]
+                                if data["content"] == "__CLEAR_CONTENT__":
+                                    full_response = ""
+                                else:
+                                    full_response += data["content"]
                         except:
                             pass
         finally:
