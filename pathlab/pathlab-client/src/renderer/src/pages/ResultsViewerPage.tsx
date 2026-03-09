@@ -83,6 +83,9 @@ interface TrainingTask {
   ai_results_count: number
   total_wsi_count: number  // Total WSI count (file-level)
   total_case_count: number  // Total case count (case-level)
+  test_wsi_count?: number
+  test_case_count?: number
+  test_display_count?: number
   display_count: number  // Count based on aggregation level
   wsi_ids: string[]  // WSI IDs for overlap detection
   classes?: string[] | null
@@ -106,6 +109,21 @@ interface AnalysisResult {
 // Use imported helpers from shared utils
 const isSurvivalTask = utilIsSurvivalTask
 const isSegmentationTask = utilIsSegmentationTask
+
+const getTaskModelDisplayLabel = (task?: TrainingTask | null): string | null => {
+  if (!task) return null
+  if (isSegmentationTask(task.task_type)) {
+    const backbone = typeof task.model_config?.backbone === 'string' ? task.model_config.backbone : null
+    return backbone || task.feature_extractor || null
+  }
+  return task.feature_extractor || null
+}
+
+const getTaskResultsDisplayCount = (task?: TrainingTask | null): number => {
+  if (!task) return 0
+  const testCount = task.test_display_count ?? 0
+  return testCount > 0 ? testCount : task.ai_results_count
+}
 
 export default function ResultsViewerPage() {
   const navigate = useNavigate()
@@ -1265,9 +1283,9 @@ export default function ResultsViewerPage() {
                         <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-[10px] uppercase tracking-wider font-bold px-2">
                           {selectedTask.task_type}
                         </Badge>
-                        {selectedTask.feature_extractor && (
-                          <Badge variant="secondary" className="bg-purple-50 text-purple-700 hover:bg-purple-100 text-[10px] uppercase tracking-wider font-bold px-2">
-                            {selectedTask.feature_extractor}
+                        {getTaskModelDisplayLabel(selectedTask) && (
+                          <Badge variant="secondary" className="bg-purple-50 text-purple-700 hover:bg-purple-100 text-[10px] tracking-wider font-bold px-2">
+                            {getTaskModelDisplayLabel(selectedTask)}
                           </Badge>
                         )}
                         <span className="text-xs text-gray-400 font-medium">
@@ -1321,13 +1339,13 @@ export default function ResultsViewerPage() {
                                   }`}>
                                     {task.task_type}
                                   </span>
-                                  {task.feature_extractor && (
-                                    <span className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full transition-colors duration-200 ${
+                                  {getTaskModelDisplayLabel(task) && (
+                                    <span className={`text-[10px] tracking-wider font-bold px-2 py-0.5 rounded-full transition-colors duration-200 ${
                                       selectedTaskId === task.task_id
                                         ? 'bg-white/20 text-white'
                                         : 'bg-purple-50 text-purple-700'
                                     }`}>
-                                      {task.feature_extractor}
+                                      {getTaskModelDisplayLabel(task)}
                                     </span>
                                   )}
                                   {task.created_at && (
@@ -1348,7 +1366,7 @@ export default function ResultsViewerPage() {
                                           : 'bg-amber-50 text-amber-700'
                                   }`}>
                                     {task.ai_results_count > 0
-                                      ? t('resultsPage.resultsCount', { count: task.ai_results_count })
+                                      ? t('resultsPage.resultsCount', { count: getTaskResultsDisplayCount(task) })
                                       : task.has_analysis
                                         ? t('resultsPage.analysisAvailable')
                                         : t('resultsPage.noResults')}

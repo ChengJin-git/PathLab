@@ -388,7 +388,7 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
     tasks_with_test_set_result = await db.execute(tasks_with_test_set_query)
     tasks_with_test_set = {row[0] for row in tasks_with_test_set_result.all()}
 
-    # Step 1.5: Count test WSIs per task (for 100% AI results completeness check)
+    # Step 1.5: Count test WSIs per task (for results viewer display / completeness check)
     test_wsi_count_by_task = {}
     if tasks_with_test_set:
         test_wsi_count_query = (
@@ -402,6 +402,23 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
         )
         test_wsi_count_result = await db.execute(test_wsi_count_query)
         test_wsi_count_by_task = {row[0]: row[1] for row in test_wsi_count_result.all()}
+
+    # Step 1.6: For case-level tasks, count distinct test case_ids
+    test_case_count_by_task = {}
+    test_case_level_task_ids = [tid for tid in tasks_with_test_set if task_aggregation_levels.get(tid) == "case"]
+    if test_case_level_task_ids:
+        test_case_count_query = (
+            select(
+                TrainingTaskWSI.task_id,
+                func.count(func.distinct(WSISlide.case_id)).label('count')
+            )
+            .join(WSISlide, TrainingTaskWSI.wsi_id == WSISlide.wsi_id)
+            .where(TrainingTaskWSI.task_id.in_(test_case_level_task_ids))
+            .where(TrainingTaskWSI.split == "test")
+            .group_by(TrainingTaskWSI.task_id)
+        )
+        test_case_count_result = await db.execute(test_case_count_query)
+        test_case_count_by_task = {row[0]: row[1] for row in test_case_count_result.all()}
 
     # Step 2: For tasks WITH test set, count AI results joined with test WSIs
     ai_count_with_test = {}
@@ -514,6 +531,9 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
         total_wsi_count = total_wsi_by_task.get(task_id, 0)
         total_case_count = total_case_by_task.get(task_id, 0)
         aggregation_level = task_aggregation_levels.get(task_id, "file")
+        test_wsi_count = test_wsi_count_by_task.get(task_id, 0)
+        test_case_count = test_case_count_by_task.get(task_id, 0)
+        test_display_count = test_case_count if aggregation_level == "case" else test_wsi_count
 
         results[task_id] = {
             "has_features": has_features,
@@ -523,6 +543,9 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
             "ai_results_count": ai_results_count,
             "total_wsi_count": total_wsi_count,
             "total_case_count": total_case_count,
+            "test_wsi_count": test_wsi_count,
+            "test_case_count": test_case_count,
+            "test_display_count": test_display_count,
             "aggregation_level": aggregation_level,
         }
 
@@ -608,6 +631,9 @@ async def get_analysis_tasks(
             "ai_results_count": 0,
             "total_wsi_count": 0,
             "total_case_count": 0,
+            "test_wsi_count": 0,
+            "test_case_count": 0,
+            "test_display_count": 0,
             "aggregation_level": "file",
         })
 
@@ -663,6 +689,9 @@ async def get_analysis_tasks(
             "ai_results_count": resources["ai_results_count"],
             "total_wsi_count": resources["total_wsi_count"],
             "total_case_count": resources["total_case_count"],
+            "test_wsi_count": resources["test_wsi_count"],
+            "test_case_count": resources["test_case_count"],
+            "test_display_count": resources["test_display_count"],
             "display_count": display_count,  # Count based on aggregation level
             "wsi_ids": all_wsi_ids_by_task.get(task.task_id, []),  # For WSI overlap detection
             "classes": task.classes,
