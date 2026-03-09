@@ -458,6 +458,10 @@ class WSIRepository:
         # Build data_type case expressions
         is_wsi_case = case((is_wsi, 1), else_=0)
         is_patch_case = case((is_patch, 1), else_=0)
+        split_unit_identifier = case(
+            (DataGroup.aggregation_level == 'case', func.coalesce(WSISlide.case_id, WSISlide.wsi_id)),
+            else_=WSISlide.wsi_id,
+        )
 
         datasets_query = select(
             Dataset.dataset_id,
@@ -525,18 +529,18 @@ class WSIRepository:
         # Get split counts per dataset (train/val/test)
         splits_per_dataset_query = select(
             Dataset.dataset_id,
-            func.sum(case(
-                (func.lower(WSISlide.split) == 'train', 1),
-                else_=0
-            )).label("split_train_count"),
-            func.sum(case(
-                (or_(func.lower(WSISlide.split) == 'val', func.lower(WSISlide.split) == 'validation'), 1),
-                else_=0
-            )).label("split_val_count"),
-            func.sum(case(
-                (func.lower(WSISlide.split) == 'test', 1),
-                else_=0
-            )).label("split_test_count"),
+            func.count(func.distinct(case(
+                (func.lower(WSISlide.split) == 'train', split_unit_identifier),
+                else_=None,
+            ))).label("split_train_count"),
+            func.count(func.distinct(case(
+                (or_(func.lower(WSISlide.split) == 'val', func.lower(WSISlide.split) == 'validation'), split_unit_identifier),
+                else_=None,
+            ))).label("split_val_count"),
+            func.count(func.distinct(case(
+                (func.lower(WSISlide.split) == 'test', split_unit_identifier),
+                else_=None,
+            ))).label("split_test_count"),
         ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
 
         if user_filter is not None:
@@ -552,7 +556,7 @@ class WSIRepository:
             val_count = row.split_val_count or 0
             test_count = row.split_test_count or 0
             dataset_splits_map[row.dataset_id] = {
-                "has_predefined_splits": train_count > 0,  # At least train split must exist
+                "has_predefined_splits": (train_count + val_count + test_count) > 0,
                 "train": train_count,
                 "val": val_count,
                 "test": test_count
@@ -756,18 +760,27 @@ class WSIRepository:
             func.count(WSISlide.id).label("file_count"),
             func.sum(WSISlide.file_size).label("total_size"),
             # Count splits - normalize 'validation' to 'val'
-            func.sum(case(
-                (func.lower(WSISlide.split) == 'train', 1),
-                else_=0
-            )).label("split_train_count"),
-            func.sum(case(
-                (or_(func.lower(WSISlide.split) == 'val', func.lower(WSISlide.split) == 'validation'), 1),
-                else_=0
-            )).label("split_val_count"),
-            func.sum(case(
-                (func.lower(WSISlide.split) == 'test', 1),
-                else_=0
-            )).label("split_test_count"),
+            func.count(func.distinct(case(
+                (func.lower(WSISlide.split) == 'train', case(
+                    (DataGroup.aggregation_level == 'case', func.coalesce(WSISlide.case_id, WSISlide.wsi_id)),
+                    else_=WSISlide.wsi_id,
+                )),
+                else_=None,
+            ))).label("split_train_count"),
+            func.count(func.distinct(case(
+                (or_(func.lower(WSISlide.split) == 'val', func.lower(WSISlide.split) == 'validation'), case(
+                    (DataGroup.aggregation_level == 'case', func.coalesce(WSISlide.case_id, WSISlide.wsi_id)),
+                    else_=WSISlide.wsi_id,
+                )),
+                else_=None,
+            ))).label("split_val_count"),
+            func.count(func.distinct(case(
+                (func.lower(WSISlide.split) == 'test', case(
+                    (DataGroup.aggregation_level == 'case', func.coalesce(WSISlide.case_id, WSISlide.wsi_id)),
+                    else_=WSISlide.wsi_id,
+                )),
+                else_=None,
+            ))).label("split_test_count"),
         ).select_from(WSISlide).outerjoin(
             Dataset, WSISlide.dataset_id == Dataset.dataset_id
         ).outerjoin(
@@ -802,7 +815,7 @@ class WSIRepository:
             train_count = row.split_train_count or 0
             val_count = row.split_val_count or 0
             test_count = row.split_test_count or 0
-            has_predefined_splits = train_count > 0  # At least train split must exist
+            has_predefined_splits = (train_count + val_count + test_count) > 0
 
             dataset_dict = {
                 "dataset_id": row.dataset_id,  # UUID for API calls
@@ -815,6 +828,7 @@ class WSIRepository:
                 "file_count": row.file_count,
                 "total_size": row.total_size or 0,
                 "has_predefined_splits": has_predefined_splits,
+                "predefined_split_unit": "cases" if row.aggregation_level == "case" else "files",
                 "predefined_split_counts": {
                     "train": train_count,
                     "val": val_count,

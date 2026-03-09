@@ -1,7 +1,7 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, session } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { startPythonSidecar, stopPythonSidecar, getGatewayPort } from './sidecar-manager'
+import { startPythonSidecar, stopPythonSidecar, getGatewayPort, getServicePorts } from './sidecar-manager'
 
 // Deep Link protocol
 const PROTOCOL_NAME = 'pathlab'
@@ -143,6 +143,11 @@ ipcMain.handle('open-external-url', async (_event, url: string) => {
 // IPC handler for renderer to get gateway port
 ipcMain.handle('get-gateway-port', () => {
   return getGatewayPort()
+})
+
+// IPC handler for renderer to get all backend service ports
+ipcMain.handle('get-service-ports', () => {
+  return getServicePorts()
 })
 
 // IPC handler for file selection

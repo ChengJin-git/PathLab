@@ -1208,6 +1208,16 @@ class WSIClassificationTrainer(BaseTrainer):
             async with scoped_db(session_maker) as db:
                 wsi_case_map = await TrainingTaskRepository.get_wsi_case_ids(db, self.task_id)
 
+            # Keep case-level mappings aligned with the filtered valid WSI set.
+            # Some task WSIs may have been excluded above due to missing/corrupted/
+            # low-patch features and must not re-enter training through case mapping.
+            valid_wsi_ids = set(all_wsi_ids)
+            wsi_case_map = {
+                wsi_id: case_id
+                for wsi_id, case_id in wsi_case_map.items()
+                if wsi_id in valid_wsi_ids
+            }
+
             # Build case_to_wsi mapping and case_labels
             case_to_wsi = {}
             for wsi_id, case_id in wsi_case_map.items():
@@ -1218,8 +1228,14 @@ class WSIClassificationTrainer(BaseTrainer):
             # case_labels: use label from first WSI in each case
             case_labels = {}
             for case_id, wsi_ids_in_case in case_to_wsi.items():
-                if wsi_ids_in_case:
-                    case_labels[case_id] = labels[wsi_ids_in_case[0]]
+                first_valid_wsi = next((wsi_id for wsi_id in wsi_ids_in_case if wsi_id in labels), None)
+                if first_valid_wsi is None:
+                    await logger.warning(
+                        f"[Case-Level] Skipping case {case_id}: no valid WSI remained after filtering",
+                        metadata={"case_id": case_id, "wsi_ids": wsi_ids_in_case[:20]}
+                    )
+                    continue
+                case_labels[case_id] = labels[first_valid_wsi]
 
             # Convert splits to case-level
             case_splits = self._convert_splits_to_case_level(splits_map, wsi_case_map)

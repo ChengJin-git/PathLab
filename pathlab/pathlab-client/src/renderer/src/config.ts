@@ -10,10 +10,18 @@
  * - Browser mode: Use default ports or environment variables
  */
 
+interface BackendServicePorts {
+  gateway: number | null
+  preprocessing: number | null
+  ai: number | null
+}
+
 // Electron API interface for backend discovery
 interface ElectronBackendApi {
   getGatewayPort: () => Promise<number | null>
   onGatewayPort: (callback: (port: number) => void) => () => void
+  getServicePorts?: () => Promise<BackendServicePorts>
+  onServicePorts?: (callback: (ports: BackendServicePorts) => void) => () => void
 }
 
 interface ElectronApi {
@@ -58,6 +66,18 @@ const apiConfig = {
   initialized: false
 }
 
+function applyDiscoveredPorts(ports: Partial<BackendServicePorts>): void {
+  if (ports.gateway !== undefined) {
+    apiConfig.gatewayPort = ports.gateway
+  }
+  if (ports.preprocessing !== undefined) {
+    apiConfig.preprocessingPort = ports.preprocessing
+  }
+  if (ports.ai !== undefined) {
+    apiConfig.aiPort = ports.ai
+  }
+}
+
 /**
  * Initialize dynamic port discovery from Electron
  * Call this early in the app lifecycle
@@ -67,20 +87,31 @@ export async function initializeApiConfig(): Promise<void> {
 
   const electronApi = getElectronApi()
   if (electronApi?.backend) {
-    // Get initial port
-    const port = await electronApi.backend.getGatewayPort()
-    if (port) {
-      apiConfig.gatewayPort = port
-      console.log('[Config] Gateway port initialized:', port)
+    if (electronApi.backend.getServicePorts) {
+      const ports = await electronApi.backend.getServicePorts()
+      applyDiscoveredPorts(ports)
+      console.log('[Config] Backend ports initialized:', ports)
+    } else {
+      const port = await electronApi.backend.getGatewayPort()
+      if (port) {
+        applyDiscoveredPorts({ gateway: port })
+        console.log('[Config] Gateway port initialized:', port)
+      }
     }
 
-    // Listen for port updates
-    electronApi.backend.onGatewayPort((port) => {
-      apiConfig.gatewayPort = port
-      console.log('[Config] Gateway port updated:', port)
-      // Update exports
-      updateApiBase()
-    })
+    if (electronApi.backend.onServicePorts) {
+      electronApi.backend.onServicePorts((ports) => {
+        applyDiscoveredPorts(ports)
+        console.log('[Config] Backend ports updated:', ports)
+        updateApiBase()
+      })
+    } else {
+      electronApi.backend.onGatewayPort((port) => {
+        applyDiscoveredPorts({ gateway: port })
+        console.log('[Config] Gateway port updated:', port)
+        updateApiBase()
+      })
+    }
   }
 
   apiConfig.initialized = true

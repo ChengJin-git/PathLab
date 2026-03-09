@@ -1,6 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
+interface BackendServicePorts {
+  gateway: number | null
+  preprocessing: number | null
+  ai: number | null
+}
+
 // Custom APIs for renderer
 const api = {
   // Authentication
@@ -39,6 +45,13 @@ const api = {
     },
 
     /**
+     * Get all discovered backend service ports
+     */
+    getServicePorts: (): Promise<BackendServicePorts> => {
+      return ipcRenderer.invoke('get-service-ports')
+    },
+
+    /**
      * Listen for gateway port updates
      * Returns cleanup function
      */
@@ -51,6 +64,21 @@ const api = {
       // Return cleanup function
       return (): void => {
         ipcRenderer.removeListener('gateway-port', handler)
+      }
+    },
+
+    /**
+     * Listen for backend service port updates
+     * Returns cleanup function
+     */
+    onServicePorts: (callback: (ports: BackendServicePorts) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, ports: BackendServicePorts): void => {
+        callback(ports)
+      }
+      ipcRenderer.on('backend-service-ports', handler)
+
+      return (): void => {
+        ipcRenderer.removeListener('backend-service-ports', handler)
       }
     }
   },

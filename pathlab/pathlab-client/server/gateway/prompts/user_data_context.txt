@@ -22,8 +22,11 @@ The user has the following data available:
 - labels: Available class labels (for classification datasets)
 - survival_info: Event/time columns (for survival datasets)
 - splits: Whether train/val/test splits exist
-- task_types: Supported task types (classification, survival, or both)
+- predefined_split_distribution(unit): Exact train/val/test counts when predefined splits already exist
+- task_types: Supported task types (classification, survival, segmentation, or compatible combinations)
 - available_feature_extractors: Feature extractors available (for WSI datasets) - CRITICAL for external validation compatibility
+
+CRITICAL: If a dataset line includes `predefined_split_distribution(...)`, you MUST use those exact counts directly when answering questions about train/val/test distribution. Do NOT say the exact split counts are unavailable.
 
 CRITICAL: When user asks "what data do I have" or similar questions, you MUST list ALL datasets shown above, clearly distinguishing:
 1. "Your own datasets: ..." (datasets without ELEVATED ACCESS marker)
@@ -49,6 +52,8 @@ The user has **{models_count}** trained model(s) available for inference and ext
 
 The user has **{training_tasks_total}** training task(s) in total ({training_tasks_completed} completed, {training_tasks_running} running, {training_tasks_failed} failed):
 {training_tasks_list}
+
+For running tasks, list items may include real-time fields such as `progress=...`, `epoch=...`, `train_loss=...`, `val_loss=...`, `val_dice=...`, `val_auc=...`, `lr=...`, or `latest_log="..."`. These values come from the live task/log stream and can be used directly when answering training-progress questions.
 
 ## USER'S INFERENCE TASKS
 

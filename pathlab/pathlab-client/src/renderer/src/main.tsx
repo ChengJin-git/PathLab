@@ -15,12 +15,6 @@ const basename = import.meta.env.BASE_URL
 // Detect if running in Electron (file:// protocol or electron window object)
 const isElectron = !!(window as any).electron || window.location.protocol === 'file:'
 
-// Initialize API configuration (dynamic port discovery)
-initializeApiConfig().then(() => {
-  updateApiBase()
-  console.log('[Main] API configuration initialized')
-})
-
 // Register Service Worker for PWA support
 // Only register in browser environment (not in Electron)
 if ('serviceWorker' in navigator && !isElectron) {
@@ -55,15 +49,28 @@ if ('serviceWorker' in navigator && !isElectron) {
 // HashRouter uses URL hash (#) which works with file:// protocol
 const Router = isElectron ? HashRouter : BrowserRouter
 
-createRoot(document.getElementById('root')!).render(
-  <Router basename={isElectron ? undefined : basename}>
-    <ToastProvider>
-      <AuthProvider>
-        <BackgroundTaskProvider>
-          <App />
-        </BackgroundTaskProvider>
-      </AuthProvider>
-    </ToastProvider>
-  </Router>
-)
+async function bootstrap(): Promise<void> {
+  try {
+    await initializeApiConfig()
+  } catch (error) {
+    console.error('[Main] Failed to initialize API configuration:', error)
+  }
+
+  updateApiBase()
+  console.log('[Main] API configuration initialized')
+
+  createRoot(document.getElementById('root')!).render(
+    <Router basename={isElectron ? undefined : basename}>
+      <ToastProvider>
+        <AuthProvider>
+          <BackgroundTaskProvider>
+            <App />
+          </BackgroundTaskProvider>
+        </AuthProvider>
+      </ToastProvider>
+    </Router>
+  )
+}
+
+void bootstrap()
 

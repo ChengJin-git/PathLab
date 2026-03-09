@@ -4,6 +4,7 @@ Handles AI chat, conversation persistence, and task parsing
 """
 import asyncio
 import json
+import math
 import mimetypes
 import os
 import re
@@ -18,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.database import get_db
-from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository, DatasetPermissionRepository, DatasetRepository, TrainingTaskRepository, AITaskRepository
+from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository, DatasetPermissionRepository, DatasetRepository, TrainingTaskRepository, TrainingLogRepository, AITaskRepository
 from backend.database.models import TrainingTask, DataGroup, WSISlide, TrainingTaskWSI
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import check_data_ownership, get_user_id_filter, get_user_from_header_or_param
@@ -45,6 +46,8 @@ from .chat_pdf_vectorstore import search_pdf_chunks
 router = APIRouter(tags=["Chat & Conversations"])
 
 SEGMENTATION_TASK_TYPES = {"segmentation", "patch_segmentation"}
+ACTIVE_TRAINING_STATUSES = {"pending", "queued", "patching", "resuming", "extracting", "training"}
+_EPOCH_PROGRESS_RE = re.compile(r"epoch\s+(\d+)\s*/\s*(\d+)", re.IGNORECASE)
 
 
 def _is_segmentation_task(task_type: Optional[str]) -> bool:
@@ -120,6 +123,95 @@ def _normalize_task_config_blocks(response_text: str) -> str:
         return f"[TASK_CONFIG]\n{normalized_json}\n[/TASK_CONFIG]"
 
     return pattern.sub(_replace, response_text)
+
+
+def _format_prompt_number(value: Any) -> Optional[str]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        text = str(value).strip()
+        return text or None
+    if not math.isfinite(number):
+        return None
+    if number.is_integer():
+        return str(int(number))
+    if abs(number) >= 1000:
+        return f"{number:.1f}"
+    if abs(number) >= 1:
+        return f"{number:.4f}".rstrip("0").rstrip(".")
+    return f"{number:.4g}"
+
+
+def _shorten_prompt_text(text: str, limit: int = 140) -> str:
+    clean = " ".join(str(text).split())
+    if len(clean) <= limit:
+        return clean
+    return clean[: limit - 3].rstrip() + "..."
+
+
+def _extract_latest_training_snapshot(logs: List[Any]) -> Optional[str]:
+    metric_labels = [
+        ("train_loss", "train_loss"),
+        ("val_loss", "val_loss"),
+        ("val_accuracy", "val_accuracy"),
+        ("val_acc", "val_accuracy"),
+        ("val_auc", "val_auc"),
+        ("train_c_index", "train_c_index"),
+        ("val_c_index", "val_c_index"),
+        ("val_dice", "val_dice"),
+        ("val_iou", "val_iou"),
+        ("val_mean_iou", "val_mean_iou"),
+        ("lr", "lr"),
+    ]
+
+    for log in reversed(logs):
+        message = str(getattr(log, "message", "") or "").strip()
+        metadata = getattr(log, "extra_data", None)
+        metadata = metadata if isinstance(metadata, dict) else {}
+        epoch_match = _EPOCH_PROGRESS_RE.search(message)
+
+        if not metadata and not epoch_match:
+            continue
+
+        summary_parts: List[str] = []
+        fold_value = _format_prompt_number(metadata.get("fold"))
+        if fold_value:
+            summary_parts.append(f"fold={fold_value}")
+
+        epoch_value = _format_prompt_number(metadata.get("epoch"))
+        if epoch_value and epoch_match:
+            summary_parts.append(f"epoch={epoch_value}/{epoch_match.group(2)}")
+        elif epoch_value:
+            summary_parts.append(f"epoch={epoch_value}")
+        elif epoch_match:
+            summary_parts.append(f"epoch={epoch_match.group(1)}/{epoch_match.group(2)}")
+
+        seen_labels = set()
+        for key, label in metric_labels:
+            if label in seen_labels or key not in metadata:
+                continue
+            formatted = _format_prompt_number(metadata.get(key))
+            if formatted is None:
+                continue
+            summary_parts.append(f"{label}={formatted}")
+            seen_labels.add(label)
+
+        phase = str(metadata.get("phase") or "").strip()
+        if phase:
+            summary_parts.append(f"phase={phase}")
+
+        if summary_parts:
+            return "; ".join(summary_parts)
+        if message:
+            return f'latest_log="{_shorten_prompt_text(message)}"'
+
+    for log in reversed(logs):
+        message = str(getattr(log, "message", "") or "").strip()
+        if message:
+            return f'latest_log="{_shorten_prompt_text(message)}"'
+    return None
 
 
 def _get_segmentation_model_spec(model: Any, training_task: Optional[TrainingTask]) -> Dict[str, str | bool]:
@@ -2262,13 +2354,20 @@ async def chat_with_ai(
             ds_labels = d.get('labels', {})
             ds_survival = d.get('survival_count', 0)
             ds_event_status = d.get('event_status', {})
-            ds_has_splits = d.get('has_predefined_splits', False)
             ds_access_type = d.get('access_type', 'own')
             rich_ds = rich_datasets_map.get(ds_id, {})
             ds_task_type = rich_ds.get('task_type') or d.get('group_task_type', 'unknown')
             is_segmentation_dataset = _is_segmentation_task(ds_task_type) or _is_segmentation_task(d.get('group_task_type'))
             effective_ds_labels = {} if is_segmentation_dataset else ds_labels
             ds_aggregation_level = rich_ds.get('aggregation_level', '')
+            ds_split_counts = rich_ds.get('predefined_split_counts') or d.get('predefined_split_counts', {})
+            ds_split_unit = rich_ds.get('predefined_split_unit') or ('cases' if ds_aggregation_level == 'case' else 'files')
+            ds_train_split = int(ds_split_counts.get('train', 0) or 0)
+            ds_val_split = int(ds_split_counts.get('val', 0) or 0)
+            ds_test_split = int(ds_split_counts.get('test', 0) or 0)
+            ds_has_splits = d.get('has_predefined_splits', False) or any(
+                count > 0 for count in (ds_train_split, ds_val_split, ds_test_split)
+            )
             ds_segmentation_labels = _extract_segmentation_label_names(rich_ds.get('coco_categories', []) or [])
             d['task_type'] = ds_task_type
             d['labels'] = effective_ds_labels
@@ -2288,7 +2387,11 @@ async def chat_with_ai(
             else:
                 survival_str = ""
 
-            splits_str = ", has_predefined_splits=true" if ds_has_splits else ""
+            splits_str = (
+                f", has_predefined_splits=true, predefined_split_distribution({ds_split_unit})="
+                f"[train:{ds_train_split}, val:{ds_val_split}, test:{ds_test_split}]"
+                if ds_has_splits else ""
+            )
 
             # Determine supported task types based on data
             task_types = []
@@ -2554,9 +2657,26 @@ async def chat_with_ai(
     training_tasks_failed = training_tasks_stats.get("failed", 0)
 
     if training_tasks:
+        from backend.common.progress_store import get_all_progress
+
+        active_task_ids = [
+            t.task_id for t in training_tasks
+            if str(getattr(t, "status", "") or "").lower() in ACTIVE_TRAINING_STATUSES
+        ]
+        live_progress_map = await get_all_progress() if active_task_ids else {}
+        recent_logs_by_task_id: Dict[str, List[Any]] = {}
+        if active_task_ids:
+            recent_logs_batches = await asyncio.gather(
+                *(TrainingLogRepository.get_recent(db, task_id, count=20) for task_id in active_task_ids)
+            )
+            recent_logs_by_task_id = {
+                task_id: logs for task_id, logs in zip(active_task_ids, recent_logs_batches)
+            }
+
         training_tasks_details = []
         for t in training_tasks:
             created_str = t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "unknown"
+            status_lower = str(t.status or "").lower()
             # Get task_type and data_type from DataGroup relationship
             if t.data_group:
                 task_type = t.data_group.task_type
@@ -2564,8 +2684,23 @@ async def chat_with_ai(
             else:
                 task_type = "unknown"
                 data_type = "unknown"
+
+            detail_parts = [f"created={created_str}"]
+            if status_lower in ACTIVE_TRAINING_STATUSES:
+                live_progress = live_progress_map.get(t.task_id)
+                if live_progress is None:
+                    live_progress = getattr(t, "progress", None)
+                progress_value = _format_prompt_number(live_progress)
+                if progress_value is not None:
+                    detail_parts.append(f"progress={progress_value}%")
+
+                latest_snapshot = _extract_latest_training_snapshot(recent_logs_by_task_id.get(t.task_id, []))
+                if latest_snapshot:
+                    detail_parts.append(latest_snapshot)
+
             training_tasks_details.append(
-                f"  - [{t.status.upper()}] {t.task_name} (id={t.task_id}): {task_type}, {data_type}, created={created_str}"
+                f"  - [{t.status.upper()}] {t.task_name} (id={t.task_id}): {task_type}, {data_type}, "
+                + "; ".join(detail_parts)
             )
         if training_tasks_total > 10:
             training_tasks_details.append(f"  ... and {training_tasks_total - 10} more tasks")
