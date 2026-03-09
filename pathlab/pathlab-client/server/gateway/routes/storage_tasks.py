@@ -518,6 +518,45 @@ async def _run_reset_derived_data_task(task_id: str, user_id: str):
             await StorageTaskRepository.update_status(db, task_id, 'processing', progress=0)
             await db.commit()
 
+            # Define progress callback to update database
+            def progress_callback(progress: int):
+                """Synchronous callback to update progress - will be called from sync context"""
+                # We can't use async here since it's called from sync code
+                # Instead, we'll update progress after the operation completes
+                pass
+
+            # Run the reset operation in thread pool
+            result = await asyncio.to_thread(
+                storage_manager.reset_derived_data,
+                progress_callback=None  # We'll update progress manually
+            )
+
+            # Update task with final results
+            await StorageTaskRepository.update_status(
+                db, task_id, 'completed',
+                progress=100,
+                processed_items=8,
+                success_count=len(result.get('deleted_dirs', [])),
+                failed_count=len(result.get('failed', [])),
+                results=[{
+                    "deleted_dirs": result.get('deleted_dirs', []),
+                    "failed": result.get('failed', []),
+                    "total_size": result.get('total_size', 0),
+                    "summary": result.get('summary', '')
+                }]
+            )
+            await db.commit()
+
+            logger.info(f"Reset derived data task {task_id} completed: {result.get('summary', '')}")
+
+        except Exception as e:
+            logger.error(f"Reset derived data task {task_id} failed: {e}")
+            await StorageTaskRepository.update_status(
+                db, task_id, 'failed',
+                error_message=str(e)
+            )
+            await db.commit()
+
 
 async def _delete_wsi_associated_records(db: AsyncSession, wsi_id: str) -> None:
     """Delete DB-side records that must be removed before deleting a WSI row."""
@@ -591,45 +630,6 @@ async def _cleanup_empty_dataset_record(db: AsyncSession, dataset_id: str) -> bo
     _remove_dataset_annotation_cache_files(dataset_id, annotation_ids)
     logger.info(f"Deleted empty dataset record {dataset_id}")
     return True
-
-            # Define progress callback to update database
-            def progress_callback(progress: int):
-                """Synchronous callback to update progress - will be called from sync context"""
-                # We can't use async here since it's called from sync code
-                # Instead, we'll update progress after the operation completes
-                pass
-
-            # Run the reset operation in thread pool
-            result = await asyncio.to_thread(
-                storage_manager.reset_derived_data,
-                progress_callback=None  # We'll update progress manually
-            )
-
-            # Update task with final results
-            await StorageTaskRepository.update_status(
-                db, task_id, 'completed',
-                progress=100,
-                processed_items=8,
-                success_count=len(result.get('deleted_dirs', [])),
-                failed_count=len(result.get('failed', [])),
-                results=[{
-                    "deleted_dirs": result.get('deleted_dirs', []),
-                    "failed": result.get('failed', []),
-                    "total_size": result.get('total_size', 0),
-                    "summary": result.get('summary', '')
-                }]
-            )
-            await db.commit()
-
-            logger.info(f"Reset derived data task {task_id} completed: {result.get('summary', '')}")
-
-        except Exception as e:
-            logger.error(f"Reset derived data task {task_id} failed: {e}")
-            await StorageTaskRepository.update_status(
-                db, task_id, 'failed',
-                error_message=str(e)
-            )
-            await db.commit()
 
 
 async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
