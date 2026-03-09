@@ -544,7 +544,7 @@ async def _run_external_validation_segmentation_analysis(task, request, db, mode
     if has_metrics:
         results_with_gt = [r for r in image_results if r.get("has_ground_truth") and r.get("metrics")]
         primary_metric_key = _resolve_segmentation_primary_metric_key(class_names, results_with_gt)
-        metric_keys = [primary_metric_key, "dice", "accuracy", "precision", "recall"]
+        metric_keys = [primary_metric_key, "dice", "accuracy", "precision", "recall", "f1"]
 
         for key in metric_keys:
             values = [

@@ -271,7 +271,7 @@ def _calculate_segmentation_bootstrap_ci(
         return {"metrics_ci": {}, "n_bootstrap": n_bootstrap, "confidence_level": confidence_level}
 
     primary_metric_key = "miou" if _is_multiclass_segmentation(None, per_image_metrics) else "iou"
-    supported_metric_keys = [primary_metric_key, "dice", "accuracy", "precision", "recall"]
+    supported_metric_keys = [primary_metric_key, "dice", "accuracy", "precision", "recall", "f1"]
     requested_metric_keys = set(requested_metrics)
     if primary_metric_key == "miou" and "iou" in requested_metric_keys:
         requested_metric_keys.add("miou")
@@ -462,7 +462,7 @@ async def _run_segmentation_analysis(
 
     # Override summary_metrics with mean of per-image metrics if available
     if per_image_metrics:
-        for key in (primary_metric_key, "dice", "accuracy", "precision", "recall"):
+        for key in (primary_metric_key, "dice", "accuracy", "precision", "recall", "f1"):
             values = [_resolve_segmentation_metric_value(m, key) for m in per_image_metrics]
             values = [value for value in values if value is not None]
             if values:
