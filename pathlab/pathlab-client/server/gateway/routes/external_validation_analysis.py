@@ -54,6 +54,9 @@ def _build_segmentation_class_summary(
     metric_specs = {
         "iou_per_class": ("iou", "per_class_iou", "IoU"),
         "dice_per_class": ("dice", "per_class_dice", "Dice"),
+        "precision_per_class": ("precision", None, "Precision"),
+        "recall_per_class": ("recall", None, "Recall"),
+        "f1_per_class": ("f1", None, "F1"),
     }
 
     class_metrics: Dict[str, Dict[str, float]] = {name: {} for name in class_names}
@@ -96,12 +99,13 @@ def _build_segmentation_class_summary(
             })
 
         per_class_data[raw_key] = per_class_entries
-        chart_data[chart_key] = {
-            "classes": class_names[:len(means)],
-            "means": [round(float(v), 4) for v in means.tolist()],
-            "stds": [round(float(v), 4) for v in stds.tolist()],
-            "metric_name": metric_name,
-        }
+        if chart_key:
+            chart_data[chart_key] = {
+                "classes": class_names[:len(means)],
+                "means": [round(float(v), 4) for v in means.tolist()],
+                "stds": [round(float(v), 4) for v in stds.tolist()],
+                "metric_name": metric_name,
+            }
 
     return {
         "classes": class_names,

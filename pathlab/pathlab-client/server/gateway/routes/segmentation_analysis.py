@@ -92,6 +92,9 @@ def _build_segmentation_class_metrics(
     metric_specs = {
         "iou_per_class": ("iou", "per_class_iou", "IoU"),
         "dice_per_class": ("dice", "per_class_dice", "Dice"),
+        "precision_per_class": ("precision", None, "Precision"),
+        "recall_per_class": ("recall", None, "Recall"),
+        "f1_per_class": ("f1", None, "F1"),
     }
 
     for raw_key, (metric_key, chart_key, metric_name) in metric_specs.items():
@@ -128,14 +131,15 @@ def _build_segmentation_class_metrics(
         for index, class_name in enumerate(class_names[:len(means)]):
             class_metrics.setdefault(class_name, {})[metric_key] = round(float(means[index]), 4)
 
-        chart_payload: Dict[str, Any] = {
-            "classes": class_names[:len(means)],
-            "means": [round(float(v), 4) for v in means.tolist()],
-            "metric_name": metric_name,
-        }
-        if stds is not None:
-            chart_payload["stds"] = [round(float(v), 4) for v in stds.tolist()]
-        chart_payloads[chart_key] = chart_payload
+        if chart_key:
+            chart_payload: Dict[str, Any] = {
+                "classes": class_names[:len(means)],
+                "means": [round(float(v), 4) for v in means.tolist()],
+                "metric_name": metric_name,
+            }
+            if stds is not None:
+                chart_payload["stds"] = [round(float(v), 4) for v in stds.tolist()]
+            chart_payloads[chart_key] = chart_payload
 
     return {
         "classes": class_names,

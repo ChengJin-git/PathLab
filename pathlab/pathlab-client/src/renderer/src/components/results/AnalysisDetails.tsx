@@ -279,7 +279,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
 
 
       {/* Metrics Grid */}
-      {Object.entries(analysis.metrics).filter(([key]) => !key.includes('recall') && shouldShowMetric(key)).length > 0 && (
+      {Object.entries(analysis.metrics).filter(([key]) => shouldShowMetric(key)).length > 0 && (
       <div className="pt-4">
         <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
           <div className={`w-1.5 h-6 ${accentBg} rounded-full`} />
@@ -287,7 +287,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
         </h5>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {Object.entries(analysis.metrics)
-            .filter(([key]) => !key.includes('recall') && shouldShowMetric(key))
+            .filter(([key]) => shouldShowMetric(key))
             .map(([key, value]) => {
               const ci = analysis.bootstrap_ci?.metrics_ci?.[key] || analysis.bootstrap_ci?.metrics_ci?.[`macro_${key}`]
               return (
@@ -474,22 +474,22 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
 
             {/* IoU Curve */}
             {shouldShowChart('iou_curve') && analysis.chart_data?.iou_curve && (
-              <MetricCurveChart data={analysis.chart_data.iou_curve} title="IoU Curve" />
+              <MetricCurveChart data={analysis.chart_data.iou_curve} />
             )}
 
             {/* Dice Curve */}
             {shouldShowChart('dice_curve') && analysis.chart_data?.dice_curve && (
-              <MetricCurveChart data={analysis.chart_data.dice_curve} title="Dice Curve" />
+              <MetricCurveChart data={analysis.chart_data.dice_curve} />
             )}
 
             {/* External Segmentation Per-Class IoU */}
             {shouldShowChart('per_class_iou') && analysis.chart_data?.per_class_iou && (
-              <PerClassMetricBarChart data={analysis.chart_data.per_class_iou} title="Per-Class IoU" />
+              <PerClassMetricBarChart data={analysis.chart_data.per_class_iou} title={`${analysis.chart_data.per_class_iou.metric_name} ${t('analysisDetails.perClassPerformance')}`} />
             )}
 
             {/* External Segmentation Per-Class Dice */}
             {shouldShowChart('per_class_dice') && analysis.chart_data?.per_class_dice && (
-              <PerClassMetricBarChart data={analysis.chart_data.per_class_dice} title="Per-Class Dice" />
+              <PerClassMetricBarChart data={analysis.chart_data.per_class_dice} title={`${analysis.chart_data.per_class_dice.metric_name} ${t('analysisDetails.perClassPerformance')}`} />
             )}
           </div>
         </div>
