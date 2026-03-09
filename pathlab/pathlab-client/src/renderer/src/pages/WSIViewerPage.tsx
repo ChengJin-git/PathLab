@@ -215,8 +215,12 @@ export default function WSIViewerPage() {
       if (deleteMode === 'all' || !heatmaps.find(h => h.task_id === selectedTaskId)) {
         if (heatmaps.length > 0) {
           setSelectedTaskId(heatmaps[0].task_id ?? undefined)
+          setSelectedFoldKey(undefined)
+          setShowHeatmap(false)
+          setShowSegMask(false)
         } else {
           setSelectedTaskId(undefined)
+          setSelectedFoldKey(undefined)
           setHeatmapData(null)
           setShowHeatmap(false)
           setShowSegMask(false)
@@ -326,10 +330,11 @@ export default function WSIViewerPage() {
       try {
         const heatmaps = await fetchAvailableHeatmaps(wsi_id)
         setAvailableHeatmaps(heatmaps)
-        // Auto-select first heatmap if available
         if (heatmaps.length > 0 && heatmaps[0].task_id) {
           setSelectedTaskId(heatmaps[0].task_id)
-          setShowHeatmap(true)
+          setSelectedFoldKey(undefined)
+          setShowHeatmap(false)
+          setShowSegMask(false)
         }
       } catch (err) {
         console.error('Failed to fetch available heatmaps:', err)
@@ -352,16 +357,56 @@ export default function WSIViewerPage() {
     }
   }, [])
 
-  // Get selected task and check if it's patch-level
-  const selectedTask = availableHeatmaps.find(h => h.task_id === selectedTaskId && (!h.fold_key || h.fold_key === selectedFoldKey))
-  const isPatchLevel = selectedTask?.data_type === 'patch'
-  const isPatchSegmentation = selectedTask?.data_type === 'patch_segmentation'
+  const handleSelectedTaskChange = useCallback((taskId: string | undefined) => {
+    setSelectedTaskId(taskId)
+    setSelectedFoldKey(undefined)
+    setSelectedClassIdx(undefined)
+    setShowHeatmap(false)
+    setShowSegMask(false)
+  }, [])
+
+  const handleSelectedFoldChange = useCallback((foldKey: string) => {
+    setSelectedFoldKey(foldKey)
+    setSelectedClassIdx(undefined)
+    setShowHeatmap(false)
+    setShowSegMask(false)
+  }, [])
+
+  const selectedTaskGroup = useMemo(() => {
+    if (!selectedTaskId) return []
+    return availableHeatmaps.filter(h => h.task_id === selectedTaskId)
+  }, [availableHeatmaps, selectedTaskId])
+
+  const isSegmentationTask = selectedTaskGroup.some(
+    h => h.task_type === 'segmentation' || h.task_type === 'patch_segmentation' || h.data_type === 'patch_segmentation'
+  )
+
+  const effectiveFoldKey = isSegmentationTask ? undefined : selectedFoldKey
+
+  const selectedTaskEntries = useMemo(() => {
+    if (selectedTaskGroup.length === 0) return []
+
+    if (effectiveFoldKey) {
+      const foldEntries = selectedTaskGroup.filter(h => h.fold_key === effectiveFoldKey)
+      if (foldEntries.length > 0) return foldEntries
+    }
+
+    const nonFoldEntries = selectedTaskGroup.filter(h => !h.fold_key)
+    return nonFoldEntries.length > 0 ? nonFoldEntries : selectedTaskGroup
+  }, [effectiveFoldKey, selectedTaskGroup])
+
+  const selectedTask = selectedTaskEntries.find(h => h.data_type === 'wsi' || h.data_type === 'patch') ?? selectedTaskEntries[0]
+  const hasPatchHeatmap = selectedTaskEntries.some(h => h.data_type === 'patch')
+  const isPatchLevel = selectedTaskEntries.some(h => h.data_type === 'patch' || h.data_type === 'patch_segmentation')
+  const canShowHeatmapOverlay = selectedTaskEntries.some(h => h.data_type === 'wsi' || h.data_type === 'patch')
+  const canShowSegMaskOverlay = selectedTaskEntries.some(h => h.data_type === 'patch_segmentation')
+  const shouldShowOverlayControls = canShowHeatmapOverlay || canShowSegMaskOverlay
 
   // Get available folds for the selected task (K-fold support)
   const availableFolds = useMemo(() => {
-    if (!selectedTaskId) return []
-    const folds = availableHeatmaps
-      .filter(h => h.task_id === selectedTaskId && h.fold_key)
+    if (selectedTaskGroup.length === 0 || isSegmentationTask) return []
+    const folds = selectedTaskGroup
+      .filter(h => h.fold_key)
       .map(h => h.fold_key!)
       .filter((v, i, a) => a.indexOf(v) === i)  // unique
       .sort((a, b) => {
@@ -371,7 +416,7 @@ export default function WSIViewerPage() {
         return numA - numB
       })
     return folds
-  }, [availableHeatmaps, selectedTaskId])
+  }, [isSegmentationTask, selectedTaskGroup])
 
   // Get unique tasks for dropdown (deduplicate K-fold entries)
   const uniqueTasks = useMemo(() => {
@@ -402,14 +447,26 @@ export default function WSIViewerPage() {
     }
   }, [availableFolds, selectedFoldKey])
 
+  useEffect(() => {
+    if (!canShowHeatmapOverlay && showHeatmap) {
+      setShowHeatmap(false)
+    }
+  }, [canShowHeatmapOverlay, showHeatmap])
+
+  useEffect(() => {
+    if (!canShowSegMaskOverlay && showSegMask) {
+      setShowSegMask(false)
+    }
+  }, [canShowSegMaskOverlay, showSegMask])
+
   // Load patch CAM data when selecting a patch-level task
   useEffect(() => {
-    if (isPatchLevel && selectedTaskId) {
-      fetchPatchCAMData(wsi_id, selectedTaskId, selectedFoldKey).then(setPatchCAMData)
+    if (hasPatchHeatmap && selectedTaskId) {
+      fetchPatchCAMData(wsi_id, selectedTaskId, effectiveFoldKey).then(setPatchCAMData)
     } else {
       setPatchCAMData(null)
     }
-  }, [wsi_id, selectedTaskId, selectedFoldKey, isPatchLevel])
+  }, [wsi_id, selectedTaskId, effectiveFoldKey, hasPatchHeatmap])
 
   const currentIndex = allWSIs.findIndex(w => w.wsi_id === wsi_id)
   const prevWSI = currentIndex > 0 ? allWSIs[currentIndex - 1] : null
@@ -1102,9 +1159,9 @@ export default function WSIViewerPage() {
                   draggable={false}
                 />
                 {/* CAM overlay (for both classification and segmentation) */}
-                {showHeatmap && selectedTaskId && (
+                {showHeatmap && canShowHeatmapOverlay && selectedTaskId && (
                   <img
-                    src={getPatchCAMImageUrl(wsi_id, selectedTaskId, selectedFoldKey)}
+                    src={getPatchCAMImageUrl(wsi_id, selectedTaskId, effectiveFoldKey)}
                     alt={t('wsiViewer.heatmapOverlayAlt')}
                     className="absolute inset-0 w-full h-full object-contain rounded-xl pointer-events-none select-none"
                     style={{ opacity: heatmapOpacity }}
@@ -1112,10 +1169,10 @@ export default function WSIViewerPage() {
                   />
                 )}
                 {/* Segmentation mask overlay (only for segmentation tasks) */}
-                {isPatchSegmentation && showSegMask && selectedTaskId && (
+                {showSegMask && canShowSegMaskOverlay && selectedTaskId && (
                   <img
-                    src={getSegMaskImageUrl(wsi_id, selectedTaskId, selectedFoldKey)}
-                    alt="Segmentation Mask"
+                    src={getSegMaskImageUrl(wsi_id, selectedTaskId, effectiveFoldKey)}
+                    alt="Prediction Mask"
                     className="absolute inset-0 w-full h-full object-contain rounded-xl pointer-events-none select-none"
                     style={{ opacity: 1 }}
                     draggable={false}
@@ -1131,7 +1188,7 @@ export default function WSIViewerPage() {
                 showHeatmap={showHeatmap}
                 heatmapOpacity={heatmapOpacity}
                 taskId={selectedTaskId}
-                foldKey={selectedFoldKey}
+                foldKey={effectiveFoldKey}
                 classIdx={selectedClassIdx}
                 dataLevel={(selectedTask?.data_type === 'patch_segmentation' ? 'wsi' : selectedTask?.data_type) || 'wsi'}
                 onHeatmapLoaded={handleHeatmapLoaded}
@@ -1157,26 +1214,25 @@ export default function WSIViewerPage() {
           )}
 
           {/* Heatmap Controls Overlay */}
-          {availableHeatmaps.length > 0 && (
+          {availableHeatmaps.length > 0 && shouldShowOverlayControls && (
             <div className="absolute bottom-4 left-4 right-4 sm:right-auto bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200 p-2 sm:p-3 z-20">
               <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
                 {/* CAM / Heatmap toggle */}
-                <button
-                  onClick={() => setShowHeatmap(!showHeatmap)}
-                  className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${showHeatmap
-                    ? 'bg-indigo-100 text-indigo-700 border border-indigo-300'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200'
-                    }`}
-                >
-                  <Layers className="w-4 h-4" />
-                  {isPatchSegmentation
-                    ? (showHeatmap ? 'Hide CAM' : 'Show CAM')
-                    : (showHeatmap ? t('wsiViewer.hideHeatmap') : t('wsiViewer.showHeatmap'))
-                  }
-                </button>
+                {canShowHeatmapOverlay && (
+                  <button
+                    onClick={() => setShowHeatmap(!showHeatmap)}
+                    className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${showHeatmap
+                      ? 'bg-indigo-100 text-indigo-700 border border-indigo-300'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200'
+                      }`}
+                  >
+                    <Layers className="w-4 h-4" />
+                    {showHeatmap ? t('wsiViewer.hideHeatmap') : t('wsiViewer.showHeatmap')}
+                  </button>
+                )}
 
                 {/* Segmentation mask toggle (only for segmentation tasks) */}
-                {isPatchSegmentation && (
+                {canShowSegMaskOverlay && (
                   <button
                     onClick={() => setShowSegMask(!showSegMask)}
                     className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${showSegMask
@@ -1185,7 +1241,7 @@ export default function WSIViewerPage() {
                       }`}
                   >
                     <Layers className="w-4 h-4" />
-                    {showSegMask ? 'Hide Mask' : 'Show Mask'}
+                    {showSegMask ? 'Hide Pred Mask' : 'Show Pred Mask'}
                   </button>
                 )}
 
@@ -1280,10 +1336,11 @@ export default function WSIViewerPage() {
                 <TaskSelectorCard
                   availableHeatmaps={availableHeatmaps}
                   selectedTaskId={selectedTaskId}
-                  setSelectedTaskId={setSelectedTaskId}
-                  selectedFoldKey={selectedFoldKey}
-                  setSelectedFoldKey={setSelectedFoldKey}
+                  setSelectedTaskId={handleSelectedTaskChange}
+                  selectedFoldKey={effectiveFoldKey}
+                  setSelectedFoldKey={handleSelectedFoldChange}
                   availableFolds={availableFolds}
+                  supportsFoldSelection={!isSegmentationTask}
                   uniqueTasks={uniqueTasks}
                   isTaskDropdownOpen={isTaskDropdownOpen}
                   setIsTaskDropdownOpen={setIsTaskDropdownOpen}

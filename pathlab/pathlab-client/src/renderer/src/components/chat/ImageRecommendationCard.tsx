@@ -22,7 +22,6 @@ type SegmentationMaskSource = 'gt' | 'model_pred' | 'both'
 interface SegmentationMaskConfig {
   source: SegmentationMaskSource
   task_id?: string
-  fold_key?: string
 }
 
 export interface ImageRecommendation {
@@ -266,7 +265,6 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         show_heatmap: recommendation.show_heatmap,
         segmentation_mask_source: recommendation.segmentation_mask?.source,
         segmentation_mask_task_id: recommendation.segmentation_mask?.task_id,
-        segmentation_mask_fold_key: recommendation.segmentation_mask?.fold_key,
       }),
     [recommendation.query, recommendation.filters, maxCount, recommendation.show_heatmap, recommendation.segmentation_mask]
   )
@@ -551,10 +549,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
               const segmentationOverlays = overlays.filter(o => o.data_type === 'patch_segmentation')
               const latestHeatmap = heatmapOverlays[0]
               const latestSegmentationMask = segmentationMaskConfig?.task_id
-                ? segmentationOverlays.find(o =>
-                  o.task_id === segmentationMaskConfig.task_id
-                  && (!segmentationMaskConfig.fold_key || o.fold_key === segmentationMaskConfig.fold_key)
-                ) || segmentationOverlays.find(o => o.task_id === segmentationMaskConfig.task_id)
+                ? segmentationOverlays.find(o => o.task_id === segmentationMaskConfig.task_id)
                 : segmentationOverlays[0]
               const hasHeatmap = heatmapOverlays.length > 0
               return (
@@ -607,7 +602,11 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                           <img
                             src={
                               fileType === 'Patch'
-                                ? getPatchCAMImageUrl(image.wsi_id, latestHeatmap.task_id || undefined)
+                                ? getPatchCAMImageUrl(
+                                  image.wsi_id,
+                                  latestHeatmap.task_id || undefined,
+                                  latestHeatmap.fold_key || undefined,
+                                )
                                 : getHeatmapThumbnailUrl(image.wsi_id, latestHeatmap.task_id || undefined, 256)
                             }
                             alt={`Heatmap for ${image.original_filename}`}
@@ -646,7 +645,6 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                               src={getSegMaskImageUrl(
                                 image.wsi_id,
                                 latestSegmentationMask.task_id || segmentationMaskConfig?.task_id,
-                                segmentationMaskConfig?.fold_key || latestSegmentationMask.fold_key || undefined,
                               )}
                               alt={`${t('chatComponents.imageRecommendation.modelPredictionMask')}: ${image.original_filename}`}
                               className="w-full h-full object-cover"

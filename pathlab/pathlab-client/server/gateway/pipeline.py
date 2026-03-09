@@ -22,6 +22,7 @@ from backend.common.coco_utils import (
     materialize_coco_to_disk,
     merge_coco_datasets,
 )
+from backend.database import safe_session
 from backend.database.repositories import TrainingTaskRepository, SegmentationAnnotationRepository, WSIRepository
 from backend.database.utils.training_logger import TrainingLogger
 from backend.common.config import Config
@@ -338,6 +339,64 @@ class ScopedLogger:
             )
 
 
+async def _generate_patch_segmentation_visualizations(
+    logger_manager: 'ScopedLogger',
+    task_id: str,
+    assigned_device: str | None = None,
+) -> None:
+    from gateway.routes.results import _check_task_resources, _run_inference_patch_segmentation
+
+    async def _update_visualization_progress(progress_ratio: float) -> None:
+        bounded_ratio = max(0.0, min(progress_ratio, 1.0))
+        progress = 92 + int(round(bounded_ratio * 7))
+        async with safe_session() as db:
+            await TrainingTaskRepository.update_status(
+                db,
+                task_id,
+                TaskStatus.TRAINING,
+                progress=max(92, min(progress, 99)),
+            )
+
+    async with safe_session() as db:
+        task = await TrainingTaskRepository.get_by_id(db, task_id)
+        if not task:
+            raise ValueError(f"Training task not found: {task_id}")
+
+        resources = await _check_task_resources(task_id, db)
+        if resources["has_ai_results"]:
+            async with logger_manager.session() as (logger, db_for_log):
+                await logger.info("Visualization artifacts already exist. Skipping post-training generation.")
+                await TrainingTaskRepository.update_status(db_for_log, task_id, TaskStatus.TRAINING, progress=99)
+            return
+
+        wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
+        if not wsi_ids:
+            raise ValueError(f"No WSI IDs found for task {task_id}")
+
+        async with logger_manager.session() as (logger, db_for_log):
+            await logger.info(
+                "[Post-processing] Generating visualization artifacts...",
+                metadata={"artifacts": ["pred_mask.npy", "cam.npy"]},
+            )
+            await TrainingTaskRepository.update_status(db_for_log, task_id, TaskStatus.TRAINING, progress=92)
+
+        await _run_inference_patch_segmentation(
+            task,
+            wsi_ids,
+            resources,
+            db,
+            progress_callback=_update_visualization_progress,
+            assigned_device=assigned_device,
+        )
+
+    async with logger_manager.session() as (logger, db):
+        await logger.info(
+            "Visualization artifacts generated successfully.",
+            metadata={"artifacts": ["pred_mask.npy", "cam.npy"]},
+        )
+        await TrainingTaskRepository.update_status(db, task_id, TaskStatus.TRAINING, progress=99)
+
+
 async def run_training_pipeline(
     task_id: str,
     data_type: str,
@@ -453,6 +512,12 @@ async def run_training_pipeline(
                         "num_classes": num_classes,
                     },
                     operation_name="patch segmentation training"
+                )
+
+                await _generate_patch_segmentation_visualizations(
+                    logger_manager=logger_manager,
+                    task_id=task_id,
+                    assigned_device=assigned_device,
                 )
 
                 async with logger_manager.session() as (logger, db):

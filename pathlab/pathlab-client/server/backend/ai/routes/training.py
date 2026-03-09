@@ -913,7 +913,7 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         user_id = task.user_id
         preprocessing_config = task.preprocessing_config or {}
 
-        # Mark task as training from 0% and let the trainer advance it to 100%.
+        # Mark task as training from 0% and let the trainer advance it through the training phase.
         await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=0)
         await training_logger.info(
             f"[Training] Starting Patch Segmentation ({req.architecture}/{req.backbone})",
@@ -1045,7 +1045,7 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
                 "is_active": True,
             })
             await training_logger.info("Training completed. Model saved.", {"model_id": model_id})
-            await _safe_update_status(db, req.task_id, TaskStatus.COMPLETED, progress=100)
+            await _safe_update_status(db, req.task_id, TaskStatus.TRAINING, progress=90)
 
         return result
 

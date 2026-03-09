@@ -1006,7 +1006,7 @@ class SegmentationTrainer:
                     f"best_{monitor_metric}": best_metric,
                 },
             )
-            self._update_training_progress(100)
+            self._update_training_progress(90)
 
             return results
         finally:

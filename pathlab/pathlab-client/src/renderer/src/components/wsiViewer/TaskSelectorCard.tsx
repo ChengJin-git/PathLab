@@ -12,6 +12,7 @@ interface TaskSelectorCardProps {
   selectedFoldKey: string | undefined
   setSelectedFoldKey: (key: string) => void
   availableFolds: string[]
+  supportsFoldSelection: boolean
   uniqueTasks: (AvailableHeatmap & { isKFold?: boolean; numFolds?: number })[]
   isTaskDropdownOpen: boolean
   setIsTaskDropdownOpen: (open: boolean) => void
@@ -28,6 +29,7 @@ export function TaskSelectorCard({
   selectedFoldKey,
   setSelectedFoldKey,
   availableFolds,
+  supportsFoldSelection,
   uniqueTasks,
   isTaskDropdownOpen,
   setIsTaskDropdownOpen,
@@ -175,7 +177,7 @@ export function TaskSelectorCard({
         </div>
 
         {/* K-Fold Selector - show when multiple folds are available */}
-        {availableFolds.length > 1 && (
+        {supportsFoldSelection && availableFolds.length > 1 && (
           <div className="mt-3">
             <div className="flex items-center gap-2 mb-2">
               <span className="text-xs text-gray-500 font-medium uppercase tracking-wider">{t('wsiViewerComponents.taskSelector.kFold')}</span>
@@ -213,7 +215,7 @@ export function TaskSelectorCard({
                   {heatmapData?.task_type === 'survival' ? t('wsiViewerComponents.taskSelector.riskGroup') : t('wsiViewerComponents.taskSelector.prediction')}
                 </span>
                 {/* Show fold info for K-Fold trained models */}
-                {heatmapData?.fold_key && (
+                {supportsFoldSelection && heatmapData?.fold_key && (
                   <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700">
                     {heatmapData.fold_key.replace('_', ' ').replace('fold', 'Fold')}
                   </span>
