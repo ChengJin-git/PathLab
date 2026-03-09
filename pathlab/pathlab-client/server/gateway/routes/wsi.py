@@ -10,7 +10,8 @@ Authentication & Authorization:
 """
 import csv
 import io
-from typing import Optional, List, Dict
+from pathlib import Path
+from typing import Optional, List, Dict, Set
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -23,6 +24,7 @@ from backend.database.repositories import (
     DatasetRepository,
     DataGroupRepository,
     AIResultRepository,
+    SegmentationAnnotationRepository,
 )
 from backend.database.models import AIResult, AITask, TrainingTaskWSI
 from backend.auth import current_active_user, User
@@ -34,6 +36,10 @@ from backend.auth.dependencies import (
     get_wsi_with_access,
 )
 from backend.ai.utils.data_splitter import split_case_dataset, split_wsi_dataset
+from backend.common.annotation_summary_cache import (
+    load_dataset_annotation_summary_cache,
+    is_dataset_annotation_summary_cache_valid,
+)
 from ..dependencies import logger, storage_manager
 from ..models import DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest
 from ..utils import (
@@ -49,6 +55,132 @@ router = APIRouter(prefix="/wsi", tags=["WSI Management"])
 # registered before /{wsi_id} to avoid path parameter conflicts.
 from .wsi_permissions import router as wsi_permissions_router
 router.include_router(wsi_permissions_router)
+
+
+def _normalize_annotation_file_key(file_name: Optional[str]) -> Optional[str]:
+    if not file_name:
+        return None
+    normalized = Path(str(file_name)).name.strip().lower()
+    return normalized or None
+
+
+def _build_segmentation_wsi_lookups(wsis) -> tuple[Dict[str, str], Dict[str, str]]:
+    exact_lookup: Dict[str, str] = {}
+    stem_candidates: Dict[str, Set[str]] = {}
+
+    for wsi in wsis:
+        candidates = [
+            str(getattr(wsi, "original_filename", "") or "").strip(),
+            str(getattr(wsi, "wsi_path", "") or "").strip(),
+        ]
+        for candidate in candidates:
+            key = _normalize_annotation_file_key(candidate)
+            if not key:
+                continue
+            exact_lookup[key] = wsi.wsi_id
+            stem_candidates.setdefault(Path(key).stem, set()).add(wsi.wsi_id)
+
+    stem_lookup = {
+        stem: next(iter(wsi_ids))
+        for stem, wsi_ids in stem_candidates.items()
+        if len(wsi_ids) == 1
+    }
+    return exact_lookup, stem_lookup
+
+
+def _mark_coco_image_matches(
+    payload: Optional[dict],
+    *,
+    exact_lookup: Dict[str, str],
+    stem_lookup: Dict[str, str],
+    presence_map: Dict[str, bool],
+) -> None:
+    if not isinstance(payload, dict):
+        return
+
+    for image in payload.get("images") or []:
+        if not isinstance(image, dict):
+            continue
+        key = _normalize_annotation_file_key(image.get("file_name"))
+        if not key:
+            continue
+        wsi_id = exact_lookup.get(key) or stem_lookup.get(Path(key).stem)
+        if wsi_id in presence_map:
+            presence_map[wsi_id] = True
+
+async def _get_segmentation_annotation_presence_map(
+    db: AsyncSession,
+    dataset_id: str,
+    wsis,
+) -> Dict[str, bool]:
+    presence_map = {wsi.wsi_id: False for wsi in wsis}
+    if not presence_map:
+        return presence_map
+
+    try:
+        finalized_annotations_key = await SegmentationAnnotationRepository.get_finalized_dataset_cache_key(
+            db,
+            dataset_id,
+        )
+        wsi_key = await WSIRepository.get_dataset_cache_key(db, dataset_id)
+        cache_data = load_dataset_annotation_summary_cache(dataset_id)
+        if is_dataset_annotation_summary_cache_valid(cache_data, finalized_annotations_key, wsi_key):
+            slide_summaries = (cache_data or {}).get("slides") or {}
+            for wsi_id in presence_map:
+                presence_map[wsi_id] = wsi_id in slide_summaries
+            return presence_map
+    except Exception as cache_err:
+        logger.warning(f"Failed to resolve segmentation annotation cache for {dataset_id}: {cache_err}")
+
+    page_records = await SegmentationAnnotationRepository.get_finalized_for_wsis_or_dataset(
+        db,
+        dataset_id,
+        list(presence_map.keys()),
+    )
+    if not page_records:
+        return presence_map
+
+    exact_lookup, stem_lookup = _build_segmentation_wsi_lookups(wsis)
+    for record in page_records:
+        annotation_id = str(getattr(record, "annotation_id", "") or "")
+        if annotation_id.startswith("annot_"):
+            inferred_wsi_id = annotation_id[len("annot_"):]
+            if inferred_wsi_id in presence_map:
+                presence_map[inferred_wsi_id] = True
+        _mark_coco_image_matches(
+            getattr(record, "annotations", None),
+            exact_lookup=exact_lookup,
+            stem_lookup=stem_lookup,
+            presence_map=presence_map,
+        )
+
+    return presence_map
+
+
+async def _serialize_dataset_wsi_items(
+    db: AsyncSession,
+    dataset_id: str,
+    wsi_slides,
+    *,
+    is_admin: bool,
+    user_id_str: str,
+) -> List[dict]:
+    annotation_presence: Dict[str, bool] = {}
+
+    if dataset_id != "Uncategorized":
+        dataset = await DatasetRepository.get_by_id(db, dataset_id)
+        task_type = dataset.data_group.task_type if dataset and dataset.data_group else None
+        if task_type == SEGMENTATION_TASK_TYPE:
+            annotation_presence = await _get_segmentation_annotation_presence_map(db, dataset_id, wsi_slides)
+
+    items = []
+    for wsi in wsi_slides:
+        item = wsi.to_summary_dict()
+        item["can_delete"] = is_admin or (wsi.user_id == user_id_str)
+        if annotation_presence:
+            item["has_segmentation_annotation"] = annotation_presence.get(wsi.wsi_id, False)
+        items.append(item)
+    return items
 
 
 @router.get("")
@@ -96,11 +228,13 @@ async def list_wsi(
                 db, dataset_id, user_id=user_id_filter, data_type=data_type,
                 elevated_dataset_ids=elevated_dataset_ids,
             )
-            items = []
-            for wsi in wsi_slides:
-                item = wsi.to_summary_dict()
-                item["can_delete"] = is_admin or (wsi.user_id == user_id_str)
-                items.append(item)
+            items = await _serialize_dataset_wsi_items(
+                db,
+                dataset_id,
+                wsi_slides,
+                is_admin=is_admin,
+                user_id_str=user_id_str,
+            )
             return {
                 "items": items,
                 "total": total,
@@ -122,11 +256,13 @@ async def list_wsi(
             elevated_dataset_ids=elevated_dataset_ids,
         )
 
-        items = []
-        for wsi in wsi_slides:
-            item = wsi.to_summary_dict()
-            item["can_delete"] = is_admin or (wsi.user_id == user_id_str)
-            items.append(item)
+        items = await _serialize_dataset_wsi_items(
+            db,
+            dataset_id,
+            wsi_slides,
+            is_admin=is_admin,
+            user_id_str=user_id_str,
+        )
 
         return {
             "items": items,
@@ -1117,8 +1253,10 @@ async def export_dataset_labels(
         if task_type == "survival":
             # For survival, stratify by event_status
             labels = {wsi.wsi_id: str(wsi.event_status) for wsi in wsis if wsi.event_status is not None}
+        elif task_type == SEGMENTATION_TASK_TYPE:
+            labels = {}
         else:
-            # For classification/segmentation, stratify by label
+            # For classification, stratify by label
             labels = {wsi.wsi_id: wsi.label for wsi in wsis if wsi.label}
 
         wsi_ids = [wsi.wsi_id for wsi in wsis]
@@ -1135,7 +1273,7 @@ async def export_dataset_labels(
                     if task_type == "survival":
                         if wsi.event_status is not None:
                             case_labels[case_id] = str(wsi.event_status)
-                    else:
+                    elif task_type != SEGMENTATION_TASK_TYPE:
                         if wsi.label:
                             case_labels[case_id] = wsi.label
 
@@ -1143,7 +1281,7 @@ async def export_dataset_labels(
                 wsi_ids=wsi_ids,
                 case_id_map=case_id_map,
                 strategy="random",
-                labels=case_labels if stratified else None,
+                labels=case_labels if stratified and task_type != SEGMENTATION_TASK_TYPE else None,
                 ratios={"train": train_ratio, "val": val_ratio, "test": test_ratio},
                 seed=seed
             )
@@ -1152,7 +1290,7 @@ async def export_dataset_labels(
             splits = split_wsi_dataset(
                 wsi_ids=wsi_ids,
                 strategy="random",
-                labels=labels if stratified else None,
+                labels=labels if stratified and task_type != SEGMENTATION_TASK_TYPE else None,
                 ratios={"train": train_ratio, "val": val_ratio, "test": test_ratio},
                 seed=seed
             )
@@ -1168,6 +1306,8 @@ async def export_dataset_labels(
 
         if task_type == "survival":
             fieldnames = ["filename", "event_time", "event_status", "case_id", "age", "gender", "source", "split"]
+        elif task_type == SEGMENTATION_TASK_TYPE:
+            fieldnames = ["filename", "case_id", "age", "gender", "source", "split"]
         else:
             fieldnames = ["filename", "label", "case_id", "age", "gender", "source", "split"]
 
@@ -1202,7 +1342,7 @@ async def export_dataset_labels(
             if task_type == "survival":
                 row["event_time"] = wsi.event_time if wsi.event_time is not None else ""
                 row["event_status"] = wsi.event_status if wsi.event_status is not None else ""
-            else:
+            elif task_type != SEGMENTATION_TASK_TYPE:
                 row["label"] = wsi.label or ""
 
             writer.writerow(row)

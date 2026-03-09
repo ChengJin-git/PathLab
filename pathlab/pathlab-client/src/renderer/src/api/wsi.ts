@@ -17,6 +17,7 @@ export interface WSISummary {
   dataset_name: string | null
   case_id: string | null
   label: string | null
+  has_segmentation_annotation?: boolean
   file_extension: string  // e.g. ".svs", ".png" - for file type determination (wsi_path no longer exposed)
   age: number | null
   gender: string | null

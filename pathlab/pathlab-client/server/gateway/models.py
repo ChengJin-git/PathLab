@@ -208,7 +208,7 @@ class BatchRegisterRequest(BaseModel):
     dataset_name: Optional[str] = None  # New dataset name (if creating new)
     task_type: str = "classification"  # "classification", "survival", or "segmentation"
     # Classification fields
-    default_label: str = "External Import"  # Default label for all files
+    default_label: Optional[str] = None  # Default label for classification files
     # Survival analysis fields (required when task_type is "survival")
     default_event_time: Optional[float] = None  # Time to event
     default_event_status: Optional[int] = None  # 1 = event occurred, 0 = censored
@@ -232,7 +232,7 @@ class StartBatchImportRequest(BaseModel):
     aggregation_level: str = "file"  # "case" or "file" - aggregation level
     task_type: str = "classification"  # "classification", "survival", or "segmentation"
     # Classification fields
-    default_label: str = "External Import"  # Default label for all files
+    default_label: Optional[str] = None  # Default label for classification files
     # Survival analysis fields (required when task_type is "survival")
     default_event_time: Optional[float] = None  # Time to event
     default_event_status: Optional[int] = None  # 1 = event occurred, 0 = censored

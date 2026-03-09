@@ -6,14 +6,16 @@ export type FileMetadataMap = Map<string, { label: string; case_id: string; age:
 export interface FileMetadataModalProps {
   selectedFiles: File[]
   fileMetadata: FileMetadataMap
+  datasetType?: 'classification' | 'survival' | 'segmentation'
   onUpdateMetadata: (fileName: string, field: 'label' | 'case_id' | 'age' | 'gender' | 'source', value: string) => void
   onCancel: () => void
   onConfirm: () => void
   uploading: boolean
 }
 
-export function FileMetadataModal({ selectedFiles, fileMetadata, onUpdateMetadata, onCancel, onConfirm, uploading }: FileMetadataModalProps) {
+export function FileMetadataModal({ selectedFiles, fileMetadata, datasetType = 'classification', onUpdateMetadata, onCancel, onConfirm, uploading }: FileMetadataModalProps) {
   const { t } = useTranslation()
+  const showLabelField = datasetType !== 'segmentation'
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
@@ -36,18 +38,20 @@ export function FileMetadataModal({ selectedFiles, fileMetadata, onUpdateMetadat
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-gray-900 truncate mb-3">{file.name}</p>
                     <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          {t('listComponents.fileMetadata.labelDiseaseClassification')}
-                        </label>
-                        <input
-                          type="text"
-                          placeholder={t('listComponents.fileMetadata.labelPlaceholder')}
-                          value={fileMetadata.get(file.name)?.label || ''}
-                          onChange={(e) => onUpdateMetadata(file.name, 'label', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                        />
-                      </div>
+                      {showLabelField && (
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            {t('listComponents.fileMetadata.labelDiseaseClassification')}
+                          </label>
+                          <input
+                            type="text"
+                            placeholder={t('listComponents.fileMetadata.labelPlaceholder')}
+                            value={fileMetadata.get(file.name)?.label || ''}
+                            onChange={(e) => onUpdateMetadata(file.name, 'label', e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                          />
+                        </div>
+                      )}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                           {t('listComponents.fileMetadata.caseId')}

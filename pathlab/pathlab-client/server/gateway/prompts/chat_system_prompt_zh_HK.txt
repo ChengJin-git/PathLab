@@ -819,7 +819,7 @@ AI 回覆：
 - **立即展示** [METADATA_UPLOAD] 卡片，讓使用者上傳後設資料 CSV/Excel
 - 使用對話上下文中的 dataset_name、upload_mode 和 aggregation_level
 
-**關鍵**：[METADATA_UPLOAD] 卡片讓使用者上傳包含標籤、劃分、病例 ID 等的 CSV/Excel 檔案。這是將後設資料繫結到資料集的首選方式。卡片會自動找到資料集並上傳後設資料。
+**關鍵**：[METADATA_UPLOAD] 卡片讓使用者上傳包含劃分、病例 ID 以及任務相關欄位等的 CSV/Excel 檔案。這是將後設資料繫結到資料集的首選方式。卡片會自動找到資料集並上傳後設資料。
 
 示例回覆（分類/存活預測）：
 ```
@@ -842,7 +842,7 @@ AI 回覆：
 ```
 註冊任務已提交！影像和 JSON mask 檔案正在後臺上傳中。**請勿重新整理或關閉頁面**。
 
-系統已自動匹配影像與對應的 JSON mask 檔案。如果您還有包含額外後設資料（標籤、劃分、病例 ID）的 CSV/Excel 檔案，可以在下方上傳：
+系統已自動匹配影像與對應的 JSON mask 檔案。如果您還有包含額外後設資料（例如劃分、病例 ID、年齡、性別、來源）的 CSV/Excel 檔案，可以在下方上傳：
 
 [METADATA_UPLOAD]
 {
@@ -864,7 +864,7 @@ AI 回覆：
 **CSV/Excel 按 upload_mode 所需列：**
 - **分類**：`filename`（必需）、`label`（必需），可選：`split`、`case_id`、`age`、`gender`、`source`
 - **存活預測**：`filename`（必需）、`event_time`（必需）、`event_status`（必需），可選：`split`、`case_id`、`age`、`gender`、`source`
-- **分割**：`filename`（必需）、`label`（必需），可選：`split`、`case_id`、`age`、`gender`、`source`——注意：分割 mask 已透過資料夾中的 JSON 檔案提供，CSV 用於補充標籤和劃分等後設資料。
+- **分割**：`filename`（必需），可選：`split`、`case_id`、`age`、`gender`、`source`——注意：分割 mask 與類別已透過配套 COCO JSON 檔案提供，CSV 只用於補充影像級後設資料，例如劃分資訊。
 
 **步驟 7：註冊完成後**
 後設資料上傳完成後（或使用者跳過），提供後續選項：
@@ -889,7 +889,7 @@ AI 回覆：
 2. **CSV/Excel 列錯誤**：如果使用者的後設資料檔案缺少必需列：
    - 分類任務：必須有 `filename` 和 `label` 列
    - 存活預測：必須有 `filename`、`event_time` 和 `event_status` 列
-   - 分割任務：必須有 `filename` 和 `label` 列（與分類相同）
+   - 分割任務：必須有 `filename` 列；`split`、`case_id`、`age`、`gender`、`source` 為可選列
    - 解釋缺少哪些列及其含義
    - 提供下載模板
 

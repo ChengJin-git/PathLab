@@ -496,7 +496,7 @@ export default function RegisterPage() {
         const current = updated.get(item.key) || { ...defaultMetadata }
         updated.set(item.key, {
           ...current,
-          label: batchMetadata.label || current.label,
+          label: uploadMode === 'classification' ? (batchMetadata.label || current.label) : current.label,
           case_id: batchMetadata.case_id || current.case_id,
           age: batchMetadata.age || current.age,
           gender: batchMetadata.gender || current.gender,

@@ -159,6 +159,58 @@ export default function ListPage() {
   const [showExportModal, setShowExportModal] = useState(false)
   const [exporting, setExporting] = useState(false)
 
+  const isSegmentationDataset = selectedDatasetType === 'segmentation'
+  const labelColumnTitle = isSegmentationDataset ? t('listPage.annotationStatus') : t('listPage.label')
+
+  const renderSegmentationStatusBadge = (matched: boolean) => (
+    matched ? (
+      <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-teal-100/80 text-teal-700 border border-teal-200/60 shadow-sm whitespace-nowrap">
+        {t('listPage.maskMatched')}
+      </span>
+    ) : (
+      <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-amber-50 text-amber-700 border border-amber-200/80 shadow-sm whitespace-nowrap">
+        {t('listPage.maskMissing')}
+      </span>
+    )
+  )
+
+  const renderLabelBadge = (item: { label?: string | null; has_segmentation_annotation?: boolean }) => {
+    if (isSegmentationDataset) {
+      return renderSegmentationStatusBadge(Boolean(item.has_segmentation_annotation))
+    }
+
+    if (item.label) {
+      return <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">{item.label}</span>
+    }
+
+    return <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.noLabel')}</span>
+  }
+
+  const renderCaseLabelBadge = (slides: Array<{ label?: string | null; has_segmentation_annotation?: boolean }>) => {
+    if (isSegmentationDataset) {
+      const matchedCount = slides.filter(s => s.has_segmentation_annotation).length
+      if (matchedCount === 0) return renderSegmentationStatusBadge(false)
+      if (matchedCount === slides.length) return renderSegmentationStatusBadge(true)
+      return (
+        <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-slate-100 text-slate-700 border border-slate-200 shadow-sm whitespace-nowrap">
+          {t('listPage.maskMatchedCount', { matched: matchedCount, total: slides.length })}
+        </span>
+      )
+    }
+
+    const labels = Array.from(new Set(slides.map(s => s.label).filter(Boolean)))
+    if (labels.length === 0) return <span className="text-gray-300 text-xs italic">{t('listPage.noLabel')}</span>
+    if (labels.length === 1) return <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">{labels[0]}</span>
+    return (
+      <div className="flex flex-wrap gap-1">
+        {labels.slice(0, 2).map(l => (
+          <span key={l} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">{l}</span>
+        ))}
+        {labels.length > 2 && <span className="text-xs text-gray-500">+{labels.length - 2}</span>}
+      </div>
+    )
+  }
+
   const visibleDatasets = useMemo(() => {
     return datasets.filter(d => !d.dataset_id || !optimisticallyDeletedDatasetIds.has(d.dataset_id))
   }, [datasets, optimisticallyDeletedDatasetIds])
@@ -359,7 +411,7 @@ export default function ListPage() {
         try {
           const age = metadata?.age ? parseInt(metadata.age) : undefined
           await uploadWSIFile(file, {
-            label: metadata?.label || undefined,
+            label: selectedDatasetType === 'classification' ? (metadata?.label || undefined) : undefined,
             case_id: metadata?.case_id || undefined,
             age: age,
             gender: metadata?.gender || undefined,
@@ -1438,7 +1490,7 @@ export default function ListPage() {
                               <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.status')}</th>
                             </>
                           ) : (
-                            <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.label')}</th>
+                            <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{labelColumnTitle}</th>
                           )}
                           <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.patientInfo')}</th>
                           <th className="px-3 sm:px-6 py-3 text-right text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.action')}</th>
@@ -1555,11 +1607,7 @@ export default function ListPage() {
                                 </>
                               ) : (
                                 <td className="px-3 sm:px-6 py-4 sm:py-5">
-                                  {it.label ? (
-                                    <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">{it.label}</span>
-                                  ) : (
-                                    <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.noLabel')}</span>
-                                  )}
+                                  {renderLabelBadge(it)}
                                 </td>
                               )}
                               <td className="px-3 sm:px-6 py-4 sm:py-5">
@@ -1675,19 +1723,7 @@ export default function ListPage() {
                                 </>
                               ) : (
                                 <td className="px-3 sm:px-6 py-4 sm:py-5">
-                                  {(() => {
-                                    const labels = Array.from(new Set(slides.map(s => s.label).filter(Boolean)))
-                                    if (labels.length === 0) return <span className="text-gray-300 text-xs italic">{t('listPage.noLabel')}</span>
-                                    if (labels.length === 1) return <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">{labels[0]}</span>
-                                    return (
-                                      <div className="flex flex-wrap gap-1">
-                                        {labels.slice(0, 2).map(l => (
-                                          <span key={l} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">{l}</span>
-                                        ))}
-                                        {labels.length > 2 && <span className="text-xs text-gray-500">+{labels.length - 2}</span>}
-                                      </div>
-                                    )
-                                  })()}
+                                  {renderCaseLabelBadge(slides)}
                                 </td>
                               )}
 
@@ -1793,11 +1829,7 @@ export default function ListPage() {
                                     </>
                                   ) : (
                                     <td className="px-3 sm:px-6 py-3 sm:py-4">
-                                      {it.label ? (
-                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 whitespace-nowrap">{it.label}</span>
-                                      ) : (
-                                        <span className="text-gray-300 text-[10px] italic">{t('listPage.noLabel')}</span>
-                                      )}
+                                      {renderLabelBadge(it)}
                                     </td>
                                   )}
                                   <td className="px-3 sm:px-6 py-3 sm:py-4">
@@ -1915,13 +1947,7 @@ export default function ListPage() {
                               </>
                             ) : (
                               <td className="px-3 sm:px-6 py-4 sm:py-5">
-                                {it.label ? (
-                                  <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium bg-gray-100/80 text-gray-700 border border-gray-200/60 shadow-sm whitespace-nowrap">
-                                    {it.label}
-                                  </span>
-                                ) : (
-                                  <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.noLabel')}</span>
-                                )}
+                                {renderLabelBadge(it)}
                               </td>
                             )}
                             <td className="px-3 sm:px-6 py-4 sm:py-5">
@@ -2095,6 +2121,7 @@ export default function ListPage() {
         <FileMetadataModal
           selectedFiles={selectedFiles}
           fileMetadata={fileMetadata}
+          datasetType={selectedDatasetType}
           onUpdateMetadata={updateFileMetadata}
           onCancel={() => {
             setShowFileMetadataModal(false)

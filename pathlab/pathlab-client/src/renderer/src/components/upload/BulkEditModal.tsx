@@ -35,7 +35,7 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
         </div>
 
         <div className="space-y-4 sm:space-y-6">
-          {(uploadMode === 'classification' || uploadMode === 'segmentation') ? (
+          {uploadMode === 'classification' ? (
             <div className="space-y-1.5">
               <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('uploadComponents.bulkEdit.label')}</label>
               <input
@@ -45,7 +45,7 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
                 onChange={e => onBatchMetadataChange(p => ({ ...p, label: e.target.value }))}
               />
             </div>
-          ) : (
+          ) : uploadMode === 'survival' ? (
             <div className="grid grid-cols-2 gap-3 sm:gap-4">
               <div className="space-y-1.5">
                 <label className="text-[10px] sm:text-xs font-semibold text-emerald-600 uppercase tracking-wider">{t('uploadComponents.bulkEdit.eventTime')}</label>
@@ -71,7 +71,7 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
                 </select>
               </div>
             </div>
-          )}
+          ) : null}
           <div className="grid grid-cols-2 gap-3 sm:gap-4">
             <div className="space-y-1.5">
               <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('uploadComponents.bulkEdit.caseId')}</label>

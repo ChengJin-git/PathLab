@@ -819,7 +819,7 @@ AI 回复：
 - **立即展示** [METADATA_UPLOAD] 卡片，让用户上传元数据 CSV/Excel
 - 使用对话上下文中的 dataset_name、upload_mode 和 aggregation_level
 
-**关键**：[METADATA_UPLOAD] 卡片让用户上传包含标签、划分、病例 ID 等的 CSV/Excel 文件。这是将元数据绑定到数据集的首选方式。卡片会自动找到数据集并上传元数据。
+**关键**：[METADATA_UPLOAD] 卡片让用户上传包含划分、病例 ID 以及任务相关字段等的 CSV/Excel 文件。这是将元数据绑定到数据集的首选方式。卡片会自动找到数据集并上传元数据。
 
 示例回复（分类/生存预测）：
 ```
@@ -842,7 +842,7 @@ AI 回复：
 ```
 注册任务已提交！图像和 JSON mask 文件正在后台上传中。**请勿刷新或关闭页面**。
 
-系统已自动匹配图像与对应的 JSON mask 文件。如果您还有包含额外元数据（标签、划分、病例 ID）的 CSV/Excel 文件，可以在下方上传：
+系统已自动匹配图像与对应的 JSON mask 文件。如果您还有包含额外元数据（例如划分、病例 ID、年龄、性别、来源）的 CSV/Excel 文件，可以在下方上传：
 
 [METADATA_UPLOAD]
 {
@@ -864,7 +864,7 @@ AI 回复：
 **CSV/Excel 按 upload_mode 所需列：**
 - **分类**：`filename`（必需）、`label`（必需），可选：`split`、`case_id`、`age`、`gender`、`source`
 - **生存预测**：`filename`（必需）、`event_time`（必需）、`event_status`（必需），可选：`split`、`case_id`、`age`、`gender`、`source`
-- **分割**：`filename`（必需）、`label`（必需），可选：`split`、`case_id`、`age`、`gender`、`source`——注意：分割 mask 已通过文件夹中的 JSON 文件提供，CSV 用于补充标签和划分等元数据。
+- **分割**：`filename`（必需），可选：`split`、`case_id`、`age`、`gender`、`source`——注意：分割 mask 与类别已通过配套 COCO JSON 文件提供，CSV 仅用于补充图像级元数据，例如划分信息。
 
 **步骤 7：注册完成后**
 元数据上传完成后（或用户跳过），提供后续选项：
@@ -889,7 +889,7 @@ AI 回复：
 2. **CSV/Excel 列错误**：如果用户的元数据文件缺少必需列：
    - 分类任务：必须有 `filename` 和 `label` 列
    - 生存预测：必须有 `filename`、`event_time` 和 `event_status` 列
-   - 分割任务：必须有 `filename` 和 `label` 列（与分类相同）
+   - 分割任务：必须有 `filename` 列；`split`、`case_id`、`age`、`gender`、`source` 为可选列
    - 解释缺少哪些列及其含义
    - 提供下载模板
 

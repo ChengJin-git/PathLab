@@ -7,7 +7,7 @@ Supports annotations from viewer drawing, file import, upload, and ROI extractio
 
 import logging
 from typing import List, Optional, Set
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -230,6 +230,31 @@ class SegmentationAnnotationRepository:
         )
         if not include_drafts:
             query = query.where(SegmentationAnnotation.status != "draft")
+
+        result = await db.execute(query)
+        return result.scalars().all()
+
+    @staticmethod
+    async def get_finalized_for_wsis_or_dataset(
+        db: AsyncSession,
+        dataset_id: str,
+        wsi_ids: List[str],
+    ) -> List[SegmentationAnnotation]:
+        """Get finalized annotations relevant to a page of WSIs.
+
+        Returns per-WSI records like ``annot_{wsi_id}`` plus the optional
+        dataset-level record ``annot_{dataset_id}``.
+        """
+        target_ids = [f"annot_{wsi_id}" for wsi_id in wsi_ids if wsi_id]
+        target_ids.append(f"annot_{dataset_id}")
+
+        query = (
+            select(SegmentationAnnotation)
+            .where(SegmentationAnnotation.source_dataset_id == dataset_id)
+            .where(SegmentationAnnotation.status != "draft")
+            .where(SegmentationAnnotation.annotation_id.in_(target_ids))
+            .order_by(SegmentationAnnotation.updated_at.desc())
+        )
 
         result = await db.execute(query)
         return result.scalars().all()

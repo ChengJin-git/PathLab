@@ -70,7 +70,7 @@ async def upload_wsi_by_csv(
     - label, case_id, age, gender, source, wsi_id are optional
     - If wsi_id is not provided, it will be auto-generated
     - If case_id is not provided, it will be auto-generated as "case_{wsi_id}"
-    - If label is not provided, it will be set to "Unknown"
+    - If label is not provided, it will remain empty
     - age should be an integer (patient age in years)
     - gender should be a string (e.g., Male, Female, Other)
     - source should be a string (organ/tissue source, e.g., Cervix, Lung, Breast)
@@ -173,7 +173,7 @@ async def upload_wsi_by_csv(
                 wsi_data = {
                     "wsi_id": wsi_id,
                     "original_filename": original_filename,
-                    "label": label or "Unknown",
+                    "label": label,
                     "case_id": case_id,
                     "wsi_path": wsi_path,
                     "file_size": file_size,
@@ -713,7 +713,7 @@ async def upload_wsi_by_path(
             "wsi_id": wsi_id,
             "original_filename": original_filename,
             "dataset_id": resolved_dataset_id,
-            "label": None if resolved_task_type == 'segmentation' else (req.label or "Unknown"),
+            "label": None if resolved_task_type == 'segmentation' else req.label,
             "case_id": case_id,
             "wsi_path": req.wsi_path,
             "file_size": file_size,

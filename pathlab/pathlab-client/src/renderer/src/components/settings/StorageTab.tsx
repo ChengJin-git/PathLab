@@ -251,8 +251,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         dataset_id: batchDatasetMode === 'existing' ? batchSelectedDatasetId : undefined,
         dataset_name: batchDatasetMode === 'new' ? datasetNameToUse : undefined,
         aggregation_level: batchDataLevel,
-        task_type: batchTaskType,
-        default_label: batchTaskType === 'classification' ? 'External Import' : undefined
+        task_type: batchTaskType
       })
       setBatchImportTaskId(result.task_id)
       setBatchSelectedFiles(new Set())
