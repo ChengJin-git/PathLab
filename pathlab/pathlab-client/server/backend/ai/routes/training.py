@@ -402,7 +402,6 @@ async def extract_features(req: FeatureExtractionRequest):
     to prevent connection pool exhaustion during long-running feature extraction.
     """
     scoped_session = ScopedSession(req.task_id)
-    scoped_logger = ScopedTrainingLogger(req.task_id)
 
     try:
         # Validate training task exists - short-lived session
@@ -1046,8 +1045,8 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         return result
 
     except TrainingCancelledException as e:
-        await scoped_logger.info(f"Patch Segmentation training cancelled: {e}")
         async with scoped_session.session() as (training_logger, db):
+            await training_logger.info(f"Patch Segmentation training cancelled: {e}")
             await _safe_update_status(db, req.task_id, TaskStatus.CANCELLED, error_message=str(e))
         return TrainResponse.cancelled(req.task_id, TaskType.PATCH_SEGMENTATION, message=str(e))
 

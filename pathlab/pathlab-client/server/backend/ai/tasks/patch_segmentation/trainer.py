@@ -41,6 +41,7 @@ from backend.ai.schemas.base import TaskStatus
 from backend.ai.tasks.training_utils import safe_update_progress as _safe_update_progress
 from backend.ai.utils.segmentation_dataset import SegmentationDataset, get_transforms
 from backend.ai.segmentors import Segmentor
+from backend.database.utils.training_logger import TrainingLogger
 
 logger = logging.getLogger("patch_segmentation_trainer")
 
@@ -116,12 +117,15 @@ class SegmentationTrainer:
         device: str | None = None,
         batch_size: int = 8,
         config: Dict[str, Any] = None,
+        task_logger: Optional[TrainingLogger] = None,
     ):
         self.task_id = task_id
         self.uploads_root = Path(uploads_root)
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.batch_size = batch_size
         self.config = self.update_config(config)
+        self.task_logger = task_logger
+        self._owns_task_logger = task_logger is None
         segmentor = Segmentor(
             architecture=self.config["architecture"],
             encoder_name=self.config["backbone"],
@@ -202,6 +206,32 @@ class SegmentationTrainer:
                 torch.cuda.synchronize()
             except Exception as exc:
                 logger.debug(f"Failed to fully release CUDA memory during segmentation cleanup: {exc}")
+
+    def _get_task_logger(self) -> TrainingLogger:
+        """Lazily initialize the task logger used by the live log stream."""
+        if self.task_logger is None:
+            self.task_logger = TrainingLogger(self.task_id)
+            self._owns_task_logger = True
+        return self.task_logger
+
+    def _log_info(self, message: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Write a training log entry to the task log stream, with fallback to std logging."""
+        try:
+            asyncio.run(self._get_task_logger().info(message, metadata))
+        except Exception as exc:
+            logger.debug(f"Failed to write segmentation task log to stream: {exc}")
+            logger.info(message)
+
+    def _close_task_logger(self) -> None:
+        """Flush and close the per-task logger when training exits."""
+        if self.task_logger is None or not self._owns_task_logger:
+            return
+        try:
+            asyncio.run(self.task_logger.close())
+        except Exception as exc:
+            logger.debug(f"Failed to close segmentation task logger cleanly: {exc}")
+        finally:
+            self.task_logger = None
 
     def _update_training_progress(self, progress: int) -> None:
         """Write segmentation training progress to the shared progress store."""
@@ -741,7 +771,10 @@ class SegmentationTrainer:
             best_path = save_dir / "best_model.pth"
             torch.save(checkpoint, best_path)
             monitor_metric = self._get_monitor_metric()
-            logger.info(f"Saved best model with {monitor_metric}: {metrics.get(monitor_metric, 0):.4f}")
+            self._log_info(
+                f"Saved best model with {monitor_metric}: {metrics.get(monitor_metric, 0):.4f}",
+                {"epoch": epoch, monitor_metric: metrics.get(monitor_metric, 0)},
+            )
         
         return checkpoint_path
         
@@ -770,166 +803,212 @@ class SegmentationTrainer:
         Returns:
             Dictionary containing training history and results
         """
-        # Override config with provided parameters
-        training_cfg = self.config.get("training", {})
-        epochs = epochs or training_cfg.get("epochs", 100)
-        patience = early_stopping_patience or training_cfg.get("early_stopping_patience", 15)
-        use_amp = training_cfg.get("use_amp", True) and self.device != "cpu"
-        monitor_metric = self._get_monitor_metric()
-        primary_iou_metric = self._get_primary_iou_metric_key()
-        primary_iou_label = self._get_primary_iou_metric_label()
-        
-        if lr is not None:
-            training_cfg["lr"] = lr
-            self.config["training"] = training_cfg
-        
-        # Build data loaders
-        train_loader, val_loader, test_loader = self.build_loaders()
-        
-        logger.info(f"Training on {len(train_loader.dataset)} samples, validating on {len(val_loader.dataset)} samples")
-        logger.info(f"Using device: {self.device}, AMP: {use_amp}")
-        logger.info(f"Architecture: {self.config['architecture']}, Backbone: {self.config['backbone']}")
-        self._update_training_progress(0)
-        
-        # Build optimizer and scheduler
-        optimizer = self._build_optimizer(self.model)
-        scheduler = self._build_scheduler(optimizer, train_loader)
-        
-        # Mixed precision scaler
-        scaler = GradScaler() if use_amp else None
-        
-        # Training history
-        history = {
-            "train_loss": [],
-            "val_loss": [],
-            "train_metrics": [],
-            "val_metrics": [],
-            "learning_rates": [],
-        }
-        
-        # Early stopping variables
-        best_metric = 0.0
-        best_epoch = 0
-        best_state_dict = None
-        epochs_without_improvement = 0
-        
-        # Training loop
-        start_time = time.time()
-        
-        for epoch in range(1, epochs + 1):
-            if is_task_cancelled(self.task_id):
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                raise TrainingCancelledException(f"Training cancelled at epoch {epoch}")
+        try:
+            # Override config with provided parameters
+            training_cfg = self.config.get("training", {})
+            epochs = epochs or training_cfg.get("epochs", 100)
+            patience = early_stopping_patience or training_cfg.get("early_stopping_patience", 15)
+            use_amp = training_cfg.get("use_amp", True) and self.device != "cpu"
+            monitor_metric = self._get_monitor_metric()
+            primary_iou_metric = self._get_primary_iou_metric_key()
+            primary_iou_label = self._get_primary_iou_metric_label()
 
-            epoch_start_time = time.time()
-            
-            # Train for one epoch
-            train_loss, train_metrics = self._train_one_epoch(
-                self.model, train_loader, optimizer, scheduler, scaler, epoch
+            if lr is not None:
+                training_cfg["lr"] = lr
+                self.config["training"] = training_cfg
+
+            # Build data loaders
+            train_loader, val_loader, test_loader = self.build_loaders()
+            test_count = len(test_loader.dataset) if test_loader is not None else 0
+
+            self._log_info(
+                f"Training on {len(train_loader.dataset)} samples, validating on {len(val_loader.dataset)} samples",
+                {
+                    "train_count": len(train_loader.dataset),
+                    "val_count": len(val_loader.dataset),
+                    "test_count": test_count,
+                },
             )
-            
-            # Validate
-            val_loss, val_metrics = self._validate(self.model, val_loader)
-            
-            # Update scheduler (for ReduceLROnPlateau)
-            scheduler_type = training_cfg.get("scheduler", "cosine_warm_restarts").lower()
-            if scheduler is not None and scheduler_type == "reduce_on_plateau":
-                scheduler.step(val_metrics.get(monitor_metric, val_loss))
-            
-            # Get current learning rate
-            current_lr = optimizer.param_groups[0]['lr']
-            
-            # Record history
-            history["train_loss"].append(train_loss)
-            history["val_loss"].append(val_loss)
-            history["train_metrics"].append(train_metrics)
-            history["val_metrics"].append(val_metrics)
-            history["learning_rates"].append(current_lr)
-            
-            # Check for improvement
-            current_metric = val_metrics.get(monitor_metric, 0.0)
-            is_best = current_metric > best_metric
-            
-            if is_best:
-                best_metric = current_metric
-                best_epoch = epoch
-                # For FM models, only keep decoder+head weights in memory
+            self._log_info(
+                f"Using device: {self.device}, AMP: {use_amp}",
+                {"device": self.device, "use_amp": use_amp},
+            )
+            self._log_info(
+                f"Architecture: {self.config['architecture']}, Backbone: {self.config['backbone']}",
+                {"architecture": self.config["architecture"], "backbone": self.config["backbone"], "epochs": epochs},
+            )
+            self._update_training_progress(0)
+
+            # Build optimizer and scheduler
+            optimizer = self._build_optimizer(self.model)
+            scheduler = self._build_scheduler(optimizer, train_loader)
+
+            # Mixed precision scaler
+            scaler = GradScaler() if use_amp else None
+
+            # Training history
+            history = {
+                "train_loss": [],
+                "val_loss": [],
+                "train_metrics": [],
+                "val_metrics": [],
+                "learning_rates": [],
+            }
+
+            # Early stopping variables
+            best_metric = 0.0
+            best_epoch = 0
+            best_state_dict = None
+            epochs_without_improvement = 0
+
+            # Training loop
+            start_time = time.time()
+
+            for epoch in range(1, epochs + 1):
+                if is_task_cancelled(self.task_id):
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    raise TrainingCancelledException(f"Training cancelled at epoch {epoch}")
+
+                epoch_start_time = time.time()
+
+                # Train for one epoch
+                train_loss, train_metrics = self._train_one_epoch(
+                    self.model, train_loader, optimizer, scheduler, scaler, epoch
+                )
+
+                # Validate
+                val_loss, val_metrics = self._validate(self.model, val_loader)
+
+                # Update scheduler (for ReduceLROnPlateau)
+                scheduler_type = training_cfg.get("scheduler", "cosine_warm_restarts").lower()
+                if scheduler is not None and scheduler_type == "reduce_on_plateau":
+                    scheduler.step(val_metrics.get(monitor_metric, val_loss))
+
+                # Get current learning rate
+                current_lr = optimizer.param_groups[0]['lr']
+
+                # Record history
+                history["train_loss"].append(train_loss)
+                history["val_loss"].append(val_loss)
+                history["train_metrics"].append(train_metrics)
+                history["val_metrics"].append(val_metrics)
+                history["learning_rates"].append(current_lr)
+
+                # Check for improvement
+                current_metric = val_metrics.get(monitor_metric, 0.0)
+                is_best = current_metric > best_metric
+
+                if is_best:
+                    best_metric = current_metric
+                    best_epoch = epoch
+                    # For FM models, only keep decoder+head weights in memory
+                    from backend.ai.segmentors.fm_segmentation_model import FMSegmentationModel
+                    if isinstance(self.model, FMSegmentationModel):
+                        best_state_dict = copy.deepcopy(self.model.decoder_state_dict())
+                    else:
+                        best_state_dict = copy.deepcopy(self.model.state_dict())
+                    epochs_without_improvement = 0
+
+                    # Save best checkpoint
+                    self._save_checkpoint(
+                        self.model, optimizer, scheduler, epoch, val_metrics,
+                        is_best=True, filename=f"checkpoint_epoch_{epoch}.pth"
+                    )
+                else:
+                    epochs_without_improvement += 1
+
+                epoch_time = time.time() - epoch_start_time
+                epoch_metadata = {
+                    "epoch": epoch,
+                    "train_loss": train_loss,
+                    "val_loss": val_loss,
+                    f"val_{primary_iou_metric}": val_metrics.get(primary_iou_metric, 0),
+                    "val_dice": val_metrics.get('dice', 0),
+                    "lr": current_lr,
+                    "epoch_time_sec": epoch_time,
+                }
+
+                self._log_info(
+                    f"Epoch {epoch}/{epochs} | "
+                    f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | "
+                    f"Val {primary_iou_label}: {val_metrics.get(primary_iou_metric, 0):.4f} | "
+                    f"Val Dice: {val_metrics.get('dice', 0):.4f} | "
+                    f"LR: {current_lr:.2e} | "
+                    f"Time: {epoch_time:.1f}s",
+                    epoch_metadata,
+                )
+                self._update_training_progress(min(90, max(1, int(epoch / epochs * 90))))
+
+                # Early stopping check
+                if epochs_without_improvement >= patience:
+                    self._log_info(
+                        f"Early stopping triggered at epoch {epoch}. "
+                        f"No improvement for {patience} epochs. "
+                        f"Best {monitor_metric}: {best_metric:.4f} at epoch {best_epoch}",
+                        {
+                            "epoch": epoch,
+                            "best_epoch": best_epoch,
+                            f"best_{monitor_metric}": best_metric,
+                            "patience": patience,
+                        },
+                    )
+                    break
+
+            # Restore best model
+            if best_state_dict is not None:
                 from backend.ai.segmentors.fm_segmentation_model import FMSegmentationModel
                 if isinstance(self.model, FMSegmentationModel):
-                    best_state_dict = copy.deepcopy(self.model.decoder_state_dict())
+                    self.model.load_decoder_state_dict(best_state_dict)
                 else:
-                    best_state_dict = copy.deepcopy(self.model.state_dict())
-                epochs_without_improvement = 0
-                
-                # Save best checkpoint
-                self._save_checkpoint(
-                    self.model, optimizer, scheduler, epoch, val_metrics,
-                    is_best=True, filename=f"checkpoint_epoch_{epoch}.pth"
+                    self.model.load_state_dict(best_state_dict)
+                self._log_info(
+                    f"Restored best model from epoch {best_epoch}",
+                    {"best_epoch": best_epoch, f"best_{monitor_metric}": best_metric},
                 )
-            else:
-                epochs_without_improvement += 1
-            
-            epoch_time = time.time() - epoch_start_time
-            
-            # Logging
-            logger.info(
-                f"Epoch {epoch}/{epochs} | "
-                f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | "
-                f"Val {primary_iou_label}: {val_metrics.get(primary_iou_metric, 0):.4f} | "
-                f"Val Dice: {val_metrics.get('dice', 0):.4f} | "
-                f"LR: {current_lr:.2e} | "
-                f"Time: {epoch_time:.1f}s"
-            )
-            self._update_training_progress(min(90, max(1, int(epoch / epochs * 90))))
-            
-            # Early stopping check
-            if epochs_without_improvement >= patience:
-                logger.info(
-                    f"Early stopping triggered at epoch {epoch}. "
-                    f"No improvement for {patience} epochs. "
-                    f"Best {monitor_metric}: {best_metric:.4f} at epoch {best_epoch}"
+
+            # Final evaluation on test set if available
+            test_metrics = None
+            if test_loader is not None:
+                test_loss, test_metrics = self._validate(self.model, test_loader)
+                self._log_info(
+                    f"Test Results | Loss: {test_loss:.4f} | "
+                    f"{primary_iou_label}: {test_metrics.get(primary_iou_metric, 0):.4f} | "
+                    f"Dice: {test_metrics.get('dice', 0):.4f} | "
+                    f"Accuracy: {test_metrics.get('accuracy', 0):.4f}",
+                    {
+                        "test_loss": test_loss,
+                        f"test_{primary_iou_metric}": test_metrics.get(primary_iou_metric, 0),
+                        "test_dice": test_metrics.get('dice', 0),
+                        "test_accuracy": test_metrics.get('accuracy', 0),
+                    },
                 )
-                break
-        
-        # Restore best model
-        if best_state_dict is not None:
-            from backend.ai.segmentors.fm_segmentation_model import FMSegmentationModel
-            if isinstance(self.model, FMSegmentationModel):
-                self.model.load_decoder_state_dict(best_state_dict)
-            else:
-                self.model.load_state_dict(best_state_dict)
-            logger.info(f"Restored best model from epoch {best_epoch}")
-        
-        # Final evaluation on test set if available
-        test_metrics = None
-        if test_loader is not None:
-            test_loss, test_metrics = self._validate(self.model, test_loader)
-            logger.info(
-                f"Test Results | Loss: {test_loss:.4f} | "
-                f"{primary_iou_label}: {test_metrics.get(primary_iou_metric, 0):.4f} | "
-                f"Dice: {test_metrics.get('dice', 0):.4f} | "
-                f"Accuracy: {test_metrics.get('accuracy', 0):.4f}"
+
+            total_time = time.time() - start_time
+
+            # Compile results
+            results = {
+                "history": history,
+                "best_epoch": best_epoch,
+                "best_metric": best_metric,
+                "best_val_metrics": history["val_metrics"][best_epoch - 1] if best_epoch > 0 else {},
+                "test_metrics": test_metrics,
+                "total_training_time": total_time,
+                "config": self.config,
+            }
+
+            self._log_info(
+                f"Training completed in {total_time/60:.1f} minutes. "
+                f"Best {monitor_metric}: {best_metric:.4f} at epoch {best_epoch}",
+                {
+                    "training_time_sec": total_time,
+                    "best_epoch": best_epoch,
+                    f"best_{monitor_metric}": best_metric,
+                },
             )
-        
-        total_time = time.time() - start_time
-        
-        # Compile results
-        results = {
-            "history": history,
-            "best_epoch": best_epoch,
-            "best_metric": best_metric,
-            "best_val_metrics": history["val_metrics"][best_epoch - 1] if best_epoch > 0 else {},
-            "test_metrics": test_metrics,
-            "total_training_time": total_time,
-            "config": self.config,
-        }
-        
-        logger.info(
-            f"Training completed in {total_time/60:.1f} minutes. "
-            f"Best {monitor_metric}: {best_metric:.4f} at epoch {best_epoch}"
-        )
-        self._update_training_progress(100)
-        
-        return results
+            self._update_training_progress(100)
+
+            return results
+        finally:
+            self._close_task_logger()
         
