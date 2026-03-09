@@ -371,10 +371,14 @@ class SegmentationTrainer:
         # Precision
         precision = smp.metrics.precision(tp, fp, fn, tn, reduction='micro')
         metrics['precision'] = precision.item()
+        precision_per_class = smp.metrics.precision(tp, fp, fn, tn, reduction='none')
+        metrics['precision_per_class'] = precision_per_class.tolist() if precision_per_class.dim() > 0 else [precision_per_class.item()]
         
         # Recall / Sensitivity
         recall = smp.metrics.recall(tp, fp, fn, tn, reduction='micro')
         metrics['recall'] = recall.item()
+        recall_per_class = smp.metrics.recall(tp, fp, fn, tn, reduction='none')
+        metrics['recall_per_class'] = recall_per_class.tolist() if recall_per_class.dim() > 0 else [recall_per_class.item()]
         
         # F1 Score (harmonic mean of precision and recall)
         if precision.item() + recall.item() > 0:
@@ -382,6 +386,7 @@ class SegmentationTrainer:
         else:
             f1 = 0.0
         metrics['f1'] = f1
+        metrics['f1_per_class'] = dice_per_class.tolist() if dice_per_class.dim() > 0 else [dice_per_class.item()]
         
         return metrics
 

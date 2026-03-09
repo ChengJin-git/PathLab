@@ -1373,23 +1373,35 @@ def _get_seg_grad_cam_target_layers(model):
 def _build_segmentation_per_image_metrics(
     iou_per_class,
     dice_per_class,
+    precision_per_class,
+    recall_per_class,
     accuracy,
     precision,
     recall,
 ) -> Dict[str, Any]:
     iou_flat = iou_per_class.squeeze(0) if getattr(iou_per_class, "dim", lambda: 0)() > 1 else iou_per_class
     dice_flat = dice_per_class.squeeze(0) if getattr(dice_per_class, "dim", lambda: 0)() > 1 else dice_per_class
+    precision_flat = precision_per_class.squeeze(0) if getattr(precision_per_class, "dim", lambda: 0)() > 1 else precision_per_class
+    recall_flat = recall_per_class.squeeze(0) if getattr(recall_per_class, "dim", lambda: 0)() > 1 else recall_per_class
     num_classes = int(iou_flat.numel()) if hasattr(iou_flat, "numel") else len(iou_flat)
     primary_iou_key = "miou" if num_classes > 1 else "iou"
+
+    precision_value = precision.item()
+    recall_value = recall.item()
+    f1_value = (2 * precision_value * recall_value / (precision_value + recall_value)) if (precision_value + recall_value) > 0 else 0.0
 
     return {
         primary_iou_key: iou_flat.mean().item(),
         "iou_per_class": iou_flat.tolist() if iou_flat.dim() > 0 else [iou_flat.item()],
         "dice": dice_flat.mean().item(),
         "dice_per_class": dice_flat.tolist() if dice_flat.dim() > 0 else [dice_flat.item()],
+        "f1": f1_value,
+        "f1_per_class": dice_flat.tolist() if dice_flat.dim() > 0 else [dice_flat.item()],
         "accuracy": accuracy.item(),
-        "precision": precision.item(),
-        "recall": recall.item(),
+        "precision": precision_value,
+        "precision_per_class": precision_flat.tolist() if precision_flat.dim() > 0 else [precision_flat.item()],
+        "recall": recall_value,
+        "recall_per_class": recall_flat.tolist() if recall_flat.dim() > 0 else [recall_flat.item()],
     }
 
 
@@ -1580,6 +1592,8 @@ async def _run_inference_patch_segmentation(
                         )
                         iou_per_class = smp.metrics.iou_score(tp, fp, fn, tn, reduction='none')
                         dice_per_class = smp.metrics.f1_score(tp, fp, fn, tn, reduction='none')
+                        precision_per_class = smp.metrics.precision(tp, fp, fn, tn, reduction='none')
+                        recall_per_class = smp.metrics.recall(tp, fp, fn, tn, reduction='none')
                         accuracy = smp.metrics.accuracy(tp, fp, fn, tn, reduction='micro')
                         precision_val = smp.metrics.precision(tp, fp, fn, tn, reduction='micro')
                         recall_val = smp.metrics.recall(tp, fp, fn, tn, reduction='micro')
@@ -1587,6 +1601,8 @@ async def _run_inference_patch_segmentation(
                         per_image_metrics = _build_segmentation_per_image_metrics(
                             iou_per_class,
                             dice_per_class,
+                            precision_per_class,
+                            recall_per_class,
                             accuracy,
                             precision_val,
                             recall_val,
@@ -2942,6 +2958,8 @@ async def _run_external_validation_patch_segmentation(
                             )
                             iou_per_class = smp.metrics.iou_score(tp, fp, fn, tn, reduction='none')
                             dice_per_class = smp.metrics.f1_score(tp, fp, fn, tn, reduction='none')
+                            precision_per_class = smp.metrics.precision(tp, fp, fn, tn, reduction='none')
+                            recall_per_class = smp.metrics.recall(tp, fp, fn, tn, reduction='none')
                             accuracy = smp.metrics.accuracy(tp, fp, fn, tn, reduction='micro')
                             precision = smp.metrics.precision(tp, fp, fn, tn, reduction='micro')
                             recall = smp.metrics.recall(tp, fp, fn, tn, reduction='micro')
@@ -2949,6 +2967,8 @@ async def _run_external_validation_patch_segmentation(
                             per_image_metrics = _build_segmentation_per_image_metrics(
                                 iou_per_class,
                                 dice_per_class,
+                                precision_per_class,
+                                recall_per_class,
                                 accuracy,
                                 precision,
                                 recall,
