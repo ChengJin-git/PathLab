@@ -2,6 +2,7 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Edit, X, Users, FileImage } from 'lucide-react'
 import { Button } from '../ui/button'
+import { organSources } from '../upload/types'
 
 // ─── EditMetadataModal ───────────────────────────────────────────────────────
 
@@ -20,7 +21,6 @@ export interface EditMetadataModalProps {
   editCaseId: string
   editAge: string
   editGender: string
-  editSource: string
   editEventTime: string
   editEventStatus: string
   datasetType?: 'classification' | 'survival' | 'segmentation'
@@ -29,7 +29,6 @@ export interface EditMetadataModalProps {
   onEditCaseIdChange: (v: string) => void
   onEditAgeChange: (v: string) => void
   onEditGenderChange: (v: string) => void
-  onEditSourceChange: (v: string) => void
   onEditEventTimeChange: (v: string) => void
   onEditEventStatusChange: (v: string) => void
   updating: boolean
@@ -38,10 +37,10 @@ export interface EditMetadataModalProps {
 }
 
 export function EditMetadataModal({
-  editingWSI, editLabel, editCaseId, editAge, editGender, editSource, editEventTime, editEventStatus,
+  editingWSI, editLabel, editCaseId, editAge, editGender, editEventTime, editEventStatus,
   datasetType,
   visualType,
-  onEditLabelChange, onEditCaseIdChange, onEditAgeChange, onEditGenderChange, onEditSourceChange,
+  onEditLabelChange, onEditCaseIdChange, onEditAgeChange, onEditGenderChange,
   onEditEventTimeChange, onEditEventStatusChange,
   updating, onCancel, onConfirm,
 }: EditMetadataModalProps) {
@@ -132,14 +131,6 @@ export function EditMetadataModal({
           </div>
         </div>
 
-        {/* Source Input */}
-        <div className="mb-6 sm:mb-8">
-          <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.sourceOrganTissue')}</label>
-          <input type="text" value={editSource} onChange={(e) => onEditSourceChange(e.target.value)}
-            placeholder={t('listComponents.editModals.sourcePlaceholder')}
-            className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm" />
-        </div>
-
         {/* Action Buttons */}
         <div className="flex gap-3">
           <button onClick={onCancel} disabled={updating}
@@ -164,7 +155,6 @@ export interface BatchEditModalProps {
   batchEditCaseId: string
   batchEditAge: string
   batchEditGender: string
-  batchEditSource: string
   batchEditEventTime: string
   batchEditEventStatus: string
   datasetType?: 'classification' | 'survival' | 'segmentation'
@@ -173,7 +163,6 @@ export interface BatchEditModalProps {
   onBatchEditCaseIdChange: (v: string) => void
   onBatchEditAgeChange: (v: string) => void
   onBatchEditGenderChange: (v: string) => void
-  onBatchEditSourceChange: (v: string) => void
   onBatchEditEventTimeChange: (v: string) => void
   onBatchEditEventStatusChange: (v: string) => void
   batchUpdating: boolean
@@ -182,11 +171,11 @@ export interface BatchEditModalProps {
 }
 
 export function BatchEditModal({
-  selectedCount, batchEditLabel, batchEditCaseId, batchEditAge, batchEditGender, batchEditSource,
+  selectedCount, batchEditLabel, batchEditCaseId, batchEditAge, batchEditGender,
   batchEditEventTime, batchEditEventStatus,
   datasetType,
   visualType,
-  onBatchEditLabelChange, onBatchEditCaseIdChange, onBatchEditAgeChange, onBatchEditGenderChange, onBatchEditSourceChange,
+  onBatchEditLabelChange, onBatchEditCaseIdChange, onBatchEditAgeChange, onBatchEditGenderChange,
   onBatchEditEventTimeChange, onBatchEditEventStatusChange,
   batchUpdating, onCancel, onConfirm,
 }: BatchEditModalProps) {
@@ -278,13 +267,6 @@ export function BatchEditModal({
             </div>
           </div>
 
-          {/* Source Input */}
-          <div className="mb-4 sm:mb-6">
-            <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.sourceOrganTissue')}</label>
-            <input type="text" value={batchEditSource} onChange={(e) => onBatchEditSourceChange(e.target.value)}
-              placeholder={t('listComponents.editModals.keepExisting')}
-              className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm" />
-          </div>
         </div>
 
         {/* Action Buttons */}
@@ -311,22 +293,27 @@ export interface EditDatasetModalProps {
   editingDatasetOriginalType: 'classification' | 'survival' | 'segmentation'
   editingDatasetDataLevel: 'case' | 'file'
   editingDatasetOriginalDataLevel: 'case' | 'file'
+  editingDatasetSourceSelection: string
+  editingDatasetSourceCustom: string
   editingDatasetSaving: boolean
   isSlideDataset: boolean
   canSelectSegmentation: boolean
   onNameChange: (v: string) => void
   onTypeChange: (v: 'classification' | 'survival' | 'segmentation') => void
   onDataLevelChange: (v: 'case' | 'file') => void
+  onSourceSelectionChange: (v: string) => void
+  onSourceCustomChange: (v: string) => void
   onCancel: () => void
   onSave: () => void
 }
 
 export function EditDatasetModal({
   editingDatasetName, editingDatasetType, editingDatasetOriginalType,
-  editingDatasetDataLevel, editingDatasetOriginalDataLevel, editingDatasetSaving,
-  isSlideDataset, canSelectSegmentation, onNameChange, onTypeChange, onDataLevelChange, onCancel, onSave,
+  editingDatasetDataLevel, editingDatasetOriginalDataLevel, editingDatasetSourceSelection, editingDatasetSourceCustom, editingDatasetSaving,
+  isSlideDataset, canSelectSegmentation, onNameChange, onTypeChange, onDataLevelChange, onSourceSelectionChange, onSourceCustomChange, onCancel, onSave,
 }: EditDatasetModalProps) {
   const { t } = useTranslation()
+  const isOtherSource = editingDatasetSourceSelection === 'Other'
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onCancel}>
       <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-md p-4 sm:p-6 animate-in zoom-in-95 fade-in duration-200" onClick={e => e.stopPropagation()}>
@@ -416,6 +403,35 @@ export function EditDatasetModal({
             )}
           </div>
         )}
+
+        <div className="mb-6">
+          <label className="block text-sm font-semibold text-gray-700 mb-2">{t('listComponents.editModals.sourceOrganTissue')}</label>
+          <div className="grid grid-cols-1 gap-3">
+            <select
+              value={editingDatasetSourceSelection}
+              onChange={(e) => onSourceSelectionChange(e.target.value)}
+              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+            >
+              <option value="">{t('listComponents.editModals.unknownSourceOrgan')}</option>
+              {organSources.filter((source) => source !== 'Other').map((source) => (
+                <option key={source} value={source}>{source}</option>
+              ))}
+              <option value="Other">{t('listComponents.editModals.otherSource')}</option>
+            </select>
+            {isOtherSource && (
+              <input
+                type="text"
+                value={editingDatasetSourceCustom}
+                onChange={(e) => onSourceCustomChange(e.target.value)}
+                placeholder={t('listComponents.editModals.otherSourcePlaceholder')}
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            )}
+          </div>
+          <p className="mt-2 text-xs text-gray-500">
+            {t('listComponents.editModals.datasetSourceDescription')}
+          </p>
+        </div>
 
         {/* Action Buttons */}
         <div className="flex gap-3">

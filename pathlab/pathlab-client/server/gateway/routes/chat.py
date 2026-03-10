@@ -39,7 +39,7 @@ from .chat_pdf import (
     search_pdf_pages, get_cached_markdown, get_cached_pdf_meta, _split_md_into_pages,
     _get_url_hash, _get_pdf_cache_dir, _tokenize_for_search,
     detect_source_type, is_academic_content, format_reference_card,
-    trigger_mineru_upgrade_by_hash,
+    PDF_PARSE_METHOD_DOCLING, PDF_PARSE_METHOD_PYMUPDF,
 )
 from .chat_pdf_vectorstore import search_pdf_chunks
 
@@ -354,8 +354,8 @@ _PDF_SUPPLEMENT_PROMPTS = {
         "When a paper's content contains Markdown image links like ![fig](http://...), you MUST "
         "include those links verbatim in your response so the user can see the figures. "
         "Do NOT describe images as a substitute for the actual image link. "
-        "If the user asks for a figure but the paper shows [PDF_IMAGES_STATUS: pending], tell the user "
-        "that high-precision figure extraction is still running and to ask again later.\n\n"
+        "If the user asks for a figure but no matching image link appears in the retrieved paper content, "
+        "tell the user the current parsed content does not include that figure and avoid guessing.\n\n"
         "## OTHER RULES\n"
         "LONG PAPERS: For papers with many pages, only the beginning, end, and most relevant "
         "middle sections are shown. If the user asks about a section not visible here, tell them "
@@ -377,7 +377,7 @@ _PDF_SUPPLEMENT_PROMPTS = {
         "## 图片规则\n"
         "如果论文内容中包含 Markdown 图片链接（如 ![fig](http://...)），你**必须**将这些链接原样放入回答中，"
         "让用户直接看到图片。**不要**用文字描述来替代实际图片链接。"
-        "如果用户询问图片但看到 [PDF_IMAGES_STATUS: pending]，请告知用户高精度图片提取仍在后台运行，稍后再问。\n\n"
+        "如果用户询问某张图片，但当前检索到的论文内容里没有对应图片链接，请明确说明当前解析内容未包含该图片，禁止猜测。\n\n"
         "## 其他规则\n"
         "长论文提示：对于页数很多的论文，仅展示了开头、结尾和最相关的中间部分。"
         "如果用户问到未展示的章节，请告知用户可以通过追问来搜索特定页面或主题。"
@@ -397,7 +397,7 @@ _PDF_SUPPLEMENT_PROMPTS = {
         "## 圖片規則\n"
         "如果論文內容中包含 Markdown 圖片連結（如 ![fig](http://...)），你**必須**將這些連結原樣放入回答中，"
         "讓用戶直接看到圖片。**不要**用文字描述來替代實際圖片連結。"
-        "如果用戶詢問圖片但看到 [PDF_IMAGES_STATUS: pending]，請告知用戶高精度圖片提取仍在後台運行，稍後再問。\n\n"
+        "如果用戶詢問某張圖片，但當前檢索到的論文內容裡沒有對應圖片連結，請明確說明當前解析內容未包含該圖片，禁止猜測。\n\n"
         "## 其他規則\n"
         "長論文提示：對於頁數很多的論文，僅展示了開頭、結尾和最相關的中間部分。"
         "如果用戶問到未展示的章節，請告知用戶可以透過追問來搜尋特定頁面或主題。"
@@ -421,7 +421,8 @@ _READ_ARTICLE_PROMPTS = {
         "'I could not find this information in the retrieved article content.'\n"
         "4. If the article failed to download or parse, tell the user explicitly.\n\n"
         "## IMAGE RULES\n"
-        "When the content contains Markdown image links like ![fig](http://...), include them verbatim.\n\n"
+        "When the content contains Markdown image links like ![fig](http://...), include them verbatim. "
+        "If no matching image link is present for the figure the user asks about, say the current parsed content does not include it.\n\n"
         "## OTHER RULES\n"
         "For long articles, only head/tail sections are shown. If the user asks about a missing section, "
         "tell them to ask a more specific follow-up question.\n"
@@ -438,7 +439,8 @@ _READ_ARTICLE_PROMPTS = {
         "\"我在已检索的文章内容中没有找到这个信息。\"\n"
         "4. 如果文章下载或解析失败，**必须**明确告知用户。\n\n"
         "## 图片规则\n"
-        "如果内容中包含 Markdown 图片链接（如 ![fig](http://...)），请原样放入回答中。\n\n"
+        "如果内容中包含 Markdown 图片链接（如 ![fig](http://...)），请原样放入回答中。"
+        "如果用户询问的图片在当前解析内容中没有对应链接，请明确说明当前内容未包含该图片。\n\n"
         "## 其他规则\n"
         "长文章仅展示了开头和结尾部分。如果用户问到未展示的章节，请告知用户提出更具体的问题。\n"
         "重要：[REFERENCE] 块格式已正确，请原样复制到回答中。"
@@ -453,7 +455,8 @@ _READ_ARTICLE_PROMPTS = {
         "「我在已檢索的文章內容中沒有找到這個資訊。」\n"
         "4. 如果文章下載或解析失敗，**必須**明確告知用戶。\n\n"
         "## 圖片規則\n"
-        "如果內容中包含 Markdown 圖片連結（如 ![fig](http://...)），請原樣放入回答中。\n\n"
+        "如果內容中包含 Markdown 圖片連結（如 ![fig](http://...)），請原樣放入回答中。"
+        "如果用戶詢問的圖片在當前解析內容中沒有對應連結，請明確說明當前內容未包含該圖片。\n\n"
         "## 其他規則\n"
         "長文章僅展示了開頭和結尾部分。如果用戶問到未展示的章節，請告知用戶提出更具體的問題。\n"
         "重要：[REFERENCE] 區塊格式已正確，請原樣複製到回答中。"
@@ -472,7 +475,9 @@ _PDF_FOLLOWUP_NOTE = {
         "Do NOT use training knowledge to fill gaps. "
         "When quoting original text from the paper, use blockquotes (> ...) to clearly distinguish "
         "the paper's original words from your own analysis.\n"
-        "If a paper's images are available (shown in Paper Registry), include image links verbatim."
+        "If a paper's images are available (shown in Paper Registry), include image links verbatim. "
+        "If parse quality says a background Docling upgrade is pending, treat the current fast parse as provisional "
+        "and invite the user to ask again later for better figure/table coverage if needed."
     ),
     "zh_CN": (
         "注意：以下 PDF 内容已通过语义搜索筛选，展示与用户最新提问最相关的文本片段以及首尾页作为上下文。"
@@ -481,6 +486,8 @@ _PDF_FOLLOWUP_NOTE = {
         "严格 Grounding：你的回答**必须完全基于**下方论文内容，**禁止**用训练知识填补空白。"
         "引用论文原文时，请使用引用块（> ...）来清楚区分论文原文和你自己的分析。\n"
         "如果论文图片可用（见 Paper Registry），请将图片链接原样包含在回答中。"
+        "如果解析质量显示后台 Docling 升级待完成，请把当前快速解析视为临时结果；"
+        "若需要更好的图表覆盖，可建议用户稍后再追问。"
     ),
     "zh_HK": (
         "注意：以下 PDF 內容已透過語義搜尋篩選，展示與用戶最新提問最相關的文本片段以及首尾頁作為上下文。"
@@ -489,8 +496,38 @@ _PDF_FOLLOWUP_NOTE = {
         "嚴格 Grounding：你的回答**必須完全基於**下方論文內容，**禁止**用訓練知識填補空白。"
         "引用論文原文時，請使用引用區塊（> ...）來清楚區分論文原文和你自己的分析。\n"
         "如果論文圖片可用（見 Paper Registry），請將圖片連結原樣包含在回答中。"
+        "如果解析品質顯示背景 Docling 升級待完成，請把當前快速解析視為暫時結果；"
+        "若需要更好的圖表覆蓋，可建議用戶稍後再追問。"
     ),
 }
+
+
+def _describe_pdf_parse_quality(
+    parse_method: str | None,
+    image_count: int,
+    images_ready: bool,
+    high_quality_pending: bool = False,
+) -> str:
+    if parse_method == PDF_PARSE_METHOD_DOCLING:
+        return (
+            f"Structured (Docling) — {image_count} images extracted"
+            if images_ready else
+            "Structured (Docling) — no extracted images"
+        )
+    if parse_method == PDF_PARSE_METHOD_PYMUPDF:
+        image_label = (
+            f"{image_count} images extracted"
+            if images_ready else
+            "no extracted images"
+        )
+        if high_quality_pending:
+            return f"Fast (PyMuPDF) — {image_label}; background Docling upgrade pending"
+        return f"Fast (PyMuPDF) — {image_label}"
+    return "Parser unavailable"
+
+
+def _describe_pdf_image_status(image_count: int) -> str:
+    return f"{image_count} figures ✅" if image_count > 0 else "none"
 
 
 def _collect_pdf_urls_from_contexts(messages: list[dict]) -> list[str]:
@@ -573,8 +610,7 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
     This replaces the old per-block `_enhance_pdf_context_for_query` with a
     global merge that:
       1. Builds a Paper Registry with global sequential numbering and image status.
-      2. Re-reads the **latest** cached markdown for each URL from disk (so MinerU
-         upgrades are picked up automatically).
+      2. Re-reads the **latest** cached markdown for each URL from disk.
       3. Uses BM25 to select the most relevant pages per paper.
       4. Returns one unified context string.
     """
@@ -592,7 +628,7 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
     for idx, url in enumerate(all_urls, 1):
         meta = get_cached_pdf_meta(url) or {}
         title = meta.get('title', 'Unknown')
-        parse_method = meta.get('parse_method', 'unknown')
+        parse_method = meta.get('parse_method')
 
         # Determine academic status from cache meta (persisted by process_pdf_url).
         # If not in cache (legacy), re-detect from cached markdown + source type.
@@ -611,15 +647,10 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
         image_count = 0
         if images_dir.is_dir():
             image_count = sum(1 for f in images_dir.iterdir() if f.is_file())
-        if image_count > 0:
-            image_status = f"{image_count} figures ✅"
-        elif parse_method == "pymupdf":
-            image_status = "pending ⏳"
-        else:
-            image_status = "none"
+        image_status = _describe_pdf_image_status(image_count)
 
         registry_lines.append(
-            f"- [{label} {idx}] {title} ({url}) | Parse: {parse_method} | Images: {image_status}"
+            f"- [{label} {idx}] {title} ({url}) | Parse: {parse_method or 'unknown'} | Images: {image_status}"
         )
         paper_metas.append({
             'url': url, 'meta': meta, 'title': title,
@@ -647,16 +678,17 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
         page_count = meta.get('page_count')
         parse_method = pd['parse_method']
         is_academic = pd.get('is_academic', False)
+        high_quality_pending = bool(meta.get('high_quality_parse_pending'))
         label = "Paper" if is_academic else "Doc"
         content_type = "Academic Paper" if is_academic else "General Document"
         _img_count = pd['image_count']
         _imgs_ready = _img_count > 0
-        if parse_method == "mineru":
-            quality_label = f"High-precision (MinerU) — {_img_count} images extracted" if _imgs_ready else "High-precision (MinerU) — no images"
-        elif _imgs_ready:
-            quality_label = f"Fast (PyMuPDF) — {_img_count} images extracted (MinerU upgrade pending in background)"
-        else:
-            quality_label = "Fast (PyMuPDF) — images not yet extracted (MinerU upgrade pending in background)"
+        quality_label = _describe_pdf_parse_quality(
+            parse_method,
+            _img_count,
+            _imgs_ready,
+            high_quality_pending,
+        )
         page_info = f"{page_count} pages" if page_count else "page count unknown"
 
         enhanced_parts.append(
@@ -667,14 +699,11 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
             f"- **Parse quality**: {quality_label}\n"
         )
 
-        # Read full cached markdown (always re-reads from disk → picks up MinerU upgrades)
+        # Read full cached markdown (always re-reads from disk → picks up newer high-quality cache)
         full_md = get_cached_markdown(url)
         if not full_md:
             enhanced_parts.append("[Content not available — cache may have expired]\n---\n")
             continue
-
-        # 改动 8: Strip stale IMAGE_STATUS markers from old content
-        full_md = re.sub(r'\[PDF_IMAGES_STATUS:[^\]]*\]', '', full_md)
 
         # 改动 9: Replace hash-based image filenames with fig-N aliases.
         # LLMs hallucinate 64-char SHA-256 hashes → cascading 404 errors.
@@ -1893,7 +1922,10 @@ After saving, return here and start chatting!"""
                 if pdf_result.get("success"):
                     pdf_status = {
                         "url": article_url, "title": article_title,
-                        "status": "completed", "from_cache": pdf_result.get("from_cache", False)
+                        "status": "completed",
+                        "from_cache": pdf_result.get("from_cache", False),
+                        "parse_method": pdf_result.get("parse_method"),
+                        "high_quality_pending": pdf_result.get("high_quality_pending", False),
                     }
                 else:
                     pdf_status = {
@@ -1924,15 +1956,15 @@ After saving, return here and start chatting!"""
 
                     # Build metadata
                     page_count = pdf_result.get("page_count")
-                    parse_method = pdf_result.get("parse_method", "pymupdf")
+                    parse_method = pdf_result.get("parse_method")
                     _img_count = pdf_result.get("image_count", 0)
                     _imgs_ready = pdf_result.get("images_ready", False)
-                    if parse_method == "mineru":
-                        quality_label = f"High-precision (MinerU) — {_img_count} images extracted" if _imgs_ready else "High-precision (MinerU) — no images"
-                    elif _imgs_ready:
-                        quality_label = f"Fast (PyMuPDF) — {_img_count} images extracted (MinerU upgrade pending in background)"
-                    else:
-                        quality_label = "Fast (PyMuPDF) — images not yet extracted (MinerU upgrade pending in background)"
+                    quality_label = _describe_pdf_parse_quality(
+                        parse_method,
+                        _img_count,
+                        _imgs_ready,
+                        bool(pdf_result.get("high_quality_pending", False)),
+                    )
                     page_info = f"{page_count} pages" if page_count else "page count unknown"
                     is_academic = pdf_result.get("is_academic", False)
                     label = "Paper" if is_academic else "Doc"
@@ -3030,11 +3062,11 @@ async def serve_pdf_image(
     filename: str,
     user: User = Depends(get_user_from_header_or_param)
 ):
-    """Serve MinerU-extracted PDF images from persistent cache.
+    """Serve extracted PDF images from persistent cache.
 
     Images are stored at: uploads/pdf_cache/images/{url_hash}/{filename}
-    They are created by the background MinerU upgrade task (or the synchronous
-    MinerU fallback) and referenced by absolute URLs inside the .mineru.md cache.
+    They are created during PDF parsing and referenced by absolute URLs inside
+    cached markdown.
     """
     # Prevent path traversal: url_hash must be hex chars only; filename must be
     # a plain filename with no directory separators or parent-dir references.
@@ -3046,8 +3078,6 @@ async def serve_pdf_image(
     image_path = get_pdf_image_path(url_hash, filename)
 
     if not image_path.exists() or not image_path.is_file():
-        # Image not found — likely MinerU hasn't run yet. Schedule upgrade.
-        await trigger_mineru_upgrade_by_hash(url_hash)
         raise HTTPException(status_code=404, detail="Image not found")
 
     content_type, _ = mimetypes.guess_type(str(image_path))

@@ -753,13 +753,14 @@
       "searchedPages": "Searched {{count}} pages",
       "summarizingSearch": "Summarizing search results...",
       "webSearchCard": "Web Search",
-      "downloadingPdf": "Downloading PDF paper...",
-      "parsingPdf": "Parsing PDF paper...",
-      "pdfParsedCount": "Parsed {{count}} PDF papers",
+      "downloadingPdf": "Downloading PDF document...",
+      "parsingPdf": "Parsing PDF document...",
+      "pdfParsedCount": "Parsed {{count}} PDF documents",
+      "pdfHighQualityPending": "Fast parse ready; Docling background upgrade pending",
       "pdfDownloadFailed": "PDF download failed",
       "pdfParseFailed": "PDF parsing failed",
       "pdfFailedCount": "{{count}} PDFs failed",
-      "summarizingPdf": "Generating paper summary..."
+      "summarizingPdf": "Generating PDF summary..."
     }
   },
   "layout": {
@@ -1638,11 +1639,18 @@
       "clear": "Clear filters",
       "summary": "Showing {{shown}} of {{total}} datasets",
       "compactSummary": "{{shown}} / {{total}} datasets",
+      "selectSourceOrgan": "Select source organ",
+      "unknownSourceOrgan": "Unknown",
       "groups": {
         "taskType": "Task Type",
         "dataType": "Data Type",
-        "dataLevel": "Data Level"
+        "dataLevel": "Data Level",
+        "sourceOrgan": "Source Organ"
       }
+    },
+    "view": {
+      "iconView": "Icon view",
+      "listView": "List view"
     },
     "newDataset": "New Dataset",
     "newDatasetDescription": "Register slides to create a new dataset",
@@ -2556,6 +2564,7 @@
       "unspecified": "Unspecified",
       "sourceOrganTissue": "Source (Organ/Tissue)",
       "sourcePlaceholder": "e.g., Lung, Breast",
+      "selectSourceOrgan": "Select source organ",
       "cancel": "Cancel",
       "saving": "Saving...",
       "saveChanges": "Save Changes",
@@ -2578,7 +2587,11 @@
       "dataLevel": "Data Level",
       "caseLevel": "Case Level",
       "fileLevel": "File Level",
-      "changingDataLevelWarning": "Changing data level may affect existing analyses"
+      "changingDataLevelWarning": "Changing data level may affect existing analyses",
+      "unknownSourceOrgan": "Unknown",
+      "datasetSourceDescription": "This source will be applied to all files in the dataset.",
+      "otherSource": "Other",
+      "otherSourcePlaceholder": "Enter a custom source"
     },
     "fileMetadata": {
       "setMetadataForFiles": "Set Metadata for Files",
@@ -2596,6 +2609,7 @@
       "unspecified": "Unspecified",
       "sourceOrganTissue": "Source (Organ/Tissue)",
       "sourcePlaceholder": "e.g., Lung, Breast",
+      "selectSourceOrgan": "Select source organ",
       "filesSelected": "{{count}} files selected",
       "cancel": "Cancel",
       "uploadAllFiles": "Upload All Files"
@@ -2680,7 +2694,12 @@
       "fileLevel": "File Level",
       "fileLevelDesc": "Each slide is independent",
       "segmentationPatchOnly": "Segmentation only supports patch image data, not whole slide image data.",
-      "nextChooseFiles": "Next: Choose Files"
+      "nextChooseFiles": "Next: Choose Files",
+      "sourceOrganTissue": "Source (Organ/Tissue)",
+      "unknownSourceOrgan": "Unknown",
+      "otherSource": "Other",
+      "otherSourcePlaceholder": "Enter a custom source",
+      "datasetSourceDescription": "This source will be applied to all files uploaded into the dataset."
     },
     "successStep": {
       "importSuccessful": "Import Successful",

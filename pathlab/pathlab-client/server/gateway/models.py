@@ -24,6 +24,11 @@ class DatasetUpdateDataLevelRequest(BaseModel):
     aggregation_level: str  # "case" or "file"
 
 
+class DatasetUpdateSourceRequest(BaseModel):
+    """Request model for updating dataset source organ/tissue."""
+    source: Optional[str] = None
+
+
 class DeletionMode(str, Enum):
     """Deletion mode for WSI and training task deletion"""
     STANDARD = "standard"  # Delete main files, keep training features

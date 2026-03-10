@@ -48,6 +48,7 @@ export interface ImageRecommendation {
 interface ImageWithOverlays {
   image: WSISummary
   overlays: AvailableHeatmap[]
+  resultPrediction: string | null
 }
 
 interface ViewerNavigationState {
@@ -513,6 +514,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
     setError(null)
     try {
       let displayImages: WSISummary[] = []
+      let predictionByWsiId = new Map<string, string | null>()
 
       // If has_predictions is true, fetch from results endpoint
       if (recommendation.filters?.has_predictions) {
@@ -536,6 +538,8 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
             r.label?.toLowerCase() === recommendation.filters!.label!.toLowerCase()
           )
         }
+
+        predictionByWsiId = new Map(resultsWithWsi.map(r => [r.wsi_id, r.pred ?? null]))
 
         // We need to get full WSI info, so fetch WSI list and merge
         const wsiResult = await fetchWSIList(recommendation.filters?.dataset_id)
@@ -582,6 +586,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
       const baseImageInfo = limitedImages.map(img => ({
         image: img,
         overlays: [],
+        resultPrediction: predictionByWsiId.get(img.wsi_id) ?? null,
       }))
 
       setImagesWithOverlays(baseImageInfo)
@@ -628,11 +633,13 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
             return {
               image: img,
               overlays,
+              resultPrediction: predictionByWsiId.get(img.wsi_id) ?? null,
             }
           } catch {
             return {
               image: img,
               overlays: [],
+              resultPrediction: predictionByWsiId.get(img.wsi_id) ?? null,
             }
           }
         })
@@ -760,7 +767,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
           </p>
         ) : (
           <div className="space-y-4">
-            {imagesWithOverlays.map(({ image, overlays }) => {
+            {imagesWithOverlays.map(({ image, overlays, resultPrediction }) => {
               const fileType = getFileType(image.file_extension, image.file_size, image.data_type)
               const latestSegmentationMask = getLatestSegmentationMaskOverlay(overlays, segmentationMaskConfig?.task_id)
               const latestHeatmap = getPreferredHeatmapOverlay(
@@ -768,6 +775,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                 isSegmentationCard ? (latestSegmentationMask?.task_id ?? segmentationMaskConfig?.task_id) : undefined,
               )
               const hasHeatmap = !!latestHeatmap
+              const displayPrediction = resultPrediction ?? latestHeatmap?.prediction ?? null
               const showOverlayLoadingPlaceholder = needsOverlayLookup && isOverlayInfoLoading
               return (
                 <div
@@ -923,6 +931,12 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                             {t('chatComponents.imageRecommendation.dataset')}: <span className="text-gray-900 ml-1">{image.dataset_name}</span>
                           </div>
                         )}
+                        {displayPrediction && (
+                          <div className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2.5 py-1 bg-blue-50 text-blue-700 text-xs rounded-md font-medium border border-blue-100">
+                            <span className="font-bold text-blue-500 uppercase tracking-wider text-[10px]">{t('chatComponents.imageRecommendation.pred')}</span>
+                            <span className="text-blue-900">{displayPrediction}</span>
+                          </div>
+                        )}
                         {image.label && (
                           <div className="inline-flex shrink-0 items-center whitespace-nowrap px-2 py-1 bg-amber-50 text-amber-700 text-xs rounded-md font-medium border border-amber-100">
                             {t('chatComponents.imageRecommendation.label')}: <span className="text-amber-900 ml-1">{image.label}</span>
@@ -932,12 +946,6 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                           <div className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-md font-medium border border-indigo-100">
                             <span className="font-bold text-indigo-500 uppercase tracking-wider text-[10px]">{t('chatComponents.imageRecommendation.maskModel')}</span>
                             <span className="text-indigo-900">{latestSegmentationMask.task_name}</span>
-                          </div>
-                        )}
-                        {recommendation.show_heatmap && hasHeatmap && latestHeatmap?.prediction && (
-                          <div className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2.5 py-1 bg-blue-50 text-blue-700 text-xs rounded-md font-medium border border-blue-100">
-                            <span className="font-bold text-blue-500 uppercase tracking-wider text-[10px]">{t('chatComponents.imageRecommendation.pred')}</span>
-                            <span className="text-blue-900">{latestHeatmap.prediction}</span>
                           </div>
                         )}
                         {image.event_status !== null && (

@@ -487,8 +487,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
         }
       }
       // Safety net: prevent 404 flood from hallucinated image URLs.
-      // On error, clear src to stop browser retries and show a placeholder
-      // for pdf-images (which may load after MinerU upgrade).
+      // On error, clear src so the browser stops retrying broken PDF images.
       const isPdfImage = (src || '').includes('/pdf-images/')
       return (
         <img

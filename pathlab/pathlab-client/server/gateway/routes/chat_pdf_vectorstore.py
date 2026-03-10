@@ -198,6 +198,66 @@ def _chunk_markdown_fallback(
     return chunks
 
 
+def _stringify_block_for_embedding(block: dict, paper_title: str) -> str:
+    block_type = str(block.get("type") or "paragraph")
+    section_path = block.get("section_path") or []
+    section_prefix = " / ".join(str(item) for item in section_path if item)
+    prefix_parts = [f"[BlockType: {block_type}]"]
+    if section_prefix:
+        prefix_parts.append(f"[Section: {section_prefix}]")
+
+    body = ""
+    if block_type == "paragraph":
+        body = str(block.get("text") or "")
+    elif block_type == "section":
+        body = str(block.get("text") or "")
+    elif block_type == "table":
+        body = str(block.get("caption") or "")
+        table_markdown = str(block.get("markdown") or "")
+        body = f"{body}\n{table_markdown}".strip()
+    elif block_type == "figure":
+        caption = str(block.get("caption") or "")
+        vision_summary = str(block.get("vision_summary") or "")
+        body = f"{caption}\n{vision_summary}".strip()
+    elif block_type == "equation":
+        latex = str(block.get("latex") or "")
+        surrounding = str(block.get("surrounding_text") or "")
+        body = f"{latex}\n{surrounding}".strip()
+    else:
+        body = str(block.get("text") or block.get("markdown") or "")
+
+    prefix = " ".join(prefix_parts)
+    candidate = f"{prefix}\n{body}".strip()
+    return candidate or f"[BlockType: {block_type}] {paper_title}"
+
+
+def _chunk_structured_content(
+    structured_content: dict,
+    url_hash: str,
+    paper_title: str,
+) -> list[dict]:
+    """Flatten the normalized Document Graph / Block Graph into embedding chunks."""
+    blocks = structured_content.get("blocks") if isinstance(structured_content, dict) else None
+    if not isinstance(blocks, list):
+        return []
+
+    chunks: list[dict] = []
+    for chunk_index, block in enumerate(blocks):
+        if not isinstance(block, dict):
+            continue
+        chunk_text = _stringify_block_for_embedding(block, paper_title).strip()
+        if not chunk_text:
+            continue
+        chunks.append({
+            "url_hash": url_hash,
+            "paper_title": paper_title,
+            "page_num": int(block.get("page") or 0),
+            "chunk_index": chunk_index,
+            "chunk_text": chunk_text,
+        })
+    return chunks
+
+
 # ── LanceDB operations ──────────────────────────────────────────────────────
 
 def _get_db():
@@ -214,13 +274,20 @@ def _table_exists(db, name: str) -> bool:
         return False
 
 
-def index_pdf_to_vectorstore(url_hash: str, markdown: str, paper_title: str) -> int:
+def index_pdf_to_vectorstore(
+    url_hash: str,
+    markdown: str,
+    paper_title: str,
+    structured_content: Optional[dict] = None,
+) -> int:
     """Chunk + embed + upsert a PDF into the vector store.
 
     Returns the number of chunks indexed.
     """
     try:
-        chunks = _chunk_markdown(markdown, url_hash, paper_title)
+        chunks = _chunk_structured_content(structured_content or {}, url_hash, paper_title)
+        if not chunks:
+            chunks = _chunk_markdown(markdown, url_hash, paper_title)
         if not chunks:
             logger.warning(f"[VectorStore] No chunks produced for {url_hash}")
             return 0

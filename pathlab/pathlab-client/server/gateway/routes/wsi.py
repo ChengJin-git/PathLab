@@ -41,7 +41,7 @@ from backend.common.annotation_summary_cache import (
     is_dataset_annotation_summary_cache_valid,
 )
 from ..dependencies import logger, storage_manager
-from ..models import DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest
+from ..models import DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest, DatasetUpdateSourceRequest
 from ..utils import (
     get_effective_wsi_data_type,
     proxy_preprocessing_json,
@@ -679,6 +679,58 @@ async def update_dataset_data_level(
         raise HTTPException(status_code=500, detail=f"Failed to update dataset data level: {str(e)}")
 
 
+@router.put("/datasets/{dataset_id}/source")
+async def update_dataset_source(
+    dataset_id: str,
+    req: DatasetUpdateSourceRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update dataset source organ/tissue by applying the same source to all files in the dataset.
+
+    Empty string clears the source, which will be shown as unknown in the dataset repository.
+    All authenticated users can update their own datasets, admin can update any.
+    """
+    try:
+        await get_dataset_with_access(
+            dataset_id,
+            user,
+            db,
+            require_owner=True,
+            not_found_detail=f"Dataset not found: {dataset_id}",
+            forbidden_detail="You don't have permission to update this dataset",
+        )
+
+        from sqlalchemy import update as sql_update
+        from backend.database.models import WSISlide
+
+        normalized_source = req.source.strip() if isinstance(req.source, str) else None
+        if normalized_source == '':
+            normalized_source = None
+
+        result = await db.execute(
+            sql_update(WSISlide)
+            .where(WSISlide.dataset_id == dataset_id)
+            .values(source=normalized_source)
+        )
+        await db.commit()
+
+        logger.info(f"Updated dataset {dataset_id} source to {normalized_source!r}: {result.rowcount} WSIs affected")
+
+        return {
+            "message": "Dataset source updated successfully",
+            "dataset_id": dataset_id,
+            "source": normalized_source,
+            "updated_count": result.rowcount,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update dataset source: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update dataset source: {str(e)}")
+
+
 @router.post("/check-duplicates")
 async def check_duplicate_filenames(
     filenames: List[str],
@@ -999,7 +1051,7 @@ async def upload_dataset_splits(
     - filename: The original filename of the WSI slide
 
     Optional columns:
-    - split (train, val, test), label, case_id, age, gender, source, event_time, event_status
+    - split (train, val, test), label, case_id, age, gender, event_time, event_status
 
     If no 'val' split is provided, 10% of 'train' samples will be automatically
     assigned to 'val'.
@@ -1201,8 +1253,6 @@ async def upload_dataset_splits(
                     target_wsi.age = int(val)
             elif norm_key == 'gender':
                 target_wsi.gender = val
-            elif norm_key == 'source':
-                target_wsi.source = val
             elif norm_key == 'event_time':
                 try:
                     target_wsi.event_time = float(val)
@@ -1270,10 +1320,10 @@ async def export_dataset_labels(
     logic as training (respects file-level vs case-level aggregation).
 
     CSV columns vary by task_type and aggregation_level:
-    - Classification (file-level): filename, label, case_id, age, gender, source, split
-    - Classification (case-level): case_id, label, file_count, age, gender, source, split, filenames
-    - Survival (file-level): filename, event_time, event_status, case_id, age, gender, source, split
-    - Survival (case-level): case_id, event_time, event_status, file_count, age, gender, source, split, filenames
+    - Classification (file-level): filename, label, case_id, age, gender, split
+    - Classification (case-level): case_id, label, file_count, age, gender, split, filenames
+    - Survival (file-level): filename, event_time, event_status, case_id, age, gender, split
+    - Survival (case-level): case_id, event_time, event_status, file_count, age, gender, split, filenames
     """
     # Admin only
     if not user.is_admin():
@@ -1402,7 +1452,6 @@ async def export_dataset_labels(
                 "case_id": wsi.case_id or "",
                 "age": wsi.age if wsi.age is not None else "",
                 "gender": wsi.gender or "",
-                "source": wsi.source or "",
                 "split": splits.get(wsi.wsi_id, "unknown")
             }
             if task_type == "survival":

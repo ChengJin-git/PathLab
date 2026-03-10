@@ -753,13 +753,14 @@
       "searchedPages": "已搜索 {{count}} 个网页",
       "summarizingSearch": "正在总结搜索内容...",
       "webSearchCard": "网页搜索",
-      "downloadingPdf": "正在下载 PDF 论文...",
-      "parsingPdf": "正在解析 PDF 论文...",
-      "pdfParsedCount": "已解析 {{count}} 篇 PDF 论文",
+      "downloadingPdf": "正在下载 PDF 文档...",
+      "parsingPdf": "正在解析 PDF 文档...",
+      "pdfParsedCount": "已解析 {{count}} 份 PDF 文档",
+      "pdfHighQualityPending": "快速解析已完成；Docling 后台升级进行中",
       "pdfDownloadFailed": "PDF 下载失败",
       "pdfParseFailed": "PDF 解析失败",
       "pdfFailedCount": "{{count}} 篇 PDF 失败",
-      "summarizingPdf": "正在生成论文解读..."
+      "summarizingPdf": "正在生成 PDF 摘要..."
     }
   },
   "layout": {
@@ -1638,11 +1639,18 @@
       "clear": "清除筛选",
       "summary": "当前显示 {{shown}} / {{total}} 个数据集",
       "compactSummary": "{{shown}} / {{total}} 个数据集",
+      "selectSourceOrgan": "选择来源器官",
+      "unknownSourceOrgan": "unknown",
       "groups": {
         "taskType": "任务类型",
         "dataType": "数据类型",
-        "dataLevel": "数据层级"
+        "dataLevel": "数据层级",
+        "sourceOrgan": "来源器官"
       }
+    },
+    "view": {
+      "iconView": "图标视图",
+      "listView": "列表视图"
     },
     "newDataset": "新建数据集",
     "newDatasetDescription": "注册切片以创建新数据集",
@@ -2505,6 +2513,7 @@
       "unspecified": "未指定",
       "sourceOrganTissue": "来源（器官/组织）",
       "sourcePlaceholder": "例如：肺、乳腺",
+      "selectSourceOrgan": "选择来源器官",
       "cancel": "取消",
       "saving": "保存中...",
       "saveChanges": "保存更改",
@@ -2527,7 +2536,11 @@
       "dataLevel": "数据级别",
       "caseLevel": "病例级别",
       "fileLevel": "文件级别",
-      "changingDataLevelWarning": "更改数据级别可能影响现有分析"
+      "changingDataLevelWarning": "更改数据级别可能影响现有分析",
+      "unknownSourceOrgan": "unknown",
+      "datasetSourceDescription": "该来源会应用到数据集中的全部文件。",
+      "otherSource": "其他",
+      "otherSourcePlaceholder": "请输入自定义来源"
     },
     "fileMetadata": {
       "setMetadataForFiles": "设置文件元数据",
@@ -2545,6 +2558,7 @@
       "unspecified": "未指定",
       "sourceOrganTissue": "来源（器官/组织）",
       "sourcePlaceholder": "例如：肺、乳腺",
+      "selectSourceOrgan": "选择来源器官",
       "filesSelected": "已选择 {{count}} 个文件",
       "cancel": "取消",
       "uploadAllFiles": "上传所有文件"
@@ -2629,7 +2643,12 @@
       "fileLevel": "文件级别",
       "fileLevelDesc": "存在文件级别图像标签",
       "segmentationPatchOnly": "分割任务仅支持普通图片数据，不支持全切片图像数据。",
-      "nextChooseFiles": "下一步：选择文件"
+      "nextChooseFiles": "下一步：选择文件",
+      "sourceOrganTissue": "来源（器官/组织）",
+      "unknownSourceOrgan": "unknown",
+      "otherSource": "其他",
+      "otherSourcePlaceholder": "请输入自定义来源",
+      "datasetSourceDescription": "该来源会应用到上传到此数据集的全部文件。"
     },
     "successStep": {
       "importSuccessful": "导入成功",

@@ -734,6 +734,7 @@ class WSIRepository:
             DataGroup.task_type,
             func.count(WSISlide.id).label("file_count"),
             func.sum(WSISlide.file_size).label("total_size"),
+            func.min(func.nullif(func.trim(WSISlide.source), '')).label("source_organ"),
             func.count(func.distinct(case(
                 (func.lower(WSISlide.split) == 'train', case(
                     (DataGroup.aggregation_level == 'case', func.coalesce(WSISlide.case_id, WSISlide.wsi_id)),
@@ -856,6 +857,7 @@ class WSIRepository:
                 "data_type": row.data_type,  # wsi or patch (for frontend display)
                 "aggregation_level": row.aggregation_level,  # file or case
                 "task_type": row.task_type or "classification",  # classification, survival
+                "source_organ": row.source_organ,
                 "file_count": row.file_count,
                 "total_size": row.total_size or 0,
                 "has_predefined_splits": has_predefined_splits,

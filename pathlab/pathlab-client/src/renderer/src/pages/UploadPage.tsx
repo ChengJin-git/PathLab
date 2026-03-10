@@ -60,6 +60,8 @@ export default function RegisterPage() {
   const [datasetName, setDatasetName] = useState('')
   // Dataset ID (UUID) - only set when using existing dataset or passed from navigation
   const [datasetId, setDatasetId] = useState<string | null>(null)
+  const [datasetSourceSelection, setDatasetSourceSelection] = useState('')
+  const [datasetSourceCustom, setDatasetSourceCustom] = useState('')
 
   // Steps: 1 - Dataset Name, 2 - File Upload
   const [step, setStep] = useState(1)
@@ -114,8 +116,24 @@ export default function RegisterPage() {
     const loadDatasets = async () => {
       try {
         const data = await fetchDatasets()
+        // Prioritize datasets without source organ for quick registration,
+        // while preserving backend default order within each group.
+        const sortedDatasetNames = data.items
+          .map((dataset, index) => ({ dataset, index }))
+          .sort((a, b) => {
+            const aMissingSourceOrgan = !a.dataset.source_organ?.trim()
+            const bMissingSourceOrgan = !b.dataset.source_organ?.trim()
+
+            if (aMissingSourceOrgan !== bMissingSourceOrgan) {
+              return aMissingSourceOrgan ? -1 : 1
+            }
+
+            return a.index - b.index
+          })
+          .map(({ dataset }) => dataset.dataset_name)
+
         // Store list of existing dataset names
-        setExistingDatasets(data.items.map(d => d.dataset_name))
+        setExistingDatasets(sortedDatasetNames)
         // Build lookup maps
         const typeMap = new Map<string, UploadMode>()
         const levelMap = new Map<string, DataLevel>()
@@ -197,6 +215,13 @@ export default function RegisterPage() {
 
   // Batch metadata state (temporary for the modal)
   const [batchMetadata, setBatchMetadata] = useState<FileMetadata>({ ...defaultMetadata })
+
+  const getResolvedDatasetSource = () => {
+    if (datasetSourceSelection === 'Other') {
+      return datasetSourceCustom.trim()
+    }
+    return datasetSourceSelection.trim()
+  }
 
   const tableContainerRef = useRef<HTMLDivElement>(null)
 
@@ -502,7 +527,6 @@ export default function RegisterPage() {
           case_id: batchMetadata.case_id || current.case_id,
           age: batchMetadata.age || current.age,
           gender: batchMetadata.gender || current.gender,
-          source: batchMetadata.source || current.source,
           event_time: batchMetadata.event_time || current.event_time,
           event_status: batchMetadata.event_status || current.event_status
         })
@@ -585,6 +609,8 @@ export default function RegisterPage() {
       }
     }
 
+    const resolvedDatasetSource = getResolvedDatasetSource()
+
     // Prepare items with resolved metadata (UI + CSV)
     const itemsWithMeta = localItems.map(item => {
       const uiMeta = localMetadata.get(item.key) || {} as FileMetadata
@@ -605,7 +631,7 @@ export default function RegisterPage() {
           case_id: (uiMeta.case_id && uiMeta.case_id.trim()) ? uiMeta.case_id : csvMeta.case_id,
           age: (uiMeta.age && uiMeta.age.trim()) ? uiMeta.age : csvMeta.age,
           gender: (uiMeta.gender && uiMeta.gender.trim()) ? uiMeta.gender : csvMeta.gender,
-          source: (uiMeta.source && uiMeta.source.trim()) ? uiMeta.source : csvMeta.source,
+          source: resolvedDatasetSource,
           event_time: (uiMeta.event_time && uiMeta.event_time.trim()) ? uiMeta.event_time : csvMeta.event_time,
           event_status: (uiMeta.event_status && uiMeta.event_status.trim()) ? uiMeta.event_status : csvMeta.event_status
         }
@@ -886,6 +912,13 @@ export default function RegisterPage() {
           onUploadModeChange={setUploadMode}
           dataLevel={dataLevel}
           onDataLevelChange={setDataLevel}
+          datasetSourceSelection={datasetSourceSelection}
+          datasetSourceCustom={datasetSourceCustom}
+          onDatasetSourceSelectionChange={(value) => {
+            setDatasetSourceSelection(value)
+            if (value !== 'Other') setDatasetSourceCustom('')
+          }}
+          onDatasetSourceCustomChange={setDatasetSourceCustom}
           isExistingDataset={isExistingDataset}
           existingDatasets={existingDatasets}
           showValidation={showValidation}
@@ -1195,7 +1228,6 @@ export default function RegisterPage() {
                         <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[100px] sm:min-w-[120px]">{t('uploadPage.caseId')}</th>
                         <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[70px] sm:min-w-[80px]">{t('uploadPage.age')}</th>
                         <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">{t('uploadPage.gender')}</th>
-                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[120px] sm:min-w-[140px]">{t('uploadPage.source')}</th>
                         <th className="w-10 px-3 py-2 bg-slate-50"></th>
                       </tr>
                     </thead>
@@ -1315,16 +1347,6 @@ export default function RegisterPage() {
                                 <option value="Unspecified">?</option>
                               </select>
                             </td>
-                            <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
-                              <select
-                                className="w-full px-2 py-1.5 text-sm border border-slate-100 rounded-lg bg-slate-50/50 hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
-                                value={meta.source}
-                                onChange={e => handleMetadataChange(item.key, 'source', e.target.value)}
-                              >
-                                <option value="">{t('uploadPage.sourceDefault')}</option>
-                                {organSources.map(o => <option key={o} value={o}>{o}</option>)}
-                              </select>
-                            </td>
                             <td className="px-3 sm:px-4 py-3 align-middle text-right border-b border-slate-100">
                               <button
                                 onClick={() => removeLocalItem(item.key)}
@@ -1407,7 +1429,7 @@ export default function RegisterPage() {
                         {uploadMode === 'segmentation' && (
                           <li><code className="bg-blue-100 px-1 rounded">filename</code></li>
                         )}
-                        <li className="hidden sm:list-item">{t('uploadPage.optionalFields')} <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
+                        <li className="hidden sm:list-item">{t('uploadPage.optionalFields')} <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
                       </ul>
                     </div>
 

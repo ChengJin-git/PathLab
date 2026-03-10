@@ -59,7 +59,7 @@ pkill -9 -f "uvicorn.*gateway" 2>/dev/null || true
 pkill -9 -f "uvicorn.*preprocessing" 2>/dev/null || true
 pkill -9 -f "uvicorn.*ai" 2>/dev/null || true
 
-# Kill vllm / MinerU related processes (spawned by PDF parsing)
+# Kill vLLM / PDF parsing related processes
 pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
 pkill -9 -f "vllm.engine" 2>/dev/null || true
 pkill -9 -f "ray::vLLM" 2>/dev/null || true

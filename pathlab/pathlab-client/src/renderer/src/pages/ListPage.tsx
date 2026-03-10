@@ -2,20 +2,25 @@ import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchWSIIds, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels } from '../api'
-import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download } from 'lucide-react'
+import { fetchWSIList, fetchWSIIds, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels } from '../api'
+import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
+import { Select } from '../components/ui/select'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { ALL_ACCEPT_STRING, getFileType } from '../constants/fileTypes'
 import { formatBytes } from '../lib/utils'
 import { useAuth } from '../contexts/AuthContext'
 import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, type ExportLabelsOptions } from '../components/list'
+import { organSources } from '../components/upload/types'
 
 type DatasetTaskFilter = 'all' | 'classification' | 'survival' | 'segmentation'
 type DatasetTypeFilter = 'all' | 'wsi' | 'patch'
 type DatasetLevelFilter = 'all' | 'file' | 'patient'
+type DatasetViewMode = 'grid' | 'list'
+
+const UNKNOWN_SOURCE_ORGAN_FILTER = '__unknown__'
 
 const getNormalizedDatasetTaskType = (taskType: string): Exclude<DatasetTaskFilter, 'all'> => {
   if (taskType === 'survival') return 'survival'
@@ -35,6 +40,11 @@ const getDatasetVisualType = (dataset: DatasetSummary): 'slides' | 'images' => {
 const getDatasetLevelFilterValue = (
   aggregationLevel: DatasetSummary['aggregation_level']
 ): Exclude<DatasetLevelFilter, 'all'> => aggregationLevel === 'case' ? 'patient' : 'file'
+
+const getDatasetSourceOrganFilterValue = (sourceOrgan?: string | null): string => {
+  const normalized = sourceOrgan?.trim()
+  return normalized || UNKNOWN_SOURCE_ORGAN_FILTER
+}
 
 export default function ListPage() {
   const { t } = useTranslation()
@@ -71,6 +81,8 @@ export default function ListPage() {
   const [datasetTaskFilter, setDatasetTaskFilter] = useState<DatasetTaskFilter>('all')
   const [datasetTypeFilter, setDatasetTypeFilter] = useState<DatasetTypeFilter>('all')
   const [datasetLevelFilter, setDatasetLevelFilter] = useState<DatasetLevelFilter>('all')
+  const [datasetSourceFilter, setDatasetSourceFilter] = useState<string>('all')
+  const [datasetViewMode, setDatasetViewMode] = useState<DatasetViewMode>('grid')
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
@@ -86,7 +98,9 @@ export default function ListPage() {
   // File upload with metadata modal
   const [showFileMetadataModal, setShowFileMetadataModal] = useState(false)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
-  const [fileMetadata, setFileMetadata] = useState<Map<string, { label: string; case_id: string; age: string; gender: string; source: string }>>(new Map())
+  const [fileMetadata, setFileMetadata] = useState<Map<string, { label: string; case_id: string; age: string; gender: string }>>(new Map())
+  const [uploadDatasetSourceSelection, setUploadDatasetSourceSelection] = useState('')
+  const [uploadDatasetSourceCustom, setUploadDatasetSourceCustom] = useState('')
 
   // Delete confirmation modal
   const [showDeleteModal, setShowDeleteModal] = useState(false)
@@ -115,7 +129,6 @@ export default function ListPage() {
   const [editCaseId, setEditCaseId] = useState('')
   const [editAge, setEditAge] = useState('')
   const [editGender, setEditGender] = useState('')
-  const [editSource, setEditSource] = useState('')
   const [editEventTime, setEditEventTime] = useState('')
   const [editEventStatus, setEditEventStatus] = useState('')
   const [updating, setUpdating] = useState(false)
@@ -126,7 +139,6 @@ export default function ListPage() {
   const [batchEditCaseId, setBatchEditCaseId] = useState('')
   const [batchEditAge, setBatchEditAge] = useState('')
   const [batchEditGender, setBatchEditGender] = useState('')
-  const [batchEditSource, setBatchEditSource] = useState('')
   const [batchEditEventTime, setBatchEditEventTime] = useState('')
   const [batchEditEventStatus, setBatchEditEventStatus] = useState('')
   const [batchUpdating, setBatchUpdating] = useState(false)
@@ -141,7 +153,21 @@ export default function ListPage() {
   const [editingDatasetOriginalType, setEditingDatasetOriginalType] = useState<'classification' | 'survival' | 'segmentation'>('classification')
   const [editingDatasetDataLevel, setEditingDatasetDataLevel] = useState<'case' | 'file'>('file')
   const [editingDatasetOriginalDataLevel, setEditingDatasetOriginalDataLevel] = useState<'case' | 'file'>('file')
+  const [editingDatasetSourceSelection, setEditingDatasetSourceSelection] = useState('')
+  const [editingDatasetSourceCustom, setEditingDatasetSourceCustom] = useState('')
+  const [editingDatasetOriginalSource, setEditingDatasetOriginalSource] = useState('')
   const [editingDatasetSaving, setEditingDatasetSaving] = useState(false)
+
+  const resolveSourceValue = (selection: string, custom: string) => selection === 'Other' ? custom.trim() : selection.trim()
+
+  const toSourceSelectionState = (value?: string | null) => {
+    const normalized = value?.trim() || ''
+    const knownSources = organSources.filter(source => source !== 'Other')
+    if (!normalized) return { selection: '', custom: '' }
+    return knownSources.includes(normalized)
+      ? { selection: normalized, custom: '' }
+      : { selection: 'Other', custom: normalized }
+  }
 
   // Legacy inline rename (still used for inline editing display)
   const [renamingDatasetId, setRenamingDatasetId] = useState<string | null>(null)
@@ -216,7 +242,7 @@ export default function ListPage() {
     return datasets.filter(d => !d.dataset_id || !optimisticallyDeletedDatasetIds.has(d.dataset_id))
   }, [datasets, optimisticallyDeletedDatasetIds])
 
-  const filteredDatasets = useMemo(() => {
+  const datasetsMatchingPrimaryFilters = useMemo(() => {
     return visibleDatasets.filter((dataset) => {
       const normalizedTaskType = getNormalizedDatasetTaskType(dataset.task_type)
       const datasetLevelValue = getDatasetLevelFilterValue(dataset.aggregation_level)
@@ -229,8 +255,33 @@ export default function ListPage() {
     })
   }, [visibleDatasets, datasetTaskFilter, datasetTypeFilter, datasetLevelFilter])
 
+  const datasetSourceOptions = useMemo(() => {
+    const sourceValues = Array.from(
+      new Set(datasetsMatchingPrimaryFilters.map((dataset) => getDatasetSourceOrganFilterValue(dataset.source_organ)))
+    ).sort((left, right) => {
+      if (left === UNKNOWN_SOURCE_ORGAN_FILTER) return 1
+      if (right === UNKNOWN_SOURCE_ORGAN_FILTER) return -1
+      return left.localeCompare(right)
+    })
+
+    return [
+      { value: 'all', label: t('common.all') },
+      ...sourceValues.map((value) => ({
+        value,
+        label: value === UNKNOWN_SOURCE_ORGAN_FILTER ? t('listPage.filters.unknownSourceOrgan') : value,
+      })),
+    ]
+  }, [datasetsMatchingPrimaryFilters, t])
+
+  const filteredDatasets = useMemo(() => {
+    return datasetsMatchingPrimaryFilters.filter((dataset) => {
+      if (datasetSourceFilter === 'all') return true
+      return getDatasetSourceOrganFilterValue(dataset.source_organ) === datasetSourceFilter
+    })
+  }, [datasetsMatchingPrimaryFilters, datasetSourceFilter])
+
   const hasActiveDatasetFilters =
-    datasetTaskFilter !== 'all' || datasetTypeFilter !== 'all' || datasetLevelFilter !== 'all'
+    datasetTaskFilter !== 'all' || datasetTypeFilter !== 'all' || datasetLevelFilter !== 'all' || datasetSourceFilter !== 'all'
 
   // Load datasets on mount
   useEffect(() => {
@@ -336,6 +387,7 @@ export default function ListPage() {
     setDatasetTaskFilter('all')
     setDatasetTypeFilter('all')
     setDatasetLevelFilter('all')
+    setDatasetSourceFilter('all')
   }
 
   const renderDatasetFilterGroup = (
@@ -378,11 +430,15 @@ export default function ListPage() {
     setSelectedFiles(filesArray)
 
     // Initialize metadata for each file
-    const metadata = new Map<string, { label: string; case_id: string; age: string; gender: string; source: string }>()
+    const metadata = new Map<string, { label: string; case_id: string; age: string; gender: string }>()
     filesArray.forEach(file => {
-      metadata.set(file.name, { label: '', case_id: '', age: '', gender: '', source: '' })
+      metadata.set(file.name, { label: '', case_id: '', age: '', gender: '' })
     })
     setFileMetadata(metadata)
+    const dataset = datasets.find(d => d.dataset_id === selectedDatasetId)
+    const sourceState = toSourceSelectionState(dataset?.source_organ)
+    setUploadDatasetSourceSelection(sourceState.selection)
+    setUploadDatasetSourceCustom(sourceState.custom)
 
     // Show metadata modal
     setShowFileMetadataModal(true)
@@ -404,6 +460,15 @@ export default function ListPage() {
     try {
       let successCount = 0
       let failedCount = 0
+      const resolvedDatasetSource = resolveSourceValue(uploadDatasetSourceSelection, uploadDatasetSourceCustom)
+
+      if (selectedDatasetId) {
+        const currentDataset = datasets.find(d => d.dataset_id === selectedDatasetId)
+        const currentSource = currentDataset?.source_organ?.trim() || ''
+        if (resolvedDatasetSource !== currentSource) {
+          await updateDatasetSource(selectedDatasetId, resolvedDatasetSource)
+        }
+      }
 
       for (let i = 0; i < selectedFiles.length; i++) {
         const file = selectedFiles[i]
@@ -416,7 +481,7 @@ export default function ListPage() {
             case_id: metadata?.case_id || undefined,
             age: age,
             gender: metadata?.gender || undefined,
-            source: metadata?.source || undefined,
+            source: resolvedDatasetSource || undefined,
             onProgress: (progress) => {
               setUploadingFiles(prev => {
                 const updated = new Map(prev)
@@ -458,15 +523,17 @@ export default function ListPage() {
       setUploading(false)
       setSelectedFiles([])
       setFileMetadata(new Map())
+      setUploadDatasetSourceSelection('')
+      setUploadDatasetSourceCustom('')
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
       }
     }
   }
 
-  const updateFileMetadata = (fileName: string, field: 'label' | 'case_id' | 'age' | 'gender' | 'source', value: string) => {
+  const updateFileMetadata = (fileName: string, field: 'label' | 'case_id' | 'age' | 'gender', value: string) => {
     const newMetadata = new Map(fileMetadata)
-    const current = newMetadata.get(fileName) || { label: '', case_id: '', age: '', gender: '', source: '' }
+    const current = newMetadata.get(fileName) || { label: '', case_id: '', age: '', gender: '' }
     newMetadata.set(fileName, { ...current, [field]: value })
     setFileMetadata(newMetadata)
   }
@@ -587,7 +654,6 @@ export default function ListPage() {
     setEditCaseId(wsi.case_id || '')
     setEditAge(wsi.age?.toString() || '')
     setEditGender(wsi.gender || '')
-    setEditSource(wsi.source || '')
     setEditEventTime(wsi.event_time?.toString() || '')
     setEditEventStatus(wsi.event_status?.toString() || '')
     setShowEditModal(true)
@@ -607,7 +673,6 @@ export default function ListPage() {
         case_id: editCaseId || undefined,
         age: age,
         gender: editGender || undefined,
-        source: editSource || undefined,
         event_time: event_time,
         event_status: event_status
       })
@@ -631,7 +696,6 @@ export default function ListPage() {
     setBatchEditCaseId('')
     setBatchEditAge('')
     setBatchEditGender('')
-    setBatchEditSource('')
     setBatchEditEventTime('')
     setBatchEditEventStatus('')
     setShowBatchEditModal(true)
@@ -641,7 +705,7 @@ export default function ListPage() {
     if (selectedIds.size === 0) return
 
     // Check if at least one field is provided
-    const hasUpdates = batchEditLabel || batchEditCaseId || batchEditAge || batchEditGender || batchEditSource || batchEditEventTime || batchEditEventStatus
+    const hasUpdates = batchEditLabel || batchEditCaseId || batchEditAge || batchEditGender || batchEditEventTime || batchEditEventStatus
     if (!hasUpdates) {
       setShowBatchEditModal(false)
       return
@@ -660,7 +724,6 @@ export default function ListPage() {
         case_id: batchEditCaseId || undefined,
         age: age,
         gender: batchEditGender || undefined,
-        source: batchEditSource || undefined,
         event_time: event_time,
         event_status: event_status
       }
@@ -691,6 +754,10 @@ export default function ListPage() {
     const dataLevel = dataset.aggregation_level || 'file'
     setEditingDatasetDataLevel(dataLevel)
     setEditingDatasetOriginalDataLevel(dataLevel)
+    const sourceState = toSourceSelectionState(dataset.source_organ)
+    setEditingDatasetSourceSelection(sourceState.selection)
+    setEditingDatasetSourceCustom(sourceState.custom)
+    setEditingDatasetOriginalSource(dataset.source_organ || '')
   }
 
   const handleEditDatasetCancel = () => {
@@ -700,6 +767,9 @@ export default function ListPage() {
     setEditingDatasetOriginalType('classification')
     setEditingDatasetDataLevel('file')
     setEditingDatasetOriginalDataLevel('file')
+    setEditingDatasetSourceSelection('')
+    setEditingDatasetSourceCustom('')
+    setEditingDatasetOriginalSource('')
     setEditingDatasetSaving(false)
   }
 
@@ -728,6 +798,11 @@ export default function ListPage() {
       // Update data level if changed
       if (editingDatasetDataLevel !== editingDatasetOriginalDataLevel) {
         await updateDatasetDataLevel(editingDatasetId, editingDatasetDataLevel)
+      }
+
+      const resolvedDatasetSource = resolveSourceValue(editingDatasetSourceSelection, editingDatasetSourceCustom)
+      if (resolvedDatasetSource !== editingDatasetOriginalSource) {
+        await updateDatasetSource(editingDatasetId, resolvedDatasetSource)
       }
 
       await loadDatasets() // Reload datasets list
@@ -1075,7 +1150,7 @@ export default function ListPage() {
 
           {/* Dataset Filters */}
           {!datasetsLoading && !datasetsError && visibleDatasets.length > 0 && (
-            <Card className="border-gray-100 shadow-sm bg-white/80 backdrop-blur-sm">
+            <Card className="relative z-20 border-gray-100 shadow-sm bg-white/80 backdrop-blur-sm">
               <div className="px-4 py-3 sm:px-5 sm:py-3.5">
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
                   {renderDatasetFilterGroup(
@@ -1112,7 +1187,47 @@ export default function ListPage() {
                     (nextValue) => setDatasetLevelFilter(nextValue as DatasetLevelFilter)
                   )}
 
+                  <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 min-w-0">
+                    <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400 whitespace-nowrap">
+                      {t('listPage.filters.groups.sourceOrgan')}
+                    </p>
+                    <Select
+                      value={datasetSourceFilter}
+                      onChange={setDatasetSourceFilter}
+                      options={datasetSourceOptions}
+                      placeholder={t('listPage.filters.selectSourceOrgan')}
+                      className="w-[180px] sm:w-[220px] shrink-0"
+                    />
+                  </div>
+
                   <div className="flex items-center gap-2 sm:gap-3 ml-auto pl-0 sm:pl-2">
+                    <div className="inline-flex items-center rounded-xl bg-slate-100 p-1 shadow-inner">
+                      <button
+                        type="button"
+                        onClick={() => setDatasetViewMode('grid')}
+                        aria-label={t('listPage.view.iconView')}
+                        title={t('listPage.view.iconView')}
+                        className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition-all ${datasetViewMode === 'grid'
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                      >
+                        <LayoutGrid className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDatasetViewMode('list')}
+                        aria-label={t('listPage.view.listView')}
+                        title={t('listPage.view.listView')}
+                        className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition-all ${datasetViewMode === 'list'
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                      >
+                        <List className="w-4 h-4" />
+                      </button>
+                    </div>
+
                     <span className="inline-flex items-center rounded-full bg-slate-50 px-2.5 sm:px-3 py-1 text-[11px] sm:text-xs font-medium text-slate-600 whitespace-nowrap">
                       {t('listPage.filters.compactSummary', {
                         shown: filteredDatasets.length,
@@ -1152,11 +1267,15 @@ export default function ListPage() {
           )}
 
           {/* Datasets Grid */}
-          {!datasetsLoading && !datasetsError && filteredDatasets.length > 0 && (
+          {!datasetsLoading && !datasetsError && filteredDatasets.length > 0 && datasetViewMode === 'grid' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6 p-1">
               {filteredDatasets.map((dataset) => {
                 const itemType = getDatasetVisualType(dataset)
                 const normalizedTaskType = getNormalizedDatasetTaskType(dataset.task_type)
+                const sourceOrganValue = getDatasetSourceOrganFilterValue(dataset.source_organ)
+                const sourceOrganLabel = sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER
+                  ? t('listPage.filters.unknownSourceOrgan')
+                  : dataset.source_organ?.trim() || t('listPage.filters.unknownSourceOrgan')
 
                 return (
                   <Card
@@ -1294,6 +1413,13 @@ export default function ListPage() {
                             )}
                           </span>
                         )}
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
+                          sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER
+                            ? 'bg-slate-50 text-slate-600 border border-slate-200/70'
+                            : 'bg-cyan-50 text-cyan-700 border border-cyan-100/70'
+                        }`}>
+                          {sourceOrganLabel}
+                        </span>
                       </div>
 
                       <div className="flex items-center gap-3 sm:gap-4 text-xs sm:text-sm text-slate-500/90 pt-3 sm:pt-4 border-t border-slate-100">
@@ -1329,6 +1455,205 @@ export default function ListPage() {
                 <p className="text-sm text-slate-400 text-center mt-2 group-hover:text-slate-500">
                   {t('listPage.newDatasetDescription')}
                 </p>
+              </button>
+            </div>
+          )}
+
+          {/* Datasets List */}
+          {!datasetsLoading && !datasetsError && filteredDatasets.length > 0 && datasetViewMode === 'list' && (
+            <div className="space-y-3 p-1">
+              {filteredDatasets.map((dataset) => {
+                const itemType = getDatasetVisualType(dataset)
+                const normalizedTaskType = getNormalizedDatasetTaskType(dataset.task_type)
+                const sourceOrganValue = getDatasetSourceOrganFilterValue(dataset.source_organ)
+                const sourceOrganLabel = sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER
+                  ? t('listPage.filters.unknownSourceOrgan')
+                  : dataset.source_organ?.trim() || t('listPage.filters.unknownSourceOrgan')
+
+                return (
+                  <Card
+                    key={dataset.dataset_id ?? dataset.dataset_name}
+                    className="group border-slate-200 bg-white transition-all duration-200 hover:shadow-md"
+                    onClick={() => handleDatasetClick(dataset)}
+                  >
+                    <div className="p-4 sm:p-5 flex flex-col gap-4">
+                      <div className="flex items-start gap-4 min-w-0">
+                        <div className={`p-3 rounded-2xl ${itemType === 'slides' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                          {itemType === 'slides' ? (
+                            <Microscope className="w-6 h-6" />
+                          ) : (
+                            <LayoutGrid className="w-6 h-6" />
+                          )}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3">
+                            <div className="min-w-0">
+                              <h3 className="text-lg sm:text-xl font-bold text-slate-900 truncate" title={dataset.dataset_name}>
+                                {dataset.dataset_name}
+                              </h3>
+                              <div className="flex flex-wrap items-center gap-2 mt-2">
+                                <p className="text-xs sm:text-sm text-slate-500 font-medium whitespace-nowrap">
+                                  {itemType === 'slides' ? t('listPage.wholeSlideImaging') : t('listPage.patchCollection')}
+                                </p>
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
+                                  normalizedTaskType === 'survival'
+                                    ? 'bg-amber-50 text-amber-700 border border-amber-100/50'
+                                    : normalizedTaskType === 'segmentation'
+                                      ? 'bg-violet-50 text-violet-700 border border-violet-100/50'
+                                      : 'bg-indigo-50 text-indigo-700 border border-indigo-100/50'
+                                }`}>
+                                  {normalizedTaskType === 'survival' ? t('listPage.survival') : normalizedTaskType === 'segmentation' ? t('listPage.segmentation') : t('listPage.classification')}
+                                </span>
+                                {itemType === 'slides' && (
+                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
+                                    dataset.aggregation_level === 'case'
+                                      ? 'bg-purple-50 text-purple-700 border border-purple-100/50'
+                                      : 'bg-orange-50 text-orange-700 border border-orange-100/50'
+                                  }`}>
+                                    {dataset.aggregation_level === 'case' ? (
+                                      <><Users className="w-3 h-3" />{t('listPage.patientLevel')}</>
+                                    ) : (
+                                      <><FileImage className="w-3 h-3" />{t('listPage.fileLevel')}</>
+                                    )}
+                                  </span>
+                                )}
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
+                                  sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER
+                                    ? 'bg-slate-50 text-slate-600 border border-slate-200/70'
+                                    : 'bg-cyan-50 text-cyan-700 border border-cyan-100/70'
+                                }`}>
+                                  {sourceOrganLabel}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="hidden xl:flex items-center gap-1">
+                              {dataset.can_delete && (
+                                <>
+                                  {isAdmin && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 text-slate-400 hover:text-green-600"
+                                      onClick={(e) => handleExportLabelsClick(e, dataset)}
+                                      title={t('listPage.exportLabels')}
+                                      disabled={exporting}
+                                    >
+                                      {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                      ) : (
+                                        <Download className="w-4 h-4" />
+                                      )}
+                                    </Button>
+                                  )}
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-slate-400 hover:text-blue-600"
+                                    onClick={(e) => handleEditDatasetClick(e, dataset)}
+                                    title={t('listPage.editDataset')}
+                                  >
+                                    <Pencil className="w-4 h-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-slate-400 hover:text-red-600"
+                                    onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
+                                    title={t('listPage.deleteDataset')}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </>
+                              )}
+                              <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 transition-colors" />
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-xs sm:text-sm text-slate-500/90 pt-3 mt-3 border-t border-slate-100">
+                            <span className="flex items-center gap-1.5 font-medium whitespace-nowrap">
+                              <Database className="w-4 h-4 text-slate-400" />
+                              {dataset.file_count} {itemType}
+                            </span>
+                            <span className="flex items-center gap-1.5 font-medium whitespace-nowrap">
+                              <CheckCircle className="w-4 h-4 text-slate-400" />
+                              {formatBytes(dataset.total_size)}
+                            </span>
+                            {isAdmin && dataset.username && (
+                              <span className="flex items-center gap-1.5 font-medium whitespace-nowrap text-slate-400">
+                                <User className="w-3.5 h-3.5 text-slate-300" />
+                                <span className="truncate max-w-[180px]" title={dataset.username}>{dataset.username}</span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex xl:hidden items-center justify-between pt-3 border-t border-slate-100">
+                        <div className="flex items-center gap-1">
+                          {dataset.can_delete && (
+                            <>
+                              {isAdmin && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-slate-400 hover:text-green-600"
+                                  onClick={(e) => handleExportLabelsClick(e, dataset)}
+                                  title={t('listPage.exportLabels')}
+                                  disabled={exporting}
+                                >
+                                  {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <Download className="w-4 h-4" />
+                                  )}
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-slate-400 hover:text-blue-600"
+                                onClick={(e) => handleEditDatasetClick(e, dataset)}
+                                title={t('listPage.editDataset')}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-slate-400 hover:text-red-600"
+                                onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
+                                title={t('listPage.deleteDataset')}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                        <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 transition-colors" />
+                      </div>
+                    </div>
+                  </Card>
+                )
+              })}
+
+              <button
+                onClick={() => navigate('/register')}
+                className="flex items-center justify-between gap-4 w-full p-5 rounded-xl border-2 border-dashed border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 transition-all duration-300 group"
+              >
+                <div className="flex items-center gap-4 min-w-0 text-left">
+                  <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center group-hover:bg-white group-hover:shadow-md transition-all">
+                    <Upload className="w-6 h-6 text-slate-400 group-hover:text-blue-600" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-lg font-bold text-slate-600 group-hover:text-blue-700">{t('listPage.newDataset')}</h3>
+                    <p className="text-sm text-slate-400 group-hover:text-slate-500 truncate">
+                      {t('listPage.newDatasetDescription')}
+                    </p>
+                  </div>
+                </div>
+                <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-blue-500 transition-colors" />
               </button>
             </div>
           )}
@@ -2114,11 +2439,20 @@ export default function ListPage() {
           selectedFiles={selectedFiles}
           fileMetadata={fileMetadata}
           datasetType={selectedDatasetType}
+          datasetSourceSelection={uploadDatasetSourceSelection}
+          datasetSourceCustom={uploadDatasetSourceCustom}
+          onDatasetSourceSelectionChange={(value) => {
+            setUploadDatasetSourceSelection(value)
+            if (value !== 'Other') setUploadDatasetSourceCustom('')
+          }}
+          onDatasetSourceCustomChange={setUploadDatasetSourceCustom}
           onUpdateMetadata={updateFileMetadata}
           onCancel={() => {
             setShowFileMetadataModal(false)
             setSelectedFiles([])
             setFileMetadata(new Map())
+            setUploadDatasetSourceSelection('')
+            setUploadDatasetSourceCustom('')
             if (fileInputRef.current) {
               fileInputRef.current.value = ''
             }
@@ -2174,7 +2508,6 @@ export default function ListPage() {
           editCaseId={editCaseId}
           editAge={editAge}
           editGender={editGender}
-          editSource={editSource}
           editEventTime={editEventTime}
           editEventStatus={editEventStatus}
           datasetType={selectedDatasetType}
@@ -2183,7 +2516,6 @@ export default function ListPage() {
           onEditCaseIdChange={setEditCaseId}
           onEditAgeChange={setEditAge}
           onEditGenderChange={setEditGender}
-          onEditSourceChange={setEditSource}
           onEditEventTimeChange={setEditEventTime}
           onEditEventStatusChange={setEditEventStatus}
           updating={updating}
@@ -2203,7 +2535,6 @@ export default function ListPage() {
           batchEditCaseId={batchEditCaseId}
           batchEditAge={batchEditAge}
           batchEditGender={batchEditGender}
-          batchEditSource={batchEditSource}
           batchEditEventTime={batchEditEventTime}
           batchEditEventStatus={batchEditEventStatus}
           datasetType={selectedDatasetType}
@@ -2212,7 +2543,6 @@ export default function ListPage() {
           onBatchEditCaseIdChange={setBatchEditCaseId}
           onBatchEditAgeChange={setBatchEditAge}
           onBatchEditGenderChange={setBatchEditGender}
-          onBatchEditSourceChange={setBatchEditSource}
           onBatchEditEventTimeChange={setBatchEditEventTime}
           onBatchEditEventStatusChange={setBatchEditEventStatus}
           batchUpdating={batchUpdating}
@@ -2229,6 +2559,8 @@ export default function ListPage() {
           editingDatasetOriginalType={editingDatasetOriginalType}
           editingDatasetDataLevel={editingDatasetDataLevel}
           editingDatasetOriginalDataLevel={editingDatasetOriginalDataLevel}
+          editingDatasetSourceSelection={editingDatasetSourceSelection}
+          editingDatasetSourceCustom={editingDatasetSourceCustom}
           editingDatasetSaving={editingDatasetSaving}
           isSlideDataset={(() => {
             const ds = datasets.find(d => d.dataset_id === editingDatasetId)
@@ -2241,6 +2573,11 @@ export default function ListPage() {
           onNameChange={setEditingDatasetName}
           onTypeChange={setEditingDatasetType}
           onDataLevelChange={setEditingDatasetDataLevel}
+          onSourceSelectionChange={(value) => {
+            setEditingDatasetSourceSelection(value)
+            if (value !== 'Other') setEditingDatasetSourceCustom('')
+          }}
+          onSourceCustomChange={setEditingDatasetSourceCustom}
           onCancel={handleEditDatasetCancel}
           onSave={handleEditDatasetSave}
         />

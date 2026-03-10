@@ -5,6 +5,7 @@ import { PageHeader } from '../PageHeader'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import type { UploadMode, DataLevel } from './types'
+import { organSources } from './types'
 
 export interface DatasetConfigStepProps {
   datasetName: string
@@ -13,6 +14,10 @@ export interface DatasetConfigStepProps {
   onUploadModeChange: (mode: UploadMode) => void
   dataLevel: DataLevel
   onDataLevelChange: (level: DataLevel) => void
+  datasetSourceSelection: string
+  datasetSourceCustom: string
+  onDatasetSourceSelectionChange: (value: string) => void
+  onDatasetSourceCustomChange: (value: string) => void
   isExistingDataset: boolean
   existingDatasets: string[]
   showValidation: boolean
@@ -23,12 +28,14 @@ export interface DatasetConfigStepProps {
 
 export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
   datasetName, onDatasetNameChange, uploadMode, onUploadModeChange,
-  dataLevel, onDataLevelChange, isExistingDataset, existingDatasets,
+  dataLevel, onDataLevelChange, datasetSourceSelection, datasetSourceCustom,
+  onDatasetSourceSelectionChange, onDatasetSourceCustomChange, isExistingDataset, existingDatasets,
   showValidation, fromAIChat, onNext, onBack
 }) => {
   const { t } = useTranslation()
 
   const isSegmentation = uploadMode === 'segmentation'
+  const isOtherSource = datasetSourceSelection === 'Other'
 
   // When switching to segmentation, force data level to 'file' (patch-only)
   const handleUploadModeChange = useCallback((mode: UploadMode) => {
@@ -200,6 +207,37 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                   </div>
                 )}
               </div>
+              </div>
+
+              <div>
+                <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">
+                  {t('uploadComponents.datasetConfig.sourceOrganTissue')}
+                </label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+                  <select
+                    value={datasetSourceSelection}
+                    onChange={(e) => onDatasetSourceSelectionChange(e.target.value)}
+                    className="w-full px-4 sm:px-5 py-3 border border-slate-200 rounded-xl sm:rounded-2xl bg-slate-50/50 hover:border-slate-300 focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all"
+                  >
+                    <option value="">{t('uploadComponents.datasetConfig.unknownSourceOrgan')}</option>
+                    {organSources.filter((source) => source !== 'Other').map((source) => (
+                      <option key={source} value={source}>{source}</option>
+                    ))}
+                    <option value="Other">{t('uploadComponents.datasetConfig.otherSource')}</option>
+                  </select>
+                  {isOtherSource && (
+                    <input
+                      type="text"
+                      value={datasetSourceCustom}
+                      onChange={(e) => onDatasetSourceCustomChange(e.target.value)}
+                      placeholder={t('uploadComponents.datasetConfig.otherSourcePlaceholder')}
+                      className="w-full px-4 sm:px-5 py-3 border border-slate-200 rounded-xl sm:rounded-2xl bg-slate-50/50 hover:border-slate-300 focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all"
+                    />
+                  )}
+                </div>
+                <p className="mt-3 text-sm text-slate-400">
+                  {t('uploadComponents.datasetConfig.datasetSourceDescription')}
+                </p>
               </div>
 
               <Button

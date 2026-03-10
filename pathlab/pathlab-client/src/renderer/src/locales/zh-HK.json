@@ -753,13 +753,14 @@
       "searchedPages": "已搜尋 {{count}} 個網頁",
       "summarizingSearch": "正在總結搜尋內容...",
       "webSearchCard": "網頁搜尋",
-      "downloadingPdf": "正在下載 PDF 論文...",
-      "parsingPdf": "正在解析 PDF 論文...",
-      "pdfParsedCount": "已解析 {{count}} 篇 PDF 論文",
+      "downloadingPdf": "正在下載 PDF 文件...",
+      "parsingPdf": "正在解析 PDF 文件...",
+      "pdfParsedCount": "已解析 {{count}} 份 PDF 文件",
+      "pdfHighQualityPending": "快速解析已完成；Docling 背景升級進行中",
       "pdfDownloadFailed": "PDF 下載失敗",
       "pdfParseFailed": "PDF 解析失敗",
       "pdfFailedCount": "{{count}} 篇 PDF 失敗",
-      "summarizingPdf": "正在生成論文解讀..."
+      "summarizingPdf": "正在生成 PDF 摘要..."
     }
   },
   "layout": {
@@ -1632,11 +1633,18 @@
       "clear": "清除篩選",
       "summary": "目前顯示 {{shown}} / {{total}} 個資料集",
       "compactSummary": "{{shown}} / {{total}} 個資料集",
+      "selectSourceOrgan": "選擇來源器官",
+      "unknownSourceOrgan": "unknown",
       "groups": {
         "taskType": "任務類型",
         "dataType": "資料類型",
-        "dataLevel": "資料層級"
+        "dataLevel": "資料層級",
+        "sourceOrgan": "來源器官"
       }
+    },
+    "view": {
+      "iconView": "圖示視圖",
+      "listView": "列表視圖"
     },
     "newDataset": "新建資料集",
     "newDatasetDescription": "註冊切片以建立新資料集",
@@ -2497,6 +2505,7 @@
       "unspecified": "未指定",
       "sourceOrganTissue": "來源（器官/組織）",
       "sourcePlaceholder": "例如：肺、乳腘",
+      "selectSourceOrgan": "選擇來源器官",
       "cancel": "取消",
       "saving": "儲存中...",
       "saveChanges": "儲存變更",
@@ -2519,7 +2528,11 @@
       "dataLevel": "數據級別",
       "caseLevel": "病例級別",
       "fileLevel": "檔案級別",
-      "changingDataLevelWarning": "更改數據級別可能影響現有分析"
+      "changingDataLevelWarning": "更改數據級別可能影響現有分析",
+      "unknownSourceOrgan": "unknown",
+      "datasetSourceDescription": "此來源會套用到資料集中的全部檔案。",
+      "otherSource": "其他",
+      "otherSourcePlaceholder": "請輸入自訂來源"
     },
     "fileMetadata": {
       "setMetadataForFiles": "設定檔案元數據",
@@ -2537,6 +2550,7 @@
       "unspecified": "未指定",
       "sourceOrganTissue": "來源（器官/組織）",
       "sourcePlaceholder": "例如：肺、乳腘",
+      "selectSourceOrgan": "選擇來源器官",
       "filesSelected": "已選擇 {{count}} 個檔案",
       "cancel": "取消",
       "uploadAllFiles": "上傳所有檔案"
@@ -2621,7 +2635,12 @@
       "fileLevel": "檔案級別",
       "fileLevelDesc": "每張切片獨立",
       "segmentationPatchOnly": "分割任務僅支援普通圖片資料，不支援全切片圖像資料。",
-      "nextChooseFiles": "下一步：選擇檔案"
+      "nextChooseFiles": "下一步：選擇檔案",
+      "sourceOrganTissue": "來源（器官/組織）",
+      "unknownSourceOrgan": "unknown",
+      "otherSource": "其他",
+      "otherSourcePlaceholder": "請輸入自訂來源",
+      "datasetSourceDescription": "此來源會套用到上傳到此資料集的全部檔案。"
     },
     "successStep": {
       "importSuccessful": "匯入成功",

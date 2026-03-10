@@ -971,45 +971,45 @@ async def get_csv_template(
     - For segmentation: no label required — masks are provided via COCO JSON separately
 
     Optional columns:
-    - split (train, val, test), case_id, age, gender, source
+    - split (train, val, test), case_id, age, gender
 
     Note: If no 'val' split is provided, 10% of 'train' samples will be
     automatically assigned to 'val' during upload.
     """
     if task_type == "survival":
         # Survival analysis template
-        headers = ["filename", "split", "event_time", "event_status", "case_id", "age", "gender", "source"]
+        headers = ["filename", "split", "event_time", "event_status", "case_id", "age", "gender"]
         examples = [
             {"filename": "slide1.svs", "split": "train", "event_time": "24.5", "event_status": "1",
-             "case_id": "CASE001", "age": "65", "gender": "Male", "source": "Lung"},
+             "case_id": "CASE001", "age": "65", "gender": "Male"},
             {"filename": "slide2.svs", "split": "val", "event_time": "36.0", "event_status": "0",
-             "case_id": "CASE002", "age": "50", "gender": "Female", "source": "Lung"},
+             "case_id": "CASE002", "age": "50", "gender": "Female"},
             {"filename": "slide3.svs", "split": "test", "event_time": "48.0", "event_status": "1",
-             "case_id": "CASE003", "age": "70", "gender": "Male", "source": "Lung"}
+             "case_id": "CASE003", "age": "70", "gender": "Male"}
         ]
         filename = "wsi_survival_metadata_template.csv"
     elif task_type == "segmentation":
         # Segmentation template — no label column; masks are provided via COCO JSON separately
-        headers = ["filename", "split", "case_id", "age", "gender", "source"]
+        headers = ["filename", "split", "case_id", "age", "gender"]
         examples = [
             {"filename": "image_001.png", "split": "train",
-             "case_id": "CASE001", "age": "", "gender": "", "source": ""},
+             "case_id": "CASE001", "age": "", "gender": ""},
             {"filename": "image_002.png", "split": "val",
-             "case_id": "CASE002", "age": "", "gender": "", "source": ""},
+             "case_id": "CASE002", "age": "", "gender": ""},
             {"filename": "image_003.png", "split": "test",
-             "case_id": "CASE003", "age": "", "gender": "", "source": ""}
+             "case_id": "CASE003", "age": "", "gender": ""}
         ]
         filename = "segmentation_metadata_template.csv"
     else:
         # Classification template (default)
-        headers = ["filename", "split", "label", "case_id", "age", "gender", "source"]
+        headers = ["filename", "split", "label", "case_id", "age", "gender"]
         examples = [
             {"filename": "slide1.svs", "split": "train", "label": "Tumor",
-             "case_id": "CASE001", "age": "65", "gender": "Male", "source": "Lung"},
+             "case_id": "CASE001", "age": "65", "gender": "Male"},
             {"filename": "slide2.svs", "split": "val", "label": "Normal",
-             "case_id": "CASE002", "age": "50", "gender": "Female", "source": "Lung"},
+             "case_id": "CASE002", "age": "50", "gender": "Female"},
             {"filename": "slide3.svs", "split": "test", "label": "Tumor",
-             "case_id": "CASE003", "age": "70", "gender": "Male", "source": "Lung"}
+             "case_id": "CASE003", "age": "70", "gender": "Male"}
         ]
         filename = "wsi_classification_metadata_template.csv"
 

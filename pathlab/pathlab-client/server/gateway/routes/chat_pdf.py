@@ -1,5 +1,5 @@
 """
-PDF Parsing utilities for AI chat - uses MinerU for academic paper processing
+PDF parsing utilities for AI chat.
 
 When Exa search returns PDF links (e.g., arXiv papers),
 this module downloads, parses, and summarizes the content for the AI agent.
@@ -17,52 +17,54 @@ import shutil
 import tempfile
 import asyncio
 import hashlib
-from concurrent.futures import ProcessPoolExecutor
-from concurrent.futures.process import BrokenProcessPool
+import uuid
+import gc
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from datetime import datetime, timedelta
 import httpx
 
 from ..dependencies import logger
 from backend.common.config import Config
-from backend.common.gpu_utils import select_optimal_gpu_for_task
-
-# Process pool for MinerU heavy parsing — runs in a separate process with its own
-# GIL so CPU-intensive PyTorch / vLLM operations do NOT block the asyncio event loop.
-# Created lazily and shut down after each task to release GPU memory (CUDA context).
-_mineru_process_executor: ProcessPoolExecutor | None = None
-
-
-def _get_mineru_executor() -> ProcessPoolExecutor:
-    """Return the MinerU ProcessPoolExecutor, creating it if needed."""
-    global _mineru_process_executor
-    if _mineru_process_executor is None:
-        _mineru_process_executor = ProcessPoolExecutor(
-            max_workers=1,
-            mp_context=multiprocessing.get_context('spawn'),
-        )
-    return _mineru_process_executor
-
-
-def _shutdown_mineru_executor() -> None:
-    """Shut down the MinerU ProcessPoolExecutor to kill the subprocess and
-    release all GPU memory (including CUDA context).  Safe to call repeatedly."""
-    global _mineru_process_executor
-    if _mineru_process_executor is not None:
-        try:
-            _mineru_process_executor.shutdown(wait=False)
-            logger.info("[MinerU] ProcessPoolExecutor shut down — subprocess GPU memory released")
-        except Exception as e:
-            logger.warning(f"[MinerU] Error shutting down executor: {e}")
-        _mineru_process_executor = None
-
-# Minimum free VRAM (MB) required to run MinerU hybrid_auto with VLM backend
-MIN_VRAM_MB_FOR_MINERU = 14000
 
 
 _pdf_cache_dir: Path | None = None
 PDF_CACHE_TTL_DAYS = 7
+PDF_PARSE_METHOD_DOCLING = "docling"
+PDF_PARSE_METHOD_PYMUPDF = "pymupdf"
+PDF_PARSE_METHOD_FAILED = "parse_failed"
+DOCLING_CACHE_SUFFIX = ".docling.md"
+PYMUPDF_CACHE_SUFFIX = ".md"
+STRUCTURED_CACHE_SUFFIX = ".structured.json"
+STRUCTURED_SCHEMA_VERSION = 1
+PdfParseMethod = Literal["docling", "pymupdf", "parse_failed"]
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedPdfResult:
+    markdown: str
+    parse_method: PdfParseMethod
+    page_count: int
+    structured_content: dict[str, Any]
+
+
+HIGH_QUALITY_CACHE_SUFFIXES: tuple[tuple[str, str], ...] = (
+    (DOCLING_CACHE_SUFFIX, PDF_PARSE_METHOD_DOCLING),
+)
+CACHED_MARKDOWN_CANDIDATES: tuple[tuple[str, str], ...] = (
+    *HIGH_QUALITY_CACHE_SUFFIXES,
+    (PYMUPDF_CACHE_SUFFIX, PDF_PARSE_METHOD_PYMUPDF),
+)
+CACHE_ARTEFACT_SUFFIXES: tuple[str, ...] = (
+    '.pdf',
+    '.pdf.partial',
+    '.json',
+    STRUCTURED_CACHE_SUFFIX,
+    *(suffix for suffix, _method in CACHED_MARKDOWN_CANDIDATES),
+)
+DOCLING_SUBPROCESS_JOIN_TIMEOUT_SECONDS = 5.0
+_docling_upgrade_tasks: dict[str, asyncio.Task[None]] = {}
 
 
 def _get_pdf_cache_dir() -> Path:
@@ -75,7 +77,7 @@ def _get_pdf_cache_dir() -> Path:
 
 
 def get_pdf_image_path(url_hash: str, filename: str) -> Path:
-    """Return the persistent storage path for a MinerU-extracted PDF image.
+    """Return the persistent storage path for an extracted PDF image.
 
     Used by the /pdf-images/{url_hash}/{filename} HTTP endpoint to locate files.
     Images are stored at: pdf_cache/images/{url_hash}/{filename}
@@ -194,8 +196,28 @@ def _get_url_hash(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()[:16]
 
 
-def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any], str | None] | None:
-    """Returns (pdf_bytes, meta, cached_markdown_or_None) or None if not cached/expired."""
+def _remove_cached_pdf_artifacts(url_hash: str, *, remove_vectorstore: bool = False) -> None:
+    """Delete all persisted cache artifacts for a cached PDF hash."""
+    cache_dir = _get_pdf_cache_dir()
+    for suffix in CACHE_ARTEFACT_SUFFIXES:
+        file_path = cache_dir / f"{url_hash}{suffix}"
+        if file_path.exists():
+            file_path.unlink()
+
+    images_dir = cache_dir / "images" / url_hash
+    if images_dir.exists() and images_dir.is_dir():
+        shutil.rmtree(images_dir, ignore_errors=True)
+
+    if remove_vectorstore:
+        try:
+            from .chat_pdf_vectorstore import delete_pdf_from_vectorstore
+            delete_pdf_from_vectorstore(url_hash)
+        except Exception as e:
+            logger.error(f"Error cleaning vector store for {url_hash}: {e}")
+
+
+def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any], str | None, str | None] | None:
+    """Returns (pdf_bytes, meta, cached_markdown_or_None, parse_method_or_None)."""
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
@@ -212,32 +234,29 @@ def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any], str | None] | None
         if datetime.now() - cached_time > timedelta(days=PDF_CACHE_TTL_DAYS):
             logger.info(f"PDF cache expired for {url}")
             try:
-                pdf_file.unlink()
-                meta_file.unlink()
-                md_file = cache_dir / f"{url_hash}.md"
-                if md_file.exists():
-                    md_file.unlink()
-            except:
+                _remove_cached_pdf_artifacts(url_hash, remove_vectorstore=True)
+            except Exception:
                 pass
             return None
 
         pdf_bytes = pdf_file.read_bytes()
 
-        # Prefer MinerU high-precision cache; fall back to pymupdf cache.
+        # Prefer the highest-quality cached markdown; fall back to PyMuPDF.
         cached_md = None
-        mineru_file = cache_dir / f"{url_hash}.mineru.md"
-        pymupdf_file = cache_dir / f"{url_hash}.md"
-        for md_candidate in (mineru_file, pymupdf_file):
+        cached_md_method = None
+        for suffix, method in CACHED_MARKDOWN_CANDIDATES:
+            md_candidate = cache_dir / f"{url_hash}{suffix}"
             if md_candidate.exists():
                 try:
                     cached_md = md_candidate.read_text(encoding='utf-8')
-                    if md_candidate == mineru_file:
-                        logger.info(f"PDF cache: using high-precision MinerU result for {url}")
+                    cached_md_method = method
+                    if method == PDF_PARSE_METHOD_DOCLING:
+                        logger.info(f"PDF cache: using high-quality parsed result for {url}")
                     break
                 except Exception:
                     pass
 
-        return pdf_bytes, meta, cached_md
+        return pdf_bytes, meta, cached_md, cached_md_method
     except Exception as e:
         logger.error(f"Error reading PDF cache: {e}")
         return None
@@ -259,6 +278,11 @@ def _save_pdf_to_cache(url: str, pdf_bytes: bytes, title: str = "", markdown: st
             'title': title,
             'cached_at': datetime.now().isoformat(),
             'size_bytes': len(pdf_bytes),
+            'parse_method': None,
+            'structured_parse_method': None,
+            'structured_parse_ready': False,
+            'high_quality_parse_pending': False,
+            'high_quality_parse_ready': False,
         }
         with open(meta_file, 'w') as f:
             json.dump(meta, f, indent=2)
@@ -283,12 +307,8 @@ def _extract_page_count(markdown: str) -> int:
     return max(page_nums) if page_nums else 0
 
 
-def _update_meta_with_parse_info(url: str, page_count: int, parse_method: str) -> None:
-    """Update the cached JSON metadata with page_count and parse_method.
-
-    This is a best-effort update: failures are logged but never raised so that
-    the caller (cache-save path) is never disrupted.
-    """
+def _update_meta_fields(url: str, **fields: Any) -> None:
+    """Best-effort update for cached PDF metadata fields."""
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
@@ -297,12 +317,22 @@ def _update_meta_with_parse_info(url: str, page_count: int, parse_method: str) -
             return
         with open(meta_file, 'r') as f:
             meta = json.load(f)
-        meta['page_count'] = page_count
-        meta['parse_method'] = parse_method
+        for key, value in fields.items():
+            if value is not None:
+                meta[key] = value
         with open(meta_file, 'w') as f:
             json.dump(meta, f, indent=2)
     except Exception as e:
         logger.error(f"Error updating meta for {url}: {e}")
+
+
+def _update_meta_with_parse_info(url: str, page_count: int, parse_method: str) -> None:
+    """Update the cached JSON metadata with page_count and parse_method.
+
+    This is a best-effort update: failures are logged but never raised so that
+    the caller (cache-save path) is never disrupted.
+    """
+    _update_meta_fields(url, page_count=page_count, parse_method=parse_method)
 
 
 def _update_meta_academic_flag(url: str, is_academic: bool) -> None:
@@ -327,57 +357,126 @@ def _update_meta_academic_flag(url: str, is_academic: bool) -> None:
         logger.error(f"Error updating academic flag for {url}: {e}")
 
 
-def _save_markdown_to_cache(url: str, markdown: str, paper_title: str = "") -> None:
+def _save_structured_to_cache(url: str, structured_content: dict[str, Any]) -> None:
+    """Persist the normalized Document Graph / Block Graph sidecar."""
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        structured_file = cache_dir / f"{url_hash}{STRUCTURED_CACHE_SUFFIX}"
+        structured_file.write_text(
+            json.dumps(structured_content, ensure_ascii=False, indent=2),
+            encoding='utf-8',
+        )
+    except Exception as e:
+        logger.error(f"Error saving structured cache for {url}: {e}")
+
+
+def get_cached_structured_content(url: str) -> dict[str, Any] | None:
+    """Return the cached normalized Document Graph / Block Graph for *url*."""
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        structured_file = cache_dir / f"{url_hash}{STRUCTURED_CACHE_SUFFIX}"
+        if not structured_file.exists():
+            return None
+        return json.loads(structured_file.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+
+
+def _save_markdown_to_cache(
+    url: str,
+    markdown: str,
+    paper_title: str = "",
+    structured_content: dict[str, Any] | None = None,
+    *,
+    high_quality_pending: bool = False,
+) -> None:
     """Save pymupdf-parsed markdown to cache (fast tier)."""
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
-        md_file = cache_dir / f"{url_hash}.md"
+        md_file = cache_dir / f"{url_hash}{PYMUPDF_CACHE_SUFFIX}"
         md_file.write_text(markdown, encoding='utf-8')
-        # Update JSON metadata with page count from this parse
         page_count = _extract_page_count(markdown)
-        _update_meta_with_parse_info(url, page_count, 'pymupdf')
-        logger.info(f"Cached pymupdf markdown for {url} ({page_count} pages)")
-        # Build vector index for semantic search
-        _trigger_vector_index(url_hash, markdown, paper_title)
+        _save_structured_to_cache(
+            url,
+            structured_content or _build_document_graph_from_markdown(markdown, PDF_PARSE_METHOD_PYMUPDF),
+        )
+        _update_meta_fields(
+            url,
+            page_count=page_count,
+            parse_method=PDF_PARSE_METHOD_PYMUPDF,
+            structured_parse_method=PDF_PARSE_METHOD_PYMUPDF,
+            structured_parse_ready=True,
+            high_quality_parse_pending=high_quality_pending,
+            high_quality_parse_ready=False,
+        )
+        logger.info(f"Cached PyMuPDF markdown for {url} ({page_count} pages)")
+        _trigger_vector_index(url_hash, markdown, paper_title, structured_content)
     except Exception as e:
         logger.error(f"Error saving markdown to cache: {e}")
 
 
-def _has_mineru_cache(url: str) -> bool:
-    """Return True if a high-precision MinerU result is already cached for this URL."""
+def _has_docling_cache(url: str) -> bool:
+    """Return True if a Docling high-quality result is already cached for this URL."""
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
-        return (cache_dir / f"{url_hash}.mineru.md").exists()
+        return (cache_dir / f"{url_hash}{DOCLING_CACHE_SUFFIX}").exists()
     except Exception:
         return False
 
 
-def _save_mineru_to_cache(url: str, markdown: str, paper_title: str = "") -> None:
-    """Save MinerU high-precision parse result to cache (slow/high-quality tier)."""
+def _save_docling_to_cache(
+    url: str,
+    markdown: str,
+    paper_title: str = "",
+    structured_content: dict[str, Any] | None = None,
+) -> None:
+    """Save Docling high-quality parse result to cache."""
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
-        mineru_file = cache_dir / f"{url_hash}.mineru.md"
-        mineru_file.write_text(markdown, encoding='utf-8')
-        # MinerU supersedes pymupdf: update JSON meta with final page count
+        docling_file = cache_dir / f"{url_hash}{DOCLING_CACHE_SUFFIX}"
+        docling_file.write_text(markdown, encoding='utf-8')
         page_count = _extract_page_count(markdown)
-        _update_meta_with_parse_info(url, page_count, 'mineru')
-        logger.info(f"Cached MinerU high-precision markdown for {url} ({page_count} pages)")
-        # Rebuild vector index with higher-quality MinerU content
-        _trigger_vector_index(url_hash, markdown, paper_title)
+        _save_structured_to_cache(
+            url,
+            structured_content or _build_document_graph_from_markdown(markdown, PDF_PARSE_METHOD_DOCLING),
+        )
+        _update_meta_fields(
+            url,
+            page_count=page_count,
+            parse_method=PDF_PARSE_METHOD_DOCLING,
+            structured_parse_method=PDF_PARSE_METHOD_DOCLING,
+            structured_parse_ready=True,
+            high_quality_parse_pending=False,
+            high_quality_parse_ready=True,
+        )
+        logger.info(f"Cached Docling markdown for {url} ({page_count} pages)")
+        _trigger_vector_index(url_hash, markdown, paper_title, structured_content)
     except Exception as e:
-        logger.error(f"Error saving MinerU markdown to cache: {e}")
+        logger.error(f"Error saving Docling markdown to cache: {e}")
 
 
 # ── Vector Index Helper ─────────────────────────────────────────────────────
 
-def _trigger_vector_index(url_hash: str, markdown: str, paper_title: str) -> None:
+def _trigger_vector_index(
+    url_hash: str,
+    markdown: str,
+    paper_title: str,
+    structured_content: dict[str, Any] | None = None,
+) -> None:
     """Index PDF content into the vector store (best-effort, non-blocking)."""
     try:
         from .chat_pdf_vectorstore import index_pdf_to_vectorstore
-        index_pdf_to_vectorstore(url_hash, markdown, paper_title or "Unknown")
+        index_pdf_to_vectorstore(
+            url_hash,
+            markdown,
+            paper_title or "Unknown",
+            structured_content=structured_content,
+        )
     except Exception as e:
         logger.error(f"[VectorIndex] Failed to index {url_hash}: {e}")
 
@@ -413,6 +512,196 @@ def _split_md_into_pages(markdown: str) -> list[tuple[int, str]]:
         if content.strip():
             pages.append((page_num, content.strip()))
     return pages
+
+
+def _parse_markdown_table_rows(table_lines: list[str]) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for line in table_lines:
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if cells and any(cell and set(cell) != {"-", ":"} for cell in cells):
+            rows.append(cells)
+    return rows
+
+
+def _build_document_graph_from_markdown(markdown: str, parse_method: PdfParseMethod) -> dict[str, Any]:
+    """Normalize markdown into a lightweight Document Graph / Block Graph sidecar."""
+    page_entries = _split_md_into_pages(markdown)
+    blocks: list[dict[str, Any]] = []
+    section_nodes: list[dict[str, Any]] = []
+    block_counter = 0
+
+    def _next_block_id(prefix: str, page_num: int) -> str:
+        nonlocal block_counter
+        block_counter += 1
+        return f"{prefix}-p{page_num}-{block_counter}"
+
+    def _append_block(page_num: int, page_node: dict[str, Any], block_type: str, **payload: Any) -> None:
+        block_id = _next_block_id(block_type, page_num)
+        block = {
+            "id": block_id,
+            "type": block_type,
+            "page": page_num,
+            "parent_id": page_node["id"],
+            **payload,
+        }
+        blocks.append(block)
+        page_node["children"].append(block_id)
+
+    for page_num, page_text in page_entries:
+        page_node = {
+            "id": f"page-{page_num}",
+            "type": "section",
+            "title": f"Page {page_num}",
+            "page_start": page_num,
+            "page_end": page_num,
+            "children": [],
+        }
+        section_nodes.append(page_node)
+
+        paragraph_buffer: list[str] = []
+        table_buffer: list[str] = []
+        equation_buffer: list[str] = []
+        in_equation = False
+        current_path: list[str] = []
+
+        def _flush_paragraph() -> None:
+            if not paragraph_buffer:
+                return
+            text = "\n".join(paragraph_buffer).strip()
+            paragraph_buffer.clear()
+            if text:
+                _append_block(
+                    page_num,
+                    page_node,
+                    "paragraph",
+                    text=text,
+                    section_path=current_path.copy(),
+                )
+
+        def _flush_table() -> None:
+            if not table_buffer:
+                return
+            table_markdown = "\n".join(table_buffer).strip()
+            rows = _parse_markdown_table_rows(table_buffer)
+            table_buffer.clear()
+            if table_markdown:
+                _append_block(
+                    page_num,
+                    page_node,
+                    "table",
+                    markdown=table_markdown,
+                    cells=rows,
+                    caption="",
+                    section_path=current_path.copy(),
+                )
+
+        def _flush_equation() -> None:
+            if not equation_buffer:
+                return
+            latex = "\n".join(equation_buffer).strip()
+            equation_buffer.clear()
+            if latex:
+                _append_block(
+                    page_num,
+                    page_node,
+                    "equation",
+                    latex=latex,
+                    surrounding_text="",
+                    section_path=current_path.copy(),
+                )
+
+        for raw_line in page_text.splitlines():
+            line = raw_line.rstrip()
+            stripped = line.strip()
+
+            if stripped.startswith("$$"):
+                _flush_paragraph()
+                _flush_table()
+                if in_equation and stripped != "$$":
+                    equation_buffer.append(stripped)
+                in_equation = not in_equation
+                if not in_equation:
+                    _flush_equation()
+                continue
+
+            if in_equation:
+                equation_buffer.append(line)
+                continue
+
+            heading_match = re.match(r'^(#{1,6})\s+(.*)$', stripped)
+            image_match = re.match(r'^!\[([^\]]*)\]\(([^)]+)\)$', stripped)
+
+            if not stripped:
+                _flush_paragraph()
+                _flush_table()
+                continue
+
+            if heading_match:
+                _flush_paragraph()
+                _flush_table()
+                level = len(heading_match.group(1))
+                title = heading_match.group(2).strip()
+                current_path = current_path[: max(level - 1, 0)]
+                current_path.append(title)
+                _append_block(
+                    page_num,
+                    page_node,
+                    "section",
+                    text=title,
+                    level=level,
+                    section_path=current_path.copy(),
+                )
+                continue
+
+            if image_match:
+                _flush_paragraph()
+                _flush_table()
+                _append_block(
+                    page_num,
+                    page_node,
+                    "figure",
+                    image=image_match.group(2).strip(),
+                    caption=image_match.group(1).strip(),
+                    vision_summary="",
+                    section_path=current_path.copy(),
+                )
+                continue
+
+            if stripped.startswith("|") and stripped.endswith("|"):
+                _flush_paragraph()
+                table_buffer.append(stripped)
+                continue
+
+            if table_buffer:
+                _flush_table()
+
+            paragraph_buffer.append(stripped)
+
+        _flush_paragraph()
+        _flush_table()
+        _flush_equation()
+
+    return {
+        "schema_version": STRUCTURED_SCHEMA_VERSION,
+        "type": "document",
+        "parse_method": parse_method,
+        "page_count": _extract_page_count(markdown),
+        "children": section_nodes,
+        "blocks": blocks,
+    }
+
+
+def _to_parsed_pdf_result(markdown: str, parse_method: PdfParseMethod) -> ParsedPdfResult:
+    structured_content = _build_document_graph_from_markdown(markdown, parse_method)
+    return ParsedPdfResult(
+        markdown=markdown,
+        parse_method=parse_method,
+        page_count=int(structured_content.get("page_count") or 0),
+        structured_content=structured_content,
+    )
 
 
 def search_pdf_pages(
@@ -474,12 +763,12 @@ def search_pdf_pages(
 def get_cached_markdown(url: str) -> str | None:
     """Return the best available cached markdown for *url*, or ``None``.
 
-    Prefers MinerU high-precision (``.mineru.md``) over PyMuPDF (``.md``).
+    Prefers high-quality structured parses over PyMuPDF.
     """
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
-        for suffix in ('.mineru.md', '.md'):
+        for suffix, _method in CACHED_MARKDOWN_CANDIDATES:
             md_file = cache_dir / f"{url_hash}{suffix}"
             if md_file.exists():
                 return md_file.read_text(encoding='utf-8')
@@ -496,18 +785,9 @@ def invalidate_pdf_cache(url: str) -> None:
     served on the next request.
     """
     try:
-        import shutil
-        cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
-        for suffix in ('.pdf', '.pdf.partial', '.json', '.md', '.mineru.md'):
-            f = cache_dir / f"{url_hash}{suffix}"
-            if f.exists():
-                f.unlink()
-                logger.info(f"Invalidated PDF cache file: {f.name}")
-        img_dir = cache_dir / "images" / url_hash
-        if img_dir.exists():
-            shutil.rmtree(img_dir, ignore_errors=True)
-            logger.info(f"Invalidated PDF image dir: images/{url_hash}")
+        _remove_cached_pdf_artifacts(url_hash, remove_vectorstore=True)
+        logger.info(f"Invalidated PDF cache artefacts for {url}")
     except Exception as e:
         logger.error(f"Error invalidating PDF cache for {url}: {e}")
 
@@ -526,85 +806,99 @@ def get_cached_pdf_meta(url: str) -> dict[str, Any] | None:
         return None
 
 
-async def _background_mineru_upgrade(url: str, pdf_bytes: bytes, max_pages: int = 0) -> None:
-    """Background task: run MinerU on a PDF that was already served via pymupdf.
+async def _parse_pdf_with_docling_best_effort(
+    pdf_bytes: bytes,
+    max_pages: int,
+    images_output_dir: Path | None,
+    images_url_prefix: str | None,
+) -> ParsedPdfResult | None:
+    """Run Docling via GPU queue when possible, otherwise CPU, and normalize the result."""
+    docling_markdown = await _parse_pdf_with_docling_via_gpu_queue(
+        pdf_bytes,
+        max_pages,
+        images_output_dir,
+        images_url_prefix,
+    )
+    if docling_markdown is None:
+        docling_markdown = await _parse_pdf_with_docling_on_cpu(
+            pdf_bytes,
+            max_pages,
+            images_output_dir,
+            images_url_prefix,
+        )
+    if docling_markdown is None:
+        return None
+    return _to_parsed_pdf_result(docling_markdown, PDF_PARSE_METHOD_DOCLING)
 
-    Saves the high-precision result to {url_hash}.mineru.md so the *next* cache hit
-    will automatically return the better parse.  Silently no-ops if a MinerU cache
-    already exists for this URL.
 
-    GPU selection happens inside the subprocess at execution time (not submission
-    time) so VRAM readings are accurate even when tasks are queued.  The
-    ProcessPoolExecutor(max_workers=1) serializes execution automatically.
+def _register_docling_upgrade_task(url_hash: str, task: asyncio.Task[None]) -> None:
+    _docling_upgrade_tasks[url_hash] = task
 
-    max_pages=0 means unlimited: this task runs in the background so there is no
-    UX penalty for parsing all pages.
-    """
-    if _has_mineru_cache(url):
-        return  # already upgraded
+    def _cleanup(completed_task: asyncio.Task[None]) -> None:
+        current_task = _docling_upgrade_tasks.get(url_hash)
+        if current_task is completed_task:
+            _docling_upgrade_tasks.pop(url_hash, None)
+        try:
+            completed_task.result()
+        except asyncio.CancelledError:
+            logger.info(f"Background Docling upgrade cancelled for {url_hash}")
+        except Exception as e:
+            logger.error(f"Background Docling upgrade failed for {url_hash}: {e}")
 
-    # Prepare persistent image directory so MinerU images survive temp-dir cleanup.
+    task.add_done_callback(_cleanup)
+
+
+async def _run_docling_background_upgrade(url: str, title: str, pdf_bytes: bytes) -> None:
+    """Upgrade a fast PyMuPDF parse to a high-quality Docling parse in the background."""
+    if _has_docling_cache(url):
+        _update_meta_fields(url, high_quality_parse_pending=False, high_quality_parse_ready=True)
+        return
+
     url_hash = _get_url_hash(url)
     images_output_dir = _get_pdf_cache_dir() / "images" / url_hash
     images_url_prefix = f"{Config.GATEWAY_SERVICE_URL}/pdf-images/{url_hash}"
 
     try:
-        logger.info(f"[BG MinerU] Queuing upgrade for {url}")
-        loop = asyncio.get_event_loop()
-        executor = _get_mineru_executor()
-        markdown = await loop.run_in_executor(
-            executor,
-            _run_mineru_in_process,
-            pdf_bytes, max_pages,
-            str(images_output_dir), images_url_prefix,
-            MIN_VRAM_MB_FOR_MINERU,
+        logger.info(f"Starting background Docling upgrade for {url}")
+        result = await _parse_pdf_with_docling_best_effort(
+            pdf_bytes,
+            0,
+            images_output_dir,
+            images_url_prefix,
         )
-        if markdown and not markdown.startswith("[Error"):
-            # Recover paper title from cached meta for vector re-indexing
-            meta = get_cached_pdf_meta(url)
-            title = (meta or {}).get("title", "")
-            _save_mineru_to_cache(url, markdown, paper_title=title)
-            logger.info(f"[BG MinerU] Upgrade complete for {url} ({len(markdown)} chars)")
-        else:
-            logger.warning(f"[BG MinerU] Upgrade failed for {url}: {markdown[:80]}")
+        if result is None or not result.markdown or result.markdown.startswith("[Error"):
+            _update_meta_fields(url, high_quality_parse_pending=False, high_quality_parse_ready=False)
+            logger.warning(f"Background Docling upgrade produced no usable result for {url}")
+            return
+
+        _save_docling_to_cache(
+            url,
+            result.markdown,
+            paper_title=title,
+            structured_content=result.structured_content,
+        )
+        logger.info(f"Background Docling upgrade completed for {url}")
     except Exception as e:
-        logger.error(f"[BG MinerU] Upgrade error for {url}: {e}")
-    finally:
-        # Kill the subprocess to release GPU memory (CUDA context holds ~GBs).
-        _shutdown_mineru_executor()
+        _update_meta_fields(url, high_quality_parse_pending=False, high_quality_parse_ready=False)
+        logger.error(f"Background Docling upgrade error for {url}: {e}")
 
 
-async def trigger_mineru_upgrade_by_hash(url_hash: str) -> bool:
-    """Look up a cached PDF by its url_hash and schedule a MinerU background upgrade.
-
-    Returns True if an upgrade was scheduled, False otherwise (already upgraded,
-    no cached PDF found, or GPU unavailable).  Safe to call repeatedly — the
-    underlying ``_background_mineru_upgrade`` is idempotent.
-    """
-    try:
-        cache_dir = _get_pdf_cache_dir()
-        # Already have MinerU result — nothing to do
-        if (cache_dir / f"{url_hash}.mineru.md").exists():
-            return False
-
-        meta_file = cache_dir / f"{url_hash}.json"
-        pdf_file = cache_dir / f"{url_hash}.pdf"
-        if not meta_file.exists() or not pdf_file.exists():
-            return False
-
-        with open(meta_file, 'r') as f:
-            meta = json.load(f)
-        url = meta.get("url")
-        if not url:
-            return False
-
-        pdf_bytes = pdf_file.read_bytes()
-        asyncio.create_task(_background_mineru_upgrade(url, pdf_bytes))
-        logger.info(f"[BG MinerU] Triggered upgrade from 404 image request for url_hash={url_hash}")
-        return True
-    except Exception as e:
-        logger.error(f"[BG MinerU] trigger_mineru_upgrade_by_hash error: {e}")
+def schedule_docling_upgrade(url: str, title: str, pdf_bytes: bytes) -> bool:
+    """Schedule a background Docling upgrade unless one is already cached or running."""
+    url_hash = _get_url_hash(url)
+    if _has_docling_cache(url):
+        _update_meta_fields(url, high_quality_parse_pending=False, high_quality_parse_ready=True)
         return False
+
+    existing_task = _docling_upgrade_tasks.get(url_hash)
+    if existing_task is not None and not existing_task.done():
+        _update_meta_fields(url, high_quality_parse_pending=True, high_quality_parse_ready=False)
+        return False
+
+    _update_meta_fields(url, high_quality_parse_pending=True, high_quality_parse_ready=False)
+    task = asyncio.create_task(_run_docling_background_upgrade(url, title, pdf_bytes))
+    _register_docling_upgrade_task(url_hash, task)
+    return True
 
 
 def cleanup_expired_pdf_cache() -> int:
@@ -623,26 +917,7 @@ def cleanup_expired_pdf_cache() -> int:
                 cached_time = datetime.fromisoformat(meta.get('cached_at', '2000-01-01'))
                 if now - cached_time > timedelta(days=PDF_CACHE_TTL_DAYS):
                     url_hash = meta_file.stem
-                    pdf_file = cache_dir / f"{url_hash}.pdf"
-                    
-                    if pdf_file.exists():
-                        pdf_file.unlink()
-                    # Remove pymupdf and MinerU cached markdown
-                    for suffix in (".md", ".mineru.md"):
-                        cached_file = cache_dir / f"{url_hash}{suffix}"
-                        if cached_file.exists():
-                            cached_file.unlink()
-                    # Remove MinerU-extracted images directory
-                    images_dir = cache_dir / "images" / url_hash
-                    if images_dir.exists() and images_dir.is_dir():
-                        shutil.rmtree(images_dir)
-                    # Remove vector store entries
-                    try:
-                        from .chat_pdf_vectorstore import delete_pdf_from_vectorstore
-                        delete_pdf_from_vectorstore(url_hash)
-                    except Exception as ve:
-                        logger.error(f"Error cleaning vector store for {url_hash}: {ve}")
-                    meta_file.unlink()
+                    _remove_cached_pdf_artifacts(url_hash, remove_vectorstore=True)
                     cleaned += 1
                     logger.info(f"Cleaned expired PDF cache: {meta.get('url', url_hash)}")
             except Exception as e:
@@ -1358,12 +1633,12 @@ def _parse_pdf_with_pymupdf(
 
         # Quality checks
         if total_chars < 200:
-            logger.info(f"PyMuPDF: too short ({total_chars} chars), need MinerU fallback")
+            logger.info(f"PyMuPDF: too short ({total_chars} chars), need structured-parser fallback")
             return None
 
         garbage_ratio = garbage_chars / total_chars if total_chars > 0 else 0
         if garbage_ratio > 0.1:
-            logger.info(f"PyMuPDF: too much garbage ({garbage_ratio:.1%}), need MinerU fallback")
+            logger.info(f"PyMuPDF: too much garbage ({garbage_ratio:.1%}), need structured-parser fallback")
             return None
 
         # Per-page density check: catch scanned PDFs with sparse headers/footers
@@ -1374,7 +1649,7 @@ def _parse_pdf_with_pymupdf(
             if avg_chars_per_page < 50 and num_pages >= 3:
                 logger.info(
                     f"PyMuPDF: low per-page density ({avg_chars_per_page:.0f} chars/page "
-                    f"across {num_pages} pages), likely scanned PDF — need MinerU fallback"
+                    f"across {num_pages} pages), likely scanned PDF — need structured-parser fallback"
                 )
                 return None
 
@@ -1410,295 +1685,328 @@ def _parse_pdf_with_pymupdf(
 
 
 
-def _cleanup_vllm_processes() -> None:
-    """Force-kill any orphaned vLLM EngineCore subprocesses spawned by this process.
-
-    This is a safety-net fallback called after the normal ModelSingleton
-    shutdown path.  It uses the OS process tree to find and kill children
-    whose command-line contains ``vllm`` or ``EngineCore``.
-    """
-    import signal
-    import subprocess as _sp
-
-    my_pid = os.getpid()
-    try:
-        # Find all child processes of the current process
-        result = _sp.run(
-            ["pgrep", "-P", str(my_pid), "-a"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode != 0:
-            return  # no children or pgrep not available
-
-        for line in result.stdout.strip().splitlines():
-            parts = line.split(None, 1)
-            if len(parts) < 2:
-                continue
-            child_pid_str, cmdline = parts
-            # Match vLLM EngineCore worker processes
-            if "vllm" in cmdline.lower() or "enginecore" in cmdline.lower():
-                child_pid = int(child_pid_str)
-                try:
-                    os.kill(child_pid, signal.SIGKILL)
-                    logger.info(
-                        f"[MinerU] Force-killed orphaned vLLM process "
-                        f"PID={child_pid}: {cmdline[:80]}"
-                    )
-                except ProcessLookupError:
-                    pass  # already dead
-                except Exception as _e:
-                    logger.warning(
-                        f"[MinerU] Failed to kill PID={child_pid}: {_e}"
-                    )
-    except Exception as e:
-        logger.debug(f"[MinerU] _cleanup_vllm_processes fallback error: {e}")
+def _extract_gpu_index_from_device(assigned_device: str | None) -> int | None:
+    """Extract the physical GPU index from strings like ``cuda:1``."""
+    if not assigned_device:
+        return None
+    match = re.fullmatch(r'cuda:(\d+)', assigned_device.strip().lower())
+    if not match:
+        return None
+    return int(match.group(1))
 
 
-def _shutdown_mineru_vlm_singleton() -> None:
-    """Shutdown all vLLM engines tracked by MinerU's ModelSingleton and
-    release GPU memory.  Always safe to call (no-ops if nothing to clean)."""
-    try:
-        from mineru.backend.vlm.vlm_analyze import ModelSingleton
-        from mineru.utils.model_utils import clean_memory
-        import gc
-
-        if not ModelSingleton._models:
-            return
-
-        # 1) Explicitly shutdown each vLLM engine so EngineCore
-        #    subprocesses are terminated (terminate → join → kill).
-        for _key, _client in list(ModelSingleton._models.items()):
-            # Sync vLLM engine (backend == "vllm-engine")
-            _llm = getattr(_client, 'vllm_llm', None)
-            if _llm is not None:
-                try:
-                    _llm.llm_engine.engine_core.shutdown()
-                    logger.info(f"[MinerU] vLLM sync engine shutdown OK (key={_key})")
-                except Exception as _e:
-                    logger.warning(f"[MinerU] vLLM sync engine shutdown warning: {_e}")
-            # Async vLLM engine (backend == "vllm-async-engine")
-            _allm = getattr(_client, 'vllm_async_llm', None)
-            if _allm is not None:
-                try:
-                    _allm.engine_core.shutdown()
-                    logger.info(f"[MinerU] vLLM async engine shutdown OK (key={_key})")
-                except Exception as _e:
-                    logger.warning(f"[MinerU] vLLM async engine shutdown warning: {_e}")
-
-        # 2) Clear singleton dict & free CUDA memory.
-        ModelSingleton._models.clear()
-        clean_memory('cuda')
-        gc.collect()
-        logger.info("[MinerU] VLM singleton cleared — EngineCore processes terminated")
-    except Exception as _cleanup_err:
-        logger.warning(f"[MinerU] VLM singleton cleanup warning: {_cleanup_err}")
-
-    # 3) Fallback: kill any remaining vLLM child processes by PID.
-    _cleanup_vllm_processes()
-
-
-def _run_mineru_in_process(
+def _docling_subprocess_entry(
+    result_conn,
     pdf_bytes: bytes,
     max_pages: int,
-    images_output_dir_str: str | None = None,
-    images_url_prefix: str | None = None,
-    min_vram_mb: float = 0,
-) -> str:
-    """Run MinerU parsing in a subprocess (called via ProcessPoolExecutor).
-
-    This function is the subprocess entry-point.  It selects the best GPU at
-    execution time (not submission time — the queue may delay execution), sets
-    CUDA_VISIBLE_DEVICES, runs MinerU, cleans up VLM resources, and returns
-    markdown.  All arguments must be picklable (no Path, no Lock).
-    """
-    import os as _os
-    import logging as _logging
-    _logger = _logging.getLogger(__name__)
-
-    # Ensure all GPUs are visible before selection.  An empty
-    # CUDA_VISIBLE_DEVICES string (inherited from the parent env) makes
-    # PyTorch report zero devices, so remove it if empty/whitespace-only.
-    _cvd = _os.environ.get("CUDA_VISIBLE_DEVICES")
-    if _cvd is not None and _cvd.strip() == "":
-        del _os.environ["CUDA_VISIBLE_DEVICES"]
-
-    # Select GPU at execution time for accurate VRAM readings
-    from backend.common.gpu_utils import select_optimal_gpu_for_task as _select_gpu
-    gpu_idx, free_mb = _select_gpu(min_vram_mb=min_vram_mb)
-    if gpu_idx == -1:
-        return (
-            "[Error: GPU unavailable — no GPU with sufficient free memory "
-            "for PDF parsing. Please try again later.]"
-        )
-
-    _os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
-    _logger.info(f"[MinerU subprocess] Using cuda:{gpu_idx} ({free_mb:.0f} MB free)")
-
-    # ── Monkey-patch vLLM memory profiling assertion ────────────────────
-    # On shared-GPU machines, other processes may release VRAM while vLLM
-    # is profiling, causing free memory to *increase* — which triggers a
-    # hard AssertionError in vllm.v1.worker.gpu_worker.Worker.
-    # We replace the assertion with a warning so the engine can still start
-    # using a conservative memory estimate.
+    images_output_dir_str: str | None,
+    images_url_prefix: str | None,
+    physical_gpu_index: int,
+) -> None:
+    """Child-process entrypoint for GPU-isolated Docling parsing."""
     try:
-        import vllm.v1.worker.gpu_worker as _vllm_gw
-        import torch as _torch
-
-        _orig_determine = _vllm_gw.Worker.determine_available_memory
-
-        @_torch.inference_mode()
-        def _patched_determine_available_memory(self):
-            """Wrapper that converts the memory-profiling assertion into a
-            warning + retry instead of a hard crash."""
-            import time as _time
-            _MAX_RETRIES = 3
-            for _attempt in range(1, _MAX_RETRIES + 1):
-                try:
-                    return _orig_determine(self)
-                except AssertionError as _ae:
-                    if "memory profiling" not in str(_ae):
-                        raise  # unrelated assertion — propagate
-                    if _attempt < _MAX_RETRIES:
-                        _logger.warning(
-                            f"[MinerU] vLLM memory profiling assertion "
-                            f"(attempt {_attempt}/{_MAX_RETRIES}), "
-                            f"retrying in 2s: {_ae}"
-                        )
-                        _time.sleep(2)
-                        # Re-take the init snapshot so the next attempt
-                        # starts from a fresh baseline.
-                        _torch.cuda.empty_cache()
-                        from vllm.utils import MemorySnapshot as _MemSnap
-                        self.init_snapshot = _MemSnap()
-                    else:
-                        _logger.warning(
-                            f"[MinerU] vLLM memory profiling assertion "
-                            f"persisted after {_MAX_RETRIES} retries: {_ae}"
-                        )
-                        raise
-
-        _vllm_gw.Worker.determine_available_memory = _patched_determine_available_memory
-        _logger.info("[MinerU] Patched vLLM memory profiling for shared-GPU tolerance")
-    except Exception as _patch_err:
-        _logger.debug(f"[MinerU] Could not patch vLLM memory profiling: {_patch_err}")
-
-    images_output_dir = Path(images_output_dir_str) if images_output_dir_str else None
-    try:
-        return _parse_pdf_sync_inner(
-            pdf_bytes, max_pages, images_output_dir, images_url_prefix,
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(physical_gpu_index)
+        markdown = _parse_pdf_with_docling(
+            pdf_bytes,
+            max_pages,
+            images_output_dir=Path(images_output_dir_str) if images_output_dir_str else None,
+            images_url_prefix=images_url_prefix,
+            accelerator_device="cuda",
         )
+        result_conn.send({"ok": True, "markdown": markdown})
+    except Exception as e:
+        try:
+            result_conn.send({"ok": False, "error": str(e)})
+        except Exception:
+            pass
     finally:
-        _shutdown_mineru_vlm_singleton()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        gc.collect()
+        try:
+            result_conn.close()
+        except Exception:
+            pass
 
 
-def _parse_pdf_sync_inner(
+def _run_docling_in_isolated_process(
+    pdf_bytes: bytes,
+    max_pages: int,
+    images_output_dir_str: str | None,
+    images_url_prefix: str | None,
+    assigned_device: str,
+) -> str | None:
+    """Run Docling in a short-lived subprocess pinned to the assigned GPU."""
+    physical_gpu_index = _extract_gpu_index_from_device(assigned_device)
+    if physical_gpu_index is None:
+        raise RuntimeError(f"Invalid assigned GPU device for Docling parse: {assigned_device}")
+
+    ctx = multiprocessing.get_context('spawn')
+    parent_conn, child_conn = ctx.Pipe(duplex=False)
+    process = ctx.Process(
+        target=_docling_subprocess_entry,
+        args=(
+            child_conn,
+            pdf_bytes,
+            max_pages,
+            images_output_dir_str,
+            images_url_prefix,
+            physical_gpu_index,
+        ),
+    )
+
+    payload = None
+    try:
+        process.start()
+        child_conn.close()
+
+        while True:
+            if parent_conn.poll(0.5):
+                payload = parent_conn.recv()
+                break
+            if not process.is_alive():
+                break
+
+        process.join(timeout=DOCLING_SUBPROCESS_JOIN_TIMEOUT_SECONDS)
+
+        if payload is None:
+            raise RuntimeError(
+                f"Docling subprocess exited without returning a result "
+                f"(exitcode={process.exitcode})"
+            )
+        if not payload.get("ok"):
+            raise RuntimeError(payload.get("error") or "Unknown Docling subprocess error")
+        return payload.get("markdown")
+    finally:
+        try:
+            parent_conn.close()
+        except Exception:
+            pass
+        try:
+            child_conn.close()
+        except Exception:
+            pass
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=DOCLING_SUBPROCESS_JOIN_TIMEOUT_SECONDS)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=DOCLING_SUBPROCESS_JOIN_TIMEOUT_SECONDS)
+
+
+async def _parse_pdf_with_docling_on_assigned_gpu(
+    pdf_bytes: bytes,
+    max_pages: int,
+    images_output_dir: Path | None,
+    images_url_prefix: str | None,
+    assigned_device: str,
+) -> str | None:
+    """Run Docling in an isolated subprocess on the queue-assigned GPU."""
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            None,
+            _run_docling_in_isolated_process,
+            pdf_bytes,
+            max_pages,
+            str(images_output_dir) if images_output_dir else None,
+            images_url_prefix,
+            assigned_device,
+        )
+        logger.info(f"Docling GPU parse completed on {assigned_device}")
+        return result
+    except Exception as e:
+        logger.warning(f"Docling GPU parse failed on {assigned_device}: {e}")
+        return None
+
+
+async def _parse_pdf_with_docling_via_gpu_queue(
+    pdf_bytes: bytes,
+    max_pages: int,
+    images_output_dir: Path | None,
+    images_url_prefix: str | None,
+) -> str | None:
+    """Submit Docling parsing to the shared GPU queue and await the result."""
+    from ..task_queue import TaskType, get_task_queue
+
+    queue = get_task_queue()
+    worker_task = getattr(queue, "_worker_task", None)
+    if worker_task is None or worker_task.done():
+        logger.warning("Task queue is not running; skipping Docling GPU parse")
+        return None
+
+    loop = asyncio.get_running_loop()
+    result_future: asyncio.Future[str | None] = loop.create_future()
+    task_id = f"pdf-parse-{uuid.uuid4().hex}"
+
+    async def _queued_docling_job(
+        *,
+        assigned_device: str,
+        task_id: str | None = None,
+        **_ignored_kwargs: Any,
+    ) -> None:
+        try:
+            result = await _parse_pdf_with_docling_on_assigned_gpu(
+                pdf_bytes,
+                max_pages,
+                images_output_dir,
+                images_url_prefix,
+                assigned_device,
+            )
+            if not result_future.done():
+                result_future.set_result(result)
+        except Exception as e:
+            if task_id:
+                logger.warning(f"Docling queued job {task_id} failed on {assigned_device}: {e}")
+            if not result_future.done():
+                result_future.set_exception(e)
+            raise
+
+    await queue.submit(task_id, TaskType.INFERENCE, _queued_docling_job)
+    return await result_future
+
+
+async def _parse_pdf_with_docling_on_cpu(
+    pdf_bytes: bytes,
+    max_pages: int,
+    images_output_dir: Path | None,
+    images_url_prefix: str | None,
+) -> str | None:
+    """Run Docling on CPU in a worker thread when GPU parsing is unavailable."""
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            None,
+            _parse_pdf_with_docling,
+            pdf_bytes,
+            max_pages,
+            images_output_dir,
+            images_url_prefix,
+            "cpu",
+        )
+        if result is not None:
+            logger.info("Docling CPU parse completed")
+        return result
+    except Exception as e:
+        logger.warning(f"Docling CPU parse failed: {e}")
+        return None
+
+
+def _parse_pdf_with_docling(
     pdf_bytes: bytes,
     max_pages: int,
     images_output_dir: Path | None = None,
     images_url_prefix: str | None = None,
-) -> str:
-    """Inner parsing logic, called with GPU lock held and CUDA_VISIBLE_DEVICES set.
+    accelerator_device: str = "cpu",
+) -> str | None:
+    """High-quality PDF extraction using Docling.
 
-    Args:
-        pdf_bytes: Raw PDF bytes to parse.
-        max_pages: Maximum pages to parse (0 = unlimited).
-        images_output_dir: If provided, MinerU-extracted images are copied here
-            (persistent storage) before the temporary directory is cleaned up.
-        images_url_prefix: If provided, relative image references in the markdown
-            (e.g. ``images/fig1.jpg``) are rewritten to absolute HTTP URLs using
-            this prefix (e.g. ``http://127.0.0.1:6100/pdf-images/{hash}``).
+    Returns markdown with page markers and appends extracted figure/table links
+    when image export is enabled.
     """
     try:
-        from mineru.cli.common import convert_pdf_bytes_to_bytes_by_pypdfium2, prepare_env
-        from mineru.data.data_reader_writer import FileBasedDataWriter
-        from mineru.backend.hybrid.hybrid_analyze import doc_analyze as hybrid_doc_analyze
-        from mineru.backend.vlm.vlm_middle_json_mkcontent import union_make
-        from mineru.utils.enum_class import MakeMode
-        from mineru.utils.engine_utils import get_vlm_engine
-
-        md_content = ""
-        try:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                temp_path = Path(temp_dir)
-                pdf_path = temp_path / "input.pdf"
-                pdf_path.write_bytes(pdf_bytes)
-
-                output_dir = temp_path / "output"
-                local_image_dir, local_md_dir = prepare_env(output_dir, "input", "hybrid_auto")
-
-                # Use 'transformers' instead of 'auto' to avoid vLLM's
-                # memory-profiling assertion that crashes on shared-GPU
-                # machines when other processes release VRAM during init.
-                # transformers is stable and sufficient for one-PDF-at-a-time.
-                backend = get_vlm_engine(inference_engine='transformers', is_async=False)
-
-                start_page_id = 0
-                end_page_id = max_pages - 1 if max_pages > 0 else None
-
-                pdf_bytes_limited = convert_pdf_bytes_to_bytes_by_pypdfium2(
-                    pdf_bytes, start_page_id, end_page_id
-                )
-
-                middle_json, _, _ = hybrid_doc_analyze(
-                    pdf_bytes_limited,
-                    image_writer=FileBasedDataWriter(local_image_dir),
-                    backend=backend,
-                    parse_method="hybrid_auto",
-                    language="en",
-                    inline_formula_enable=True,
-                    server_url=None,
-                )
-
-                pdf_info = middle_json["pdf_info"]
-                image_dir = str(os.path.basename(local_image_dir))
-                pdf_info_list = pdf_info if isinstance(pdf_info, list) else []
-
-                # Build page-aware markdown: iterate per page and add page markers
-                if not pdf_info_list:
-                    return ""
-
-                page_sections = []
-                for page_info in pdf_info_list:
-                    page_idx = page_info.get('page_idx', len(page_sections))
-                    page_num = page_idx + 1
-
-                    page_md = str(union_make([page_info], MakeMode.MM_MD, image_dir) or "").strip()
-                    if page_md:
-                        page_sections.append(f"--- Page {page_num} ---\n\n{page_md}")
-
-                md_content = "\n\n".join(page_sections)
-
-                # ── Image persistence ────────────────────────────────────────
-                local_image_path = Path(local_image_dir)
-                if images_output_dir is not None and local_image_path.is_dir():
-                    images_output_dir.mkdir(parents=True, exist_ok=True)
-                    copied = 0
-                    for img_file in local_image_path.iterdir():
-                        if img_file.is_file():
-                            shutil.copy2(img_file, images_output_dir / img_file.name)
-                            copied += 1
-                    logger.info(f"[MinerU] Copied {copied} images to {images_output_dir}")
-
-                if images_url_prefix is not None and image_dir:
-                    md_content = re.sub(
-                        r'\(' + re.escape(image_dir) + r'/([^)\s]+)\)',
-                        f'({images_url_prefix}/\\1)',
-                        md_content,
-                    )
-        finally:
-            # ── VLM singleton cleanup (ALWAYS runs) ──────────────────────
-            # Must run even if parsing raised an exception, otherwise the
-            # vLLM EngineCore subprocess leaks GPU VRAM permanently.
-            _shutdown_mineru_vlm_singleton()
-
-        return md_content
-
+        from docling_core.types.doc import ImageRefMode, PictureItem, TableItem
+        from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import PdfPipelineOptions
+        from docling.document_converter import DocumentConverter, PdfFormatOption
     except ImportError as e:
-        logger.error(f"MinerU not available: {e}")
-        return "[Error: MinerU not installed or import failed]"
+        logger.info(f"Docling not available for structured fallback parse: {e}")
+        return None
+
+    tmp_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    try:
+        tmp_file.write(pdf_bytes)
+        tmp_file.close()
+
+        pipeline_options = PdfPipelineOptions()
+        pipeline_options.images_scale = 2.0
+        pipeline_options.generate_page_images = True
+        pipeline_options.generate_picture_images = True
+        pipeline_options.accelerator_options = AcceleratorOptions(
+            num_threads=4,
+            device=AcceleratorDevice.CUDA if accelerator_device == "cuda" else AcceleratorDevice.CPU,
+        )
+
+        converter = DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+            }
+        )
+
+        conv_res = converter.convert(tmp_file.name)
+        markdown = conv_res.document.export_to_markdown(
+            image_mode=ImageRefMode.PLACEHOLDER,
+            page_break_placeholder="\n\n--- Page {page_no} ---\n\n",
+        ).strip()
+
+        if max_pages > 0:
+            page_sections: list[str] = []
+            for match in re.finditer(
+                r'--- Page (\d+) ---\n\n([\s\S]*?)(?=\n\n--- Page \d+ ---|\Z)',
+                markdown,
+            ):
+                if int(match.group(1)) > max_pages:
+                    break
+                page_sections.append(
+                    f"--- Page {match.group(1)} ---\n\n{match.group(2).strip()}"
+                )
+            markdown = "\n\n".join(section for section in page_sections if section.strip())
+
+        extracted_links: list[str] = []
+        if images_output_dir is not None:
+            images_output_dir.mkdir(parents=True, exist_ok=True)
+            figure_counter = 0
+            for element, _level in conv_res.document.iterate_items():
+                if not isinstance(element, (PictureItem, TableItem)):
+                    continue
+
+                image = element.get_image(conv_res.document)
+                if image is None:
+                    continue
+
+                figure_counter += 1
+                filename = f"figure-{figure_counter:03d}.png"
+                image_path = images_output_dir / filename
+                image.save(image_path, "PNG")
+
+                caption = ""
+                if hasattr(element, "caption_text"):
+                    try:
+                        caption = str(element.caption_text(conv_res.document) or "").strip()
+                    except Exception:
+                        caption = ""
+
+                if images_url_prefix is not None:
+                    link_title = f"Figure {figure_counter}"
+                    if caption:
+                        link_title = f"{link_title}: {caption}"
+                    extracted_links.append(f"![{link_title}]({images_url_prefix}/{filename})")
+
+            if extracted_links:
+                markdown = (
+                    markdown.rstrip()
+                    + "\n\n## Extracted Figures and Tables\n\n"
+                    + "\n\n".join(extracted_links)
+                )
+
+        logger.info(
+            f"Docling extraction OK: {len(markdown)} chars, "
+            f"{len(extracted_links)} extracted figures/tables"
+        )
+        return markdown
     except Exception as e:
-        logger.error(f"Error parsing PDF with MinerU: {e}")
-        return f"[Error parsing PDF: {str(e)}]"
+        logger.warning(f"Docling extraction failed: {e}")
+        return None
+    finally:
+        try:
+            os.unlink(tmp_file.name)
+        except OSError:
+            pass
 
 
 async def parse_pdf(
@@ -1706,48 +2014,34 @@ async def parse_pdf(
     max_pages: int = 10,
     images_output_dir: Path | None = None,
     images_url_prefix: str | None = None,
-) -> str:
-    """Async two-tier PDF parsing: fast PyMuPDF first, MinerU GPU fallback.
+) -> ParsedPdfResult:
+    """Parse PDF with PyMuPDF first; fall back to Docling only if fast parse fails.
 
-    Tier 1 (PyMuPDF) is fast enough to run synchronously on the event loop.
-    Tier 2 (MinerU) runs in a dedicated subprocess via ProcessPoolExecutor
-    so heavy PyTorch / vLLM operations never hold the main-process GIL.
-    The executor has max_workers=1, so multiple requests queue automatically.
-    GPU selection happens inside the subprocess at execution time.
+    Normal flow returns quickly with a PyMuPDF parse. Callers can schedule a
+    background Docling upgrade separately to improve fidelity and structure.
     """
-    # --- Tier 1: Fast PyMuPDF extraction (no GPU, <5s) ---
     pymupdf_result = _parse_pdf_with_pymupdf(
-        pdf_bytes, max_pages,
+        pdf_bytes,
+        max_pages,
         images_output_dir=images_output_dir,
         images_url_prefix=images_url_prefix,
     )
     if pymupdf_result is not None:
-        return pymupdf_result
+        return _to_parsed_pdf_result(pymupdf_result, PDF_PARSE_METHOD_PYMUPDF)
 
-    # --- Tier 2: MinerU GPU-based parsing in subprocess ---
-    logger.info("PyMuPDF extraction insufficient, falling back to MinerU GPU parsing (queued)")
-    loop = asyncio.get_event_loop()
-    try:
-        executor = _get_mineru_executor()
-        result = await loop.run_in_executor(
-            executor,
-            _run_mineru_in_process,
-            pdf_bytes, max_pages,
-            str(images_output_dir) if images_output_dir else None,
-            images_url_prefix,
-            MIN_VRAM_MB_FOR_MINERU,
-        )
-        return result
-    except BrokenProcessPool:
-        logger.error(
-            "[MinerU] ProcessPoolExecutor is broken (subprocess crash). "
-            "Rebuilding executor for future requests."
-        )
-        _shutdown_mineru_executor()
-        return "[Error: MinerU subprocess crashed. Please retry.]"
-    finally:
-        # Kill the subprocess to release GPU memory (CUDA context holds ~GBs).
-        _shutdown_mineru_executor()
+    docling_result = await _parse_pdf_with_docling_best_effort(
+        pdf_bytes,
+        max_pages,
+        images_output_dir,
+        images_url_prefix,
+    )
+    if docling_result is not None:
+        return docling_result
+
+    return _to_parsed_pdf_result(
+        "[Error parsing PDF: PyMuPDF and Docling both failed]",
+        PDF_PARSE_METHOD_FAILED,
+    )
 
 
 async def summarize_pdf_content(
@@ -2044,11 +2338,12 @@ async def process_pdf_url(
     model: str,
     use_cache: bool = True
 ) -> dict[str, Any]:
-    """Process a PDF URL: download, parse with MinerU, summarize, and format reference card.
+    """Process a PDF URL: download, parse, summarize, and format a reference card.
 
     Returns a dict with keys:
         url, title, source_type, success, summary, pdf_content (full markdown with page markers),
-        error, error_detail, from_cache, reference_card, page_count, parse_method
+        error, error_detail, from_cache, reference_card, page_count, parse_method,
+        structured_parse_method, high_quality_pending
     """
     result: dict[str, Any] = {
         "url": url,
@@ -2063,9 +2358,11 @@ async def process_pdf_url(
         "from_cache": False,
         "reference_card": None,
         "page_count": None,    # Total pages parsed (int), filled after parsing
-        "parse_method": None,  # "pymupdf" or "mineru" — indicates quality tier
+        "parse_method": None,  # "docling" or "pymupdf"
+        "structured_parse_method": None,
+        "high_quality_pending": False,
         "image_count": 0,      # Number of extracted images on disk
-        "images_ready": False, # Whether images are available for the AI to reference
+        "images_ready": False, # Whether extracted images are available to reference
     }
 
     try:
@@ -2075,14 +2372,15 @@ async def process_pdf_url(
         if use_cache:
             cached = _get_cached_pdf(url)
             if cached:
-                pdf_bytes, cache_meta, cached_markdown = cached
+                pdf_bytes, cache_meta, cached_markdown, cached_markdown_method = cached
                 result["from_cache"] = True
                 result["title"] = cache_meta.get('title', title)
                 # Restore persisted metadata so callers always have it on cache hits
                 if cache_meta.get('page_count'):
                     result["page_count"] = cache_meta['page_count']
-                if cache_meta.get('parse_method'):
-                    result["parse_method"] = cache_meta['parse_method']
+                result["parse_method"] = cached_markdown_method or cache_meta.get('parse_method')
+                result["structured_parse_method"] = cache_meta.get('structured_parse_method')
+                result["high_quality_pending"] = bool(cache_meta.get('high_quality_parse_pending'))
                 logger.info(f"Using cached PDF for {url}" + (" (with cached markdown)" if cached_markdown else ""))
 
         if not pdf_bytes:
@@ -2103,54 +2401,43 @@ async def process_pdf_url(
         if cached_markdown:
             pdf_content = cached_markdown
             logger.info(f"Using cached parsed markdown for {url}")
-            # Re-schedule MinerU background upgrade on cache hit if only pymupdf
-            # cache exists.  The initial upgrade attempt may have been skipped
-            # (GPU busy / lock contention) and is never retried otherwise.
-            if use_cache and pdf_bytes and not _has_mineru_cache(url):
-                asyncio.create_task(
-                    _background_mineru_upgrade(url, pdf_bytes)
-                )
-                logger.info(f"[BG MinerU] Re-scheduled upgrade on cache hit for {url}")
+            if result["parse_method"] == PDF_PARSE_METHOD_PYMUPDF and use_cache and pdf_bytes:
+                schedule_docling_upgrade(url, str(result["title"] or title), pdf_bytes)
+                result["high_quality_pending"] = not _has_docling_cache(url)
         else:
-            # ── Two-tier parsing ──────────────────────────────────────────────
-            # Pre-compute image storage paths (shared by both tiers).
             url_hash = _get_url_hash(url)
             sync_images_output_dir = _get_pdf_cache_dir() / "images" / url_hash
             sync_images_url_prefix = f"{Config.GATEWAY_SERVICE_URL}/pdf-images/{url_hash}"
 
-            # Tier 1: Fast pymupdf4llm (CPU, <5 s).  Extracts text + images.
-            # max_pages=0 means unlimited.
-            pymupdf_result = _parse_pdf_with_pymupdf(
+            parse_result = await parse_pdf(
                 pdf_bytes, max_pages=0,
                 images_output_dir=sync_images_output_dir,
                 images_url_prefix=sync_images_url_prefix,
             )
-
-            if pymupdf_result is not None:
-                pdf_content = pymupdf_result
-                if use_cache:
-                    _save_markdown_to_cache(url, pdf_content, paper_title=title)
-                # Tier 2 (background): Schedule MinerU upgrade for the *next*
-                # request if no high-precision cache exists yet and GPU is free.
-                if use_cache and not _has_mineru_cache(url):
-                    asyncio.create_task(
-                        _background_mineru_upgrade(url, pdf_bytes)  # max_pages=0: unlimited in background
+            pdf_content = parse_result.markdown
+            parse_method = parse_result.parse_method
+            result["parse_method"] = parse_method
+            result["page_count"] = parse_result.page_count
+            result["structured_parse_method"] = parse_method
+            if use_cache and not pdf_content.startswith("[Error"):
+                if parse_method == PDF_PARSE_METHOD_DOCLING:
+                    _save_docling_to_cache(
+                        url,
+                        pdf_content,
+                        paper_title=title,
+                        structured_content=parse_result.structured_content,
                     )
-                    logger.info(f"[BG MinerU] Background upgrade scheduled for {url}")
-            else:
-                # pymupdf insufficient — fall back to MinerU synchronously now.
-                # Pass image params so extracted figures are persisted immediately.
-                # Use max_pages=0 (unlimited) since MinerU is the high-precision tier
-                # and can extract tables, formulas, and images from all pages.
-                pdf_content = await parse_pdf(
-                    pdf_bytes,
-                    max_pages=0,
-                    images_output_dir=sync_images_output_dir,
-                    images_url_prefix=sync_images_url_prefix,
-                )
-                # Successful MinerU result goes to the high-precision cache slot
-                if not pdf_content.startswith("[Error") and use_cache:
-                    _save_mineru_to_cache(url, pdf_content, paper_title=title)
+                else:
+                    _save_markdown_to_cache(
+                        url,
+                        pdf_content,
+                        paper_title=title,
+                        structured_content=parse_result.structured_content,
+                        high_quality_pending=True,
+                    )
+                    if pdf_bytes:
+                        schedule_docling_upgrade(url, title, pdf_bytes)
+                        result["high_quality_pending"] = True
 
         # Guard: empty result (not an [Error prefix but no content extracted)
         if not pdf_content or not pdf_content.strip():
@@ -2162,25 +2449,27 @@ async def process_pdf_url(
             return result
 
         if pdf_content.startswith("[Error"):
-            # Distinguish GPU unavailable from other parse errors
-            if "GPU unavailable" in pdf_content:
-                result["error"] = "gpu_unavailable"
-                result["error_detail"] = (
-                    f"No GPU resources available to parse '{title}'. "
-                    "All GPUs are currently busy or lack sufficient free memory. "
-                    "Please try again later when GPU resources are freed."
-                )
-            else:
-                result["error"] = "parse_failed"
-                result["error_detail"] = f"PDF parsing failed for '{title}'. The file may be corrupted, scanned-only, or in an unsupported format."
+            result["error"] = "parse_failed"
+            result["error_detail"] = (
+                f"PDF parsing failed for '{title}'. The file may be corrupted, "
+                "scanned-only, or in an unsupported format."
+            )
             return result
 
         # Extract page count from the raw content (before any appended status markers).
         # _extract_page_count scans '--- Page X ---' markers; 0 means no markers found.
         result["page_count"] = result["page_count"] or _extract_page_count(pdf_content)
-        # parse_method may already be set from cache_meta; set it from current parse if not.
+        # parse_method may already be set from cache metadata or current parse.
         if not result["parse_method"]:
-            result["parse_method"] = "mineru" if _has_mineru_cache(url) else "pymupdf"
+            result["parse_method"] = (
+                PDF_PARSE_METHOD_DOCLING if _has_docling_cache(url) else PDF_PARSE_METHOD_PYMUPDF
+            )
+        if not result["structured_parse_method"]:
+            structured_cached = get_cached_structured_content(url)
+            if structured_cached:
+                result["structured_parse_method"] = structured_cached.get("parse_method")
+        if result["parse_method"] == PDF_PARSE_METHOD_DOCLING:
+            result["high_quality_pending"] = False
 
         # ── Academic content detection ────────────────────────────────────────
         # Determines whether this PDF is an academic paper or a general document
@@ -2196,9 +2485,7 @@ async def process_pdf_url(
             _update_meta_academic_flag(url, academic)
 
         # Determine whether extracted images are already available.
-        # Images can come from either pymupdf4llm (Tier 1) or MinerU (Tier 2).
-        # Both tiers write images to the same directory: pdf_cache/images/{url_hash}/
-        # MinerU upgrade overwrites pymupdf images with higher-quality versions.
+        # Both Docling and PyMuPDF write into the same per-document images dir.
         url_hash_for_images = _get_url_hash(url)
         images_dir_for_check = _get_pdf_cache_dir() / "images" / url_hash_for_images
         image_count_on_disk = 0
@@ -2208,20 +2495,8 @@ async def process_pdf_url(
         result["image_count"] = image_count_on_disk
         result["images_ready"] = images_ready
 
-        # Build the content blob for the AI.
-        if images_ready:
-            ai_pdf_content = pdf_content
-        else:
-            ai_pdf_content = (
-                pdf_content
-                + "\n\n[PDF_IMAGES_STATUS: pending — Figure/image extraction "
-                "is running in the background. If the user asks about specific "
-                "figures, tables, or images in this paper, inform them that image extraction is "
-                "not yet complete and they can ask again after refreshing the page.]"
-            )
-
-        # Store full content with page markers so AI can cite specific pages
-        result["pdf_content"] = ai_pdf_content
+        # Store full content with page markers so AI can cite specific pages.
+        result["pdf_content"] = pdf_content
 
         summary = await summarize_pdf_content(
             pdf_content,

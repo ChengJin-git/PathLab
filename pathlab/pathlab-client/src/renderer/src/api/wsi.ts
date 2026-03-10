@@ -248,6 +248,7 @@ export interface DatasetSummary {
   dataset_name: string  // Display name
   user_id: string | null  // Dataset owner
   username?: string | null  // Username of dataset owner (only for admin users)
+  source_organ?: string | null
   file_count: number
   total_size: number
   data_type: 'wsi' | 'patch'  // Data type: WSI collection or Patch collection
@@ -365,6 +366,13 @@ export interface UpdateDatasetDataLevelResponse {
   new_aggregation_level: 'case' | 'file'
 }
 
+export interface UpdateDatasetSourceResponse {
+  message: string
+  dataset_id: string
+  source: string | null
+  updated_count: number
+}
+
 /**
  * Update dataset data level (case-level or file-level)
  * @param datasetId - Dataset UUID
@@ -383,6 +391,21 @@ export async function updateDatasetDataLevel(
       body: JSON.stringify({ aggregation_level: dataLevel })
     },
     'Failed to update dataset data level'
+  )
+}
+
+export async function updateDatasetSource(
+  datasetId: string,
+  source: string
+): Promise<UpdateDatasetSourceResponse> {
+  return apiFetch<UpdateDatasetSourceResponse>(
+    `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/source`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source })
+    },
+    'Failed to update dataset source'
   )
 }
 
