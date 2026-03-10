@@ -113,6 +113,7 @@ PDF_URL_PATTERNS = [
     
     r'arxiv\.org/(pdf|abs)/',
     r'arxiv\.org/pdf/',
+    r'openreview\.net/(pdf|forum|note)\?id=',
     
     r'ncbi\.nlm\.nih\.gov/pmc/articles/',
     r'pubmed\.ncbi\.nlm\.nih\.gov/',
@@ -664,6 +665,16 @@ def get_arxiv_pdf_url(url: str) -> str:
     return url
 
 
+def get_openreview_pdf_url(url: str) -> str:
+    """Convert OpenReview forum/note URLs to direct PDF download URLs."""
+    if 'openreview.net/pdf?' in url:
+        return url
+    match = re.search(r'openreview\.net/(?:forum|note|pdf)\?id=([^&#]+)', url, re.IGNORECASE)
+    if match:
+        return f"https://openreview.net/pdf?id={match.group(1)}"
+    return url
+
+
 def get_sciencedirect_pdf_url(url: str) -> str:
     """Convert ScienceDirect article page URL to direct PDF download URL.
 
@@ -1154,6 +1165,8 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
         # Step 1: Convert article page URLs to direct PDF download URLs.
         if 'arxiv.org' in url:
             url = get_arxiv_pdf_url(url)
+        elif 'openreview.net' in url:
+            url = get_openreview_pdf_url(url)
         elif 'nature.com' in url:
             url = get_nature_pdf_url(url)
         elif 'sciencedirect.com' in url or 'elsevier.com' in url:
@@ -1867,6 +1880,7 @@ type: paper
             "blog": "Blog",
             "documentation": "Docs",
             "wikipedia": "Wikipedia",
+            "openreview": "OpenReview",
         }
         source_label = source_labels.get(source_type, source_type.upper())
         card = f"""[REFERENCE]
@@ -1887,6 +1901,8 @@ def detect_source_type(url: str) -> str:
     # ── Academic sources ──────────────────────────────────────────────────────
     if 'arxiv.org' in url_lower:
         return "arxiv"
+    elif 'openreview.net' in url_lower:
+        return "openreview"
     elif 'ncbi.nlm.nih.gov' in url_lower or 'pubmed' in url_lower:
         return "pubmed"
     elif 'nature.com' in url_lower:
@@ -1956,7 +1972,7 @@ def detect_source_type(url: str) -> str:
 
 # Known academic source types — used to determine if a source is inherently academic.
 _ACADEMIC_SOURCE_TYPES = frozenset({
-    "arxiv", "pubmed", "nature", "science", "cell", "lancet",
+    "arxiv", "openreview", "pubmed", "nature", "science", "cell", "lancet",
     "nejm", "jama", "bmj", "modernpathology", "springer", "ieee", "acm",
     "biorxiv", "elsevier", "wiley", "frontiers", "mdpi", "oup", "plos",
     "taylor_francis",

@@ -81,6 +81,50 @@ function PaginationFooter({ page, pageSize, total, disabled, onPageChange, onPag
   )
 }
 
+function BulkSelectionBanner({
+  allPageSelected,
+  allMatchingSelected,
+  pageCount,
+  selectedCount,
+  selectingAll,
+  onSelectAllMatching,
+  onClearSelection
+}: {
+  allPageSelected: boolean
+  allMatchingSelected: boolean
+  pageCount: number
+  selectedCount: number
+  selectingAll?: boolean
+  onSelectAllMatching: () => void
+  onClearSelection: () => void
+}) {
+  const { t } = useTranslation()
+
+  if (allMatchingSelected && selectedCount > 0) {
+    return (
+      <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-gray-700">
+        <span className="font-medium">{t('settings.permissionCenterModal.allMatchingItemsSelected', { count: selectedCount })}</span>
+        <button type="button" onClick={onClearSelection} className="ml-2 font-semibold text-blue-600 hover:text-blue-800 hover:underline">
+          {t('settings.permissionCenterModal.clearSelection')}
+        </button>
+      </div>
+    )
+  }
+
+  if (allPageSelected && pageCount > 0) {
+    return (
+      <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-gray-700">
+        <span className="font-medium">{t('settings.permissionCenterModal.allPageItemsSelected', { count: pageCount })}</span>
+        <button type="button" onClick={onSelectAllMatching} disabled={selectingAll} className="ml-2 font-semibold text-blue-600 hover:text-blue-800 hover:underline disabled:cursor-not-allowed disabled:opacity-60">
+          {selectingAll ? t('settings.permissionCenterModal.selectingAll') : t('settings.permissionCenterModal.selectAllMatchingItems')}
+        </button>
+      </div>
+    )
+  }
+
+  return null
+}
+
 export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, onClose, initialMode = 'user', onModeChange }: PermissionCenterModalProps) {
   const { t } = useTranslation()
   const [mode, setMode] = useState<PermissionMode>(initialMode)
@@ -113,6 +157,12 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   const [loadingDatasetPermissions, setLoadingDatasetPermissions] = useState(false)
   const [selectedDatasetIds, setSelectedDatasetIds] = useState<string[]>([])
   const [selectedGrantUserIds, setSelectedGrantUserIds] = useState<string[]>([])
+  const [selectingAllDatasets, setSelectingAllDatasets] = useState(false)
+  const [selectingAllUsers, setSelectingAllUsers] = useState(false)
+  const [allMatchingDatasetsSelected, setAllMatchingDatasetsSelected] = useState(false)
+  const [allMatchingUsersSelected, setAllMatchingUsersSelected] = useState(false)
+  const [allMatchingDatasetCount, setAllMatchingDatasetCount] = useState(0)
+  const [allMatchingUserCount, setAllMatchingUserCount] = useState(0)
 
   const pagedDatasets = useMemo(() => datasetItems.filter((item): item is PermissionDataset => Boolean(item.dataset_id)), [datasetItems])
   const selectedDataset = useMemo(() => pagedDatasets.find((dataset) => dataset.dataset_id === selectedDatasetId) ?? null, [pagedDatasets, selectedDatasetId])
@@ -120,15 +170,44 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   const validUserPermissions = useMemo(() => userPermissions.filter((permission) => permission.is_valid), [userPermissions])
   const validUserDatasetIds = useMemo(() => new Set(validUserPermissions.map((permission) => permission.dataset_id)), [validUserPermissions])
   const sortedUserPermissions = useMemo(() => [...userPermissions].sort((a, b) => a.is_valid !== b.is_valid ? (a.is_valid ? -1 : 1) : (a.dataset_name || a.dataset_id).localeCompare(b.dataset_name || b.dataset_id)), [userPermissions])
-  const allVisibleDatasetsSelected = useMemo(() => {
-    const selectableIds = pagedDatasets.filter((dataset) => !validUserDatasetIds.has(dataset.dataset_id)).map((dataset) => dataset.dataset_id)
-    return selectableIds.length > 0 && selectableIds.every((datasetId) => selectedDatasetIds.includes(datasetId))
-  }, [pagedDatasets, selectedDatasetIds, validUserDatasetIds])
+  const selectableDatasetIdsOnPage = useMemo(() => pagedDatasets.filter((dataset) => !validUserDatasetIds.has(dataset.dataset_id)).map((dataset) => dataset.dataset_id), [pagedDatasets, validUserDatasetIds])
+  const allVisibleDatasetsSelected = useMemo(() => selectableDatasetIdsOnPage.length > 0 && selectableDatasetIdsOnPage.every((datasetId) => selectedDatasetIds.includes(datasetId)), [selectableDatasetIdsOnPage, selectedDatasetIds])
   const validDatasetPermissions = useMemo(() => datasetPermissions.filter((permission) => permission.is_valid), [datasetPermissions])
   const validDatasetPermissionUserIds = useMemo(() => new Set(validDatasetPermissions.map((permission) => permission.user_id)), [validDatasetPermissions])
   const sortedDatasetPermissions = useMemo(() => [...datasetPermissions].sort((a, b) => a.is_valid !== b.is_valid ? (a.is_valid ? -1 : 1) : (a.user_nickname || a.user_email || a.user_id).localeCompare(b.user_nickname || b.user_email || b.user_id)), [datasetPermissions])
   const selectableGrantUsers = useMemo(() => grantUserItems.filter((user) => !validDatasetPermissionUserIds.has(user.id)), [grantUserItems, validDatasetPermissionUserIds])
   const allVisibleUsersSelected = useMemo(() => selectableGrantUsers.length > 0 && selectableGrantUsers.every((user) => selectedGrantUserIds.includes(user.id)), [selectableGrantUsers, selectedGrantUserIds])
+
+  const fetchAllSelectableDatasetIds = useCallback(async () => {
+    const response = await fetchDatasets(undefined, { search: datasetSearchQuery.trim() || undefined, page_size: 0 })
+    return response.items
+      .filter((item): item is PermissionDataset => Boolean(item.dataset_id))
+      .map((item) => item.dataset_id)
+      .filter((datasetId) => !validUserDatasetIds.has(datasetId))
+  }, [datasetSearchQuery, validUserDatasetIds])
+
+  const fetchAllSelectableGrantUserIds = useCallback(async () => {
+    const pageSize = 100
+    let page = 1
+    let total = 0
+    const ids: string[] = []
+
+    do {
+      const response = await listUsersPaged({
+        page,
+        page_size: pageSize,
+        search: grantUserSearchQuery.trim() || undefined,
+        exclude_admin: true
+      })
+      total = response.total
+      response.items.forEach((user) => {
+        if (!validDatasetPermissionUserIds.has(user.id)) ids.push(user.id)
+      })
+      page += 1
+    } while ((page - 1) * pageSize < total)
+
+    return Array.from(new Set(ids))
+  }, [grantUserSearchQuery, validDatasetPermissionUserIds])
 
   const loadDatasets = useCallback(async () => {
     setLoadingDatasets(true)
@@ -210,21 +289,82 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
     if (!pagedDatasets.some((dataset) => dataset.dataset_id === selectedDatasetId)) setSelectedDatasetId(pagedDatasets[0].dataset_id)
   }, [mode, pagedDatasets, selectedDatasetId])
   useEffect(() => { if (mode === 'dataset' && selectedDatasetId) void loadDatasetPermissions(selectedDatasetId) }, [loadDatasetPermissions, mode, selectedDatasetId])
+  useEffect(() => {
+    setAllMatchingDatasetsSelected(false)
+    setAllMatchingDatasetCount(0)
+  }, [datasetSearchQuery, selectedUserId, validUserDatasetIds])
+  useEffect(() => {
+    setAllMatchingUsersSelected(false)
+    setAllMatchingUserCount(0)
+  }, [grantUserSearchQuery, selectedDatasetId, validDatasetPermissionUserIds])
 
-  const handleModeChange = (nextMode: PermissionMode) => { setMode(nextMode); onModeChange?.(nextMode); setError(null); setExpiresInHours(''); setSelectedDatasetIds([]); setSelectedGrantUserIds([]) }
+  const handleModeChange = (nextMode: PermissionMode) => { setMode(nextMode); onModeChange?.(nextMode); setError(null); setExpiresInHours(''); setSelectedDatasetIds([]); setSelectedGrantUserIds([]); setAllMatchingDatasetsSelected(false); setAllMatchingUsersSelected(false); setAllMatchingDatasetCount(0); setAllMatchingUserCount(0) }
   const handleToggleAllDatasets = (checked: boolean) => {
-    const visibleIds = pagedDatasets.filter((dataset) => !validUserDatasetIds.has(dataset.dataset_id)).map((dataset) => dataset.dataset_id)
-    if (checked) { setSelectedDatasetIds((prev) => Array.from(new Set([...prev, ...visibleIds]))); return }
-    const visibleIdSet = new Set(visibleIds)
+    if (checked) { setSelectedDatasetIds((prev) => Array.from(new Set([...prev, ...selectableDatasetIdsOnPage]))); setAllMatchingDatasetsSelected(false); setAllMatchingDatasetCount(0); return }
+    const visibleIdSet = new Set(selectableDatasetIdsOnPage)
     setSelectedDatasetIds((prev) => prev.filter((datasetId) => !visibleIdSet.has(datasetId)))
+    setAllMatchingDatasetsSelected(false)
+    setAllMatchingDatasetCount(0)
   }
-  const handleToggleDataset = (datasetId: string, checked: boolean) => setSelectedDatasetIds((prev) => checked ? Array.from(new Set([...prev, datasetId])) : prev.filter((id) => id !== datasetId))
+  const handleToggleDataset = (datasetId: string, checked: boolean) => {
+    setSelectedDatasetIds((prev) => checked ? Array.from(new Set([...prev, datasetId])) : prev.filter((id) => id !== datasetId))
+    setAllMatchingDatasetsSelected(false)
+    setAllMatchingDatasetCount(0)
+  }
   const handleToggleAllUsers = (checked: boolean) => {
-    if (checked) { setSelectedGrantUserIds((prev) => Array.from(new Set([...prev, ...selectableGrantUsers.map((user) => user.id)]))); return }
+    if (checked) { setSelectedGrantUserIds((prev) => Array.from(new Set([...prev, ...selectableGrantUsers.map((user) => user.id)]))); setAllMatchingUsersSelected(false); setAllMatchingUserCount(0); return }
     const visibleIds = new Set(selectableGrantUsers.map((user) => user.id))
     setSelectedGrantUserIds((prev) => prev.filter((userId) => !visibleIds.has(userId)))
+    setAllMatchingUsersSelected(false)
+    setAllMatchingUserCount(0)
   }
-  const handleToggleGrantUser = (userId: string, checked: boolean) => setSelectedGrantUserIds((prev) => checked ? Array.from(new Set([...prev, userId])) : prev.filter((id) => id !== userId))
+  const handleToggleGrantUser = (userId: string, checked: boolean) => {
+    setSelectedGrantUserIds((prev) => checked ? Array.from(new Set([...prev, userId])) : prev.filter((id) => id !== userId))
+    setAllMatchingUsersSelected(false)
+    setAllMatchingUserCount(0)
+  }
+
+  const handleSelectAllMatchingDatasets = async () => {
+    try {
+      setSelectingAllDatasets(true)
+      setError(null)
+      const ids = await fetchAllSelectableDatasetIds()
+      setSelectedDatasetIds(ids)
+      setAllMatchingDatasetsSelected(true)
+      setAllMatchingDatasetCount(ids.length)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('settings.permissionCenterModal.failedToSelectAllDatasets'))
+    } finally {
+      setSelectingAllDatasets(false)
+    }
+  }
+
+  const handleClearDatasetSelection = () => {
+    setSelectedDatasetIds([])
+    setAllMatchingDatasetsSelected(false)
+    setAllMatchingDatasetCount(0)
+  }
+
+  const handleSelectAllMatchingUsers = async () => {
+    try {
+      setSelectingAllUsers(true)
+      setError(null)
+      const ids = await fetchAllSelectableGrantUserIds()
+      setSelectedGrantUserIds(ids)
+      setAllMatchingUsersSelected(true)
+      setAllMatchingUserCount(ids.length)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('settings.permissionCenterModal.failedToSelectAllUsers'))
+    } finally {
+      setSelectingAllUsers(false)
+    }
+  }
+
+  const handleClearUserSelection = () => {
+    setSelectedGrantUserIds([])
+    setAllMatchingUsersSelected(false)
+    setAllMatchingUserCount(0)
+  }
 
   const handleGrantToUser = async () => {
     if (!selectedUser || selectedDatasetIds.length === 0) return
@@ -235,6 +375,8 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
       const results = await Promise.allSettled(selectedDatasetIds.map((datasetId) => grantDatasetPermission(datasetId, selectedUser.id, hours)))
       await loadUserPermissions(selectedUser.id)
       setSelectedDatasetIds([])
+      setAllMatchingDatasetsSelected(false)
+      setAllMatchingDatasetCount(0)
       setExpiresInHours('')
       const failedCount = results.filter((result) => result.status === 'rejected').length
       if (failedCount > 0) setError(t('settings.permissionCenterModal.partialGrantWarning', { failed: failedCount }))
@@ -302,6 +444,8 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
       const response = await batchGrantDatasetPermissions(selectedDatasetId, selectedGrantUserIds, hours)
       await loadDatasetPermissions(selectedDatasetId)
       setSelectedGrantUserIds([])
+      setAllMatchingUsersSelected(false)
+      setAllMatchingUserCount(0)
       setExpiresInHours('')
       if ((response.failed || 0) > 0) setError(t('settings.permissionCenterModal.partialGrantWarning', { failed: response.failed }))
     } catch (err) {
@@ -390,7 +534,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {loadingUsers ? <div className="col-span-full rounded-xl border border-dashed border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">{t('settings.permissionCenterModal.loadingUsers')}</div> : userItems.length === 0 ? <div className="col-span-full rounded-xl border border-dashed border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">{t('settings.permissionCenterModal.noUsers')}</div> : userItems.map((user) => {
                   const isSelected = user.id === selectedUserId
-                  return <button key={user.id} type="button" onClick={() => { setSelectedUserId(user.id); setSelectedDatasetIds([]); setExpiresInHours(''); setError(null) }} className={cn('rounded-xl border p-4 text-left transition-all', isSelected ? 'border-gray-900 bg-gray-900 text-white shadow-md' : 'border-gray-200 bg-white hover:border-gray-300')}><div className="truncate text-sm font-semibold">{getUserDisplayName(user)}</div><div className={cn('mt-1 truncate text-xs', isSelected ? 'text-gray-300' : 'text-gray-500')}>{user.email}</div><div className="mt-3 flex flex-wrap items-center gap-2"><span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium', isSelected ? 'border-white/20 bg-white/10 text-white' : getRoleBadgeColor(user.role))}>{t(`settings.usersTab.role_${user.role}`)}</span><span className={cn('inline-flex items-center rounded px-2 py-0.5 text-xs', isSelected ? 'bg-white/10 text-white' : user.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600')}>{user.is_active ? t('settings.usersTab.active') : t('settings.usersTab.inactive')}</span></div></button>
+                  return <button key={user.id} type="button" onClick={() => { setSelectedUserId(user.id); setSelectedDatasetIds([]); setAllMatchingDatasetsSelected(false); setAllMatchingDatasetCount(0); setExpiresInHours(''); setError(null) }} className={cn('rounded-xl border p-4 text-left transition-all', isSelected ? 'border-gray-900 bg-gray-900 text-white shadow-md' : 'border-gray-200 bg-white hover:border-gray-300')}><div className="truncate text-sm font-semibold">{getUserDisplayName(user)}</div><div className={cn('mt-1 truncate text-xs', isSelected ? 'text-gray-300' : 'text-gray-500')}>{user.email}</div><div className="mt-3 flex flex-wrap items-center gap-2"><span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium', isSelected ? 'border-white/20 bg-white/10 text-white' : getRoleBadgeColor(user.role))}>{t(`settings.usersTab.role_${user.role}`)}</span><span className={cn('inline-flex items-center rounded px-2 py-0.5 text-xs', isSelected ? 'bg-white/10 text-white' : user.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600')}>{user.is_active ? t('settings.usersTab.active') : t('settings.usersTab.inactive')}</span></div></button>
                 })}
               </div>
               <div className="mt-4"><PaginationFooter page={userPage} pageSize={userPageSize} total={userTotal} disabled={loadingUsers || submitting} onPageChange={setUserPage} onPageSizeChange={(pageSize) => { setUserPageSize(pageSize); setUserPage(1) }} t={t} /></div>
@@ -403,7 +547,16 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
               <div className="rounded-2xl border border-gray-200 bg-white p-4">
                 <div className="mb-3 flex items-center justify-between gap-3"><div><h4 className="text-sm font-medium text-gray-900">{t('settings.permissionCenterModal.grantDatasets')}</h4><p className="mt-1 text-xs text-gray-500">{selectedUser ? t('settings.permissionCenterModal.selectedUserName', { name: getUserDisplayName(selectedUser) }) : t('settings.permissionCenterModal.selectUserHint')}</p></div><div className="text-xs text-gray-500">{t('settings.permissionCenterModal.datasetCount', { count: datasetTotal })}</div></div>
                 <div className="relative mb-3"><Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><Input value={datasetSearchQuery} onChange={(e) => { setDatasetSearchQuery(e.target.value); setDatasetPage(1) }} placeholder={t('settings.permissionCenterModal.searchDatasets')} className="pl-9" disabled={loadingDatasets || submitting} /></div>
-                <div className="mb-4 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3"><Checkbox checked={allVisibleDatasetsSelected} onCheckedChange={handleToggleAllDatasets} /><span className="text-sm text-gray-700">{t('settings.permissionCenterModal.selectVisibleDatasets', { count: pagedDatasets.length })}</span></div>
+                <div className="mb-4 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3"><Checkbox checked={allVisibleDatasetsSelected} onCheckedChange={handleToggleAllDatasets} /><span className="text-sm text-gray-700">{t('settings.permissionCenterModal.selectVisibleDatasets', { count: selectableDatasetIdsOnPage.length })}</span></div>
+                <BulkSelectionBanner
+                  allPageSelected={allVisibleDatasetsSelected}
+                  allMatchingSelected={allMatchingDatasetsSelected}
+                  pageCount={selectableDatasetIdsOnPage.length}
+                  selectedCount={allMatchingDatasetsSelected ? allMatchingDatasetCount : selectedDatasetIds.length}
+                  selectingAll={selectingAllDatasets}
+                  onSelectAllMatching={handleSelectAllMatchingDatasets}
+                  onClearSelection={handleClearDatasetSelection}
+                />
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">{loadingDatasets ? <div className="col-span-full rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">{t('settings.permissionCenterModal.loadingDatasets')}</div> : pagedDatasets.length === 0 ? <div className="col-span-full rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">{t('settings.permissionCenterModal.noDatasets')}</div> : pagedDatasets.map((dataset) => {
                   const alreadyGranted = validUserDatasetIds.has(dataset.dataset_id)
                   return <div key={dataset.dataset_id} className="rounded-xl border border-gray-200 bg-gray-50 p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-gray-900">{dataset.dataset_name}</div><div className="mt-1 text-xs text-gray-500">{t('settings.permissionCenterModal.datasetMeta', { count: dataset.file_count })}</div></div><Checkbox checked={selectedDatasetIds.includes(dataset.dataset_id)} disabled={alreadyGranted || submitting || !selectedUser} onCheckedChange={(checked) => handleToggleDataset(dataset.dataset_id, checked)} /></div>{alreadyGranted && <div className="mt-3 inline-flex rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-700">{t('settings.permissionCenterModal.alreadyGranted')}</div>}</div>
@@ -419,7 +572,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
               <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div className="flex-1"><Label>{t('settings.permissionCenterModal.datasetBrowser')}</Label><div className="relative mt-2"><Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><Input value={datasetSearchQuery} onChange={(e) => { setDatasetSearchQuery(e.target.value); setDatasetPage(1) }} placeholder={t('settings.permissionCenterModal.searchDatasets')} className="pl-9" disabled={loadingDatasets || submitting} /></div></div><div className="text-sm text-gray-500">{t('settings.permissionCenterModal.datasetCount', { count: datasetTotal })}</div></div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">{loadingDatasets ? <div className="col-span-full rounded-xl border border-dashed border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">{t('settings.permissionCenterModal.loadingDatasets')}</div> : pagedDatasets.length === 0 ? <div className="col-span-full rounded-xl border border-dashed border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">{t('settings.permissionCenterModal.noDatasets')}</div> : pagedDatasets.map((dataset) => {
                 const isSelected = selectedDatasetId === dataset.dataset_id
-                return <button key={dataset.dataset_id} type="button" onClick={() => { setSelectedDatasetId(dataset.dataset_id); setSelectedGrantUserIds([]); setExpiresInHours(''); setError(null) }} className={cn('rounded-xl border p-4 text-left transition-all', isSelected ? 'border-gray-900 bg-gray-900 text-white shadow-md' : 'border-gray-200 bg-white hover:border-gray-300')}><div className="truncate text-sm font-semibold">{dataset.dataset_name}</div><div className={cn('mt-1 text-xs', isSelected ? 'text-gray-300' : 'text-gray-500')}>{t('settings.permissionCenterModal.datasetMeta', { count: dataset.file_count })}</div></button>
+                return <button key={dataset.dataset_id} type="button" onClick={() => { setSelectedDatasetId(dataset.dataset_id); setSelectedGrantUserIds([]); setAllMatchingUsersSelected(false); setAllMatchingUserCount(0); setExpiresInHours(''); setError(null) }} className={cn('rounded-xl border p-4 text-left transition-all', isSelected ? 'border-gray-900 bg-gray-900 text-white shadow-md' : 'border-gray-200 bg-white hover:border-gray-300')}><div className="truncate text-sm font-semibold">{dataset.dataset_name}</div><div className={cn('mt-1 text-xs', isSelected ? 'text-gray-300' : 'text-gray-500')}>{t('settings.permissionCenterModal.datasetMeta', { count: dataset.file_count })}</div></button>
               })}</div>
               <div className="mt-4"><PaginationFooter page={datasetPage} pageSize={datasetPageSize} total={datasetTotal} disabled={loadingDatasets || submitting} onPageChange={setDatasetPage} onPageSizeChange={(pageSize) => { setDatasetPageSize(pageSize); setDatasetPage(1) }} t={t} /></div>
             </div>
@@ -435,6 +588,15 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
                 <div className="mb-3 flex items-center justify-between gap-3"><div><h4 className="text-sm font-medium text-gray-900">{t('settings.permissionCenterModal.grantUsers')}</h4><p className="mt-1 text-xs text-gray-500">{selectedDataset ? t('settings.permissionCenterModal.selectedDatasetName', { name: selectedDataset.dataset_name }) : t('settings.permissionCenterModal.selectDatasetHint')}</p></div><div className="text-xs text-gray-500">{t('settings.permissionCenterModal.userCount', { count: grantUserTotal })}</div></div>
                 <div className="relative mb-3"><Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><Input value={grantUserSearchQuery} onChange={(e) => { setGrantUserSearchQuery(e.target.value); setGrantUserPage(1) }} placeholder={t('settings.permissionCenterModal.searchUsers')} className="pl-9" disabled={submitting} /></div>
                 <div className="mb-4 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3"><Checkbox checked={allVisibleUsersSelected} onCheckedChange={handleToggleAllUsers} /><span className="text-sm text-gray-700">{t('settings.permissionCenterModal.selectVisibleUsers', { count: selectableGrantUsers.length })}</span></div>
+                <BulkSelectionBanner
+                  allPageSelected={allVisibleUsersSelected}
+                  allMatchingSelected={allMatchingUsersSelected}
+                  pageCount={selectableGrantUsers.length}
+                  selectedCount={allMatchingUsersSelected ? allMatchingUserCount : selectedGrantUserIds.length}
+                  selectingAll={selectingAllUsers}
+                  onSelectAllMatching={handleSelectAllMatchingUsers}
+                  onClearSelection={handleClearUserSelection}
+                />
                 <div className="space-y-2">{loadingGrantUsers ? <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">{t('settings.permissionCenterModal.loadingUsers')}</div> : grantUserItems.length === 0 ? <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">{t('settings.permissionCenterModal.noUsers')}</div> : <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">{grantUserItems.map((user) => {
                   const alreadyGranted = validDatasetPermissionUserIds.has(user.id)
                   return <div key={user.id} className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3"><Checkbox checked={selectedGrantUserIds.includes(user.id)} disabled={alreadyGranted || submitting || !selectedDatasetId} onCheckedChange={(checked) => handleToggleGrantUser(user.id, checked)} /><div className="min-w-0 flex-1"><div className="truncate text-sm font-medium text-gray-900">{getUserDisplayName(user)}</div><div className="mt-1 truncate text-xs text-gray-500">{user.email}</div><div className="mt-2 flex flex-wrap items-center gap-2"><span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${getRoleBadgeColor(user.role)}`}>{t(`settings.usersTab.role_${user.role}`)}</span><span className={`inline-flex items-center rounded px-2 py-0.5 text-xs ${user.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>{user.is_active ? t('settings.usersTab.active') : t('settings.usersTab.inactive')}</span>{alreadyGranted && <span className="inline-flex rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">{t('settings.permissionCenterModal.alreadyGranted')}</span>}</div></div></div>
