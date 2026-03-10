@@ -54,6 +54,7 @@ export interface AnalysisSummary {
   timestamp: string
   description: string | null
   num_samples: number
+  num_classes?: number
   classes?: string[]
   is_binary?: boolean
   requested_metrics?: string[]
@@ -102,6 +103,17 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
   const effectiveTaskId = analysis.task_id || taskId
   const isSurvival = analysis.task_type === 'wsi_survival' || analysis.task_type === 'survival' || analysis.task_type === 'external_validation_survival'
   const isSegmentation = analysis.task_type === 'segmentation' || analysis.task_type === 'patch_segmentation'
+  const segmentationClassCount = isSegmentation
+    ? Math.max(
+      analysis.num_classes ?? 0,
+      analysis.classes?.filter(Boolean).length ?? 0,
+      analysis.class_metrics ? Object.keys(analysis.class_metrics).length : 0,
+      analysis.metrics.miou != null ? 2 : 0,
+      analysis.metrics.iou != null ? 1 : 0
+    )
+    : 0
+  const segmentationPrimaryMetricKey = segmentationClassCount > 1 ? 'miou' : 'iou'
+  const segmentationFallbackMetricKey = segmentationPrimaryMetricKey === 'miou' ? 'iou' : 'miou'
   const showKFoldTraining = !isSegmentation && Boolean(analysis.kfold_training)
   const showKFoldLossCurve = Boolean(
     !isSegmentation &&
@@ -190,6 +202,36 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
     if (key === 'iou') return 'IoU'
     if (key === 'weighted_kappa') return 'Weighted Kappa'
     return key.replace('macro_', '').replace(/_/g, ' ')
+  }
+
+  const visibleMetricEntries = (() => {
+    if (!isSegmentation) {
+      return Object.entries(analysis.metrics).filter(([key]) => shouldShowMetric(key))
+    }
+
+    const normalizedEntries: Array<[string, number]> = []
+    const primaryMetricValue = analysis.metrics[segmentationPrimaryMetricKey] ?? analysis.metrics[segmentationFallbackMetricKey]
+
+    if (primaryMetricValue != null) {
+      normalizedEntries.push([segmentationPrimaryMetricKey, primaryMetricValue])
+    }
+
+    Object.entries(analysis.metrics).forEach(([key, value]) => {
+      if (key === segmentationPrimaryMetricKey || key === segmentationFallbackMetricKey) return
+      normalizedEntries.push([key, value])
+    })
+
+    return normalizedEntries.filter(([key]) => shouldShowMetric(key))
+  })()
+
+  const getMetricCI = (key: string) => {
+    const directCI = analysis.bootstrap_ci?.metrics_ci?.[key] || analysis.bootstrap_ci?.metrics_ci?.[`macro_${key}`]
+    if (directCI) return directCI
+
+    if (!isSegmentation || (key !== 'iou' && key !== 'miou')) return undefined
+
+    return analysis.bootstrap_ci?.metrics_ci?.[segmentationFallbackMetricKey]
+      || analysis.bootstrap_ci?.metrics_ci?.[`macro_${segmentationFallbackMetricKey}`]
   }
 
   return (
@@ -283,17 +325,16 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
 
 
       {/* Metrics Grid */}
-      {Object.entries(analysis.metrics).filter(([key]) => shouldShowMetric(key)).length > 0 && (
+      {visibleMetricEntries.length > 0 && (
       <div className="pt-4">
         <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
           <div className={`w-1.5 h-6 ${accentBg} rounded-full`} />
           {t('analysisDetails.metrics')}
         </h5>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {Object.entries(analysis.metrics)
-            .filter(([key]) => shouldShowMetric(key))
+          {visibleMetricEntries
             .map(([key, value]) => {
-              const ci = analysis.bootstrap_ci?.metrics_ci?.[key] || analysis.bootstrap_ci?.metrics_ci?.[`macro_${key}`]
+              const ci = getMetricCI(key)
               return (
                 <div key={key} className={`p-4 sm:p-6 rounded-2xl border-2 transition-all hover:shadow-md ${isSurvival ? 'bg-emerald-50/50 border-emerald-100 hover:border-emerald-200' : isSegmentation ? 'bg-violet-50/50 border-violet-100 hover:border-violet-200' : `bg-white border-gray-100 ${accentHoverBorder}`}`}>
                   <p className="text-xs text-gray-400 uppercase font-bold tracking-wider mb-2">{getMetricDisplayName(key)}</p>

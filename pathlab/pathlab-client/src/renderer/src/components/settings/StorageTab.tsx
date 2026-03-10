@@ -206,7 +206,11 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     setBatchSelectAllValid(false)
     setBatchImportTaskId(null)
     try {
-      const result = await scanDirectory(batchScanPath.trim(), { page: 1, pageSize: BATCH_SCAN_PAGE_SIZE })
+      const result = await scanDirectory(batchScanPath.trim(), {
+        taskType: batchTaskType,
+        page: 1,
+        pageSize: BATCH_SCAN_PAGE_SIZE,
+      })
       setBatchScanResult(result)
       setBatchSelectAllValid(true)
     } catch (err) {
@@ -224,6 +228,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     try {
       const result = await scanDirectory(batchScanResult.directory, {
         scanId: batchScanResult.scan_id,
+        taskType: batchTaskType,
         page,
         pageSize: batchScanResult.page_size || BATCH_SCAN_PAGE_SIZE,
       })
@@ -235,6 +240,44 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       setBatchScanning(false)
     }
   }
+
+  useEffect(() => {
+    if (batchTaskType !== 'segmentation' || !batchScanResult?.directory || batchScanResult.annotation_scan_enabled) {
+      return
+    }
+
+    let cancelled = false
+
+    const reloadSegmentationScan = async () => {
+      setBatchScanning(true)
+      setBatchScanError(null)
+      try {
+        const result = await scanDirectory(batchScanResult.directory, {
+          taskType: 'segmentation',
+          page: batchScanResult.page,
+          pageSize: batchScanResult.page_size || BATCH_SCAN_PAGE_SIZE,
+        })
+        if (!cancelled) {
+          setBatchScanResult(result)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error('Failed to reload segmentation scan:', err)
+          setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir'))
+        }
+      } finally {
+        if (!cancelled) {
+          setBatchScanning(false)
+        }
+      }
+    }
+
+    void reloadSegmentationScan()
+
+    return () => {
+      cancelled = true
+    }
+  }, [batchScanResult, batchTaskType, t])
 
   const isBatchFileSelected = (path: string, valid: boolean) => {
     if (!valid) return false

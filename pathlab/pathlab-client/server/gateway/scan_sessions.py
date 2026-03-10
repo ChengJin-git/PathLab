@@ -23,7 +23,13 @@ def _cleanup_expired_sessions() -> None:
             _scan_sessions.pop(scan_id, None)
 
 
-def create_scan_session(*, directory: str, files: list[dict[str, Any]], user_id: str) -> dict[str, Any]:
+def create_scan_session(
+    *,
+    directory: str,
+    files: list[dict[str, Any]],
+    user_id: str,
+    annotation_scan_enabled: bool,
+) -> dict[str, Any]:
     _cleanup_expired_sessions()
 
     scan_id = f"scan_{uuid.uuid4().hex[:16]}"
@@ -42,6 +48,7 @@ def create_scan_session(*, directory: str, files: list[dict[str, Any]], user_id:
         "total_size": total_size,
         "wsi_count": wsi_count,
         "patch_count": patch_count,
+        "annotation_scan_enabled": annotation_scan_enabled,
         "user_id": user_id,
         "created_at": time.time(),
     }
@@ -75,6 +82,7 @@ def build_scan_response(session: dict[str, Any], *, page: int, page_size: int) -
         "total_size": session["total_size"],
         "wsi_count": session["wsi_count"],
         "patch_count": session["patch_count"],
+        "annotation_scan_enabled": session.get("annotation_scan_enabled", False),
         "page": current_page,
         "page_size": page_size,
         "total_pages": total_pages,

@@ -194,6 +194,7 @@ class ScanDirectoryRequest(BaseModel):
     """Request model for scanning a directory for WSI files"""
     directory_path: str
     scan_id: Optional[str] = None
+    task_type: Optional[str] = None
     page: int = 1
     page_size: int = 100
 
@@ -203,6 +204,7 @@ class BatchRegisterFileInfo(BaseModel):
     path: str  # Main file path
     format_type: str = "standard"  # "standard", "mrxs", or "tmap"
     associated_data: Optional[Any] = None  # str for mrxs (data folder), list[str] for tmap (DT files)
+    data_type: Optional[str] = None  # Cached scan classification when available
 
 
 class BatchRegisterRequest(BaseModel):

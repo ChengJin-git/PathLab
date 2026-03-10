@@ -227,10 +227,18 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                     file_info.get('path', '') if isinstance(file_info, dict) else file_info.path
                     for file_info in files
                 ]
+                batch_file_data_types = [
+                    file_info.get('data_type') if isinstance(file_info, dict) else getattr(file_info, 'data_type', None)
+                    for file_info in files
+                ]
                 anchor_path = None
                 data_type = 'patch'
                 if task_type == 'segmentation':
-                    if infer_dataset_data_type_from_paths(batch_file_paths) != 'patch':
+                    if all(file_data_type in {'wsi', 'patch'} for file_data_type in batch_file_data_types):
+                        has_non_patch_file = any(file_data_type != 'patch' for file_data_type in batch_file_data_types)
+                    else:
+                        has_non_patch_file = infer_dataset_data_type_from_paths(batch_file_paths) != 'patch'
+                    if has_non_patch_file:
                         await StorageTaskRepository.update_status(
                             db, task_id, 'failed',
                             error_message='Segmentation batch import only supports patch/image files with same-name COCO JSON annotations'
@@ -241,11 +249,22 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                     aggregation_level = 'file'
                 elif files:
                     anchor_path = next(
-                        (path for path in batch_file_paths if Path(path).suffix.lower() in WSI_EXTENSIONS),
+                        (
+                            file_info.get('path', '')
+                            for file_info in files
+                            if isinstance(file_info, dict) and file_info.get('data_type') == 'wsi'
+                        ),
                         None,
                     )
                     if anchor_path:
                         data_type = 'wsi'
+                    else:
+                        anchor_path = next(
+                            (path for path in batch_file_paths if Path(path).suffix.lower() in WSI_EXTENSIONS),
+                            None,
+                        )
+                        if anchor_path:
+                            data_type = 'wsi'
 
                 try:
                     ensure_segmentation_contract(task_type, data_type, aggregation_level, context='Batch import')
@@ -334,10 +353,15 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
                         skipped_count += 1
                         continue
 
+                    cached_file_data_type = file_info.get('data_type') if isinstance(file_info, dict) else getattr(file_info, 'data_type', None)
+
                     # Extract properties first to get file_size for type detection
                     props = extract_wsi_properties(file_path)
                     file_size = props.get("file_size", 0)
-                    file_data_type = get_file_data_type(file_path, file_size)
+                    if cached_file_data_type in {'wsi', 'patch'}:
+                        file_data_type = cached_file_data_type
+                    else:
+                        file_data_type = get_file_data_type(file_path, file_size)
 
                     if target_dataset is not None:
                         target_dataset = await align_dataset_data_type_for_file(
@@ -1178,7 +1202,7 @@ async def start_batch_import_task(
             task_id=task_id,
             user_id=str(user.id),
             task_type='batch_import',
-            total_items=len(request.files),
+            total_items=len(resolved_files),
             params=params
         )
         await db.commit()

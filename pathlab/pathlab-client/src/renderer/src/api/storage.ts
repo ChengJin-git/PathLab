@@ -393,6 +393,7 @@ export interface ScanDirectoryResponse {
   total_size: number
   wsi_count: number
   patch_count: number
+  annotation_scan_enabled?: boolean
   page: number
   page_size: number
   total_pages: number
@@ -400,6 +401,7 @@ export interface ScanDirectoryResponse {
 
 export interface ScanDirectoryOptions {
   scanId?: string
+  taskType?: 'classification' | 'survival' | 'segmentation'
   page?: number
   pageSize?: number
 }
@@ -419,6 +421,7 @@ export async function scanDirectory(directoryPath: string, options: ScanDirector
       body: JSON.stringify({
         directory_path: directoryPath,
         scan_id: options.scanId,
+        task_type: options.taskType,
         page: options.page ?? 1,
         page_size: options.pageSize ?? 100,
       })
@@ -431,6 +434,7 @@ export interface BatchRegisterFileInfo {
   path: string
   format_type: 'standard' | 'mrxs' | 'tmap'
   associated_data?: string | string[] | null  // string for mrxs (data folder), string[] for tmap (DT files)
+  data_type?: 'wsi' | 'patch'
 }
 
 export interface BatchRegisterRequest {

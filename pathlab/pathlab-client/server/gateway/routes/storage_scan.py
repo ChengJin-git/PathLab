@@ -44,7 +44,7 @@ router = APIRouter()
 # Directory Scanning
 # ==============================================================================
 
-def _scan_directory_for_wsi(directory: str) -> list:
+def _scan_directory_for_wsi(directory: str, *, include_annotation_json: bool = False) -> list:
     """
     Scan a directory for WSI and patch files (non-recursive).
     Handles special formats: MRXS (requires data folder), TMAP (may have DT files).
@@ -67,77 +67,54 @@ def _scan_directory_for_wsi(directory: str) -> list:
         return []
 
     results = []
+    pending_tiff_items = []
     seen_stems = set()  # Track processed file stems to avoid duplicates
 
-    # Build a set of all items in directory for quick lookup
-    all_items = {item.name: item for item in dir_path.iterdir()}
-    annotation_index = build_segmentation_annotation_index(dir_path)
+    entries = list(dir_path.iterdir())
+    all_items = {item.name: item for item in entries}
+    annotation_index = build_segmentation_annotation_index(dir_path) if include_annotation_json else {}
 
-    for item in dir_path.iterdir():
-        if not item.is_file():
-            continue
-
-        ext = item.suffix.lower()
-        file_size = item.stat().st_size
-
-        # Determine file type: WSI, patch, or skip
-        data_type = None
-        if ext in WSI_EXTENSIONS or ext in PATCH_EXTENSIONS or is_tiff_family(item):
-            data_type = get_scan_file_data_type(item, file_size)
-
-        if data_type is None:
-            continue
-
-        # Skip if we've already processed this stem (for MRXS/TMAP handling)
-        if item.stem in seen_stems:
-            continue
-        seen_stems.add(item.stem)
-
-        # Total size includes main file + associated files
+    def _build_file_info(item: Path, *, file_size: int, data_type: str) -> dict:
         total_size = file_size
+        ext = item.suffix.lower()
 
         file_info = {
             "path": str(item),
             "filename": item.name,
-            "size": file_size,  # Will be updated to include associated files
+            "size": file_size,
             "extension": ext,
             "format_type": "standard",
-            "data_type": data_type,  # 'wsi' or 'patch'
+            "data_type": data_type,
             "valid": True,
             "validation_message": None,
-            "has_annotation_json": False,  # Will be checked below
+            "has_annotation_json": False,
         }
 
-        # Handle MRXS format - requires data folder with same name
         if ext == '.mrxs':
             file_info["format_type"] = "mrxs"
             data_folder_name = item.stem
             if data_folder_name in all_items and all_items[data_folder_name].is_dir():
                 data_folder_path = all_items[data_folder_name]
                 file_info["associated_data"] = str(data_folder_path)
-                # Calculate total size of data folder
                 try:
                     for root, dirs, files in os.walk(data_folder_path):
                         for f in files:
                             total_size += os.path.getsize(os.path.join(root, f))
                 except OSError:
-                    pass  # Ignore errors when calculating folder size
+                    pass
             else:
                 file_info["valid"] = False
                 file_info["validation_message"] = f"Missing required data folder: {data_folder_name}/"
-
-        # Handle TMAP format - may have DT files
         elif ext == '.tmap':
             file_info["format_type"] = "tmap"
             dt_files = []
-            for name, other_item in all_items.items():
+            for other_item in all_items.values():
                 if other_item.is_file() and other_item.stem == item.stem:
                     other_ext = other_item.suffix.lower()
                     if other_ext.startswith('.dt') and len(other_ext) > 3:
                         suffix_num = other_ext[3:]
                         if suffix_num.isdigit():
                             dt_files.append(str(other_item))
-                            # Add DT file size to total
                             try:
                                 total_size += other_item.stat().st_size
                             except OSError:
@@ -145,25 +122,60 @@ def _scan_directory_for_wsi(directory: str) -> list:
             if dt_files:
                 file_info["associated_data"] = sorted(dt_files)
 
-        matched_annotation_path, _annotation_error = resolve_segmentation_annotation_match(
-            item,
-            annotation_index=annotation_index,
-        )
-        file_info["has_annotation_json"] = matched_annotation_path is not None
+        if include_annotation_json:
+            matched_annotation_path, _annotation_error = resolve_segmentation_annotation_match(
+                item,
+                annotation_index=annotation_index,
+            )
+            file_info["has_annotation_json"] = matched_annotation_path is not None
 
-        # Update size to include associated files
         file_info["size"] = total_size
+        return file_info
 
-        results.append(file_info)
+    for item in entries:
+        if not item.is_file():
+            continue
 
-    tiff_batch_has_wsi = any(
-        file_info["data_type"] == "wsi" and is_tiff_family(file_info["path"])
-        for file_info in results
-    )
-    if tiff_batch_has_wsi:
-        for file_info in results:
-            if is_tiff_family(file_info["path"]):
-                file_info["data_type"] = "wsi"
+        ext = item.suffix.lower()
+        if ext not in WSI_EXTENSIONS and ext not in PATCH_EXTENSIONS and not is_tiff_family(item):
+            continue
+
+        if item.stem in seen_stems:
+            continue
+        seen_stems.add(item.stem)
+
+        try:
+            file_size = item.stat().st_size
+        except OSError:
+            file_size = 0
+
+        if ext in WSI_EXTENSIONS:
+            results.append(_build_file_info(item, file_size=file_size, data_type="wsi"))
+        elif ext in PATCH_EXTENSIONS:
+            results.append(_build_file_info(item, file_size=file_size, data_type="patch"))
+        else:
+            pending_tiff_items.append((item, file_size))
+
+    if pending_tiff_items:
+        sorted_tiff_items = sorted(pending_tiff_items, key=lambda entry: entry[1], reverse=True)
+        checked_tiff_items: list[tuple[Path, int, str]] = []
+        tiff_batch_has_wsi = False
+
+        for item, file_size in sorted_tiff_items:
+            data_type = get_scan_file_data_type(item, file_size)
+            checked_tiff_items.append((item, file_size, data_type))
+            if data_type == "wsi":
+                tiff_batch_has_wsi = True
+                break
+
+        if tiff_batch_has_wsi:
+            for item, file_size, _data_type in checked_tiff_items:
+                results.append(_build_file_info(item, file_size=file_size, data_type="wsi"))
+            for item, file_size in sorted_tiff_items[len(checked_tiff_items):]:
+                results.append(_build_file_info(item, file_size=file_size, data_type="wsi"))
+        else:
+            for item, file_size, data_type in checked_tiff_items:
+                results.append(_build_file_info(item, file_size=file_size, data_type=data_type))
 
     # Sort by filename for consistent ordering
     results.sort(key=lambda x: x["filename"].lower())
@@ -206,6 +218,7 @@ async def scan_directory(
         directory = request.directory_path
         page = max(1, request.page)
         page_size = min(max(1, request.page_size), 500)
+        include_annotation_json = request.task_type == 'segmentation'
 
         if request.scan_id:
             session = get_scan_session(request.scan_id, str(user.id))
@@ -213,7 +226,8 @@ async def scan_directory(
                 raise HTTPException(status_code=404, detail="Scan session not found or expired")
             if session["directory"] != directory:
                 raise HTTPException(status_code=400, detail="Scan session does not match requested directory")
-            return build_scan_response(session, page=page, page_size=page_size)
+            if not include_annotation_json or session.get("annotation_scan_enabled"):
+                return build_scan_response(session, page=page, page_size=page_size)
 
         # Validate directory exists
         if not os.path.exists(directory):
@@ -226,8 +240,17 @@ async def scan_directory(
             raise HTTPException(status_code=400, detail=f"Directory is not readable: {directory}")
 
         # Scan directory in thread pool to avoid blocking
-        files = await asyncio.to_thread(_scan_directory_for_wsi, directory)
-        session = create_scan_session(directory=directory, files=files, user_id=str(user.id))
+        files = await asyncio.to_thread(
+            _scan_directory_for_wsi,
+            directory,
+            include_annotation_json=include_annotation_json,
+        )
+        session = create_scan_session(
+            directory=directory,
+            files=files,
+            user_id=str(user.id),
+            annotation_scan_enabled=include_annotation_json,
+        )
         return build_scan_response(session, page=page, page_size=page_size)
 
     except HTTPException:
