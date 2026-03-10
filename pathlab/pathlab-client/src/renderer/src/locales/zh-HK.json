@@ -778,6 +778,8 @@
     "heatmapOverlayAlt": "熱圖疊加",
     "showHeatmap": "顯示熱圖",
     "hideHeatmap": "隱藏熱圖",
+    "showPredictionMask": "顯示預測標注",
+    "hidePredictionMask": "隱藏預測標注",
     "opacity": "不透明度",
     "activation": "啟動值",
     "lowToHigh": "低 → 高",
@@ -2585,9 +2587,12 @@
       "kFold": "K 折交叉驗證",
       "folds": "折",
       "riskGroup": "風險分組",
+      "classes": "類別",
       "prediction": "預測",
+      "predictionMask": "預測標注",
       "patchHeatmap": "切片熱力圖",
       "patches": "切片",
+      "noClasses": "暫無類別",
       "riskScore": "風險評分"
     }
   },

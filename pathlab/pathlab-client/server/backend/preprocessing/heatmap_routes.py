@@ -783,6 +783,7 @@ async def get_patch_cam(
     task_id: Optional[str] = Query(None, description="Specific task ID for the result"),
     fold_key: Optional[str] = Query(None, description="Fold key for k-fold results (e.g., 'fold_0')"),
     format: str = Query("image", description="Output format: 'image' for colored PNG, 'json' for raw data"),
+    size: Optional[int] = Query(None, description="Optional max thumbnail size for previews"),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -806,7 +807,7 @@ async def get_patch_cam(
     matplotlib.use('Agg')
     from matplotlib import cm
 
-    logger.info(f"Getting patch CAM for {wsi_id}, task_id={task_id}, fold_key={fold_key}, format={format}")
+    logger.info(f"Getting patch CAM for {wsi_id}, task_id={task_id}, fold_key={fold_key}, format={format}, size={size}")
 
     # Helper function to return empty CAM response
     def empty_cam_response(message: str = "No CAM data available"):
@@ -911,7 +912,15 @@ async def get_patch_cam(
             with Image.open(file_path) as img:
                 original_image = img.convert('RGB')
 
-            orig_width, orig_height = original_image.size
+            source_width, source_height = original_image.size
+            target_width, target_height = source_width, source_height
+
+            if size is not None and size > 0:
+                scale = min(size / max(source_width, source_height), 1.0)
+                if scale < 1.0:
+                    target_width = max(1, int(round(source_width * scale)))
+                    target_height = max(1, int(round(source_height * scale)))
+                    original_image = original_image.resize((target_width, target_height), Image.Resampling.LANCZOS)
 
             # Normalize CAM to 0-1 if not already
             if cam.max() > cam.min():
@@ -931,10 +940,10 @@ async def get_patch_cam(
 
             # Create PIL image and resize to match original
             cam_image = Image.fromarray(colored_cam_uint8, mode='RGBA')
-            cam_image = cam_image.resize((orig_width, orig_height), Image.Resampling.BILINEAR)
+            cam_image = cam_image.resize((target_width, target_height), Image.Resampling.BILINEAR)
 
             # Apply Gaussian blur for smoother appearance
-            blur_radius = max(2, orig_width / 50)  # Adaptive blur based on image size
+            blur_radius = max(2, target_width / 50)  # Adaptive blur based on image size
             cam_image = cam_image.filter(ImageFilter.GaussianBlur(radius=blur_radius))
 
             # Composite CAM over original image
@@ -983,6 +992,7 @@ async def get_seg_mask(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID"),
     fold_key: Optional[str] = Query(None, description="Fold key for k-fold results"),
+    size: Optional[int] = Query(None, description="Optional max thumbnail size for previews"),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1044,10 +1054,18 @@ async def get_seg_mask(
         with Image.open(file_path) as img:
             original_image = img.convert('RGB')
 
-        orig_w, orig_h = original_image.size
+        source_w, source_h = original_image.size
+        target_w, target_h = source_w, source_h
+
+        if size is not None and size > 0:
+            scale = min(size / max(source_w, source_h), 1.0)
+            if scale < 1.0:
+                target_w = max(1, int(round(source_w * scale)))
+                target_h = max(1, int(round(source_h * scale)))
+                original_image = original_image.resize((target_w, target_h), Image.Resampling.LANCZOS)
 
         # Build RGBA overlay
-        overlay = np.zeros((orig_h, orig_w, 4), dtype=np.uint8)
+        overlay = np.zeros((target_h, target_w, 4), dtype=np.uint8)
 
         if mask.ndim == 3:
             num_classes = mask.shape[0]
@@ -1055,7 +1073,7 @@ async def get_seg_mask(
                 color = _SEG_COLORS[c % len(_SEG_COLORS)]
                 # Resize class mask to original size
                 class_mask = Image.fromarray((mask[c] * 255).astype(np.uint8), mode='L')
-                class_mask = class_mask.resize((orig_w, orig_h), Image.Resampling.NEAREST)
+                class_mask = class_mask.resize((target_w, target_h), Image.Resampling.NEAREST)
                 class_arr = np.array(class_mask) > 127  # binary
                 for ch in range(4):
                     overlay[:, :, ch][class_arr] = color[ch]
@@ -1063,7 +1081,7 @@ async def get_seg_mask(
             # Single-class mask
             color = _SEG_COLORS[0]
             class_mask = Image.fromarray((mask * 255).astype(np.uint8), mode='L')
-            class_mask = class_mask.resize((orig_w, orig_h), Image.Resampling.NEAREST)
+            class_mask = class_mask.resize((target_w, target_h), Image.Resampling.NEAREST)
             class_arr = np.array(class_mask) > 127
             for ch in range(4):
                 overlay[:, :, ch][class_arr] = color[ch]

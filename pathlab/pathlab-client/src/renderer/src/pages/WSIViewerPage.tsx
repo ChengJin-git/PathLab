@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo, type SyntheticEvent } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
@@ -14,6 +14,7 @@ import {
   getPatchCAMImageUrl,
   getPatchFileImageUrl,
   getSegMaskImageUrl,
+  SEGMENTATION_MASK_COLORS,
 } from '../api'
 import WSIViewer from '../components/WSIViewer'
 import { Card } from '../components/common'
@@ -25,6 +26,7 @@ import { AttentionPatchesPanel } from '../components/wsiViewer/AttentionPatchesP
 import { DeleteResultsModal } from '../components/wsiViewer/DeleteResultsModal'
 import { AnnotationToolbar, getColorForLabel } from '../components/wsiViewer/AnnotationToolbar'
 import { AnnotationOverlay } from '../components/wsiViewer/AnnotationOverlay'
+import { PatchAnnotationOverlay } from '../components/wsiViewer/PatchAnnotationOverlay'
 import { AnnotationListPanel } from '../components/wsiViewer/AnnotationListPanel'
 import { CreateDatasetDialog } from '../components/wsiViewer/CreateDatasetDialog'
 import {
@@ -42,6 +44,8 @@ import {
 import { useToast } from '../contexts/ToastContext'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { getFileType } from '../constants/fileTypes'
+
+const PATCH_OVERLAY_PREVIEW_SIZE = 768
 
 const FOCUS_REGION_PADDING_MULTIPLIER = 1.8
 const FOCUS_REGION_MIN_SIZE = 512
@@ -396,11 +400,15 @@ export default function WSIViewerPage() {
   }, [effectiveFoldKey, selectedTaskGroup])
 
   const selectedTask = selectedTaskEntries.find(h => h.data_type === 'wsi' || h.data_type === 'patch') ?? selectedTaskEntries[0]
+  const selectedSegmentationEntry = selectedTaskEntries.find(
+    h => h.task_type === 'segmentation' || h.task_type === 'patch_segmentation' || h.data_type === 'patch_segmentation'
+  )
   const hasPatchHeatmap = selectedTaskEntries.some(h => h.data_type === 'patch')
   const isPatchLevel = selectedTaskEntries.some(h => h.data_type === 'patch' || h.data_type === 'patch_segmentation')
   const canShowHeatmapOverlay = selectedTaskEntries.some(h => h.data_type === 'wsi' || h.data_type === 'patch')
   const canShowSegMaskOverlay = selectedTaskEntries.some(h => h.data_type === 'patch_segmentation')
   const shouldShowOverlayControls = canShowHeatmapOverlay || canShowSegMaskOverlay
+  const segmentationClasses = selectedSegmentationEntry?.classes ?? []
 
   // Get available folds for the selected task (K-fold support)
   const availableFolds = useMemo(() => {
@@ -468,6 +476,28 @@ export default function WSIViewerPage() {
     }
   }, [wsi_id, selectedTaskId, effectiveFoldKey, hasPatchHeatmap])
 
+  const patchHeatmapPreviewUrl = useMemo(() => {
+    if (!selectedTaskId || !canShowHeatmapOverlay) return null
+    return getPatchCAMImageUrl(wsi_id, selectedTaskId, effectiveFoldKey, PATCH_OVERLAY_PREVIEW_SIZE)
+  }, [canShowHeatmapOverlay, effectiveFoldKey, selectedTaskId, wsi_id])
+
+  const patchSegMaskPreviewUrl = useMemo(() => {
+    if (!selectedTaskId || !canShowSegMaskOverlay) return null
+    return getSegMaskImageUrl(wsi_id, selectedTaskId, effectiveFoldKey, PATCH_OVERLAY_PREVIEW_SIZE)
+  }, [canShowSegMaskOverlay, effectiveFoldKey, selectedTaskId, wsi_id])
+
+  useEffect(() => {
+    if (!isPatchLevel) return
+
+    ;[patchHeatmapPreviewUrl, patchSegMaskPreviewUrl]
+      .filter((url): url is string => !!url)
+      .forEach((url) => {
+        const img = new Image()
+        img.decoding = 'async'
+        img.src = url
+      })
+  }, [isPatchLevel, patchHeatmapPreviewUrl, patchSegMaskPreviewUrl])
+
   const currentIndex = allWSIs.findIndex(w => w.wsi_id === wsi_id)
   const prevWSI = currentIndex > 0 ? allWSIs[currentIndex - 1] : null
   const nextWSI = currentIndex >= 0 && currentIndex < allWSIs.length - 1 ? allWSIs[currentIndex + 1] : null
@@ -534,6 +564,14 @@ export default function WSIViewerPage() {
   const handleSlideInfo = useCallback((info: { width: number; height: number }) => {
     setSlideWidth(info.width)
     setSlideHeight(info.height)
+  }, [])
+
+  const handlePatchImageLoad = useCallback((event: SyntheticEvent<HTMLImageElement>) => {
+    const image = event.currentTarget
+    if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+      setSlideWidth(image.naturalWidth)
+      setSlideHeight(image.naturalHeight)
+    }
   }, [])
 
   const handleFocusRegion = useCallback((regionId: string) => {
@@ -1156,28 +1194,39 @@ export default function WSIViewerPage() {
                   src={getPatchFileImageUrl(wsi_id)}
                   alt={t('wsiViewer.patchAlt')}
                   className="w-full h-full object-contain rounded-xl shadow-lg select-none"
+                  onLoad={handlePatchImageLoad}
+                  decoding="async"
                   draggable={false}
                 />
                 {/* CAM overlay (for both classification and segmentation) */}
-                {showHeatmap && canShowHeatmapOverlay && selectedTaskId && (
+                {showHeatmap && patchHeatmapPreviewUrl && (
                   <img
-                    src={getPatchCAMImageUrl(wsi_id, selectedTaskId, effectiveFoldKey)}
+                    src={patchHeatmapPreviewUrl}
                     alt={t('wsiViewer.heatmapOverlayAlt')}
                     className="absolute inset-0 w-full h-full object-contain rounded-xl pointer-events-none select-none"
                     style={{ opacity: heatmapOpacity }}
+                    decoding="async"
                     draggable={false}
                   />
                 )}
                 {/* Segmentation mask overlay (only for segmentation tasks) */}
-                {showSegMask && canShowSegMaskOverlay && selectedTaskId && (
+                {showSegMask && patchSegMaskPreviewUrl && (
                   <img
-                    src={getSegMaskImageUrl(wsi_id, selectedTaskId, effectiveFoldKey)}
+                    src={patchSegMaskPreviewUrl}
                     alt="Prediction Mask"
                     className="absolute inset-0 w-full h-full object-contain rounded-xl pointer-events-none select-none"
                     style={{ opacity: 1 }}
+                    decoding="async"
                     draggable={false}
                   />
                 )}
+                <PatchAnnotationOverlay
+                  regions={currentRegions}
+                  labelColors={labelColors}
+                  highlightedRegionId={focusedRegionId}
+                  slideWidth={slideWidth}
+                  slideHeight={slideHeight}
+                />
               </div>
             </div>
           ) : (
@@ -1241,7 +1290,7 @@ export default function WSIViewerPage() {
                       }`}
                   >
                     <Layers className="w-4 h-4" />
-                    {showSegMask ? 'Hide Pred Mask' : 'Show Pred Mask'}
+                    {showSegMask ? t('wsiViewer.hidePredictionMask') : t('wsiViewer.showPredictionMask')}
                   </button>
                 )}
 
@@ -1268,6 +1317,28 @@ export default function WSIViewerPage() {
                     <span className="text-[10px] text-gray-400 uppercase tracking-wide">{t('wsiViewer.activation')}:</span>
                     <div className="flex-1 h-2 rounded-full bg-gradient-to-r from-blue-500 via-green-500 via-yellow-500 to-red-500"></div>
                     <span className="text-[10px] text-gray-500">{t('wsiViewer.lowToHigh')}</span>
+                  </div>
+                </div>
+              )}
+
+              {showSegMask && segmentationClasses.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-gray-100">
+                  <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-2">
+                    {t('wsiViewerComponents.taskSelector.classes')}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {segmentationClasses.map((label, index) => (
+                      <div
+                        key={`${label}-${index}`}
+                        className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-700"
+                      >
+                        <span
+                          className="h-2.5 w-2.5 rounded-full border border-gray-200"
+                          style={{ backgroundColor: SEGMENTATION_MASK_COLORS[index % SEGMENTATION_MASK_COLORS.length] }}
+                        />
+                        <span>{label}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -1335,6 +1406,7 @@ export default function WSIViewerPage() {
               <>
                 <TaskSelectorCard
                   availableHeatmaps={availableHeatmaps}
+                  selectedTaskEntries={selectedTaskEntries}
                   selectedTaskId={selectedTaskId}
                   setSelectedTaskId={handleSelectedTaskChange}
                   selectedFoldKey={effectiveFoldKey}

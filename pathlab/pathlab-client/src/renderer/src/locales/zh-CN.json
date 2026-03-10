@@ -778,6 +778,8 @@
     "heatmapOverlayAlt": "热图叠加",
     "showHeatmap": "显示热图",
     "hideHeatmap": "隐藏热图",
+    "showPredictionMask": "显示预测标注",
+    "hidePredictionMask": "隐藏预测标注",
     "opacity": "不透明度",
     "activation": "激活值",
     "lowToHigh": "低 → 高",
@@ -2593,9 +2595,12 @@
       "kFold": "K 折交叉验证",
       "folds": "折",
       "riskGroup": "风险分组",
+      "classes": "类别",
       "prediction": "预测",
+      "predictionMask": "预测标注",
       "patchHeatmap": "普通图像热力图",
       "patches": "图像块",
+      "noClasses": "暂无类别",
       "riskScore": "风险评分"
     }
   },

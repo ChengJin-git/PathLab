@@ -158,6 +158,7 @@ async def get_seg_mask(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID"),
     fold_key: Optional[str] = Query(None, description="Fold key for k-fold results"),
+    size: Optional[int] = Query(None, description="Optional max thumbnail size for previews"),
     user: User = Depends(get_user_from_header_or_param),
     db: AsyncSession = Depends(get_db)
 ):
@@ -171,6 +172,8 @@ async def get_seg_mask(
         params["task_id"] = task_id
     if fold_key:
         params["fold_key"] = fold_key
+    if size is not None:
+        params["size"] = size
 
     return await proxy_preprocessing_binary(
         "GET",

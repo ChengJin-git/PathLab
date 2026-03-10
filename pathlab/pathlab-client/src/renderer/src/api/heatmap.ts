@@ -76,6 +76,19 @@ export interface HeatmapData {
   risk_group?: 'High Risk' | 'Low Risk' | null  // Risk group based on median cutoff
 }
 
+export const SEGMENTATION_MASK_COLORS = [
+  '#ff0000',
+  '#00ff00',
+  '#0000ff',
+  '#ffff00',
+  '#ff00ff',
+  '#00ffff',
+  '#ff8000',
+  '#8000ff',
+  '#0080ff',
+  '#ff0080',
+]
+
 // Cache for fetchAvailableHeatmaps (keyed by wsi_id, 60s TTL)
 const heatmapAvailabilityCache = createKeyedCache<AvailableHeatmap[]>(LONG_CACHE_TTL)
 
@@ -191,11 +204,12 @@ export interface PatchCAMData {
  * @param fold_key - Optional fold key for k-fold results (e.g., 'fold_0')
  * @returns URL for the CAM overlay PNG image (with auth token for <img> tags)
  */
-export function getPatchCAMImageUrl(wsi_id: string, task_id?: string, fold_key?: string): string {
+export function getPatchCAMImageUrl(wsi_id: string, task_id?: string, fold_key?: string, size?: number): string {
   return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam`, {
     format: 'image',
     task_id,
     fold_key,
+    size,
   })
 }
 
@@ -204,12 +218,14 @@ export function getPatchCAMImageUrl(wsi_id: string, task_id?: string, fold_key?:
  * @param wsi_id - The WSI/patch ID
  * @param task_id - Optional task ID for specific mask
  * @param fold_key - Optional fold key for k-fold results
+ * @param size - Optional max thumbnail size for faster preview rendering
  * @returns URL for the seg mask overlay PNG image (with auth token for <img> tags)
  */
-export function getSegMaskImageUrl(wsi_id: string, task_id?: string, fold_key?: string): string {
+export function getSegMaskImageUrl(wsi_id: string, task_id?: string, fold_key?: string, size?: number): string {
   return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/seg_mask`, {
     task_id,
     fold_key,
+    size,
   })
 }
 

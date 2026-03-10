@@ -778,6 +778,8 @@
     "heatmapOverlayAlt": "Heatmap Overlay",
     "showHeatmap": "Show Heatmap",
     "hideHeatmap": "Hide Heatmap",
+    "showPredictionMask": "Show Prediction Mask",
+    "hidePredictionMask": "Hide Prediction Mask",
     "opacity": "Opacity",
     "activation": "Activation",
     "lowToHigh": "Low → High",
@@ -2644,9 +2646,12 @@
       "kFold": "K-Fold",
       "folds": "folds",
       "riskGroup": "Risk Group",
+      "classes": "Classes",
       "prediction": "Prediction",
+      "predictionMask": "Prediction Mask",
       "patchHeatmap": "Patch Heatmap",
       "patches": "patches",
+      "noClasses": "No classes",
       "riskScore": "Risk Score"
     }
   },
