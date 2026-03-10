@@ -9,6 +9,7 @@ Extracted from main.py to reduce file size. Handles:
 """
 import json
 import logging
+import math
 import re
 import struct
 from pathlib import Path
@@ -89,8 +90,8 @@ def _enhance_overlay_image(image, contrast_boost: float, saturation_boost: float
 
 
 def _get_thumbnail_blur_radius(
-    patch_w: int,
-    patch_h: int,
+    patch_w: float,
+    patch_h: float,
     blur_scale: float,
     preset: Optional[str],
 ) -> float:
@@ -475,21 +476,26 @@ async def get_heatmap_thumbnail(
         # Scale factor from slide coordinates to actual thumbnail size
         scale_x = actual_thumb_width / slide_width
         scale_y = actual_thumb_height / slide_height
-        patch_w = max(1, int(patch_size * scale_x))
-        patch_h = max(1, int(patch_size * scale_y))
+        patch_w = max(1e-6, patch_size * scale_x)
+        patch_h = max(1e-6, patch_size * scale_y)
 
         # Create transparent RGBA overlay so empty areas do not darken the whole slide.
         heatmap_rgba = np.zeros((actual_thumb_height, actual_thumb_width, 4), dtype=np.uint8)
 
         # Draw patches on heatmap as opaque color blocks; opacity is applied after blur.
+        # Use floor/ceil bounds instead of int(start) + int(width) to avoid seams and
+        # preserve more consistent patch coverage at tiny thumbnail scales.
         for coord, weight in zip(coords, attention_normalized):
-            x = int(coord[0] * scale_x)
-            y = int(coord[1] * scale_y)
-            # Clamp to bounds
-            x_end = min(x + patch_w, actual_thumb_width)
-            y_end = min(y + patch_h, actual_thumb_height)
-            x = max(0, x)
-            y = max(0, y)
+            x = max(0, int(math.floor(coord[0] * scale_x)))
+            y = max(0, int(math.floor(coord[1] * scale_y)))
+            x_end = min(actual_thumb_width, int(math.ceil((coord[0] + patch_size) * scale_x)))
+            y_end = min(actual_thumb_height, int(math.ceil((coord[1] + patch_size) * scale_y)))
+
+            if x_end <= x:
+                x_end = min(actual_thumb_width, x + 1)
+            if y_end <= y:
+                y_end = min(actual_thumb_height, y + 1)
+
             if x < x_end and y < y_end:
                 rgb = weight_to_rgb(weight)
                 heatmap_rgba[y:y_end, x:x_end, 0] = rgb[0]  # R
