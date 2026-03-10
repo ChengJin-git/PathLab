@@ -471,7 +471,9 @@ class WSIRepository:
         labels = {label: count for label, count in labels_result.all() if label}
 
         # Query for datasets (with join to Dataset and DataGroup tables)
-        # Include data_type (WSI/Patch), labels per dataset, and DataGroup task_type
+        # Chat upload-related context must use only the authoritative dataset
+        # data_type from DataGroup. Do not derive a "mixed" state or apply
+        # file-count heuristics here.
         from ..models import Dataset, DataGroup
 
         # Build data_type case expressions
@@ -486,6 +488,7 @@ class WSIRepository:
             Dataset.dataset_id,
             Dataset.name.label("dataset_name"),
             Dataset.user_id.label("dataset_owner_id"),
+            DataGroup.data_type.label("group_data_type"),
             DataGroup.task_type.label("group_task_type"),
             func.count(WSISlide.id).label("file_count"),
             func.sum(is_wsi_case).label("wsi_count"),
@@ -499,7 +502,13 @@ class WSIRepository:
         if user_filter is not None:
             datasets_query = datasets_query.where(user_filter)
 
-        datasets_query = datasets_query.group_by(Dataset.dataset_id, Dataset.name, Dataset.user_id, DataGroup.task_type).order_by(Dataset.name)
+        datasets_query = datasets_query.group_by(
+            Dataset.dataset_id,
+            Dataset.name,
+            Dataset.user_id,
+            DataGroup.data_type,
+            DataGroup.task_type,
+        ).order_by(Dataset.name)
         datasets_result = await db.execute(datasets_query)
 
         # Get labels per dataset
@@ -611,17 +620,8 @@ class WSIRepository:
 
         datasets = []
         for row in datasets_result.all():
-            wsi_cnt = row.wsi_count or 0
-            patch_cnt = row.patch_count or 0
-            # Determine data_type based on file counts
-            if wsi_cnt > 0 and patch_cnt == 0:
-                data_type = "wsi"
-            elif patch_cnt > 0 and wsi_cnt == 0:
-                data_type = "patch"
-            elif wsi_cnt > 0 and patch_cnt > 0:
-                data_type = "mixed"
-            else:
-                data_type = "unknown"
+            group_data_type = row.group_data_type if row.group_data_type in {"wsi", "patch"} else None
+            data_type = group_data_type or "unknown"
 
             ds_labels = dataset_labels_map.get(row.dataset_id, {})
             survival_count = dataset_survival_map.get(row.dataset_id, 0)

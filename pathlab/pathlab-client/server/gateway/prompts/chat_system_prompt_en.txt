@@ -917,6 +917,8 @@ When user wants to browse/analyze images (WSI or patches):
    - Only show datasets that are actually supported by the user's existing results context:
      - matching entries in **USER'S TRAINED MODELS** (including segmentation models), and/or
      - clearly relevant completed items in **USER'S TRAINING TASKS** / **USER'S INFERENCE TASKS**.
+   - A trained model on a DIFFERENT dataset is not enough by itself. For a selected dataset, heatmaps / prediction masks require dataset-specific evidence.
+   - `compatible_validation_datasets` must NEVER be used as proof that browseable heatmaps/prediction masks already exist on that dataset. It only means the dataset is structurally compatible for external validation.
    - If a dataset has no evidence of available model outputs in the current context, do NOT recommend it in [OPTIONS].
    - Do NOT rely on the frontend fallback (“if unavailable, only original image is shown”) when choosing which datasets to recommend. The filtering must happen before you present dataset choices.
    - If no dataset in the current context appears to have the requested result type, say so explicitly and offer the next valid action (for example: train a model first, run inference first, or browse original images without heatmaps/predictions).
@@ -979,6 +981,7 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
 - If the user asks for a model prediction mask from a specific trained segmentation task, include `segmentation_mask.task_id`.
 - If the user asks for `source: "model_pred"` (or `"both"`), you must first verify there is evidence in the current context that this dataset has a relevant segmentation model/result. If not, do NOT recommend that dataset for prediction-mask browsing.
 - If there are multiple eligible segmentation models/tasks and the choice would change which prediction mask is shown, ask the user which one to use FIRST with `[OPTIONS]`. Do NOT show a default `[IMAGE_RECOMMENDATION]` card in the same message while still asking that question.
+- A segmentation model trained on dataset A does NOT imply dataset B already has prediction masks, even if both datasets share the same labels. For dataset B, require dataset-specific result evidence first.
 
 **IMPORTANT for max_count:**
 - If user says "show me 5 images", set max_count: 5
@@ -992,6 +995,9 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
 - The system will automatically check if heatmaps are available and display them side-by-side with the original image
 - If no heatmap is available, only the original image will be shown (no placeholder)
 - But before you ask the user to choose a dataset for heatmaps, you MUST filter out datasets with no evidence of compatible trained models / results in the current context. Do NOT recommend datasets just because they are patch datasets.
+- For an already selected dataset, do NOT turn on `show_heatmap: true` unless the current context contains dataset-specific evidence that heatmaps/results exist for that exact dataset.
+- Matching labels, similar disease names, or external-validation compatibility are NOT enough to justify heatmap browsing on another dataset.
+- If the selected dataset lacks dataset-specific heatmap evidence, say that explicitly and offer alternatives such as browsing original images only, switching to a dataset that has results, or running inference first.
 
 **IMPORTANT for heatmap_filter:**
 - If user asks for heatmaps from a specific model (e.g., "UNI model", "ABMIL aggregator"), use heatmap_filter
@@ -999,6 +1005,7 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
 - For Patch: only feature_extractor is relevant (no aggregator)
 - If user doesn't specify, don't include heatmap_filter (system will use the best available heatmap)
 - **CRITICAL: Before using heatmap_filter, CHECK USER'S TRAINED MODELS to verify the requested model exists!**
+- **CRITICAL:** existence of a matching model is still not enough for a selected dataset. Only use `heatmap_filter` when that dataset also has dataset-specific result evidence. Do NOT apply a model trained on dataset A to dataset B just because labels or model compatibility match.
   - If user requests a specific feature_extractor or aggregator that does NOT exist in their trained models, REJECT the request and explain:
     ```
     I checked your trained models, but I don't see any model using {TransMIL/UNI/etc}.

@@ -2714,11 +2714,18 @@ async def chat_with_ai(
     inference_tasks_running = inference_tasks_stats.get("running", 0)
 
     if inference_tasks:
+        inference_task_wsi_map = await WSIRepository.get_by_ids_with_dataset(
+            db,
+            [t.wsi_id for t in inference_tasks if t.wsi_id]
+        )
         inference_tasks_details = []
         for t in inference_tasks:
             created_str = t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "unknown"
+            task_wsi = inference_task_wsi_map.get(t.wsi_id)
+            dataset_name = task_wsi.dataset.name if task_wsi and task_wsi.dataset and task_wsi.dataset.name else "unknown dataset"
+            dataset_id = task_wsi.dataset_id if task_wsi and task_wsi.dataset_id else "unknown"
             inference_tasks_details.append(
-                f"  - [{t.status.upper()}] {t.task_type} on {t.wsi_id} (id={t.task_id}): created={created_str}"
+                f"  - [{t.status.upper()}] {t.task_type} on {t.wsi_id} (dataset={dataset_name}, dataset_id={dataset_id}, id={t.task_id}): created={created_str}"
             )
         if inference_tasks_total > 10:
             inference_tasks_details.append(f"  ... and {inference_tasks_total - 10} more tasks")

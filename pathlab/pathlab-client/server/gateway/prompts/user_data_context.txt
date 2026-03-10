@@ -49,6 +49,7 @@ The user has **{models_count}** trained model(s) available for inference and ext
 - trained_on_dataset: Name of the dataset used for training
 - trained_on_task: Source training task ID
 - compatible_validation_datasets: PRE-FILTERED list of datasets (with dataset_id) that are compatible for external validation with this model. Already excludes the training dataset and enforces data_type/task_type/extractor/label compatibility. Use ONLY these datasets when the user asks for external validation.
+- CRITICAL: `compatible_validation_datasets` is ONLY about external-validation compatibility. It is NOT evidence that those datasets already have stored heatmaps, predictions, or segmentation masks.
 
 ## USER'S TRAINING TASKS
 
@@ -61,6 +62,18 @@ For running tasks, list items may include real-time fields such as `progress=...
 
 The user has **{inference_tasks_total}** inference task(s) in total ({inference_tasks_completed} completed, {inference_tasks_running} running):
 {inference_tasks_list}
+
+**Inference Task Information Format**: Items may include:
+- task_type: inference task type
+- wsi_id: image/slide identifier
+- dataset / dataset_id: which dataset that inference result belongs to
+- id: inference task ID
+- created: creation time
+
+CRITICAL: For browsing heatmaps, AI predictions, or segmentation `model_pred` masks on a selected dataset, use dataset-specific evidence only:
+- Valid evidence includes the selected dataset being the model's own training/source dataset, or inference tasks/results explicitly tied to that same dataset.
+- Do NOT assume a dataset has browseable heatmaps/prediction masks just because another dataset shares the same labels.
+- Do NOT use `compatible_validation_datasets` as proof that a selected dataset already has visual results.
 
 ## SYSTEM STATUS
 
