@@ -41,9 +41,11 @@ The user has **{models_count}** trained model(s) available for inference and ext
 - model_id: Unique identifier for external validation
 - classes: Label names (for classification models)
 - data_type: "wsi" or "patch"
-- task_type: "classification" or "survival"
+- task_type: "classification", "survival", or "segmentation"
 - feature_extractor: Feature extractor used (for WSI models)
 - embedding_dim: Feature dimension (for WSI models)
+- architecture / backbone: May appear for segmentation models
+- source_dataset_id: May appear for segmentation models to indicate the source dataset used by that task
 - trained_on_dataset: Name of the dataset used for training
 - trained_on_task: Source training task ID
 - compatible_validation_datasets: PRE-FILTERED list of datasets (with dataset_id) that are compatible for external validation with this model. Already excludes the training dataset and enforces data_type/task_type/extractor/label compatibility. Use ONLY these datasets when the user asks for external validation.

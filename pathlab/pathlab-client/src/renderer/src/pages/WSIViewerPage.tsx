@@ -12,9 +12,7 @@ import {
   PatchCAMData,
   fetchPatchCAMData,
   getPatchCAMImageUrl,
-  getPatchFileImageUrl,
   getSegMaskImageUrl,
-  SEGMENTATION_MASK_COLORS,
 } from '../api'
 import WSIViewer from '../components/WSIViewer'
 import { Card } from '../components/common'
@@ -26,9 +24,10 @@ import { AttentionPatchesPanel } from '../components/wsiViewer/AttentionPatchesP
 import { DeleteResultsModal } from '../components/wsiViewer/DeleteResultsModal'
 import { AnnotationToolbar, getColorForLabel } from '../components/wsiViewer/AnnotationToolbar'
 import { AnnotationOverlay } from '../components/wsiViewer/AnnotationOverlay'
-import { PatchAnnotationOverlay } from '../components/wsiViewer/PatchAnnotationOverlay'
+import { PatchOverlayStack, type PatchOverlayLayer } from '../components/wsiViewer/PatchOverlayStack'
 import { AnnotationListPanel } from '../components/wsiViewer/AnnotationListPanel'
 import { CreateDatasetDialog } from '../components/wsiViewer/CreateDatasetDialog'
+import { ViewerOverlayControls } from '../components/wsiViewer/ViewerOverlayControls'
 import {
   AnnotationRegion,
   AnnotationsMap,
@@ -388,6 +387,7 @@ export default function WSIViewerPage() {
   const canShowSegMaskOverlay = selectedTaskEntries.some(h => h.data_type === 'patch_segmentation')
   const shouldShowOverlayControls = canShowHeatmapOverlay || canShowSegMaskOverlay
   const segmentationClasses = selectedSegmentationEntry?.classes ?? []
+  const viewerDataLevel: 'wsi' | 'patch' = selectedTask?.data_type === 'patch' ? 'patch' : 'wsi'
 
   // Mouse wheel zoom for patch viewer - wait until the conditional patch container is mounted
   useEffect(() => {
@@ -486,6 +486,37 @@ export default function WSIViewerPage() {
     if (!selectedTaskId || !canShowSegMaskOverlay) return null
     return getSegMaskImageUrl(wsi_id, selectedTaskId, effectiveFoldKey, PATCH_OVERLAY_PREVIEW_SIZE)
   }, [canShowSegMaskOverlay, effectiveFoldKey, selectedTaskId, wsi_id])
+
+  const patchOverlayLayers = useMemo<PatchOverlayLayer[]>(() => {
+    const layers: PatchOverlayLayer[] = []
+
+    if (showHeatmap && patchHeatmapPreviewUrl) {
+      layers.push({
+        key: 'pred-heatmap',
+        src: patchHeatmapPreviewUrl,
+        alt: t('wsiViewer.heatmapOverlayAlt'),
+        opacity: heatmapOpacity,
+      })
+    }
+
+    if (showSegMask && patchSegMaskPreviewUrl) {
+      layers.push({
+        key: 'pred-mask',
+        src: patchSegMaskPreviewUrl,
+        alt: t('wsiViewer.showPredictionMask'),
+      })
+    }
+
+    return layers
+  }, [heatmapOpacity, patchHeatmapPreviewUrl, patchSegMaskPreviewUrl, showHeatmap, showSegMask, t])
+
+  const handleToggleHeatmap = useCallback(() => {
+    setShowHeatmap(prev => !prev)
+  }, [])
+
+  const handleToggleSegMask = useCallback(() => {
+    setShowSegMask(prev => !prev)
+  }, [])
 
   useEffect(() => {
     if (!isPatchLevel) return
@@ -1183,52 +1214,21 @@ export default function WSIViewerPage() {
                 </button>
               </div>
 
-              <div
-                className="relative max-w-[600px] max-h-full aspect-square transition-transform duration-100"
-                style={{
+              <PatchOverlayStack
+                wsiId={wsi_id}
+                baseImageAlt={t('wsiViewer.patchAlt')}
+                overlayLayers={patchOverlayLayers}
+                containerStyle={{
                   transform: `scale(${patchZoom}) translate(${patchPan.x / patchZoom}px, ${patchPan.y / patchZoom}px)`,
                   transformOrigin: 'center center'
                 }}
-              >
-                {/* Patch image */}
-                <img
-                  src={getPatchFileImageUrl(wsi_id)}
-                  alt={t('wsiViewer.patchAlt')}
-                  className="w-full h-full object-contain rounded-xl shadow-lg select-none"
-                  onLoad={handlePatchImageLoad}
-                  decoding="async"
-                  draggable={false}
-                />
-                {/* CAM overlay (for both classification and segmentation) */}
-                {showHeatmap && patchHeatmapPreviewUrl && (
-                  <img
-                    src={patchHeatmapPreviewUrl}
-                    alt={t('wsiViewer.heatmapOverlayAlt')}
-                    className="absolute inset-0 w-full h-full object-contain rounded-xl pointer-events-none select-none"
-                    style={{ opacity: heatmapOpacity }}
-                    decoding="async"
-                    draggable={false}
-                  />
-                )}
-                {/* Segmentation mask overlay (only for segmentation tasks) */}
-                {showSegMask && patchSegMaskPreviewUrl && (
-                  <img
-                    src={patchSegMaskPreviewUrl}
-                    alt="Prediction Mask"
-                    className="absolute inset-0 w-full h-full object-contain rounded-xl pointer-events-none select-none"
-                    style={{ opacity: 1 }}
-                    decoding="async"
-                    draggable={false}
-                  />
-                )}
-                <PatchAnnotationOverlay
-                  regions={currentRegions}
-                  labelColors={labelColors}
-                  highlightedRegionId={focusedRegionId}
-                  slideWidth={slideWidth}
-                  slideHeight={slideHeight}
-                />
-              </div>
+                onBaseImageLoad={handlePatchImageLoad}
+                regions={currentRegions}
+                labelColors={labelColors}
+                highlightedRegionId={focusedRegionId}
+                slideWidth={slideWidth}
+                slideHeight={slideHeight}
+              />
             </div>
           ) : (
             // WSI-level viewer
@@ -1240,7 +1240,7 @@ export default function WSIViewerPage() {
                 taskId={selectedTaskId}
                 foldKey={effectiveFoldKey}
                 classIdx={selectedClassIdx}
-                dataLevel={(selectedTask?.data_type === 'patch_segmentation' ? 'wsi' : selectedTask?.data_type) || 'wsi'}
+                dataLevel={viewerDataLevel}
                 onHeatmapLoaded={handleHeatmapLoaded}
                 onViewerReady={handleViewerReady}
                 onSlideInfo={handleSlideInfo}
@@ -1265,85 +1265,17 @@ export default function WSIViewerPage() {
 
           {/* Heatmap Controls Overlay */}
           {availableHeatmaps.length > 0 && shouldShowOverlayControls && (
-            <div className="absolute bottom-4 left-4 right-4 sm:right-auto bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200 p-2 sm:p-3 z-20">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-                {/* CAM / Heatmap toggle */}
-                {canShowHeatmapOverlay && (
-                  <button
-                    onClick={() => setShowHeatmap(!showHeatmap)}
-                    className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${showHeatmap
-                      ? 'bg-indigo-100 text-indigo-700 border border-indigo-300'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200'
-                      }`}
-                  >
-                    <Layers className="w-4 h-4" />
-                    {showHeatmap ? t('wsiViewer.hideHeatmap') : t('wsiViewer.showHeatmap')}
-                  </button>
-                )}
-
-                {/* Segmentation mask toggle (only for segmentation tasks) */}
-                {canShowSegMaskOverlay && (
-                  <button
-                    onClick={() => setShowSegMask(!showSegMask)}
-                    className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${showSegMask
-                      ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200'
-                      }`}
-                  >
-                    <Layers className="w-4 h-4" />
-                    {showSegMask ? t('wsiViewer.hidePredictionMask') : t('wsiViewer.showPredictionMask')}
-                  </button>
-                )}
-
-                {showHeatmap && (
-                  <div className="flex items-center gap-2 px-2 sm:px-0 sm:pl-3 border-t sm:border-t-0 sm:border-l border-gray-200 pt-2 sm:pt-0">
-                    <span className="text-[10px] sm:text-xs text-gray-500 whitespace-nowrap">{t('wsiViewer.opacity')}:</span>
-                    <input
-                      type="range"
-                      min="0.1"
-                      max="0.9"
-                      step="0.1"
-                      value={heatmapOpacity}
-                      onChange={(e) => setHeatmapOpacity(parseFloat(e.target.value))}
-                      className="flex-1 sm:w-20 accent-indigo-600"
-                    />
-                    <span className="text-[10px] sm:text-xs text-gray-600 w-8 text-right px-1">{Math.round(heatmapOpacity * 100)}%</span>
-                  </div>
-                )}
-              </div>
-
-              {showHeatmap && (
-                <div className="mt-2 pt-2 border-t border-gray-100">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-gray-400 uppercase tracking-wide">{t('wsiViewer.activation')}:</span>
-                    <div className="flex-1 h-2 rounded-full bg-gradient-to-r from-blue-500 via-green-500 via-yellow-500 to-red-500"></div>
-                    <span className="text-[10px] text-gray-500">{t('wsiViewer.lowToHigh')}</span>
-                  </div>
-                </div>
-              )}
-
-              {showSegMask && segmentationClasses.length > 0 && (
-                <div className="mt-2 pt-2 border-t border-gray-100">
-                  <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-2">
-                    {t('wsiViewerComponents.taskSelector.classes')}
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {segmentationClasses.map((label, index) => (
-                      <div
-                        key={`${label}-${index}`}
-                        className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-700"
-                      >
-                        <span
-                          className="h-2.5 w-2.5 rounded-full border border-gray-200"
-                          style={{ backgroundColor: SEGMENTATION_MASK_COLORS[index % SEGMENTATION_MASK_COLORS.length] }}
-                        />
-                        <span>{label}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+            <ViewerOverlayControls
+              canShowHeatmapOverlay={canShowHeatmapOverlay}
+              showHeatmap={showHeatmap}
+              onToggleHeatmap={handleToggleHeatmap}
+              heatmapOpacity={heatmapOpacity}
+              onHeatmapOpacityChange={setHeatmapOpacity}
+              canShowSegMaskOverlay={canShowSegMaskOverlay}
+              showSegMask={showSegMask}
+              onToggleSegMask={handleToggleSegMask}
+              segmentationClasses={segmentationClasses}
+            />
           )}
         </div>
       </div>
