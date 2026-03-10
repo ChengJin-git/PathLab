@@ -33,7 +33,7 @@ server/
 │   ├── auth/               # 认证模型与 FastAPI-Users 配置
 │   ├── common/             # 配置、Redis、端口发现、通用工具
 │   ├── database/           # SQLAlchemy 模型与仓储层
-│   ├── preprocessing/      # WSI 预处理与瓦片服务
+│   ├── preprocessing/      # WSI 图像服务与辅助缓存逻辑
 │   └── storage/            # 存储统计、迁移、清理
 ├── build/                  # 打包产物目录
 └── dist/                   # 打包产物目录
@@ -44,13 +44,13 @@ server/
 | 服务 | 当前职责 |
 |------|----------|
 | Gateway | 认证、用户管理、WSI / 任务 / 结果 / 聊天 / 存储 / 设置等对外 API |
-| Preprocessing | WSI 基本信息、缩略图、DZI、瓦片、热图相关底层接口 |
+| Preprocessing | WSI 基本信息、图像、缩略图、DZI、瓦片、热图辅助与部分数据集标注导出逻辑 |
 | AI | 训练、推理、特征提取与模型内部接口 |
 
 ## 运行依赖
 
 - PostgreSQL：元数据与业务状态
-- Redis：训练日志、任务进度、部分状态缓存
+- Redis：任务队列、日志、进度与部分缓存
 - `uploads/`：WSI、特征缓存、模型、日志、标注及衍生文件
 
 默认配置可在 `backend/common/config.py` 中看到，包括：
@@ -60,8 +60,8 @@ server/
 
 ## 当前实现重点
 
-- `main.py` 中 Preprocessing 默认支持多 worker，并可配置 `PREPROCESSING_MAX_REQUESTS`
-- Gateway 启动时会等待依赖服务可用后再提供完整功能
+- `main.py` 中 Preprocessing 允许多 worker，并支持 `PREPROCESSING_MAX_REQUESTS`
+- Gateway 会在自身生命周期中初始化数据库、Redis、任务队列和若干启动期清理逻辑
 - AI 与 Preprocessing 的内部服务地址通过环境变量注入给 Gateway
 - `main.spec` 用于将 sidecar 打包为独立可执行文件
 

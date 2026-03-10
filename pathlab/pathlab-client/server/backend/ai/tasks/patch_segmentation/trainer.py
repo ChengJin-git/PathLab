@@ -38,6 +38,7 @@ from sklearn.metrics import confusion_matrix
 
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 from backend.ai.schemas.base import TaskStatus
+from backend.ai.tasks.base import BaseTrainer
 from backend.ai.tasks.training_utils import safe_update_progress as _safe_update_progress
 from backend.ai.utils.segmentation_dataset import SegmentationDataset, get_transforms
 from backend.ai.segmentors import Segmentor
@@ -125,9 +126,12 @@ class SegmentationTrainer:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.batch_size = batch_size
         self.config = self.update_config(config)
+        self.seed = self.config.get("training", {}).get("seed")
         self.task_logger = task_logger
         self._owns_task_logger = task_logger is None
         self._async_runner: Optional[asyncio.Runner] = None
+        if self.seed is not None:
+            BaseTrainer._set_seed(self.seed)
         segmentor = Segmentor(
             architecture=self.config["architecture"],
             encoder_name=self.config["backbone"],
@@ -292,11 +296,27 @@ class SegmentationTrainer:
             return "miou"
         return configured_metric or self._get_primary_iou_metric_key()
 
+    @staticmethod
+    def _seed_dataloader_worker(_worker_id: int) -> None:
+        worker_seed = torch.initial_seed() % (2 ** 32)
+        random.seed(worker_seed)
+        np.random.seed(worker_seed)
+
+    def _build_dataloader_generator(self) -> Optional[torch.Generator]:
+        if self.seed is None:
+            return None
+
+        generator = torch.Generator()
+        generator.manual_seed(self.seed)
+        return generator
+
     
     def build_loaders(self) -> Tuple[DataLoader, DataLoader, Optional[DataLoader]]:
         """
         Build DataLoaders for training, validation, and testing datasets.
         """
+        train_generator = self._build_dataloader_generator()
+        worker_init_fn = self._seed_dataloader_worker if self.seed is not None else None
         train_loader = DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
@@ -304,6 +324,8 @@ class SegmentationTrainer:
             num_workers=4,
             pin_memory=True,
             multiprocessing_context='spawn',  # Avoid fork deadlock in multithreaded env
+            worker_init_fn=worker_init_fn,
+            generator=train_generator,
         )
         val_loader = DataLoader(
             self.val_dataset,
@@ -842,6 +864,9 @@ class SegmentationTrainer:
             primary_iou_metric = self._get_primary_iou_metric_key()
             primary_iou_label = self._get_primary_iou_metric_label()
 
+            if self.seed is not None:
+                BaseTrainer._set_seed(self.seed)
+
             if lr is not None:
                 training_cfg["lr"] = lr
                 self.config["training"] = training_cfg
@@ -862,6 +887,8 @@ class SegmentationTrainer:
                 f"Using device: {self.device}, AMP: {use_amp}",
                 {"device": self.device, "use_amp": use_amp},
             )
+            if self.seed is not None:
+                self._log_info("Random seed configured for patch segmentation training", {"seed": self.seed})
             self._log_info(
                 f"Architecture: {self.config['architecture']}, Backbone: {self.config['backbone']}",
                 {"architecture": self.config["architecture"], "backbone": self.config["backbone"], "epochs": epochs},

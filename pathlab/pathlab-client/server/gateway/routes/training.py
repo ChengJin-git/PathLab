@@ -240,6 +240,9 @@ async def create_training_task(
 
             # Create training task with pre-fetched WSIs (avoids redundant DB query)
             split_config_dict = req.split_config.dict() if req.split_config else None
+            pipeline_preprocessing_config = dict(req.preprocessing or {})
+            if split_config_dict is not None:
+                pipeline_preprocessing_config["split_config"] = split_config_dict
             prefetched_wsis = list(wsi_map.values())
             try:
                 task = await TrainingTaskRepository.create(
@@ -271,7 +274,7 @@ async def create_training_task(
             # Note: task_id is automatically added by task_queue.submit()
             "data_type": req.data_type,
             "wsi_ids": wsi_ids,
-            "preprocessing_config": req.preprocessing,
+            "preprocessing_config": pipeline_preprocessing_config,
             "model_config": req.model,
             "huggingface_token": huggingface_token,
             "training_task_type": req.task_type,  # Use different name to avoid conflict with TaskType enum
@@ -317,18 +320,45 @@ async def create_training_task(
 
 @router.get("")
 async def list_training_tasks(
-    skip: int = 0,
-    limit: int = 100,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    search: Optional[str] = Query(None, description="Search by task name or task ID"),
+    status_filter: str = Query("all", description="all|running|completed|failed|cancelled"),
+    sort_by: str = Query("updated", description="updated|created|name"),
     user: User = Depends(current_active_user),
     user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db)
 ):
     """List training tasks. Users see only their own tasks, admin sees all (with username)."""
+    valid_status_filters = {"all", "running", "completed", "failed", "cancelled"}
+    if status_filter not in valid_status_filters:
+        raise HTTPException(status_code=400, detail=f"Invalid status_filter: {status_filter}")
+
+    valid_sort_fields = {"updated", "created", "name"}
+    if sort_by not in valid_sort_fields:
+        raise HTTPException(status_code=400, detail=f"Invalid sort_by: {sort_by}")
+
+    skip = (page - 1) * page_size
     # Admin users get username information
     include_username = user.is_admin()
 
-    tasks = await TrainingTaskRepository.get_all(db, limit, skip, user_id=user_id_filter, include_username=include_username)
-    total = await TrainingTaskRepository.count(db, user_id=user_id_filter)
+    tasks = await TrainingTaskRepository.get_all(
+        db,
+        page_size,
+        skip,
+        user_id=user_id_filter,
+        include_username=include_username,
+        search=search,
+        status_filter=status_filter,
+        sort_by=sort_by,
+    )
+    total = await TrainingTaskRepository.count(
+        db,
+        user_id=user_id_filter,
+        search=search,
+        status_filter=status_filter,
+    )
+    stats = await TrainingTaskRepository.get_status_counts(db, user_id=user_id_filter)
 
     # Batch get WSI counts for all tasks (avoids N+1 query)
     if include_username:
@@ -355,7 +385,13 @@ async def list_training_tasks(
         task_dict["source_dataset_id"] = source_dataset_ids.get(task_dict["task_id"])
         result_tasks.append(task_dict)
 
-    return {"items": result_tasks, "total": total}
+    return {
+        "items": result_tasks,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "stats": stats,
+    }
 
 
 @router.get("/stream")

@@ -6,9 +6,15 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 
 - 启动文件：`server/gateway/main.py`
 - Web 框架：FastAPI
-- 启动时会：
+- 启动时当前会执行：
   - 初始化数据库
-  - 等待 Preprocessing / AI 服务可用
+  - 初始化 Redis
+  - 探测 GPU 数量并决定 `max_concurrent`
+  - 初始化任务队列
+  - 清理旧的 progress 文件
+  - 恢复中断的训练任务
+  - 清理过期完成任务
+  - 清理过期 PDF 缓存
   - 注册所有顶层 router
   - 在存在前端构建产物时挂载静态资源
   - 始终挂载 `/avatars`
@@ -38,15 +44,15 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 
 - 登录 / 用户管理 / 维护通知 / 头像上传
 - WSI 上传、列表、详情、权限检查
-- 训练任务、AI 任务与队列观察
+- 训练任务、AI 任务与 GPU 队列观察
 - 模型管理、结果查看、报告导出
-- AI 对话、会话历史、PDF 图片缓存与反馈
+- AI 对话、会话历史、PDF 缓存 / 检索与反馈
 - 存储统计、扫描、清理与配置
 - GPU 信息、热图、标注、系统设置
 
 ## 路由目录现状
 
-`server/gateway/routes/` 当前共有 29 个 Python 文件。
+`server/gateway/routes/` 当前包含 **29 个路由模块文件**（不含 `__init__.py`）。
 
 除了上面 16 个顶层 router 外，目录里还有若干**被其他 router 复用的支持模块**，例如：
 
@@ -68,16 +74,25 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 - 包含管理员批量启用 / 禁用 / 删除用户接口
 - 当前代码里没有单独暴露的 `AccessToken` ORM 模型 README 记录，认证主要依赖 JWT
 
+## 存储路由补充说明
+
+`routes/storage.py` 自身提供 `/storage/stats`、`/storage/config`、`/storage/migrate`、`/storage/orphaned` 等入口，并进一步组合：
+
+- `storage_tasks.py`
+- `storage_scan.py`
+
+因此 `/storage` 不是单一文件，而是一组聚合后的存储管理路由。
+
 ## 静态资源挂载
 
 - `/avatars` → `uploads/avatars`
 - `/images`、`/assets` → 当前前端构建产物目录（如果存在）
 
-这意味着浏览器部署模式下，Gateway 既提供 API，也可以为前端构建产物提供静态资源入口。
+这意味着浏览器部署模式下，Gateway 既提供 API，也可以直接为前端构建产物提供静态资源入口。
 
 ## 与内部服务的关系
 
-- Preprocessing：提供 WSI 信息、缩略图、DZI、瓦片等底层接口
+- Preprocessing：提供 WSI 信息、图像、缩略图、DZI、瓦片等底层接口
 - AI：提供训练、推理等内部能力
 - Database / Storage：通过 `backend/` 共享模块提供 ORM、仓储、文件系统能力
 

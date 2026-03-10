@@ -278,6 +278,9 @@ export interface DatasetListQueryOptions {
   page?: number
   page_size?: number
   search?: string
+  task_type?: 'classification' | 'survival' | 'segmentation'
+  aggregation_level?: 'file' | 'case'
+  source_organ?: string
 }
 
 /**
@@ -296,6 +299,15 @@ export async function fetchDatasets(
   if (options?.search) {
     params.append('search', options.search)
   }
+  if (options?.task_type) {
+    params.append('task_type', options.task_type)
+  }
+  if (options?.aggregation_level) {
+    params.append('aggregation_level', options.aggregation_level)
+  }
+  if (options?.source_organ) {
+    params.append('source_organ', options.source_organ)
+  }
   if (options?.page_size !== undefined) {
     params.append('page_size', String(options.page_size))
     params.append('page', String(options.page ?? 1))
@@ -303,6 +315,14 @@ export async function fetchDatasets(
   const queryString = params.toString()
   const url = queryString ? `${API_BASE}/wsi/datasets?${queryString}` : `${API_BASE}/wsi/datasets`
   return apiFetch<DatasetsListResponse>(url, undefined, 'Failed to load datasets from database')
+}
+
+export async function fetchDatasetSummary(datasetId: string): Promise<DatasetSummary> {
+  return apiFetch<DatasetSummary>(
+    `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}`,
+    undefined,
+    'Failed to load dataset summary'
+  )
 }
 
 /**

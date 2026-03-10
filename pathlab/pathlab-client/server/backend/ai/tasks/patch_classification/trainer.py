@@ -46,6 +46,11 @@ from backend.ai.tasks.training_utils import (
 logger = logging.getLogger("patch_classification_trainer")
 
 
+# Throttle patch-classification result persistence to reduce end-of-training I/O spikes.
+SAVE_FILE_IO_MAX_WORKERS = 4
+SAVE_FILE_IO_BATCH_SIZE = 32
+
+
 class PatchClassificationTrainer(BaseTrainer):
     """
     Trainer for patch-level classification tasks.
@@ -1290,6 +1295,14 @@ class PatchClassificationTrainer(BaseTrainer):
             f"[Saving] Writing {total_images} result files to disk...",
             {"phase": "writing_files", "num_files": total_images}
         )
+        await logger.info(
+            "[Saving] Using throttled file I/O to reduce disk pressure",
+            {
+                "phase": "writing_files",
+                "max_workers": SAVE_FILE_IO_MAX_WORKERS,
+                "batch_size": SAVE_FILE_IO_BATCH_SIZE,
+            }
+        )
 
         # Track completed files for progress updates
         completed_count = [0]
@@ -1329,13 +1342,16 @@ class PatchClassificationTrainer(BaseTrainer):
                     await _safe_update_progress(session_maker_ref, task_id_for_update, TaskStatus.TRAINING, file_progress)
             return result
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
-            tasks = [
-                save_with_progress(executor, item, total_images,
-                                   progress_file_io_start, file_io_progress_range)
-                for item in file_save_items
-            ]
-            await asyncio.gather(*tasks)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=SAVE_FILE_IO_MAX_WORKERS) as executor:
+            for batch_start in range(0, total_images, SAVE_FILE_IO_BATCH_SIZE):
+                batch_items = file_save_items[batch_start:batch_start + SAVE_FILE_IO_BATCH_SIZE]
+                tasks = [
+                    save_with_progress(executor, item, total_images,
+                                       progress_file_io_start, file_io_progress_range)
+                    for item in batch_items
+                ]
+                await asyncio.gather(*tasks)
+                await asyncio.sleep(0)
 
         # Phase 3: Batch database insert
         await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_db)

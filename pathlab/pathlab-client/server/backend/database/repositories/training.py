@@ -7,7 +7,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Set, Tuple
-from sqlalchemy import select, update, delete, func, desc, insert, or_, cast, String
+from sqlalchemy import select, update, delete, func, desc, asc, insert, or_, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -384,7 +384,58 @@ class TrainingTaskRepository:
         return {task.task_id: task for task in tasks}
 
     @staticmethod
-    async def get_all(db: AsyncSession, limit: int = 100, offset: int = 0, user_id: Optional[str] = None, include_username: bool = False):
+    def _apply_task_list_filters(query, user_id: Optional[str] = None, search: Optional[str] = None, status_filter: str = "all"):
+        if user_id is not None:
+            query = query.where(TrainingTask.user_id == user_id)
+
+        normalized_search = search.strip() if search else None
+        if normalized_search:
+            like_term = f"%{normalized_search}%"
+            query = query.where(
+                or_(
+                    TrainingTask.task_name.ilike(like_term),
+                    TrainingTask.task_id.ilike(like_term),
+                )
+            )
+
+        if status_filter == "running":
+            query = query.where(
+                TrainingTask.status.in_([
+                    TaskStatus.PATCHING,
+                    TaskStatus.TRAINING,
+                    TaskStatus.PENDING,
+                    TaskStatus.QUEUED,
+                    TaskStatus.EXTRACTING,
+                ])
+            )
+        elif status_filter == "completed":
+            query = query.where(TrainingTask.status == TaskStatus.COMPLETED)
+        elif status_filter == "failed":
+            query = query.where(TrainingTask.status == TaskStatus.FAILED)
+        elif status_filter == "cancelled":
+            query = query.where(TrainingTask.status == TaskStatus.CANCELLED)
+
+        return query
+
+    @staticmethod
+    def _apply_task_list_sort(query, sort_by: str = "updated"):
+        if sort_by == "created":
+            return query.order_by(desc(TrainingTask.created_at))
+        if sort_by == "name":
+            return query.order_by(asc(TrainingTask.task_name), desc(TrainingTask.created_at))
+        return query.order_by(desc(TrainingTask.updated_at), desc(TrainingTask.created_at))
+
+    @staticmethod
+    async def get_all(
+        db: AsyncSession,
+        limit: int = 100,
+        offset: int = 0,
+        user_id: Optional[str] = None,
+        include_username: bool = False,
+        search: Optional[str] = None,
+        status_filter: str = "all",
+        sort_by: str = "updated",
+    ):
         """Get all training tasks with data_group relationship loaded.
 
         Args:
@@ -403,9 +454,13 @@ class TrainingTaskRepository:
         if not include_username:
             # Original behavior - return TrainingTask objects
             query = select(TrainingTask).options(selectinload(TrainingTask.data_group))
-            if user_id is not None:
-                query = query.where(TrainingTask.user_id == user_id)
-            query = query.order_by(desc(TrainingTask.created_at)).limit(limit).offset(offset)
+            query = TrainingTaskRepository._apply_task_list_filters(
+                query,
+                user_id=user_id,
+                search=search,
+                status_filter=status_filter,
+            )
+            query = TrainingTaskRepository._apply_task_list_sort(query, sort_by).limit(limit).offset(offset)
             result = await db.execute(query)
             return result.scalars().all()
         else:
@@ -418,9 +473,13 @@ class TrainingTaskRepository:
                 .options(selectinload(TrainingTask.data_group))
                 .outerjoin(AuthUser, TrainingTask.user_id == cast(AuthUser.id, String))
             )
-            if user_id is not None:
-                query = query.where(TrainingTask.user_id == user_id)
-            query = query.order_by(desc(TrainingTask.created_at)).limit(limit).offset(offset)
+            query = TrainingTaskRepository._apply_task_list_filters(
+                query,
+                user_id=user_id,
+                search=search,
+                status_filter=status_filter,
+            )
+            query = TrainingTaskRepository._apply_task_list_sort(query, sort_by).limit(limit).offset(offset)
             result = await db.execute(query)
             rows = result.all()
 
@@ -439,7 +498,12 @@ class TrainingTaskRepository:
             return tasks_with_username
 
     @staticmethod
-    async def count(db: AsyncSession, user_id: Optional[str] = None) -> int:
+    async def count(
+        db: AsyncSession,
+        user_id: Optional[str] = None,
+        search: Optional[str] = None,
+        status_filter: str = "all",
+    ) -> int:
         """Count total training tasks.
 
         Args:
@@ -448,8 +512,12 @@ class TrainingTaskRepository:
                      If None, counts all tasks (for admin users).
         """
         query = select(func.count(TrainingTask.id))
-        if user_id is not None:
-            query = query.where(TrainingTask.user_id == user_id)
+        query = TrainingTaskRepository._apply_task_list_filters(
+            query,
+            user_id=user_id,
+            search=search,
+            status_filter=status_filter,
+        )
         result = await db.execute(query)
         return result.scalar()
 
@@ -478,6 +546,7 @@ class TrainingTaskRepository:
             func.sum(case((TrainingTask.status == TaskStatus.COMPLETED, 1), else_=0)).label("completed"),
             func.sum(case((TrainingTask.status.in_(in_progress_statuses), 1), else_=0)).label("running"),
             func.sum(case((TrainingTask.status == TaskStatus.FAILED, 1), else_=0)).label("failed"),
+            func.sum(case((TrainingTask.status == TaskStatus.CANCELLED, 1), else_=0)).label("cancelled"),
         )
         if user_id is not None:
             query = query.where(TrainingTask.user_id == user_id)
@@ -488,6 +557,7 @@ class TrainingTaskRepository:
             "completed": row.completed or 0,
             "running": row.running or 0,
             "failed": row.failed or 0,
+            "cancelled": row.cancelled or 0,
         }
 
     @staticmethod

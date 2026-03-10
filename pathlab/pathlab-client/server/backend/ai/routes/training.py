@@ -936,6 +936,7 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
                 "lr": req.lr,
                 "optimizer": req.optimizer,
                 "early_stopping_patience": req.early_stopping_patience,
+                "seed": req.seed,
             },
             "monitor_metric": "miou" if req.num_classes > 1 else "iou",
             "save_dir": save_dir,

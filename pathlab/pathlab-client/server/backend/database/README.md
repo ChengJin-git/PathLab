@@ -45,25 +45,25 @@
 
 ## Repository 现状
 
-`repositories/` 当前按业务拆分，主要包括：
+`repositories/__init__.py` 当前导出的是：
 
-- `AIResultRepository`
-- `AnnotationRepository`
-- `ChatRepository`
 - `DataGroupRepository`
 - `DatasetRepository`
+- `WSIRepository`
+- `AITaskRepository`
+- `AIResultRepository`
+- `ChatRepository`
+- `FeedbackRepository`
 - `ExportTaskRepository`
-- `PermissionRepository`
-- `StorageTaskRepository`
-- `TaskRepository`
-- `TrainingLogRepository`
 - `TrainingTaskRepository`
 - `TrainedModelRepository`
-- `UserRepository`
-- `WSIRepository`
-- `WSIRepositoryStorageMixin`
+- `TrainingLogRepository`
+- `DatasetPermissionRepository`
+- `StorageTaskRepository`
+- `OrphanedRecordsRepository`
+- `SegmentationAnnotationRepository`
 
-这意味着当前仓储层已经覆盖用户、任务、WSI、聊天、结果、权限、训练日志、存储任务与标注等主要实体。
+这意味着当前仓储层已经覆盖数据集、WSI、AI 任务、聊天、反馈、导出、训练、权限、存储任务、孤立记录与标注等核心实体。
 
 ## 初始化与使用方式
 

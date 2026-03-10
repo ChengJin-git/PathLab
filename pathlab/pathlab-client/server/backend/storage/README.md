@@ -11,34 +11,37 @@
 
 ## 当前 StorageManager 能力
 
-`StorageManager` 当前主要提供：
+`StorageManager` 结合 `stats_mixin.py` / `orphan_mixin.py` 当前主要承担：
 
-- `get_total_storage_stats()`
-- `get_wsi_storage_info()`
-- `get_training_task_storage_info()`
-- `delete_wsi_files()`
-- `delete_training_task_files()`
-- `update_storage_config()`
-- `migrate_storage()`
+- 总存储统计与分目录统计
+- WSI 级别存储信息读取
+- 训练任务级别存储信息读取
+- 删除 WSI 相关衍生文件
+- 删除训练任务相关衍生文件
+- 重置部分派生数据与悬挂符号链接清理辅助逻辑
 
 这些能力通过 Gateway 的 `/storage` 相关接口暴露给前端或运维流程。
 
 ## 当前 uploads 目录现状
 
-根据 `backend/common/config.py`、统计与清理逻辑，当前项目会管理以下主要目录：
+根据 `backend/common/config.py`，当前启动时会确保这些目录存在：
 
-- `uploads/wsi_files/`
-- `uploads/features/`
+- `uploads/avatars/`
 - `uploads/coordinates/`
 - `uploads/masks/`
+- `uploads/features/`
 - `uploads/ai_results/`
 - `uploads/training/`
 - `uploads/models/`
 - `uploads/logs/`
-- `uploads/avatars/`
+- `uploads/wsi_files/`
 - `uploads/metadata/`
 - `uploads/progress/`
-- `uploads/pdf_cache/`（按需生成，用于聊天 / PDF 相关缓存）
+
+此外，当前代码里还有两类按需生成目录：
+
+- `uploads/annotations/`：Preprocessing 为数据集写出 `*_coco.json` 缓存时创建
+- `uploads/pdf_cache/`：聊天 / PDF 相关逻辑按需使用
 
 这已经超出“只存切片文件”的阶段，当前实现同时管理模型、训练结果、日志、缓存和用户上传衍生物。
 
@@ -46,46 +49,55 @@
 
 ### 存储统计
 
-`stats_mixin.py` 会统计：
+`stats_mixin.py` 当前重点统计这些类别：
 
-- 总体积与文件数量
-- 各子目录占用
-- WSI / 训练任务相关数据的聚合视图
+- `coordinates`
+- `masks`
+- `ai_results`
+- `features_cache`
+- `training`
+- `models`
+- `logs`
+- `wsi_files`
 
 ### 孤立项检测
 
-`orphan_mixin.py` 当前会关注：
+`orphan_mixin.py` 当前重点扫描这些类别：
 
 - `wsi_files`
-- `features`
 - `coordinates`
 - `masks`
+- `features_cache`
 - `ai_results`
 - `training`
 - `models`
 - `logs`
-- `metadata`
-- `progress`
-- `pdf_cache`
-- `avatars`
 
-并将它们与数据库中已有的 WSI、任务、模型、用户记录对照，以发现多余文件或失配记录。
+并将它们与数据库中已有的 WSI、任务、模型记录对照，以发现多余文件或失配记录。
+
+因此要注意：`metadata`、`progress`、`avatars`、`annotations`、`pdf_cache` 虽然是当前运行时会使用的目录，但并不是都被纳入同一套统计 / 孤立扫描逻辑。
+
+## Gateway 暴露方式
+
+`server/gateway/routes/storage.py` 当前直接提供或组合这些入口：
+
+- `/storage/stats`
+- `/storage/config`
+- `/storage/migrate`
+- `/storage/orphaned`
+- `/storage/orphaned/cleanup`
+- `/storage/orphaned-records`
+- `/storage/orphaned-records/cleanup`
+- 以及 `storage_tasks.py`、`storage_scan.py` 中的批量任务与目录扫描接口
 
 ## 迁移现状
 
-`migration.py` 中的 `StorageMigrator` 支持：
-
-- 校验新路径
-- 预估迁移规模
-- 执行目录迁移
-- 更新数据库中的存储根路径配置
-
-适用于需要把 `uploads/` 迁移到新磁盘或新挂载点的场景。
+`migration.py` 中的 `StorageMigrator` 负责存储根目录迁移相关逻辑，适用于把 `uploads/` 迁移到新磁盘或新挂载点的场景。
 
 ## 与业务层的关系
 
-- Gateway：提供 `/storage`、扫描、清理、配置更新等接口
-- Database：提供 WSI、训练任务、模型、用户等实体用于一致性校验
+- Gateway：提供统计、扫描、清理、配置更新等接口
+- Database：提供 WSI、训练任务、模型等实体用于一致性校验
 - Frontend：设置页中的存储管理视图会消费这些接口
 
 ## 相关文档

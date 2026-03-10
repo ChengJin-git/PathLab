@@ -358,6 +358,9 @@ async def list_wsi_ids(
 async def list_datasets(
     data_type: Optional[str] = None,
     search: Optional[str] = Query(None, description="Search dataset names"),
+    task_type: Optional[str] = Query(None, description="Filter by task type"),
+    aggregation_level: Optional[str] = Query(None, description="Filter by aggregation level"),
+    source_organ: Optional[str] = Query(None, description="Filter by normalized source organ"),
     page: int = Query(1, ge=1, description="Page number (1-based). Ignored when page_size=0."),
     page_size: int = Query(0, ge=0, le=100, description="Datasets per page. 0 = return all (legacy behavior)."),
     user: User = Depends(current_active_user),
@@ -399,6 +402,9 @@ async def list_datasets(
         user_id=user_id_filter,
         elevated_dataset_ids=elevated_dataset_ids,
         search=search,
+        task_type=task_type,
+        aggregation_level=aggregation_level,
+        source_organ=source_organ,
     )
 
     datasets = await WSIRepository.get_datasets(
@@ -407,6 +413,9 @@ async def list_datasets(
         user_id=user_id_filter,
         elevated_dataset_ids=elevated_dataset_ids,
         search=search,
+        task_type=task_type,
+        aggregation_level=aggregation_level,
+        source_organ=source_organ,
         skip=skip,
         limit=page_size,
     )
@@ -445,6 +454,45 @@ async def list_datasets(
         "page": 1 if page_size == 0 else page,
         "page_size": page_size,
     }
+
+
+@router.get("/datasets/{dataset_id}")
+async def get_dataset_summary(
+    dataset_id: str,
+    user: User = Depends(current_active_user),
+    user_id_filter: Optional[str] = Depends(get_user_id_filter),
+    db: AsyncSession = Depends(get_db)
+):
+    """Return one dataset summary row for repository/detail pages."""
+    elevated_dataset_ids = await get_permitted_dataset_ids(user, db)
+    datasets = await WSIRepository.get_datasets(
+        db,
+        user_id=user_id_filter,
+        elevated_dataset_ids=elevated_dataset_ids,
+        dataset_id=dataset_id,
+        skip=0,
+        limit=1,
+    )
+
+    if not datasets:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    dataset = datasets[0]
+    user_id_str = str(user.id)
+    dataset["can_delete"] = user.is_admin() or (dataset.get("user_id") == user_id_str)
+
+    if user.is_admin() and dataset.get("user_id"):
+        from sqlalchemy import select as sql_select, cast, String
+        from backend.auth.models import User as AuthUser
+
+        result = await db.execute(
+            sql_select(AuthUser.email, AuthUser.nickname)
+            .where(cast(AuthUser.id, String) == dataset["user_id"])
+        )
+        owner = result.one_or_none()
+        dataset["username"] = (owner.nickname or owner.email) if owner else None
+
+    return dataset
 
 
 @router.put("/datasets")

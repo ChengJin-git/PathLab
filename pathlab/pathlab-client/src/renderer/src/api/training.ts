@@ -185,18 +185,47 @@ export interface TrainingTaskCreateResult extends TrainingTask {
   wsi_count: number
 }
 
+export interface TrainingTaskListStats {
+  total: number
+  running: number
+  completed: number
+  failed: number
+  cancelled: number
+}
+
+export interface TrainingTaskListQuery {
+  page?: number
+  page_size?: number
+  search?: string
+  status_filter?: 'all' | 'running' | 'completed' | 'failed' | 'cancelled'
+  sort_by?: 'updated' | 'created' | 'name'
+}
+
+export interface TrainingTaskListResponse extends PaginatedResponse<TrainingTask> {
+  page: number
+  page_size: number
+  stats: TrainingTaskListStats
+}
+
 /**
  * Get all training tasks
  * @returns List of training tasks
  * @throws {ApiError} If the request fails
  */
-export async function getTrainingTasks(): Promise<TrainingTask[]> {
-  const data = await apiFetch<PaginatedResponse<TrainingTask>>(
-    `${API_BASE}/tasks/training`,
+export async function getTrainingTasks(options?: TrainingTaskListQuery): Promise<TrainingTaskListResponse> {
+  const params = new URLSearchParams()
+  if (options?.page !== undefined) params.set('page', String(options.page))
+  if (options?.page_size !== undefined) params.set('page_size', String(options.page_size))
+  if (options?.search) params.set('search', options.search)
+  if (options?.status_filter) params.set('status_filter', options.status_filter)
+  if (options?.sort_by) params.set('sort_by', options.sort_by)
+
+  const queryString = params.toString()
+  return apiFetch<TrainingTaskListResponse>(
+    queryString ? `${API_BASE}/tasks/training?${queryString}` : `${API_BASE}/tasks/training`,
     undefined,
     'Failed to get training tasks'
   )
-  return data.items || []
 }
 
 /**

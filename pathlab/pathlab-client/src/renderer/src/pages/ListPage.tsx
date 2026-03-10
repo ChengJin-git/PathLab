@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchWSIIds, fetchDatasets, renameDataset, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels } from '../api'
+import { fetchWSIList, fetchWSIIds, fetchDatasets, fetchDatasetSummary, renameDataset, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels } from '../api'
 import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -62,8 +62,10 @@ export default function ListPage() {
   const [selectedDatasetName, setSelectedDatasetName] = useState<string>('')
   const [selectedDatasetType, setSelectedDatasetType] = useState<'classification' | 'survival' | 'segmentation'>('classification')
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
+  const [datasetTotalCount, setDatasetTotalCount] = useState(0)
   const [datasetsLoading, setDatasetsLoading] = useState(true)
   const [datasetsError, setDatasetsError] = useState<string | undefined>()
+  const [selectedDatasetSummary, setSelectedDatasetSummary] = useState<DatasetSummary | null>(null)
 
   // File list state (when viewing a dataset)
   const [items, setItems] = useState<any[]>([])
@@ -240,32 +242,16 @@ export default function ListPage() {
     )
   }
 
-  const selectedDatasetSummary = useMemo(
-    () => datasets.find(dataset => dataset.dataset_id === selectedDatasetId) ?? null,
-    [datasets, selectedDatasetId]
-  )
-
   const visibleDatasets = useMemo(() => {
     return datasets.filter(d => !d.dataset_id || !optimisticallyDeletedDatasetIds.has(d.dataset_id))
   }, [datasets, optimisticallyDeletedDatasetIds])
 
-  const datasetsMatchingPrimaryFilters = useMemo(() => {
-    return visibleDatasets.filter((dataset) => {
-      const normalizedTaskType = getNormalizedDatasetTaskType(dataset.task_type)
-      const datasetLevelValue = getDatasetLevelFilterValue(dataset.aggregation_level)
-
-      const matchesTask = datasetTaskFilter === 'all' || normalizedTaskType === datasetTaskFilter
-      const matchesType = datasetTypeFilter === 'all' || dataset.data_type === datasetTypeFilter
-      const matchesLevel = datasetLevelFilter === 'all' || datasetLevelValue === datasetLevelFilter
-
-      return matchesTask && matchesType && matchesLevel
-    })
-  }, [visibleDatasets, datasetTaskFilter, datasetTypeFilter, datasetLevelFilter])
-
   const datasetSourceOptions = useMemo(() => {
-    const sourceValues = Array.from(
-      new Set(datasetsMatchingPrimaryFilters.map((dataset) => getDatasetSourceOrganFilterValue(dataset.source_organ)))
-    ).sort((left, right) => {
+    const sourceValues = Array.from(new Set([
+      ...organSources.filter(source => source !== 'Other'),
+      ...visibleDatasets.map((dataset) => getDatasetSourceOrganFilterValue(dataset.source_organ)),
+      ...(datasetSourceFilter !== 'all' ? [datasetSourceFilter] : []),
+    ])).sort((left, right) => {
       if (left === UNKNOWN_SOURCE_ORGAN_FILTER) return 1
       if (right === UNKNOWN_SOURCE_ORGAN_FILTER) return -1
       return left.localeCompare(right)
@@ -278,22 +264,15 @@ export default function ListPage() {
         label: value === UNKNOWN_SOURCE_ORGAN_FILTER ? t('listPage.filters.unknownSourceOrgan') : value,
       })),
     ]
-  }, [datasetsMatchingPrimaryFilters, t])
-
-  const filteredDatasets = useMemo(() => {
-    return datasetsMatchingPrimaryFilters.filter((dataset) => {
-      if (datasetSourceFilter === 'all') return true
-      return getDatasetSourceOrganFilterValue(dataset.source_organ) === datasetSourceFilter
-    })
-  }, [datasetsMatchingPrimaryFilters, datasetSourceFilter])
+  }, [datasetSourceFilter, t, visibleDatasets])
 
   const datasetItemsPerPage = datasetViewMode === 'grid' ? 8 : datasetListItemsPerPage
-  const datasetTotalPages = Math.max(1, Math.ceil(filteredDatasets.length / datasetItemsPerPage))
+  const datasetTotalPages = Math.max(1, Math.ceil(datasetTotalCount / datasetItemsPerPage))
   const datasetStartIndex = (datasetCurrentPage - 1) * datasetItemsPerPage
   const datasetEndIndex = datasetStartIndex + datasetItemsPerPage
-  const paginatedDatasets = filteredDatasets.slice(datasetStartIndex, datasetEndIndex)
-  const datasetPaginationStart = filteredDatasets.length === 0 ? 0 : datasetStartIndex + 1
-  const datasetPaginationEnd = Math.min(datasetEndIndex, filteredDatasets.length)
+  const paginatedDatasets = visibleDatasets
+  const datasetPaginationStart = datasetTotalCount === 0 ? 0 : datasetStartIndex + 1
+  const datasetPaginationEnd = Math.min(datasetEndIndex, datasetTotalCount)
 
   const hasActiveDatasetFilters =
     datasetTaskFilter !== 'all' || datasetTypeFilter !== 'all' || datasetLevelFilter !== 'all' || datasetSourceFilter !== 'all'
@@ -306,21 +285,26 @@ export default function ListPage() {
     setDatasetCurrentPage(prev => Math.min(prev, datasetTotalPages))
   }, [datasetTotalPages])
 
-  // Load datasets on mount
   useEffect(() => {
-    loadDatasets()
-  }, [])
-
-  // Set initial dataset name and type when datasets are loaded and we have an initialDatasetId
-  useEffect(() => {
-    if (initialDatasetId && datasets.length > 0 && !selectedDatasetName) {
-      const dataset = datasets.find(d => d.dataset_id === initialDatasetId)
-      if (dataset) {
-        setSelectedDatasetName(dataset.dataset_name)
-        setSelectedDatasetType(dataset.task_type)
-      }
+    if (!selectedDatasetId) {
+      loadDatasets()
     }
-  }, [datasets, initialDatasetId, selectedDatasetName])
+  }, [selectedDatasetId, datasetCurrentPage, datasetItemsPerPage, datasetTaskFilter, datasetTypeFilter, datasetLevelFilter, datasetSourceFilter])
+
+  useEffect(() => {
+    if (selectedDatasetId && !selectedDatasetSummary) {
+      void (async () => {
+        try {
+          const dataset = await fetchDatasetSummary(selectedDatasetId)
+          setSelectedDatasetSummary(dataset)
+          setSelectedDatasetName(dataset.dataset_name)
+          setSelectedDatasetType(dataset.task_type)
+        } catch (err) {
+          console.error('Failed to load selected dataset summary:', err)
+        }
+      })()
+    }
+  }, [selectedDatasetId, selectedDatasetSummary])
 
   // Debounce search input → debouncedSearch (300ms)
   useEffect(() => {
@@ -341,8 +325,19 @@ export default function ListPage() {
     setDatasetsLoading(true)
     setDatasetsError(undefined)
     try {
-      const d = await fetchDatasets()
+      const d = await fetchDatasets(datasetTypeFilter === 'all' ? undefined : datasetTypeFilter, {
+        page: datasetCurrentPage,
+        page_size: datasetItemsPerPage,
+        task_type: datasetTaskFilter === 'all' ? undefined : datasetTaskFilter,
+        aggregation_level: datasetLevelFilter === 'all'
+          ? undefined
+          : datasetLevelFilter === 'patient'
+            ? 'case'
+            : 'file',
+        source_organ: datasetSourceFilter === 'all' ? undefined : datasetSourceFilter,
+      })
       setDatasets(d.items || [])
+      setDatasetTotalCount(d.total || 0)
     } catch (e) {
       setDatasetsError(String(e))
     } finally {
@@ -380,6 +375,7 @@ export default function ListPage() {
     setSelectedDatasetId(null)
     setSelectedDatasetName('')
     setSelectedDatasetType('classification')
+    setSelectedDatasetSummary(null)
     setItems([])
     setTotalCount(0)
     setTotalCases(0)
@@ -395,6 +391,7 @@ export default function ListPage() {
     setSelectedDatasetId(dataset.dataset_id)
     setSelectedDatasetName(dataset.dataset_name)
     setSelectedDatasetType(dataset.task_type)
+    setSelectedDatasetSummary(dataset)
     setCurrentPage(1)
     setSearchQuery('')
     setDebouncedSearch('')
@@ -1170,7 +1167,7 @@ export default function ListPage() {
           )}
 
           {/* Datasets Empty State */}
-          {!datasetsLoading && !datasetsError && visibleDatasets.length === 0 && (
+          {!datasetsLoading && !datasetsError && datasetTotalCount === 0 && (
             <div className="flex flex-col items-center justify-center py-16 px-4 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
               <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
                 <Database className="w-8 h-8 text-gray-400" />
@@ -1183,7 +1180,7 @@ export default function ListPage() {
           )}
 
           {/* Dataset Filters */}
-          {!datasetsLoading && !datasetsError && visibleDatasets.length > 0 && (
+          {!datasetsLoading && !datasetsError && datasetTotalCount > 0 && (
             <Card className="relative z-20 border-gray-100 shadow-sm bg-white/80 backdrop-blur-sm">
               <div className="px-4 py-3 sm:px-5 sm:py-3.5">
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -1267,8 +1264,8 @@ export default function ListPage() {
 
                     <span className="inline-flex items-center rounded-full bg-slate-50 px-2.5 py-0.5 text-[11px] sm:text-xs font-medium text-slate-600 whitespace-nowrap">
                       {t('listPage.filters.compactSummary', {
-                        shown: filteredDatasets.length,
-                        total: visibleDatasets.length,
+                        shown: visibleDatasets.length,
+                        total: datasetTotalCount,
                       })}
                     </span>
 
@@ -1288,7 +1285,7 @@ export default function ListPage() {
           )}
 
           {/* Filtered Empty State */}
-          {!datasetsLoading && !datasetsError && visibleDatasets.length > 0 && filteredDatasets.length === 0 && (
+          {!datasetsLoading && !datasetsError && datasetTotalCount > 0 && visibleDatasets.length === 0 && (
             <div className="flex flex-col items-center justify-center py-16 px-4 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
               <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
                 <Search className="w-8 h-8 text-gray-400" />
@@ -1304,7 +1301,7 @@ export default function ListPage() {
           )}
 
           {/* Datasets Grid */}
-          {!datasetsLoading && !datasetsError && filteredDatasets.length > 0 && datasetViewMode === 'grid' && (
+          {!datasetsLoading && !datasetsError && visibleDatasets.length > 0 && datasetViewMode === 'grid' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6 p-1">
               {paginatedDatasets.map((dataset) => {
                 const itemType = getDatasetVisualType(dataset)
@@ -1497,7 +1494,7 @@ export default function ListPage() {
           )}
 
           {/* Datasets List */}
-          {!datasetsLoading && !datasetsError && filteredDatasets.length > 0 && datasetViewMode === 'list' && (
+          {!datasetsLoading && !datasetsError && visibleDatasets.length > 0 && datasetViewMode === 'list' && (
             <div className="space-y-3 p-1">
               {paginatedDatasets.map((dataset) => {
                 const itemType = getDatasetVisualType(dataset)
@@ -1695,14 +1692,14 @@ export default function ListPage() {
             </div>
           )}
 
-          {!datasetsLoading && !datasetsError && filteredDatasets.length > 0 && (
+          {!datasetsLoading && !datasetsError && datasetTotalCount > 0 && (
             <Card className="border-gray-100 bg-white/80 shadow-sm">
               <div className="px-4 sm:px-5 py-4 flex flex-col lg:flex-row items-center justify-between gap-4">
                 <div className="text-xs sm:text-sm text-gray-500 font-medium text-center lg:text-left">
                   {t('listPage.pagination.summary', {
                     start: datasetPaginationStart,
                     end: datasetPaginationEnd,
-                    total: filteredDatasets.length,
+                    total: datasetTotalCount,
                   })}
                 </div>
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName } from '../api'
+import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName, getTrainingTasks, TrainingTaskListStats } from '../api'
 import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES, CancellableStatus } from '../constants/status'
 import { isSegFmEncoder } from '../constants/training'
@@ -47,8 +47,10 @@ export default function TaskListPage() {
   const [filter, setFilter] = useState<'all' | 'running' | 'completed' | 'failed' | 'cancelled'>('all')
   const [sortBy, setSortBy] = useState<'created' | 'updated' | 'name'>('updated')
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(5)
+  const [totalCount, setTotalCount] = useState(0)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null)
   const [deleteMode, setDeleteMode] = useState<'standard' | 'complete'>('standard')
@@ -60,7 +62,7 @@ export default function TaskListPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null)
-  const [deletedTaskIds, setDeletedTaskIds] = useState<Set<string>>(new Set())
+  const [stats, setStats] = useState<TrainingTaskListStats>({ total: 0, running: 0, completed: 0, failed: 0, cancelled: 0 })
 
   // Edit task name modal states
   const [showEditModal, setShowEditModal] = useState(false)
@@ -77,6 +79,14 @@ export default function TaskListPage() {
     return () => unsubscribe()
   }, [subscribeTrainingSSE])
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim())
+    }, 300)
+
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+
   // Handle cancel task
   const handleCancelTask = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -90,15 +100,48 @@ export default function TaskListPage() {
     }
   }
 
-  // Sync training tasks from BackgroundTaskContext SSE (avoids duplicate SSE connection)
-  // Filter out tasks that have been deleted locally
-  useEffect(() => {
-    if (rawTrainingTasks !== null) {
-      const filteredTasks = rawTrainingTasks.filter(t => !deletedTaskIds.has(t.task_id))
-      setTasks(filteredTasks)
-      setLoading(false)
+  const refreshTasks = React.useCallback(async (showLoadingSpinner: boolean = true) => {
+    if (showLoadingSpinner) {
+      setLoading(true)
     }
-  }, [rawTrainingTasks, deletedTaskIds])
+
+    try {
+      const response = await getTrainingTasks({
+        page: currentPage,
+        page_size: itemsPerPage,
+        search: debouncedSearchQuery || undefined,
+        status_filter: filter,
+        sort_by: sortBy,
+      })
+
+      setTasks(response.items || [])
+      setTotalCount(response.total || 0)
+      setStats(response.stats || { total: 0, running: 0, completed: 0, failed: 0, cancelled: 0 })
+    } catch (error) {
+      console.error('Failed to load training tasks:', error)
+      if (showLoadingSpinner) {
+        setTasks([])
+        setTotalCount(0)
+      }
+    } finally {
+      if (showLoadingSpinner) {
+        setLoading(false)
+      }
+    }
+  }, [currentPage, itemsPerPage, debouncedSearchQuery, filter, sortBy])
+
+  useEffect(() => {
+    void refreshTasks(true)
+  }, [refreshTasks])
+
+  useEffect(() => {
+    if (rawTrainingTasks === null) return
+    void refreshTasks(false)
+  }, [rawTrainingTasks, refreshTasks])
+
+  useEffect(() => {
+    setSelectedTasks([])
+  }, [currentPage, itemsPerPage, debouncedSearchQuery, filter, sortBy])
 
   const handleDeleteTask = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation() // Prevent card click
@@ -164,7 +207,7 @@ export default function TaskListPage() {
 
   const toggleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedTasks(filteredTasks.map(t => t.task_id))
+      setSelectedTasks(tasks.map(t => t.task_id))
     } else {
       setSelectedTasks([])
     }
@@ -212,19 +255,21 @@ export default function TaskListPage() {
         await deleteTrainingTask(taskId, deleteMode)
       }
 
-      // All deletions successful - update local state immediately
-      setTasks(prev => prev.filter(t => !taskIdsToDelete.includes(t.task_id)))
-
-      // Mark these tasks as deleted so they won't reappear from SSE updates
-      setDeletedTaskIds(prev => {
-        const newSet = new Set(prev)
-        taskIdsToDelete.forEach(id => newSet.add(id))
-        return newSet
+      const response = await getTrainingTasks({
+        page: currentPage,
+        page_size: itemsPerPage,
+        search: debouncedSearchQuery || undefined,
+        status_filter: filter,
+        sort_by: sortBy,
       })
+
+      setTasks(response.items || [])
+      setTotalCount(response.total || 0)
+      setStats(response.stats || { total: 0, running: 0, completed: 0, failed: 0, cancelled: 0 })
+      setSelectedTasks([])
 
       // Clean up state
       if (isBatchDelete) {
-        setSelectedTasks([])
         setIsBatchDelete(false)
       } else {
         setTaskToDelete(null)
@@ -295,26 +340,6 @@ export default function TaskListPage() {
     })
   }
 
-  const filteredTasks = tasks.filter(task => {
-    // Filter by status
-    let statusMatch = true
-    if (filter === 'running') statusMatch = isActiveStatus(task.status)
-    else if (filter === 'completed') statusMatch = task.status === 'completed'
-    else if (filter === 'failed') statusMatch = task.status === 'failed'
-    else if (filter === 'cancelled') statusMatch = task.status === 'cancelled'
-
-    // Filter by search query (task name or task ID)
-    let searchMatch = true
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase().trim()
-      searchMatch =
-        task.task_name.toLowerCase().includes(query) ||
-        task.task_id.toLowerCase().includes(query)
-    }
-
-    return statusMatch && searchMatch
-  })
-
   const calculateDuration = (start: string | null, end: string | null, status: Task['status']) => {
     if (!start || !end) return t('taskList.na')
     if (isActiveStatus(status) || status === 'pending') return t('taskList.inProgress')
@@ -325,30 +350,14 @@ export default function TaskListPage() {
     return `${minutes}m ${Math.floor((duration % (1000 * 60)) / 1000)}s`
   }
 
-  const sortedTasks = [...filteredTasks].sort((a, b) => {
-    if (sortBy === 'created') return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
-    if (sortBy === 'updated') return new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime()
-    if (sortBy === 'name') return a.task_name.localeCompare(b.task_name)
-    return 0
-  })
-
-  const totalPages = Math.max(1, Math.ceil(sortedTasks.length / itemsPerPage))
-  const paginatedTasks = sortedTasks.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
-  const paginationStart = sortedTasks.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1
-  const paginationEnd = Math.min(currentPage * itemsPerPage, sortedTasks.length)
-  const allFilteredSelected = filteredTasks.length > 0 && filteredTasks.every(task => selectedTasks.includes(task.task_id))
+  const totalPages = Math.max(1, Math.ceil(totalCount / itemsPerPage))
+  const paginationStart = totalCount === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1
+  const paginationEnd = Math.min(currentPage * itemsPerPage, totalCount)
+  const allFilteredSelected = tasks.length > 0 && tasks.every(task => selectedTasks.includes(task.task_id))
 
   useEffect(() => {
     setCurrentPage(prev => Math.min(prev, totalPages))
   }, [totalPages])
-
-  const stats = {
-    total: tasks.length,
-    running: tasks.filter(t => isActiveStatus(t.status)).length,
-    completed: tasks.filter(t => t.status === 'completed').length,
-    failed: tasks.filter(t => t.status === 'failed').length,
-    cancelled: tasks.filter(t => t.status === 'cancelled').length
-  }
 
   return (
     <div className="w-full">
@@ -521,7 +530,7 @@ export default function TaskListPage() {
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
           <p className="text-gray-600">{t('taskList.loadingTasks')}</p>
         </Card>
-      ) : sortedTasks.length === 0 ? (
+      ) : tasks.length === 0 ? (
         <Card className="p-12 text-center">
           <ClipboardList className="w-16 h-16 mx-auto mb-4 text-gray-400" />
           <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('taskList.noTasksFound')}</h3>
@@ -539,7 +548,7 @@ export default function TaskListPage() {
         </Card>
       ) : (
         <div className="space-y-3 pb-8">
-          {paginatedTasks.map(task => (
+          {tasks.map(task => (
             <Card
               key={task.task_id}
               className={`group p-4 sm:p-6 hover:shadow-lg transition-all cursor-pointer overflow-visible border-gray-100 ${selectedTasks.includes(task.task_id) ? 'ring-2 ring-gray-900 bg-gray-50' : 'bg-white'
@@ -759,7 +768,7 @@ export default function TaskListPage() {
                 {t('taskList.pagination.summary', {
                   start: paginationStart,
                   end: paginationEnd,
-                  total: sortedTasks.length,
+                  total: totalCount,
                 })}
               </div>
 

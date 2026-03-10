@@ -10,7 +10,7 @@ backend/
 ├── auth/             # 用户模型、JWT/FastAPI-Users 配置
 ├── common/           # 配置、Redis、端口与通用工具
 ├── database/         # SQLAlchemy 模型、Session、Repository
-├── preprocessing/    # WSI 信息 / DZI / Tile / Heatmap 服务
+├── preprocessing/    # WSI 信息 / 图像 / DZI / Tile / Heatmap 服务
 └── storage/          # 存储统计、迁移、孤立文件处理
 ```
 
@@ -18,18 +18,15 @@ backend/
 
 入口文件：`backend/preprocessing/main.py`
 
-当前暴露的能力包括：
+当前代码可以确认它承担的主要职责包括：
 
-- `/health`
-- `/wsi/{wsi_id}/info`
-- `/wsi/{wsi_id}/image`
-- `/wsi/{wsi_id}/thumbnail`
-- `/wsi/{wsi_id}/dzi`
-- `/wsi/{wsi_id}/tiles/{level}/{x}_{y}.jpeg`
-- `/api/wsi`（WSI 列表）
-- `heatmap_routes.py` 中的热图相关接口
+- WSI 健康检查与基础信息读取
+- WSI 原图 / 缩略图 / DZI / Tile 提供
+- `heatmap_routes.py` 中的热图相关辅助接口
+- 热图预览缓存与相关工具函数
+- 为数据集生成 COCO 标注缓存时，在 `uploads/annotations/` 下写入 `*_coco.json`
 
-它更像是底层图像服务，不直接承担业务权限和用户会话逻辑。
+它本质上是底层图像与预处理服务，不直接承担用户认证与业务权限逻辑。
 
 ## AI 服务现状
 
@@ -40,15 +37,11 @@ backend/
 - `routes/training.py`
 - `routes/inference.py`
 
-已知公开接口包括：
+当前职责可概括为：
 
-- `/health`
-- `/api/ai/training/start`
-- `/api/ai/training/status/{task_id}`
-- `/api/ai/training/task/{task_id}`
-- `/api/ai/training/results/{task_id}`
-- `/api/ai/analyze`
-- `/api/ai/wsi_classification`
+- 训练任务启动、状态追踪、结果读取
+- 推理与分析相关内部能力
+- 模型、特征提取器与训练流水线复用逻辑
 
 ## Shared Infrastructure
 
@@ -68,7 +61,7 @@ backend/
 ### Redis / 配置
 
 - 统一配置：`common/config.py`
-- Redis 封装：`common/redis_manager.py`
+- Redis 客户端 / 连接管理位于 `common/` 下
 - 端口与服务发现工具：`common/port_utils.py` 等
 
 ### 存储
@@ -81,8 +74,8 @@ backend/
 ## 当前代码状态提示
 
 - 旧文档中的 `annotation_drafts` 已不再对应当前表名；当前模型为 `segmentation_annotations`
-- 旧文档中的单体 API / 单体服务表述已经过时，当前实现明显拆成 Gateway / Preprocessing / AI 三层
-- 文件系统状态不只包含 WSI，本地还管理模型、训练日志、特征、遮罩、坐标、PDF 缓存等目录
+- 旧文档中的单体 API / 单体服务表述已经过时，当前实现明确拆成 Gateway / Preprocessing / AI 三层
+- `backend/common/config.py` 会确保 `avatars`、`coordinates`、`masks`、`features`、`ai_results`、`training`、`models`、`logs`、`wsi_files`、`metadata`、`progress` 等目录存在
 
 ## 相关文档
 

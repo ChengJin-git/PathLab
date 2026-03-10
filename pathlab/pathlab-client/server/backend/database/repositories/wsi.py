@@ -717,6 +717,10 @@ class WSIRepository:
         user_id: Optional[str] = None,
         elevated_dataset_ids: Optional[List[str]] = None,
         search: Optional[str] = None,
+        dataset_id: Optional[str] = None,
+        task_type: Optional[str] = None,
+        aggregation_level: Optional[str] = None,
+        source_organ: Optional[str] = None,
     ):
         from sqlalchemy import case
 
@@ -780,6 +784,21 @@ class WSIRepository:
         if normalized_search:
             query = query.where(Dataset.name.ilike(f"%{normalized_search}%"))
 
+        if dataset_id:
+            query = query.where(Dataset.dataset_id == dataset_id)
+
+        if task_type:
+            query = query.where(DataGroup.task_type == task_type)
+
+        if aggregation_level:
+            query = query.where(DataGroup.aggregation_level == aggregation_level)
+
+        if source_organ:
+            normalized_source = source_organ.strip()
+            if normalized_source:
+                source_expr = func.coalesce(func.nullif(func.trim(WSISlide.source), ''), '__unknown__')
+                query = query.where(source_expr == normalized_source)
+
         return query.group_by(
             Dataset.dataset_id, Dataset.name, Dataset.user_id, Dataset.group_id,
             DataGroup.data_type, DataGroup.aggregation_level, DataGroup.task_type
@@ -792,6 +811,10 @@ class WSIRepository:
         user_id: Optional[str] = None,
         elevated_dataset_ids: Optional[List[str]] = None,
         search: Optional[str] = None,
+        dataset_id: Optional[str] = None,
+        task_type: Optional[str] = None,
+        aggregation_level: Optional[str] = None,
+        source_organ: Optional[str] = None,
     ) -> int:
         """Count datasets visible under the current filter set."""
         grouped_query = WSIRepository._build_dataset_summary_query(
@@ -799,6 +822,10 @@ class WSIRepository:
             user_id=user_id,
             elevated_dataset_ids=elevated_dataset_ids,
             search=search,
+            dataset_id=dataset_id,
+            task_type=task_type,
+            aggregation_level=aggregation_level,
+            source_organ=source_organ,
         )
         result = await db.execute(select(func.count()).select_from(grouped_query.subquery()))
         return result.scalar() or 0
@@ -810,6 +837,10 @@ class WSIRepository:
         user_id: Optional[str] = None,
         elevated_dataset_ids: Optional[List[str]] = None,
         search: Optional[str] = None,
+        dataset_id: Optional[str] = None,
+        task_type: Optional[str] = None,
+        aggregation_level: Optional[str] = None,
+        source_organ: Optional[str] = None,
         skip: int = 0,
         limit: int = 0,
     ) -> List[Dict]:
@@ -834,6 +865,10 @@ class WSIRepository:
             user_id=user_id,
             elevated_dataset_ids=elevated_dataset_ids,
             search=search,
+            dataset_id=dataset_id,
+            task_type=task_type,
+            aggregation_level=aggregation_level,
+            source_organ=source_organ,
         ).order_by(Dataset.name)
 
         if skip > 0:

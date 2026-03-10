@@ -7,7 +7,7 @@
 - 技术栈：React 18 + TypeScript + Vite + Tailwind CSS
 - 路由：浏览器模式使用 `BrowserRouter`，Electron 模式使用 `HashRouter`
 - 国际化：`en-US`、`zh-CN`、`zh-HK`
-- PWA：`vite-plugin-pwa` 已启用，浏览器模式下会注册 Service Worker
+- PWA：浏览器模式会注册 Service Worker，Electron 模式不会
 - WSI 阅片：OpenSeadragon 资源随项目一起打包
 
 ## 关键入口文件
@@ -38,6 +38,15 @@ src/renderer/
 └── vite.config.ts
 ```
 
+## 当前运行时事实
+
+`src/main.tsx` 当前会：
+
+- 根据 Electron / 浏览器环境选择 `HashRouter` 或 `BrowserRouter`
+- 启动时调用 `initializeApiConfig()` 初始化后端地址
+- 组合 `ToastProvider`、`AuthProvider`、`BackgroundTaskProvider`
+- 在浏览器模式注册 Service Worker
+
 ## 当前路由与页面
 
 `src/App.tsx` 当前定义了：
@@ -49,23 +58,35 @@ src/renderer/
 - 结果相关：`/results`、`/reports`
 - 以及 1 个 `*` 兜底路由
 
-另外，`pages/StorageManagementPage.tsx` 目前作为设置页内部功能页使用，并非独立路由。
+另外，`pages/StorageManagementPage.tsx` 当前仍是设置页内部功能页，并非独立路由。
+
+## API 客户端现状
+
+`src/api/` 当前已经按业务拆分为多个模块，包括：
+
+- `analysis`
+- `annotation`
+- `auth`
+- `chat`
+- `export`
+- `feedback`
+- `heatmap`
+- `permissions`
+- `queue`
+- `results`
+- `settings`
+- `stats`
+- `storage`
+- `training`
+- `users`
+- `wsi`
+- 以及 `client` / `crypto` / `index` 等公共封装
 
 ## 与后端的连接方式
 
 - Electron 模式：通过 preload 暴露的 IPC 获取 Gateway 动态端口
 - 浏览器模式：默认使用固定调试端口 `6100 / 6101 / 6102`，也可由环境变量覆盖
-- `src/config.ts` 会统一导出：
-  - `API_BASE`
-  - `PREPROCESSING_BASE`
-  - `AI_BASE`
-
-## 当前和旧文档的差异
-
-- API 客户端已经从单文件拆成 `src/api/` 目录
-- 运行时增加了 `ToastProvider`
-- 浏览器模式会注册 Service Worker；Electron 模式不会
-- OpenSeadragon 资源使用本地打包资产，而不是运行时远程加载
+- `src/config.ts` 会统一导出 `API_BASE`、`PREPROCESSING_BASE`、`AI_BASE`
 
 ## 相关文档
 

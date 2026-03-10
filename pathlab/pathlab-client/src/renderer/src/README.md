@@ -21,7 +21,7 @@ src/
 
 ## 当前路由
 
-`App.tsx` 中现在有 14 个主路由入口，外加 1 个兜底 `*` 路由：
+`App.tsx` 中当前有 14 个主路由入口，外加 1 个兜底 `*` 路由：
 
 - 公开页：`/`、`/login`
 - 受保护页面：
@@ -38,37 +38,62 @@ src/
   - `/reports`
   - `/wsi/:wsi_id`
 
-说明：`pages/StorageManagementPage.tsx` 目前不是独立路由，而是作为设置页内部视图使用。
+说明：`pages/StorageManagementPage.tsx` 当前不是独立路由，而是作为设置页内部视图使用。
 
 ## 运行时事实
 
 - Electron 环境下使用 `HashRouter`
 - 浏览器环境下使用 `BrowserRouter`
 - `main.tsx` 会先调用 `initializeApiConfig()`，从 preload / Electron IPC 获取 Gateway 端口
+- 运行时组合 `ToastProvider`、`AuthProvider`、`BackgroundTaskProvider`
 - 浏览器模式会注册 Service Worker；Electron 模式不会注册
 
 ## API 客户端现状
 
-旧文档里提到的单体 `api.ts` 已经拆分为模块化目录：
+旧文档里提到的单体 `api.ts` 已经拆分为模块化目录。当前可见模块包括：
 
+- `api/analysis.ts`
+- `api/annotation.ts`
 - `api/auth.ts`
 - `api/chat.ts`
-- `api/wsi.ts`
-- `api/training.ts`
+- `api/export.ts`
+- `api/feedback.ts`
+- `api/heatmap.ts`
+- `api/permissions.ts`
+- `api/queue.ts`
 - `api/results.ts`
+- `api/settings.ts`
+- `api/stats.ts`
 - `api/storage.ts`
-- `api/annotation.ts`
-- `api/analysis.ts`
-- 以及 `client.ts` / `index.ts` 等公共封装
+- `api/training.ts`
+- `api/users.ts`
+- `api/wsi.ts`
+- 以及 `client.ts` / `crypto.ts` / `index.ts` 等公共封装
 
-## 主要页面文件
+## 主要页面与状态模块
 
 - `AIChatPage.tsx`：AI 对话与 PDF 辅助阅读
 - `ListPage.tsx`：WSI 列表与数据浏览
+- `UploadPage.tsx`：数据注册 / 上传入口（路由为 `/register`）
 - `WSIViewerPage.tsx`：全屏阅片器
 - `NewTaskPage.tsx` / `TaskDetailPage.tsx` / `TaskListPage.tsx`：任务配置与追踪
 - `ResultsViewerPage.tsx` / `ReportGeneratorPage.tsx`：结果查看与报告导出
-- `SettingsPage.tsx`：系统设置、存储管理入口
+- `SettingsPage.tsx` / `StorageManagementPage.tsx`：系统设置与存储管理相关界面
+- `contexts/backgroundTask/`：训练、分析、存储相关 SSE / 动作封装
+
+## 组件分层补充
+
+`components/` 当前除了基础 UI 外，还拆出了这些主要分组：
+
+- `chat/`
+- `list/`
+- `results/`
+- `settings/`
+- `taskDetail/`
+- `training/`
+- `upload/`
+- `workflow/`
+- `wsiViewer/`
 
 ## 相关文档
 
