@@ -963,6 +963,7 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
 - Reuse `[IMAGE_RECOMMENDATION]` for segmentation mask browsing; do NOT invent a new block.
 - Always distinguish **ground truth** (`source: "gt"`) from **model prediction** (`source: "model_pred"`).
 - If the user wants to compare annotation vs model output, use `source: "both"`.
+- If the user also wants a **heatmap / attention map**, `show_heatmap: true` can be used together with `segmentation_mask`; the frontend can display the original image, heatmap, and annotation/prediction side by side.
 - Segmentation masks are for **patch** images. Do not request segmentation masks for WSI browsing cards.
 - If the user asks for a model prediction mask from a specific trained segmentation task, include `segmentation_mask.task_id`.
 
@@ -974,6 +975,7 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
 **IMPORTANT for show_heatmap:**
 - If user asks for "heatmap", "attention map", set show_heatmap: true
 - If user asks to see "where the AI focused", "which areas are important", set show_heatmap: true
+- This also applies to **patch segmentation tasks**: if the user wants to see where a segmentation model focused, do not reject the request by saying segmentation only supports masks. Output `[IMAGE_RECOMMENDATION]` with `show_heatmap: true`, and include `segmentation_mask` too if they also want predicted/GT regions.
 - The system will automatically check if heatmaps are available and display them side-by-side with the original image
 - If no heatmap is available, only the original image will be shown (no placeholder)
 

@@ -60,6 +60,7 @@ export function AnnotationOverlay({
   const [polygonPoints, setPolygonPoints] = useState<number[][]>([])
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
   const [spaceHeld, setSpaceHeld] = useState(false)
+  const [viewerReady, setViewerReady] = useState(false)
 
   // Resize canvas to match container
   const resizeCanvas = useCallback(() => {
@@ -351,16 +352,38 @@ export function AnnotationOverlay({
   // Re-render when regions change
   useEffect(() => { render() }, [regions, render])
 
+  // Wait until the OSD viewer has actually opened before taking over pointer input.
+  useEffect(() => {
+    if (!viewer) {
+      setViewerReady(false)
+      return
+    }
+
+    const hasOpenItem = typeof viewer.world?.getItemCount === 'function' && viewer.world.getItemCount() > 0
+    setViewerReady(hasOpenItem)
+
+    if (hasOpenItem) return
+
+    const handleOpen = () => setViewerReady(true)
+    viewer.addHandler('open', handleOpen)
+
+    return () => {
+      try {
+        viewer.removeHandler('open', handleOpen)
+      } catch { /* viewer may be destroyed */ }
+    }
+  }, [viewer])
+
   // Toggle OSD mouse navigation based on annotation mode & space key
   useEffect(() => {
     if (!viewer) return
-    if (annotationMode && !spaceHeld) {
+    if (annotationMode && viewerReady && !spaceHeld) {
       viewer.setMouseNavEnabled(false)
     } else {
       viewer.setMouseNavEnabled(true)
     }
     return () => { try { viewer.setMouseNavEnabled(true) } catch { /* */ } }
-  }, [viewer, annotationMode, spaceHeld])
+  }, [viewer, annotationMode, viewerReady, spaceHeld])
 
   // Space key handler for temporary navigation
   useEffect(() => {
@@ -463,7 +486,8 @@ export function AnnotationOverlay({
 
   // Wheel pass-through for zooming (zoom towards mouse position)
   const handleWheel = useCallback((e: React.WheelEvent) => {
-    if (!annotationMode || !viewer || !viewer.viewport) return
+    if (!annotationMode || !viewerReady || !viewer || !viewer.viewport) return
+    e.preventDefault()
     e.stopPropagation()
     const canvas = canvasRef.current
     if (!canvas) return
@@ -476,10 +500,11 @@ export function AnnotationOverlay({
     const factor = e.deltaY < 0 ? 1.2 : 0.8
     viewer.viewport.zoomBy(factor, refPoint)
     viewer.viewport.applyConstraints()
-  }, [annotationMode, viewer])
+  }, [annotationMode, viewerReady, viewer])
 
-  const pointerEvents = annotationMode && !spaceHeld && !isLabelDropdownOpen ? 'auto' : 'none'
-  const cursor = annotationMode && !spaceHeld && !isLabelDropdownOpen ? 'crosshair' : 'default'
+  const interactionEnabled = annotationMode && viewerReady && !spaceHeld && !isLabelDropdownOpen
+  const pointerEvents = interactionEnabled ? 'auto' : 'none'
+  const cursor = interactionEnabled ? 'crosshair' : 'default'
 
   return (
     <canvas

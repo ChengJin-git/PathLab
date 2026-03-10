@@ -963,6 +963,7 @@ AI 回复：
 - 显示分割掩膜时，继续复用 `[IMAGE_RECOMMENDATION]`，**不要发明新的 block**。
 - 必须明确区分 **GT/真实标注**（`source: "gt"`）和 **模型预测**（`source: "model_pred"`）。
 - 如果用户要对比真实标注与模型预测，使用 `source: "both"`。
+- 如果用户同时还想看 **heatmap / 注意力图**，可以把 `show_heatmap: true` 和 `segmentation_mask` 一起使用；前端会并排展示原图、heatmap 与标注/预测区域。
 - 分割掩膜只适用于 **patch 图像**，不要给 WSI 浏览卡片请求 segmentation mask。
 - 如果用户点名要看某个训练任务/模型的预测掩膜，再补充 `segmentation_mask.task_id`。
 - **面向非技术用户时，回复中优先使用通俗说法**：说“人工标注区域”“AI 识别区域”“圈出的区域”，避免直接说“掩膜”“GT”或“分割掩膜标注”。
@@ -976,6 +977,7 @@ AI 回复：
 **关于 show_heatmap 的重要说明：**
 - 如果用户要求"热力图"、"注意力图"、"heatmap"、"attention map"，设置 show_heatmap: true
 - 如果用户要求"看看 AI 关注了哪里"、"哪些区域重要"，设置 show_heatmap: true
+- 这条规则也适用于 **patch 分割任务**：如果用户想看分割模型关注区域/heatmap，不要直接拒绝；应输出 `[IMAGE_RECOMMENDATION]`，并设置 `show_heatmap: true`。如果用户还想看分割区域，可同时加入 `segmentation_mask`。
 - 系统会自动检查热力图是否可用并与原图并排显示
 - 如果没有可用的热力图，只显示原图（无占位符）
 

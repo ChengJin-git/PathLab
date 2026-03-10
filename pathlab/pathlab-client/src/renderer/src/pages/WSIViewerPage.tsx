@@ -124,27 +124,6 @@ export default function WSIViewerPage() {
     }
   }
 
-  // Mouse wheel zoom for patch viewer - use non-passive event listener to allow preventDefault
-  useEffect(() => {
-    const container = patchContainerRef.current
-    if (!container) return
-
-    const handleWheel = (e: WheelEvent) => {
-      e.preventDefault()
-      if (e.deltaY < 0) {
-        setPatchZoom(prev => Math.min(prev * 1.1, 10))
-      } else {
-        setPatchZoom(prev => Math.max(prev / 1.1, 0.5))
-      }
-    }
-
-    // Use { passive: false } to allow preventDefault
-    container.addEventListener('wheel', handleWheel, { passive: false })
-    return () => {
-      container.removeEventListener('wheel', handleWheel)
-    }
-  }, [])
-
   // Pan and click handlers for patch viewer
   const [clickStart, setClickStart] = useState({ x: 0, y: 0 })
 
@@ -409,6 +388,28 @@ export default function WSIViewerPage() {
   const canShowSegMaskOverlay = selectedTaskEntries.some(h => h.data_type === 'patch_segmentation')
   const shouldShowOverlayControls = canShowHeatmapOverlay || canShowSegMaskOverlay
   const segmentationClasses = selectedSegmentationEntry?.classes ?? []
+
+  // Mouse wheel zoom for patch viewer - wait until the conditional patch container is mounted
+  useEffect(() => {
+    if (!isPatchLevel) return
+
+    const container = patchContainerRef.current
+    if (!container) return
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      if (e.deltaY < 0) {
+        setPatchZoom(prev => Math.min(prev * 1.1, 10))
+      } else {
+        setPatchZoom(prev => Math.max(prev / 1.1, 0.5))
+      }
+    }
+
+    container.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      container.removeEventListener('wheel', handleWheel)
+    }
+  }, [isPatchLevel])
 
   // Get available folds for the selected task (K-fold support)
   const availableFolds = useMemo(() => {

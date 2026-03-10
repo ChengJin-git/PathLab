@@ -44,6 +44,8 @@ export interface DatasetGroundTruthResponse {
   annotations: AnnotationsMap
   record_count: number
   source: 'ground_truth'
+  width?: number | null
+  height?: number | null
 }
 
 export interface AnnotationSummaryLabel {

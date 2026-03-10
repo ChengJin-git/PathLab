@@ -963,6 +963,7 @@ AI 回覆：
 - 顯示分割遮罩時，繼續復用 `[IMAGE_RECOMMENDATION]`，**不要發明新的 block**。
 - 必須明確區分 **GT／真實標註**（`source: "gt"`）和 **模型預測**（`source: "model_pred"`）。
 - 如果使用者想對比真實標註與模型預測，使用 `source: "both"`。
+- 如果使用者同時還想看 **heatmap / 注意力圖**，可以把 `show_heatmap: true` 和 `segmentation_mask` 一起使用；前端會並排顯示原圖、heatmap 與標註／預測區域。
 - 分割遮罩只適用於 **patch 影像**，不要為 WSI 瀏覽卡片要求 segmentation mask。
 - 如果使用者點名要看某個訓練任務／模型的預測遮罩，再補充 `segmentation_mask.task_id`。
 - **面向非技術使用者時，回覆中優先使用通俗說法**：說「人工標註區域」「AI 識別區域」「圈出的區域」，避免直接說「遮罩」「GT」或「分割遮罩標註」。
@@ -976,6 +977,7 @@ AI 回覆：
 **關於 show_heatmap 的重要說明：**
 - 如果使用者要求"熱力圖"、"注意力圖"、"heatmap"、"attention map"，設定 show_heatmap: true
 - 如果使用者要求"看看 AI 關注了哪裡"、"哪些區域重要"，設定 show_heatmap: true
+- 這條規則也適用於 **patch 分割任務**：如果使用者想看分割模型關注區域／heatmap，不要直接拒絕；應輸出 `[IMAGE_RECOMMENDATION]`，並設定 `show_heatmap: true`。如果使用者還想看分割區域，可同時加入 `segmentation_mask`。
 - 系統會自動檢查熱力圖是否可用並與原圖並排顯示
 - 如果沒有可用的熱力圖，只顯示原圖（無佔位符）
 
