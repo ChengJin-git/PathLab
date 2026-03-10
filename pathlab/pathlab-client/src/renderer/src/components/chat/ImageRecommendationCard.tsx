@@ -53,6 +53,7 @@ interface ImageWithOverlays {
 interface ViewerNavigationState {
   fromAIChat: boolean
   conversationId?: string
+  chatScrollPosition?: string
   selectedTaskId?: string
   selectedFoldKey?: string
   initialShowHeatmap?: boolean
@@ -658,8 +659,9 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
   const handleImageClick = (wsiId: string, heatmapOverlay?: AvailableHeatmap) => {
     // Save scroll position and conversation ID before navigating
     const messagesContainer = document.querySelector('[data-chat-messages-container]')
+    const scrollPosition = messagesContainer ? String(messagesContainer.scrollTop) : undefined
     if (messagesContainer) {
-      sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
+      sessionStorage.setItem('ai-chat-scroll-position', scrollPosition || '0')
     }
     const conversationId = document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
     if (conversationId) {
@@ -668,6 +670,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
     const navigationState: ViewerNavigationState = {
       fromAIChat: true,
       conversationId: conversationId || undefined,
+      chatScrollPosition: scrollPosition,
     }
 
     if (heatmapOverlay?.task_id) {

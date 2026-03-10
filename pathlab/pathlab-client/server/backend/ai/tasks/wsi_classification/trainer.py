@@ -45,6 +45,7 @@ from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 from backend.ai.permission_revocation import is_permission_revoked, PermissionRevokedException
+from backend.preprocessing.heatmap_preview_cache import ensure_recommendation_preview_cache
 from backend.ai.tasks.training_utils import (
     safe_update_progress as _safe_update_progress,
     scoped_db,
@@ -2060,6 +2061,7 @@ class WSIClassificationTrainer(BaseTrainer):
             if attention_np is not None:
                 attention_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy"
                 np.save(attention_file, attention_np)
+                ensure_recommendation_preview_cache(wsi_id, attention_file, Config.get_uploads_dir())
 
             if raw_attention_np is not None:
                 raw_attention_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_attention_raw.npy"

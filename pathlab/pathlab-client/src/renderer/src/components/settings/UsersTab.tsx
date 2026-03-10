@@ -1,12 +1,12 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, Key, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, Construction, Search, ChevronLeft, ChevronRight, Megaphone, Send, X, Database } from 'lucide-react'
+import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, Construction, Search, ChevronLeft, ChevronRight, Megaphone, Send, X, Database } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Select } from '../ui/select'
 import {
-  listUsers, updateUser, deleteUser, registerUser, revokeUserAgreement,
+  listUsersPaged, updateUser, deleteUser, registerUser, revokeUserAgreement,
   batchActivateUsers, batchDeactivateUsers, batchDeleteUsers,
   getMaintenanceMode, setMaintenanceMode as setMaintenanceModeApi,
   getMaintenanceNotice, setMaintenanceNotice as setMaintenanceNoticeApi
@@ -17,6 +17,8 @@ import { ShowConfirmDialog } from './ConfirmDialog'
 import { EditUserModal } from './EditUserModal'
 import { CreateUserModal } from './CreateUserModal'
 import { PermissionCenterModal } from './PermissionCenterModal'
+
+type PermissionMode = 'user' | 'dataset'
 
 export interface UsersTabProps {
   showConfirmDialog: ShowConfirmDialog
@@ -51,11 +53,8 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
   const [showNoticeInput, setShowNoticeInput] = useState(false)
   const [sendingNotice, setSendingNotice] = useState(false)
 
-  const [permissionCenterState, setPermissionCenterState] = useState<{
-    open: boolean
-    mode: 'user' | 'dataset'
-    userId?: string
-  }>({ open: false, mode: 'dataset' })
+  const [permissionCenterOpen, setPermissionCenterOpen] = useState(false)
+  const [permissionCenterMode, setPermissionCenterMode] = useState<PermissionMode>('user')
 
   // Batch selection state
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set())
@@ -64,20 +63,33 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
   const [searchQuery, setSearchQuery] = useState('')
   const [itemsPerPage, setItemsPerPage] = useState(10)
   const [currentPage, setCurrentPage] = useState(1)
+  const [totalUsers, setTotalUsers] = useState(0)
 
   // --- Data loading ---
   const loadUsers = useCallback(async () => {
     setLoadingUsers(true)
     setUsersError(null)
     try {
-      const userList = await listUsers()
-      setUsers(userList)
+      const response = await listUsersPaged({
+        page: currentPage,
+        page_size: itemsPerPage,
+        search: searchQuery.trim() || undefined
+      })
+
+      const nextTotalPages = Math.max(1, Math.ceil(response.total / itemsPerPage) || 1)
+      if (response.total > 0 && currentPage > nextTotalPages) {
+        setCurrentPage(nextTotalPages)
+        return
+      }
+
+      setUsers(response.items)
+      setTotalUsers(response.total)
     } catch (err) {
       setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToLoadUsers'))
     } finally {
       setLoadingUsers(false)
     }
-  }, [t])
+  }, [currentPage, itemsPerPage, searchQuery, t])
 
   const loadMaintenanceMode = useCallback(async () => {
     try {
@@ -181,33 +193,12 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
     })
   }
 
-  // Reset page when search or items per page changes
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [searchQuery, itemsPerPage])
-
-  // Filtered users
-  const filteredUsers = useMemo(() => {
-    if (!searchQuery.trim()) return users
-    const query = searchQuery.toLowerCase()
-    return users.filter(user => 
-      user.email.toLowerCase().includes(query) || 
-      (user.nickname && user.nickname.toLowerCase().includes(query))
-    )
-  }, [users, searchQuery])
-
-  // Paginated users
-  const paginatedUsers = useMemo(() => {
-    const start = (currentPage - 1) * itemsPerPage
-    return filteredUsers.slice(start, start + itemsPerPage)
-  }, [filteredUsers, currentPage, itemsPerPage])
-
-  const totalPages = Math.ceil((filteredUsers.length || 1) / itemsPerPage)
+  const totalPages = Math.max(1, Math.ceil(totalUsers / itemsPerPage) || 1)
 
   // Users that can be batch selected (not admin, not current user) - from current page
   const selectableUsers = useMemo(() => {
-    return paginatedUsers.filter(user => user.role !== 'admin' && user.id !== currentUserId)
-  }, [paginatedUsers, currentUserId])
+    return users.filter(user => user.role !== 'admin' && user.id !== currentUserId)
+  }, [users, currentUserId])
 
   const allSelectableSelected = selectableUsers.length > 0 && selectableUsers.every(u => selectedUserIds.has(u.id))
   const someSelected = selectedUserIds.size > 0
@@ -297,12 +288,8 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
     })
   }
 
-  const openPermissionCenter = (mode: 'user' | 'dataset', userId?: string) => {
-    setPermissionCenterState({ open: true, mode, userId })
-  }
-
   const closePermissionCenter = () => {
-    setPermissionCenterState((prev) => ({ ...prev, open: false }))
+    setPermissionCenterOpen(false)
   }
 
   return (
@@ -399,7 +386,10 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
               placeholder={t('settings.usersTab.searchPlaceholder')} 
               className="pl-9 h-9"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value)
+                setCurrentPage(1)
+              }}
             />
           </div>
           {/* Maintenance Notice Button - only show when no active notice and input not open */}
@@ -428,7 +418,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
             <UserPlus className="w-4 h-4" />
             <span className="hidden sm:inline">{t('settings.usersTab.createUser')}</span>
           </Button>
-          <Button variant="outline" onClick={() => openPermissionCenter('dataset')} className="gap-2">
+          <Button variant="outline" onClick={() => setPermissionCenterOpen(true)} className="gap-2">
             <Database className="w-4 h-4" />
             <span className="hidden sm:inline">{t('settings.usersTab.openPermissionCenter')}</span>
           </Button>
@@ -525,7 +515,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
               </tr>
             </thead>
             <tbody>
-              {paginatedUsers.map((user) => {
+              {users.map((user) => {
                 const isSelectable = canSelectUser(user)
                 const isSelected = selectedUserIds.has(user.id)
                 return (
@@ -588,11 +578,6 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                         <Button variant="ghost" size="sm" onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '' }) }} className="h-8 w-8 p-0" title={t('settings.usersTab.editUser')}>
                           <Edit className="w-4 h-4" />
                         </Button>
-                        {user.role !== 'admin' && (
-                          <Button variant="ghost" size="sm" onClick={() => openPermissionCenter('user', user.id)} className="h-8 w-8 p-0 text-purple-600 hover:text-purple-700 hover:bg-purple-50" title={t('settings.usersTab.managePermissions')}>
-                            <Key className="w-4 h-4" />
-                          </Button>
-                        )}
                         {(!currentUserId || user.id !== currentUserId) && user.email !== 'admin' && (
                           <Button
                             variant="ghost"
@@ -617,7 +602,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                   </tr>
                 )
               })}
-              {filteredUsers.length === 0 && (
+              {users.length === 0 && (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-gray-500">
                     {searchQuery ? t('settings.usersTab.noUsersMatchingSearch') : t('settings.usersTab.noUsersFound')}
@@ -628,14 +613,17 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
           </table>
         </div>
 
-        {!loadingUsers && filteredUsers.length > 0 && (
+        {!loadingUsers && totalUsers > 0 && (
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-4 px-2">
             <div className="flex items-center gap-2 text-sm text-gray-600">
               <span className="whitespace-nowrap">{t('settings.usersTab.rowsPerPage')}</span>
               <div className="w-[70px]">
                 <Select
                   value={itemsPerPage.toString()}
-                  onChange={(v) => setItemsPerPage(Number(v))}
+                  onChange={(v) => {
+                    setItemsPerPage(Number(v))
+                    setCurrentPage(1)
+                  }}
                   options={[
                     { value: '5', label: '5' },
                     { value: '10', label: '10' },
@@ -648,7 +636,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
               <span className="whitespace-nowrap">
                 {t('settings.usersTab.pageOf', { current: currentPage, total: totalPages || 1 })}
               </span>
-              <span className="text-gray-400 whitespace-nowrap hidden sm:inline">({t('settings.usersTab.totalCount', { count: filteredUsers.length })})</span>
+              <span className="text-gray-400 whitespace-nowrap hidden sm:inline">({t('settings.usersTab.totalCount', { count: totalUsers })})</span>
             </div>
             
             <div className="flex items-center gap-2">
@@ -665,7 +653,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                 variant="outline"
                 size="sm"
                 onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages || totalPages === 0}
+                disabled={currentPage >= totalPages || totalPages === 0}
                 className="h-8 w-8 p-0"
               >
                 <ChevronRight className="w-4 h-4" />
@@ -703,11 +691,10 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
         />
       )}
 
-      {permissionCenterState.open && (
+      {permissionCenterOpen && (
         <PermissionCenterModal
-          users={users}
-          initialMode={permissionCenterState.mode}
-          initialUserId={permissionCenterState.userId}
+          initialMode={permissionCenterMode}
+          onModeChange={setPermissionCenterMode}
           showConfirmDialog={showConfirmDialog}
           closeConfirmDialog={closeConfirmDialog}
           onClose={closePermissionCenter}

@@ -133,10 +133,9 @@ async def _revoke_dataset_permission_with_side_effects(
     )
     if deleted_annotation_count:
         logger.info(
-            "Deleted %s annotation record(s) for user %s on dataset %s during permission revocation",
-            deleted_annotation_count,
-            target_user_id,
-            dataset_id,
+            f"Deleted {deleted_annotation_count} annotation record(s) "
+            f"for user {target_user_id} on dataset {dataset_id} "
+            f"during permission revocation"
         )
 
     deleted = await DatasetPermissionRepository.delete_by_dataset_and_user(db, dataset_id, target_user_id)
@@ -218,9 +217,32 @@ async def list_dataset_permissions(
         raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
 
     permissions = await DatasetPermissionRepository.get_by_dataset(db, dataset_id)
+    user_ids = list({permission.user_id for permission in permissions})
+    user_map: Dict[str, Dict[str, object]] = {}
+    if user_ids:
+        user_rows = await db.execute(
+            select(User.id, User.email, User.nickname, User.role, User.is_active)
+            .where(User.id.in_(user_ids))
+        )
+        user_map = {
+            str(row[0]): {
+                "user_email": row[1],
+                "user_nickname": row[2],
+                "user_role": row[3],
+                "user_is_active": row[4],
+            }
+            for row in user_rows.all()
+        }
+
     return {
         "dataset_id": dataset_id,
-        "permissions": [p.to_dict() for p in permissions]
+        "permissions": [
+            {
+                **p.to_dict(),
+                **user_map.get(p.user_id, {}),
+            }
+            for p in permissions
+        ]
     }
 
 
@@ -321,10 +343,8 @@ async def batch_grant_dataset_permissions(
         except Exception as exc:
             await db.rollback()
             logger.warning(
-                "Failed to batch grant permission for user %s on dataset %s: %s",
-                user_id,
-                dataset_id,
-                exc,
+                f"Failed to batch grant permission for user {user_id} "
+                f"on dataset {dataset_id}: {exc}"
             )
             results.append({
                 "user_id": user_id,
@@ -420,10 +440,8 @@ async def batch_revoke_dataset_permissions(
         except Exception as exc:
             await db.rollback()
             logger.warning(
-                "Failed to batch revoke permission for user %s on dataset %s: %s",
-                target_user_id,
-                dataset_id,
-                exc,
+                f"Failed to batch revoke permission for user {target_user_id} "
+                f"on dataset {dataset_id}: {exc}"
             )
             results.append({
                 "user_id": target_user_id,

@@ -32,6 +32,7 @@ from .heatmap_utils import (
     normalize_attention,
     find_best_fold,
 )
+from .heatmap_preview_cache import ensure_recommendation_preview_cache
 
 logger = logging.getLogger(__name__)
 
@@ -378,6 +379,34 @@ async def get_heatmap_thumbnail(
         if attention_file is None:
             raise HTTPException(status_code=404, detail=f"No attention data for task {task_id}")
 
+        wsi = None
+
+        if preset == RECOMMENDATION_PRESET:
+            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            if not wsi:
+                raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
+            cached_preview_path = ensure_recommendation_preview_cache(
+                wsi_id,
+                attention_file,
+                UPLOADS_DIR,
+                patch_size=patch_size,
+                class_idx=class_idx,
+                wsi_path=wsi.wsi_path,
+                file_size=wsi.file_size,
+            )
+            if cached_preview_path and cached_preview_path.exists():
+                with Image.open(cached_preview_path) as cached_preview:
+                    preview = cached_preview.convert('RGB')
+                    preview.thumbnail((size, size), Image.Resampling.LANCZOS)
+                    buf = io.BytesIO()
+                    preview.save(buf, format='PNG')
+                    buf.seek(0)
+                    return Response(
+                        content=buf.getvalue(),
+                        media_type="image/png",
+                        headers=render_settings["cache_headers"],
+                    )
+
         # Load attention weights
         attention = np.load(str(attention_file), allow_pickle=True)
 
@@ -424,7 +453,8 @@ async def get_heatmap_thumbnail(
             thumb_width = int(size * aspect_ratio)
 
         # Get WSI thumbnail
-        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if wsi is None:
+            wsi = await WSIRepository.get_by_id(db, wsi_id)
         if not wsi:
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
 

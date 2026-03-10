@@ -26,9 +26,9 @@ import time
 import os
 import shutil
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func, or_
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from pydantic import BaseModel, Field
@@ -103,6 +103,14 @@ class SecureLoginRequest(BaseModel):
     hashed_password: str  # SHA256(SHA256(password) + timestamp + APP_SALT)
     timestamp: int  # Unix timestamp in milliseconds
     turnstile_token: Optional[str] = None  # Cloudflare Turnstile token (optional)
+
+
+class PaginatedUserListResponse(BaseModel):
+    """Paginated admin user list response."""
+    items: List[UserReadAdmin]
+    total: int
+    page: int
+    page_size: int
 
 # Create main auth router
 router = APIRouter(tags=["Authentication"])
@@ -331,6 +339,61 @@ async def list_users(
     users = result.scalars().all()
     logger.info(f"Admin {admin.email} listed {len(users)} users")
     return users
+
+
+@router.get("/auth/users/paged", response_model=PaginatedUserListResponse, tags=["User Management"])
+async def list_users_paged(
+    search: Optional[str] = Query(None, description="Search username or nickname"),
+    page: int = Query(1, ge=1, description="Page number (1-based)"),
+    page_size: int = Query(10, ge=1, le=100, description="Users per page"),
+    exclude_admin: bool = Query(False, description="Exclude admin users from the result"),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """List users with pagination and optional search."""
+    filters = []
+    normalized_search = (search or "").strip()
+
+    if exclude_admin:
+        filters.append(User.role != "admin")
+
+    if normalized_search:
+        pattern = f"%{normalized_search}%"
+        filters.append(
+            or_(
+                User.email.ilike(pattern),
+                User.nickname.ilike(pattern),
+            )
+        )
+
+    count_stmt = select(func.count()).select_from(User)
+    query_stmt = select(User)
+    if filters:
+        count_stmt = count_stmt.where(*filters)
+        query_stmt = query_stmt.where(*filters)
+
+    total = (await db.execute(count_stmt)).scalar_one()
+    offset = (page - 1) * page_size
+    users = (
+        await db.execute(
+            query_stmt
+            .order_by(User.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+    ).scalars().all()
+
+    logger.info(
+        f"Admin {admin.email} listed {len(users)} users "
+        f"(paged, page={page}, page_size={page_size}, "
+        f"search={normalized_search or None}, exclude_admin={exclude_admin})"
+    )
+    return {
+        "items": users,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.get("/auth/users/{user_id}", response_model=UserReadAdmin, tags=["User Management"])

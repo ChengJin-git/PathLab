@@ -13,6 +13,10 @@ export interface DatasetPermission {
   dataset_id: string
   dataset_name?: string | null
   user_id: string
+  user_email?: string | null
+  user_nickname?: string | null
+  user_role?: string | null
+  user_is_active?: boolean | null
   granted_by: string
   permission_level: string
   expires_at: string | null

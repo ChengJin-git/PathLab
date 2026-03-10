@@ -32,6 +32,7 @@ from backend.storage import StorageManager
 from backend.auth import current_active_user, User, get_user_from_header_or_param, get_user_from_token_param
 from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, check_wsi_access_permission
 from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
+from backend.preprocessing.heatmap_preview_cache import ensure_recommendation_preview_cache
 
 # Analysis modules (extracted from this file for maintainability)
 from .analysis_state import get_analysis_state, AnalysisRequest
@@ -1270,6 +1271,7 @@ async def _run_inference_wsi_classification(
                     if slide_att is not None:
                         att_file = wsi_result_dir / f"train_{task_id}_attention.npy"
                         np.save(att_file, slide_att)
+                        ensure_recommendation_preview_cache(wsi_id, att_file, Config.get_uploads_dir())
                         attention_file_path = str(att_file)
 
                     db_result_data = {
@@ -1364,6 +1366,7 @@ async def _run_inference_wsi_classification(
                 if attention is not None:
                     att_file = wsi_result_dir / f"train_{task_id}_attention.npy"
                     np.save(att_file, attention_np)
+                    ensure_recommendation_preview_cache(wsi_id, att_file, Config.get_uploads_dir())
                     attention_file_path = str(att_file)
 
                 db_result_data = {
@@ -2283,6 +2286,7 @@ async def _run_inference_wsi_survival(
                 if slide_att is not None:
                     att_file = result_dir / f"train_{task_id}_attention.npy"
                     np.save(att_file, slide_att)
+                    ensure_recommendation_preview_cache(wsi_id, att_file, Config.get_uploads_dir())
                     attention_file_path = str(att_file)
 
                 if slide_raw_att is not None:
@@ -2357,6 +2361,7 @@ async def _run_inference_wsi_survival(
             if attention_np is not None:
                 att_file = result_dir / f"train_{task_id}_attention.npy"
                 np.save(att_file, attention_np)
+                ensure_recommendation_preview_cache(wsi_id, att_file, Config.get_uploads_dir())
                 attention_file_path = str(att_file)
 
             if raw_attention_np is not None:
@@ -4610,6 +4615,7 @@ async def _run_external_validation(
                         if slide_attn is not None:
                             attention_file = wsi_result_dir / f"extval_{task_id}_attention.npy"
                             np.save(attention_file, slide_attn)
+                            ensure_recommendation_preview_cache(wsi_id, attention_file, Config.get_uploads_dir())
 
                         if attention_file is not None:
                             result_data["attention_file"] = str(attention_file)

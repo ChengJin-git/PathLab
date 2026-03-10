@@ -45,6 +45,7 @@ from backend.ai.schemas import (
 )
 from backend.common.config import Config
 from backend.common.gpu_utils import get_device_string
+from backend.preprocessing.heatmap_preview_cache import ensure_recommendation_preview_cache
 
 logger = logging.getLogger("inference_routes")
 
@@ -294,6 +295,13 @@ async def run_inference_pipeline(
                 attention_file = ai_results_dir / f"{task_id}_attention.npy"
                 attention_np = attention.cpu().numpy()
                 np.save(attention_file, attention_np)
+                ensure_recommendation_preview_cache(
+                    wsi_id,
+                    attention_file,
+                    UPLOADS_DIR,
+                    wsi_path=wsi.wsi_path,
+                    file_size=wsi.file_size,
+                )
                 attention_path = str(attention_file)
                 logger.info(f"Saved attention weights ({len(attention_np)} patches) to {attention_path}")
 
@@ -460,6 +468,13 @@ async def run_inference_pipeline_sync(
         attention_file = ai_results_dir / f"{task_id}_attention.npy"
         attention_np = attention.cpu().numpy()
         np.save(attention_file, attention_np)
+        ensure_recommendation_preview_cache(
+            wsi_id,
+            attention_file,
+            UPLOADS_DIR,
+            wsi_path=wsi.wsi_path,
+            file_size=wsi.file_size,
+        )
         attention_path = str(attention_file)
         logger.info(f"Saved attention weights ({len(attention_np)} patches) to {attention_path}")
 

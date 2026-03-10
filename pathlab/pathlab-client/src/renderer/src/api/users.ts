@@ -10,12 +10,45 @@ export interface UserListItem extends AuthUser {
   id: string
 }
 
+export interface ListUsersPagedOptions {
+  search?: string
+  page?: number
+  page_size?: number
+  exclude_admin?: boolean
+}
+
+export interface PaginatedUserListResponse {
+  items: UserListItem[]
+  total: number
+  page: number
+  page_size: number
+}
+
 /**
  * List all users (admin only)
  * @throws {ApiError} If request fails or not authorized
  */
 export async function listUsers(): Promise<UserListItem[]> {
   return apiFetch<UserListItem[]>(`${API_BASE}/auth/users`, undefined, 'Failed to list users')
+}
+
+/**
+ * List users with pagination/search (admin only)
+ */
+export async function listUsersPaged(options: ListUsersPagedOptions = {}): Promise<PaginatedUserListResponse> {
+  const params = new URLSearchParams()
+
+  if (options.search?.trim()) params.set('search', options.search.trim())
+  if (options.page) params.set('page', String(options.page))
+  if (options.page_size) params.set('page_size', String(options.page_size))
+  if (options.exclude_admin) params.set('exclude_admin', 'true')
+
+  const query = params.toString()
+  return apiFetch<PaginatedUserListResponse>(
+    `${API_BASE}/auth/users/paged${query ? `?${query}` : ''}`,
+    undefined,
+    'Failed to list users'
+  )
 }
 
 /**

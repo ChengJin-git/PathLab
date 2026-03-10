@@ -40,6 +40,7 @@ from backend.database.repositories import WSIRepository, TrainingTaskRepository,
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 from backend.ai.permission_revocation import is_permission_revoked, PermissionRevokedException
 from backend.ai.tasks.wsi_survival.losses import NLLSurvivalLoss, calculate_c_index
+from backend.preprocessing.heatmap_preview_cache import ensure_recommendation_preview_cache
 
 
 class WSISurvivalTrainer(WSIClassificationTrainer):
@@ -1807,6 +1808,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             if attention_np is not None:
                 attention_file = result_dir / f"train_{task_id}{fold_suffix}_attention.npy"
                 np.save(attention_file, attention_np)
+                ensure_recommendation_preview_cache(result_data["wsi_id"], attention_file, Config.get_uploads_dir())
 
             if raw_attention_np is not None:
                 raw_attention_file = result_dir / f"train_{task_id}{fold_suffix}_attention_raw.npy"

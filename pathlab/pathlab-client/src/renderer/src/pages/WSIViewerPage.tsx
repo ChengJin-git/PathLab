@@ -59,6 +59,7 @@ interface ViewerNavigationState {
   datasetId?: string
   datasetName?: string
   conversationId?: string
+  chatScrollPosition?: string
   selectedTaskId?: string
   selectedFoldKey?: string
   initialShowHeatmap?: boolean
@@ -77,6 +78,7 @@ export default function WSIViewerPage() {
   const datasetId = navigationState?.datasetId
   const datasetName = navigationState?.datasetName
   const conversationId = navigationState?.conversationId
+  const chatScrollPosition = navigationState?.chatScrollPosition
   const preferredTaskId = navigationState?.selectedTaskId
   const preferredFoldKey = navigationState?.selectedFoldKey
   const initialShowHeatmap = navigationState?.initialShowHeatmap === true
@@ -1075,6 +1077,12 @@ export default function WSIViewerPage() {
           <button
             onClick={() => guardedNavigate(() => {
               if (fromAIChat) {
+                if (conversationId) {
+                  sessionStorage.setItem('ai-chat-conversation-id', conversationId)
+                }
+                if (chatScrollPosition) {
+                  sessionStorage.setItem('ai-chat-scroll-position', chatScrollPosition)
+                }
                 navigate(conversationId ? `/dashboard/${conversationId}` : '/dashboard')
               } else if (fromDataset && datasetId) {
                 navigate('/wsi-list', { state: { dataset_id: datasetId } })
@@ -1107,7 +1115,8 @@ export default function WSIViewerPage() {
                     fromDataset,
                     datasetId,
                     datasetName,
-                    conversationId
+                    conversationId,
+                    chatScrollPosition,
                   }
                 }))}
                 disabled={!prevWSI}
@@ -1124,7 +1133,8 @@ export default function WSIViewerPage() {
                     fromDataset,
                     datasetId,
                     datasetName,
-                    conversationId
+                    conversationId,
+                    chatScrollPosition,
                   }
                 }))}
                 disabled={!nextWSI}
