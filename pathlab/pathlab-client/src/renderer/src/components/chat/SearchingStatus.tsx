@@ -369,8 +369,6 @@ export interface PdfParseStatusItem {
   title: string
   status: string // "parsing" | "completed" | "download_failed" | "parse_failed" | error strings
   from_cache?: boolean
-  parse_method?: string
-  high_quality_pending?: boolean
 }
 
 /**
@@ -486,7 +484,6 @@ export const PdfParsingCompletedCard = React.memo(function PdfParsingCompletedCa
   const completedItems = items.filter(i => i.status === 'completed')
   const completedCount = completedItems.length
   const failedItems = items.filter(i => i.status === 'download_failed' || i.status === 'parse_failed')
-  const hasPendingUpgrade = completedItems.some(i => i.high_quality_pending)
 
   // Don't show if nothing completed and nothing failed
   if (completedCount === 0 && failedItems.length === 0) return null
@@ -526,11 +523,6 @@ export const PdfParsingCompletedCard = React.memo(function PdfParsingCompletedCa
             <span className="text-xs sm:text-sm font-medium text-green-700">
               {t('settings.general.pdfParsedCount', { count: completedCount })}
             </span>
-            {hasPendingUpgrade && (
-              <p className="text-[10px] sm:text-xs text-green-600/80 mt-0.5">
-                {t('settings.general.pdfHighQualityPending')}
-              </p>
-            )}
           </div>
         </motion.div>
       )}

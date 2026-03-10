@@ -26,6 +26,7 @@ type PermissionMode = 'user' | 'dataset'
 type PermissionDataset = DatasetSummary & { dataset_id: string }
 
 const PAGE_SIZE_OPTIONS = ['5', '10', '20']
+const SEARCH_DEBOUNCE_MS = 300
 
 export interface PermissionCenterModalProps {
   showConfirmDialog: ShowConfirmDialog
@@ -132,6 +133,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   const [submitting, setSubmitting] = useState(false)
   const [expiresInHours, setExpiresInHours] = useState('')
   const [datasetSearchQuery, setDatasetSearchQuery] = useState('')
+  const [debouncedDatasetSearchQuery, setDebouncedDatasetSearchQuery] = useState('')
   const [datasetPage, setDatasetPage] = useState(1)
   const [datasetPageSize, setDatasetPageSize] = useState(10)
   const [datasetItems, setDatasetItems] = useState<DatasetSummary[]>([])
@@ -139,6 +141,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   const [loadingDatasets, setLoadingDatasets] = useState(false)
   const [selectedDatasetId, setSelectedDatasetId] = useState('')
   const [userSearchQuery, setUserSearchQuery] = useState('')
+  const [debouncedUserSearchQuery, setDebouncedUserSearchQuery] = useState('')
   const [userPage, setUserPage] = useState(1)
   const [userPageSize, setUserPageSize] = useState(10)
   const [userItems, setUserItems] = useState<UserListItem[]>([])
@@ -146,6 +149,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [selectedUserId, setSelectedUserId] = useState('')
   const [grantUserSearchQuery, setGrantUserSearchQuery] = useState('')
+  const [debouncedGrantUserSearchQuery, setDebouncedGrantUserSearchQuery] = useState('')
   const [grantUserPage, setGrantUserPage] = useState(1)
   const [grantUserPageSize, setGrantUserPageSize] = useState(10)
   const [grantUserItems, setGrantUserItems] = useState<UserListItem[]>([])
@@ -178,13 +182,28 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   const selectableGrantUsers = useMemo(() => grantUserItems.filter((user) => !validDatasetPermissionUserIds.has(user.id)), [grantUserItems, validDatasetPermissionUserIds])
   const allVisibleUsersSelected = useMemo(() => selectableGrantUsers.length > 0 && selectableGrantUsers.every((user) => selectedGrantUserIds.includes(user.id)), [selectableGrantUsers, selectedGrantUserIds])
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedUserSearchQuery(userSearchQuery), SEARCH_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [userSearchQuery])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedDatasetSearchQuery(datasetSearchQuery), SEARCH_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [datasetSearchQuery])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedGrantUserSearchQuery(grantUserSearchQuery), SEARCH_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [grantUserSearchQuery])
+
   const fetchAllSelectableDatasetIds = useCallback(async () => {
-    const response = await fetchDatasets(undefined, { search: datasetSearchQuery.trim() || undefined, page_size: 0 })
+    const response = await fetchDatasets(undefined, { search: debouncedDatasetSearchQuery.trim() || undefined, page_size: 0 })
     return response.items
       .filter((item): item is PermissionDataset => Boolean(item.dataset_id))
       .map((item) => item.dataset_id)
       .filter((datasetId) => !validUserDatasetIds.has(datasetId))
-  }, [datasetSearchQuery, validUserDatasetIds])
+  }, [debouncedDatasetSearchQuery, validUserDatasetIds])
 
   const fetchAllSelectableGrantUserIds = useCallback(async () => {
     const pageSize = 100
@@ -196,7 +215,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
       const response = await listUsersPaged({
         page,
         page_size: pageSize,
-        search: grantUserSearchQuery.trim() || undefined,
+        search: debouncedGrantUserSearchQuery.trim() || undefined,
         exclude_admin: true
       })
       total = response.total
@@ -207,12 +226,12 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
     } while ((page - 1) * pageSize < total)
 
     return Array.from(new Set(ids))
-  }, [grantUserSearchQuery, validDatasetPermissionUserIds])
+  }, [debouncedGrantUserSearchQuery, validDatasetPermissionUserIds])
 
   const loadDatasets = useCallback(async () => {
     setLoadingDatasets(true)
     try {
-      const response = await fetchDatasets(undefined, { page: datasetPage, page_size: datasetPageSize, search: datasetSearchQuery.trim() || undefined })
+      const response = await fetchDatasets(undefined, { page: datasetPage, page_size: datasetPageSize, search: debouncedDatasetSearchQuery.trim() || undefined })
       setDatasetItems(response.items)
       setDatasetTotal(response.total)
     } catch (err) {
@@ -220,12 +239,12 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
     } finally {
       setLoadingDatasets(false)
     }
-  }, [datasetPage, datasetPageSize, datasetSearchQuery, t])
+  }, [datasetPage, datasetPageSize, debouncedDatasetSearchQuery, t])
 
   const loadUsers = useCallback(async () => {
     setLoadingUsers(true)
     try {
-      const response = await listUsersPaged({ page: userPage, page_size: userPageSize, search: userSearchQuery.trim() || undefined, exclude_admin: true })
+      const response = await listUsersPaged({ page: userPage, page_size: userPageSize, search: debouncedUserSearchQuery.trim() || undefined, exclude_admin: true })
       setUserItems(response.items)
       setUserTotal(response.total)
     } catch (err) {
@@ -233,12 +252,12 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
     } finally {
       setLoadingUsers(false)
     }
-  }, [t, userPage, userPageSize, userSearchQuery])
+  }, [debouncedUserSearchQuery, t, userPage, userPageSize])
 
   const loadGrantUsers = useCallback(async () => {
     setLoadingGrantUsers(true)
     try {
-      const response = await listUsersPaged({ page: grantUserPage, page_size: grantUserPageSize, search: grantUserSearchQuery.trim() || undefined, exclude_admin: true })
+      const response = await listUsersPaged({ page: grantUserPage, page_size: grantUserPageSize, search: debouncedGrantUserSearchQuery.trim() || undefined, exclude_admin: true })
       setGrantUserItems(response.items)
       setGrantUserTotal(response.total)
     } catch (err) {
@@ -246,7 +265,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
     } finally {
       setLoadingGrantUsers(false)
     }
-  }, [grantUserPage, grantUserPageSize, grantUserSearchQuery, t])
+  }, [debouncedGrantUserSearchQuery, grantUserPage, grantUserPageSize, t])
 
   const loadUserPermissions = useCallback(async (userId: string) => {
     if (!userId) { setUserPermissions([]); return }
@@ -528,7 +547,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
           <>
             <div className="mb-6 rounded-2xl border border-gray-200 bg-gray-50 p-4">
               <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-                <div className="flex-1"><Label>{t('settings.permissionCenterModal.userBrowser')}</Label><div className="relative mt-2"><Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><Input value={userSearchQuery} onChange={(e) => { setUserSearchQuery(e.target.value); setUserPage(1) }} placeholder={t('settings.permissionCenterModal.searchUsers')} className="pl-9" disabled={loadingUsers || submitting} /></div></div>
+                <div className="flex-1"><Label>{t('settings.permissionCenterModal.userBrowser')}</Label><div className="relative mt-2"><Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><Input value={userSearchQuery} onChange={(e) => { setUserSearchQuery(e.target.value); setUserPage(1) }} placeholder={t('settings.permissionCenterModal.searchUsers')} className="pl-9" disabled={submitting} /></div></div>
                 <div className="text-sm text-gray-500">{t('settings.permissionCenterModal.userCount', { count: userTotal })}</div>
               </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -546,7 +565,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
               </div>
               <div className="rounded-2xl border border-gray-200 bg-white p-4">
                 <div className="mb-3 flex items-center justify-between gap-3"><div><h4 className="text-sm font-medium text-gray-900">{t('settings.permissionCenterModal.grantDatasets')}</h4><p className="mt-1 text-xs text-gray-500">{selectedUser ? t('settings.permissionCenterModal.selectedUserName', { name: getUserDisplayName(selectedUser) }) : t('settings.permissionCenterModal.selectUserHint')}</p></div><div className="text-xs text-gray-500">{t('settings.permissionCenterModal.datasetCount', { count: datasetTotal })}</div></div>
-                <div className="relative mb-3"><Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><Input value={datasetSearchQuery} onChange={(e) => { setDatasetSearchQuery(e.target.value); setDatasetPage(1) }} placeholder={t('settings.permissionCenterModal.searchDatasets')} className="pl-9" disabled={loadingDatasets || submitting} /></div>
+                <div className="relative mb-3"><Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><Input value={datasetSearchQuery} onChange={(e) => { setDatasetSearchQuery(e.target.value); setDatasetPage(1) }} placeholder={t('settings.permissionCenterModal.searchDatasets')} className="pl-9" disabled={submitting} /></div>
                 <div className="mb-4 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3"><Checkbox checked={allVisibleDatasetsSelected} onCheckedChange={handleToggleAllDatasets} /><span className="text-sm text-gray-700">{t('settings.permissionCenterModal.selectVisibleDatasets', { count: selectableDatasetIdsOnPage.length })}</span></div>
                 <BulkSelectionBanner
                   allPageSelected={allVisibleDatasetsSelected}
@@ -569,7 +588,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
         ) : (
           <>
             <div className="mb-6 rounded-2xl border border-gray-200 bg-gray-50 p-4">
-              <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div className="flex-1"><Label>{t('settings.permissionCenterModal.datasetBrowser')}</Label><div className="relative mt-2"><Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><Input value={datasetSearchQuery} onChange={(e) => { setDatasetSearchQuery(e.target.value); setDatasetPage(1) }} placeholder={t('settings.permissionCenterModal.searchDatasets')} className="pl-9" disabled={loadingDatasets || submitting} /></div></div><div className="text-sm text-gray-500">{t('settings.permissionCenterModal.datasetCount', { count: datasetTotal })}</div></div>
+              <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div className="flex-1"><Label>{t('settings.permissionCenterModal.datasetBrowser')}</Label><div className="relative mt-2"><Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><Input value={datasetSearchQuery} onChange={(e) => { setDatasetSearchQuery(e.target.value); setDatasetPage(1) }} placeholder={t('settings.permissionCenterModal.searchDatasets')} className="pl-9" disabled={submitting} /></div></div><div className="text-sm text-gray-500">{t('settings.permissionCenterModal.datasetCount', { count: datasetTotal })}</div></div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">{loadingDatasets ? <div className="col-span-full rounded-xl border border-dashed border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">{t('settings.permissionCenterModal.loadingDatasets')}</div> : pagedDatasets.length === 0 ? <div className="col-span-full rounded-xl border border-dashed border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">{t('settings.permissionCenterModal.noDatasets')}</div> : pagedDatasets.map((dataset) => {
                 const isSelected = selectedDatasetId === dataset.dataset_id
                 return <button key={dataset.dataset_id} type="button" onClick={() => { setSelectedDatasetId(dataset.dataset_id); setSelectedGrantUserIds([]); setAllMatchingUsersSelected(false); setAllMatchingUserCount(0); setExpiresInHours(''); setError(null) }} className={cn('rounded-xl border p-4 text-left transition-all', isSelected ? 'border-gray-900 bg-gray-900 text-white shadow-md' : 'border-gray-200 bg-white hover:border-gray-300')}><div className="truncate text-sm font-semibold">{dataset.dataset_name}</div><div className={cn('mt-1 text-xs', isSelected ? 'text-gray-300' : 'text-gray-500')}>{t('settings.permissionCenterModal.datasetMeta', { count: dataset.file_count })}</div></button>

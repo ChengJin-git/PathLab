@@ -747,11 +747,19 @@ class TrainingTaskRepository:
         return await TrainingTaskRepository.get_by_id(db, task_id)
 
     # Status values that indicate a task was interrupted (not failed normally)
-    # - 'pending': task was queued but not yet started (queue is in-memory, lost on restart)
+    # and can be claimed for recovery by a restarted process.
+    # - 'pending': legacy pre-queue status before the route updates to 'queued'
+    # - 'queued': task was accepted into the in-memory queue but not yet started
     # - 'patching', 'extracting', 'training': task was actively processing
     # Note: 'resuming' is intentionally excluded here to preserve CAS (compare-and-swap)
     # safety in try_claim_for_resume(). See RECOVERABLE_STATUSES for the full set.
-    INTERRUPTED_STATUSES = [TaskStatus.PENDING, TaskStatus.PATCHING, TaskStatus.EXTRACTING, TaskStatus.TRAINING]
+    INTERRUPTED_STATUSES = [
+        TaskStatus.PENDING,
+        TaskStatus.QUEUED,
+        TaskStatus.PATCHING,
+        TaskStatus.EXTRACTING,
+        TaskStatus.TRAINING,
+    ]
 
     # All statuses that need recovery on restart, including 'resuming'.
     # 'resuming' means a previous restart claimed the task but the pipeline never started
@@ -764,12 +772,13 @@ class TrainingTaskRepository:
         """
         Get all training tasks that need recovery (e.g., after system shutdown).
 
-        These are tasks with status 'pending', 'patching', 'extracting', 'training',
-        or 'resuming' - states that indicate the task was queued, in progress, or
+        These are tasks with status 'pending', 'queued', 'patching', 'extracting',
+        'training', or 'resuming' - states that indicate the task was queued, in progress, or
         claimed for resume but never completed or failed.
 
         Note: 'failed' tasks are NOT considered interrupted - they failed normally.
-        Note: 'pending' tasks are included because the in-memory queue is lost on restart.
+        Note: 'pending' and 'queued' tasks are included because the in-memory queue
+              is lost on restart.
         Note: 'resuming' tasks are included because a previous restart may have claimed
               them but the pipeline never started (e.g., due to another crash).
         """

@@ -94,8 +94,9 @@ async def lifespan(app: FastAPI):
     await cleanup_all_progress()
 
     # Resume interrupted training tasks
-    # Tasks with status 'pending', 'patching', 'extracting', or 'training' were interrupted
-    # by system shutdown/crash and need to be resumed (pending tasks lose their queue position)
+    # Tasks with status 'pending', 'queued', 'patching', 'extracting', or 'training'
+    # were interrupted by system shutdown/crash and need to be resumed.
+    # Pending/queued tasks lose their in-memory queue position across restart.
     await resume_interrupted_tasks()
 
     # Cleanup old finished tasks (completed/failed/cancelled older than 7 days)
@@ -238,9 +239,9 @@ async def resume_interrupted_tasks():
     """
     Resume training tasks that were interrupted by system shutdown or crash.
 
-    Recoverable tasks are those with status 'pending', 'patching', 'extracting',
-    'training', or 'resuming'.
-    - 'pending' tasks are included because the in-memory queue is lost on restart
+    Recoverable tasks are those with status 'pending', 'queued', 'patching',
+    'extracting', 'training', or 'resuming'.
+    - 'pending' and 'queued' tasks are included because the in-memory queue is lost on restart
     - 'resuming' tasks are included because a previous restart may have claimed them
       but the pipeline never started (e.g., due to another crash)
     - Failed tasks (status='failed') are NOT resumed as they failed normally.

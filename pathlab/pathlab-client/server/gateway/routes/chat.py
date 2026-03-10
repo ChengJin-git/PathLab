@@ -468,36 +468,30 @@ _PDF_FOLLOWUP_NOTE = {
     "en": (
         "NOTE: The PDF content below has been semantically searched to show the most relevant "
         "chunks for the user's latest question, along with the first and last pages for context. "
-        "Chunks are labelled with page number and chunk index (e.g. `Page 3, Chunk 5`). "
+        "Retrieved blocks are labelled with page number and block type (e.g. `Page 3, Table 5`). "
         "When citing, use [N, p.Y] format where N is the paper number. If the user asks about content not shown here, "
         "tell them to ask a more specific follow-up question so the system can retrieve it.\n"
         "STRICT GROUNDING: Your answer MUST be based ENTIRELY on the paper content below. "
         "Do NOT use training knowledge to fill gaps. "
         "When quoting original text from the paper, use blockquotes (> ...) to clearly distinguish "
         "the paper's original words from your own analysis.\n"
-        "If a paper's images are available (shown in Paper Registry), include image links verbatim. "
-        "If parse quality says a background Docling upgrade is pending, treat the current fast parse as provisional "
-        "and invite the user to ask again later for better figure/table coverage if needed."
+        "If a paper's images are available (shown in Paper Registry), include image links verbatim."
     ),
     "zh_CN": (
         "注意：以下 PDF 内容已通过语义搜索筛选，展示与用户最新提问最相关的文本片段以及首尾页作为上下文。"
-        "片段标记了页码和块编号（如 `Page 3, Chunk 5`）。引用格式：[N, p.Y]，其中 N 是论文编号。"
+        "片段标记了页码和块类型（如 `Page 3, Table 5`）。引用格式：[N, p.Y]，其中 N 是论文编号。"
         "如果用户询问的信息不在这些片段中，请告诉用户提出更具体的追问以便系统检索。\n"
         "严格 Grounding：你的回答**必须完全基于**下方论文内容，**禁止**用训练知识填补空白。"
         "引用论文原文时，请使用引用块（> ...）来清楚区分论文原文和你自己的分析。\n"
         "如果论文图片可用（见 Paper Registry），请将图片链接原样包含在回答中。"
-        "如果解析质量显示后台 Docling 升级待完成，请把当前快速解析视为临时结果；"
-        "若需要更好的图表覆盖，可建议用户稍后再追问。"
     ),
     "zh_HK": (
         "注意：以下 PDF 內容已透過語義搜尋篩選，展示與用戶最新提問最相關的文本片段以及首尾頁作為上下文。"
-        "片段標記了頁碼和塊編號（如 `Page 3, Chunk 5`）。引用格式：[N, p.Y]，其中 N 是論文編號。"
+        "片段標記了頁碼和塊類型（如 `Page 3, Table 5`）。引用格式：[N, p.Y]，其中 N 是論文編號。"
         "如果用戶詢問的資訊不在這些片段中，請告訴用戶提出更具體的追問以便系統檢索。\n"
         "嚴格 Grounding：你的回答**必須完全基於**下方論文內容，**禁止**用訓練知識填補空白。"
         "引用論文原文時，請使用引用區塊（> ...）來清楚區分論文原文和你自己的分析。\n"
         "如果論文圖片可用（見 Paper Registry），請將圖片連結原樣包含在回答中。"
-        "如果解析品質顯示背景 Docling 升級待完成，請把當前快速解析視為暫時結果；"
-        "若需要更好的圖表覆蓋，可建議用戶稍後再追問。"
     ),
 }
 
@@ -506,7 +500,6 @@ def _describe_pdf_parse_quality(
     parse_method: str | None,
     image_count: int,
     images_ready: bool,
-    high_quality_pending: bool = False,
 ) -> str:
     if parse_method == PDF_PARSE_METHOD_DOCLING:
         return (
@@ -520,14 +513,30 @@ def _describe_pdf_parse_quality(
             if images_ready else
             "no extracted images"
         )
-        if high_quality_pending:
-            return f"Fast (PyMuPDF) — {image_label}; background Docling upgrade pending"
         return f"Fast (PyMuPDF) — {image_label}"
     return "Parser unavailable"
 
 
 def _describe_pdf_image_status(image_count: int) -> str:
     return f"{image_count} figures ✅" if image_count > 0 else "none"
+
+
+def _format_pdf_block_label(chunk: dict[str, Any]) -> str:
+    block_type_raw = str(chunk.get("block_type") or "chunk").strip().lower()
+    block_index = int(chunk.get("chunk_index", 0)) + 1
+    label_map = {
+        "paragraph": "Paragraph",
+        "table": "Table",
+        "figure": "Figure",
+        "equation": "Equation",
+        "section": "Section",
+    }
+    block_label = label_map.get(block_type_raw, block_type_raw.title() or "Chunk")
+    section_path = str(chunk.get("section_path") or "").strip()
+    label = f"Page {chunk.get('page_num', 0)}, {block_label} {block_index}"
+    if section_path:
+        label += f" [{section_path}]"
+    return label
 
 
 def _collect_pdf_urls_from_contexts(messages: list[dict]) -> list[str]:
@@ -678,7 +687,6 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
         page_count = meta.get('page_count')
         parse_method = pd['parse_method']
         is_academic = pd.get('is_academic', False)
-        high_quality_pending = bool(meta.get('high_quality_parse_pending'))
         label = "Paper" if is_academic else "Doc"
         content_type = "Academic Paper" if is_academic else "General Document"
         _img_count = pd['image_count']
@@ -687,7 +695,6 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
             parse_method,
             _img_count,
             _imgs_ready,
-            high_quality_pending,
         )
         page_info = f"{page_count} pages" if page_count else "page count unknown"
 
@@ -751,10 +758,8 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
                 # Skip if this chunk is from first or last page (already included)
                 if chunk["page_num"] == first_pn or chunk["page_num"] == last_pn:
                     continue
-                chunk_text = (
-                    f"--- Page {chunk['page_num']}, Chunk {chunk['chunk_index']} ---\n"
-                    f"{chunk['chunk_text']}\n"
-                )
+                chunk_body = chunk.get("display_text") or chunk.get("chunk_text") or ""
+                chunk_text = f"--- {_format_pdf_block_label(chunk)} ---\n{chunk_body}\n"
                 if char_count + len(chunk_text) > _PDF_MAX_CHARS_PER_PAPER:
                     break
                 content_parts.append(chunk_text)
@@ -1925,7 +1930,6 @@ After saving, return here and start chatting!"""
                         "status": "completed",
                         "from_cache": pdf_result.get("from_cache", False),
                         "parse_method": pdf_result.get("parse_method"),
-                        "high_quality_pending": pdf_result.get("high_quality_pending", False),
                     }
                 else:
                     pdf_status = {
@@ -1963,7 +1967,6 @@ After saving, return here and start chatting!"""
                         parse_method,
                         _img_count,
                         _imgs_ready,
-                        bool(pdf_result.get("high_quality_pending", False)),
                     )
                     page_info = f"{page_count} pages" if page_count else "page count unknown"
                     is_academic = pdf_result.get("is_academic", False)

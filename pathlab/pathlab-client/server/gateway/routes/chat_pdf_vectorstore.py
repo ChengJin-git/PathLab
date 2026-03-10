@@ -10,7 +10,7 @@ Replaces BM25 page-level search with paragraph-level vector search.
 import re
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 
@@ -97,7 +97,8 @@ def _chunk_markdown(markdown: str, url_hash: str, paper_title: str) -> list[dict
     Falls back to a simple character-based splitter when ``llama-index-core``
     is not installed.
 
-    Each chunk dict has: url_hash, paper_title, page_num, chunk_index, chunk_text.
+    Each chunk dict has: url_hash, paper_title, page_num, chunk_index, chunk_text,
+    block_type, block_id, section_path.
     """
     try:
         return _chunk_markdown_llamaindex(markdown, url_hash, paper_title)
@@ -162,6 +163,10 @@ def _chunk_markdown_llamaindex(
                     "page_num": page_num,
                     "chunk_index": chunk_index,
                     "chunk_text": chunk_text,
+                    "display_text": chunk_text,
+                    "block_type": "paragraph",
+                    "block_id": f"md-p{page_num}-{chunk_index}",
+                    "section_path": header_path if header_path and header_path != "/" else "",
                 })
                 chunk_index += 1
 
@@ -189,6 +194,10 @@ def _chunk_markdown_fallback(
                     "page_num": page_num,
                     "chunk_index": chunk_index,
                     "chunk_text": chunk_text,
+                    "display_text": chunk_text,
+                    "block_type": "paragraph",
+                    "block_id": f"fallback-p{page_num}-{chunk_index}",
+                    "section_path": "",
                 })
                 chunk_index += 1
             start += CHUNK_SIZE_CHARS - CHUNK_OVERLAP_CHARS
@@ -231,6 +240,26 @@ def _stringify_block_for_embedding(block: dict, paper_title: str) -> str:
     return candidate or f"[BlockType: {block_type}] {paper_title}"
 
 
+def _stringify_block_for_display(block: dict) -> str:
+    block_type = str(block.get("type") or "paragraph")
+    if block_type in {"paragraph", "section"}:
+        return str(block.get("text") or "").strip()
+    if block_type == "table":
+        caption = str(block.get("caption") or "").strip()
+        markdown = str(block.get("markdown") or "").strip()
+        return f"{caption}\n{markdown}".strip()
+    if block_type == "figure":
+        caption = str(block.get("caption") or "").strip()
+        vision_summary = str(block.get("vision_summary") or "").strip()
+        image = str(block.get("image") or "").strip()
+        return "\n".join(part for part in [caption, vision_summary, image] if part).strip()
+    if block_type == "equation":
+        latex = str(block.get("latex") or "").strip()
+        surrounding = str(block.get("surrounding_text") or "").strip()
+        return "\n".join(part for part in [latex, surrounding] if part).strip()
+    return str(block.get("text") or block.get("markdown") or "").strip()
+
+
 def _chunk_structured_content(
     structured_content: dict,
     url_hash: str,
@@ -248,14 +277,31 @@ def _chunk_structured_content(
         chunk_text = _stringify_block_for_embedding(block, paper_title).strip()
         if not chunk_text:
             continue
+        section_path_items = block.get("section_path") or []
+        if isinstance(section_path_items, list):
+            section_path = " / ".join(str(item) for item in section_path_items if item)
+        else:
+            section_path = str(section_path_items or "")
         chunks.append({
             "url_hash": url_hash,
             "paper_title": paper_title,
             "page_num": int(block.get("page") or 0),
             "chunk_index": chunk_index,
             "chunk_text": chunk_text,
+            "display_text": _stringify_block_for_display(block),
+            "block_type": str(block.get("type") or "paragraph"),
+            "block_id": str(block.get("id") or f"block-{chunk_index}"),
+            "section_path": section_path,
         })
     return chunks
+
+
+def _create_or_replace_table(db: Any, records: list[dict]) -> None:
+    try:
+        db.drop_table(TABLE_NAME)
+    except Exception:
+        pass
+    db.create_table(TABLE_NAME, records)
 
 
 # ── LanceDB operations ──────────────────────────────────────────────────────
@@ -304,6 +350,10 @@ def index_pdf_to_vectorstore(
                 "paper_title": chunk["paper_title"],
                 "page_num": chunk["page_num"],
                 "chunk_index": chunk["chunk_index"],
+                "block_type": chunk.get("block_type", "paragraph"),
+                "block_id": chunk.get("block_id", ""),
+                "section_path": chunk.get("section_path", ""),
+                "display_text": chunk.get("display_text", chunk["chunk_text"]),
                 "chunk_text": chunk["chunk_text"],
                 "vector": vec.tolist(),
             })
@@ -317,7 +367,11 @@ def index_pdf_to_vectorstore(
                 table.delete(f"url_hash = '{url_hash}'")
             except Exception:
                 pass  # table might be empty or column missing
-            table.add(records)
+            try:
+                table.add(records)
+            except Exception as e:
+                logger.warning(f"[VectorStore] Recreating table after schema drift: {e}")
+                _create_or_replace_table(db, records)
         else:
             db.create_table(TABLE_NAME, records)
 
@@ -351,7 +405,7 @@ def search_pdf_chunks(
     -------
     list[dict]
         Each dict has: url_hash, paper_title, page_num, chunk_index,
-        chunk_text, _distance.
+        block_type, block_id, section_path, display_text, chunk_text, _distance.
     """
     try:
         db = _get_db()
@@ -381,6 +435,10 @@ def search_pdf_chunks(
                 "paper_title": r.get("paper_title", ""),
                 "page_num": r.get("page_num", 0),
                 "chunk_index": r.get("chunk_index", 0),
+                "block_type": r.get("block_type", "paragraph"),
+                "block_id": r.get("block_id", ""),
+                "section_path": r.get("section_path", ""),
+                "display_text": r.get("display_text", r.get("chunk_text", "")),
                 "chunk_text": r.get("chunk_text", ""),
                 "_distance": r.get("_distance", 999.0),
             })
