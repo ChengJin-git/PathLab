@@ -712,35 +712,18 @@ class WSIRepository:
         }
 
     @staticmethod
-    async def get_datasets(
-        db: AsyncSession,
+    def _build_dataset_summary_query(
         data_type: Optional[str] = None,
         user_id: Optional[str] = None,
-        elevated_dataset_ids: Optional[List[str]] = None
-    ) -> List[Dict]:
-        """
-        Get all datasets with file count, total size, and split statistics.
-
-        Args:
-            db: Database session
-            data_type: Optional filter - "wsi" for WSI files, "patch" for image files
-                       If None, returns all datasets
-            user_id: Optional user ID filter. If provided, only returns datasets containing WSI belonging to this user.
-                     If None, returns all datasets (for admin users).
-            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
-                                  These datasets will be included even if user doesn't own any WSI in them.
-
-        Returns:
-            List of dicts with dataset_id (UUID), name (display), file_count, total_size, group info,
-            has_predefined_splits, and predefined_split_counts
-        """
-        from sqlalchemy import or_, and_, case
+        elevated_dataset_ids: Optional[List[str]] = None,
+        search: Optional[str] = None,
+    ):
+        from sqlalchemy import case
 
         # Dataset list should trust stored DataGroup data_type for grouped datasets.
         # Only uncategorized/ungrouped files fall back to file-level heuristics.
         file_filter = WSIRepository._build_data_type_filter(data_type)
 
-        # Join with Dataset and DataGroup tables to get all info
         query = select(
             Dataset.dataset_id,
             Dataset.name.label("dataset_name"),
@@ -751,7 +734,6 @@ class WSIRepository:
             DataGroup.task_type,
             func.count(WSISlide.id).label("file_count"),
             func.sum(WSISlide.file_size).label("total_size"),
-            # Count splits - normalize 'validation' to 'val'
             func.count(func.distinct(case(
                 (func.lower(WSISlide.split) == 'train', case(
                     (DataGroup.aggregation_level == 'case', func.coalesce(WSISlide.case_id, WSISlide.wsi_id)),
@@ -779,11 +761,8 @@ class WSIRepository:
             DataGroup, Dataset.group_id == DataGroup.group_id
         )
 
-        # Apply user_id filter with elevated_dataset_ids support
-        # User can see: their own datasets OR datasets they have elevated permissions for
         if user_id is not None:
             if elevated_dataset_ids:
-                # Include user's own data OR data from elevated permission datasets
                 query = query.where(
                     or_(
                         WSISlide.user_id == user_id,
@@ -796,10 +775,70 @@ class WSIRepository:
         if file_filter is not None:
             query = query.where(file_filter)
 
-        query = query.group_by(
+        normalized_search = search.strip() if search else None
+        if normalized_search:
+            query = query.where(Dataset.name.ilike(f"%{normalized_search}%"))
+
+        return query.group_by(
             Dataset.dataset_id, Dataset.name, Dataset.user_id, Dataset.group_id,
             DataGroup.data_type, DataGroup.aggregation_level, DataGroup.task_type
+        )
+
+    @staticmethod
+    async def count_datasets(
+        db: AsyncSession,
+        data_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None,
+        search: Optional[str] = None,
+    ) -> int:
+        """Count datasets visible under the current filter set."""
+        grouped_query = WSIRepository._build_dataset_summary_query(
+            data_type=data_type,
+            user_id=user_id,
+            elevated_dataset_ids=elevated_dataset_ids,
+            search=search,
+        )
+        result = await db.execute(select(func.count()).select_from(grouped_query.subquery()))
+        return result.scalar() or 0
+
+    @staticmethod
+    async def get_datasets(
+        db: AsyncSession,
+        data_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None,
+        search: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 0,
+    ) -> List[Dict]:
+        """
+        Get all datasets with file count, total size, and split statistics.
+
+        Args:
+            db: Database session
+            data_type: Optional filter - "wsi" for WSI files, "patch" for image files
+                       If None, returns all datasets
+            user_id: Optional user ID filter. If provided, only returns datasets containing WSI belonging to this user.
+                     If None, returns all datasets (for admin users).
+            elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
+                                  These datasets will be included even if user doesn't own any WSI in them.
+
+        Returns:
+            List of dicts with dataset_id (UUID), name (display), file_count, total_size, group info,
+            has_predefined_splits, and predefined_split_counts
+        """
+        query = WSIRepository._build_dataset_summary_query(
+            data_type=data_type,
+            user_id=user_id,
+            elevated_dataset_ids=elevated_dataset_ids,
+            search=search,
         ).order_by(Dataset.name)
+
+        if skip > 0:
+            query = query.offset(skip)
+        if limit > 0:
+            query = query.limit(limit)
 
         result = await db.execute(query)
         datasets = []

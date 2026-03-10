@@ -206,6 +206,36 @@ function OverlayThumbnailButton({
   )
 }
 
+function PendingThumbnailSlot({
+  title,
+  badgeLabel,
+  badgeClassName,
+  loadingColorClass,
+}: {
+  title: string
+  badgeLabel: string
+  badgeClassName: string
+  loadingColorClass: string
+}) {
+  return (
+    <div
+      className="relative flex-shrink-0 snap-start w-32 h-32"
+      title={title}
+      aria-label={title}
+    >
+      <div className="relative w-full h-full bg-gray-100 rounded-lg overflow-hidden border border-gray-200 shadow-sm">
+        <div className="absolute inset-0 flex items-center justify-center bg-white/70">
+          <Loader2 className={`w-5 h-5 animate-spin ${loadingColorClass}`} />
+        </div>
+      </div>
+
+      <span className={`absolute bottom-1.5 left-1.5 px-1.5 py-0.5 text-[10px] font-medium rounded shadow-sm backdrop-blur-[2px] ${badgeClassName}`}>
+        {badgeLabel}
+      </span>
+    </div>
+  )
+}
+
 function GroundTruthMaskThumbnail({
   image,
   onClick
@@ -701,7 +731,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
             </span>
           </div>
         )}
-        {wantsPredictionMask && imagesWithPredictionMaskCount === 0 && imagesWithOverlays.length > 0 && (
+        {wantsPredictionMask && !isOverlayInfoLoading && imagesWithPredictionMaskCount === 0 && imagesWithOverlays.length > 0 && (
           <div className="flex items-center gap-2 mt-2 text-xs text-amber-600 bg-amber-50 px-2 py-1.5 rounded-lg">
             <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
             <span>{t('chatComponents.imageRecommendation.noModelPredMasksFound')}</span>
@@ -735,21 +765,22 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                 isSegmentationCard ? (latestSegmentationMask?.task_id ?? segmentationMaskConfig?.task_id) : undefined,
               )
               const hasHeatmap = !!latestHeatmap
+              const showOverlayLoadingPlaceholder = needsOverlayLookup && isOverlayInfoLoading
               return (
                 <div
                   key={image.wsi_id}
                   className="group p-4 bg-gray-50 hover:bg-orange-50 rounded-xl border border-gray-200
                              hover:border-orange-300 transition-all"
                 >
-                  <div className="flex flex-col gap-3">
+                  <div className="flex flex-wrap items-center gap-4">
                     {/* Images Container - Scrollable horizontal list */}
-                    <div className="flex gap-2 overflow-x-auto pb-0 snap-x [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                    <div className="flex gap-2 overflow-x-auto pb-0 snap-x [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] shrink-0 max-w-full">
                       {/* Original image */}
                       <button
                         onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
                         className="relative flex-shrink-0 snap-start group/img w-32 h-32"
                       >
-                        <div className="w-full h-full bg-gray-100 rounded-lg overflow-hidden border border-gray-200 group-hover/img:border-orange-300 transition-colors">
+                        <div className="w-full h-full bg-gray-100 rounded-lg overflow-hidden border border-gray-200 group-hover/img:border-orange-300 shadow-sm transition-colors">
                           <img
                             src={getThumbnailUrl(image.wsi_id, 256)}
                             alt={image.original_filename}
@@ -777,50 +808,68 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                       </button>
 
                       {/* Heatmap (if available and show_heatmap is true) */}
-                      {recommendation.show_heatmap && hasHeatmap && latestHeatmap && (
-                        <OverlayThumbnailButton
-                          src={
-                            fileType === 'Patch'
-                              ? getPatchCAMImageUrl(
-                                image.wsi_id,
-                                latestHeatmap.task_id || undefined,
-                                latestHeatmap.fold_key || undefined,
-                              )
-                              : getHeatmapThumbnailUrl(
-                                image.wsi_id,
-                                latestHeatmap.task_id || undefined,
-                                CARD_THUMBNAIL_SIZE,
-                                undefined,
-                                latestHeatmap.fold_key || undefined,
-                                latestHeatmap.patch_size,
-                              )
-                          }
-                          alt={`Heatmap for ${image.original_filename}`}
-                          onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
-                          title={t('chatComponents.imageRecommendation.heatmap')}
-                          badgeLabel={t('chatComponents.imageRecommendation.heatmap')}
-                          badgeClassName="bg-green-100/90 text-green-700"
-                          loadingColorClass="text-green-500"
-                          fallback={<Layers className="w-8 h-8 text-gray-300" />}
-                        />
+                      {recommendation.show_heatmap && (
+                        hasHeatmap && latestHeatmap ? (
+                          <OverlayThumbnailButton
+                            src={
+                              fileType === 'Patch'
+                                ? getPatchCAMImageUrl(
+                                  image.wsi_id,
+                                  latestHeatmap.task_id || undefined,
+                                  latestHeatmap.fold_key || undefined,
+                                )
+                                : getHeatmapThumbnailUrl(
+                                  image.wsi_id,
+                                  latestHeatmap.task_id || undefined,
+                                  CARD_THUMBNAIL_SIZE,
+                                  undefined,
+                                  latestHeatmap.fold_key || undefined,
+                                  latestHeatmap.patch_size,
+                                )
+                            }
+                            alt={`Heatmap for ${image.original_filename}`}
+                            onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
+                            title={t('chatComponents.imageRecommendation.heatmap')}
+                            badgeLabel={t('chatComponents.imageRecommendation.heatmap')}
+                            badgeClassName="bg-green-100/90 text-green-700"
+                            loadingColorClass="text-green-500"
+                            fallback={<Layers className="w-8 h-8 text-gray-300" />}
+                          />
+                        ) : showOverlayLoadingPlaceholder ? (
+                          <PendingThumbnailSlot
+                            title={t('chatComponents.imageRecommendation.heatmap')}
+                            badgeLabel={t('chatComponents.imageRecommendation.heatmap')}
+                            badgeClassName="bg-green-100/90 text-green-700"
+                            loadingColorClass="text-green-500"
+                          />
+                        ) : null
                       )}
 
                       {wantsPredictionMask && fileType === 'Patch' && (
                         latestSegmentationMask ? (
-                          <OverlayThumbnailButton
-                            src={getSegMaskImageUrl(
-                              image.wsi_id,
-                              latestSegmentationMask.task_id || segmentationMaskConfig?.task_id,
-                              latestSegmentationMask.fold_key || undefined,
-                              CARD_THUMBNAIL_SIZE,
-                            )}
-                            alt={`${t('chatComponents.imageRecommendation.modelPredictionMask')}: ${image.original_filename}`}
-                            onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
+                          <div className="shadow-sm rounded-lg">
+                            <OverlayThumbnailButton
+                              src={getSegMaskImageUrl(
+                                image.wsi_id,
+                                latestSegmentationMask.task_id || segmentationMaskConfig?.task_id,
+                                latestSegmentationMask.fold_key || undefined,
+                                CARD_THUMBNAIL_SIZE,
+                              )}
+                              alt={`${t('chatComponents.imageRecommendation.modelPredictionMask')}: ${image.original_filename}`}
+                              onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
+                              title={t('chatComponents.imageRecommendation.modelPredictionMask')}
+                              badgeLabel={t('chatComponents.imageRecommendation.modelPredictionMaskShort')}
+                              badgeClassName="bg-indigo-100/90 text-indigo-700"
+                              loadingColorClass="text-indigo-500"
+                              fallback={<Layers className="w-8 h-8 text-gray-300" />}
+                            />
+                          </div>
+                        ) : showOverlayLoadingPlaceholder ? (
+                          <PendingThumbnailSlot
                             title={t('chatComponents.imageRecommendation.modelPredictionMask')}
                             badgeLabel={t('chatComponents.imageRecommendation.modelPredictionMaskShort')}
                             badgeClassName="bg-indigo-100/90 text-indigo-700"
                             loadingColorClass="text-indigo-500"
-                            fallback={<Layers className="w-8 h-8 text-gray-300" />}
                           />
                         ) : (
                           <div className="relative flex-shrink-0 snap-start w-32 h-32">
@@ -842,7 +891,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                       )}
 
                       {wantsGroundTruthMask && fileType === 'Patch' && (
-                        <div className="w-32 h-32 flex-shrink-0 snap-start">
+                        <div className="w-32 h-32 flex-shrink-0 snap-start shadow-sm rounded-lg">
                           <GroundTruthMaskThumbnail
                             image={image}
                             onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
@@ -852,7 +901,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                     </div>
 
                     {/* Image info */}
-                    <div className="flex-1 min-w-0 flex flex-col">
+                    <div className="flex-1 min-w-[240px] flex flex-col pt-1">
                       <div className="flex justify-between items-start gap-2">
                         <p className="text-base font-semibold text-gray-900 break-all leading-tight">
                           {image.original_filename}
@@ -898,7 +947,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                         )}
                         {image.event_time !== null && image.event_time !== undefined && (
                           <span className="shrink-0 whitespace-nowrap px-2 py-1 text-xs bg-gray-50 text-gray-600 rounded-md border border-gray-100">
-                            {t('chatComponents.imageRecommendation.time')}: {image.event_time}
+                            {t('chatComponents.imageRecommendation.survivalTimeMonths')}: {image.event_time}
                           </span>
                         )}
                       </div>

@@ -88,6 +88,32 @@ def _enhance_overlay_image(image, contrast_boost: float, saturation_boost: float
     return enhanced
 
 
+def _get_thumbnail_blur_radius(
+    patch_w: int,
+    patch_h: int,
+    blur_scale: float,
+    preset: Optional[str],
+) -> float:
+    """
+    Compute thumbnail blur radius.
+
+    Recommendation cards use a more conservative blur when each patch collapses to
+    only a couple of pixels in the thumbnail, which helps preserve local hotspots
+    without increasing thumbnail resolution or payload size.
+    """
+    patch_extent = max(1.0, min(float(patch_w), float(patch_h)))
+    base_radius = (patch_extent / 2.0) * blur_scale
+
+    if preset == RECOMMENDATION_PRESET:
+        if patch_extent <= 1.0:
+            return 0.0
+        if patch_extent <= 2.0:
+            return min(0.35, base_radius)
+        return max(0.45, base_radius * 0.7)
+
+    return max(1.0, base_radius)
+
+
 def _get_npy_shape_fast(filepath: Path) -> Optional[tuple]:
     """
     Read numpy array shape from file header without loading the entire array.
@@ -475,8 +501,17 @@ async def get_heatmap_thumbnail(
         # recommendation-card previews when requested.
         from PIL import ImageFilter
         heatmap_image = Image.fromarray(heatmap_rgba, mode='RGBA')
-        blur_radius = max(1, (patch_w / 2) * render_settings["blur_scale"])
-        heatmap_blurred = heatmap_image.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+        blur_radius = _get_thumbnail_blur_radius(
+            patch_w,
+            patch_h,
+            float(render_settings["blur_scale"]),
+            preset,
+        )
+        heatmap_blurred = (
+            heatmap_image
+            if blur_radius <= 0
+            else heatmap_image.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+        )
         heatmap_blurred = _enhance_overlay_image(
             heatmap_blurred,
             render_settings["contrast_boost"],

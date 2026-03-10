@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, Key, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, AlertTriangle, Construction, Search, ChevronLeft, ChevronRight, Megaphone, Send, X } from 'lucide-react'
+import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, Key, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, Construction, Search, ChevronLeft, ChevronRight, Megaphone, Send, X, Database } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -9,16 +9,14 @@ import {
   listUsers, updateUser, deleteUser, registerUser, revokeUserAgreement,
   batchActivateUsers, batchDeactivateUsers, batchDeleteUsers,
   getMaintenanceMode, setMaintenanceMode as setMaintenanceModeApi,
-  getMaintenanceNotice, setMaintenanceNotice as setMaintenanceNoticeApi,
-  getUserDatasetPermissions, grantDatasetPermission, revokeDatasetPermission, fetchDatasets
+  getMaintenanceNotice, setMaintenanceNotice as setMaintenanceNoticeApi
 } from '../../api'
 import type { AdminUserUpdateRequest, RegisterRequest } from '../../api/auth'
-import type { DatasetPermission } from '../../api/permissions'
 import type { UserListItem } from '../../api/users'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { EditUserModal } from './EditUserModal'
 import { CreateUserModal } from './CreateUserModal'
-import { PermissionModal } from './PermissionModal'
+import { PermissionCenterModal } from './PermissionCenterModal'
 
 export interface UsersTabProps {
   showConfirmDialog: ShowConfirmDialog
@@ -53,14 +51,11 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
   const [showNoticeInput, setShowNoticeInput] = useState(false)
   const [sendingNotice, setSendingNotice] = useState(false)
 
-  // Dataset Permission Management State
-  const [permissionUser, setPermissionUser] = useState<UserListItem | null>(null)
-  const [userPermissions, setUserPermissions] = useState<DatasetPermission[]>([])
-  const [loadingPermissions, setLoadingPermissions] = useState(false)
-  const [datasets, setDatasets] = useState<{ dataset_id: string; dataset_name: string }[]>([])
-  const [selectedDatasetIds, setSelectedDatasetIds] = useState<string[]>([])
-  const [expiresInHours, setExpiresInHours] = useState<string>('')
-  const [grantingPermission, setGrantingPermission] = useState(false)
+  const [permissionCenterState, setPermissionCenterState] = useState<{
+    open: boolean
+    mode: 'user' | 'dataset'
+    userId?: string
+  }>({ open: false, mode: 'dataset' })
 
   // Batch selection state
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set())
@@ -302,92 +297,12 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
     })
   }
 
-  // --- Dataset Permission Management ---
-  const openPermissionModal = async (user: UserListItem) => {
-    setPermissionUser(user)
-    setLoadingPermissions(true)
-    setSelectedDatasetIds([])
-    setExpiresInHours('')
-    try {
-      const permResponse = await getUserDatasetPermissions(user.id)
-      setUserPermissions(permResponse.permissions)
-      const datasetResponse = await fetchDatasets()
-      setDatasets(datasetResponse.items.filter(d => d.dataset_id !== null).map(d => ({
-        dataset_id: d.dataset_id!,
-        dataset_name: d.dataset_name
-      })))
-    } catch (err) {
-      setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToLoadPermissions'))
-    } finally {
-      setLoadingPermissions(false)
-    }
+  const openPermissionCenter = (mode: 'user' | 'dataset', userId?: string) => {
+    setPermissionCenterState({ open: true, mode, userId })
   }
 
-  const handleGrantPermission = async () => {
-    if (!permissionUser || selectedDatasetIds.length === 0) return
-    try {
-      setGrantingPermission(true)
-      const hours = expiresInHours ? parseInt(expiresInHours, 10) : undefined
-      for (const dsId of selectedDatasetIds) {
-        if (dsId) await grantDatasetPermission(dsId, permissionUser.id, hours)
-      }
-      const permResponse = await getUserDatasetPermissions(permissionUser.id)
-      setUserPermissions(permResponse.permissions)
-      setSelectedDatasetIds([])
-      setExpiresInHours('')
-    } catch (err) {
-      setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToGrantPermission'))
-    } finally {
-      setGrantingPermission(false)
-    }
-  }
-
-  const handleRevokePermission = (datasetId: string) => {
-    if (!permissionUser) return
-    const datasetName = datasets.find(d => d.dataset_id === datasetId)?.dataset_name || datasetId
-    showConfirmDialog({
-      title: t('settings.usersTab.revokePermission'),
-      message: t('settings.usersTab.revokePermissionConfirm', { datasetName }),
-      confirmText: t('settings.usersTab.revoke'),
-      confirmVariant: 'warning',
-      onConfirm: async () => {
-        closeConfirmDialog()
-        try {
-          await revokeDatasetPermission(datasetId, permissionUser.id)
-          const permResponse = await getUserDatasetPermissions(permissionUser.id)
-          setUserPermissions(permResponse.permissions)
-        } catch (err) {
-          setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToRevokePermission'))
-        }
-      }
-    })
-  }
-
-  const handleRevokeAllPermissions = () => {
-    if (!permissionUser || userPermissions.length === 0) return
-    showConfirmDialog({
-      title: t('settings.usersTab.revokeAllPermissions'),
-      message: t('settings.usersTab.revokeAllPermissionsConfirm', { userName: permissionUser.nickname || permissionUser.email }),
-      confirmText: t('settings.usersTab.revokeAll'),
-      confirmVariant: 'danger',
-      onConfirm: async () => {
-        closeConfirmDialog()
-        try {
-          await Promise.allSettled(userPermissions.map(perm => revokeDatasetPermission(perm.dataset_id, permissionUser.id)))
-          const permResponse = await getUserDatasetPermissions(permissionUser.id)
-          setUserPermissions(permResponse.permissions)
-        } catch (err) {
-          setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToRevokePermissions'))
-        }
-      }
-    })
-  }
-
-  const closePermissionModal = () => {
-    setPermissionUser(null)
-    setUserPermissions([])
-    setSelectedDatasetIds([])
-    setExpiresInHours('')
+  const closePermissionCenter = () => {
+    setPermissionCenterState((prev) => ({ ...prev, open: false }))
   }
 
   return (
@@ -512,6 +427,10 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
           <Button onClick={() => setShowCreateUser(true)} className="gap-2">
             <UserPlus className="w-4 h-4" />
             <span className="hidden sm:inline">{t('settings.usersTab.createUser')}</span>
+          </Button>
+          <Button variant="outline" onClick={() => openPermissionCenter('dataset')} className="gap-2">
+            <Database className="w-4 h-4" />
+            <span className="hidden sm:inline">{t('settings.usersTab.openPermissionCenter')}</span>
           </Button>
           <Button variant="outline" onClick={loadUsers} disabled={loadingUsers} className="gap-2">
             <RefreshCw className={`w-4 h-4 ${loadingUsers ? 'animate-spin' : ''}`} />
@@ -670,7 +589,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                           <Edit className="w-4 h-4" />
                         </Button>
                         {user.role !== 'admin' && (
-                          <Button variant="ghost" size="sm" onClick={() => openPermissionModal(user)} className="h-8 w-8 p-0 text-purple-600 hover:text-purple-700 hover:bg-purple-50" title={t('settings.usersTab.managePermissions')}>
+                          <Button variant="ghost" size="sm" onClick={() => openPermissionCenter('user', user.id)} className="h-8 w-8 p-0 text-purple-600 hover:text-purple-700 hover:bg-purple-50" title={t('settings.usersTab.managePermissions')}>
                             <Key className="w-4 h-4" />
                           </Button>
                         )}
@@ -784,22 +703,14 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
         />
       )}
 
-      {/* Dataset Permission Management Modal */}
-      {permissionUser && (
-        <PermissionModal
-          user={permissionUser}
-          permissions={userPermissions}
-          datasets={datasets}
-          selectedDatasetIds={selectedDatasetIds}
-          expiresInHours={expiresInHours}
-          loadingPermissions={loadingPermissions}
-          grantingPermission={grantingPermission}
-          onSelectedDatasetIdsChange={setSelectedDatasetIds}
-          onExpiresInHoursChange={setExpiresInHours}
-          onGrantPermission={handleGrantPermission}
-          onRevokePermission={handleRevokePermission}
-          onRevokeAllPermissions={handleRevokeAllPermissions}
-          onClose={closePermissionModal}
+      {permissionCenterState.open && (
+        <PermissionCenterModal
+          users={users}
+          initialMode={permissionCenterState.mode}
+          initialUserId={permissionCenterState.userId}
+          showConfirmDialog={showConfirmDialog}
+          closeConfirmDialog={closeConfirmDialog}
+          onClose={closePermissionCenter}
         />
       )}
     </>

@@ -357,6 +357,9 @@ async def list_wsi_ids(
 @router.get("/datasets")
 async def list_datasets(
     data_type: Optional[str] = None,
+    search: Optional[str] = Query(None, description="Search dataset names"),
+    page: int = Query(1, ge=1, description="Page number (1-based). Ignored when page_size=0."),
+    page_size: int = Query(0, ge=0, le=100, description="Datasets per page. 0 = return all (legacy behavior)."),
     user: User = Depends(current_active_user),
     user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db)
@@ -372,6 +375,9 @@ async def list_datasets(
 
     Args:
         data_type: Optional filter - "wsi" for WSI files, "patch" for image files
+        search: Optional dataset name search
+        page: 1-based page number when pagination is enabled
+        page_size: page size, 0 keeps legacy all-in-one behavior
 
     Returns:
         {
@@ -379,17 +385,30 @@ async def list_datasets(
                 {"dataset_id": str, "dataset_name": str, "file_count": int, "total_size": int, "task_type": str},
                 ...
             ],
-            "total": int
+            "total": int,
+            "page": int,
+            "page_size": int
         }
     """
     # Get elevated dataset IDs for non-admin users
     elevated_dataset_ids = await get_permitted_dataset_ids(user, db)
+    skip = 0 if page_size == 0 else (page - 1) * page_size
+    total = await WSIRepository.count_datasets(
+        db,
+        data_type=data_type,
+        user_id=user_id_filter,
+        elevated_dataset_ids=elevated_dataset_ids,
+        search=search,
+    )
 
     datasets = await WSIRepository.get_datasets(
         db,
         data_type=data_type,
         user_id=user_id_filter,
-        elevated_dataset_ids=elevated_dataset_ids
+        elevated_dataset_ids=elevated_dataset_ids,
+        search=search,
+        skip=skip,
+        limit=page_size,
     )
 
     # Add can_delete flag to each dataset
@@ -420,7 +439,12 @@ async def list_datasets(
             dataset["username"] = username_map.get(dataset.get("user_id")) if dataset.get("user_id") else None
         items.append(dataset)
 
-    return {"items": items, "total": len(items)}
+    return {
+        "items": items,
+        "total": total,
+        "page": 1 if page_size == 0 else page,
+        "page_size": page_size,
+    }
 
 
 @router.put("/datasets")

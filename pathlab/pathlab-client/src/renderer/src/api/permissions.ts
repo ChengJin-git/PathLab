@@ -11,6 +11,7 @@ import { apiFetch } from './client'
 export interface DatasetPermission {
   id: number
   dataset_id: string
+  dataset_name?: string | null
   user_id: string
   granted_by: string
   permission_level: string
@@ -91,6 +92,75 @@ export async function getUserDatasetPermissions(userId: string): Promise<{
     `${API_BASE}/wsi/user-permissions/${userId}`,
     undefined,
     'Failed to get user dataset permissions'
+  )
+}
+
+/**
+ * Get all permissions granted for a specific dataset (admin only)
+ * @param datasetId - Dataset ID
+ */
+export async function listDatasetPermissions(datasetId: string): Promise<{
+  dataset_id: string
+  permissions: DatasetPermission[]
+}> {
+  return apiFetch(
+    `${API_BASE}/wsi/datasets/${datasetId}/permissions`,
+    undefined,
+    'Failed to list dataset permissions'
+  )
+}
+
+export interface BatchDatasetPermissionResult {
+  user_id: string
+  success: boolean
+  message?: string
+  error?: string
+  permission?: DatasetPermission
+  affected_tasks?: string[]
+}
+
+export interface BatchDatasetPermissionResponse {
+  dataset_id: string
+  granted?: number
+  revoked?: number
+  failed: number
+  results: BatchDatasetPermissionResult[]
+}
+
+/**
+ * Grant one dataset to many users in a single request (admin only)
+ */
+export async function batchGrantDatasetPermissions(
+  datasetId: string,
+  userIds: string[],
+  expiresInHours?: number
+): Promise<BatchDatasetPermissionResponse> {
+  return apiFetch(
+    `${API_BASE}/wsi/datasets/${datasetId}/permissions/batch-grant`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_ids: userIds, expires_in_hours: expiresInHours })
+    },
+    'Failed to batch grant dataset permissions'
+  )
+}
+
+/**
+ * Revoke one dataset from many users in a single request (admin only)
+ */
+export async function batchRevokeDatasetPermissions(
+  datasetId: string,
+  userIds: string[]
+): Promise<BatchDatasetPermissionResponse> {
+  return apiFetch(
+    `${API_BASE}/wsi/datasets/${datasetId}/permissions/batch-revoke`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_ids: userIds })
+    },
+    'Failed to batch revoke dataset permissions'
   )
 }
 

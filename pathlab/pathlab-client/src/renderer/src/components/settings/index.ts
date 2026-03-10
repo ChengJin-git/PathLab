@@ -11,6 +11,12 @@ export type { CreateUserModalProps } from './CreateUserModal'
 export { PermissionModal } from './PermissionModal'
 export type { PermissionModalProps } from './PermissionModal'
 
+export { DatasetPermissionModal } from './DatasetPermissionModal'
+export type { DatasetPermissionModalProps } from './DatasetPermissionModal'
+
+export { PermissionCenterModal } from './PermissionCenterModal'
+export type { PermissionCenterModalProps } from './PermissionCenterModal'
+
 export { MigrationModal } from './MigrationModal'
 export type { MigrationModalProps } from './MigrationModal'
 

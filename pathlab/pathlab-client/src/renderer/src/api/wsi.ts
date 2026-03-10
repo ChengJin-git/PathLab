@@ -269,6 +269,14 @@ export interface DatasetSummary {
 export interface DatasetsListResponse {
   items: DatasetSummary[]
   total: number
+  page?: number
+  page_size?: number
+}
+
+export interface DatasetListQueryOptions {
+  page?: number
+  page_size?: number
+  search?: string
 }
 
 /**
@@ -276,10 +284,20 @@ export interface DatasetsListResponse {
  * @param dataLevel - Optional filter: "wsi" for WSI files, "patch" for image files
  * @throws {ApiError} If the request fails
  */
-export async function fetchDatasets(dataLevel?: string): Promise<DatasetsListResponse> {
+export async function fetchDatasets(
+  dataLevel?: string,
+  options?: DatasetListQueryOptions
+): Promise<DatasetsListResponse> {
   const params = new URLSearchParams()
   if (dataLevel) {
     params.append('data_type', dataLevel)
+  }
+  if (options?.search) {
+    params.append('search', options.search)
+  }
+  if (options?.page_size !== undefined) {
+    params.append('page_size', String(options.page_size))
+    params.append('page', String(options.page ?? 1))
   }
   const queryString = params.toString()
   const url = queryString ? `${API_BASE}/wsi/datasets?${queryString}` : `${API_BASE}/wsi/datasets`
