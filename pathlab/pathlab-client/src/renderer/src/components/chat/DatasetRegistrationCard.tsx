@@ -110,6 +110,16 @@ export function DatasetRegistrationCard({
     })
   }, [datasets, isSegmentation, config?.upload_mode])
 
+  const selectedDataset = useMemo(
+    () => datasets.find(dataset => dataset.dataset_id === selectedDatasetId),
+    [datasets, selectedDatasetId]
+  )
+
+  const getDatasetSource = (dataset?: DatasetSummary | null) => {
+    const source = dataset?.source_organ?.trim()
+    return source || t('chatComponents.datasetRegistration.unknownSource')
+  }
+
   useEffect(() => {
     if (config?.submitted_task_id) {
       setUploadStatus('success')
@@ -524,9 +534,21 @@ export function DatasetRegistrationCard({
                         >
                           <option value="">{t('chatComponents.datasetRegistration.chooseDataset')}</option>
                           {filteredDatasets.map(d => (
-                             <option key={d.dataset_id || 'uncoded'} value={d.dataset_id || ''}>{d.dataset_name}</option>
+                             <option key={d.dataset_id || 'uncoded'} value={d.dataset_id || ''}>
+                               {t('chatComponents.datasetRegistration.datasetWithSource', {
+                                 name: d.dataset_name,
+                                 source: getDatasetSource(d)
+                               })}
+                             </option>
                           ))}
                         </select>
+                      )}
+                      {!loadingDatasets && selectedDataset && (
+                        <p className="mt-2 text-xs text-gray-500">
+                          {t('chatComponents.datasetRegistration.sourceLabel', {
+                            source: getDatasetSource(selectedDataset)
+                          })}
+                        </p>
                       )}
                     </>
                   )}

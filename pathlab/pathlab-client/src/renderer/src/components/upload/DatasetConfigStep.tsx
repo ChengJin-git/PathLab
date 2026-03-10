@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, ArrowRight, Tags, Activity, Users, FileImage, Plus, Layers, Info } from 'lucide-react'
 import { PageHeader } from '../PageHeader'
@@ -22,6 +22,7 @@ export interface DatasetConfigStepProps {
   existingDatasets: string[]
   showValidation: boolean
   fromAIChat: boolean
+  existingDatasetSource?: string
   onNext: () => void
   onBack: () => void
 }
@@ -30,12 +31,51 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
   datasetName, onDatasetNameChange, uploadMode, onUploadModeChange,
   dataLevel, onDataLevelChange, datasetSourceSelection, datasetSourceCustom,
   onDatasetSourceSelectionChange, onDatasetSourceCustomChange, isExistingDataset, existingDatasets,
-  showValidation, fromAIChat, onNext, onBack
+  showValidation, fromAIChat, existingDatasetSource, onNext, onBack
 }) => {
   const { t } = useTranslation()
+  const debounceTimerRef = useRef<NodeJS.Timeout>()
+  const [debouncedSourceCustom, setDebouncedSourceCustom] = useState(datasetSourceCustom)
 
   const isSegmentation = uploadMode === 'segmentation'
   const isOtherSource = datasetSourceSelection === 'Other'
+  const canEditSource = !isExistingDataset
+
+  // Sync external datasetSourceCustom changes (e.g., when selection changes to non-Other)
+  useEffect(() => {
+    if (!isOtherSource) {
+      setDebouncedSourceCustom('')
+    }
+  }, [isOtherSource])
+
+  // Handle debounced input for custom source
+  useEffect(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      onDatasetSourceCustomChange(debouncedSourceCustom)
+    }, 300)
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current)
+      }
+    }
+  }, [debouncedSourceCustom, onDatasetSourceCustomChange])
+
+  // Auto-fill source for existing datasets
+  useEffect(() => {
+    if (isExistingDataset && existingDatasetSource) {
+      if (organSources.includes(existingDatasetSource)) {
+        // Source is in the select options
+        onDatasetSourceSelectionChange(existingDatasetSource)
+      } else {
+        // Source is not in options, put in "Other" + custom field
+        onDatasetSourceSelectionChange('Other')
+        setDebouncedSourceCustom(existingDatasetSource)
+      }
+    }
+  }, [isExistingDataset, existingDatasetSource, onDatasetSourceSelectionChange])
 
   // When switching to segmentation, force data level to 'file' (patch-only)
   const handleUploadModeChange = useCallback((mode: UploadMode) => {
@@ -217,7 +257,12 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                   <select
                     value={datasetSourceSelection}
                     onChange={(e) => onDatasetSourceSelectionChange(e.target.value)}
-                    className="w-full px-4 sm:px-5 py-3 border border-slate-200 rounded-xl sm:rounded-2xl bg-slate-50/50 hover:border-slate-300 focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all"
+                    disabled={!canEditSource}
+                    className={`w-full px-4 sm:px-5 py-3 border rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all ${
+                      !canEditSource 
+                        ? 'bg-slate-100 border-slate-200 cursor-not-allowed opacity-60' 
+                        : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
+                    }`}
                   >
                     <option value="">{t('uploadComponents.datasetConfig.unknownSourceOrgan')}</option>
                     {organSources.filter((source) => source !== 'Other').map((source) => (
@@ -225,15 +270,18 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                     ))}
                     <option value="Other">{t('uploadComponents.datasetConfig.otherSource')}</option>
                   </select>
-                  {isOtherSource && (
-                    <input
-                      type="text"
-                      value={datasetSourceCustom}
-                      onChange={(e) => onDatasetSourceCustomChange(e.target.value)}
-                      placeholder={t('uploadComponents.datasetConfig.otherSourcePlaceholder')}
-                      className="w-full px-4 sm:px-5 py-3 border border-slate-200 rounded-xl sm:rounded-2xl bg-slate-50/50 hover:border-slate-300 focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all"
-                    />
-                  )}
+                  <input
+                    type="text"
+                    value={isOtherSource ? debouncedSourceCustom : ''}
+                    onChange={(e) => setDebouncedSourceCustom(e.target.value)}
+                    disabled={!isOtherSource || !canEditSource}
+                    placeholder={t('uploadComponents.datasetConfig.otherSourcePlaceholder')}
+                    className={`w-full px-4 sm:px-5 py-3 border rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all ${
+                      !isOtherSource || !canEditSource
+                        ? 'bg-slate-100 border-slate-200 cursor-not-allowed opacity-60'
+                        : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
+                    }`}
+                  />
                 </div>
                 <p className="mt-3 text-sm text-slate-400">
                   {t('uploadComponents.datasetConfig.datasetSourceDescription')}

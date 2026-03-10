@@ -83,8 +83,10 @@ export default function ListPage() {
   const [datasetLevelFilter, setDatasetLevelFilter] = useState<DatasetLevelFilter>('all')
   const [datasetSourceFilter, setDatasetSourceFilter] = useState<string>('all')
   const [datasetViewMode, setDatasetViewMode] = useState<DatasetViewMode>('grid')
+  const [datasetCurrentPage, setDatasetCurrentPage] = useState(1)
+  const [datasetListItemsPerPage, setDatasetListItemsPerPage] = useState(5)
 
-  // Pagination state
+  // File list pagination state
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 10
 
@@ -285,8 +287,24 @@ export default function ListPage() {
     })
   }, [datasetsMatchingPrimaryFilters, datasetSourceFilter])
 
+  const datasetItemsPerPage = datasetViewMode === 'grid' ? 8 : datasetListItemsPerPage
+  const datasetTotalPages = Math.max(1, Math.ceil(filteredDatasets.length / datasetItemsPerPage))
+  const datasetStartIndex = (datasetCurrentPage - 1) * datasetItemsPerPage
+  const datasetEndIndex = datasetStartIndex + datasetItemsPerPage
+  const paginatedDatasets = filteredDatasets.slice(datasetStartIndex, datasetEndIndex)
+  const datasetPaginationStart = filteredDatasets.length === 0 ? 0 : datasetStartIndex + 1
+  const datasetPaginationEnd = Math.min(datasetEndIndex, filteredDatasets.length)
+
   const hasActiveDatasetFilters =
     datasetTaskFilter !== 'all' || datasetTypeFilter !== 'all' || datasetLevelFilter !== 'all' || datasetSourceFilter !== 'all'
+
+  useEffect(() => {
+    setDatasetCurrentPage(1)
+  }, [datasetTaskFilter, datasetTypeFilter, datasetLevelFilter, datasetSourceFilter, datasetViewMode])
+
+  useEffect(() => {
+    setDatasetCurrentPage(prev => Math.min(prev, datasetTotalPages))
+  }, [datasetTotalPages])
 
   // Load datasets on mount
   useEffect(() => {
@@ -403,7 +421,7 @@ export default function ListPage() {
     options: Array<{ value: string; label: string }>,
     onChange: (value: string) => void
   ) => (
-    <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 min-w-0">
+    <div className="flex min-w-0 flex-col gap-1.5 sm:gap-2 2xl:flex-row 2xl:items-center 2xl:gap-3">
       <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400 whitespace-nowrap">
         {label}
       </p>
@@ -1168,55 +1186,57 @@ export default function ListPage() {
           {!datasetsLoading && !datasetsError && visibleDatasets.length > 0 && (
             <Card className="relative z-20 border-gray-100 shadow-sm bg-white/80 backdrop-blur-sm">
               <div className="px-4 py-3 sm:px-5 sm:py-3.5">
-                <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-                  {renderDatasetFilterGroup(
-                    t('listPage.filters.groups.taskType'),
-                    datasetTaskFilter,
-                    [
-                      { value: 'all', label: t('common.all') },
-                      { value: 'classification', label: t('listPage.classification') },
-                      { value: 'survival', label: t('listPage.survival') },
-                      { value: 'segmentation', label: t('listPage.segmentation') },
-                    ],
-                    (nextValue) => setDatasetTaskFilter(nextValue as DatasetTaskFilter)
-                  )}
+                <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
+                  <div className="flex flex-wrap items-start gap-x-6 gap-y-3 min-w-0">
+                    {renderDatasetFilterGroup(
+                      t('listPage.filters.groups.taskType'),
+                      datasetTaskFilter,
+                      [
+                        { value: 'all', label: t('common.all') },
+                        { value: 'classification', label: t('listPage.classification') },
+                        { value: 'survival', label: t('listPage.survival') },
+                        { value: 'segmentation', label: t('listPage.segmentation') },
+                      ],
+                      (nextValue) => setDatasetTaskFilter(nextValue as DatasetTaskFilter)
+                    )}
 
-                  {renderDatasetFilterGroup(
-                    t('listPage.filters.groups.dataType'),
-                    datasetTypeFilter,
-                    [
-                      { value: 'all', label: t('common.all') },
-                      { value: 'wsi', label: t('listPage.wholeSlideImaging') },
-                      { value: 'patch', label: t('listPage.patchCollection') },
-                    ],
-                    (nextValue) => setDatasetTypeFilter(nextValue as DatasetTypeFilter)
-                  )}
+                    {renderDatasetFilterGroup(
+                      t('listPage.filters.groups.dataType'),
+                      datasetTypeFilter,
+                      [
+                        { value: 'all', label: t('common.all') },
+                        { value: 'wsi', label: t('listPage.wholeSlideImaging') },
+                        { value: 'patch', label: t('listPage.patchCollection') },
+                      ],
+                      (nextValue) => setDatasetTypeFilter(nextValue as DatasetTypeFilter)
+                    )}
 
-                  {renderDatasetFilterGroup(
-                    t('listPage.filters.groups.dataLevel'),
-                    datasetLevelFilter,
-                    [
-                      { value: 'all', label: t('common.all') },
-                      { value: 'file', label: t('listPage.fileLevel') },
-                      { value: 'patient', label: t('listPage.patientLevel') },
-                    ],
-                    (nextValue) => setDatasetLevelFilter(nextValue as DatasetLevelFilter)
-                  )}
+                    {renderDatasetFilterGroup(
+                      t('listPage.filters.groups.dataLevel'),
+                      datasetLevelFilter,
+                      [
+                        { value: 'all', label: t('common.all') },
+                        { value: 'file', label: t('listPage.fileLevel') },
+                        { value: 'patient', label: t('listPage.patientLevel') },
+                      ],
+                      (nextValue) => setDatasetLevelFilter(nextValue as DatasetLevelFilter)
+                    )}
 
-                  <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 min-w-0">
-                    <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400 whitespace-nowrap">
-                      {t('listPage.filters.groups.sourceOrgan')}
-                    </p>
-                    <Select
-                      value={datasetSourceFilter}
-                      onChange={setDatasetSourceFilter}
-                      options={datasetSourceOptions}
-                      placeholder={t('listPage.filters.selectSourceOrgan')}
-                      className="w-[180px] sm:w-[220px] shrink-0"
-                    />
+                    <div className="flex min-w-0 flex-col gap-1.5 sm:gap-2 2xl:flex-row 2xl:items-center 2xl:gap-3">
+                      <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400 whitespace-nowrap">
+                        {t('listPage.filters.groups.sourceOrgan')}
+                      </p>
+                      <Select
+                        value={datasetSourceFilter}
+                        onChange={setDatasetSourceFilter}
+                        options={datasetSourceOptions}
+                        placeholder={t('listPage.filters.selectSourceOrgan')}
+                        className="w-full min-w-[180px] sm:min-w-[220px] 2xl:w-[220px]"
+                      />
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-2 sm:gap-3 ml-auto pl-0 sm:pl-2">
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3 self-start 2xl:ml-auto 2xl:self-center">
                     <div className="inline-flex items-center rounded-xl bg-slate-100 p-1 shadow-inner">
                       <button
                         type="button"
@@ -1285,7 +1305,7 @@ export default function ListPage() {
           {/* Datasets Grid */}
           {!datasetsLoading && !datasetsError && filteredDatasets.length > 0 && datasetViewMode === 'grid' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6 p-1">
-              {filteredDatasets.map((dataset) => {
+              {paginatedDatasets.map((dataset) => {
                 const itemType = getDatasetVisualType(dataset)
                 const normalizedTaskType = getNormalizedDatasetTaskType(dataset.task_type)
                 const sourceOrganValue = getDatasetSourceOrganFilterValue(dataset.source_organ)
@@ -1478,7 +1498,7 @@ export default function ListPage() {
           {/* Datasets List */}
           {!datasetsLoading && !datasetsError && filteredDatasets.length > 0 && datasetViewMode === 'list' && (
             <div className="space-y-3 p-1">
-              {filteredDatasets.map((dataset) => {
+              {paginatedDatasets.map((dataset) => {
                 const itemType = getDatasetVisualType(dataset)
                 const normalizedTaskType = getNormalizedDatasetTaskType(dataset.task_type)
                 const sourceOrganValue = getDatasetSourceOrganFilterValue(dataset.source_organ)
@@ -1672,6 +1692,71 @@ export default function ListPage() {
                 <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-blue-500 transition-colors" />
               </button>
             </div>
+          )}
+
+          {!datasetsLoading && !datasetsError && filteredDatasets.length > 0 && (
+            <Card className="border-gray-100 bg-white/80 shadow-sm">
+              <div className="px-4 sm:px-5 py-4 flex flex-col lg:flex-row items-center justify-between gap-4">
+                <div className="text-xs sm:text-sm text-gray-500 font-medium text-center lg:text-left">
+                  {t('listPage.pagination.summary', {
+                    start: datasetPaginationStart,
+                    end: datasetPaginationEnd,
+                    total: filteredDatasets.length,
+                  })}
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-4">
+                  {datasetViewMode === 'list' && (
+                    <div className="flex items-center gap-2 w-full sm:w-auto">
+                      <span className="text-xs sm:text-sm text-gray-500 whitespace-nowrap">
+                        {t('listPage.pagination.itemsPerPage')}
+                      </span>
+                      <Select
+                        value={String(datasetListItemsPerPage)}
+                        onChange={(value) => {
+                          setDatasetListItemsPerPage(Number(value))
+                          setDatasetCurrentPage(1)
+                        }}
+                        options={[
+                          { value: '5', label: '5' },
+                          { value: '10', label: '10' },
+                          { value: '20', label: '20' },
+                        ]}
+                        className="w-[88px]"
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 sm:gap-3">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setDatasetCurrentPage(prev => Math.max(prev - 1, 1))}
+                      disabled={datasetCurrentPage === 1}
+                      className="h-8 px-2 sm:px-3"
+                    >
+                      <ChevronLeft className="w-4 h-4 sm:mr-1" />
+                      <span className="hidden sm:inline">{t('common.previous')}</span>
+                    </Button>
+
+                    <span className="text-xs sm:text-sm font-semibold text-gray-600 min-w-[92px] text-center">
+                      {t('listPage.pagination.pageInfo', { current: datasetCurrentPage, total: datasetTotalPages })}
+                    </span>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setDatasetCurrentPage(prev => Math.min(prev + 1, datasetTotalPages))}
+                      disabled={datasetCurrentPage === datasetTotalPages}
+                      className="h-8 px-2 sm:px-3"
+                    >
+                      <span className="hidden sm:inline">{t('common.next')}</span>
+                      <ChevronRight className="w-4 h-4 sm:ml-1" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </Card>
           )}
         </>
       )}
@@ -1898,7 +1983,7 @@ export default function ListPage() {
                                         {isNoCase ? t('listPage.noCaseId') : t('listPage.caseLabel', { caseId: displayCaseId })}
                                       </span>
                                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 border border-blue-200 w-fit">
-                                        {t('listPage.slidesCount', { count: 1 })}
+                                        {t('listPage.slideCountSingle', { count: 1 })}
                                       </span>
                                     </div>
                                     <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
@@ -2021,7 +2106,9 @@ export default function ListPage() {
                                       </span>
                                     </div>
                                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 border border-blue-200">
-                                      {t('listPage.slidesCount', { count: slides.length })}
+                                      {slides.length === 1
+                                        ? t('listPage.slideCountSingle', { count: slides.length })
+                                        : t('listPage.slidesCount', { count: slides.length })}
                                     </span>
                                   </div>
                                 </div>

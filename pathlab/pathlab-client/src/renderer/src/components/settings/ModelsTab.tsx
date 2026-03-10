@@ -6,6 +6,7 @@ import { Card } from '../ui/card'
 import { TrainedModel, getTrainedModels, updateTrainedModel, deleteTrainedModel, getAuthToken } from '../../api'
 import { API_BASE } from '../../config'
 import { ShowConfirmDialog } from './ConfirmDialog'
+import { isSegmentationTask } from '../../lib/externalValidationUtils'
 
 interface TaskItem {
   task_id: string
@@ -18,6 +19,11 @@ interface TaskItem {
 export interface ModelsTabProps {
   showConfirmDialog: ShowConfirmDialog
   closeConfirmDialog: () => void
+}
+
+interface MetricDisplay {
+  label: string
+  value: unknown
 }
 
 export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabProps) {
@@ -144,6 +150,38 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
     return modelClasses
   }
 
+  const getMetricDisplay = (task: TaskItem | undefined, model: TrainedModel, displayClasses: string[]) => {
+    const metrics = (model.val_metrics || {}) as Record<string, unknown>
+    const isSurvival = metrics.c_index !== undefined
+    const isSegmentation = isSegmentationTask(task?.task_type)
+
+    let primaryMetric: MetricDisplay = { label: 'Loss', value: metrics.loss }
+    let secondaryMetric: MetricDisplay = { label: 'Accuracy', value: metrics.accuracy }
+
+    if (isSurvival) {
+      primaryMetric = { label: 'C-Index', value: metrics.c_index }
+      secondaryMetric = { label: 'Loss', value: metrics.loss }
+    } else if (isSegmentation) {
+      const isMulticlassSegmentation =
+        displayClasses.length > 1 ||
+        metrics.miou !== undefined ||
+        (Array.isArray(metrics.iou_per_class) && metrics.iou_per_class.length > 1)
+
+      primaryMetric = {
+        label: isMulticlassSegmentation ? 'mIoU' : 'IoU',
+        value: isMulticlassSegmentation
+          ? (metrics.miou ?? metrics.iou ?? metrics.dice)
+          : (metrics.iou ?? metrics.miou ?? metrics.dice)
+      }
+      secondaryMetric = { label: 'Loss', value: metrics.loss }
+    } else if (metrics.auc !== undefined || metrics.macro_auc !== undefined) {
+      primaryMetric = { label: 'AUC', value: metrics.auc ?? metrics.macro_auc }
+      secondaryMetric = { label: 'Accuracy', value: metrics.accuracy }
+    }
+
+    return { metrics, isSurvival, primaryMetric, secondaryMetric }
+  }
+
   const totalPages = Math.ceil(modelsTotal / pageSize)
 
   return (
@@ -198,20 +236,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
               const task = tasks.find(item => item.task_id === model.task_id)
               const taskName = task?.name || task?.task_name || t('settings.modelsTab.unknownTask')
               const displayClasses = getDisplayClasses(model, task)
-
-              const metrics = model.val_metrics || {}
-              const isSurvival = (metrics as Record<string, unknown>).c_index !== undefined
-
-              let primaryMetric = { label: 'Loss', value: (metrics as Record<string, unknown>).loss }
-              let secondaryMetric = { label: 'Accuracy', value: (metrics as Record<string, unknown>).accuracy }
-
-              if (isSurvival) {
-                primaryMetric = { label: 'C-Index', value: (metrics as Record<string, unknown>).c_index }
-                secondaryMetric = { label: 'Loss', value: (metrics as Record<string, unknown>).loss }
-              } else if ((metrics as Record<string, unknown>).auc !== undefined || (metrics as Record<string, unknown>).macro_auc !== undefined) {
-                primaryMetric = { label: 'AUC', value: (metrics as Record<string, unknown>).auc || (metrics as Record<string, unknown>).macro_auc }
-                secondaryMetric = { label: 'Accuracy', value: (metrics as Record<string, unknown>).accuracy }
-              }
+              const { metrics, isSurvival, primaryMetric, secondaryMetric } = getMetricDisplay(task, model, displayClasses)
 
               return (
                 <div key={model.model_id} className="bg-white border rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow">
@@ -349,20 +374,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                   const task = tasks.find(item => item.task_id === model.task_id)
                   const taskName = task?.name || task?.task_name || t('settings.modelsTab.unknownTask')
                   const displayClasses = getDisplayClasses(model, task)
-
-                  const metrics = model.val_metrics || {}
-                  const isSurvival = (metrics as Record<string, unknown>).c_index !== undefined
-
-                  let primaryMetric = { label: 'Loss', value: (metrics as Record<string, unknown>).loss }
-                  let secondaryMetric = { label: 'Accuracy', value: (metrics as Record<string, unknown>).accuracy }
-
-                  if (isSurvival) {
-                    primaryMetric = { label: 'C-Index', value: (metrics as Record<string, unknown>).c_index }
-                    secondaryMetric = { label: 'Loss', value: (metrics as Record<string, unknown>).loss }
-                  } else if ((metrics as Record<string, unknown>).auc !== undefined || (metrics as Record<string, unknown>).macro_auc !== undefined) {
-                    primaryMetric = { label: 'AUC', value: (metrics as Record<string, unknown>).auc || (metrics as Record<string, unknown>).macro_auc }
-                    secondaryMetric = { label: 'Accuracy', value: (metrics as Record<string, unknown>).accuracy }
-                  }
+                  const { metrics, isSurvival, primaryMetric, secondaryMetric } = getMetricDisplay(task, model, displayClasses)
 
                   return (
                     <tr key={model.model_id} className="hover:bg-gray-50 transition-colors group border-b last:border-0 border-gray-100">

@@ -62,6 +62,8 @@ export default function RegisterPage() {
   const [datasetId, setDatasetId] = useState<string | null>(null)
   const [datasetSourceSelection, setDatasetSourceSelection] = useState('')
   const [datasetSourceCustom, setDatasetSourceCustom] = useState('')
+  // Source organ of the existing dataset (for auto-fill when appending)
+  const [existingDatasetSource, setExistingDatasetSource] = useState<string | undefined>()
 
   // Steps: 1 - Dataset Name, 2 - File Upload
   const [step, setStep] = useState(1)
@@ -75,6 +77,8 @@ export default function RegisterPage() {
   const [existingDatasetDataTypes, setExistingDatasetDataTypes] = useState<Map<string, DataType>>(new Map())
   // Map from dataset_name to dataset_id for quick lookup
   const [datasetNameToId, setDatasetNameToId] = useState<Map<string, string | null>>(new Map())
+  // Map from dataset_name to source_organ for quick lookup
+  const [datasetNameToSourceOrgan, setDatasetNameToSourceOrgan] = useState<Map<string, string | null>>(new Map())
   // Toggle for Dataset Splits Configuration visibility
   const [showSplitConfig, setShowSplitConfig] = useState(false)
 
@@ -139,16 +143,19 @@ export default function RegisterPage() {
         const levelMap = new Map<string, DataLevel>()
         const dataTypeMap = new Map<string, DataType>()
         const idMap = new Map<string, string | null>()
+        const sourceOrganMap = new Map<string, string | null>()
         data.items.forEach(d => {
           typeMap.set(d.dataset_name, d.task_type as UploadMode)
           levelMap.set(d.dataset_name, d.aggregation_level as DataLevel)
           dataTypeMap.set(d.dataset_name, d.data_type as DataType)
           idMap.set(d.dataset_name, d.dataset_id)
+          sourceOrganMap.set(d.dataset_name, d.source_organ ?? null)
         })
         setExistingDatasetTypes(typeMap)
         setExistingDatasetLevels(levelMap)
         setExistingDatasetDataTypes(dataTypeMap)
         setDatasetNameToId(idMap)
+        setDatasetNameToSourceOrgan(sourceOrganMap)
       } catch (err) {
         console.error('Failed to load datasets', err)
       }
@@ -182,7 +189,13 @@ export default function RegisterPage() {
       // New dataset - clear datasetId
       setDatasetId(null)
     }
-  }, [datasetName, existingDatasetTypes, existingDatasetLevels, datasetNameToId])
+    // Set existingDatasetSource for existing datasets
+    if (datasetNameToSourceOrgan.has(trimmed)) {
+      setExistingDatasetSource(datasetNameToSourceOrgan.get(trimmed) ?? undefined)
+    } else {
+      setExistingDatasetSource(undefined)
+    }
+  }, [datasetName, existingDatasetTypes, existingDatasetLevels, datasetNameToId, datasetNameToSourceOrgan])
 
   // State
   const [localItems, setLocalItems] = useState<LocalItem[]>([])
@@ -921,6 +934,7 @@ export default function RegisterPage() {
           onDatasetSourceCustomChange={setDatasetSourceCustom}
           isExistingDataset={isExistingDataset}
           existingDatasets={existingDatasets}
+          existingDatasetSource={existingDatasetSource}
           showValidation={showValidation}
           fromAIChat={fromAIChat}
           onNext={() => setStep(2)}

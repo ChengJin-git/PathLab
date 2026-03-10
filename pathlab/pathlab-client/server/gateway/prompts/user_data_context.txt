@@ -19,6 +19,7 @@ The user has the following data available:
 - dataset_id: Unique identifier (use this as data_task_id for external validation)
 - file count: Number of WSI/patch files
 - type: "wsi" or "patch"
+- source: Dataset-level source/description (if missing, it will appear as `source=unknown`)
 - labels: Available class labels (for classification datasets)
 - survival_info: Event/time columns (for survival datasets)
 - splits: Whether train/val/test splits exist
@@ -27,6 +28,8 @@ The user has the following data available:
 - available_feature_extractors: Feature extractors available (for WSI datasets) - CRITICAL for external validation compatibility
 
 CRITICAL: If a dataset line includes `predefined_split_distribution(...)`, you MUST use those exact counts directly when answering questions about train/val/test distribution. Do NOT say the exact split counts are unavailable.
+
+CRITICAL: Whenever you mention, compare, recommend, or present datasets from the user's current data, include that dataset's `source` in the response or option text.
 
 CRITICAL: When user asks "what data do I have" or similar questions, you MUST list ALL datasets shown above, clearly distinguishing:
 1. "Your own datasets: ..." (datasets without ELEVATED ACCESS marker)

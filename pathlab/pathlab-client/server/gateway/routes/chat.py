@@ -2471,6 +2471,9 @@ async def chat_with_ai(
                 f", segmentation_labels=[{', '.join(ds_segmentation_labels)}]"
                 if ds_segmentation_labels else ""
             )
+            ds_source = rich_ds.get('source_organ') or d.get('source_organ')
+            if isinstance(ds_source, str):
+                ds_source = ds_source.strip()
 
             if ds_id != 'unknown':
                 dataset_wsi_ids = await DatasetRepository.get_wsi_ids(db, ds_id)
@@ -2506,7 +2509,7 @@ async def chat_with_ai(
 
             datasets_details.append(
                 f"  - {ds_name} (dataset_id={ds_id}){access_marker}: {ds_count} files, type={ds_type}, "
-                f"labels=[{labels_str}]{survival_str}{splits_str}{task_types_str}{aggregation_str}"
+                f"source={ds_source or 'unknown'}, labels=[{labels_str}]{survival_str}{splits_str}{task_types_str}{aggregation_str}"
                 f"{segmentation_labels_str}{available_extractors_str}"
             )
         datasets_list = "\n".join(datasets_details)

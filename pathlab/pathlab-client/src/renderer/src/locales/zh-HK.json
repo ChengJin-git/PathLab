@@ -1206,6 +1206,11 @@
       "created": "建立時間",
       "name": "名稱"
     },
+    "pagination": {
+      "itemsPerPage": "每頁",
+      "summary": "顯示第 {{start}} - {{end}} 項，共 {{total}} 個任務",
+      "pageInfo": "第 {{current}} / {{total}} 頁"
+    },
     "columns": {
       "data": "資料",
       "extractor": "特徵提取器",
@@ -1715,6 +1720,7 @@
     "deleteFile": "刪除檔案",
     "noCaseId": "無病例 ID",
     "slidesCount": "{{count}} 張切片",
+    "slideCountSingle": "{{count}} 張切片",
     "mixed": "混合",
     "seeSlides": "檢視切片",
     "eventCount": "{{count}} 事件",
@@ -1728,7 +1734,12 @@
     "cases": "個病例",
     "slidesTotal": "共 {{count}} 張切片",
     "files": "個檔案",
-    "goTo": "跳轉至"
+    "goTo": "跳轉至",
+    "pagination": {
+      "itemsPerPage": "每頁",
+      "summary": "顯示第 {{start}} - {{end}} 項，共 {{total}} 個資料集",
+      "pageInfo": "第 {{current}} / {{total}} 頁"
+    }
   },
   "training": {
     "batchEdit": {
@@ -2381,6 +2392,9 @@
       "selectDatasetLabel": "選擇數據集",
       "loading": "載入中...",
       "chooseDataset": "選擇一個數據集...",
+      "datasetWithSource": "{{name}}（source：{{source}}）",
+      "sourceLabel": "數據來源：{{source}}",
+      "unknownSource": "未知",
       "dataGrouping": "數據分組",
       "fileLevel": "檔案級別",
       "fileLevelDesc": "每個檔案作為獨立樣本",

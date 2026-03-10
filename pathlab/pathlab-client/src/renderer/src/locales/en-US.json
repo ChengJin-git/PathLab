@@ -1206,6 +1206,11 @@
       "created": "Created",
       "name": "Name"
     },
+    "pagination": {
+      "itemsPerPage": "Per page",
+      "summary": "Showing {{start}} to {{end}} of {{total}} tasks",
+      "pageInfo": "Page {{current}} / {{total}}"
+    },
     "columns": {
       "data": "Data",
       "extractor": "Feature Extractor",
@@ -1721,6 +1726,7 @@
     "deleteFile": "Delete File",
     "noCaseId": "No Case ID",
     "slidesCount": "{{count}} slides",
+    "slideCountSingle": "{{count}} slide",
     "mixed": "Mixed",
     "seeSlides": "See slides",
     "eventCount": "{{count}} Event",
@@ -1734,7 +1740,12 @@
     "cases": "cases",
     "slidesTotal": "{{count}} slides total",
     "files": "files",
-    "goTo": "Go to"
+    "goTo": "Go to",
+    "pagination": {
+      "itemsPerPage": "Per page",
+      "summary": "Showing {{start}} to {{end}} of {{total}} datasets",
+      "pageInfo": "Page {{current}} / {{total}}"
+    }
   },
   "training": {
     "batchEdit": {
@@ -2389,6 +2400,9 @@
       "selectDatasetLabel": "Select Dataset",
       "loading": "Loading...",
       "chooseDataset": "Choose a dataset...",
+      "datasetWithSource": "{{name}} (source: {{source}})",
+      "sourceLabel": "Source: {{source}}",
+      "unknownSource": "Unknown",
       "dataGrouping": "Data Grouping",
       "fileLevel": "File Level",
       "fileLevelDesc": "Each file is an independent sample",

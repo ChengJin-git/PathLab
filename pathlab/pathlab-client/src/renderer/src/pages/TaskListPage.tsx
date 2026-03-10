@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName } from '../api'
-import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles, User, Edit2 } from 'lucide-react'
+import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES, CancellableStatus } from '../constants/status'
 import { isSegFmEncoder } from '../constants/training'
 import { PageHeader } from '../components/PageHeader'
@@ -47,6 +47,8 @@ export default function TaskListPage() {
   const [filter, setFilter] = useState<'all' | 'running' | 'completed' | 'failed' | 'cancelled'>('all')
   const [sortBy, setSortBy] = useState<'created' | 'updated' | 'name'>('updated')
   const [searchQuery, setSearchQuery] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(5)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null)
   const [deleteMode, setDeleteMode] = useState<'standard' | 'complete'>('standard')
@@ -330,6 +332,16 @@ export default function TaskListPage() {
     return 0
   })
 
+  const totalPages = Math.max(1, Math.ceil(sortedTasks.length / itemsPerPage))
+  const paginatedTasks = sortedTasks.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
+  const paginationStart = sortedTasks.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1
+  const paginationEnd = Math.min(currentPage * itemsPerPage, sortedTasks.length)
+  const allFilteredSelected = filteredTasks.length > 0 && filteredTasks.every(task => selectedTasks.includes(task.task_id))
+
+  useEffect(() => {
+    setCurrentPage(prev => Math.min(prev, totalPages))
+  }, [totalPages])
+
   const stats = {
     total: tasks.length,
     running: tasks.filter(t => isActiveStatus(t.status)).length,
@@ -393,13 +405,19 @@ export default function TaskListPage() {
           <input
             type="text"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value)
+              setCurrentPage(1)
+            }}
             placeholder={t('taskList.searchPlaceholder')}
             className="w-full pl-9 sm:pl-12 pr-4 py-2 sm:py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 text-sm sm:text-base transition-all"
           />
           {searchQuery && (
             <button
-              onClick={() => setSearchQuery('')}
+              onClick={() => {
+                setSearchQuery('')
+                setCurrentPage(1)
+              }}
               className="absolute right-3 sm:right-4 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
               title={t('taskList.clearSearch')}
             >
@@ -415,7 +433,10 @@ export default function TaskListPage() {
           {(['all', 'running', 'completed', 'failed', 'cancelled'] as const).map(f => (
             <button
               key={f}
-              onClick={() => setFilter(f)}
+              onClick={() => {
+                setFilter(f)
+                setCurrentPage(1)
+              }}
               className={`px-3 sm:px-4 py-1 sm:py-1.5 text-[11px] sm:text-sm font-semibold rounded-lg transition-all whitespace-nowrap ${filter === f
                 ? 'bg-gray-900 text-white shadow-md'
                 : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
@@ -427,9 +448,9 @@ export default function TaskListPage() {
         </div>
 
         <div className="flex items-center justify-between sm:justify-end gap-3 sm:gap-6 bg-white sm:bg-transparent px-3 py-2 sm:p-0 rounded-xl border border-gray-100 sm:border-transparent">
-          <div className="flex items-center gap-2 group cursor-pointer" onClick={() => toggleSelectAll(!(filteredTasks.length > 0 && selectedTasks.length === filteredTasks.length))}>
+          <div className="flex items-center gap-2 group cursor-pointer" onClick={() => toggleSelectAll(!allFilteredSelected)}>
             <Checkbox
-              checked={filteredTasks.length > 0 && selectedTasks.length === filteredTasks.length}
+              checked={allFilteredSelected}
               onCheckedChange={toggleSelectAll}
               id="select-all"
               className="h-4 w-4 data-[state=checked]:bg-gray-900 data-[state=checked]:border-gray-900"
@@ -442,10 +463,32 @@ export default function TaskListPage() {
           <div className="h-4 w-px bg-gray-200"></div>
 
           <div className="flex items-center space-x-1 sm:space-x-2">
+            <span className="text-[11px] sm:text-sm font-medium text-gray-400">{t('taskList.pagination.itemsPerPage')}:</span>
+            <select
+              value={itemsPerPage}
+              onChange={(e) => {
+                setItemsPerPage(Number(e.target.value))
+                setCurrentPage(1)
+              }}
+              className="pl-1 pr-6 py-1 text-[11px] sm:text-sm font-bold border-none bg-transparent focus:ring-0 text-gray-700 cursor-pointer hover:bg-gray-100 rounded-md transition-colors"
+              style={{ backgroundImage: 'none' }}
+            >
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+            </select>
+          </div>
+
+          <div className="h-4 w-px bg-gray-200"></div>
+
+          <div className="flex items-center space-x-1 sm:space-x-2">
             <span className="text-[11px] sm:text-sm font-medium text-gray-400">{t('taskList.sort')}:</span>
             <select
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+              onChange={(e) => {
+                setSortBy(e.target.value as typeof sortBy)
+                setCurrentPage(1)
+              }}
               className="pl-1 pr-6 py-1 text-[11px] sm:text-sm font-bold border-none bg-transparent focus:ring-0 text-gray-700 cursor-pointer hover:bg-gray-100 rounded-md transition-colors"
               style={{ backgroundImage: 'none' }}
             >
@@ -496,7 +539,7 @@ export default function TaskListPage() {
         </Card>
       ) : (
         <div className="space-y-3 pb-8">
-          {sortedTasks.map(task => (
+          {paginatedTasks.map(task => (
             <Card
               key={task.task_id}
               className={`group p-4 sm:p-6 hover:shadow-lg transition-all cursor-pointer overflow-visible border-gray-100 ${selectedTasks.includes(task.task_id) ? 'ring-2 ring-gray-900 bg-gray-50' : 'bg-white'
@@ -709,6 +752,46 @@ export default function TaskListPage() {
               </div>
             </Card>
           ))}
+
+          <Card className="border-gray-100 bg-white/80 shadow-sm">
+            <div className="px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="text-xs sm:text-sm text-gray-500 font-medium text-center sm:text-left">
+                {t('taskList.pagination.summary', {
+                  start: paginationStart,
+                  end: paginationEnd,
+                  total: sortedTasks.length,
+                })}
+              </div>
+
+              <div className="flex items-center gap-2 sm:gap-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                  disabled={currentPage === 1}
+                  className="h-8 px-2 sm:px-3"
+                >
+                  <ChevronLeft className="w-4 h-4 sm:mr-1" />
+                  <span className="hidden sm:inline">{t('common.previous')}</span>
+                </Button>
+
+                <span className="text-xs sm:text-sm font-semibold text-gray-600 min-w-[88px] text-center">
+                  {t('taskList.pagination.pageInfo', { current: currentPage, total: totalPages })}
+                </span>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                  disabled={currentPage === totalPages}
+                  className="h-8 px-2 sm:px-3"
+                >
+                  <span className="hidden sm:inline">{t('common.next')}</span>
+                  <ChevronRight className="w-4 h-4 sm:ml-1" />
+                </Button>
+              </div>
+            </div>
+          </Card>
         </div>
       )}
 

@@ -1206,6 +1206,11 @@
       "created": "创建时间",
       "name": "名称"
     },
+    "pagination": {
+      "itemsPerPage": "每页",
+      "summary": "显示第 {{start}} - {{end}} 项，共 {{total}} 个任务",
+      "pageInfo": "第 {{current}} / {{total}} 页"
+    },
     "columns": {
       "data": "数据",
       "extractor": "特征提取器",
@@ -1721,6 +1726,7 @@
     "deleteFile": "删除文件",
     "noCaseId": "无病例 ID",
     "slidesCount": "{{count}} 张切片",
+    "slideCountSingle": "{{count}} 张切片",
     "mixed": "混合",
     "seeSlides": "查看切片",
     "eventCount": "{{count}} 事件",
@@ -1734,7 +1740,12 @@
     "cases": "个病例",
     "slidesTotal": "共 {{count}} 张切片",
     "files": "个文件",
-    "goTo": "跳转至"
+    "goTo": "跳转至",
+    "pagination": {
+      "itemsPerPage": "每页",
+      "summary": "显示第 {{start}} - {{end}} 项，共 {{total}} 个数据集",
+      "pageInfo": "第 {{current}} / {{total}} 页"
+    }
   },
   "training": {
     "batchEdit": {
@@ -2389,6 +2400,9 @@
       "selectDatasetLabel": "选择数据集",
       "loading": "加载中...",
       "chooseDataset": "选择一个数据集...",
+      "datasetWithSource": "{{name}}（source：{{source}}）",
+      "sourceLabel": "数据来源：{{source}}",
+      "unknownSource": "未知",
       "dataGrouping": "数据分组",
       "fileLevel": "文件级别",
       "fileLevelDesc": "每个文件作为独立样本",

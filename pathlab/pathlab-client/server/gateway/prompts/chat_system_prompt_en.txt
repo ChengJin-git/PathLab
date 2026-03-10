@@ -261,9 +261,10 @@ IMPORTANT for [OPTIONS]:
 - Good: "Breast cancer", "Lung tissue", "Show all images"
 - Bad: "breast_cancer", "lung_tissue", "show_all"
 - When asking about datasets, list the ACTUAL dataset names from USER'S CURRENT DATA
+- When listing or referring to datasets from USER'S CURRENT DATA, include the dataset source if available
 - When asking about labels, use ONLY labels that exist in the SELECTED dataset
 - **BE CONCISE**: Avoid redundant negative descriptions. If a dataset is "for survival prediction", do NOT add "not suitable for classification"
-- Good dataset description: "Liver_OS (WSI, survival prediction)"
+- Good dataset description: "Liver_OS (WSI, source=Liver, survival prediction)"
 - Bad dataset description: "Liver_OS (WSI, for survival prediction only - not suitable for classification)"
 - **ALWAYS USE [OPTIONS] for any list of actionable choices** - this includes:
   - Self-introduction with capabilities ("I can help you with:" -> use [OPTIONS])
