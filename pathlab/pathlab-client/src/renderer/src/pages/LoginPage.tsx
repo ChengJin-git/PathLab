@@ -13,6 +13,8 @@ import { Microscope, Brain, Shield, Zap, LogIn, Loader2, User, Lock, Heart, Exte
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { LanguageSwitcher } from '../components/common/LanguageSwitcher'
+import { DisclaimerModal } from '../components/DisclaimerModal'
+import { PrivacyPolicyModal } from '../components/PrivacyPolicyModal'
 import { getPublicSettings, ApiError } from '../api'
 
 /**
@@ -28,6 +30,8 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
   const [username, setUsername] = React.useState('')
   const [password, setPassword] = React.useState('')
   const [formError, setFormError] = React.useState<string | null>(null)
+  const [isTermsPreviewOpen, setIsTermsPreviewOpen] = React.useState(false)
+  const [isPrivacyPreviewOpen, setIsPrivacyPreviewOpen] = React.useState(false)
 
   // Turnstile state
   const [turnstileToken, setTurnstileToken] = React.useState<string | undefined>(undefined)
@@ -224,6 +228,38 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
               {t('common.signIn')}
             </Button>
 
+            <div className="rounded-2xl bg-slate-50/80 px-5 py-4 shadow-[0_10px_30px_rgba(15,23,42,0.06)]">
+              <div className="mx-auto max-w-sm text-center">
+                <p className="text-xs leading-relaxed text-slate-500">
+                  {t('loginPage.legalNotice')}
+                </p>
+
+                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => setIsTermsPreviewOpen(true)}
+                    className="group h-auto justify-center rounded-full bg-white/85 px-4 py-2 text-xs font-semibold text-slate-700 shadow-[0_4px_14px_rgba(15,23,42,0.08)] transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-[0_8px_20px_rgba(15,23,42,0.12)]"
+                  >
+                    <Shield className="mr-1.5 h-3.5 w-3.5 text-blue-600" />
+                    <span>{t('loginPage.viewTerms')}</span>
+                    <ExternalLink className="ml-1.5 h-3 w-3 text-slate-400 transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => setIsPrivacyPreviewOpen(true)}
+                    className="group h-auto justify-center rounded-full bg-white/85 px-4 py-2 text-xs font-semibold text-slate-700 shadow-[0_4px_14px_rgba(15,23,42,0.08)] transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-[0_8px_20px_rgba(15,23,42,0.12)]"
+                  >
+                    <Lock className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
+                    <span>{t('loginPage.viewPrivacy')}</span>
+                    <ExternalLink className="ml-1.5 h-3 w-3 text-slate-400 transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+
             <p className="text-center text-xs text-slate-400 mt-6">
               © 2026 <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer">SmartLab</a>{turnstileSiteKey ? ` · ${t('common.protectedByTurnstile')}` : ''}
             </p>
@@ -313,6 +349,25 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
           <p className="text-slate-400 text-xs font-mono font-medium">{t('loginPage.buildVersion')}</p>
         </div>
       </div>
+
+      <DisclaimerModal
+        isOpen={isTermsPreviewOpen}
+        isLoading={false}
+        onAccept={() => {}}
+        onDecline={() => setIsTermsPreviewOpen(false)}
+        previewOnly
+        onClose={() => setIsTermsPreviewOpen(false)}
+        onOpenPrivacyPolicy={() => setIsPrivacyPreviewOpen(true)}
+      />
+
+      <PrivacyPolicyModal
+        isOpen={isPrivacyPreviewOpen}
+        onClose={() => setIsPrivacyPreviewOpen(false)}
+        onBackToTerms={() => {
+          setIsPrivacyPreviewOpen(false)
+          setIsTermsPreviewOpen(true)
+        }}
+      />
 
     </div>
   )

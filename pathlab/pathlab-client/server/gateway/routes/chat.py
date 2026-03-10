@@ -63,6 +63,20 @@ def _get_generation_cancelled_text(detected_lang: str) -> str:
     return cancel_messages.get(normalized, cancel_messages.get(normalized.split("_")[0], cancel_messages["en"]))
 
 
+async def _require_conversation_write_access(
+    db: AsyncSession,
+    conversation_id: str,
+    user: User,
+) -> None:
+    """Ensure the current user can persist data into the target conversation."""
+    conversation = await ChatRepository.get_conversation(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if not check_data_ownership(conversation.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to modify this conversation")
+
+
 def _is_segmentation_task(task_type: Optional[str]) -> bool:
     return task_type in SEGMENTATION_TASK_TYPES
 
@@ -2355,6 +2369,9 @@ async def chat_with_ai(
     }
     ui_lang_header = request.headers.get("X-Language", "")
     ui_lang = _LANG_HEADER_MAP.get(ui_lang_header) if ui_lang_header else None
+
+    if req.conversation_id:
+        await _require_conversation_write_access(db, req.conversation_id, user)
 
     # Resolve current datetime in the user's browser timezone (falls back to UTC).
     tz_header = request.headers.get("X-Timezone", "").strip()

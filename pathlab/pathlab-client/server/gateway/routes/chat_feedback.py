@@ -24,6 +24,26 @@ from ..models import MessageFeedbackRequest
 router = APIRouter()
 
 
+async def _require_message_access(
+    message_id: int,
+    user: User,
+    db: AsyncSession,
+):
+    """Ensure the current user can access the target message via its conversation."""
+    message = await ChatRepository.get_message(db, message_id)
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    conversation = message.conversation
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if not check_data_ownership(conversation.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to access this message")
+
+    return message
+
+
 @router.post("/messages/{message_id}/feedback")
 async def submit_feedback(
     message_id: int,
@@ -40,6 +60,8 @@ async def submit_feedback(
         raise HTTPException(status_code=400, detail="feedback_type must be 'thumbs_up' or 'thumbs_down'")
     if req.task_helpfulness and req.task_helpfulness not in ["helpful", "not_helpful"]:
         raise HTTPException(status_code=400, detail="task_helpfulness must be 'helpful' or 'not_helpful'")
+
+    await _require_message_access(message_id, user, db)
 
     # Upsert feedback (convert UUID to string for storage)
     feedback = await FeedbackRepository.upsert_feedback(
@@ -66,6 +88,8 @@ async def get_feedback(
     db: AsyncSession = Depends(get_db)
 ):
     """Get feedback for a specific message."""
+    await _require_message_access(message_id, user, db)
+
     feedback = await FeedbackRepository.get_feedback(db, message_id, str(user.id))
     if not feedback:
         return {"message_id": message_id, "feedback": None}
@@ -79,6 +103,8 @@ async def delete_feedback(
     db: AsyncSession = Depends(get_db)
 ):
     """Delete feedback for a message."""
+    await _require_message_access(message_id, user, db)
+
     success = await FeedbackRepository.delete_feedback(db, message_id, str(user.id))
     if not success:
         raise HTTPException(status_code=404, detail="Feedback not found")

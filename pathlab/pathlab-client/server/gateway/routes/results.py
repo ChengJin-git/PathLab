@@ -25,7 +25,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.ai.schemas.base import TaskStatus
 from backend.database import get_db, safe_session
-from backend.database.models import AIResult, WSISlide, TrainingTask, TrainedModel, TrainingTaskWSI, DataGroup, Dataset
+from backend.database.models import AIResult, AITask, WSISlide, TrainingTask, TrainedModel, TrainingTaskWSI, DataGroup, Dataset
 from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository, TrainedModelRepository, DataGroupRepository, DatasetRepository, DatasetPermissionRepository
 from backend.common.config import Config
 from backend.storage import StorageManager
@@ -324,6 +324,23 @@ async def _get_elevated_dataset_ids(user: User, db: AsyncSession) -> Optional[Li
     return [p.dataset_id for p in permissions if p.is_valid()]
 
 
+def _build_owned_ai_result_filter(user: User):
+    """
+    Restrict AI result visibility to the current user's own derived artifacts.
+
+    Some historical AIResult rows do not have user_id populated, so we also fall
+    back to task ownership for both inference tasks (AITask) and training tasks.
+    """
+    user_id = str(user.id)
+    owned_ai_task_ids = select(AITask.task_id).where(AITask.user_id == user_id)
+    owned_training_task_ids = select(TrainingTask.task_id).where(TrainingTask.user_id == user_id)
+    return or_(
+        AIResult.user_id == user_id,
+        AIResult.task_id.in_(owned_ai_task_ids),
+        AIResult.task_id.in_(owned_training_task_ids),
+    )
+
+
 
 @router.get("")
 async def get_all_results(
@@ -335,7 +352,6 @@ async def get_all_results(
     """
     Get all AI results with associated WSI labels for analysis.
     Users see only their own results, admin sees all.
-    Users with temporary elevated dataset permissions can also see results for WSIs in those datasets.
 
     Returns:
         List of results with predictions and ground truth labels
@@ -345,13 +361,9 @@ async def get_all_results(
         select(AIResult, WSISlide)
         .join(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
     )
-    # Filter by user_id if not admin (include results for elevated datasets)
+    # Filter to the current user's own derived results if not admin.
     if not user.is_admin():
-        elevated_dataset_ids = await _get_elevated_dataset_ids(user, db)
-        conditions = [AIResult.user_id == str(user.id)]
-        if elevated_dataset_ids:
-            conditions.append(WSISlide.dataset_id.in_(elevated_dataset_ids))
-        query = query.where(or_(*conditions))
+        query = query.where(_build_owned_ai_result_filter(user))
     query = query.order_by(AIResult.created_at.desc()).offset(skip).limit(limit)
 
     result = await db.execute(query)
@@ -393,13 +405,9 @@ async def get_analysis_stats(
         .join(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
         .where(AIResult.pred.isnot(None))  # Only analyzed results
     )
-    # Filter by user_id if not admin (include results for elevated datasets)
+    # Filter to the current user's own derived results if not admin.
     if not user.is_admin():
-        elevated_dataset_ids = await _get_elevated_dataset_ids(user, db)
-        conditions = [AIResult.user_id == str(user.id)]
-        if elevated_dataset_ids:
-            conditions.append(WSISlide.dataset_id.in_(elevated_dataset_ids))
-        query = query.where(or_(*conditions))
+        query = query.where(_build_owned_ai_result_filter(user))
     if task_id:
         query = query.where(AIResult.task_id == task_id)
 
@@ -815,7 +823,6 @@ async def get_analysis_tasks(
     """
     Get list of tasks available for analysis.
     Users see only their own tasks, admin sees all.
-    Users with temporary elevated dataset permissions can also see tasks for those datasets.
 
     Only returns tasks that have both features and model available.
     Also indicates whether ai_results exist (needed before running analysis).
@@ -829,20 +836,9 @@ async def get_analysis_tasks(
     query = select(TrainingTask).options(
         selectinload(TrainingTask.data_group)
     ).where(TrainingTask.status == TaskStatus.COMPLETED)
-    # Filter by user_id if not admin (include tasks for elevated datasets)
+    # Filter to the current user's own tasks if not admin.
     if not user.is_admin():
-        elevated_dataset_ids = await _get_elevated_dataset_ids(user, db)
-        conditions = [TrainingTask.user_id == str(user.id)]
-        if elevated_dataset_ids:
-            # Include tasks that have WSIs in elevated datasets
-            elevated_task_ids_subquery = (
-                select(TrainingTaskWSI.task_id)
-                .join(WSISlide, TrainingTaskWSI.wsi_id == WSISlide.wsi_id)
-                .where(WSISlide.dataset_id.in_(elevated_dataset_ids))
-                .distinct()
-            )
-            conditions.append(TrainingTask.task_id.in_(elevated_task_ids_subquery))
-        query = query.where(or_(*conditions))
+        query = query.where(TrainingTask.user_id == str(user.id))
     query = query.order_by(TrainingTask.created_at.desc())
     result = await db.execute(query)
     tasks = result.scalars().all()
@@ -2539,8 +2535,7 @@ async def start_external_validation(
     if not trained_model:
         raise HTTPException(status_code=404, detail=f"Model not found: {req.model_id}")
 
-    # Check ownership of the model (supports temporary elevated dataset permissions)
-    # First get model's training task to check dataset_id for temp permission
+    # Check ownership of the model via its training task.
     model_task = await TrainingTaskRepository.get_by_id(db, trained_model.task_id)
     if not model_task:
         raise HTTPException(status_code=404, detail=f"Model's training task not found: {trained_model.task_id}")
@@ -2962,19 +2957,9 @@ async def get_completed_external_validations(
             )
         )
     )
-    # Filter by user_id if not admin (include tasks for elevated datasets)
+    # Filter to the current user's own tasks if not admin.
     if not user.is_admin():
-        elevated_dataset_ids = await _get_elevated_dataset_ids(user, db)
-        conditions = [TrainingTask.user_id == str(user.id)]
-        if elevated_dataset_ids:
-            elevated_task_ids_subquery = (
-                select(TrainingTaskWSI.task_id)
-                .join(WSISlide, TrainingTaskWSI.wsi_id == WSISlide.wsi_id)
-                .where(WSISlide.dataset_id.in_(elevated_dataset_ids))
-                .distinct()
-            )
-            conditions.append(TrainingTask.task_id.in_(elevated_task_ids_subquery))
-        query = query.where(or_(*conditions))
+        query = query.where(TrainingTask.user_id == str(user.id))
     query = query.order_by(TrainingTask.created_at.desc())
     result = await db.execute(query)
     tasks = result.scalars().all()
@@ -4897,7 +4882,7 @@ async def get_task_analysis(
     """
     Get existing analysis results for a task. Users can only view their own tasks.
     """
-    # Check task ownership (supports temporary elevated dataset permissions)
+    # Check task ownership/admin access.
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if task:
         await _require_task_access(
@@ -5438,7 +5423,7 @@ async def get_analysis_file(
     - Authorization header: Bearer <token>
     - Query parameter: ?token=<token> (for <img> tags)
     """
-    # Check task ownership (supports temporary elevated dataset permissions)
+    # Check task ownership/admin access.
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if task:
         await _require_task_access(
@@ -5547,7 +5532,7 @@ async def get_analysis_status(
 
         raise HTTPException(status_code=404, detail=f"Analysis not found: {analysis_id}")
 
-    # Check ownership (supports temporary elevated dataset permissions)
+    # Check task ownership/admin access.
     task_id = analysis_state.get("task_id")
     if task_id:
         task = await TrainingTaskRepository.get_by_id(db, task_id)
@@ -5601,7 +5586,9 @@ async def get_results(
 ):
     """
     Get AI analysis results for a WSI from database.
-    Users can view results for their own WSI or WSI in datasets they have elevated permissions for.
+    Users can access the WSI itself via ownership or temporary dataset permission,
+    but only admins can see all derived results; non-admins only see their own
+    results for that WSI.
 
     Args:
         wsi_id: The WSI ID to get results for
@@ -5616,8 +5603,13 @@ async def get_results(
         if not has_access:
             raise HTTPException(status_code=403, detail="You don't have permission to view results for this WSI")
 
-    # Get from database
-    result = await AIResultRepository.get_by_wsi_id(db, wsi_id)
+    # Get latest derived result visible to the current user.
+    result_query = select(AIResult).where(AIResult.wsi_id == wsi_id)
+    if not user.is_admin():
+        result_query = result_query.where(_build_owned_ai_result_filter(user))
+    result_query = result_query.order_by(AIResult.created_at.desc()).limit(1)
+
+    result = (await db.execute(result_query)).scalar_one_or_none()
     if result:
         return result.to_dict()
 

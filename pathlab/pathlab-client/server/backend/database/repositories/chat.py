@@ -36,6 +36,16 @@ class ChatRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_message(db: AsyncSession, message_id: int) -> Optional[ChatMessage]:
+        """Get a chat message by ID with its parent conversation loaded."""
+        result = await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.id == message_id)
+            .options(selectinload(ChatMessage.conversation))
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def get_user_conversations(
         db: AsyncSession,
         user_id: str,

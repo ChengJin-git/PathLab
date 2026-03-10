@@ -7,6 +7,7 @@ import { Button } from './ui/button'
 import { BackgroundTaskPanel } from './BackgroundTaskPanel'
 import { InstallPWA } from './InstallPWA'
 import { DisclaimerModal } from './DisclaimerModal'
+import { PrivacyPolicyModal } from './PrivacyPolicyModal'
 import { MaintenanceNoticeModal } from './MaintenanceNoticeModal'
 import { uploadAvatar, deleteAvatar, ApiError } from '../api'
 import { API_BASE } from '../config'
@@ -24,6 +25,7 @@ export default function Layout({ children }: LayoutProps) {
   const { error: toastError, success: toastSuccess } = useToast()
   const { t } = useTranslation()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const [isPrivacyPolicyOpen, setIsPrivacyPolicyOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -273,6 +275,13 @@ export default function Layout({ children }: LayoutProps) {
         isLoading={isLoading}
         onAccept={handleAcceptAgreement}
         onDecline={handleDeclineAgreement}
+        onOpenPrivacyPolicy={() => setIsPrivacyPolicyOpen(true)}
+      />
+
+      <PrivacyPolicyModal
+        isOpen={needsAgreement && isPrivacyPolicyOpen}
+        onClose={() => setIsPrivacyPolicyOpen(false)}
+        onBackToTerms={() => setIsPrivacyPolicyOpen(false)}
       />
 
       {/* Maintenance Notice Modal - shown when admin posts a notice */}

@@ -309,13 +309,12 @@ async def check_task_access_permission(
     Returns True if:
     - User is admin (can access all)
     - User owns the task (task_user_id matches)
-    - User has valid temporary elevated permission for the task's dataset
 
     Args:
         user: Current user
         task_user_id: User ID of the task owner (can be None for legacy data)
-        task_dataset_id: Dataset UUID associated with the task (from model_config, can be None)
-        db: Database session
+        task_dataset_id: Unused for read access; kept for signature compatibility
+        db: Unused for read access; kept for signature compatibility
 
     Returns:
         True if user can access the task
@@ -327,15 +326,6 @@ async def check_task_access_permission(
     # Check if user owns the task
     if task_user_id == str(user.id):
         return True
-
-    # Check for temporary elevated permission on the task's dataset
-    if task_dataset_id:
-        from backend.database.repositories import DatasetPermissionRepository
-        has_permission = await DatasetPermissionRepository.has_valid_permission(
-            db, task_dataset_id, str(user.id), "pathologist"
-        )
-        if has_permission:
-            return True
 
     return False
 

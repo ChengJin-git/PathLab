@@ -421,11 +421,11 @@ export default function ListPage() {
     options: Array<{ value: string; label: string }>,
     onChange: (value: string) => void
   ) => (
-    <div className="flex min-w-0 flex-col gap-1.5 sm:gap-2 2xl:flex-row 2xl:items-center 2xl:gap-3">
-      <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400 whitespace-nowrap">
+    <div className="flex min-w-0 flex-col gap-1.5 sm:gap-2 lg:flex-row lg:items-center lg:gap-2.5">
+      <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] leading-none text-gray-400 whitespace-nowrap">
         {label}
       </p>
-      <div className="flex flex-wrap gap-1.5 sm:gap-2 min-w-0">
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5 sm:gap-2">
         {options.map((option) => {
           const selected = option.value === value
 
@@ -1186,8 +1186,8 @@ export default function ListPage() {
           {!datasetsLoading && !datasetsError && visibleDatasets.length > 0 && (
             <Card className="relative z-20 border-gray-100 shadow-sm bg-white/80 backdrop-blur-sm">
               <div className="px-4 py-3 sm:px-5 sm:py-3.5">
-                <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
-                  <div className="flex flex-wrap items-start gap-x-6 gap-y-3 min-w-0">
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-3 xl:flex-1">
                     {renderDatasetFilterGroup(
                       t('listPage.filters.groups.taskType'),
                       datasetTaskFilter,
@@ -1222,8 +1222,8 @@ export default function ListPage() {
                       (nextValue) => setDatasetLevelFilter(nextValue as DatasetLevelFilter)
                     )}
 
-                    <div className="flex min-w-0 flex-col gap-1.5 sm:gap-2 2xl:flex-row 2xl:items-center 2xl:gap-3">
-                      <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400 whitespace-nowrap">
+                    <div className="flex min-w-0 flex-col gap-1.5 sm:gap-2 lg:flex-row lg:items-center lg:gap-2.5">
+                      <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] leading-none text-gray-400 whitespace-nowrap">
                         {t('listPage.filters.groups.sourceOrgan')}
                       </p>
                       <Select
@@ -1231,40 +1231,41 @@ export default function ListPage() {
                         onChange={setDatasetSourceFilter}
                         options={datasetSourceOptions}
                         placeholder={t('listPage.filters.selectSourceOrgan')}
-                        className="w-full min-w-[180px] sm:min-w-[220px] 2xl:w-[220px]"
+                        className="w-full min-w-[160px] sm:min-w-[180px] lg:w-[180px] xl:w-[200px]"
+                        triggerClassName="h-8 px-2.5 text-xs sm:text-sm"
                       />
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2 sm:gap-3 self-start 2xl:ml-auto 2xl:self-center">
-                    <div className="inline-flex items-center rounded-xl bg-slate-100 p-1 shadow-inner">
+                  <div className="flex shrink-0 items-center gap-2 sm:gap-3 self-start xl:ml-4 xl:self-center">
+                    <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5 shadow-inner">
                       <button
                         type="button"
                         onClick={() => setDatasetViewMode('grid')}
                         aria-label={t('listPage.view.iconView')}
                         title={t('listPage.view.iconView')}
-                        className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition-all ${datasetViewMode === 'grid'
+                        className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-all ${datasetViewMode === 'grid'
                           ? 'bg-white text-slate-900 shadow-sm'
                           : 'text-slate-500 hover:text-slate-700'
                           }`}
                       >
-                        <LayoutGrid className="w-4 h-4" />
+                        <LayoutGrid className="h-3.5 w-3.5" />
                       </button>
                       <button
                         type="button"
                         onClick={() => setDatasetViewMode('list')}
                         aria-label={t('listPage.view.listView')}
                         title={t('listPage.view.listView')}
-                        className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition-all ${datasetViewMode === 'list'
+                        className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-all ${datasetViewMode === 'list'
                           ? 'bg-white text-slate-900 shadow-sm'
                           : 'text-slate-500 hover:text-slate-700'
                           }`}
                       >
-                        <List className="w-4 h-4" />
+                        <List className="h-3.5 w-3.5" />
                       </button>
                     </div>
 
-                    <span className="inline-flex items-center rounded-full bg-slate-50 px-2.5 sm:px-3 py-1 text-[11px] sm:text-xs font-medium text-slate-600 whitespace-nowrap">
+                    <span className="inline-flex items-center rounded-full bg-slate-50 px-2.5 py-0.5 text-[11px] sm:text-xs font-medium text-slate-600 whitespace-nowrap">
                       {t('listPage.filters.compactSummary', {
                         shown: filteredDatasets.length,
                         total: visibleDatasets.length,
