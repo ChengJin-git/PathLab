@@ -23,7 +23,7 @@ from backend.database.repositories import WSIRepository
 from backend.common.config import Config
 from backend.common.file_types import is_patch_file
 from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
-from .tiling import safe_load_h5_coords
+from .coords_utils import safe_load_h5_coords, safe_load_h5_coords_attrs
 from .heatmap_utils import (
     load_result_meta,
     select_attention_file,
@@ -38,6 +38,54 @@ router = APIRouter()
 
 UPLOADS_DIR = Config.get_uploads_dir()
 AI_RESULTS_DIR = UPLOADS_DIR / "ai_results"
+
+RECOMMENDATION_PRESET = "recommendation"
+
+
+def _clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
+
+
+def _get_render_settings(
+    preset: Optional[str],
+    opacity: Optional[float],
+    blur_scale: Optional[float],
+    contrast_boost: Optional[float],
+    saturation_boost: Optional[float],
+) -> Dict[str, object]:
+    is_recommendation = preset == RECOMMENDATION_PRESET
+    return {
+        "opacity": _clamp(opacity if opacity is not None else (0.68 if is_recommendation else 0.5), 0.05, 0.95),
+        "blur_scale": _clamp(blur_scale if blur_scale is not None else (0.6 if is_recommendation else 1.0), 0.1, 3.0),
+        "contrast_boost": _clamp(contrast_boost if contrast_boost is not None else (1.18 if is_recommendation else 1.0), 0.5, 3.0),
+        "saturation_boost": _clamp(saturation_boost if saturation_boost is not None else (1.25 if is_recommendation else 1.0), 0.5, 3.0),
+        "cache_headers": {"Cache-Control": "private, max-age=600"} if is_recommendation else {},
+    }
+
+
+def _enhance_overlay_image(image, contrast_boost: float, saturation_boost: float):
+    from PIL import ImageEnhance
+
+    if contrast_boost == 1.0 and saturation_boost == 1.0:
+        return image
+
+    if image.mode == 'RGBA':
+        alpha_channel = image.getchannel('A')
+        rgb_image = image.convert('RGB')
+        if saturation_boost != 1.0:
+            rgb_image = ImageEnhance.Color(rgb_image).enhance(saturation_boost)
+        if contrast_boost != 1.0:
+            rgb_image = ImageEnhance.Contrast(rgb_image).enhance(contrast_boost)
+        enhanced = rgb_image.convert('RGBA')
+        enhanced.putalpha(alpha_channel)
+        return enhanced
+
+    enhanced = image
+    if saturation_boost != 1.0:
+        enhanced = ImageEnhance.Color(enhanced).enhance(saturation_boost)
+    if contrast_boost != 1.0:
+        enhanced = ImageEnhance.Contrast(enhanced).enhance(contrast_boost)
+    return enhanced
 
 
 def _get_npy_shape_fast(filepath: Path) -> Optional[tuple]:
@@ -259,6 +307,11 @@ async def get_heatmap_thumbnail(
     patch_size: int = Query(512, description="Patch size used during inference"),
     size: int = Query(256, description="Max thumbnail size (width or height)"),
     class_idx: Optional[int] = Query(None, description="Class index for multi-class attention"),
+    preset: Optional[str] = Query(None, description="Optional rendering preset for lightweight previews"),
+    opacity: Optional[float] = Query(None, description="Optional overlay opacity for preview rendering"),
+    blur_scale: Optional[float] = Query(None, description="Optional blur scale multiplier for preview rendering"),
+    contrast_boost: Optional[float] = Query(None, description="Optional contrast boost for preview rendering"),
+    saturation_boost: Optional[float] = Query(None, description="Optional saturation boost for preview rendering"),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -277,6 +330,8 @@ async def get_heatmap_thumbnail(
     import io
     from .main import get_slide
     from backend.common.slide_utils import load_slide as _load_slide
+
+    render_settings = _get_render_settings(preset, opacity, blur_scale, contrast_boost, saturation_boost)
 
     logger.info(f"Getting heatmap thumbnail for {wsi_id}, task_id={task_id}, size={size}")
 
@@ -397,10 +452,10 @@ async def get_heatmap_thumbnail(
         patch_w = max(1, int(patch_size * scale_x))
         patch_h = max(1, int(patch_size * scale_y))
 
-        # Create RGB heatmap image (no alpha - matching WSI Viewer approach)
-        heatmap_rgb = np.zeros((actual_thumb_height, actual_thumb_width, 3), dtype=np.uint8)
+        # Create transparent RGBA overlay so empty areas do not darken the whole slide.
+        heatmap_rgba = np.zeros((actual_thumb_height, actual_thumb_width, 4), dtype=np.uint8)
 
-        # Draw patches on heatmap with coolwarm colors (opaque, no alpha)
+        # Draw patches on heatmap as opaque color blocks; opacity is applied after blur.
         for coord, weight in zip(coords, attention_normalized):
             x = int(coord[0] * scale_x)
             y = int(coord[1] * scale_y)
@@ -411,26 +466,42 @@ async def get_heatmap_thumbnail(
             y = max(0, y)
             if x < x_end and y < y_end:
                 rgb = weight_to_rgb(weight)
-                heatmap_rgb[y:y_end, x:x_end, 0] = rgb[0]  # R
-                heatmap_rgb[y:y_end, x:x_end, 1] = rgb[1]  # G
-                heatmap_rgb[y:y_end, x:x_end, 2] = rgb[2]  # B
+                heatmap_rgba[y:y_end, x:x_end, 0] = rgb[0]  # R
+                heatmap_rgba[y:y_end, x:x_end, 1] = rgb[1]  # G
+                heatmap_rgba[y:y_end, x:x_end, 2] = rgb[2]  # B
+                heatmap_rgba[y:y_end, x:x_end, 3] = 255
 
-        # Apply Gaussian blur to RGB image only (matching WSI Viewer)
+        # Apply Gaussian blur to the transparent overlay, then boost visibility for
+        # recommendation-card previews when requested.
         from PIL import ImageFilter
-        heatmap_image = Image.fromarray(heatmap_rgb, mode='RGB')
-        blur_radius = max(2, patch_w / 2)
+        heatmap_image = Image.fromarray(heatmap_rgba, mode='RGBA')
+        blur_radius = max(1, (patch_w / 2) * render_settings["blur_scale"])
         heatmap_blurred = heatmap_image.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+        heatmap_blurred = _enhance_overlay_image(
+            heatmap_blurred,
+            render_settings["contrast_boost"],
+            render_settings["saturation_boost"],
+        )
 
-        # Blend heatmap with thumbnail using 50% opacity
-        heatmap_opacity = 0.5
-        blended_rgb = Image.blend(thumbnail, heatmap_blurred, alpha=heatmap_opacity)
+        alpha_channel = heatmap_blurred.getchannel('A').point(
+            lambda value: int(value * render_settings["opacity"])
+        )
+        heatmap_overlay = heatmap_blurred.copy()
+        heatmap_overlay.putalpha(alpha_channel)
+
+        blended = Image.alpha_composite(thumbnail.convert('RGBA'), heatmap_overlay)
+        blended_rgb = blended.convert('RGB')
 
         # Convert to bytes
         buf = io.BytesIO()
         blended_rgb.save(buf, format='PNG')
         buf.seek(0)
 
-        return Response(content=buf.getvalue(), media_type="image/png")
+        return Response(
+            content=buf.getvalue(),
+            media_type="image/png",
+            headers=render_settings["cache_headers"],
+        )
 
     except HTTPException:
         raise
@@ -571,6 +642,20 @@ async def get_available_heatmaps(
             except Exception as e:
                 logger.warning(f"Failed to batch fetch training tasks: {e}")
 
+        coords_patch_size = None
+        coords_file = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
+        if coords_file is not None:
+            coords_attrs, load_error = safe_load_h5_coords_attrs(coords_file, delete_if_corrupted=False)
+            if coords_attrs is None:
+                logger.warning(f"Failed to load coords attrs for {wsi_id}: {load_error}")
+            else:
+                raw_patch_size = coords_attrs.get("patch_size")
+                if raw_patch_size is not None:
+                    try:
+                        coords_patch_size = int(raw_patch_size)
+                    except (TypeError, ValueError):
+                        logger.warning(f"Invalid coords patch_size for {wsi_id}: {raw_patch_size}")
+
         # Phase 3: Build heatmap entries with all data
         heatmaps = []
 
@@ -620,6 +705,7 @@ async def get_available_heatmaps(
                 "created_at": attention_file.stat().st_mtime,
                 "attention_file": str(attention_file.name),
                 "data_type": "wsi",
+                "patch_size": coords_patch_size,
                 "attention_type": attention_type,
                 "num_attention_classes": num_attention_classes,
                 # Survival prediction fields
@@ -784,6 +870,11 @@ async def get_patch_cam(
     fold_key: Optional[str] = Query(None, description="Fold key for k-fold results (e.g., 'fold_0')"),
     format: str = Query("image", description="Output format: 'image' for colored PNG, 'json' for raw data"),
     size: Optional[int] = Query(None, description="Optional max thumbnail size for previews"),
+    preset: Optional[str] = Query(None, description="Optional rendering preset for lightweight previews"),
+    opacity: Optional[float] = Query(None, description="Optional overlay opacity for preview rendering"),
+    blur_scale: Optional[float] = Query(None, description="Optional blur scale multiplier for preview rendering"),
+    contrast_boost: Optional[float] = Query(None, description="Optional contrast boost for preview rendering"),
+    saturation_boost: Optional[float] = Query(None, description="Optional saturation boost for preview rendering"),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -806,6 +897,8 @@ async def get_patch_cam(
     import matplotlib
     matplotlib.use('Agg')
     from matplotlib import cm
+
+    render_settings = _get_render_settings(preset, opacity, blur_scale, contrast_boost, saturation_boost)
 
     logger.info(f"Getting patch CAM for {wsi_id}, task_id={task_id}, fold_key={fold_key}, format={format}, size={size}")
 
@@ -830,7 +923,11 @@ async def get_patch_cam(
             buf = io.BytesIO()
             img.save(buf, format='PNG')
             buf.seek(0)
-            return Response(content=buf.getvalue(), media_type="image/png")
+            return Response(
+                content=buf.getvalue(),
+                media_type="image/png",
+                headers=render_settings["cache_headers"],
+            )
 
     try:
         # Find result directory
@@ -935,16 +1032,21 @@ async def get_patch_cam(
             # Convert to uint8
             colored_cam_uint8 = (colored_cam * 255).astype(np.uint8)
 
-            # Set alpha to 50% for overlay
-            colored_cam_uint8[:, :, 3] = 128
+            # Set alpha using the requested opacity (defaults preserve current behavior).
+            colored_cam_uint8[:, :, 3] = int(round(255 * render_settings["opacity"]))
 
             # Create PIL image and resize to match original
             cam_image = Image.fromarray(colored_cam_uint8, mode='RGBA')
             cam_image = cam_image.resize((target_width, target_height), Image.Resampling.BILINEAR)
 
             # Apply Gaussian blur for smoother appearance
-            blur_radius = max(2, target_width / 50)  # Adaptive blur based on image size
+            blur_radius = max(1, (target_width / 50) * render_settings["blur_scale"])  # Adaptive blur based on image size
             cam_image = cam_image.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+            cam_image = _enhance_overlay_image(
+                cam_image,
+                render_settings["contrast_boost"],
+                render_settings["saturation_boost"],
+            )
 
             # Composite CAM over original image
             original_rgba = original_image.convert('RGBA')
@@ -956,7 +1058,11 @@ async def get_patch_cam(
             blended_rgb.save(buf, format='PNG')
             buf.seek(0)
 
-            return Response(content=buf.getvalue(), media_type="image/png")
+            return Response(
+                content=buf.getvalue(),
+                media_type="image/png",
+                headers=render_settings["cache_headers"],
+            )
 
     except HTTPException:
         raise

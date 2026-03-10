@@ -8,10 +8,10 @@ import {
   fetchAllResults,
   getThumbnailUrl,
   fetchAvailableHeatmaps,
-  getPatchCAMImageUrl,
+  getRecommendationPatchCAMImageUrl as getPatchCAMImageUrl,
+  getRecommendationHeatmapThumbnailUrl as getHeatmapThumbnailUrl,
   getSegMaskImageUrl,
   getWSIGroundTruth,
-  getHeatmapThumbnailUrl,
   type WSISummary,
   type AvailableHeatmap,
   type AnnotationRegion
@@ -88,6 +88,7 @@ export function removeImageRecommendationBlock(content: string): string {
 const imageCache = new Map<string, { images: ImageWithOverlays[]; error: string | null }>()
 const groundTruthMaskCache = new Map<string, AnnotationRegion[]>()
 const wsiDimensionCache = new Map<string, { width: number; height: number }>()
+const CARD_THUMBNAIL_SIZE = 160
 
 function hexToRgba(color: string, alpha: number): string {
   const normalized = color.replace('#', '')
@@ -172,12 +173,14 @@ function OverlayThumbnailButton({
       className="relative flex-shrink-0 snap-start group/img w-32 h-32"
       title={title}
     >
-      <div className="relative w-full h-full bg-gray-100 rounded-lg overflow-hidden border border-gray-200 group-hover/img:border-orange-300 transition-colors">
+      <div className="relative w-full h-full bg-gray-100 rounded-lg overflow-hidden border border-gray-200 group-hover/img:border-orange-300 shadow-sm transition-colors">
         {loadState !== 'error' && (
           <img
             src={src}
             alt={alt}
             className={`w-full h-full object-cover ${loadState === 'ready' ? 'opacity-100' : 'opacity-0'}`}
+            loading="lazy"
+            decoding="async"
             onLoad={() => setLoadState('ready')}
             onError={() => setLoadState('error')}
           />
@@ -302,11 +305,13 @@ function GroundTruthMaskThumbnail({
       className="relative w-full h-full group/img"
       title={t('chatComponents.imageRecommendation.groundTruthMask')}
     >
-      <div className="relative w-full h-full bg-gray-100 rounded-lg overflow-hidden border border-gray-200 group-hover/img:border-orange-300 transition-colors">
+      <div className="relative w-full h-full bg-gray-100 rounded-lg overflow-hidden border border-gray-200 group-hover/img:border-orange-300 shadow-sm transition-colors">
         <img
-          src={getThumbnailUrl(image.wsi_id, 256)}
+          src={getThumbnailUrl(image.wsi_id, CARD_THUMBNAIL_SIZE)}
           alt={`${t('chatComponents.imageRecommendation.groundTruthMask')}: ${image.original_filename}`}
           className="w-full h-full object-cover"
+          loading="lazy"
+          decoding="async"
           onError={(e) => {
             e.currentTarget.style.display = 'none'
             const placeholder = e.currentTarget.nextElementSibling as HTMLElement | null
@@ -392,6 +397,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
   const { t } = useTranslation()
   const [imagesWithOverlays, setImagesWithOverlays] = useState<ImageWithOverlays[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isOverlayInfoLoading, setIsOverlayInfoLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const segmentationMaskConfig = recommendation.segmentation_mask
@@ -429,6 +435,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
     if (cached) {
       setImagesWithOverlays(cached.images)
       setError(cached.error)
+      setIsOverlayInfoLoading(false)
       setIsLoading(false)
       return
     }
@@ -471,6 +478,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
 
   const loadImages = async () => {
     setIsLoading(true)
+    setIsOverlayInfoLoading(false)
     setError(null)
     try {
       let displayImages: WSISummary[] = []
@@ -540,9 +548,17 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
 
       // Limit to user-specified count (default 3)
       const limitedImages = shuffled.slice(0, maxCount)
+      const baseImageInfo = limitedImages.map(img => ({
+        image: img,
+        overlays: [],
+      }))
+
+      setImagesWithOverlays(baseImageInfo)
+      setIsLoading(false)
 
       let imageOverlayInfo: ImageWithOverlays[]
       if (needsOverlayLookup) {
+        setIsOverlayInfoLoading(true)
         const overlayPromises = limitedImages.map(async (img) => {
           try {
             let overlays = await fetchAvailableHeatmaps(img.wsi_id)
@@ -591,21 +607,20 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         })
         imageOverlayInfo = await Promise.all(overlayPromises)
       } else {
-        imageOverlayInfo = limitedImages.map(img => ({
-          image: img,
-          overlays: [],
-        }))
+        imageOverlayInfo = baseImageInfo
       }
 
       setImagesWithOverlays(imageOverlayInfo)
       // Cache the result
       imageCache.set(filterKey, { images: imageOverlayInfo, error: null })
     } catch (err) {
+      setImagesWithOverlays([])
       setError(t('chatComponents.imageRecommendation.failedToLoad'))
       console.error('Failed to load images:', err)
       // Cache the error state too
       imageCache.set(filterKey, { images: [], error: t('chatComponents.imageRecommendation.failedToLoad') })
     } finally {
+      setIsOverlayInfoLoading(false)
       setIsLoading(false)
     }
   }
@@ -676,7 +691,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
           </div>
         )}
         {/* Warning when heatmap_filter specified but no matching heatmaps found */}
-        {recommendation.show_heatmap && recommendation.heatmap_filter && imagesWithHeatmapCount === 0 && imagesWithOverlays.length > 0 && (
+        {recommendation.show_heatmap && recommendation.heatmap_filter && !isOverlayInfoLoading && imagesWithHeatmapCount === 0 && imagesWithOverlays.length > 0 && (
           <div className="flex items-center gap-2 mt-2 text-xs text-amber-600 bg-amber-50 px-2 py-1.5 rounded-lg">
             <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
             <span>
@@ -774,9 +789,10 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                               : getHeatmapThumbnailUrl(
                                 image.wsi_id,
                                 latestHeatmap.task_id || undefined,
-                                256,
+                                CARD_THUMBNAIL_SIZE,
                                 undefined,
                                 latestHeatmap.fold_key || undefined,
+                                latestHeatmap.patch_size,
                               )
                           }
                           alt={`Heatmap for ${image.original_filename}`}
@@ -789,15 +805,6 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                         />
                       )}
 
-                      {wantsGroundTruthMask && fileType === 'Patch' && (
-                        <div className="w-32 h-32 flex-shrink-0 snap-start">
-                          <GroundTruthMaskThumbnail
-                            image={image}
-                            onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
-                          />
-                        </div>
-                      )}
-
                       {wantsPredictionMask && fileType === 'Patch' && (
                         latestSegmentationMask ? (
                           <OverlayThumbnailButton
@@ -805,7 +812,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                               image.wsi_id,
                               latestSegmentationMask.task_id || segmentationMaskConfig?.task_id,
                               latestSegmentationMask.fold_key || undefined,
-                              256,
+                              CARD_THUMBNAIL_SIZE,
                             )}
                             alt={`${t('chatComponents.imageRecommendation.modelPredictionMask')}: ${image.original_filename}`}
                             onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
@@ -832,6 +839,15 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                             </span>
                           </div>
                         )
+                      )}
+
+                      {wantsGroundTruthMask && fileType === 'Patch' && (
+                        <div className="w-32 h-32 flex-shrink-0 snap-start">
+                          <GroundTruthMaskThumbnail
+                            image={image}
+                            onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
+                          />
+                        </div>
                       )}
                     </div>
 
@@ -873,11 +889,10 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                           </div>
                         )}
                         {image.event_status !== null && (
-                          <span className={`shrink-0 whitespace-nowrap px-2 py-1 text-xs rounded-md font-medium border ${
-                            image.event_status === 1
-                              ? 'bg-red-50 text-red-700 border-red-100'
-                              : 'bg-teal-50 text-teal-700 border-teal-100'
-                          }`}>
+                          <span className={`shrink-0 whitespace-nowrap px-2 py-1 text-xs rounded-md font-medium border ${image.event_status === 1
+                            ? 'bg-red-50 text-red-700 border-red-100'
+                            : 'bg-teal-50 text-teal-700 border-teal-100'
+                            }`}>
                             {image.event_status === 1 ? t('chatComponents.imageRecommendation.event') : t('chatComponents.imageRecommendation.censored')}
                           </span>
                         )}

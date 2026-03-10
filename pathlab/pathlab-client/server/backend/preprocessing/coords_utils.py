@@ -88,6 +88,43 @@ def safe_load_h5_coords(
             _delete_corrupted_h5(h5_path)
         return None, None, f"Corrupted file (will recompute): {error_msg}"
 
+
+def safe_load_h5_coords_attrs(
+    h5_path: Path,
+    delete_if_corrupted: bool = True,
+) -> Tuple[Optional[Dict], Optional[str]]:
+    """
+    Safely load only coords.h5 dataset attributes without reading the full coords array.
+
+    This is useful for lightweight metadata lookups such as patch_size, where loading
+    the full coordinates array would be unnecessarily expensive.
+    """
+    import h5py
+
+    if not h5_path.exists():
+        return None, f"File does not exist: {h5_path}"
+
+    try:
+        with h5py.File(h5_path, 'r') as f:
+            if 'coords' not in f:
+                error_msg = f"No 'coords' dataset in {h5_path}"
+                logger.warning(error_msg)
+                if delete_if_corrupted:
+                    _delete_corrupted_h5(h5_path)
+                return None, error_msg
+
+            return dict(f['coords'].attrs), None
+
+    except OSError as e:
+        error_msg = str(e)
+        logger.warning(
+            f"Detected corrupted H5 file (likely from power loss): {h5_path}. "
+            f"Error: {error_msg}"
+        )
+        if delete_if_corrupted:
+            _delete_corrupted_h5(h5_path)
+        return None, f"Corrupted file (will recompute): {error_msg}"
+
     except Exception as e:
         # Other unexpected errors
         error_msg = str(e)

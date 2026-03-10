@@ -32,6 +32,7 @@ export interface AvailableHeatmap {
   aggregator?: string | null  // MIL aggregator type (e.g., abmil, clam_sb, transmil)
   created_at: number
   attention_file: string
+  patch_size?: number | null
   data_type?: 'wsi' | 'patch' | 'patch_segmentation'  // WSI-level attention, patch-level CAM, or patch segmentation mask
   cam_size?: [number, number]   // CAM size for patch-level
   is_best_fold?: boolean | null  // Whether this is the best fold (for k-fold training)
@@ -214,6 +215,28 @@ export function getPatchCAMImageUrl(wsi_id: string, task_id?: string, fold_key?:
 }
 
 /**
+ * Get patch CAM overlay image URL optimized for recommendation card previews.
+ */
+export function getRecommendationPatchCAMImageUrl(
+  wsi_id: string,
+  task_id?: string,
+  fold_key?: string,
+  size: number = 160,
+): string {
+  return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam`, {
+    format: 'image',
+    task_id,
+    fold_key,
+    preset: 'recommendation',
+    size,
+    opacity: 0.68,
+    blur_scale: 0.6,
+    contrast_boost: 1.18,
+    saturation_boost: 1.25,
+  })
+}
+
+/**
  * Get segmentation mask overlay image URL
  * @param wsi_id - The WSI/patch ID
  * @param task_id - Optional task ID for specific mask
@@ -249,6 +272,31 @@ export function getHeatmapThumbnailUrl(
     task_id,
     class_idx,
     fold_key,
+  })
+}
+
+/**
+ * Get WSI heatmap thumbnail URL optimized for recommendation card previews.
+ */
+export function getRecommendationHeatmapThumbnailUrl(
+  wsi_id: string,
+  task_id?: string,
+  size: number = 160,
+  class_idx?: number,
+  fold_key?: string,
+  patch_size?: number | null,
+): string {
+  return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/heatmap_thumbnail`, {
+    size,
+    task_id,
+    class_idx,
+    fold_key,
+    patch_size,
+    preset: 'recommendation',
+    opacity: 0.68,
+    blur_scale: 0.6,
+    contrast_boost: 1.18,
+    saturation_boost: 1.25,
   })
 }
 

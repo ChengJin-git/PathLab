@@ -29,7 +29,7 @@ export function PatchAnnotationOverlay({
 
   return (
     <svg
-      className="absolute inset-0 z-10 w-full h-full pointer-events-none"
+      className="absolute inset-0 z-20 w-full h-full pointer-events-none"
       viewBox={`0 0 ${slideWidth} ${slideHeight}`}
       preserveAspectRatio="xMidYMid meet"
     >
