@@ -485,8 +485,9 @@
       "whyQueuedIntro": "The queue does auto-fill freed slots, but “max concurrent tasks” is an upper bound, not a guarantee that all tasks can start immediately.",
       "reasonConcurrency": "A task can only continue when a concurrency slot becomes free.",
       "reasonGpuVram": "Even with a free slot, the scheduler still needs an available GPU and enough free VRAM.",
+      "reasonSharedQueue": "Training jobs, inference jobs, and AI Chat Page PDF high-quality GPU parsing all share the same GPU queue.",
       "reasonCancellation": "Cancelled tasks release resources asynchronously; once resources are actually released, later tasks are retried automatically.",
-      "reasonRecovery": "After a restart or power loss, training tasks that were still queued in the database are automatically re-queued for recovery.",
+      "reasonRecovery": "After a restart or power loss, queued training tasks that were persisted in the database are automatically re-queued; transient AI Chat Page PDF parsing jobs are not persisted and must be retriggered by a new request.",
       "running": "Running",
       "pending": "Pending",
       "unableToLoadQueue": "Unable to load queue status"

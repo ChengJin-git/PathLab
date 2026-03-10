@@ -238,6 +238,11 @@ export default function ListPage() {
     )
   }
 
+  const selectedDatasetSummary = useMemo(
+    () => datasets.find(dataset => dataset.dataset_id === selectedDatasetId) ?? null,
+    [datasets, selectedDatasetId]
+  )
+
   const visibleDatasets = useMemo(() => {
     return datasets.filter(d => !d.dataset_id || !optimisticallyDeletedDatasetIds.has(d.dataset_id))
   }, [datasets, optimisticallyDeletedDatasetIds])
@@ -365,6 +370,7 @@ export default function ListPage() {
     setDebouncedSearch('')
     setCurrentPage(1)
     setSelectedIds(new Set())
+    setExpandedCases(new Set())
   }
 
   const handleDatasetClick = (dataset: DatasetSummary) => {
@@ -374,6 +380,7 @@ export default function ListPage() {
     setCurrentPage(1)
     setSearchQuery('')
     setDebouncedSearch('')
+    setExpandedCases(new Set())
   }
 
   // Reload current dataset files (for use after edits/deletes)
@@ -904,25 +911,31 @@ export default function ListPage() {
 
   // Group items by case_id (for display within current page)
   const groupedByCaseId = React.useMemo(() => {
-    const groups = new Map<string, typeof items>()
+    const groups = new Map<string, { slides: typeof items; isNoCase: boolean; order: number }>()
     const NO_CASE = '__no_case__'
 
-    items.forEach(item => {
-      const caseId = item.case_id || NO_CASE
-      if (!groups.has(caseId)) {
-        groups.set(caseId, [])
+    items.forEach((item, index) => {
+      const normalizedCaseId = item.case_id?.trim()
+      const isNoCase = !normalizedCaseId
+      const groupKey = isNoCase ? `${NO_CASE}:${item.wsi_id}` : normalizedCaseId
+
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, { slides: [], isNoCase, order: index })
       }
-      groups.get(caseId)!.push(item)
+
+      groups.get(groupKey)!.slides.push(item)
     })
 
-    // Convert to array and sort: named cases alphabetically, __no_case__ last
-    const sortedGroups = Array.from(groups.entries()).sort((a, b) => {
-      if (a[0] === NO_CASE) return 1
-      if (b[0] === NO_CASE) return -1
-      return a[0].localeCompare(b[0])
-    })
+    return Array.from(groups.entries())
+      .sort(([, left], [, right]) => {
+        if (left.isNoCase !== right.isNoCase) return left.isNoCase ? 1 : -1
+        if (left.isNoCase) return left.order - right.order
 
-    return sortedGroups
+        const leftCaseId = left.slides[0]?.case_id || ''
+        const rightCaseId = right.slides[0]?.case_id || ''
+        return leftCaseId.localeCompare(rightCaseId)
+      })
+      .map(([groupKey, group]) => [groupKey, group.slides] as const)
   }, [items])
 
   // Check if this is a patch dataset (majority of files are patches)
@@ -932,29 +945,32 @@ export default function ListPage() {
     return patchCount > items.length / 2
   }, [items])
 
-  const selectedDatasetVisualType = React.useMemo<'slides' | 'images'>(() => {
-    const dataset = datasets.find(d => d.dataset_id === selectedDatasetId)
-    if (dataset) return getDatasetVisualType(dataset)
-    return isPatchDataset ? 'images' : 'slides'
-  }, [datasets, selectedDatasetId, isPatchDataset])
+  const useCaseGroupedView = Boolean(selectedDatasetId) && (
+    selectedDatasetSummary?.data_type === 'wsi' || (!selectedDatasetSummary && !isPatchDataset)
+  )
 
-  // Server-side pagination: totalPages based on server-provided totalCases (or totalCount for non-grouped)
-  const totalPages = hasMultiSlideCases
+  const selectedDatasetVisualType = React.useMemo<'slides' | 'images'>(() => {
+    if (selectedDatasetSummary) return getDatasetVisualType(selectedDatasetSummary)
+    return isPatchDataset ? 'images' : 'slides'
+  }, [selectedDatasetSummary, isPatchDataset])
+
+  // Server-side pagination: dataset view is case-paginated for WSI datasets
+  const totalPages = useCaseGroupedView
     ? Math.ceil(totalCases / itemsPerPage)
     : Math.ceil(totalCount / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
 
   // All current-page items are already the "paginated" items (server-side pagination)
-  const paginatedCases = hasMultiSlideCases ? groupedByCaseId : null
-  const paginatedItems = hasMultiSlideCases ? [] : items
+  const paginatedCases = useCaseGroupedView ? groupedByCaseId : null
+  const paginatedItems = useCaseGroupedView ? [] : items
 
   // Batch selection logic — operates on current page items
   const pageSlides = useMemo(() => {
-    if (hasMultiSlideCases && paginatedCases) {
+    if (useCaseGroupedView && paginatedCases) {
       return paginatedCases.flatMap(([, slides]) => slides)
     }
     return paginatedItems || []
-  }, [hasMultiSlideCases, paginatedCases, paginatedItems])
+  }, [useCaseGroupedView, paginatedCases, paginatedItems])
 
   const allPageSelected = pageSlides.length > 0 && pageSlides.every(s => selectedIds.has(s.wsi_id))
 
@@ -1845,16 +1861,18 @@ export default function ListPage() {
                         </tr>
                       )}
 
-                    {hasMultiSlideCases && paginatedCases ? (
-                      // Grouped view - show cases with expandable slides
-                      paginatedCases.map(([caseId, slides]) => {
-                        const isNoCase = caseId === '__no_case__'
+                    {useCaseGroupedView && paginatedCases ? (
+                      // Grouped view - show WSI datasets by case
+                      paginatedCases.map(([caseKey, slides]) => {
+                        const representativeSlide = slides[0]
+                        const displayCaseId = representativeSlide?.case_id?.trim() || null
+                        const isNoCase = !displayCaseId
                         const isMultiSlide = slides.length > 1
-                        const isExpanded = expandedCases.has(caseId)
+                        const isExpanded = expandedCases.has(caseKey)
                         const allSelected = slides.every(s => selectedIds.has(s.wsi_id))
                         const someSelected = slides.some(s => selectedIds.has(s.wsi_id))
 
-                        // For single-slide cases, render directly
+                        // Single-slide case: keep case-style row, but show actions directly
                         if (!isMultiSlide) {
                           const it = slides[0]
                           const isSelected = selectedIds.has(it.wsi_id)
@@ -1872,9 +1890,19 @@ export default function ListPage() {
                                 />
                               </td>
                               <td className="px-3 sm:px-6 py-4 sm:py-5">
-                                <div className="flex flex-col min-w-[120px] sm:min-w-[150px] min-h-[3.5rem] sm:min-h-[4rem] justify-center">
-                                  <span className="text-sm sm:text-base font-semibold text-gray-900 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
-                                  <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
+                                <div className="flex items-center gap-2 sm:gap-3 min-h-[3.5rem] sm:min-h-[4rem]">
+                                  <Users className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />
+                                  <div className="flex flex-col min-w-[120px] sm:min-w-[150px]">
+                                    <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3">
+                                      <span className="text-sm sm:text-base font-semibold text-gray-900">
+                                        {isNoCase ? t('listPage.noCaseId') : t('listPage.caseLabel', { caseId: displayCaseId })}
+                                      </span>
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 border border-blue-200 w-fit">
+                                        {t('listPage.slidesCount', { count: 1 })}
+                                      </span>
+                                    </div>
+                                    <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
+                                    <span className="text-[10px] sm:text-xs text-gray-400 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.wsi_id}>{it.wsi_id}</span>
                                   {it.parent_wsi_id && (
                                     <Link
                                       to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
@@ -1886,11 +1914,7 @@ export default function ListPage() {
                                       {t('annotation.croppedFrom')} {it.parent_wsi_id.slice(0, 8)}...
                                     </Link>
                                   )}
-                                  {it.case_id && !isNoCase && (
-                                    <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={t('listPage.caseLabel', { caseId: it.case_id })}>
-                                      {t('listPage.caseLabel', { caseId: it.case_id })}
-                                    </span>
-                                  )}
+                                  </div>
                                 </div>
                               </td>
                               <td className="px-3 sm:px-6 py-4 sm:py-5">
@@ -1963,11 +1987,11 @@ export default function ListPage() {
 
                         // Multi-slide case - render expandable group
                         return (
-                          <React.Fragment key={caseId}>
+                          <React.Fragment key={caseKey}>
                             {/* Case header row */}
                             <tr
                               className={`group transition-all duration-200 border-l-2 cursor-pointer ${someSelected ? 'bg-blue-50/40 border-primary-500' : 'hover:bg-gray-50/60 border-transparent hover:border-blue-200'}`}
-                              onClick={() => toggleCaseExpansion(caseId)}
+                              onClick={() => toggleCaseExpansion(caseKey)}
                             >
                               <td className="px-3 sm:px-6 py-4 sm:py-5 w-10 sm:w-12" onClick={(e) => e.stopPropagation()}>
                                 <input
@@ -1993,7 +2017,7 @@ export default function ListPage() {
                                     <div className="flex items-center gap-2">
                                       <Users className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />
                                       <span className="text-sm sm:text-base font-semibold text-gray-900">
-                                        {isNoCase ? t('listPage.noCaseId') : t('listPage.caseLabel', { caseId })}
+                                        {isNoCase ? t('listPage.noCaseId') : t('listPage.caseLabel', { caseId: displayCaseId })}
                                       </span>
                                     </div>
                                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 border border-blue-200">
@@ -2344,7 +2368,7 @@ export default function ListPage() {
               {/* Pagination Controls */}
               <div className="px-3 sm:px-6 py-4 border-t border-gray-100 flex flex-col lg:flex-row items-center justify-between gap-6 lg:gap-4 bg-gray-50/30 backdrop-blur-sm rounded-b-xl">
                 <div className="text-[11px] sm:text-sm text-gray-500 font-medium order-3 lg:order-1 text-center lg:text-left">
-                  {hasMultiSlideCases ? (
+                  {useCaseGroupedView ? (
                     <>
                        {t('listPage.showing')} <span className="text-gray-900">{totalCases === 0 ? 0 : startIndex + 1}</span> {t('listPage.to')}{' '}
                        <span className="text-gray-900">{Math.min(startIndex + itemsPerPage, totalCases)}</span>{' '}

@@ -1684,6 +1684,44 @@ def _parse_pdf_with_pymupdf(
             pass
 
 
+def _parse_pdf_with_pymupdf_result(
+    pdf_bytes: bytes,
+    max_pages: int = 10,
+    images_output_dir: Path | None = None,
+    images_url_prefix: str | None = None,
+) -> ParsedPdfResult | None:
+    """Run PyMuPDF extraction and normalization in one worker-thread job."""
+    markdown = _parse_pdf_with_pymupdf(
+        pdf_bytes,
+        max_pages,
+        images_output_dir=images_output_dir,
+        images_url_prefix=images_url_prefix,
+    )
+    if markdown is None:
+        return None
+    return _to_parsed_pdf_result(markdown, PDF_PARSE_METHOD_PYMUPDF)
+
+
+async def _parse_pdf_with_pymupdf_in_worker_thread(
+    pdf_bytes: bytes,
+    max_pages: int,
+    images_output_dir: Path | None,
+    images_url_prefix: str | None,
+) -> ParsedPdfResult | None:
+    """Run PyMuPDF parsing off the event loop so SSE heartbeats keep flowing."""
+    try:
+        return await asyncio.to_thread(
+            _parse_pdf_with_pymupdf_result,
+            pdf_bytes,
+            max_pages,
+            images_output_dir,
+            images_url_prefix,
+        )
+    except Exception as e:
+        logger.warning(f"PyMuPDF worker-thread parse failed: {e}")
+        return None
+
+
 
 def _extract_gpu_index_from_device(assigned_device: str | None) -> int | None:
     """Extract the physical GPU index from strings like ``cuda:1``."""
@@ -1850,6 +1888,10 @@ async def _parse_pdf_with_docling_via_gpu_queue(
         **_ignored_kwargs: Any,
     ) -> None:
         try:
+            if result_future.cancelled():
+                if task_id:
+                    logger.info(f"Skipping cancelled Docling queued job {task_id} before GPU parse starts")
+                return
             result = await _parse_pdf_with_docling_on_assigned_gpu(
                 pdf_bytes,
                 max_pages,
@@ -1867,7 +1909,15 @@ async def _parse_pdf_with_docling_via_gpu_queue(
             raise
 
     await queue.submit(task_id, TaskType.INFERENCE, _queued_docling_job)
-    return await result_future
+    try:
+        return await result_future
+    except asyncio.CancelledError:
+        removed = await queue.cancel_pending_task(task_id)
+        if removed:
+            logger.info(f"Cancelled pending Docling GPU queue task {task_id}")
+        if not result_future.done():
+            result_future.cancel()
+        raise
 
 
 async def _parse_pdf_with_docling_on_cpu(
@@ -2020,14 +2070,14 @@ async def parse_pdf(
     Normal flow returns quickly with a PyMuPDF parse. Callers can schedule a
     background Docling upgrade separately to improve fidelity and structure.
     """
-    pymupdf_result = _parse_pdf_with_pymupdf(
+    pymupdf_result = await _parse_pdf_with_pymupdf_in_worker_thread(
         pdf_bytes,
         max_pages,
-        images_output_dir=images_output_dir,
-        images_url_prefix=images_url_prefix,
+        images_output_dir,
+        images_url_prefix,
     )
     if pymupdf_result is not None:
-        return _to_parsed_pdf_result(pymupdf_result, PDF_PARSE_METHOD_PYMUPDF)
+        return pymupdf_result
 
     docling_result = await _parse_pdf_with_docling_best_effort(
         pdf_bytes,
@@ -2330,6 +2380,41 @@ def is_academic_content(content: str, source_type: str) -> bool:
     return is_academic
 
 
+async def _save_markdown_to_cache_async(
+    url: str,
+    markdown: str,
+    paper_title: str,
+    structured_content: dict[str, Any] | None,
+    *,
+    high_quality_pending: bool,
+) -> None:
+    """Persist PyMuPDF cache artifacts off the event loop."""
+    await asyncio.to_thread(
+        _save_markdown_to_cache,
+        url,
+        markdown,
+        paper_title,
+        structured_content,
+        high_quality_pending=high_quality_pending,
+    )
+
+
+async def _save_docling_to_cache_async(
+    url: str,
+    markdown: str,
+    paper_title: str,
+    structured_content: dict[str, Any] | None,
+) -> None:
+    """Persist Docling cache artifacts off the event loop."""
+    await asyncio.to_thread(
+        _save_docling_to_cache,
+        url,
+        markdown,
+        paper_title,
+        structured_content,
+    )
+
+
 async def process_pdf_url(
     url: str,
     title: str,
@@ -2421,14 +2506,14 @@ async def process_pdf_url(
             result["structured_parse_method"] = parse_method
             if use_cache and not pdf_content.startswith("[Error"):
                 if parse_method == PDF_PARSE_METHOD_DOCLING:
-                    _save_docling_to_cache(
+                    await _save_docling_to_cache_async(
                         url,
                         pdf_content,
                         paper_title=title,
                         structured_content=parse_result.structured_content,
                     )
                 else:
-                    _save_markdown_to_cache(
+                    await _save_markdown_to_cache_async(
                         url,
                         pdf_content,
                         paper_title=title,

@@ -284,6 +284,7 @@ export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProp
                   <ul className="list-disc pl-5 space-y-1.5">
                     <li>{t('settings.tasksTab.reasonConcurrency')}</li>
                     <li>{t('settings.tasksTab.reasonGpuVram')}</li>
+                    <li>{t('settings.tasksTab.reasonSharedQueue')}</li>
                     <li>{t('settings.tasksTab.reasonCancellation')}</li>
                     <li>{t('settings.tasksTab.reasonRecovery')}</li>
                   </ul>

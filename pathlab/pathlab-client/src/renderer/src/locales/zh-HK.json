@@ -485,8 +485,9 @@
       "whyQueuedIntro": "任務佇列會自動補位，但「最大並行任務數」只是上限，不代表一定能同時啟動這麼多任務。",
       "reasonConcurrency": "任務只有在並行槽位空出後才會繼續啟動。",
       "reasonGpuVram": "即使並行槽位空閒，仍然需要有可用 GPU 且滿足最小顯存要求。",
+      "reasonSharedQueue": "訓練任務、推理任務，以及 AI Chat Page 的 PDF GPU 高品質解析都共用同一個 GPU 佇列。",
       "reasonCancellation": "取消中的任務會非同步釋放資源；資源真正釋放後，後續任務會自動重試補位。",
-      "reasonRecovery": "系統重啟 / 斷電後，資料庫裡仍處於排隊中的訓練任務會自動重新入隊恢復。",
+      "reasonRecovery": "系統重啟 / 斷電後，資料庫裡仍處於排隊中的訓練任務會自動重新入隊恢復；AI Chat Page 的臨時 PDF 解析任務不落庫，需要由新的請求重新觸發。",
       "running": "執行中",
       "pending": "等待中",
       "unableToLoadQueue": "無法載入佇列狀態"

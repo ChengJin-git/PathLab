@@ -9,6 +9,7 @@ import mimetypes
 import os
 import re
 import uuid
+from contextlib import suppress
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
@@ -1323,6 +1324,14 @@ class ClientDisconnectedError(Exception):
     pass
 
 
+def _consume_task_exception(task: asyncio.Task[Any]) -> None:
+    """Drain task exceptions so detached cleanup paths do not emit warnings."""
+    try:
+        task.exception()
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
 async def _wait_for_disconnect(request: Request) -> None:
     """Poll ``request.is_disconnected()`` until the client drops the connection."""
     while not await request.is_disconnected():
@@ -1892,31 +1901,39 @@ After saving, return here and start chatting!"""
 
             try:
                 _active_pdf_url = article_url
+                _pdf_task: asyncio.Task[dict[str, Any]] | None = None
                 # #22: Run PDF processing as a task and emit heartbeats every
                 # 10 s to prevent frontend silence-timeout (~60 s).
-                _pdf_task = asyncio.create_task(
-                    _run_or_cancel_on_disconnect(
-                        process_pdf_url(
-                            url=article_url,
-                            title=article_title,
-                            base_url=effective_base_url,
-                            api_key=effective_api_key,
-                            model=effective_model,
-                            use_cache=True
-                        ),
-                        request,
+                try:
+                    _pdf_task = asyncio.create_task(
+                        _run_or_cancel_on_disconnect(
+                            process_pdf_url(
+                                url=article_url,
+                                title=article_title,
+                                base_url=effective_base_url,
+                                api_key=effective_api_key,
+                                model=effective_model,
+                                use_cache=True
+                            ),
+                            request,
+                        )
                     )
-                )
-                _HEARTBEAT_INTERVAL = 10  # seconds
-                while not _pdf_task.done():
-                    try:
-                        await asyncio.wait_for(asyncio.shield(_pdf_task), timeout=_HEARTBEAT_INTERVAL)
-                    except asyncio.TimeoutError:
-                        # Task still running — emit heartbeat to keep connection alive
-                        hb_status = {"url": article_url, "title": article_title, "status": "parsing"}
-                        yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(hb_status)}[/PDF_PARSE_STATUS]'})}\n\n"
-                pdf_result = _pdf_task.result()
-                _active_pdf_url = None
+                    _pdf_task.add_done_callback(_consume_task_exception)
+                    _HEARTBEAT_INTERVAL = 10  # seconds
+                    while not _pdf_task.done():
+                        try:
+                            await asyncio.wait_for(asyncio.shield(_pdf_task), timeout=_HEARTBEAT_INTERVAL)
+                        except asyncio.TimeoutError:
+                            # Task still running — emit heartbeat to keep connection alive
+                            hb_status = {"url": article_url, "title": article_title, "status": "parsing"}
+                            yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(hb_status)}[/PDF_PARSE_STATUS]'})}\n\n"
+                    pdf_result = await _pdf_task
+                finally:
+                    _active_pdf_url = None
+                    if _pdf_task is not None and not _pdf_task.done():
+                        _pdf_task.cancel()
+                        with suppress(asyncio.CancelledError, Exception):
+                            await _pdf_task
 
                 # For uncached PDFs: transition downloading → parsing → completed
                 if not has_cache and pdf_result.get("success"):
@@ -2022,10 +2039,9 @@ After saving, return here and start chatting!"""
                     continue
 
             except ClientDisconnectedError:
-                logger.info(f"Client disconnected during PDF processing ({article_url}) — cleaning up")
-                if _active_pdf_url:
-                    from .chat_pdf import invalidate_pdf_cache
-                    invalidate_pdf_cache(_active_pdf_url)
+                logger.info(
+                    f"Client disconnected during PDF processing ({article_url}) — preserving any completed cache artifacts"
+                )
                 return
             except Exception as e:
                 logger.error(f"READ_ARTICLE error for {article_url}: {e}")

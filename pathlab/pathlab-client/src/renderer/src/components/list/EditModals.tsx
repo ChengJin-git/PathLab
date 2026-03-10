@@ -189,7 +189,7 @@ export function BatchEditModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-[95vw] p-4 sm:p-6 sm:min-h-[620px] max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="text-center mb-3 sm:mb-6">
           <div className="w-10 h-10 sm:w-16 sm:h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
@@ -270,7 +270,7 @@ export function BatchEditModal({
         </div>
 
         {/* Action Buttons */}
-        <div className="flex gap-3">
+        <div className="flex gap-3 mt-4 sm:mt-6 pt-1 sm:pt-2">
           <button onClick={onCancel} disabled={batchUpdating}
             className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-semibold disabled:opacity-50">
             {t('listComponents.editModals.cancel')}

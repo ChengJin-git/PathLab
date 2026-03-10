@@ -567,6 +567,16 @@ class TaskQueueManager:
         """Check if a task is in the queue (pending or running)"""
         return task_id in self._running_tasks or task_id in self._pending_tasks
 
+    async def cancel_pending_task(self, task_id: str) -> bool:
+        """Remove a task only if it is still pending and has not started running."""
+        if task_id not in self._pending_tasks:
+            return False
+
+        self._pending_tasks.pop(task_id, None)
+        logger.info(f"Task {task_id} removed from pending queue")
+        await self._notify_queue_state_changed()
+        return True
+
     async def cancel_task(self, task_id: str) -> bool:
         """
         Cancel a task if it's running or queued.
@@ -585,12 +595,7 @@ class TaskQueueManager:
             await self._notify_queue_state_changed()
             return True
 
-        if task_id in self._pending_tasks:
-            # Remove from pending (it's still in the asyncio.Queue,
-            # but will be skipped when dequeued)
-            self._pending_tasks.pop(task_id, None)
-            logger.info(f"Task {task_id} removed from pending queue")
-            await self._notify_queue_state_changed()
+        if await self.cancel_pending_task(task_id):
             return True
 
         return False

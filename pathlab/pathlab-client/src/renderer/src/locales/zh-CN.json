@@ -485,8 +485,9 @@
       "whyQueuedIntro": "任务队列会自动补位，但“最大并发数”只是上限，不代表一定能同时启动这么多任务。",
       "reasonConcurrency": "任务只有在并发槽位空出来后才会继续启动。",
       "reasonGpuVram": "即使并发槽位空闲，仍然需要有可用 GPU 且满足最小显存要求。",
+      "reasonSharedQueue": "训练任务、推理任务，以及 AI Chat Page 的 PDF GPU 高质量解析都共享同一个 GPU 队列。",
       "reasonCancellation": "取消中的任务会异步释放资源；资源真正释放后，后续任务会自动重试补位。",
-      "reasonRecovery": "系统重启/断电后，数据库里仍处于排队中的训练任务会自动重新入队恢复。",
+      "reasonRecovery": "系统重启/断电后，数据库里仍处于排队中的训练任务会自动重新入队恢复；AI Chat Page 的临时 PDF 解析任务不落库，需要由新的请求重新触发。",
       "running": "运行中",
       "pending": "等待中",
       "unableToLoadQueue": "无法加载队列状态"
