@@ -241,12 +241,14 @@ export function getHeatmapThumbnailUrl(
   wsi_id: string,
   task_id?: string,
   size: number = 256,
-  class_idx?: number
+  class_idx?: number,
+  fold_key?: string
 ): string {
   return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/heatmap_thumbnail`, {
     size,
     task_id,
     class_idx,
+    fold_key,
   })
 }
 

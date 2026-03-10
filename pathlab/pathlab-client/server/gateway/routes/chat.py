@@ -50,6 +50,18 @@ ACTIVE_TRAINING_STATUSES = {"pending", "queued", "patching", "resuming", "extrac
 _EPOCH_PROGRESS_RE = re.compile(r"epoch\s+(\d+)\s*/\s*(\d+)", re.IGNORECASE)
 
 
+def _get_generation_cancelled_text(detected_lang: str) -> str:
+    """Return localized cancel text for interrupted AI responses."""
+    normalized = (detected_lang or "en").replace("-", "_")
+    cancel_messages = {
+        "zh_CN": "*用户取消了回答。*",
+        "zh_HK": "*用戶取消了回答。*",
+        "en": "*Response cancelled by user.*",
+        "en_US": "*Response cancelled by user.*",
+    }
+    return cancel_messages.get(normalized, cancel_messages.get(normalized.split("_")[0], cancel_messages["en"]))
+
+
 def _is_segmentation_task(task_type: Optional[str]) -> bool:
     return task_type in SEGMENTATION_TASK_TYPES
 
@@ -2973,12 +2985,7 @@ async def chat_with_ai(
             # and no reply.  When the user returns, they see a clean cancel notice
             # instead of a broken UI state.
             if not saved_to_db and req.conversation_id:
-                _CANCEL_MSGS = {
-                    "zh-CN": "*用户取消了回答。*",
-                    "zh-HK": "*用戶取消了回答。*",
-                    "en": "*Response cancelled by user.*",
-                }
-                cancel_text = _CANCEL_MSGS.get(detected_lang, _CANCEL_MSGS["en"])
+                cancel_text = _get_generation_cancelled_text(detected_lang)
                 # If there was partial content, append cancel notice after it
                 if full_response.strip():
                     save_content = _strip_internal_status_blocks(full_response)

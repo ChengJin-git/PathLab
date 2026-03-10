@@ -14,6 +14,7 @@ import {
   submitMessageFeedback,
   getConversationFeedbacks,
   type Conversation,
+  type ConversationWithMessages,
   type ChatMessage,
   type ChatMessageContent
 } from '../api'
@@ -78,6 +79,13 @@ interface FileAttachment {
   preview: string[] // first few rows for preview
 }
 
+const PENDING_CANCELLED_RESPONSE_KEY_PREFIX = 'ai-chat-pending-cancelled-response:'
+const PENDING_CANCELLED_RESPONSE_RETRY_DELAY_MS = 1200
+const PENDING_CANCELLED_RESPONSE_MAX_RETRIES = 5
+
+const getPendingCancelledResponseKey = (conversationId: string) =>
+  `${PENDING_CANCELLED_RESPONSE_KEY_PREFIX}${conversationId}`
+
 export default function AIChatPage() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -95,6 +103,8 @@ export default function AIChatPage() {
   // Derived booleans for backward compatibility with existing read sites
   const isLoading = generationPhase === 'thinking'
   const isGenerating = generationPhase !== 'idle'
+  const generationPhaseRef = useRef<GenerationPhase>('idle')
+  generationPhaseRef.current = generationPhase
 
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([])
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([])
@@ -105,6 +115,8 @@ export default function AIChatPage() {
   // Conversation management
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
+  const currentConversationIdRef = useRef<string | null>(null)
+  currentConversationIdRef.current = currentConversationId
   // Initialize from localStorage, defaulting to true on desktop, false on mobile
   const [showHistory, setShowHistory] = useState(() => {
     // Mobile always defaults to hidden (false) regardless of previous state
@@ -160,6 +172,7 @@ export default function AIChatPage() {
   // Ref to access latest messages in callbacks
   const messagesRef = useRef<Message[]>([])
   messagesRef.current = messages
+  const pendingCancelledRetryTimersRef = useRef<Map<string, number>>(new Map())
   // Ref to skip loading conversation when we just created it (to avoid overwriting in-progress messages)
   const skipConversationLoadRef = useRef(false)
   // Ref to track current input value for voice transcript appending
@@ -278,6 +291,75 @@ export default function AIChatPage() {
     return map
   }, [messages.length])
 
+  const mapConversationMessages = useCallback((apiMessages: ConversationWithMessages['messages']): Message[] => {
+    return apiMessages.map(msg => ({
+      id: String(msg.id),
+      role: msg.role as 'user' | 'assistant',
+      content: msg.content,
+      ...((msg as { metadata?: { images?: string[] } | null }).metadata?.images?.length
+        ? { images: (msg as { metadata?: { images?: string[] } | null }).metadata!.images }
+        : {}),
+      timestamp: new Date(msg.created_at)
+    }))
+  }, [])
+
+  const buildCancelledMessageContent = useCallback(() => {
+    return `*${t('aiChat.generationCancelled')}*`
+  }, [t])
+
+  const markPendingCancelledResponseOnExit = useCallback(() => {
+    const conversationId = currentConversationIdRef.current
+    if (!conversationId || generationPhaseRef.current !== 'thinking') return
+
+    const lastMessage = messagesRef.current[messagesRef.current.length - 1]
+    if (lastMessage?.role !== 'assistant' || lastMessage.content.trim()) return
+
+    sessionStorage.setItem(getPendingCancelledResponseKey(conversationId), String(Date.now()))
+  }, [])
+
+  const refreshPendingCancelledResponse = useCallback((conversationId: string) => {
+    const pendingKey = getPendingCancelledResponseKey(conversationId)
+
+    const runAttempt = (attempt: number) => {
+      if (!sessionStorage.getItem(pendingKey)) return
+
+      const existingTimer = pendingCancelledRetryTimersRef.current.get(conversationId)
+      if (existingTimer) {
+        window.clearTimeout(existingTimer)
+      }
+
+      const timerId = window.setTimeout(async () => {
+        pendingCancelledRetryTimersRef.current.delete(conversationId)
+
+        if (!sessionStorage.getItem(pendingKey)) return
+
+        try {
+          const latestConversation = await getConversation(conversationId)
+          const sortedApiMessages = [...latestConversation.messages].sort((a, b) => a.id - b.id)
+          const hasAssistantReply = sortedApiMessages[sortedApiMessages.length - 1]?.role === 'assistant'
+
+          if (hasAssistantReply) {
+            sessionStorage.removeItem(pendingKey)
+            if (currentConversationIdRef.current === conversationId) {
+              setMessages(mapConversationMessages(sortedApiMessages))
+            }
+            return
+          }
+        } catch (error) {
+          console.warn('Failed to refresh pending cancelled response:', error)
+        }
+
+        if (attempt < PENDING_CANCELLED_RESPONSE_MAX_RETRIES) {
+          runAttempt(attempt + 1)
+        }
+      }, PENDING_CANCELLED_RESPONSE_RETRY_DELAY_MS)
+
+      pendingCancelledRetryTimersRef.current.set(conversationId, timerId)
+    }
+
+    runAttempt(1)
+  }, [mapConversationMessages])
+
   useEffect(() => {
     // Don't scroll to bottom if we're restoring scroll position
     if (scrollRestoredRef.current) {
@@ -345,10 +427,20 @@ export default function AIChatPage() {
   // Abort any in-progress generation when the component unmounts (e.g., navigating away).
   // This triggers the AbortError catch in executeChatGeneration, which fills the cancel text.
   useEffect(() => {
+    const handlePageExit = () => {
+      markPendingCancelledResponseOnExit()
+    }
+
+    window.addEventListener('pagehide', handlePageExit)
+
     return () => {
+      handlePageExit()
+      window.removeEventListener('pagehide', handlePageExit)
+      pendingCancelledRetryTimersRef.current.forEach(timerId => window.clearTimeout(timerId))
+      pendingCancelledRetryTimersRef.current.clear()
       abortControllerRef.current?.abort()
     }
-  }, [])
+  }, [markPendingCancelledResponseOnExit])
 
   // Handle initial message from navigation state
   useEffect(() => {
@@ -407,17 +499,30 @@ export default function AIChatPage() {
       const conv = await getConversation(conversationId)
       // Sort messages by id to ensure chronological order (defense-in-depth)
       const sortedApiMessages = [...conv.messages].sort((a, b) => a.id - b.id)
-      const loadedMessages: Message[] = sortedApiMessages.map(msg => ({
-        id: String(msg.id),
-        role: msg.role as 'user' | 'assistant',
-        content: msg.content,
-        // Restore persisted images from extra_metadata
-        ...((msg as { metadata?: { images?: string[] } | null }).metadata?.images?.length
-          ? { images: (msg as { metadata?: { images?: string[] } | null }).metadata!.images }
-          : {}),
-        timestamp: new Date(msg.created_at)
-      }))
-      setMessages(loadedMessages)
+      const loadedMessages = mapConversationMessages(sortedApiMessages)
+      const pendingCancelledKey = getPendingCancelledResponseKey(conversationId)
+      const pendingCancelledAt = sessionStorage.getItem(pendingCancelledKey)
+      const hasPendingCancelledResponse = Boolean(pendingCancelledAt)
+      const hasAssistantReply = sortedApiMessages[sortedApiMessages.length - 1]?.role === 'assistant'
+
+      const messagesToShow = hasPendingCancelledResponse && !hasAssistantReply
+        ? [...loadedMessages, {
+            id: `pending-cancelled-${conversationId}`,
+            role: 'assistant' as const,
+            content: buildCancelledMessageContent(),
+            timestamp: new Date(Number(pendingCancelledAt) || Date.now())
+          }]
+        : loadedMessages
+
+      if (hasPendingCancelledResponse) {
+        if (hasAssistantReply) {
+          sessionStorage.removeItem(pendingCancelledKey)
+        } else {
+          refreshPendingCancelledResponse(conversationId)
+        }
+      }
+
+      setMessages(messagesToShow)
       setCurrentConversationId(conversationId)
       setShowHistory(false)
       setShowWelcomeHero(false)
@@ -1763,33 +1868,10 @@ export default function AIChatPage() {
     await persistMessageUpdate(messageId, updatedContent)
   }, [persistMessageUpdate])
 
-  // Handle quick analysis data loaded - persist cached data to message content
-  const handleQuickAnalysisDataLoaded = useCallback(async (data: CachedAnalysisData, messageId: string) => {
-    // Find the message from ref to avoid stale closure
-    const currentMessage = messagesRef.current.find(m => m.id === messageId)
-    if (!currentMessage) return
-
-    const updatedContent = currentMessage.content.replace(
-      /\[QUICK_ANALYSIS_CONFIG\]([\s\S]*?)\[\/QUICK_ANALYSIS_CONFIG\]/,
-      (_match, json) => {
-        try {
-          const config = JSON.parse(json.trim())
-          config.cached_data = data
-          return `[QUICK_ANALYSIS_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/QUICK_ANALYSIS_CONFIG]`
-        } catch {
-          return _match
-        }
-      }
-    )
-
-    // Update local state
-    setMessages(prev => prev.map(m =>
-      m.id === messageId ? { ...m, content: updatedContent } : m
-    ))
-
-    // Persist to backend
-    await persistMessageUpdate(messageId, updatedContent)
-  }, [persistMessageUpdate])
+  // Do not persist quick-analysis payloads into message content.
+  // Analysis visibility must always be revalidated against current backend permissions.
+  const handleQuickAnalysisDataLoaded = useCallback((_data: CachedAnalysisData, _messageId: string) => {
+  }, [])
 
   return (
     <div

@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, BarChart3, TrendingUp, AlertCircle, RefreshCw, Activity, Target, Percent, Layers } from 'lucide-react'
-import { getTaskQuickAnalysis, getTrainingTasks, getAnalysisStatus } from '../../api'
+import { getTaskQuickAnalysis, getAnalysisStatus } from '../../api'
+import { ApiError } from '../../api/client'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, MetricCurveChart, type ConfusionMatrixData, type RocCurveData, type LossCurveData, type KFoldLossCurveData, type KMCurveData, type MetricCurveData } from '../charts/AnalysisCharts'
 import {
   METRIC_COLORS,
@@ -36,7 +37,8 @@ export interface AgentQuickAnalysisConfig {
   // Bootstrap CI options
   compute_bootstrap_ci?: boolean  // Whether to compute 95% CI for all metrics
   bootstrap_ci_metrics?: string[] // Specific metrics to compute 95% CI for
-  // Cached data for persistence (populated after first load)
+  // Retained for backward compatibility in persisted messages.
+  // Do not render it before backend access is revalidated.
   cached_data?: CachedAnalysisData
   // External validation flag - enables polling for task completion before fetching analysis
   is_external_validation?: boolean
@@ -124,25 +126,15 @@ interface KFoldTrainingData {
 
 export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnalysisViewerProps) {
   const { t } = useTranslation()
-  // Check if we have cached data (metrics only - charts are not cached)
-  const cachedData = config.cached_data
-  const hasCachedData = !!cachedData && Object.keys(cachedData.metrics || {}).length > 0
-
-  const [isLoading, setIsLoading] = useState(!hasCachedData)
+  const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string>('')
   const [taskExists, setTaskExists] = useState(true)
-  const [metrics, setMetrics] = useState<Record<string, MetricValue>>(cachedData?.metrics || {})
-  const [classMetrics, setClassMetrics] = useState<Record<string, Record<string, number>>>(cachedData?.class_metrics || {})
-  // Charts are not cached (too large), will be fetched on demand
+  const [metrics, setMetrics] = useState<Record<string, MetricValue>>({})
+  const [classMetrics, setClassMetrics] = useState<Record<string, Record<string, number>>>({})
   const [chartData, setChartData] = useState<{ confusion_matrix?: ConfusionMatrixData; roc_curve?: RocCurveData; loss_curve?: LossCurveData | KFoldLossCurveData; km_curve?: KMCurveData; iou_curve?: MetricCurveData; dice_curve?: MetricCurveData }>({})
-  const [numSamples, setNumSamples] = useState<number | undefined>(cachedData?.num_samples)
-  const [taskType, setTaskType] = useState<string>(cachedData?.task_type || 'classification')
-  // Reconstruct partial K-Fold data from partial K-Fold data from cache (aggregated only, no per-fold history)
-  const [kfoldTraining, setKfoldTraining] = useState<KFoldTrainingData | null>(
-    cachedData?.is_kfold && cachedData?.kfold_aggregated
-      ? { is_kfold: true, num_folds: cachedData.num_folds || 0, folds: {}, aggregated: cachedData.kfold_aggregated }
-      : null
-  )
+  const [numSamples, setNumSamples] = useState<number | undefined>(undefined)
+  const [taskType, setTaskType] = useState<string>('classification')
+  const [kfoldTraining, setKfoldTraining] = useState<KFoldTrainingData | null>(null)
 
   // Mobile tabs state
   const [activeTab, setActiveTab] = useState<string>('roc_curve')
@@ -160,7 +152,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
 
   // Async analysis state
   const [analysisId, setAnalysisId] = useState<string | null>(null)
-  const [analysisStatus, setAnalysisStatus] = useState<string>(hasCachedData ? 'completed' : '')
+  const [analysisStatus, setAnalysisStatus] = useState<string>('')
   const [progress, setProgress] = useState(0)
   const [statusMessage, setStatusMessage] = useState('')
   const iouCurveTitle = chartData.iou_curve?.metric_name ? `${chartData.iou_curve.metric_name} Curve` : t('chatComponents.quickAnalysis.iouCurve')
@@ -201,6 +193,27 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
   onErrorRef.current = onError
   const onDataLoadedRef = useRef(onDataLoaded)
   onDataLoadedRef.current = onDataLoaded
+
+  const clearLoadedAnalysis = useCallback(() => {
+    setMetrics({})
+    setClassMetrics({})
+    setChartData({})
+    setNumSamples(undefined)
+    setTaskType('classification')
+    setKfoldTraining(null)
+  }, [])
+
+  const getAnalysisErrorMessage = useCallback((err: unknown, fallbackKey: string) => {
+    if (err instanceof ApiError) {
+      if (err.isAuthError()) {
+        return t('chatComponents.quickAnalysis.accessRevoked')
+      }
+      if (err.isNotFound()) {
+        return t('chatComponents.quickAnalysis.taskNotFound')
+      }
+    }
+    return err instanceof Error ? err.message : t(fallbackKey)
+  }, [t])
 
   // Cleanup polling and animation on unmount
   useEffect(() => {
@@ -246,6 +259,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
         bootstrapCIMetrics
       })
       if (result.has_analysis) {
+        setTaskExists(true)
         const loadedMetrics = result.metrics || {}
         const loadedClassMetrics = result.class_metrics || {}
         const loadedChartData = result.chart_data || {}
@@ -266,11 +280,21 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
         notifyDataLoaded(loadedMetrics, loadedClassMetrics, loadedNumSamples, loadedTaskType, loadedKfoldTraining)
         return true
       }
+
+      clearLoadedAnalysis()
+      setError(result.message || t('chatComponents.quickAnalysis.noResults'))
+      setIsLoading(false)
     } catch (err) {
-      console.error('Failed to fetch analysis results:', err)
+      const msg = getAnalysisErrorMessage(err, 'chatComponents.quickAnalysis.fetchFailed')
+      clearLoadedAnalysis()
+      setTaskExists(!(err instanceof ApiError && err.isNotFound()))
+      setAnalysisStatus('')
+      setError(msg)
+      setIsLoading(false)
+      onErrorRef.current?.(msg)
     }
     return false
-  }, [config.task_id, config.metrics, config.charts, bootstrapCIMetrics, notifyDataLoaded])
+  }, [config.task_id, config.metrics, config.charts, bootstrapCIMetrics, clearLoadedAnalysis, getAnalysisErrorMessage, notifyDataLoaded, t])
 
   // Poll analysis status
   const pollStatus = useCallback(async (aid: string) => {
@@ -297,50 +321,35 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
         setIsLoading(false)
       }
     } catch (err) {
-      console.error('Failed to poll analysis status:', err)
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current)
+        pollingRef.current = null
+      }
+      const msg = getAnalysisErrorMessage(err, 'chatComponents.quickAnalysis.fetchFailed')
+      clearLoadedAnalysis()
+      setTaskExists(!(err instanceof ApiError && err.isNotFound()))
+      setAnalysisStatus('')
+      setError(msg)
+      setIsLoading(false)
+      onErrorRef.current?.(msg)
     }
-  }, [fetchResults])
+  }, [clearLoadedAnalysis, fetchResults, getAnalysisErrorMessage, t])
 
   useEffect(() => {
     // Capture current pollStatus to avoid stale closure
     const currentPollStatus = pollStatus
 
     const fetchData = async () => {
-      // If we have cached data, don't show loading state but still fetch charts in background
-      if (!hasCachedData) {
-        setIsLoading(true); setError(''); setAnalysisStatus('')
-      }
+      setIsLoading(true)
+      setError('')
+      setAnalysisStatus('')
+      setStatusMessage('')
+      setTaskExists(true)
 
       try {
-        const tasks = await getTrainingTasks()
-        const found = tasks.some(task => task.task_id === config.task_id && task.status === 'completed')
-        if (!found) {
-          if (config.is_external_validation && !hasCachedData) {
-            // External validation: task may not be completed yet (inference still running)
-            // Set waiting state and poll for task completion
-            setAnalysisStatus('waiting')
-            setStatusMessage(t('chatComponents.quickAnalysis.waitingForValidation'))
-            if (!pollingRef.current) {
-              pollingRef.current = setInterval(() => fetchData(), 5000)
-            }
-            return
-          }
-          if (!hasCachedData) {
-            setTaskExists(false); setError(t('chatComponents.quickAnalysis.taskNotFound')); setIsLoading(false)
-          }
-          return
-        }
-        // Task found - clear any task-waiting polling
-        if (pollingRef.current) {
-          clearInterval(pollingRef.current)
-          pollingRef.current = null
-        }
-        setTaskExists(true)
-
         const result = await getTaskQuickAnalysis(config.task_id, { metrics: config.metrics, charts: config.charts, runIfMissing: true, bootstrapCIMetrics })
 
-        // Check if analysis is async (pending/running)
-        if (!result.has_analysis && result.status && ['pending', 'running'].includes(result.status)) {
+        if (!result.has_analysis && result.status && ['pending', 'queued', 'running'].includes(result.status)) {
           // Start polling
           const aid = result.analysis_id
           if (aid) {
@@ -356,12 +365,12 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
         }
 
         if (!result.has_analysis) {
-          if (!hasCachedData) {
-            setError(result.message || t('chatComponents.quickAnalysis.noResults')); setIsLoading(false)
-          }
+          clearLoadedAnalysis()
+          setError(result.message || t('chatComponents.quickAnalysis.noResults'))
           return
         }
 
+        setTaskExists(true)
         const loadedMetrics = result.metrics || {}
         const loadedClassMetrics = result.class_metrics || {}
         const loadedChartData = result.chart_data || {}
@@ -377,20 +386,14 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
         setKfoldTraining(loadedKfoldTraining)
         setAnalysisStatus('completed')
 
-        // Only notify parent to persist if we didn't have cached data (avoid duplicate updates)
-        if (!hasCachedData) {
-          notifyDataLoaded(loadedMetrics, loadedClassMetrics, loadedNumSamples, loadedTaskType, loadedKfoldTraining)
-        }
+        notifyDataLoaded(loadedMetrics, loadedClassMetrics, loadedNumSamples, loadedTaskType, loadedKfoldTraining)
       } catch (err) {
-        // Only show error if we don't have cached data to display
-        if (!hasCachedData) {
-          const msg = err instanceof Error ? err.message : t('chatComponents.quickAnalysis.fetchFailed')
-          setError(msg); onErrorRef.current?.(msg)
-        } else {
-          console.warn('Failed to fetch charts for cached analysis:', err)
-        }
+        const msg = getAnalysisErrorMessage(err, 'chatComponents.quickAnalysis.fetchFailed')
+        clearLoadedAnalysis()
+        setTaskExists(!(err instanceof ApiError && err.isNotFound()))
+        setError(msg)
+        onErrorRef.current?.(msg)
       } finally {
-        // Only set loading to false if not polling
         if (!pollingRef.current) setIsLoading(false)
       }
     }
@@ -403,7 +406,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.task_id, config.metrics?.join(','), config.charts?.join(','), bootstrapCIMetrics?.join(',')])
+  }, [config.task_id, config.metrics?.join(','), config.charts?.join(','), bootstrapCIMetrics?.join(','), clearLoadedAnalysis, getAnalysisErrorMessage, pollStatus, t])
 
   const displayMetrics = useMemo(() => {
     if (!config.metrics) return Object.entries(metrics).map(([k, v]) => ({ key: k, value: v }))
@@ -413,8 +416,8 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
   const handleRefresh = () => { setIsLoading(true); setError(''); window.location.reload() }
 
   // Show loading state with progress for async analysis
-  if (isLoading || (analysisStatus && ['pending', 'running', 'waiting'].includes(analysisStatus))) {
-    const isPolling = ['pending', 'running', 'waiting'].includes(analysisStatus)
+  if (isLoading || (analysisStatus && ['pending', 'queued', 'running', 'waiting'].includes(analysisStatus))) {
+    const isPolling = ['pending', 'queued', 'running', 'waiting'].includes(analysisStatus)
     return (
       <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-4 sm:p-6">
         <div className="flex flex-col items-center gap-3">
@@ -427,7 +430,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
           {isPolling && (
             <div className="w-full max-w-xs">
               <div className="flex justify-between text-xs text-gray-500 mb-1">
-                <span>{analysisStatus === 'waiting' ? t('chatComponents.quickAnalysis.waitingForInference') : analysisStatus === 'pending' ? t('chatComponents.quickAnalysis.queued') : t('chatComponents.quickAnalysis.processing')}</span>
+                <span>{analysisStatus === 'waiting' ? t('chatComponents.quickAnalysis.waitingForInference') : ['pending', 'queued'].includes(analysisStatus) ? t('chatComponents.quickAnalysis.queued') : t('chatComponents.quickAnalysis.processing')}</span>
                 <span>{analysisStatus === 'waiting' ? '' : `${Math.round(animatedProgress)}%`}</span>
               </div>
               {analysisStatus !== 'waiting' && (

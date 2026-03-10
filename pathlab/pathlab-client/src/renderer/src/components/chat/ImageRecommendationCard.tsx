@@ -50,6 +50,14 @@ interface ImageWithOverlays {
   overlays: AvailableHeatmap[]
 }
 
+interface ViewerNavigationState {
+  fromAIChat: boolean
+  conversationId?: string
+  selectedTaskId?: string
+  selectedFoldKey?: string
+  initialShowHeatmap?: boolean
+}
+
 interface ImageRecommendationCardProps {
   recommendation: ImageRecommendation
 }
@@ -602,7 +610,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
     }
   }
 
-  const handleImageClick = (wsiId: string) => {
+  const handleImageClick = (wsiId: string, heatmapOverlay?: AvailableHeatmap) => {
     // Save scroll position and conversation ID before navigating
     const messagesContainer = document.querySelector('[data-chat-messages-container]')
     if (messagesContainer) {
@@ -612,7 +620,18 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
     if (conversationId) {
       sessionStorage.setItem('ai-chat-conversation-id', conversationId)
     }
-    navigate(`/wsi/${wsiId}`, { state: { fromAIChat: true, conversationId: conversationId || undefined } })
+    const navigationState: ViewerNavigationState = {
+      fromAIChat: true,
+      conversationId: conversationId || undefined,
+    }
+
+    if (heatmapOverlay?.task_id) {
+      navigationState.selectedTaskId = heatmapOverlay.task_id
+      navigationState.selectedFoldKey = heatmapOverlay.fold_key || undefined
+      navigationState.initialShowHeatmap = recommendation.show_heatmap === true
+    }
+
+    navigate(`/wsi/${wsiId}`, { state: navigationState })
   }
 
   const imagesWithHeatmapCount = imagesWithOverlays.filter(({ overlays }) => {
@@ -712,7 +731,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                     <div className="flex gap-2 overflow-x-auto pb-0 snap-x [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                       {/* Original image */}
                       <button
-                        onClick={() => handleImageClick(image.wsi_id)}
+                        onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
                         className="relative flex-shrink-0 snap-start group/img w-32 h-32"
                       >
                         <div className="w-full h-full bg-gray-100 rounded-lg overflow-hidden border border-gray-200 group-hover/img:border-orange-300 transition-colors">
@@ -752,10 +771,16 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                                 latestHeatmap.task_id || undefined,
                                 latestHeatmap.fold_key || undefined,
                               )
-                              : getHeatmapThumbnailUrl(image.wsi_id, latestHeatmap.task_id || undefined, 256)
+                              : getHeatmapThumbnailUrl(
+                                image.wsi_id,
+                                latestHeatmap.task_id || undefined,
+                                256,
+                                undefined,
+                                latestHeatmap.fold_key || undefined,
+                              )
                           }
                           alt={`Heatmap for ${image.original_filename}`}
-                          onClick={() => handleImageClick(image.wsi_id)}
+                          onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
                           title={t('chatComponents.imageRecommendation.heatmap')}
                           badgeLabel={t('chatComponents.imageRecommendation.heatmap')}
                           badgeClassName="bg-green-100/90 text-green-700"
@@ -768,7 +793,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                         <div className="w-32 h-32 flex-shrink-0 snap-start">
                           <GroundTruthMaskThumbnail
                             image={image}
-                            onClick={() => handleImageClick(image.wsi_id)}
+                            onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
                           />
                         </div>
                       )}
@@ -783,7 +808,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                               256,
                             )}
                             alt={`${t('chatComponents.imageRecommendation.modelPredictionMask')}: ${image.original_filename}`}
-                            onClick={() => handleImageClick(image.wsi_id)}
+                            onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
                             title={t('chatComponents.imageRecommendation.modelPredictionMask')}
                             badgeLabel={t('chatComponents.imageRecommendation.modelPredictionMaskShort')}
                             badgeClassName="bg-indigo-100/90 text-indigo-700"
@@ -817,60 +842,50 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                           {image.original_filename}
                         </p>
                         <button
-                          onClick={() => handleImageClick(image.wsi_id)}
+                          onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
                           className="shrink-0 text-xs text-orange-600 hover:text-orange-700 font-medium flex items-center gap-1.5 hover:underline"
                         >
                           {t('chatComponents.imageRecommendation.viewDetails')} <ExternalLink className="w-3.5 h-3.5" />
                         </button>
                       </div>
 
-                      <div className="mt-3 space-y-2">
-                        {/* Tags Row */}
-                        <div className="flex flex-wrap gap-2">
-                          {image.dataset_name && (
-                            <div className="inline-flex items-center px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-md font-medium border border-gray-200">
-                              {t('chatComponents.imageRecommendation.dataset')}: <span className="text-gray-900 ml-1">{image.dataset_name}</span>
-                            </div>
-                          )}
-                          {image.label && (
-                            <div className="inline-flex items-center px-2 py-1 bg-amber-50 text-amber-700 text-xs rounded-md font-medium border border-amber-100">
-                              {t('chatComponents.imageRecommendation.label')}: <span className="text-amber-900 ml-1">{image.label}</span>
-                            </div>
-                          )}
-                          {wantsPredictionMask && latestSegmentationMask?.task_name && (
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-md font-medium border border-indigo-100">
-                              <span className="font-bold text-indigo-500 uppercase tracking-wider text-[10px]">{t('chatComponents.imageRecommendation.maskModel')}</span>
-                              <span className="text-indigo-900">{latestSegmentationMask.task_name}</span>
-                            </div>
-                          )}
-                          {recommendation.show_heatmap && hasHeatmap && latestHeatmap?.prediction && (
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-700 text-xs rounded-md font-medium border border-blue-100">
-                              <span className="font-bold text-blue-500 uppercase tracking-wider text-[10px]">{t('chatComponents.imageRecommendation.pred')}</span>
-                              <span className="text-blue-900">{latestHeatmap.prediction}</span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Event Status / Time */}
-                        {(image.event_status !== null || image.event_time !== null) && (
-                          <div className="flex flex-wrap gap-2 text-xs">
-                             {image.event_status !== null && (
-                              <span className={`px-2 py-1 rounded-md font-medium border ${
-                                image.event_status === 1
-                                  ? 'bg-red-50 text-red-700 border-red-100'
-                                  : 'bg-teal-50 text-teal-700 border-teal-100'
-                              }`}>
-                                {image.event_status === 1 ? t('chatComponents.imageRecommendation.event') : t('chatComponents.imageRecommendation.censored')}
-                              </span>
-                            )}
-                            {image.event_time !== null && image.event_time !== undefined && (
-                              <span className="px-2 py-1 bg-gray-50 text-gray-600 rounded-md border border-gray-100">
-                                {t('chatComponents.imageRecommendation.time')}: {image.event_time}
-                              </span>
-                            )}
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        {image.dataset_name && (
+                          <div className="inline-flex shrink-0 items-center whitespace-nowrap px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-md font-medium border border-gray-200">
+                            {t('chatComponents.imageRecommendation.dataset')}: <span className="text-gray-900 ml-1">{image.dataset_name}</span>
                           </div>
                         )}
-
+                        {image.label && (
+                          <div className="inline-flex shrink-0 items-center whitespace-nowrap px-2 py-1 bg-amber-50 text-amber-700 text-xs rounded-md font-medium border border-amber-100">
+                            {t('chatComponents.imageRecommendation.label')}: <span className="text-amber-900 ml-1">{image.label}</span>
+                          </div>
+                        )}
+                        {wantsPredictionMask && latestSegmentationMask?.task_name && (
+                          <div className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-md font-medium border border-indigo-100">
+                            <span className="font-bold text-indigo-500 uppercase tracking-wider text-[10px]">{t('chatComponents.imageRecommendation.maskModel')}</span>
+                            <span className="text-indigo-900">{latestSegmentationMask.task_name}</span>
+                          </div>
+                        )}
+                        {recommendation.show_heatmap && hasHeatmap && latestHeatmap?.prediction && (
+                          <div className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2.5 py-1 bg-blue-50 text-blue-700 text-xs rounded-md font-medium border border-blue-100">
+                            <span className="font-bold text-blue-500 uppercase tracking-wider text-[10px]">{t('chatComponents.imageRecommendation.pred')}</span>
+                            <span className="text-blue-900">{latestHeatmap.prediction}</span>
+                          </div>
+                        )}
+                        {image.event_status !== null && (
+                          <span className={`shrink-0 whitespace-nowrap px-2 py-1 text-xs rounded-md font-medium border ${
+                            image.event_status === 1
+                              ? 'bg-red-50 text-red-700 border-red-100'
+                              : 'bg-teal-50 text-teal-700 border-teal-100'
+                          }`}>
+                            {image.event_status === 1 ? t('chatComponents.imageRecommendation.event') : t('chatComponents.imageRecommendation.censored')}
+                          </span>
+                        )}
+                        {image.event_time !== null && image.event_time !== undefined && (
+                          <span className="shrink-0 whitespace-nowrap px-2 py-1 text-xs bg-gray-50 text-gray-600 rounded-md border border-gray-100">
+                            {t('chatComponents.imageRecommendation.time')}: {image.event_time}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>

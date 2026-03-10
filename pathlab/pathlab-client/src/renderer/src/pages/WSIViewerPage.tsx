@@ -53,6 +53,17 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
 }
 
+interface ViewerNavigationState {
+  fromAIChat?: boolean
+  fromDataset?: boolean
+  datasetId?: string
+  datasetName?: string
+  conversationId?: string
+  selectedTaskId?: string
+  selectedFoldKey?: string
+  initialShowHeatmap?: boolean
+}
+
 export default function WSIViewerPage() {
   const { t } = useTranslation()
   const toast = useToast()
@@ -60,11 +71,15 @@ export default function WSIViewerPage() {
   const { wsi_id = '' } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
-  const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
-  const fromDataset = (location.state as { fromDataset?: boolean } | null)?.fromDataset === true
-  const datasetId = (location.state as { datasetId?: string } | null)?.datasetId
-  const datasetName = (location.state as { datasetName?: string } | null)?.datasetName
-  const conversationId = (location.state as { conversationId?: string } | null)?.conversationId
+  const navigationState = (location.state as ViewerNavigationState | null) ?? null
+  const fromAIChat = navigationState?.fromAIChat === true
+  const fromDataset = navigationState?.fromDataset === true
+  const datasetId = navigationState?.datasetId
+  const datasetName = navigationState?.datasetName
+  const conversationId = navigationState?.conversationId
+  const preferredTaskId = navigationState?.selectedTaskId
+  const preferredFoldKey = navigationState?.selectedFoldKey
+  const initialShowHeatmap = navigationState?.initialShowHeatmap === true
   const [detail, setDetail] = useState<any>()
   const [showHeatmap, setShowHeatmap] = useState(false)
   const [showSegMask, setShowSegMask] = useState(false)
@@ -312,10 +327,20 @@ export default function WSIViewerPage() {
       try {
         const heatmaps = await fetchAvailableHeatmaps(wsi_id)
         setAvailableHeatmaps(heatmaps)
-        if (heatmaps.length > 0 && heatmaps[0].task_id) {
-          setSelectedTaskId(heatmaps[0].task_id)
-          setSelectedFoldKey(undefined)
-          setShowHeatmap(false)
+        const isHeatmapEntry = (entry: AvailableHeatmap) => entry.data_type === 'wsi' || entry.data_type === 'patch'
+        const preferredExactEntry = preferredTaskId
+          ? heatmaps.find(h => h.task_id === preferredTaskId && h.fold_key === preferredFoldKey && isHeatmapEntry(h))
+          : undefined
+        const preferredTaskEntry = preferredTaskId
+          ? heatmaps.find(h => h.task_id === preferredTaskId && isHeatmapEntry(h))
+          : undefined
+        const fallbackEntry = heatmaps.find(isHeatmapEntry) ?? heatmaps[0]
+        const initialEntry = preferredExactEntry ?? preferredTaskEntry ?? fallbackEntry
+
+        if (initialEntry?.task_id) {
+          setSelectedTaskId(initialEntry.task_id)
+          setSelectedFoldKey(preferredExactEntry?.fold_key || undefined)
+          setShowHeatmap(initialShowHeatmap && isHeatmapEntry(initialEntry))
           setShowSegMask(false)
         }
       } catch (err) {
@@ -326,7 +351,7 @@ export default function WSIViewerPage() {
       }
     }
     loadData()
-  }, [wsi_id])
+  }, [initialShowHeatmap, preferredFoldKey, preferredTaskId, wsi_id])
 
   // Handle heatmap loaded callback from WSIViewer
   const handleHeatmapLoaded = useCallback((data: HeatmapData | null) => {
