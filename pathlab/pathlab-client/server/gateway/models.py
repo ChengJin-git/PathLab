@@ -3,7 +3,7 @@ Pydantic models for Gateway API requests/responses
 """
 from enum import Enum
 from pydantic import BaseModel, Field, model_validator
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Literal
 from backend.ai.segmentors.specs import is_fm_segmentation_backbone
 
 
@@ -168,6 +168,17 @@ class AddMessageRequest(BaseModel):
     """Request model for adding a message to a conversation"""
     role: str  # "user" or "assistant"
     content: str
+
+
+class ChatPatchInferenceRequest(BaseModel):
+    """Request model for temporary chat-only patch inference."""
+
+    conversation_id: str
+    message_id: int
+    inference_type: Literal["classification", "segmentation"]
+    model_id: str
+    image_data_url: str
+    source: Optional[str] = None
 
 
 class MessageFeedbackRequest(BaseModel):

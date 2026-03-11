@@ -34,6 +34,13 @@ from ..models import (
     CreateConversationRequest,
     UpdateMessageRequest,
     AddMessageRequest,
+    ChatPatchInferenceRequest,
+)
+from .chat_patch_inference import (
+    cleanup_chat_patch_tasks_from_message,
+    cleanup_conversation_chat_patch_tasks,
+    create_chat_patch_task,
+    get_chat_patch_task,
 )
 from .chat_pdf import (
     is_pdf_url, process_pdf_url, get_pdf_image_path,
@@ -91,6 +98,35 @@ def _extract_segmentation_label_names(categories: List[Dict[str, Any]]) -> List[
         for category in categories
         if category.get("name")
     ])
+
+
+async def _get_patch_model_for_chat(
+    db: AsyncSession,
+    model_id: str,
+    user: User,
+    inference_type: str,
+):
+    trained_model = await TrainedModelRepository.get_by_id(db, model_id)
+    if not trained_model:
+        raise HTTPException(status_code=404, detail="Trained model not found")
+    if not check_data_ownership(trained_model.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to use this model")
+
+    training_task = await TrainingTaskRepository.get_by_id(db, trained_model.task_id)
+    if not training_task or not training_task.data_group:
+        raise HTTPException(status_code=400, detail="Training task metadata is incomplete")
+
+    data_type = training_task.data_group.data_type
+    task_type = training_task.data_group.task_type
+    if data_type != "patch":
+        raise HTTPException(status_code=400, detail="Only patch models are supported for chat image inference")
+
+    if inference_type == "classification" and _is_segmentation_task(task_type):
+        raise HTTPException(status_code=400, detail="Selected model is not a patch classification model")
+    if inference_type == "segmentation" and not _is_segmentation_task(task_type):
+        raise HTTPException(status_code=400, detail="Selected model is not a patch segmentation model")
+
+    return trained_model
 
 
 def _clean_optional_str(value: Any) -> str:
@@ -2253,6 +2289,7 @@ async def delete_conversation(
     if not check_data_ownership(conversation.user_id, user):
         raise HTTPException(status_code=403, detail="You don't have permission to delete this conversation")
 
+    await cleanup_conversation_chat_patch_tasks(conversation_id)
     success = await ChatRepository.delete_conversation(db, conversation_id)
     if not success:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -2306,6 +2343,7 @@ async def delete_messages_from(
     if not check_data_ownership(conversation.user_id, user):
         raise HTTPException(status_code=403, detail="You don't have permission to delete messages in this conversation")
 
+    await cleanup_chat_patch_tasks_from_message(conversation_id, message_id)
     # Delete the message and all subsequent messages
     deleted_count = await ChatRepository.delete_messages_from_id(db, conversation_id, message_id)
     if deleted_count == 0:
@@ -2340,6 +2378,49 @@ async def add_message(
     message = await ChatRepository.add_message(db, message_data)
     await db.commit()
     return message.to_dict()
+
+
+@router.post("/patch-inference")
+async def start_chat_patch_inference(
+    req: ChatPatchInferenceRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a temporary chat-only patch inference task."""
+    conversation = await ChatRepository.get_conversation(db, req.conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if not check_data_ownership(conversation.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to modify this conversation")
+    if not any(message.id == req.message_id for message in conversation.messages):
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    trained_model = await _get_patch_model_for_chat(db, req.model_id, user, req.inference_type)
+    task = await create_chat_patch_task(
+        conversation_id=req.conversation_id,
+        message_id=req.message_id,
+        user_id=str(user.id),
+        inference_type=req.inference_type,
+        model_id=trained_model.model_id,
+        model_name=trained_model.model_name,
+        image_data_url=req.image_data_url,
+        source=req.source,
+    )
+    return task
+
+
+@router.get("/patch-inference/{task_id}")
+async def get_chat_patch_inference_status(
+    task_id: str,
+    user: User = Depends(current_active_user),
+):
+    """Get status for a temporary chat-only patch inference task."""
+    task = await get_chat_patch_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.user_id != str(user.id) and not user.is_admin():
+        raise HTTPException(status_code=403, detail="You don't have permission to view this task")
+    return task.to_public_dict()
 
 
 @router.post("/chat")

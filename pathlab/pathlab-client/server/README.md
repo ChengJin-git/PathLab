@@ -52,6 +52,10 @@ server/
 - PostgreSQL：元数据与业务状态
 - Redis：任务队列、日志、进度与部分缓存
 - `uploads/`：WSI、特征缓存、模型、日志、标注及衍生文件
+- 如果要测试/启用 Docling 的 Tesseract OCR 路径，还需要安装系统依赖与 Python 包：
+  - `sudo apt install libtesseract-dev`
+  - `sudo apt install tesseract-ocr`
+  - `python -m pip install pytesseract`
 
 默认配置可在 `backend/common/config.py` 中看到，包括：
 

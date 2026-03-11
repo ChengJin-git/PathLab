@@ -174,6 +174,44 @@ export interface ConversationWithMessages extends Conversation {
   }>
 }
 
+export type ChatPatchInferenceType = 'classification' | 'segmentation'
+
+export interface ChatPatchInferenceStartRequest {
+  conversation_id: string
+  message_id: number
+  inference_type: ChatPatchInferenceType
+  model_id: string
+  image_data_url: string
+  source?: string | null
+}
+
+export interface ChatPatchInferenceTaskResult {
+  predicted_label?: string
+  probabilities?: Record<string, number>
+  top_predictions?: Array<{ label: string; score: number }>
+  class_names?: string[]
+  positive_classes?: Array<{ label: string; coverage_ratio: number }>
+  coverage_by_class?: Array<{ label: string; coverage_ratio: number }>
+  has_positive_mask?: boolean
+  mask_shape?: [number, number]
+}
+
+export interface ChatPatchInferenceTask {
+  task_id: string
+  conversation_id: string
+  message_id: number
+  inference_type: ChatPatchInferenceType
+  model_id: string
+  model_name: string
+  source?: string | null
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+  progress: number
+  result?: ChatPatchInferenceTaskResult | null
+  error?: string | null
+  created_at: string
+  updated_at: string
+}
+
 /**
  * Create a new conversation
  * User ID is automatically determined from JWT token.
@@ -313,6 +351,28 @@ export async function addMessage(
       body: JSON.stringify({ role, content })
     },
     'Failed to add message'
+  )
+}
+
+export async function startChatPatchInference(
+  request: ChatPatchInferenceStartRequest
+): Promise<ChatPatchInferenceTask> {
+  return apiFetch<ChatPatchInferenceTask>(
+    `${API_BASE}/patch-inference`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request)
+    },
+    'Failed to start chat patch inference'
+  )
+}
+
+export async function getChatPatchInferenceTask(taskId: string): Promise<ChatPatchInferenceTask> {
+  return apiFetch<ChatPatchInferenceTask>(
+    `${API_BASE}/patch-inference/${encodeURIComponent(taskId)}`,
+    undefined,
+    'Failed to fetch chat patch inference task'
   )
 }
 

@@ -575,7 +575,11 @@ class WSIRepository:
                 (func.lower(WSISlide.split) == 'test', split_unit_identifier),
                 else_=None,
             ))).label("split_test_count"),
-        ).select_from(WSISlide).outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
+        ).select_from(WSISlide).outerjoin(
+            Dataset, WSISlide.dataset_id == Dataset.dataset_id
+        ).outerjoin(
+            DataGroup, Dataset.group_id == DataGroup.group_id
+        )
 
         if user_filter is not None:
             splits_per_dataset_query = splits_per_dataset_query.where(user_filter)

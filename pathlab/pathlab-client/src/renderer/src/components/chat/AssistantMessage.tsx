@@ -31,6 +31,7 @@ import { CancelTaskCard, parseCancelTaskConfig, removeCancelTaskBlock } from './
 import { DatasetRegistrationCard, parseDatasetRegistrationConfig, removeDatasetRegistrationBlock } from './DatasetRegistrationCard'
 import { MetadataUploadCard, parseMetadataUploadConfig, removeMetadataUploadBlock } from './MetadataUploadCard'
 import { ModelListCard, parseModelListConfig, removeModelListBlock } from './ModelListCard'
+import PatchInferenceCard, { parsePatchInferenceConfig, removePatchInferenceBlock } from './PatchInferenceCard'
 import { RenameTaskCard, parseRenameTaskConfig, removeRenameTaskBlock } from './RenameTaskCard'
 import { removeVoiceControlBlock } from './VoiceControlBlock'
 import SearchingStatus, {
@@ -89,6 +90,9 @@ export interface AssistantMessageProps {
   submitTaskTrigger?: number  // When this changes, trigger submit on TaskConfigCard
   cancelTaskTrigger?: number  // When this changes, trigger cancel on CancelTaskCard
   onNewChat?: () => void  // Callback to start a new conversation (context limit card)
+  conversationId?: string
+  referenceImages?: string[]
+  onMessageContentReplace?: (messageId: string, updatedContent: string, errorToastKey?: string) => void | Promise<void>
 }
 
 // All special block tag names used in the chat
@@ -112,6 +116,7 @@ const SPECIAL_BLOCK_TAGS = [
   'DATASET_UPLOAD',
   'METADATA_UPLOAD',
   'MODEL_LIST',
+  'PATCH_INFERENCE',
   'REFERENCE',
   'PDF_PARSE_STATUS',
   'SEARCH_STATUS',
@@ -325,7 +330,10 @@ const AssistantMessage = React.memo(function AssistantMessage({
   onMetadataUploadSuccess,
   submitTaskTrigger,
   cancelTaskTrigger,
-  onNewChat
+  onNewChat,
+  conversationId,
+  referenceImages,
+  onMessageContentReplace
 }: AssistantMessageProps) {
   const { t } = useTranslation()
 
@@ -348,6 +356,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const datasetRegistrationConfig = parseDatasetRegistrationConfig(content)
   const metadataUploadConfig = parseMetadataUploadConfig(content)
   const modelListConfig = parseModelListConfig(content)
+  const patchInferenceConfig = parsePatchInferenceConfig(content)
   const referenceCards = parseAllReferenceCards(content)
   const pdfParseStatusItems = parseAllPdfParseStatus(content)
   const citationContexts = parseCitationContexts(content)
@@ -584,6 +593,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (datasetRegistrationConfig) displayContent = removeDatasetRegistrationBlock(displayContent)
   if (metadataUploadConfig) displayContent = removeMetadataUploadBlock(displayContent)
   if (modelListConfig) displayContent = removeModelListBlock(displayContent)
+  if (patchInferenceConfig) displayContent = removePatchInferenceBlock(displayContent)
   // Remove SEARCH_STATUS block - it handled separately
   if (searchStatus) displayContent = removeSearchStatusBlock(displayContent)
   // Remove WEB_SEARCH_RESULT block - it handled separately
@@ -1043,6 +1053,29 @@ const AssistantMessage = React.memo(function AssistantMessage({
           </motion.div>
         )}
 
+        {/* Patch inference card */}
+        {patchInferenceConfig ? (
+          <motion.div key="patch-inference-real" {...cardTransition}>
+            <PatchInferenceCard
+              config={patchInferenceConfig}
+              conversationId={conversationId}
+              messageId={messageId}
+              referenceImages={referenceImages}
+              onToast={onToast}
+              onPersistConfig={(nextConfig) => {
+                if (!onMessageContentReplace) return
+                const nextBlock = `[PATCH_INFERENCE]\n${JSON.stringify(nextConfig, null, 2)}\n[/PATCH_INFERENCE]`
+                const updatedContent = content.replace(/\[PATCH_INFERENCE\][\s\S]*?\[\/PATCH_INFERENCE\]/, nextBlock)
+                return onMessageContentReplace(messageId, updatedContent, 'aiChat.failedToSavePatchInferenceStatus')
+              }}
+            />
+          </motion.div>
+        ) : incompleteTag === 'PATCH_INFERENCE' && (
+          <motion.div key="patch-inference-skeleton" {...cardTransition}>
+            <GenericCardSkeleton />
+          </motion.div>
+        )}
+
         {/* Metadata Upload Card */}
         {metadataUploadConfig ? (
           <motion.div key="metadata-upload-real" {...cardTransition}>
@@ -1083,6 +1116,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
           'DATASET_REGISTRATION',
           'METADATA_UPLOAD',
           'MODEL_LIST',
+          'PATCH_INFERENCE',
           'CITATION_CONTEXTS',
           'REFERENCE',
           'WEB_SEARCH_RESULT',

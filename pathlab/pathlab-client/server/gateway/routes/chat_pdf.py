@@ -17,6 +17,8 @@ import shutil
 import tempfile
 import asyncio
 import hashlib
+import traceback
+import time
 import uuid
 import gc
 from dataclasses import dataclass
@@ -27,6 +29,7 @@ import httpx
 
 from ..dependencies import logger
 from backend.common.config import Config
+from .transformers_runtime import ensure_transformers_runtime_ready
 
 
 _pdf_cache_dir: Path | None = None
@@ -40,9 +43,44 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _normalize_docling_ocr_engine(value: str | None) -> str:
+    normalized = (value or "auto").strip().lower()
+    if normalized in {"", "default"}:
+        return "auto"
+    if normalized in {"0", "false", "off"}:
+        return "none"
+    return normalized
+
+
+def _env_float(name: str, default: float | None = None) -> float | None:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    normalized = value.strip()
+    if not normalized:
+        return default
+    try:
+        return float(normalized)
+    except ValueError:
+        logger.warning(f"Invalid float for {name}={value!r}; using default {default!r}")
+        return default
+
+
+def _should_skip_docling_gpu_queue() -> tuple[bool, str]:
+    if DOCLING_PDF_DO_OCR and DOCLING_PDF_OCR_ENGINE == "tesseract":
+        return True, (
+            "Skipping GPU queue because DOCLING_PDF_OCR_ENGINE=tesseract is configured "
+            "for direct CPU diagnostic routing"
+        )
+    return False, "Using GPU queue first for Docling best-effort parse"
+
+
 PDF_PARSE_MAX_CONCURRENT = max(1, int(os.getenv("PDF_PARSE_MAX_CONCURRENT", "1")))
 PDF_VECTOR_INDEX_MAX_CONCURRENT = max(1, int(os.getenv("PDF_VECTOR_INDEX_MAX_CONCURRENT", "1")))
-PDF_ENABLE_BACKGROUND_DOCLING_UPGRADE = _env_flag("PDF_ENABLE_BACKGROUND_DOCLING_UPGRADE", False)
+PDF_ENABLE_BACKGROUND_DOCLING_UPGRADE = _env_flag("PDF_ENABLE_BACKGROUND_DOCLING_UPGRADE", True)
+DOCLING_PDF_DO_OCR = _env_flag("DOCLING_PDF_DO_OCR", True)
+DOCLING_PDF_OCR_ENGINE = _normalize_docling_ocr_engine(os.getenv("DOCLING_PDF_OCR_ENGINE", "tesseract"))
+DOCLING_PDF_DOCUMENT_TIMEOUT_SECONDS = _env_float("DOCLING_PDF_DOCUMENT_TIMEOUT_SECONDS")
 PDF_PARSE_METHOD_DOCLING = "docling"
 PDF_PARSE_METHOD_PYMUPDF = "pymupdf"
 PDF_PARSE_METHOD_FAILED = "parse_failed"
@@ -51,6 +89,7 @@ PDF_UPGRADE_STATUS_DISABLED = "disabled"
 PDF_UPGRADE_STATUS_RUNNING = "running"
 PDF_UPGRADE_STATUS_QUEUED_GPU = "queued_gpu"
 PDF_UPGRADE_STATUS_RUNNING_GPU = "running_gpu"
+PDF_UPGRADE_STATUS_DIRECT_CPU = "direct_cpu"
 PDF_UPGRADE_STATUS_FALLBACK_CPU = "fallback_cpu"
 PDF_UPGRADE_STATUS_COMPLETED = "completed"
 PDF_UPGRADE_STATUS_FAILED = "failed"
@@ -1518,23 +1557,31 @@ async def _parse_pdf_with_docling_best_effort(
     upgrade_url: str | None = None,
 ) -> ParsedPdfResult | None:
     """Run Docling via GPU queue when possible, otherwise CPU, and normalize the result."""
+    skip_gpu_queue, routing_detail = _should_skip_docling_gpu_queue()
     fallback_detail = "GPU Docling path unavailable or failed; retrying high-quality upgrade on CPU"
-    try:
-        docling_result = await _parse_pdf_with_docling_via_gpu_queue(
-            pdf_bytes,
-            max_pages,
-            images_output_dir,
-            images_url_prefix,
-            upgrade_url=upgrade_url,
-        )
-    except DoclingGpuQueueTimeout as e:
-        fallback_detail = str(e)
+    logger.info(f"[Docling] Best-effort routing decision: {routing_detail}")
+    docling_result: ParsedPdfResult | None = None
+    if not skip_gpu_queue:
+        try:
+            docling_result = await _parse_pdf_with_docling_via_gpu_queue(
+                pdf_bytes,
+                max_pages,
+                images_output_dir,
+                images_url_prefix,
+                upgrade_url=upgrade_url,
+            )
+        except DoclingGpuQueueTimeout as e:
+            fallback_detail = str(e)
+            docling_result = None
+    else:
+        fallback_detail = routing_detail
         docling_result = None
+
     if docling_result is None:
         if upgrade_url:
             _record_high_quality_upgrade_state(
                 upgrade_url,
-                PDF_UPGRADE_STATUS_FALLBACK_CPU,
+                PDF_UPGRADE_STATUS_DIRECT_CPU if skip_gpu_queue else PDF_UPGRADE_STATUS_FALLBACK_CPU,
                 fallback_detail,
                 high_quality_parse_pending=True,
                 high_quality_parse_ready=False,
@@ -2476,7 +2523,7 @@ def _parse_pdf_with_pymupdf(
         return md_content, md_text
 
     except Exception as e:
-        logger.exception(f"PyMuPDF extraction failed: {e}")
+        logger.error(f"PyMuPDF extraction failed: {e}\n{traceback.format_exc()}")
         return None
     finally:
         # Clean up temp file
@@ -2543,13 +2590,21 @@ def _docling_subprocess_entry(
     max_pages: int,
     images_output_dir_str: str | None,
     images_url_prefix: str | None,
-    physical_gpu_index: int,
+    accelerator_device: str,
+    physical_gpu_index: int | None,
 ) -> None:
-    """Child-process entrypoint for GPU-isolated Docling parsing."""
+    """Child-process entrypoint for isolated Docling parsing."""
     try:
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(physical_gpu_index)
+        if accelerator_device == "cuda":
+            if physical_gpu_index is None:
+                raise RuntimeError("Missing GPU index for CUDA Docling subprocess")
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(physical_gpu_index)
+            device_detail = f"physical_gpu_index={physical_gpu_index}"
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = ""
+            device_detail = "cpu"
         logger.info(
-            f"[DoclingSubprocess] Starting child parse on physical_gpu_index={physical_gpu_index}, "
+            f"[DoclingSubprocess] Starting child parse on {device_detail}, "
             f"max_pages={max_pages}, image_export={bool(images_output_dir_str)}"
         )
         result = _parse_pdf_with_docling(
@@ -2557,10 +2612,10 @@ def _docling_subprocess_entry(
             max_pages,
             images_output_dir=Path(images_output_dir_str) if images_output_dir_str else None,
             images_url_prefix=images_url_prefix,
-            accelerator_device="cuda",
+            accelerator_device=accelerator_device,
         )
         logger.info(
-            f"[DoclingSubprocess] Child parse finished on physical_gpu_index={physical_gpu_index}, "
+            f"[DoclingSubprocess] Child parse finished on {device_detail}, "
             f"success={result is not None}"
         )
         result_conn.send(
@@ -2575,7 +2630,11 @@ def _docling_subprocess_entry(
             }
         )
     except Exception as e:
-        logger.exception(f"[DoclingSubprocess] Child parse crashed on gpu_index={physical_gpu_index}: {e}")
+        logger.error(
+            f"[DoclingSubprocess] Child parse crashed on {accelerator_device}"
+            f"{f':{physical_gpu_index}' if physical_gpu_index is not None else ''}: {e}\n"
+            f"{traceback.format_exc()}"
+        )
         try:
             result_conn.send({"ok": False, "error": str(e)})
         except Exception:
@@ -2599,12 +2658,17 @@ def _run_docling_in_isolated_process(
     max_pages: int,
     images_output_dir_str: str | None,
     images_url_prefix: str | None,
-    assigned_device: str,
+    accelerator_device: str,
 ) -> ParsedPdfResult | None:
-    """Run Docling in a short-lived subprocess pinned to the assigned GPU."""
-    physical_gpu_index = _extract_gpu_index_from_device(assigned_device)
-    if physical_gpu_index is None:
-        raise RuntimeError(f"Invalid assigned GPU device for Docling parse: {assigned_device}")
+    """Run Docling in a short-lived isolated subprocess."""
+    normalized_device = accelerator_device.strip().lower()
+    physical_gpu_index: int | None = None
+    if normalized_device == "cuda":
+        physical_gpu_index = _extract_gpu_index_from_device(accelerator_device)
+        if physical_gpu_index is None:
+            raise RuntimeError(f"Invalid assigned GPU device for Docling parse: {accelerator_device}")
+    elif normalized_device != "cpu":
+        raise RuntimeError(f"Unsupported Docling accelerator device: {accelerator_device}")
 
     ctx = multiprocessing.get_context('spawn')
     parent_conn, child_conn = ctx.Pipe(duplex=False)
@@ -2616,6 +2680,7 @@ def _run_docling_in_isolated_process(
             max_pages,
             images_output_dir_str,
             images_url_prefix,
+            normalized_device,
             physical_gpu_index,
         ),
     )
@@ -2698,7 +2763,9 @@ async def _parse_pdf_with_docling_on_assigned_gpu(
             )
         return result
     except Exception as e:
-        logger.warning(f"Docling GPU parse failed on {assigned_device}: {e}")
+        logger.warning(
+            f"Docling GPU parse failed on {assigned_device}: {type(e).__name__}: {e!r}"
+        )
         return None
 
 
@@ -2811,7 +2878,7 @@ async def _parse_pdf_with_docling_on_cpu(
     images_output_dir: Path | None,
     images_url_prefix: str | None,
 ) -> ParsedPdfResult | None:
-    """Run Docling on CPU in a worker thread when GPU parsing is unavailable."""
+    """Run Docling on CPU in an isolated subprocess when GPU parsing is unavailable."""
     loop = asyncio.get_running_loop()
     try:
         logger.info(
@@ -2820,10 +2887,10 @@ async def _parse_pdf_with_docling_on_cpu(
         )
         result = await loop.run_in_executor(
             None,
-            _parse_pdf_with_docling,
+            _run_docling_in_isolated_process,
             pdf_bytes,
             max_pages,
-            images_output_dir,
+            str(images_output_dir) if images_output_dir else None,
             images_url_prefix,
             "cpu",
         )
@@ -2834,7 +2901,7 @@ async def _parse_pdf_with_docling_on_cpu(
             )
         return result
     except Exception as e:
-        logger.warning(f"Docling CPU parse failed: {e}")
+        logger.warning(f"Docling CPU parse failed: {type(e).__name__}: {e!r}")
         return None
 
 
@@ -2851,10 +2918,16 @@ def _parse_pdf_with_docling(
     when image export is enabled.
     """
     try:
+        ensure_transformers_runtime_ready("Docling PDF parse")
         from docling_core.types.doc import ImageRefMode, PictureItem, TableItem
         from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
         from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.pipeline_options import PdfPipelineOptions
+        from docling.datamodel.pipeline_options import (
+            OcrAutoOptions,
+            PdfPipelineOptions,
+            RapidOcrOptions,
+            TesseractCliOcrOptions,
+        )
         from docling.document_converter import DocumentConverter, PdfFormatOption
     except ImportError as e:
         logger.info(f"Docling not available for structured fallback parse: {e}")
@@ -2862,9 +2935,12 @@ def _parse_pdf_with_docling(
 
     tmp_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
     try:
+        parse_started_at = time.perf_counter()
         logger.info(
             f"[Docling] Starting native parse: accelerator={accelerator_device}, "
-            f"bytes={len(pdf_bytes)}, max_pages={max_pages}, image_export={images_output_dir is not None}"
+            f"bytes={len(pdf_bytes)}, max_pages={max_pages}, image_export={images_output_dir is not None}, "
+            f"do_ocr_env={DOCLING_PDF_DO_OCR}, ocr_engine_env={DOCLING_PDF_OCR_ENGINE}, "
+            f"document_timeout_env={DOCLING_PDF_DOCUMENT_TIMEOUT_SECONDS}"
         )
         tmp_file.write(pdf_bytes)
         tmp_file.close()
@@ -2878,21 +2954,56 @@ def _parse_pdf_with_docling(
             num_threads=4,
             device=AcceleratorDevice.CUDA if accelerator_device == "cuda" else AcceleratorDevice.CPU,
         )
+        if DOCLING_PDF_DOCUMENT_TIMEOUT_SECONDS is not None and DOCLING_PDF_DOCUMENT_TIMEOUT_SECONDS > 0:
+            pipeline_options.document_timeout = DOCLING_PDF_DOCUMENT_TIMEOUT_SECONDS
+
+        requested_ocr_engine = DOCLING_PDF_OCR_ENGINE
+        resolved_ocr_engine = requested_ocr_engine
+        if not DOCLING_PDF_DO_OCR or requested_ocr_engine == "none":
+            pipeline_options.do_ocr = False
+            resolved_ocr_engine = "none"
+        elif requested_ocr_engine == "auto":
+            pipeline_options.do_ocr = True
+            pipeline_options.ocr_options = OcrAutoOptions()
+        elif requested_ocr_engine == "rapidocr":
+            pipeline_options.do_ocr = True
+            pipeline_options.ocr_options = RapidOcrOptions()
+        elif requested_ocr_engine == "tesseract":
+            pipeline_options.do_ocr = True
+            pipeline_options.ocr_options = TesseractCliOcrOptions()
+        else:
+            logger.warning(
+                f"[Docling] Unknown DOCLING_PDF_OCR_ENGINE={requested_ocr_engine!r}; falling back to auto"
+            )
+            pipeline_options.do_ocr = True
+            pipeline_options.ocr_options = OcrAutoOptions()
+            resolved_ocr_engine = "auto"
+
         logger.info(
             f"[Docling] Pipeline configured: accelerator={accelerator_device}, images_scale={pipeline_options.images_scale}, "
             f"generate_page_images={pipeline_options.generate_page_images}, "
-            f"generate_picture_images={pipeline_options.generate_picture_images}"
+            f"generate_picture_images={pipeline_options.generate_picture_images}, do_ocr={pipeline_options.do_ocr}, "
+            f"ocr_engine={resolved_ocr_engine}, document_timeout={pipeline_options.document_timeout}"
         )
 
+        converter_started_at = time.perf_counter()
+        logger.info("[Docling] Creating DocumentConverter")
         converter = DocumentConverter(
             format_options={
                 InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
             }
         )
+        logger.info(
+            f"[Docling] DocumentConverter created in {time.perf_counter() - converter_started_at:.2f}s"
+        )
 
+        convert_started_at = time.perf_counter()
         logger.info(f"[Docling] Running DocumentConverter.convert on {tmp_file.name}")
         conv_res = converter.convert(tmp_file.name)
-        logger.info("[Docling] DocumentConverter.convert completed; exporting markdown")
+        logger.info(
+            f"[Docling] DocumentConverter.convert completed in {time.perf_counter() - convert_started_at:.2f}s; "
+            "exporting markdown"
+        )
         markdown = conv_res.document.export_to_markdown(
             image_mode=ImageRefMode.PLACEHOLDER,
             page_break_placeholder="\n\n--- Page {page_no} ---\n\n",
@@ -2978,11 +3089,16 @@ def _parse_pdf_with_docling(
         logger.info(
             f"Docling extraction OK ({accelerator_device}): {len(markdown)} chars, "
             f"{len(extracted_links)} extracted figures/tables, "
-            f"{len(structured_content.get('blocks', []))} native blocks"
+            f"{len(structured_content.get('blocks', []))} native blocks, "
+            f"elapsed={time.perf_counter() - parse_started_at:.2f}s"
         )
         return _to_parsed_pdf_result(markdown, PDF_PARSE_METHOD_DOCLING, structured_content)
     except Exception as e:
-        logger.exception(f"Docling extraction failed ({accelerator_device}): {e}")
+        elapsed = time.perf_counter() - parse_started_at if 'parse_started_at' in locals() else -1.0
+        logger.error(
+            f"Docling extraction failed ({accelerator_device}) after {elapsed:.2f}s: "
+            f"{type(e).__name__}: {e!r}\n{traceback.format_exc()}"
+        )
         return None
     finally:
         try:

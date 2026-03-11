@@ -16,6 +16,7 @@ import numpy as np
 
 from ..dependencies import logger
 from backend.common.config import Config
+from .transformers_runtime import ensure_transformers_runtime_ready
 
 # ── Lazy singletons ─────────────────────────────────────────────────────────
 _embedding_model = None
@@ -47,6 +48,7 @@ def _get_embedding_model():
     if _embedding_model is None:
         with _embedding_lock:
             if _embedding_model is None:
+                ensure_transformers_runtime_ready("PDF vector embedding model")
                 from sentence_transformers import SentenceTransformer
                 logger.info(f"[VectorStore] Loading embedding model: {EMBEDDING_MODEL_NAME}")
                 _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)

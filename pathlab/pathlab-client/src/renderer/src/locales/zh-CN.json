@@ -1274,6 +1274,7 @@
     "failedToSaveMetadataStatus": "保存元数据上传状态到服务器失败",
     "metadataUploaded": "元数据已上传：{{count}} 个文件已更新",
     "failedToSaveAnalysisStatus": "保存分析状态到服务器失败",
+    "failedToSavePatchInferenceStatus": "保存 patch 推理状态到服务器失败",
     "aiErrorFallback": "抱歉，我遇到了错误。请重试。",
     "generationCancelled": "用户取消了回答。",
     "generationTimeout": "回答超时，请重试。",
@@ -1745,6 +1746,7 @@
     "files": "个文件",
     "goTo": "跳转至",
     "pagination": {
+      "goToPage": "跳转到页码",
       "itemsPerPage": "每页",
       "summary": "显示第 {{start}} - {{end}} 项，共 {{total}} 个数据集",
       "pageInfo": "第 {{current}} / {{total}} 页"
@@ -2512,6 +2514,20 @@
       "csvUploadedSuccess": "CSV 上传成功！",
       "taskCancelledSuccess": "任务 {{taskId}} 已成功取消！",
       "taskRenamedSuccess": "任务已成功重命名为\"{{newName}}\"！"
+    },
+    "patchInference": {
+      "title": "Patch 图像推理",
+      "summaryFallback": "我找到了可能适合这张图像的 patch 模型。",
+      "source": "来源判断",
+      "classificationTitle": "分类",
+      "segmentationTitle": "分割",
+      "missingImage": "我没有在附近的对话里找到这张图像，因此当前还不能启动推理。",
+      "notReady": "这条消息暂时还不能持久化 patch 推理状态。",
+      "submitting": "正在提交临时 patch 推理...",
+      "startFailed": "启动临时 patch 推理失败",
+      "failed": "Patch 推理失败。",
+      "noModel": "当前没有可用于该推理类型的兼容模型。",
+      "noSegmentationMask": "未检测到阳性分割区域。"
     },
     "referenceCard": {
       "references": "参考文献",

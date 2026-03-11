@@ -1274,6 +1274,7 @@
     "failedToSaveMetadataStatus": "Failed to save metadata upload status to server",
     "metadataUploaded": "Metadata uploaded: {{count}} files updated",
     "failedToSaveAnalysisStatus": "Failed to save analysis status to server",
+    "failedToSavePatchInferenceStatus": "Failed to save patch inference status to server",
     "aiErrorFallback": "Sorry, I encountered an error. Please try again.",
     "generationCancelled": "Response cancelled by user.",
     "generationTimeout": "Response timed out. Please try again.",
@@ -1745,6 +1746,7 @@
     "files": "files",
     "goTo": "Go to",
     "pagination": {
+      "goToPage": "Go to page",
       "itemsPerPage": "Per page",
       "summary": "Showing {{start}} to {{end}} of {{total}} datasets",
       "pageInfo": "Page {{current}} / {{total}}"
@@ -2512,6 +2514,20 @@
       "csvUploadedSuccess": "CSV uploaded successfully!",
       "taskCancelledSuccess": "Task {{taskId}} cancelled successfully!",
       "taskRenamedSuccess": "Task renamed to \"{{newName}}\" successfully!"
+    },
+    "patchInference": {
+      "title": "Patch image inference",
+      "summaryFallback": "I found patch models that may match this image.",
+      "source": "Source",
+      "classificationTitle": "Classification",
+      "segmentationTitle": "Segmentation",
+      "missingImage": "I couldn't find the referenced image in the nearby conversation, so this card can't start inference yet.",
+      "notReady": "This message is not ready for persistent patch inference yet.",
+      "submitting": "Submitting temporary patch inference...",
+      "startFailed": "Failed to start temporary patch inference",
+      "failed": "Patch inference failed.",
+      "noModel": "No compatible model is available for this inference type.",
+      "noSegmentationMask": "No positive segmentation mask was detected."
     },
     "referenceCard": {
       "references": "References",

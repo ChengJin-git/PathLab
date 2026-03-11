@@ -49,6 +49,7 @@ import { CachedTaskData } from '../components/chat/TaskHistoryCard'
 import { parseCancelTaskConfig } from '../components/chat/CancelTaskCard'
 import { removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
 import { removeModelListBlock } from '../components/chat/ModelListCard'
+import { removePatchInferenceBlock } from '../components/chat/PatchInferenceCard'
 import { removePdfParseStatusBlock } from '../components/chat/SearchingStatus'
 import { parseRenameTaskConfig, removeRenameTaskBlock } from '../components/chat/RenameTaskCard'
 import { MULTIMODAL_MODELS } from '../components/settings/GeneralTab'
@@ -1307,6 +1308,17 @@ export default function AIChatPage() {
     }
   }, [currentConversationId, showToast, t])
 
+  const replaceMessageContent = useCallback(async (
+    messageId: string,
+    updatedContent: string,
+    errorToastKey?: string
+  ) => {
+    setMessages(prev => prev.map(message =>
+      message.id === messageId ? { ...message, content: updatedContent } : message
+    ))
+    await persistMessageUpdate(messageId, updatedContent, errorToastKey)
+  }, [persistMessageUpdate])
+
   /** Add a new assistant message to backend and remap its local ID (add+remap pattern). */
   const persistNewAssistantMessage = useCallback(async (
     localMessageId: string,
@@ -1340,6 +1352,7 @@ export default function AIChatPage() {
     // Remove VOICE_CONTROL block - it's for internal use only
     cleaned = removeVoiceControlBlock(cleaned)
     cleaned = removeModelListBlock(cleaned)
+    cleaned = removePatchInferenceBlock(cleaned)
     // Remove PDF_PARSE_STATUS blocks - internal status tags
     cleaned = removePdfParseStatusBlock(cleaned)
     // Remove CONTEXT_LIMIT block - UI-only warning card
@@ -2215,6 +2228,17 @@ export default function AIChatPage() {
                         <span className="text-sm font-medium text-gray-400">{t('aiChat.thinking')}</span>
                       </div>
                     ) : (
+                      (() => {
+                        const referenceImages = (() => {
+                          for (let i = index - 1; i >= 0; i -= 1) {
+                            const candidate = messages[i]
+                            if (candidate.role === 'user' && candidate.images?.length) {
+                              return candidate.images
+                            }
+                          }
+                          return [] as string[]
+                        })()
+                        return (
                       <AssistantMessage
                         content={message.content}
                         messageId={message.id}
@@ -2239,7 +2263,12 @@ export default function AIChatPage() {
                         submitTaskTrigger={index === lastTaskConfigIndex ? submitTaskTrigger : undefined}
                         cancelTaskTrigger={index === lastCancelTaskIndex ? cancelTaskTrigger : undefined}
                         onNewChat={handleNewChat}
+                        conversationId={currentConversationId || undefined}
+                        referenceImages={referenceImages}
+                        onMessageContentReplace={replaceMessageContent}
                       />
+                        )
+                      })()
                     )}
                   </div>
 

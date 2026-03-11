@@ -7,6 +7,7 @@ import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle,
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
+import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { ALL_ACCEPT_STRING, getFileType } from '../constants/fileTypes'
@@ -84,8 +85,10 @@ export default function ListPage() {
   const [datasetTypeFilter, setDatasetTypeFilter] = useState<DatasetTypeFilter>('all')
   const [datasetLevelFilter, setDatasetLevelFilter] = useState<DatasetLevelFilter>('all')
   const [datasetSourceFilter, setDatasetSourceFilter] = useState<string>('all')
+  const [availableDatasetSources, setAvailableDatasetSources] = useState<string[]>([])
   const [datasetViewMode, setDatasetViewMode] = useState<DatasetViewMode>('grid')
   const [datasetCurrentPage, setDatasetCurrentPage] = useState(1)
+  const [datasetPageInput, setDatasetPageInput] = useState('1')
   const [datasetListItemsPerPage, setDatasetListItemsPerPage] = useState(5)
 
   // File list pagination state
@@ -247,11 +250,7 @@ export default function ListPage() {
   }, [datasets, optimisticallyDeletedDatasetIds])
 
   const datasetSourceOptions = useMemo(() => {
-    const sourceValues = Array.from(new Set([
-      ...organSources.filter(source => source !== 'Other'),
-      ...visibleDatasets.map((dataset) => getDatasetSourceOrganFilterValue(dataset.source_organ)),
-      ...(datasetSourceFilter !== 'all' ? [datasetSourceFilter] : []),
-    ])).sort((left, right) => {
+    const sourceValues = [...availableDatasetSources].sort((left, right) => {
       if (left === UNKNOWN_SOURCE_ORGAN_FILTER) return 1
       if (right === UNKNOWN_SOURCE_ORGAN_FILTER) return -1
       return left.localeCompare(right)
@@ -264,7 +263,7 @@ export default function ListPage() {
         label: value === UNKNOWN_SOURCE_ORGAN_FILTER ? t('listPage.filters.unknownSourceOrgan') : value,
       })),
     ]
-  }, [datasetSourceFilter, t, visibleDatasets])
+  }, [availableDatasetSources, t])
 
   const datasetItemsPerPage = datasetViewMode === 'grid' ? 8 : datasetListItemsPerPage
   const datasetTotalPages = Math.max(1, Math.ceil(datasetTotalCount / datasetItemsPerPage))
@@ -286,10 +285,26 @@ export default function ListPage() {
   }, [datasetTotalPages])
 
   useEffect(() => {
+    setDatasetPageInput(String(datasetCurrentPage))
+  }, [datasetCurrentPage])
+
+  useEffect(() => {
+    if (datasetSourceFilter !== 'all' && !availableDatasetSources.includes(datasetSourceFilter)) {
+      setDatasetSourceFilter('all')
+    }
+  }, [availableDatasetSources, datasetSourceFilter])
+
+  useEffect(() => {
     if (!selectedDatasetId) {
       loadDatasets()
     }
   }, [selectedDatasetId, datasetCurrentPage, datasetItemsPerPage, datasetTaskFilter, datasetTypeFilter, datasetLevelFilter, datasetSourceFilter])
+
+  useEffect(() => {
+    if (!selectedDatasetId) {
+      loadDatasetSourceOptions()
+    }
+  }, [selectedDatasetId, datasetTaskFilter, datasetTypeFilter, datasetLevelFilter])
 
   useEffect(() => {
     if (selectedDatasetId && !selectedDatasetSummary) {
@@ -343,6 +358,46 @@ export default function ListPage() {
     } finally {
       setDatasetsLoading(false)
     }
+  }
+
+  const loadDatasetSourceOptions = async () => {
+    try {
+      const response = await fetchDatasets(datasetTypeFilter === 'all' ? undefined : datasetTypeFilter, {
+        page_size: 0,
+        task_type: datasetTaskFilter === 'all' ? undefined : datasetTaskFilter,
+        aggregation_level: datasetLevelFilter === 'all'
+          ? undefined
+          : datasetLevelFilter === 'patient'
+            ? 'case'
+            : 'file',
+      })
+
+      const nextSources = Array.from(new Set(
+        (response.items || []).map((dataset) => getDatasetSourceOrganFilterValue(dataset.source_organ))
+      ))
+
+      setAvailableDatasetSources(nextSources)
+    } catch {
+      setAvailableDatasetSources([])
+    }
+  }
+
+  const commitDatasetPageInput = (rawValue: string) => {
+    const trimmed = rawValue.trim()
+    if (!trimmed) {
+      setDatasetPageInput(String(datasetCurrentPage))
+      return
+    }
+
+    const parsedPage = Number.parseInt(trimmed, 10)
+    if (Number.isNaN(parsedPage)) {
+      setDatasetPageInput(String(datasetCurrentPage))
+      return
+    }
+
+    const nextPage = Math.min(Math.max(parsedPage, 1), datasetTotalPages)
+    setDatasetCurrentPage(nextPage)
+    setDatasetPageInput(String(nextPage))
   }
 
   const loadWSIList = async (datasetId: string, page: number = 1, search: string = '') => {
@@ -1704,6 +1759,33 @@ export default function ListPage() {
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-4">
+                  {datasetTotalPages > 1 && (
+                    <div className="flex items-center gap-2 w-full sm:w-auto">
+                      <span className="text-xs sm:text-sm text-gray-500 whitespace-nowrap">
+                        {t('listPage.pagination.goToPage')}
+                      </span>
+                      <Input
+                        value={datasetPageInput}
+                        onChange={(event) => setDatasetPageInput(event.target.value.replace(/[^0-9]/g, ''))}
+                        onBlur={() => commitDatasetPageInput(datasetPageInput)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            commitDatasetPageInput(datasetPageInput)
+                          }
+
+                          if (event.key === 'Escape') {
+                            setDatasetPageInput(String(datasetCurrentPage))
+                          }
+                        }}
+                        inputMode="numeric"
+                        aria-label={t('listPage.pagination.goToPage')}
+                        className="h-8 w-16 px-2 text-center text-xs sm:text-sm"
+                      />
+                      <span className="text-xs sm:text-sm text-gray-500 whitespace-nowrap">/ {datasetTotalPages}</span>
+                    </div>
+                  )}
+
                   {datasetViewMode === 'list' && (
                     <div className="flex items-center gap-2 w-full sm:w-auto">
                       <span className="text-xs sm:text-sm text-gray-500 whitespace-nowrap">

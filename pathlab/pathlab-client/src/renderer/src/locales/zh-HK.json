@@ -1270,6 +1270,7 @@
     "failedToSaveMetadataStatus": "儲存元數據上傳狀態到伺服器失敗",
     "metadataUploaded": "元數據已上傳：{{count}} 個檔案已更新",
     "failedToSaveAnalysisStatus": "儲存分析狀態到伺服器失敗",
+    "failedToSavePatchInferenceStatus": "儲存 patch 推理狀態到伺服器失敗",
     "aiErrorFallback": "抱歉，我遇到了錯誤。請重試。",
     "generationCancelled": "用戶取消了回答。",
     "generationTimeout": "回答超時，請重試。",
@@ -1739,6 +1740,7 @@
     "files": "個檔案",
     "goTo": "跳轉至",
     "pagination": {
+      "goToPage": "跳轉到頁碼",
       "itemsPerPage": "每頁",
       "summary": "顯示第 {{start}} - {{end}} 項，共 {{total}} 個資料集",
       "pageInfo": "第 {{current}} / {{total}} 頁"
@@ -2504,6 +2506,20 @@
       "csvUploadedSuccess": "CSV 上傳成功！",
       "taskCancelledSuccess": "任務 {{taskId}} 已成功取消！",
       "taskRenamedSuccess": "任務已成功重新命名為\"{{newName}}\"！"
+    },
+    "patchInference": {
+      "title": "Patch 圖像推理",
+      "summaryFallback": "我找到了可能適合這張圖像的 patch 模型。",
+      "source": "來源判斷",
+      "classificationTitle": "分類",
+      "segmentationTitle": "分割",
+      "missingImage": "我沒有在附近的對話裡找到這張圖像，因此目前還不能啟動推理。",
+      "notReady": "這條訊息暫時還不能持久化 patch 推理狀態。",
+      "submitting": "正在提交臨時 patch 推理...",
+      "startFailed": "啟動臨時 patch 推理失敗",
+      "failed": "Patch 推理失敗。",
+      "noModel": "目前沒有可用於該推理類型的相容模型。",
+      "noSegmentationMask": "未檢測到陽性分割區域。"
     },
     "referenceCard": {
       "references": "參考文獻",
