@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Depends
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -33,6 +33,7 @@ from .heatmap_utils import (
     find_best_fold,
 )
 from .heatmap_preview_cache import (
+    ensure_resized_recommendation_preview_cache,
     ensure_patch_cam_recommendation_preview_cache,
     ensure_recommendation_preview_cache,
     ensure_segmentation_recommendation_preview_cache,
@@ -399,14 +400,13 @@ async def get_heatmap_thumbnail(
                 file_size=wsi.file_size,
             )
             if cached_preview_path and cached_preview_path.exists():
-                with Image.open(cached_preview_path) as cached_preview:
-                    preview = cached_preview.convert('RGB')
-                    preview.thumbnail((size, size), Image.Resampling.LANCZOS)
-                    buf = io.BytesIO()
-                    preview.save(buf, format='PNG')
-                    buf.seek(0)
-                    return Response(
-                        content=buf.getvalue(),
+                response_preview_path = ensure_resized_recommendation_preview_cache(
+                    cached_preview_path,
+                    size,
+                )
+                if response_preview_path is not None:
+                    return FileResponse(
+                        response_preview_path,
                         media_type="image/png",
                         headers=render_settings["cache_headers"],
                     )
@@ -1069,28 +1069,16 @@ async def get_patch_cam(
                 file_size=getattr(wsi, "file_size", None),
             )
             if preview_path is not None:
-                from PIL import Image
-                import io
-
-                with Image.open(preview_path) as preview_img:
-                    blended_rgb = preview_img.convert("RGB")
-
-                source_w, source_h = blended_rgb.size
-                if size is not None and size > 0:
-                    scale = min(size / max(source_w, source_h), 1.0)
-                    if scale < 1.0:
-                        target_w = max(1, int(round(source_w * scale)))
-                        target_h = max(1, int(round(source_h * scale)))
-                        blended_rgb = blended_rgb.resize((target_w, target_h), Image.Resampling.LANCZOS)
-
-                buf = io.BytesIO()
-                blended_rgb.save(buf, format='PNG')
-                buf.seek(0)
-                return Response(
-                    content=buf.getvalue(),
-                    media_type="image/png",
-                    headers=render_settings["cache_headers"],
+                response_preview_path = ensure_resized_recommendation_preview_cache(
+                    preview_path,
+                    size,
                 )
+                if response_preview_path is not None:
+                    return FileResponse(
+                        response_preview_path,
+                        media_type="image/png",
+                        headers=render_settings["cache_headers"],
+                    )
 
         # Load CAM data
         cam = np.load(str(cam_file), allow_pickle=True)
@@ -1278,25 +1266,16 @@ async def get_seg_mask(
                 file_size=getattr(wsi, "file_size", None),
             )
             if preview_path is not None:
-                with Image.open(preview_path) as preview_img:
-                    blended_rgb = preview_img.convert("RGB")
-
-                source_w, source_h = blended_rgb.size
-                if size is not None and size > 0:
-                    scale = min(size / max(source_w, source_h), 1.0)
-                    if scale < 1.0:
-                        target_w = max(1, int(round(source_w * scale)))
-                        target_h = max(1, int(round(source_h * scale)))
-                        blended_rgb = blended_rgb.resize((target_w, target_h), Image.Resampling.LANCZOS)
-
-                buf = io.BytesIO()
-                blended_rgb.save(buf, format='PNG')
-                buf.seek(0)
-                return Response(
-                    content=buf.getvalue(),
-                    media_type="image/png",
-                    headers=render_settings["cache_headers"],
+                response_preview_path = ensure_resized_recommendation_preview_cache(
+                    preview_path,
+                    size,
                 )
+                if response_preview_path is not None:
+                    return FileResponse(
+                        response_preview_path,
+                        media_type="image/png",
+                        headers=render_settings["cache_headers"],
+                    )
 
         # Load mask: shape (num_classes, H, W), values 0/1
         mask = np.load(str(mask_file), allow_pickle=True)

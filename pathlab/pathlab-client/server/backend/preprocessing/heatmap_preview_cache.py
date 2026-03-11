@@ -78,6 +78,54 @@ def build_patch_cam_recommendation_preview_path(cam_file: Path) -> Path:
     return cam_file.with_name(f"{base_name}_cam_recommendation_preview.png")
 
 
+def build_resized_recommendation_preview_path(preview_path: Path, size: int) -> Path:
+    return preview_path.with_name(f"{preview_path.stem}_s{size}.png")
+
+
+def ensure_resized_recommendation_preview_cache(
+    preview_path: Path,
+    size: Optional[int],
+    *,
+    overwrite: bool = False,
+) -> Optional[Path]:
+    if not preview_path.exists() or not _is_preview_cache_readable(preview_path):
+        return None
+
+    if size is None or size <= 0:
+        return preview_path
+
+    with Image.open(preview_path) as preview:
+        source_width, source_height = preview.size
+
+    if max(source_width, source_height) <= size:
+        return preview_path
+
+    resized_preview_path = build_resized_recommendation_preview_path(preview_path, size)
+    if (
+        resized_preview_path.exists()
+        and not overwrite
+        and resized_preview_path.stat().st_mtime >= preview_path.stat().st_mtime
+    ):
+        if _is_preview_cache_readable(resized_preview_path):
+            return resized_preview_path
+
+    try:
+        with Image.open(preview_path) as preview:
+            resized_preview = preview.copy()
+
+        resized_preview.thumbnail((size, size), Image.Resampling.LANCZOS)
+        _save_preview_image(resized_preview, resized_preview_path)
+        return resized_preview_path
+    except Exception as exc:
+        logger.warning(
+            "Failed to cache resized recommendation preview %s at size %s: %s",
+            preview_path,
+            size,
+            exc,
+        )
+        return preview_path if preview_path.exists() else None
+
+
 def _persist_wsi_metadata(metadata_file: Path, metadata: dict) -> None:
     metadata_file.parent.mkdir(parents=True, exist_ok=True)
     metadata_with_timestamp = {
