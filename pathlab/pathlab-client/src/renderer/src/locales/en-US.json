@@ -775,6 +775,7 @@
       "pdfParsedCount": "Parsed {{count}} PDF documents",
       "pdfDownloadFailed": "PDF download failed",
       "pdfParseFailed": "PDF parsing failed",
+      "pdfParseBusy": "The system is currently busy and cannot parse the PDF right now. Please try again later.",
       "pdfFailedCount": "{{count}} PDFs failed",
       "summarizingPdf": "Generating PDF summary..."
     }

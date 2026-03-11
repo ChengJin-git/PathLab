@@ -367,7 +367,7 @@ export const SummarizingPdfStatus = React.memo(function SummarizingPdfStatus() {
 export interface PdfParseStatusItem {
   url: string
   title: string
-  status: string // "parsing" | "completed" | "download_failed" | "parse_failed" | error strings
+  status: string // "parsing" | "completed" | "download_failed" | "parse_failed" | "parse_busy" | error strings
   from_cache?: boolean
 }
 
@@ -484,9 +484,10 @@ export const PdfParsingCompletedCard = React.memo(function PdfParsingCompletedCa
   const completedItems = items.filter(i => i.status === 'completed')
   const completedCount = completedItems.length
   const failedItems = items.filter(i => i.status === 'download_failed' || i.status === 'parse_failed')
+  const busyItems = items.filter(i => i.status === 'parse_busy' || i.status === 'busy')
 
-  // Don't show if nothing completed and nothing failed
-  if (completedCount === 0 && failedItems.length === 0) return null
+  // Don't show if nothing completed, failed, or was rejected due to load
+  if (completedCount === 0 && failedItems.length === 0 && busyItems.length === 0) return null
 
   return (
     <>
@@ -551,6 +552,29 @@ export const PdfParsingCompletedCard = React.memo(function PdfParsingCompletedCa
             </span>
             {failedItems.length === 1 && failedItems[0].title && (
               <p className="text-[10px] sm:text-xs text-red-600/70 mt-0.5 truncate">{failedItems[0].title}</p>
+            )}
+          </div>
+        </motion.div>
+      )}
+
+      {/* Busy card */}
+      {busyItems.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-3 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-100 rounded-xl my-2"
+        >
+          <div className="flex-shrink-0">
+            <AlertCircle className="w-4 sm:w-5 h-4 sm:h-5 text-amber-500" />
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <span className="text-xs sm:text-sm font-medium text-amber-700">
+              {t('settings.general.pdfParseBusy')}
+            </span>
+            {busyItems.length === 1 && busyItems[0].title && (
+              <p className="text-[10px] sm:text-xs text-amber-600/70 mt-0.5 truncate">{busyItems[0].title}</p>
             )}
           </div>
         </motion.div>

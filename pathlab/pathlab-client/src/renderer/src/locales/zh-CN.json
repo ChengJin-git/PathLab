@@ -775,6 +775,7 @@
       "pdfParsedCount": "已解析 {{count}} 份 PDF 文档",
       "pdfDownloadFailed": "PDF 下载失败",
       "pdfParseFailed": "PDF 解析失败",
+      "pdfParseBusy": "当前系统繁忙，暂时无法解析 PDF，请稍后重试",
       "pdfFailedCount": "{{count}} 篇 PDF 失败",
       "summarizingPdf": "正在生成 PDF 摘要..."
     }

@@ -48,6 +48,11 @@ def _should_skip_marker_gpu_queue() -> tuple[bool, str]:
 
 
 PDF_PARSE_MAX_CONCURRENT = max(1, int(os.getenv("PDF_PARSE_MAX_CONCURRENT", "1")))
+PDF_PARSE_MAX_QUEUE = max(0, int(os.getenv("PDF_PARSE_MAX_QUEUE", "2")))
+PDF_BACKGROUND_UPGRADE_IDLE_GRACE_SECONDS = max(
+    0.0,
+    float(os.getenv("PDF_BACKGROUND_UPGRADE_IDLE_GRACE_SECONDS", "0.5")),
+)
 PDF_VECTOR_INDEX_MAX_CONCURRENT = max(1, int(os.getenv("PDF_VECTOR_INDEX_MAX_CONCURRENT", "1")))
 PDF_ENABLE_BACKGROUND_MARKER_UPGRADE = _env_flag("PDF_ENABLE_BACKGROUND_MARKER_UPGRADE", True)
 PDF_PARSE_METHOD_MARKER = "marker"
@@ -60,6 +65,7 @@ PDF_UPGRADE_STATUS_QUEUED_GPU = "queued_gpu"
 PDF_UPGRADE_STATUS_RUNNING_GPU = "running_gpu"
 PDF_UPGRADE_STATUS_DIRECT_CPU = "direct_cpu"
 PDF_UPGRADE_STATUS_FALLBACK_CPU = "fallback_cpu"
+PDF_UPGRADE_STATUS_SKIPPED = "skipped"
 PDF_UPGRADE_STATUS_COMPLETED = "completed"
 PDF_UPGRADE_STATUS_FAILED = "failed"
 MARKER_CACHE_SUFFIX = ".marker.md"
@@ -101,6 +107,10 @@ _vector_index_semaphore: asyncio.Semaphore | None = None
 
 class MarkerGpuQueueTimeout(RuntimeError):
     """Raised when a Marker GPU task stays pending in the shared queue for too long."""
+
+
+class PdfParseBusyError(RuntimeError):
+    """Raised when the foreground PDF parse queue is saturated."""
 
 
 def _get_pdf_cache_dir() -> Path:
@@ -160,12 +170,69 @@ def _get_vector_index_semaphore() -> asyncio.Semaphore:
     return _vector_index_semaphore
 
 
-async def _run_with_pdf_parse_slot(slot_label: str, work: Callable[[], Any]) -> Any:
+def _get_pdf_parse_waiter_count(semaphore: asyncio.Semaphore) -> int:
+    waiters = getattr(semaphore, "_waiters", None)
+    if not waiters:
+        return 0
+    try:
+        return sum(1 for waiter in waiters if waiter is not None and not waiter.done())
+    except TypeError:
+        return len(waiters)
+
+
+def _get_pdf_parse_running_count(semaphore: asyncio.Semaphore) -> int:
+    available_slots = max(0, int(getattr(semaphore, "_value", 0)))
+    return max(0, PDF_PARSE_MAX_CONCURRENT - available_slots)
+
+
+def _get_pdf_parse_load_snapshot(semaphore: asyncio.Semaphore | None = None) -> tuple[int, int]:
+    active_semaphore = semaphore or _get_pdf_parse_semaphore()
+    return (
+        _get_pdf_parse_running_count(active_semaphore),
+        _get_pdf_parse_waiter_count(active_semaphore),
+    )
+
+
+def _is_pdf_parse_idle(semaphore: asyncio.Semaphore | None = None) -> tuple[bool, str]:
+    active_semaphore = semaphore or _get_pdf_parse_semaphore()
+    running_count, waiter_count = _get_pdf_parse_load_snapshot(active_semaphore)
+    if running_count > 0 or waiter_count > 0:
+        return (
+            False,
+            f"foreground PDF parse activity detected (running={running_count}, waiting={waiter_count})",
+        )
+    return True, "foreground PDF parse capacity is idle"
+
+
+def _raise_if_pdf_parse_queue_full(semaphore: asyncio.Semaphore, slot_label: str) -> None:
+    waiter_count = _get_pdf_parse_waiter_count(semaphore)
+    if waiter_count < PDF_PARSE_MAX_QUEUE:
+        return
+
+    running_count = _get_pdf_parse_running_count(semaphore)
+    logger.warning(
+        f"[PDFParse] Rejecting slot '{slot_label}' because queue is full "
+        f"(running={running_count}, waiting={waiter_count}, "
+        f"max_concurrent={PDF_PARSE_MAX_CONCURRENT}, max_queue={PDF_PARSE_MAX_QUEUE})"
+    )
+    raise PdfParseBusyError(
+        "The system is currently busy and cannot parse this PDF right now. Please try again later."
+    )
+
+
+async def _run_with_pdf_parse_slot(
+    slot_label: str,
+    work: Callable[[], Any],
+    *,
+    reject_when_queue_full: bool = False,
+) -> Any:
     semaphore = _get_pdf_parse_semaphore()
     if semaphore.locked():
+        if reject_when_queue_full:
+            _raise_if_pdf_parse_queue_full(semaphore, slot_label)
         logger.info(
             f"[PDFParse] Waiting for parse slot '{slot_label}' "
-            f"(max_concurrent={PDF_PARSE_MAX_CONCURRENT})"
+            f"(max_concurrent={PDF_PARSE_MAX_CONCURRENT}, waiting={_get_pdf_parse_waiter_count(semaphore)})"
         )
     async with semaphore:
         logger.info(
@@ -1538,7 +1605,11 @@ async def _parse_pdf_with_marker_best_effort(
     images_url_prefix: str | None,
     upgrade_url: str | None = None,
 ) -> ParsedPdfResult | None:
-    """Run Marker via GPU queue when possible, otherwise CPU, and normalize the result."""
+    """Run Marker via GPU queue when possible.
+
+    Foreground parses may fall back to CPU. Background upgrades skip CPU fallback
+    so they do not consume the only foreground PDF parse slot under load.
+    """
     skip_gpu_queue, routing_detail = _should_skip_marker_gpu_queue()
     fallback_detail = "GPU Marker path unavailable or failed; retrying high-quality upgrade on CPU"
     logger.info(f"[Marker] Best-effort routing decision: {routing_detail}")
@@ -1563,11 +1634,12 @@ async def _parse_pdf_with_marker_best_effort(
         if upgrade_url:
             _record_high_quality_upgrade_state(
                 upgrade_url,
-                PDF_UPGRADE_STATUS_DIRECT_CPU if skip_gpu_queue else PDF_UPGRADE_STATUS_FALLBACK_CPU,
-                fallback_detail,
-                high_quality_parse_pending=True,
+                PDF_UPGRADE_STATUS_SKIPPED,
+                f"{fallback_detail}; skipping CPU fallback for background upgrade to protect foreground PDF parsing capacity",
+                high_quality_parse_pending=False,
                 high_quality_parse_ready=False,
             )
+            return None
         marker_result = await _parse_pdf_with_marker_on_cpu(
             pdf_bytes,
             max_pages,
@@ -1597,7 +1669,11 @@ def _register_marker_upgrade_task(url_hash: str, task: asyncio.Task[None]) -> No
 
 
 async def _run_marker_background_upgrade(url: str, title: str, pdf_bytes: bytes) -> None:
-    """Upgrade a fast PyMuPDF parse to a high-quality Marker parse in the background."""
+    """Upgrade a fast PyMuPDF parse opportunistically in the background.
+
+    Background upgrades must never queue behind foreground parses. They only run
+    when the shared PDF parse capacity is fully idle.
+    """
     if _has_high_quality_cache(url):
         _record_high_quality_upgrade_state(
             url,
@@ -1611,15 +1687,44 @@ async def _run_marker_background_upgrade(url: str, title: str, pdf_bytes: bytes)
     url_hash = _get_url_hash(url)
     images_output_dir = _get_pdf_cache_dir() / "images" / url_hash
     images_url_prefix = f"{Config.GATEWAY_SERVICE_URL}/pdf-images/{url_hash}"
-
     try:
+        if PDF_BACKGROUND_UPGRADE_IDLE_GRACE_SECONDS > 0:
+            logger.info(
+                f"[PDFUpgrade] Waiting {PDF_BACKGROUND_UPGRADE_IDLE_GRACE_SECONDS:.3f}s idle grace window "
+                f"before background Marker upgrade for {url_hash}"
+            )
+            await asyncio.sleep(PDF_BACKGROUND_UPGRADE_IDLE_GRACE_SECONDS)
+
+        if _has_high_quality_cache(url):
+            _record_high_quality_upgrade_state(
+                url,
+                PDF_UPGRADE_STATUS_COMPLETED,
+                "High-quality cache became available during the idle grace window; skipping background upgrade",
+                high_quality_parse_pending=False,
+                high_quality_parse_ready=True,
+            )
+            return
+
+        is_idle, idle_detail = _is_pdf_parse_idle()
+        if not is_idle:
+            _record_high_quality_upgrade_state(
+                url,
+                PDF_UPGRADE_STATUS_SKIPPED,
+                f"Background Marker upgrade skipped to preserve foreground priority: {idle_detail}",
+                level="warning",
+                high_quality_parse_pending=False,
+                high_quality_parse_ready=False,
+            )
+            return
+
         _record_high_quality_upgrade_state(
             url,
             PDF_UPGRADE_STATUS_RUNNING,
-            "Background Marker upgrade started",
+            "Background Marker upgrade started after confirming foreground PDF parse capacity is idle; it will not queue on the foreground parse semaphore",
             high_quality_parse_pending=True,
             high_quality_parse_ready=False,
         )
+
         async def _run_upgrade_parse() -> ParsedPdfResult | None:
             return await _parse_pdf_with_marker_best_effort(
                 pdf_bytes,
@@ -1629,11 +1734,12 @@ async def _run_marker_background_upgrade(url: str, title: str, pdf_bytes: bytes)
                 upgrade_url=url,
             )
 
-        result = await _run_with_pdf_parse_slot(
-            f"marker-background-upgrade:{url_hash}",
-            _run_upgrade_parse,
-        )
-        if result is None or not result.markdown or result.markdown.startswith("[Error"):
+        result = await _run_upgrade_parse()
+
+        if result is None:
+            logger.info(f"Background Marker upgrade skipped for {url_hash} due to current system load")
+            return
+        if not result.markdown or result.markdown.startswith("[Error"):
             _record_high_quality_upgrade_state(
                 url,
                 PDF_UPGRADE_STATUS_FAILED,
@@ -2623,10 +2729,11 @@ def _marker_subprocess_entry(
     """Child-process entrypoint for isolated Marker parsing."""
     try:
         if accelerator_device == "cuda":
-            if physical_gpu_index is None:
-                raise RuntimeError("Missing GPU index for CUDA Marker subprocess")
-            os.environ["CUDA_VISIBLE_DEVICES"] = str(physical_gpu_index)
-            device_detail = f"physical_gpu_index={physical_gpu_index}"
+            if physical_gpu_index is not None:
+                os.environ["CUDA_VISIBLE_DEVICES"] = str(physical_gpu_index)
+                device_detail = f"physical_gpu_index={physical_gpu_index}"
+            else:
+                device_detail = "cuda(default-visible-device)"
         else:
             os.environ["CUDA_VISIBLE_DEVICES"] = ""
             device_detail = "cpu"
@@ -2690,10 +2797,12 @@ def _run_marker_in_isolated_process(
     """Run Marker in a short-lived isolated subprocess."""
     normalized_device = accelerator_device.strip().lower()
     physical_gpu_index: int | None = None
-    if normalized_device == "cuda":
-        physical_gpu_index = _extract_gpu_index_from_device(accelerator_device)
-        if physical_gpu_index is None:
-            raise RuntimeError(f"Invalid assigned GPU device for Marker parse: {accelerator_device}")
+    if normalized_device.startswith("cuda"):
+        if normalized_device != "cuda":
+            physical_gpu_index = _extract_gpu_index_from_device(accelerator_device)
+            if physical_gpu_index is None:
+                raise RuntimeError(f"Invalid assigned GPU device for Marker parse: {accelerator_device}")
+        normalized_device = "cuda"
     elif normalized_device != "cpu":
         raise RuntimeError(f"Unsupported Marker accelerator device: {accelerator_device}")
 
@@ -2878,7 +2987,11 @@ async def _parse_pdf_with_marker_via_gpu_queue(
                 if removed:
                     detail = (
                         f"Marker GPU queue wait exceeded {wait_timeout_seconds:.1f}s before task {task_id} started; "
-                        "falling back to CPU"
+                        (
+                            "skipping CPU fallback for background upgrade"
+                            if upgrade_url
+                            else "falling back to CPU"
+                        )
                     )
                     logger.warning(detail)
                     if not result_future.done():
@@ -3069,7 +3182,11 @@ async def parse_pdf(
             PDF_PARSE_METHOD_FAILED,
         )
 
-    return await _run_with_pdf_parse_slot("foreground-parse", _run_parse)
+    return await _run_with_pdf_parse_slot(
+        "foreground-parse",
+        _run_parse,
+        reject_when_queue_full=True,
+    )
 
 
 async def summarize_pdf_content(
@@ -3593,6 +3710,10 @@ async def process_pdf_url(
             is_academic=academic,
         )
 
+    except PdfParseBusyError as e:
+        logger.warning(f"PDF processing rejected due to load for {url}: {e}")
+        result["error"] = "parse_busy"
+        result["error_detail"] = str(e)
     except Exception as e:
         logger.error(f"Error processing PDF {url}: {e}")
         result["error"] = str(e)
