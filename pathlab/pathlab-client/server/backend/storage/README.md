@@ -1,5 +1,7 @@
 # PathLab Storage Management
 
+> 适用版本：`PathLab v1.0.0`
+
 `server/backend/storage/` 负责文件系统层面的统计、迁移、配置与清理工作，是数据库状态与 `uploads/` 目录之间的一层维护工具。
 
 ## 当前模块结构
@@ -43,6 +45,8 @@
 - `uploads/annotations/`：Preprocessing 为数据集写出 `*_coco.json` 缓存时创建
 - `uploads/pdf_cache/`：聊天 / PDF 相关逻辑按需使用
 
+另外，`StorageManager` 当前还显式跟踪 `uploads/metadata/`，用于 WSI 元数据文件的删除与迁移协同。
+
 这已经超出“只存切片文件”的阶段，当前实现同时管理模型、训练结果、日志、缓存和用户上传衍生物。
 
 ## 统计与清理现状
@@ -79,17 +83,37 @@
 
 ## Gateway 暴露方式
 
-`server/gateway/routes/storage.py` 当前直接提供或组合这些入口：
+`server/gateway/routes/storage.py` / `storage_scan.py` / `storage_tasks.py` 当前共同暴露这些能力：
 
-- `/storage/stats`
-- `/storage/config`
-- `/storage/migrate`
-- `/storage/scan-directory`
-- `/storage/orphaned`
-- `/storage/orphaned/cleanup`
-- `/storage/orphaned-records`
-- `/storage/orphaned-records/cleanup`
-- 以及 `storage_tasks.py`、`storage_scan.py` 中的批量任务与目录扫描接口
+- 基础配置与空间信息：
+  - `/storage/stats`
+  - `/storage/disk-space`
+  - `/storage/check-upload-space`
+  - `/storage/config`（GET / POST）
+- 迁移与对象级查询：
+  - `/storage/migrate`
+  - `/storage/migration/status`
+  - `/storage/wsi/{wsi_id}`
+  - `/storage/training/{task_id}`
+- 孤立项检测与清理：
+  - `/storage/orphaned`
+  - `/storage/orphaned/cleanup`
+  - `/storage/orphaned-records`
+  - `/storage/orphaned-records/cleanup`
+- 外部目录扫描与清理：
+  - `/storage/scan-directory`
+  - `/storage/external-datasets-summary`
+  - `/storage/check-external-files`
+  - `/storage/delete-unavailable-files`
+- 后台任务与批量操作：
+  - `/storage/reset-derived-data`
+  - `/storage/tasks/batch-import`
+  - `/storage/tasks/delete-external`
+  - `/storage/tasks/delete-dataset`
+  - `/storage/tasks/cleanup-empty-datasets`
+  - `/storage/tasks/batch-update-metadata`
+  - `/storage/tasks/stream`
+  - `/storage/tasks/{task_id}`（GET / DELETE）
 
 ## 迁移现状
 

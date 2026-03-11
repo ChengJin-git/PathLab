@@ -1,5 +1,9 @@
 # PathLab
 
+> 正式版本号：`v1.0.0`
+
+发布日期：2026 年 3 月 12 日
+
 PathLab 是一个面向数字病理研究的桌面 / Web 一体化代码库。当前主应用位于 `pathlab/pathlab-client/`，由 **Electron 主进程 / preload、React 渲染层、Python FastAPI sidecar** 共同组成。
 
 ## 当前仓库重点

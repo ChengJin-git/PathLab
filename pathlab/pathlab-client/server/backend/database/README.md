@@ -1,5 +1,7 @@
 # PathLab Database Layer
 
+> 适用版本：`PathLab v1.0.0`
+
 `server/backend/database/` 是当前 SQLAlchemy 数据访问层，负责模型声明、异步 Session 管理、数据库初始化以及 Repository 封装。
 
 ## 当前组成
@@ -36,6 +38,15 @@
 ### 认证表（`backend/auth/models.py`）
 
 17. `users`
+
+`users` 当前除 FastAPI-Users 的基础字段外，还直接扩展了这些与业务强相关的字段：
+
+- `role` / `nickname`
+- `avatar_path`
+- `password_sha256`
+- `session_nonce`
+- `agreement_accepted_at` / `agreement_ip`
+- `notice_acknowledged_at`
 
 ## 与旧文档相比的关键变化
 

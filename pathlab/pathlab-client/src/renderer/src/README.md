@@ -1,5 +1,7 @@
 # PathLab Frontend Source
 
+> 适用版本：`PathLab v1.0.0`
+
 `src/renderer/src` 是当前 React 应用的真实源码目录。
 
 ## 当前源码结构
@@ -45,6 +47,7 @@ src/
 - Electron 环境下使用 `HashRouter`
 - 浏览器环境下使用 `BrowserRouter`
 - `main.tsx` 会先调用 `initializeApiConfig()`，优先从 preload / Electron IPC 获取全部后端端口
+- `config.ts` 优先走 `getServicePorts()` / `onServicePorts()`，同时兼容只暴露 `gateway-port` 的旧桥接
 - 收到端口更新时会调用 `updateApiBase()`，刷新 `API_BASE` / `PREPROCESSING_BASE` / `AI_BASE`
 - 运行时组合 `ToastProvider`、`AuthProvider`、`BackgroundTaskProvider`
 - 浏览器模式会注册 Service Worker；Electron 模式不会注册
