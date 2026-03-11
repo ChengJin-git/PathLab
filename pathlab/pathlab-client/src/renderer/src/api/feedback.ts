@@ -1,5 +1,5 @@
 import { API_BASE } from '../config'
-import { apiFetch, apiFetchBlob } from './client'
+import { apiFetch, apiFetchBlob, buildSearchParams } from './client'
 
 // ============================================================================
 // Message Feedback APIs
@@ -139,12 +139,13 @@ export async function getAdminFeedbacks(
   helpfulness?: 'helpful' | 'not_helpful' | null,
   userId?: string | null
 ): Promise<AdminFeedbackListResponse> {
-  const params = new URLSearchParams()
-  params.append('skip', skip.toString())
-  params.append('limit', limit.toString())
-  if (feedbackType) params.append('feedback_type', feedbackType)
-  if (helpfulness) params.append('helpfulness', helpfulness)
-  if (userId) params.append('user_id', userId)
+  const params = buildSearchParams({
+    skip,
+    limit,
+    feedback_type: feedbackType || undefined,
+    helpfulness: helpfulness || undefined,
+    user_id: userId || undefined,
+  })
 
   return apiFetch(
     `${API_BASE}/admin/feedbacks?${params.toString()}`,

@@ -52,6 +52,8 @@ from backend.ai.tasks.training_utils import (
     is_kfold_splits,
     get_num_folds,
     calculate_kfold_classification_metrics,
+    calculate_progress_update_interval,
+    interpolate_progress,
 )
 import logging
 
@@ -59,6 +61,10 @@ import logging
 # WSIs with fewer patches are skipped during feature extraction and training
 # to avoid low-quality inputs that would degrade model performance.
 MIN_PATCHES_THRESHOLD = 100
+
+# Throttle WSI-classification result persistence to reduce end-of-training I/O spikes.
+SAVE_FILE_IO_MAX_WORKERS = 4
+SAVE_FILE_IO_BATCH_SIZE = 32
 
 
 class WSIClassificationTrainer(BaseTrainer):
@@ -1788,10 +1794,10 @@ class WSIClassificationTrainer(BaseTrainer):
         - Batch database inserts for performance
 
         Progress allocation within the given range:
-        - 0-20%: Inference
-        - 20-80%: File I/O (per-file progress)
-        - 80-90%: Database insert
-        - 90-100%: Metrics calculation
+        - 0-50%: Inference + result preparation
+        - 50-85%: File I/O (per-file progress)
+        - 85-90%: Database insert
+        - 90-100%: Final metrics / completion handoff
 
         Args:
             model: Trained model for inference
@@ -1834,13 +1840,26 @@ class WSIClassificationTrainer(BaseTrainer):
         else:
             total_wsi = len(dataset)
 
-        # Calculate progress points based on progress_base and progress_range
-        # Allocation: 20% inference, 60% file I/O, 10% DB, 10% metrics
+        # Calculate progress points based on progress_base and progress_range.
+        # Keep the last integer slot for the final completed=100 handoff.
+        max_saving_progress = progress_base + max(progress_range - 1, 0)
         progress_inference = progress_base
-        progress_file_io_start = progress_base + int(progress_range * 0.2)
-        progress_file_io_end = progress_base + int(progress_range * 0.8)
-        progress_db = progress_base + int(progress_range * 0.8)
-        progress_metrics = progress_base + int(progress_range * 0.9)
+        progress_file_io_start = max(
+            progress_inference,
+            min(max_saving_progress, progress_base + int(progress_range * 0.5)),
+        )
+        progress_file_io_end = max(
+            progress_file_io_start,
+            min(max_saving_progress, progress_base + int(progress_range * 0.85)),
+        )
+        progress_db = max(
+            progress_file_io_end,
+            min(max_saving_progress, progress_base + int(progress_range * 0.9)),
+        )
+        progress_metrics = max(
+            progress_db,
+            min(max_saving_progress, progress_base + int(progress_range * 0.95)),
+        )
 
         await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_inference)
         unit_name = "slides" if is_case_level else "WSI slides"
@@ -1864,6 +1883,13 @@ class WSIClassificationTrainer(BaseTrainer):
             num_workers=0,
         )
 
+        running_loop = asyncio.get_running_loop()
+        inference_update_interval = calculate_progress_update_interval(
+            total_wsi,
+            target_updates=25,
+            max_interval=200,
+        )
+
         # Phase 1: Run inference and collect results in thread pool.
         # DataLoader triggers torch.load() in __getitem__(), and GPU inference is blocking.
         def _run_inference():
@@ -1874,6 +1900,7 @@ class WSIClassificationTrainer(BaseTrainer):
             all_sample_ids = []
             inference_results = []
             db_records = []
+            processed_wsi = 0
 
             with torch.inference_mode():
                 for batch in inference_loader:
@@ -1984,6 +2011,7 @@ class WSIClassificationTrainer(BaseTrainer):
                                     "aggregation_level": "case",
                                 }
                             })
+                        processed_wsi += max(1, len(slide_wsi_ids))
                     else:
                         # Slide-level: original behavior
                         wsi_id = sample_id
@@ -2031,6 +2059,19 @@ class WSIClassificationTrainer(BaseTrainer):
                                 "attention_file": attention_file_path,
                             }
                         })
+                        processed_wsi += 1
+
+                    if processed_wsi % inference_update_interval == 0 or processed_wsi >= total_wsi:
+                        inference_progress = interpolate_progress(
+                            progress_inference,
+                            progress_file_io_start,
+                            processed_wsi,
+                            total_wsi,
+                        )
+                        asyncio.run_coroutine_threadsafe(
+                            _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, inference_progress),
+                            running_loop,
+                        )
 
             return all_probs, all_preds, all_labels_list, all_sample_ids, inference_results, db_records
 
@@ -2042,12 +2083,25 @@ class WSIClassificationTrainer(BaseTrainer):
             f"[Saving] Writing {total_wsi} result files to disk...",
             metadata={"phase": "writing_files", "num_files": total_wsi}
         )
+        await logger.info(
+            "[Saving] Using throttled file I/O to reduce disk pressure",
+            metadata={
+                "phase": "writing_files",
+                "max_workers": SAVE_FILE_IO_MAX_WORKERS,
+                "batch_size": SAVE_FILE_IO_BATCH_SIZE,
+            }
+        )
 
         # Track completed files for progress updates
         completed_count = [0]  # Use list for mutable reference in closure
         progress_lock = asyncio.Lock()
-        # Calculate file I/O progress range (60% of total range)
+        # Calculate file I/O progress range within the allocated saving window
         file_io_progress_range = progress_file_io_end - progress_file_io_start
+        file_update_interval = calculate_progress_update_interval(
+            total_wsi,
+            target_updates=20,
+            max_interval=200,
+        )
 
         def save_single_wsi_files(item, fold_suffix: str, task_id: str):
             """Synchronous function to save files for a single WSI."""
@@ -2080,21 +2134,27 @@ class WSIClassificationTrainer(BaseTrainer):
             )
             async with progress_lock:
                 completed_count[0] += 1
-                # Update progress every 10% of files or at least every 500 files (reduced frequency for performance)
-                update_interval = max(1, min(total // 10, 500))
-                if completed_count[0] % update_interval == 0 or completed_count[0] == total:
+                if completed_count[0] % file_update_interval == 0 or completed_count[0] == total:
                     # Progress based on file completion within the file I/O range
-                    file_progress = file_io_start + int(completed_count[0] / total * file_io_range)
+                    file_progress = interpolate_progress(
+                        file_io_start,
+                        file_io_start + file_io_range,
+                        completed_count[0],
+                        total,
+                    )
                     await _safe_update_progress(session_maker_ref, task_id_for_update, TaskStatus.TRAINING, file_progress)
             return result
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
-            tasks = [
-                save_with_progress(executor, item, fold_suffix, task_id, total_wsi, session_maker, self.task_id,
-                                   progress_file_io_start, file_io_progress_range)
-                for item in inference_results
-            ]
-            await asyncio.gather(*tasks)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=SAVE_FILE_IO_MAX_WORKERS) as executor:
+            for batch_start in range(0, total_wsi, SAVE_FILE_IO_BATCH_SIZE):
+                batch_items = inference_results[batch_start:batch_start + SAVE_FILE_IO_BATCH_SIZE]
+                tasks = [
+                    save_with_progress(executor, item, fold_suffix, task_id, total_wsi, session_maker, self.task_id,
+                                       progress_file_io_start, file_io_progress_range)
+                    for item in batch_items
+                ]
+                await asyncio.gather(*tasks)
+                await asyncio.sleep(0)
 
         # Phase 3: Batch database insert
         await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_db)

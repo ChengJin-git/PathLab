@@ -1882,7 +1882,10 @@ async def _run_inference_patch_segmentation(
                     wsi_result_dir = ai_results_root / wsi_id
                     wsi_result_dir.mkdir(parents=True, exist_ok=True)
 
-                    pred_mask = preds_binary.squeeze(0).cpu().numpy()
+                    # Keep segmentation artifacts streamed to disk during inference to avoid
+                    # retaining many large masks/CAMs in memory. Store binary masks as uint8
+                    # to reduce write volume without changing viewer semantics.
+                    pred_mask = preds_binary.squeeze(0).to(dtype=torch.uint8).cpu().numpy()
                     mask_file = wsi_result_dir / f"train_{task_id}_pred_mask.npy"
                     np.save(mask_file, pred_mask)
 
@@ -1895,7 +1898,7 @@ async def _run_inference_patch_segmentation(
                         target_layers = _get_seg_grad_cam_target_layers(model)
 
                         # Use dominant predicted class for Grad-CAM target
-                        pred_mask_for_cam = preds_binary.squeeze(0).cpu().numpy()  # (C, H, W)
+                        pred_mask_for_cam = pred_mask.astype(np.float32, copy=False)  # (C, H, W)
                         if pred_mask_for_cam.ndim == 3 and pred_mask_for_cam.shape[0] > 1:
                             dominant_class = int(pred_mask_for_cam.sum(axis=(1, 2)).argmax())
                         else:
@@ -1956,9 +1959,10 @@ async def _run_inference_patch_segmentation(
     if progress_callback:
         await progress_callback(0.8)
 
-    # Save to database
+    # Save to database in batches to reduce write-transaction churn.
+    db_records = []
     for r in all_results:
-        db_result_data = {
+        db_records.append({
             "wsi_id": r["wsi_id"],
             "task_id": task_id,
             "pred": "segmentation",
@@ -1972,8 +1976,10 @@ async def _run_inference_patch_segmentation(
                 "pred_mask_file": r["pred_mask_file"],
                 "result_file": r["result_file"],
             }
-        }
-        await AIResultRepository.create(db, db_result_data)
+        })
+
+    if db_records:
+        await AIResultRepository.bulk_create(db, db_records, batch_size=100)
 
     await db.commit()
 
@@ -3269,7 +3275,10 @@ async def _run_external_validation_patch_segmentation(
                         wsi_result_dir = ai_results_root / wsi_id
                         wsi_result_dir.mkdir(parents=True, exist_ok=True)
 
-                        pred_mask = preds_binary.squeeze(0).cpu().numpy()
+                        # Keep segmentation artifacts streamed to disk during inference to avoid
+                        # retaining many large masks/CAMs in memory. Store binary masks as uint8
+                        # to reduce write volume without changing viewer semantics.
+                        pred_mask = preds_binary.squeeze(0).to(dtype=torch.uint8).cpu().numpy()
                         mask_file = wsi_result_dir / f"extval_{task_id}_pred_mask.npy"
                         np.save(mask_file, pred_mask)
 
@@ -3280,7 +3289,7 @@ async def _run_external_validation_patch_segmentation(
 
                             target_layers = _get_seg_grad_cam_target_layers(model)
 
-                            pred_mask_for_cam = preds_binary.squeeze(0).cpu().numpy()  # (C, H, W)
+                            pred_mask_for_cam = pred_mask.astype(np.float32, copy=False)  # (C, H, W)
                             if pred_mask_for_cam.ndim == 3 and pred_mask_for_cam.shape[0] > 1:
                                 dominant_class = int(pred_mask_for_cam.sum(axis=(1, 2)).argmax())
                             else:
@@ -3344,8 +3353,9 @@ async def _run_external_validation_patch_segmentation(
         # 4. Save to database
         async with safe_session() as db:
             from backend.database.repositories import AIResultRepository
+            db_records = []
             for r in all_results:
-                db_result_data = {
+                db_records.append({
                     "wsi_id": r["wsi_id"],
                     "task_id": task_id,
                     "user_id": task_user_id,
@@ -3363,8 +3373,10 @@ async def _run_external_validation_patch_segmentation(
                         "pred_mask_file": r["pred_mask_file"],
                         "result_file": r["result_file"],
                     }
-                }
-                await AIResultRepository.create(db, db_result_data)
+                })
+
+            if db_records:
+                await AIResultRepository.bulk_create(db, db_records, batch_size=100)
             await db.commit()
 
         await clear_progress(task_id)
@@ -5247,12 +5259,52 @@ async def get_quick_analysis(
                     "message": "Analysis is in progress"
                 }
 
-        # Create analysis state entry
-        await state.create(analysis_id, task_id, str(user.id))
-
         # Get task_type from DataGroup relationship
         quick_task_data_group = task.data_group
         quick_task_type_str = quick_task_data_group.task_type if quick_task_data_group else "classification"
+
+        # Build meaningful title and metadata for background task display
+        is_external = quick_task_type_str == "external_validation"
+        if is_external:
+            model_config = task.model_config or {}
+            model_id = model_config.get("model_id", "")
+            dataset_id = model_config.get("dataset_id", "")
+
+            source_name = model_id
+            target_name = dataset_id
+            try:
+                model = await TrainedModelRepository.get_by_id(db, model_id)
+                if model:
+                    source_name = model.model_name or model_id
+                if dataset_id:
+                    target_ds = await DatasetRepository.get_by_id(db, dataset_id)
+                    if target_ds:
+                        target_name = target_ds.name or dataset_id
+            except Exception:
+                pass
+
+            title = f"{source_name} → {target_name}"
+            analysis_type = "external"
+            task_category = None
+        else:
+            if quick_task_type_str in ("wsi_survival", "survival"):
+                task_category = "survival"
+            elif quick_task_type_str in ("segmentation", "patch_segmentation"):
+                task_category = "segmentation"
+            else:
+                task_category = "classification"
+            title = task.task_name
+            analysis_type = "internal"
+
+        # Create analysis state entry
+        await state.create(
+            analysis_id,
+            task_id,
+            str(user.id),
+            title=title,
+            analysis_type=analysis_type,
+            task_category=task_category,
+        )
 
         # Default metrics and charts based on task type
         is_survival_task = quick_task_type_str in ("wsi_survival", "survival")

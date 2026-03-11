@@ -1219,6 +1219,9 @@ async def get_seg_mask(
 
         # Load mask: shape (num_classes, H, W), values 0/1
         mask = np.load(str(mask_file), allow_pickle=True)
+        # Normalize persisted masks across historical dtypes (bool/float/uint8)
+        # so viewer/chat overlay rendering always consumes a binary uint8 array.
+        mask = (mask > 0).astype(np.uint8, copy=False)
         logger.info(f"Loaded seg mask: shape={mask.shape}")
 
         # Load original image

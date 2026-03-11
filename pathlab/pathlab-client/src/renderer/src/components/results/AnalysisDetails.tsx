@@ -1,7 +1,7 @@
 import { Download, FlaskConical } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, MetricCurveChart, PerClassMetricBarChart, type LossCurveData, type KFoldLossCurveData } from '../charts/AnalysisCharts'
-import { getAuthToken } from '../../api'
+import { downloadApiFile, withAuthTokenQuery } from '../../api'
 import { API_BASE } from '../../config'
 
 // --- Types shared with ResultsViewerPage ---
@@ -66,26 +66,6 @@ export interface AnalysisSummary {
   kfold_training?: KFoldTrainingInfo
   bootstrap_ci?: BootstrapCIResult
   submitted_by?: string
-}
-
-// --- Auth helpers ---
-
-function authFetchOptions(options: RequestInit = {}): RequestInit {
-  const token = getAuthToken()
-  return {
-    ...options,
-    headers: {
-      ...options.headers,
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    }
-  }
-}
-
-function authUrl(url: string): string {
-  const token = getAuthToken()
-  if (!token) return url
-  const separator = url.includes('?') ? '&' : '?'
-  return `${url}${separator}token=${encodeURIComponent(token)}`
 }
 
 // --- Component ---
@@ -170,17 +150,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
   const handleDownload = async (e: React.MouseEvent, url: string, filename: string) => {
     e.preventDefault()
     try {
-      const response = await fetch(url, authFetchOptions())
-      if (!response.ok) throw new Error('Download failed')
-      const blob = await response.blob()
-      const blobUrl = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = blobUrl
-      link.download = filename
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      window.URL.revokeObjectURL(blobUrl)
+      await downloadApiFile(url, filename, undefined, 'Download failed')
     } catch (error) {
       console.error('Download failed:', error)
       window.open(url, '_blank')
@@ -455,7 +425,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`)} alt={t('analysisDetails.confusionMatrix')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={withAuthTokenQuery(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`)} alt={t('analysisDetails.confusionMatrix')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             ))}
 
@@ -473,7 +443,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`)} alt={t('analysisDetails.rocCurve')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={withAuthTokenQuery(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`)} alt={t('analysisDetails.rocCurve')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             ))}
 
@@ -495,7 +465,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`)} alt={t('analysisDetails.lossCurve')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={withAuthTokenQuery(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`)} alt={t('analysisDetails.lossCurve')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             ))}
 
@@ -513,7 +483,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/km_curve.png`)} alt={t('analysisDetails.kmCurve')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={withAuthTokenQuery(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/km_curve.png`)} alt={t('analysisDetails.kmCurve')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             ))}
 

@@ -478,7 +478,7 @@ export default function AIChatPage() {
     }
   }
 
-  const handleNewChat = () => {
+  const handleNewChat = useCallback(() => {
     setMessages([])
     setCurrentConversationId(null)
     setInput('')
@@ -492,7 +492,7 @@ export default function AIChatPage() {
     if (urlConversationId) {
       navigate('/dashboard', { replace: true })
     }
-  }
+  }, [navigate, urlConversationId])
 
   const handleLoadConversation = async (conversationId: string) => {
     try {

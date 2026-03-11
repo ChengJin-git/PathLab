@@ -5,7 +5,7 @@ import { Download, Settings, FileSpreadsheet, FileDown, FileText, ArrowLeft } fr
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
-import { fetchAllResults } from '../api'
+import { downloadBlobFile, fetchAllResults } from '../api'
 
 interface ReportConfig {
   title: string
@@ -281,12 +281,7 @@ export default function ReportGeneratorPage() {
       }
 
       const blob = new Blob([content], { type: mimeType })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      a.click()
-      URL.revokeObjectURL(url)
+      downloadBlobFile(blob, filename)
 
       setGenerating(false)
     }, 500)

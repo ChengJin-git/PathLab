@@ -1,5 +1,5 @@
 import { API_BASE } from '../config'
-import { apiFetch } from './client'
+import { apiFetch, buildSearchParams } from './client'
 import type { AdminUserUpdateRequest, AuthUser } from './auth'
 
 // ============================================================================
@@ -36,12 +36,12 @@ export async function listUsers(): Promise<UserListItem[]> {
  * List users with pagination/search (admin only)
  */
 export async function listUsersPaged(options: ListUsersPagedOptions = {}): Promise<PaginatedUserListResponse> {
-  const params = new URLSearchParams()
-
-  if (options.search?.trim()) params.set('search', options.search.trim())
-  if (options.page) params.set('page', String(options.page))
-  if (options.page_size) params.set('page_size', String(options.page_size))
-  if (options.exclude_admin) params.set('exclude_admin', 'true')
+  const params = buildSearchParams({
+    search: options.search?.trim() || undefined,
+    page: options.page || undefined,
+    page_size: options.page_size || undefined,
+    exclude_admin: options.exclude_admin ? 'true' : undefined,
+  })
 
   const query = params.toString()
   return apiFetch<PaginatedUserListResponse>(

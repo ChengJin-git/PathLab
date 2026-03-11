@@ -1,5 +1,5 @@
 import { API_BASE } from '../config'
-import { apiFetch, ApiError, ApiErrorCode, getAuthToken, parseErrorResponse, getErrorCodeFromStatus, PaginatedResponse } from './client'
+import { apiFetch, ApiError, ApiErrorCode, buildAuthRequestInit, buildSearchParams, parseErrorResponse, getErrorCodeFromStatus, PaginatedResponse } from './client'
 
 // ============================================================================
 // Chat with AI (Streaming)
@@ -64,11 +64,7 @@ export async function chatWithAI(
       'X-Language': uiLang,
       'X-Timezone': userTimezone
     }
-    const token = getAuthToken()
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`
-    }
-    response = await fetch(`${API_BASE}/chat`, {
+    response = await fetch(`${API_BASE}/chat`, buildAuthRequestInit({
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -76,7 +72,7 @@ export async function chatWithAI(
         conversation_id: conversationId
       }),
       signal
-    })
+    }))
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
     if (
@@ -211,9 +207,9 @@ export async function getConversations(
   skip: number = 0,
   limit: number = 50
 ): Promise<Conversation[]> {
-  const params = new URLSearchParams({
-    skip: String(skip),
-    limit: String(limit)
+  const params = buildSearchParams({
+    skip,
+    limit
   })
 
   const data = await apiFetch<PaginatedResponse<Conversation>>(

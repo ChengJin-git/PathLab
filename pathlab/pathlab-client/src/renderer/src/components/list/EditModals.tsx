@@ -412,7 +412,7 @@ export function EditDatasetModal({
               onChange={(e) => onSourceSelectionChange(e.target.value)}
               className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
             >
-              <option value="">{t('listComponents.editModals.unknownSourceOrgan')}</option>
+              <option value="">{t('listComponents.editModals.selectDatasetSource')}</option>
               {organSources.filter((source) => source !== 'Other').map((source) => (
                 <option key={source} value={source}>{source}</option>
               ))}

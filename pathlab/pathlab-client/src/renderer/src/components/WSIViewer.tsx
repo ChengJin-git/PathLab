@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PREPROCESSING_BASE, API_BASE } from '../config'
-import { HeatmapData, getAuthToken, getPatchFileImageUrl } from '../api'
+import { HeatmapData, buildSearchParams, getPatchFileImageUrl, withAuthTokenQuery } from '../api'
 import { Plus, Minus, RotateCcw, Maximize, Minimize, Loader2 } from 'lucide-react'
 
 interface WSIViewerProps {
@@ -154,8 +154,7 @@ export default function WSIViewer({
     const initViewer = async () => {
       try {
         // First, check if this is a patch or WSI (via gateway with auth)
-        const token = getAuthToken()
-        const infoUrl = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/info${token ? '?token=' + encodeURIComponent(token) : ''}`
+        const infoUrl = withAuthTokenQuery(`${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/info`)
         const infoResponse = await fetch(infoUrl)
         if (!infoResponse.ok) {
           throw new Error(`Failed to fetch file info: ${infoResponse.status}`)
@@ -290,19 +289,12 @@ export default function WSIViewer({
       try {
         // Choose endpoint based on dataLevel: 'wsi' uses heatmap, 'patch' uses patch_cam
         const endpoint = dataLevel === 'patch' ? 'patch_cam' : 'heatmap'
-        const params = new URLSearchParams()
-        if (taskId) {
-          params.set('task_id', taskId)
-        }
-        if (foldKey) {
-          params.set('fold_key', foldKey)
-        }
-        if (classIdx !== undefined) {
-          params.set('class_idx', classIdx.toString())
-        }
-        if (dataLevel === 'patch') {
-          params.set('format', 'json')  // Request JSON format for patch CAM
-        }
+        const params = buildSearchParams({
+          task_id: taskId,
+          fold_key: foldKey,
+          class_idx: classIdx,
+          format: dataLevel === 'patch' ? 'json' : undefined,
+        })
         const queryString = params.toString()
         const url = `${PREPROCESSING_BASE}/wsi/${wsi_id}/${endpoint}${queryString ? '?' + queryString : ''}`
 

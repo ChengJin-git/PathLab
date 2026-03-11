@@ -1,5 +1,3 @@
-import { API_BASE } from '../config'
-
 // ============================================================================
 // API Error Handling
 // ============================================================================
@@ -181,6 +179,122 @@ export function clearAuthToken(): void {
   localStorage.removeItem(AUTH_TOKEN_KEY)
 }
 
+export type QueryParamValue = string | number | boolean | null | undefined
+export type QueryParamInput = QueryParamValue | QueryParamValue[]
+
+function isPresentQueryParamValue(value: QueryParamValue): value is string | number | boolean {
+  return value !== null && value !== undefined
+}
+
+/**
+ * Append a plain object of query parameters into an existing URLSearchParams.
+ * Single values use set(); arrays append repeated entries.
+ */
+export function appendSearchParams(
+  params: URLSearchParams,
+  entries?: Record<string, QueryParamInput>
+): URLSearchParams {
+  if (!entries) {
+    return params
+  }
+
+  Object.entries(entries).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (isPresentQueryParamValue(item)) {
+          params.append(key, String(item))
+        }
+      })
+      return
+    }
+
+    if (isPresentQueryParamValue(value)) {
+      params.set(key, String(value))
+    }
+  })
+
+  return params
+}
+
+/**
+ * Build URLSearchParams from a plain object while ignoring null/undefined values.
+ */
+export function buildSearchParams(entries?: Record<string, QueryParamInput>): URLSearchParams {
+  return appendSearchParams(new URLSearchParams(), entries)
+}
+
+/**
+ * Merge request headers and inject Authorization when a token is available.
+ */
+export function buildAuthHeaders(headers?: HeadersInit, skipAuth: boolean = false): Headers {
+  const mergedHeaders = new Headers(headers)
+
+  if (!skipAuth) {
+    const token = _getAuthToken()
+    if (token && !mergedHeaders.has('Authorization')) {
+      mergedHeaders.set('Authorization', `Bearer ${token}`)
+    }
+  }
+
+  return mergedHeaders
+}
+
+/**
+ * Build fetch options with merged headers and optional Authorization injection.
+ */
+export function buildAuthRequestInit(options: RequestInit = {}, skipAuth: boolean = false): RequestInit {
+  return {
+    ...options,
+    headers: buildAuthHeaders(options.headers, skipAuth)
+  }
+}
+
+/**
+ * Append the stored auth token to a URL query string for SSE/image endpoints.
+ */
+export function withAuthTokenQuery(url: string, tokenParam: string = 'token'): string {
+  const token = _getAuthToken()
+  if (!token) {
+    return url
+  }
+
+  const hashIndex = url.indexOf('#')
+  const baseWithQuery = hashIndex >= 0 ? url.slice(0, hashIndex) : url
+  const hash = hashIndex >= 0 ? url.slice(hashIndex) : ''
+  const queryIndex = baseWithQuery.indexOf('?')
+  const base = queryIndex >= 0 ? baseWithQuery.slice(0, queryIndex) : baseWithQuery
+  const existingQuery = queryIndex >= 0 ? baseWithQuery.slice(queryIndex + 1) : ''
+  const params = new URLSearchParams(existingQuery)
+
+  if (!params.has(tokenParam)) {
+    params.set(tokenParam, token)
+  }
+
+  const queryString = params.toString()
+  return `${base}${queryString ? `?${queryString}` : ''}${hash}`
+}
+
+function getFilenameFromContentDisposition(
+  contentDisposition: string | null,
+  fallbackFilename: string
+): string {
+  if (!contentDisposition) {
+    return fallbackFilename
+  }
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch {
+      return utf8Match[1]
+    }
+  }
+
+  const quotedMatch = contentDisposition.match(/filename="?([^";]+)"?/i)
+  return quotedMatch?.[1] || fallbackFilename
+}
+
 async function ensureSuccessfulResponse(response: Response, context?: string): Promise<Response> {
   if (response.ok) {
     return response
@@ -243,16 +357,7 @@ async function fetchWithAuth(
   options?: RequestInit,
   skipAuth: boolean = false
 ): Promise<Response> {
-  // Add auth header if token exists and not skipping auth
-  let headers = { ...(options?.headers || {}) } as Record<string, string>
-  if (!skipAuth) {
-    const token = _getAuthToken()
-    if (token && !headers['Authorization']) {
-      headers['Authorization'] = `Bearer ${token}`
-    }
-  }
-
-  return fetch(url, { ...options, headers })
+  return fetch(url, buildAuthRequestInit(options, skipAuth))
 }
 
 /**
@@ -285,6 +390,28 @@ export async function apiFetchBlob(
     const response = await fetchWithAuth(url, options, skipAuth)
     const okResponse = await ensureSuccessfulResponse(response, context)
     return okResponse.blob()
+  }, context)
+}
+
+/**
+ * Download a file response with auth/error handling and Content-Disposition filename support.
+ */
+export async function downloadApiFile(
+  url: string,
+  fallbackFilename: string,
+  options?: RequestInit,
+  context?: string,
+  skipAuth: boolean = false
+): Promise<void> {
+  return runApiRequest(async () => {
+    const response = await fetchWithAuth(url, options, skipAuth)
+    const okResponse = await ensureSuccessfulResponse(response, context)
+    const blob = await okResponse.blob()
+    const filename = getFilenameFromContentDisposition(
+      okResponse.headers.get('Content-Disposition'),
+      fallbackFilename
+    )
+    downloadBlobFile(blob, filename)
   }, context)
 }
 

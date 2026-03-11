@@ -1,4 +1,4 @@
-import { HeatmapPoint, getPatchImageUrl, getAuthToken } from '../../api'
+import { HeatmapPoint, buildAuthRequestInit, downloadBlobFile, getPatchImageUrl } from '../../api'
 
 /**
  * Export patches as a ZIP file containing images
@@ -14,13 +14,11 @@ export async function exportPatchesAsZip(
   const zip = new JSZip()
 
   // Download all patch images
-  const token = getAuthToken()
+  const authRequestInit = buildAuthRequestInit()
   const downloadPromises = patches.map(async (patch, idx) => {
     const url = getPatchImageUrl(wsi_id, patch.x, patch.y, 256)
     try {
-      const response = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      })
+      const response = await fetch(url, authRequestInit)
       if (response.ok) {
         const blob = await response.blob()
         const paddedIdx = String(idx + 1).padStart(2, '0')
@@ -36,13 +34,7 @@ export async function exportPatchesAsZip(
 
   // Generate and download the ZIP file
   const content = await zip.generateAsync({ type: 'blob' })
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(content)
-  link.download = fileName
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  URL.revokeObjectURL(link.href)
+  downloadBlobFile(content, fileName)
 }
 
 /**

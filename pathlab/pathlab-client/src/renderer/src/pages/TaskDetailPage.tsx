@@ -5,7 +5,7 @@ import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCirc
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
-import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask, ApiError } from '../api'
+import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask, ApiError, withAuthTokenQuery } from '../api'
 import { TASK_DETAIL_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES, ANALYSIS_CANCELLABLE_STATUSES, CancellableStatus } from '../constants/status'
 import { useAuth } from '../contexts/AuthContext'
 import { TaskDetail, LogEntry } from '../components/taskDetail/types'
@@ -74,7 +74,7 @@ export default function TaskDetailPage() {
       return
     }
 
-    const sseUrl = `${API_BASE}/tasks/training/${task_id}/logs/stream?token=${encodeURIComponent(token)}`
+    const sseUrl = withAuthTokenQuery(`${API_BASE}/tasks/training/${task_id}/logs/stream`)
 
     // Create EventSource for SSE
     const eventSource = new EventSource(sseUrl)

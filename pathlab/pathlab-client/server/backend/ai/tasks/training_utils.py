@@ -41,6 +41,35 @@ async def safe_update_progress(session_maker, task_id: str, status: str, progres
     await set_progress(task_id, progress)
 
 
+def calculate_progress_update_interval(
+    total_items: int,
+    target_updates: int = 20,
+    max_interval: int = 200,
+) -> int:
+    """Return a throttled update interval for smoother progress reporting."""
+    if total_items <= 0:
+        return 1
+    if target_updates <= 0:
+        target_updates = 1
+    return max(1, min((total_items + target_updates - 1) // target_updates, max_interval))
+
+
+def interpolate_progress(
+    progress_start: int,
+    progress_end: int,
+    completed_items: int,
+    total_items: int,
+) -> int:
+    """Interpolate a monotonic integer progress value within a stage."""
+    if progress_end <= progress_start:
+        return progress_end
+    if total_items <= 0:
+        return progress_end
+
+    bounded_completed = max(0, min(completed_items, total_items))
+    return progress_start + int((bounded_completed / total_items) * (progress_end - progress_start))
+
+
 # Keep backward-compatible alias
 _safe_update_progress = safe_update_progress
 

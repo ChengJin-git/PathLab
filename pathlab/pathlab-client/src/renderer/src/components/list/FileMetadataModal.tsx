@@ -42,7 +42,7 @@ export function FileMetadataModal({ selectedFiles, fileMetadata, datasetType = '
                   onChange={(e) => onDatasetSourceSelectionChange(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white"
                 >
-                  <option value="">{t('listComponents.editModals.unknownSourceOrgan')}</option>
+                  <option value="">{t('listComponents.editModals.selectDatasetSource')}</option>
                   {organSources.filter((source) => source !== 'Other').map((source) => (
                     <option key={source} value={source}>{source}</option>
                   ))}

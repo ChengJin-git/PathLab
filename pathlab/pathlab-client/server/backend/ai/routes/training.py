@@ -1046,7 +1046,7 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
                 "is_active": True,
             })
             await training_logger.info("Training completed. Model saved.", {"model_id": model_id})
-            await _safe_update_status(db, req.task_id, TaskStatus.TRAINING, progress=90)
+            await _safe_update_status(db, req.task_id, TaskStatus.COMPLETED, progress=100)
 
         return result
 

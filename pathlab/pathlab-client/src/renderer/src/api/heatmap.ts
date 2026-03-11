@@ -1,6 +1,6 @@
 import { API_BASE } from '../config'
 import { createKeyedCache, LONG_CACHE_TTL } from '../lib/cache'
-import { apiFetch, getAuthToken } from './client'
+import { apiFetch, buildSearchParams, withAuthTokenQuery } from './client'
 
 // ============================================================================
 // Heatmap and Attention APIs
@@ -97,23 +97,9 @@ function buildAuthedHeatmapUrl(
   path: string,
   params?: Record<string, string | number | undefined | null>
 ): string {
-  const search = new URLSearchParams()
-
-  if (params) {
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined && value !== null) {
-        search.set(key, String(value))
-      }
-    })
-  }
-
-  const token = getAuthToken()
-  if (token) {
-    search.set('token', token)
-  }
-
+  const search = buildSearchParams(params)
   const query = search.toString()
-  return `${API_BASE}${path}${query ? `?${query}` : ''}`
+  return withAuthTokenQuery(`${API_BASE}${path}${query ? `?${query}` : ''}`)
 }
 
 /**
@@ -159,14 +145,11 @@ export async function fetchHeatmapData(
   patch_size: number = 512,
   fold_key?: string
 ): Promise<HeatmapData> {
-  const params = new URLSearchParams()
-  params.set('patch_size', String(patch_size))
-  if (task_id) {
-    params.set('task_id', task_id)
-  }
-  if (fold_key) {
-    params.set('fold_key', fold_key)
-  }
+  const params = buildSearchParams({
+    patch_size,
+    task_id,
+    fold_key,
+  })
   const url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/data?${params.toString()}`
   return apiFetch<HeatmapData>(url, undefined, 'Failed to fetch heatmap data')
 }

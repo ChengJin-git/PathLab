@@ -1,6 +1,6 @@
 import { API_BASE } from '../config'
 import { createCache, DEFAULT_CACHE_TTL, ACTIVITY_CACHE_TTL } from '../lib/cache'
-import { apiFetch } from './client'
+import { apiFetch, buildSearchParams } from './client'
 
 // ============================================================================
 // Statistics & Recent Activity APIs
@@ -99,9 +99,9 @@ export async function fetchRecentActivity(
   taskLimit: number = 5,
   forceRefresh: boolean = false
 ): Promise<RecentActivityResponse> {
-  const params = new URLSearchParams({
-    upload_limit: uploadLimit.toString(),
-    task_limit: taskLimit.toString()
+  const params = buildSearchParams({
+    upload_limit: uploadLimit,
+    task_limit: taskLimit,
   })
 
   return recentActivityCache.get(

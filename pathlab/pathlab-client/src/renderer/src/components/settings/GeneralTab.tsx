@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
-import { getGlobalSettings, updateGlobalSettings, getAuthToken } from '../../api'
+import { getGlobalSettings, updateGlobalSettings, buildAuthRequestInit } from '../../api'
 import { API_BASE } from '../../config'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { useTranslation } from 'react-i18next'
@@ -112,13 +112,11 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
     setLocalVllmStatus('checking')
     setLocalVllmDetectedModel(null)
     try {
-      const token = getAuthToken()
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (token) headers['Authorization'] = `Bearer ${token}`
-      const res = await fetch(`${API_BASE}/settings/check-vllm`, {
+      const res = await fetch(`${API_BASE}/settings/check-vllm`, buildAuthRequestInit({
         method: 'POST', headers,
         body: JSON.stringify({ base_url: bUrl, api_key: aKey || null })
-      })
+      }))
       if (res.ok) {
         const data = await res.json()
         setLocalVllmStatus(data.online ? 'online' : 'offline')
@@ -133,13 +131,11 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
     setLocalAsrStatus('checking')
     setLocalAsrDetectedModel(null)
     try {
-      const token = getAuthToken()
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (token) headers['Authorization'] = `Bearer ${token}`
-      const res = await fetch(`${API_BASE}/settings/check-asr`, {
+      const res = await fetch(`${API_BASE}/settings/check-asr`, buildAuthRequestInit({
         method: 'POST', headers,
         body: JSON.stringify({ base_url: bUrl, model: m || null, api_key: aKey || null })
-      })
+      }))
       if (res.ok) {
         const data = await res.json()
         setLocalAsrStatus(data.online ? 'online' : 'offline')

@@ -9,7 +9,7 @@ import {
   MessageFeedback, FeedbackStats,
   getAdminFeedbacks, getFeedbackStats, exportFeedbacks as exportFeedbacksApi,
   resetAllFeedbacks, startAsyncExport, getExportTaskStatus, downloadExportFile,
-  ExportTaskStatus, fetchUserUsageStats, UserUsageItem
+  ExportTaskStatus, fetchUserUsageStats, UserUsageItem, downloadBlobFile
 } from '../../api'
 import { ShowConfirmDialog } from './ConfirmDialog'
 
@@ -139,10 +139,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
             if (exportPollingInterval) { clearInterval(exportPollingInterval); setExportPollingInterval(null) }
             setExportingFeedbacks(false)
             const blob = await downloadExportFile(result.task_id)
-            const url = URL.createObjectURL(blob)
-            const a = document.createElement('a'); a.href = url
-            a.download = `feedbacks_${new Date().toISOString().split('T')[0]}.${format}`
-            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
+            downloadBlobFile(blob, `feedbacks_${new Date().toISOString().split('T')[0]}.${format}`)
           } else if (status.status === 'failed') {
             if (exportPollingInterval) { clearInterval(exportPollingInterval); setExportPollingInterval(null) }
             setExportingFeedbacks(false); setFeedbackError(status.error_message || t('settings.feedbackTab.exportFailed'))
@@ -163,14 +160,10 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
     try {
       const result = await exportFeedbacksApi(format)
       if (format === 'csv' && result instanceof Blob) {
-        const url = URL.createObjectURL(result); const a = document.createElement('a'); a.href = url
-        a.download = `feedbacks_${new Date().toISOString().split('T')[0]}.csv`
-        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
+        downloadBlobFile(result, `feedbacks_${new Date().toISOString().split('T')[0]}.csv`)
       } else if (format === 'json' && !(result instanceof Blob)) {
         const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' })
-        const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url
-        a.download = `feedbacks_${new Date().toISOString().split('T')[0]}.json`
-        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
+        downloadBlobFile(blob, `feedbacks_${new Date().toISOString().split('T')[0]}.json`)
       }
     } catch (err) {
       setFeedbackError(err instanceof Error ? err.message : t('settings.feedbackTab.failedToExport'))

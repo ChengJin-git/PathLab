@@ -22,6 +22,85 @@ class WSIRepository:
     """Repository for WSI Slide operations"""
 
     @staticmethod
+    def _has_elevated_dataset_access(
+        dataset_id: Optional[str],
+        elevated_dataset_ids: Optional[List[str]] = None,
+    ) -> bool:
+        return bool(dataset_id and elevated_dataset_ids and dataset_id in elevated_dataset_ids)
+
+    @staticmethod
+    def _build_visibility_filter(
+        user_id: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None,
+    ):
+        if user_id is None:
+            return None
+        if elevated_dataset_ids:
+            return or_(
+                WSISlide.user_id == user_id,
+                WSISlide.dataset_id.in_(elevated_dataset_ids),
+            )
+        return WSISlide.user_id == user_id
+
+    @staticmethod
+    def _build_dataset_membership_filter(dataset_id: str):
+        if dataset_id == "Uncategorized":
+            return WSISlide.dataset_id.is_(None)
+        return WSISlide.dataset_id == dataset_id
+
+    @staticmethod
+    def _build_dataset_filters(
+        dataset_id: str,
+        user_id: Optional[str] = None,
+        data_type: Optional[str] = None,
+        search: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None,
+    ) -> List:
+        filters = [WSIRepository._build_dataset_membership_filter(dataset_id)]
+
+        if user_id is not None and not WSIRepository._has_elevated_dataset_access(dataset_id, elevated_dataset_ids):
+            filters.append(WSISlide.user_id == user_id)
+
+        data_type_filter = WSIRepository._build_data_type_filter(data_type)
+        if data_type_filter is not None:
+            filters.append(data_type_filter)
+
+        search_filter = WSIRepository._build_search_filter(search)
+        if search_filter is not None:
+            filters.append(search_filter)
+
+        return filters
+
+    @staticmethod
+    def _build_path_extension_filter(extensions):
+        path_lower = func.lower(WSISlide.wsi_path)
+        return or_(*[path_lower.like(f'%{ext}') for ext in extensions])
+
+    @staticmethod
+    def _build_file_level_data_type_conditions():
+        tif_path_filter = WSIRepository._build_path_extension_filter(TIF_EXTENSIONS)
+        is_wsi = or_(
+            WSIRepository._build_path_extension_filter(WSI_EXTENSIONS),
+            and_(tif_path_filter, WSISlide.file_size >= SIZE_THRESHOLD),
+        )
+        is_patch = or_(
+            WSIRepository._build_path_extension_filter(PATCH_EXTENSIONS),
+            and_(
+                tif_path_filter,
+                or_(
+                    WSISlide.file_size < SIZE_THRESHOLD,
+                    WSISlide.file_size.is_(None),
+                ),
+            ),
+        )
+        return is_wsi, is_patch
+
+    @staticmethod
+    def _build_file_level_data_type_filter(target_type: str):
+        is_wsi, is_patch = WSIRepository._build_file_level_data_type_conditions()
+        return is_wsi if target_type == "wsi" else is_patch
+
+    @staticmethod
     async def get_by_id_with_dataset(db: AsyncSession, wsi_id: str) -> Optional[WSISlide]:
         """Get WSI by wsi_id with dataset relationship loaded"""
         result = await db.execute(
@@ -126,24 +205,12 @@ class WSIRepository:
             elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
                                   WSI slides in these datasets will be included even if user doesn't own them.
         """
-        from sqlalchemy import or_
-
         query = select(WSISlide).options(_dataset_with_group_loader())
 
-        # Apply user_id filter with elevated_dataset_ids support
-        if user_id is not None:
-            if elevated_dataset_ids:
-                # Include user's own data OR data from elevated permission datasets
-                query = query.where(
-                    or_(
-                        WSISlide.user_id == user_id,
-                        WSISlide.dataset_id.in_(elevated_dataset_ids)
-                    )
-                )
-            else:
-                query = query.where(WSISlide.user_id == user_id)
+        visibility_filter = WSIRepository._build_visibility_filter(user_id, elevated_dataset_ids)
+        if visibility_filter is not None:
+            query = query.where(visibility_filter)
 
-        # Apply data_type filter
         data_type_filter = WSIRepository._build_data_type_filter(data_type)
         if data_type_filter is not None:
             query = query.where(data_type_filter)
@@ -197,24 +264,12 @@ class WSIRepository:
             elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
                                   WSI slides in these datasets will be counted even if user doesn't own them.
         """
-        from sqlalchemy import or_
-
         query = select(func.count(WSISlide.id))
 
-        # Apply user_id filter with elevated_dataset_ids support
-        if user_id is not None:
-            if elevated_dataset_ids:
-                # Count user's own data OR data from elevated permission datasets
-                query = query.where(
-                    or_(
-                        WSISlide.user_id == user_id,
-                        WSISlide.dataset_id.in_(elevated_dataset_ids)
-                    )
-                )
-            else:
-                query = query.where(WSISlide.user_id == user_id)
+        visibility_filter = WSIRepository._build_visibility_filter(user_id, elevated_dataset_ids)
+        if visibility_filter is not None:
+            query = query.where(visibility_filter)
 
-        # Apply data_type filter
         data_type_filter = WSIRepository._build_data_type_filter(data_type)
         if data_type_filter is not None:
             query = query.where(data_type_filter)
@@ -362,33 +417,8 @@ class WSIRepository:
         Returns:
             SQLAlchemy filter condition or None
         """
-        from sqlalchemy import or_, and_
-
-        def _build_file_level_filter(target_type: str):
-            if target_type == "wsi":
-                wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
-                tif_conditions = [
-                    and_(
-                        or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
-                        WSISlide.file_size >= SIZE_THRESHOLD
-                    )
-                ]
-                return or_(*wsi_ext_conditions, *tif_conditions)
-
-            patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
-            tif_conditions = [
-                and_(
-                    or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
-                    or_(
-                        WSISlide.file_size < SIZE_THRESHOLD,
-                        WSISlide.file_size.is_(None)
-                    )
-                )
-            ]
-            return or_(*patch_ext_conditions, *tif_conditions)
-
         if data_type in {"wsi", "patch"}:
-            file_level_filter = _build_file_level_filter(data_type)
+            file_level_filter = WSIRepository._build_file_level_data_type_filter(data_type)
             dataset_level_filter = WSISlide.dataset.has(
                 Dataset.data_group.has(DataGroup.data_type == data_type)
             )
@@ -422,34 +452,10 @@ class WSIRepository:
             Dict with total_count, labels (dict), data_types (dict), datasets (list)
             Each dataset in the list has an "access_type" field: "own" or "elevated"
         """
-        from sqlalchemy import case, or_, and_
+        from sqlalchemy import case, and_
 
-        # Build WSI/Patch conditions
-        wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
-        tif_wsi_condition = and_(
-            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
-            WSISlide.file_size >= SIZE_THRESHOLD
-        )
-        is_wsi = or_(*wsi_ext_conditions, tif_wsi_condition)
-
-        patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
-        tif_patch_condition = and_(
-            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
-            or_(WSISlide.file_size < SIZE_THRESHOLD, WSISlide.file_size.is_(None))
-        )
-        is_patch = or_(*patch_ext_conditions, tif_patch_condition)
-
-        # Build user filter condition (own data OR elevated datasets)
-        if user_id is not None:
-            if elevated_dataset_ids:
-                user_filter = or_(
-                    WSISlide.user_id == user_id,
-                    WSISlide.dataset_id.in_(elevated_dataset_ids)
-                )
-            else:
-                user_filter = WSISlide.user_id == user_id
-        else:
-            user_filter = None
+        is_wsi, is_patch = WSIRepository._build_file_level_data_type_conditions()
+        user_filter = WSIRepository._build_visibility_filter(user_id, elevated_dataset_ids)
 
         # Single query for total count and data type distribution
         stats_query = select(
@@ -629,8 +635,11 @@ class WSIRepository:
             event_status_dist = dataset_event_status_map.get(row.dataset_id, {})
 
             # Determine access_type: "own" if user owns it, "elevated" if via temporary permission
-            elevated_set = set(elevated_dataset_ids) if elevated_dataset_ids else set()
-            if user_id is not None and row.dataset_owner_id != user_id and row.dataset_id in elevated_set:
+            if (
+                user_id is not None
+                and row.dataset_owner_id != user_id
+                and WSIRepository._has_elevated_dataset_access(row.dataset_id, elevated_dataset_ids)
+            ):
                 access_type = "elevated"
             else:
                 access_type = "own"
@@ -676,23 +685,9 @@ class WSIRepository:
         Returns:
             Dict with 'wsi' and 'patch' counts
         """
-        from sqlalchemy import case, or_, and_
+        from sqlalchemy import case
 
-        # Build WSI condition
-        wsi_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in WSI_EXTENSIONS]
-        tif_wsi_condition = and_(
-            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
-            WSISlide.file_size >= SIZE_THRESHOLD
-        )
-        is_wsi = or_(*wsi_ext_conditions, tif_wsi_condition)
-
-        # Build Patch condition
-        patch_ext_conditions = [func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in PATCH_EXTENSIONS]
-        tif_patch_condition = and_(
-            or_(*[func.lower(WSISlide.wsi_path).like(f'%{ext}') for ext in TIF_EXTENSIONS]),
-            or_(WSISlide.file_size < SIZE_THRESHOLD, WSISlide.file_size.is_(None))
-        )
-        is_patch = or_(*patch_ext_conditions, tif_patch_condition)
+        is_wsi, is_patch = WSIRepository._build_file_level_data_type_conditions()
 
         # Count WSI and Patch
         query = select(
@@ -700,8 +695,9 @@ class WSIRepository:
             func.sum(case((is_patch, 1), else_=0)).label("patch_count")
         )
 
-        if user_id is not None:
-            query = query.where(WSISlide.user_id == user_id)
+        visibility_filter = WSIRepository._build_visibility_filter(user_id)
+        if visibility_filter is not None:
+            query = query.where(visibility_filter)
 
         result = await db.execute(query)
         row = result.one()
@@ -766,16 +762,9 @@ class WSIRepository:
             DataGroup, Dataset.group_id == DataGroup.group_id
         )
 
-        if user_id is not None:
-            if elevated_dataset_ids:
-                query = query.where(
-                    or_(
-                        WSISlide.user_id == user_id,
-                        WSISlide.dataset_id.in_(elevated_dataset_ids)
-                    )
-                )
-            else:
-                query = query.where(WSISlide.user_id == user_id)
+        visibility_filter = WSIRepository._build_visibility_filter(user_id, elevated_dataset_ids)
+        if visibility_filter is not None:
+            query = query.where(visibility_filter)
 
         if file_filter is not None:
             query = query.where(file_filter)
@@ -1011,29 +1000,14 @@ class WSIRepository:
             List of WSISlide objects with dataset relationship loaded
         """
         query = select(WSISlide).options(_dataset_with_group_loader())
-
-        if dataset_id == "Uncategorized":
-            query = query.where(WSISlide.dataset_id.is_(None))
-        else:
-            query = query.where(WSISlide.dataset_id == dataset_id)
-
-        # Apply user_id filter, but bypass if user has elevated permission for this dataset
-        if user_id is not None:
-            # Check if user has elevated permission for this specific dataset
-            has_elevated_permission = elevated_dataset_ids and dataset_id in elevated_dataset_ids
-            if not has_elevated_permission:
-                # User doesn't have elevated permission, apply user_id filter
-                query = query.where(WSISlide.user_id == user_id)
-            # If has_elevated_permission is True, don't filter by user_id - show all files in dataset
-
-        # Apply data_type filter
-        data_type_filter = WSIRepository._build_data_type_filter(data_type)
-        if data_type_filter is not None:
-            query = query.where(data_type_filter)
-
-        search_filter = WSIRepository._build_search_filter(search)
-        if search_filter is not None:
-            query = query.where(search_filter)
+        filters = WSIRepository._build_dataset_filters(
+            dataset_id,
+            user_id=user_id,
+            data_type=data_type,
+            search=search,
+            elevated_dataset_ids=elevated_dataset_ids,
+        )
+        query = query.where(*filters)
 
         query = query.order_by(desc(WSISlide.created_at)).offset(skip)
         if limit > 0:
@@ -1053,24 +1027,14 @@ class WSIRepository:
     ) -> List[str]:
         """Get matching WSI IDs in a dataset without loading full slide objects."""
         query = select(WSISlide.wsi_id)
-
-        if dataset_id == "Uncategorized":
-            query = query.where(WSISlide.dataset_id.is_(None))
-        else:
-            query = query.where(WSISlide.dataset_id == dataset_id)
-
-        if user_id is not None:
-            has_elevated_permission = elevated_dataset_ids and dataset_id in elevated_dataset_ids
-            if not has_elevated_permission:
-                query = query.where(WSISlide.user_id == user_id)
-
-        data_type_filter = WSIRepository._build_data_type_filter(data_type)
-        if data_type_filter is not None:
-            query = query.where(data_type_filter)
-
-        search_filter = WSIRepository._build_search_filter(search)
-        if search_filter is not None:
-            query = query.where(search_filter)
+        filters = WSIRepository._build_dataset_filters(
+            dataset_id,
+            user_id=user_id,
+            data_type=data_type,
+            search=search,
+            elevated_dataset_ids=elevated_dataset_ids,
+        )
+        query = query.where(*filters)
 
         query = query.order_by(desc(WSISlide.created_at))
 
@@ -1103,29 +1067,14 @@ class WSIRepository:
             Number of WSI slides in the dataset
         """
         query = select(func.count(WSISlide.id))
-
-        if dataset_id == "Uncategorized":
-            query = query.where(WSISlide.dataset_id.is_(None))
-        else:
-            query = query.where(WSISlide.dataset_id == dataset_id)
-
-        # Apply user_id filter, but bypass if user has elevated permission for this dataset
-        if user_id is not None:
-            # Check if user has elevated permission for this specific dataset
-            has_elevated_permission = elevated_dataset_ids and dataset_id in elevated_dataset_ids
-            if not has_elevated_permission:
-                # User doesn't have elevated permission, apply user_id filter
-                query = query.where(WSISlide.user_id == user_id)
-            # If has_elevated_permission is True, don't filter by user_id - count all files in dataset
-
-        # Apply data_type filter
-        data_type_filter = WSIRepository._build_data_type_filter(data_type)
-        if data_type_filter is not None:
-            query = query.where(data_type_filter)
-
-        search_filter = WSIRepository._build_search_filter(search)
-        if search_filter is not None:
-            query = query.where(search_filter)
+        filters = WSIRepository._build_dataset_filters(
+            dataset_id,
+            user_id=user_id,
+            data_type=data_type,
+            search=search,
+            elevated_dataset_ids=elevated_dataset_ids,
+        )
+        query = query.where(*filters)
 
         result = await db.execute(query)
         return result.scalar_one()
@@ -1195,27 +1144,15 @@ class WSIRepository:
             total_files       – total matching file count
             has_multi_slide_cases – whether any case_id has more than one file
         """
-        from sqlalchemy import or_, case, literal_column
+        from sqlalchemy import case, literal_column
 
-        # ---- shared WHERE filters ----
-        filters = []
-        if dataset_id == "Uncategorized":
-            filters.append(WSISlide.dataset_id.is_(None))
-        else:
-            filters.append(WSISlide.dataset_id == dataset_id)
-
-        if user_id is not None:
-            has_elevated = elevated_dataset_ids and dataset_id in elevated_dataset_ids
-            if not has_elevated:
-                filters.append(WSISlide.user_id == user_id)
-
-        dt_filter = WSIRepository._build_data_type_filter(data_type)
-        if dt_filter is not None:
-            filters.append(dt_filter)
-
-        search_filter = WSIRepository._build_search_filter(search)
-        if search_filter is not None:
-            filters.append(search_filter)
+        filters = WSIRepository._build_dataset_filters(
+            dataset_id,
+            user_id=user_id,
+            data_type=data_type,
+            search=search,
+            elevated_dataset_ids=elevated_dataset_ids,
+        )
 
         # named_case_count
         q_named = select(func.count(func.distinct(WSISlide.case_id))).where(
@@ -1279,27 +1216,13 @@ class WSIRepository:
         Returns the list of WSISlide objects belonging to the cases on the
         requested page (with dataset relationship loaded).
         """
-        from sqlalchemy import or_
-
-        # ---- shared WHERE filters ----
-        filters = []
-        if dataset_id == "Uncategorized":
-            filters.append(WSISlide.dataset_id.is_(None))
-        else:
-            filters.append(WSISlide.dataset_id == dataset_id)
-
-        if user_id is not None:
-            has_elevated = elevated_dataset_ids and dataset_id in elevated_dataset_ids
-            if not has_elevated:
-                filters.append(WSISlide.user_id == user_id)
-
-        dt_filter = WSIRepository._build_data_type_filter(data_type)
-        if dt_filter is not None:
-            filters.append(dt_filter)
-
-        search_filter = WSIRepository._build_search_filter(search)
-        if search_filter is not None:
-            filters.append(search_filter)
+        filters = WSIRepository._build_dataset_filters(
+            dataset_id,
+            user_id=user_id,
+            data_type=data_type,
+            search=search,
+            elevated_dataset_ids=elevated_dataset_ids,
+        )
 
         # Step 1: Get paginated named case_ids
         offset = (page - 1) * page_size

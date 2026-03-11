@@ -12,7 +12,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
-import { getAuthToken } from '../../api/client'
+import { withAuthTokenQuery } from '../../api/client'
 
 import { OptionButtons, parseOptions, removeOptionsBlock } from './OptionButtons'
 import { TaskConfigCard, parseTaskConfig, removeTaskConfigBlock } from './TaskConfigCard'
@@ -480,11 +480,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
     img: ({ src, alt, ...rest }) => {
       let finalSrc = src || ''
       if (finalSrc.includes('/pdf-images/')) {
-        const token = getAuthToken()
-        if (token) {
-          const sep = finalSrc.includes('?') ? '&' : '?'
-          finalSrc = `${finalSrc}${sep}token=${encodeURIComponent(token)}`
-        }
+        finalSrc = withAuthTokenQuery(finalSrc)
       }
       // Safety net: prevent 404 flood from hallucinated image URLs.
       // On error, clear src so the browser stops retrying broken PDF images.
@@ -542,12 +538,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
       // The AI sometimes uses [text](url) link syntax instead of ![text](url) image syntax
       // for PDF figure references, causing them to appear as clickable links instead of images.
       if (href && href.includes('/pdf-images/')) {
-        let finalSrc = href
-        const token = getAuthToken()
-        if (token) {
-          const sep = finalSrc.includes('?') ? '&' : '?'
-          finalSrc = `${finalSrc}${sep}token=${encodeURIComponent(token)}`
-        }
+        const finalSrc = withAuthTokenQuery(href)
         const altText = typeof children === 'string' ? children
           : Array.isArray(children) ? children.map(c => typeof c === 'string' ? c : '').join('')
           : ''

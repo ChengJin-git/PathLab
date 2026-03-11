@@ -120,7 +120,7 @@ export interface BackgroundTaskContextType {
   cancelTask: (taskId: string) => void
   cancelServerTask: (task: BackgroundTask) => Promise<boolean>  // Cancel training/inference task on server
   clearCompletedTasks: () => void
-  removeTask: (taskId: string) => void
+  removeTask: (task: BackgroundTask) => void
   togglePanel: () => void
   refreshDiskSpace: () => Promise<void>
   getMetadataUploadResult: (datasetName: string) => MetadataUploadResult | undefined

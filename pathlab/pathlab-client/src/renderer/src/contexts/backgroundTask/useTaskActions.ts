@@ -442,14 +442,25 @@ export function useTaskActions(params: TaskActionsParams) {
   }, [trainingTasks, analysisTasks, storageTasks, setLocalTasks, setDismissedServerTasks])
 
   // Remove a specific task (both local and server tasks)
-  const removeTask = useCallback((taskId: string) => {
-    if (taskId.startsWith('training_') || taskId.startsWith('inference_') || taskId.startsWith('extval_') || taskId.startsWith('analysis_')) {
+  const removeTask = useCallback((task: BackgroundTask) => {
+    if (task.isServerTask) {
       // Server task - add to dismissed set (will be persisted to localStorage via useEffect)
-      setDismissedServerTasks(prev => new Set([...prev, taskId]))
+      setDismissedServerTasks(prev => {
+        const next = new Set(prev)
+        next.add(task.id)
+
+        // For merged external validation tasks in analysis phase, also dismiss the linked analysis task
+        const analysisTaskId = (task as BackgroundTask & { _analysisTaskId?: string })._analysisTaskId
+        if (analysisTaskId) {
+          next.add(analysisTaskId)
+        }
+
+        return next
+      })
     } else {
       // Local task - remove from array
-      setLocalTasks(prev => prev.filter(t => t.id !== taskId))
-      cancelledTasksRef.current.delete(taskId)
+      setLocalTasks(prev => prev.filter(t => t.id !== task.id))
+      cancelledTasksRef.current.delete(task.id)
     }
   }, [setLocalTasks, setDismissedServerTasks, cancelledTasksRef])
 

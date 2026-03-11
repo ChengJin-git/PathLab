@@ -40,6 +40,11 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
   const isSegmentation = uploadMode === 'segmentation'
   const isOtherSource = datasetSourceSelection === 'Other'
   const canEditSource = !isExistingDataset
+  const sourceCustomPlaceholder = isOtherSource
+    ? t('uploadComponents.datasetConfig.otherSourcePlaceholder')
+    : datasetSourceSelection
+      ? ''
+      : t('uploadComponents.datasetConfig.selectDatasetSource')
 
   // Sync external datasetSourceCustom changes (e.g., when selection changes to non-Other)
   useEffect(() => {
@@ -264,7 +269,7 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                         : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
                     }`}
                   >
-                    <option value="">{t('uploadComponents.datasetConfig.unknownSourceOrgan')}</option>
+                    <option value="">{t('uploadComponents.datasetConfig.selectDatasetSource')}</option>
                     {organSources.filter((source) => source !== 'Other').map((source) => (
                       <option key={source} value={source}>{source}</option>
                     ))}
@@ -275,7 +280,7 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                     value={isOtherSource ? debouncedSourceCustom : ''}
                     onChange={(e) => setDebouncedSourceCustom(e.target.value)}
                     disabled={!isOtherSource || !canEditSource}
-                    placeholder={t('uploadComponents.datasetConfig.otherSourcePlaceholder')}
+                    placeholder={sourceCustomPlaceholder}
                     className={`w-full px-4 sm:px-5 py-3 border rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all ${
                       !isOtherSource || !canEditSource
                         ? 'bg-slate-100 border-slate-200 cursor-not-allowed opacity-60'

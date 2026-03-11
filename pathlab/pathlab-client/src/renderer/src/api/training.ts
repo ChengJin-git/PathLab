@@ -1,5 +1,5 @@
 import { API_BASE } from '../config'
-import { apiFetch, PaginatedResponse } from './client'
+import { apiFetch, buildSearchParams, PaginatedResponse } from './client'
 
 // ============================================================================
 // Training Task & Model APIs
@@ -213,12 +213,13 @@ export interface TrainingTaskListResponse extends PaginatedResponse<TrainingTask
  * @throws {ApiError} If the request fails
  */
 export async function getTrainingTasks(options?: TrainingTaskListQuery): Promise<TrainingTaskListResponse> {
-  const params = new URLSearchParams()
-  if (options?.page !== undefined) params.set('page', String(options.page))
-  if (options?.page_size !== undefined) params.set('page_size', String(options.page_size))
-  if (options?.search) params.set('search', options.search)
-  if (options?.status_filter) params.set('status_filter', options.status_filter)
-  if (options?.sort_by) params.set('sort_by', options.sort_by)
+  const params = buildSearchParams({
+    page: options?.page,
+    page_size: options?.page_size,
+    search: options?.search || undefined,
+    status_filter: options?.status_filter || undefined,
+    sort_by: options?.sort_by || undefined,
+  })
 
   const queryString = params.toString()
   return apiFetch<TrainingTaskListResponse>(

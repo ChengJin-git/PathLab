@@ -1011,6 +1011,8 @@ class SegmentationTrainer:
                     )
                     break
 
+            self._update_training_progress(92)
+
             # Restore best model
             if best_state_dict is not None:
                 from backend.ai.segmentors.fm_segmentation_model import FMSegmentationModel
@@ -1023,9 +1025,12 @@ class SegmentationTrainer:
                     {"best_epoch": best_epoch, f"best_{monitor_metric}": best_metric},
                 )
 
+            self._update_training_progress(94)
+
             # Final evaluation on test set if available
             test_metrics = None
             if test_loader is not None:
+                self._update_training_progress(96)
                 test_loss, test_metrics = self._validate(self.model, test_loader)
                 self._log_info(
                     f"Test Results | Loss: {test_loss:.4f} | "
@@ -1039,6 +1044,8 @@ class SegmentationTrainer:
                         "test_accuracy": test_metrics.get('accuracy', 0),
                     },
                 )
+
+            self._update_training_progress(98)
 
             total_time = time.time() - start_time
 
@@ -1062,7 +1069,7 @@ class SegmentationTrainer:
                     f"best_{monitor_metric}": best_metric,
                 },
             )
-            self._update_training_progress(90)
+            self._update_training_progress(99)
 
             return results
         finally:

@@ -1,6 +1,6 @@
 import { API_BASE } from '../config'
 import { createKeyedCache, DEFAULT_CACHE_TTL } from '../lib/cache'
-import { apiFetch, apiFetchBlob, downloadBlobFile, getAuthToken } from './client'
+import { apiFetch, apiFetchBlob, buildSearchParams, downloadApiFile, downloadBlobFile, getAuthToken } from './client'
 import { invalidateHeatmapAvailabilityCache } from './heatmap'
 
 // ============================================================================
@@ -174,13 +174,10 @@ export async function fetchWSIList(
   dataLevel?: string,
   options?: WSIListPaginationOptions
 ): Promise<WSIListResponse> {
-  const params = new URLSearchParams()
-  if (datasetId) {
-    params.set('dataset_id', datasetId)
-  }
-  if (dataLevel) {
-    params.set('data_type', dataLevel)
-  }
+  const params = buildSearchParams({
+    dataset_id: datasetId,
+    data_type: dataLevel,
+  })
 
   if (options) {
     if (options.search) {
@@ -220,14 +217,11 @@ export async function fetchWSIIds(
   dataLevel?: string,
   search?: string
 ): Promise<WSIIdListResponse> {
-  const params = new URLSearchParams()
-  params.set('dataset_id', datasetId)
-  if (dataLevel) {
-    params.set('data_type', dataLevel)
-  }
-  if (search) {
-    params.set('search', search)
-  }
+  const params = buildSearchParams({
+    dataset_id: datasetId,
+    data_type: dataLevel,
+    search,
+  })
 
   const url = `${API_BASE}/wsi/ids?${params.toString()}`
   return apiFetch<WSIIdListResponse>(url, undefined, 'Failed to load WSI IDs from database')
@@ -292,26 +286,15 @@ export async function fetchDatasets(
   dataLevel?: string,
   options?: DatasetListQueryOptions
 ): Promise<DatasetsListResponse> {
-  const params = new URLSearchParams()
-  if (dataLevel) {
-    params.append('data_type', dataLevel)
-  }
-  if (options?.search) {
-    params.append('search', options.search)
-  }
-  if (options?.task_type) {
-    params.append('task_type', options.task_type)
-  }
-  if (options?.aggregation_level) {
-    params.append('aggregation_level', options.aggregation_level)
-  }
-  if (options?.source_organ) {
-    params.append('source_organ', options.source_organ)
-  }
-  if (options?.page_size !== undefined) {
-    params.append('page_size', String(options.page_size))
-    params.append('page', String(options.page ?? 1))
-  }
+  const params = buildSearchParams({
+    data_type: dataLevel,
+    search: options?.search || undefined,
+    task_type: options?.task_type,
+    aggregation_level: options?.aggregation_level,
+    source_organ: options?.source_organ,
+    page_size: options?.page_size,
+    page: options?.page_size !== undefined ? (options.page ?? 1) : undefined,
+  })
   const queryString = params.toString()
   const url = queryString ? `${API_BASE}/wsi/datasets?${queryString}` : `${API_BASE}/wsi/datasets`
   return apiFetch<DatasetsListResponse>(url, undefined, 'Failed to load datasets from database')
@@ -455,47 +438,23 @@ export async function exportDatasetLabels(
   datasetId: string,
   options: ExportLabelsOptions = {}
 ): Promise<void> {
-  const params = new URLSearchParams()
+  const params = buildSearchParams(
+    options.generateSplit
+      ? {
+          generate_split: 'true',
+          seed: options.seed ?? 42,
+          stratified: options.stratified !== false,
+          train_ratio: options.trainRatio ?? 0.7,
+          val_ratio: options.valRatio ?? 0.1,
+          test_ratio: options.testRatio ?? 0.2,
+        }
+      : undefined
+  )
 
-  if (options.generateSplit) {
-    params.append('generate_split', 'true')
-    params.append('seed', String(options.seed ?? 42))
-    params.append('stratified', String(options.stratified !== false))
-    params.append('train_ratio', String(options.trainRatio ?? 0.7))
-    params.append('val_ratio', String(options.valRatio ?? 0.1))
-    params.append('test_ratio', String(options.testRatio ?? 0.2))
-  }
+  const queryString = params.toString()
+  const url = `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/export-labels${queryString ? `?${queryString}` : ''}`
 
-  const url = `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/export-labels?${params.toString()}`
-
-  // Fetch with authentication
-  const token = getAuthToken()
-  const response = await fetch(url, {
-    headers: {
-      'Authorization': token ? `Bearer ${token}` : ''
-    }
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(errorText || 'Failed to export labels')
-  }
-
-  // Trigger browser download
-  const blob = await response.blob()
-  const downloadUrl = window.URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = downloadUrl
-
-  // Extract filename from Content-Disposition header
-  const contentDisposition = response.headers.get('Content-Disposition')
-  const filenameMatch = contentDisposition?.match(/filename="(.+)"/)
-  a.download = filenameMatch ? filenameMatch[1] : 'dataset_labels.csv'
-
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  window.URL.revokeObjectURL(downloadUrl)
+  await downloadApiFile(url, 'dataset_labels.csv', undefined, 'Failed to export labels')
 }
 
 /**

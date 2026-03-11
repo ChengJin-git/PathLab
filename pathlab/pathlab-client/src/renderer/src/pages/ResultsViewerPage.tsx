@@ -8,7 +8,7 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
 
-import { getTrainedModels, TrainedModel, getAuthToken, startExternalValidation as apiStartExternalValidation, fetchDatasetsForValidation, ValidationDataset } from '../api'
+import { getTrainedModels, TrainedModel, buildAuthRequestInit, startExternalValidation as apiStartExternalValidation, fetchDatasetsForValidation, ValidationDataset } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { AnalysisDetails, type AnalysisSummary, type BootstrapCI, type ChartData } from '../components/results/AnalysisDetails'
@@ -32,20 +32,6 @@ import {
   DEFAULT_EXTERNAL_SEGMENTATION_CHARTS
 } from '../constants/metrics'
 import { filterCompatibleDatasets, isSurvivalTask as utilIsSurvivalTask, isSegmentationTask as utilIsSegmentationTask } from '../lib/externalValidationUtils'
-
-/**
- * Helper to create fetch options with authentication header
- */
-function authFetchOptions(options: RequestInit = {}): RequestInit {
-  const token = getAuthToken()
-  return {
-    ...options,
-    headers: {
-      ...options.headers,
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    }
-  }
-}
 
 type PageMode = 'internal-analysis' | 'external-validation'
 
@@ -379,7 +365,7 @@ export default function ResultsViewerPage() {
   const loadTasks = async () => {
     setLoading(true)
     try {
-      const response = await fetch(`${API_BASE}/results/tasks`, authFetchOptions())
+      const response = await fetch(`${API_BASE}/results/tasks`, buildAuthRequestInit())
       if (response.ok) {
         const data = await response.json()
         const taskList = data.items || []
@@ -423,7 +409,7 @@ export default function ResultsViewerPage() {
 
   const loadCompletedExtValTasks = async () => {
     try {
-      const response = await fetch(`${API_BASE}/results/external-validation/completed`, authFetchOptions())
+      const response = await fetch(`${API_BASE}/results/external-validation/completed`, buildAuthRequestInit())
       if (response.ok) {
         const data = await response.json()
         setCompletedExtValTasks(data.items || [])
@@ -435,7 +421,7 @@ export default function ResultsViewerPage() {
 
   const loadAnalyses = async (taskId: string) => {
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`, authFetchOptions())
+      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`, buildAuthRequestInit())
       if (response.ok) {
         const data = await response.json()
         setAnalyses(data.analyses || [])
@@ -447,7 +433,7 @@ export default function ResultsViewerPage() {
 
   const loadExtAnalyses = async (taskId: string) => {
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`, authFetchOptions())
+      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`, buildAuthRequestInit())
       if (response.ok) {
         const data = await response.json()
         setExtAnalyses(data.analyses || [])
@@ -543,7 +529,7 @@ export default function ResultsViewerPage() {
 
     const poll = async () => {
       try {
-        const response = await fetch(`${API_BASE}/results/external-validation/${taskId}`, authFetchOptions())
+        const response = await fetch(`${API_BASE}/results/external-validation/${taskId}`, buildAuthRequestInit())
         if (response.ok) {
           const progress = await response.json()
           setValidationProgress({
@@ -598,7 +584,7 @@ export default function ResultsViewerPage() {
     setRunning(true)
     setAnalysisError(null)
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/analysis`, authFetchOptions({
+      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/analysis`, buildAuthRequestInit({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -697,7 +683,7 @@ export default function ResultsViewerPage() {
 
     setDeleting(true)
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis/${deleteConfirmId}`, authFetchOptions({
+      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis/${deleteConfirmId}`, buildAuthRequestInit({
         method: 'DELETE'
       }))
 

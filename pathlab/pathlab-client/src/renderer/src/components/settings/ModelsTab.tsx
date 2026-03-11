@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Database, RefreshCw, Layers, Calendar, Star, ToggleRight, ToggleLeft, Trash2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckCircle, XCircle, BarChart3, FlaskConical } from 'lucide-react'
 import { Card } from '../ui/card'
-import { TrainedModel, getTrainedModels, updateTrainedModel, deleteTrainedModel, getAuthToken } from '../../api'
+import { TrainedModel, getTrainedModels, updateTrainedModel, deleteTrainedModel, buildAuthRequestInit } from '../../api'
 import { API_BASE } from '../../config'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { isSegmentationTask } from '../../lib/externalValidationUtils'
@@ -41,10 +41,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
 
   const loadTasks = useCallback(async () => {
     try {
-      const token = getAuthToken()
-      const response = await fetch(`${API_BASE}/results/tasks`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      })
+      const response = await fetch(`${API_BASE}/results/tasks`, buildAuthRequestInit())
       if (response.ok) {
         const data = await response.json()
         setTasks(data.items || [])
