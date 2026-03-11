@@ -370,6 +370,11 @@ async def list_training_tasks(
 
     wsi_counts = await TrainingTaskRepository.get_wsi_counts_batch(db, task_ids)
     source_dataset_ids = await TrainingTaskRepository.get_source_dataset_ids_batch(db, task_ids)
+    
+    # Overlay real-time progress from shared store so list responses stay in sync
+    # with SSE/detail endpoints during long-running tasks.
+    from backend.common.progress_store import get_all_progress
+    file_progress = await get_all_progress()
 
     # Add WSI count to each task
     result_tasks = []
@@ -381,8 +386,11 @@ async def list_training_tasks(
             # task is a TrainingTask object
             task_dict = task.to_dict()
 
-        task_dict["wsi_count"] = wsi_counts.get(task_dict["task_id"], 0)
-        task_dict["source_dataset_id"] = source_dataset_ids.get(task_dict["task_id"])
+        task_id = task_dict["task_id"]
+        task_dict["wsi_count"] = wsi_counts.get(task_id, 0)
+        task_dict["source_dataset_id"] = source_dataset_ids.get(task_id)
+        if task_id in file_progress:
+            task_dict["progress"] = file_progress[task_id]
         result_tasks.append(task_dict)
 
     return {
