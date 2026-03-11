@@ -31,12 +31,23 @@ from backend.common.config import Config
 
 _pdf_cache_dir: Path | None = None
 PDF_CACHE_TTL_DAYS = 7
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 PDF_PARSE_MAX_CONCURRENT = max(1, int(os.getenv("PDF_PARSE_MAX_CONCURRENT", "1")))
 PDF_VECTOR_INDEX_MAX_CONCURRENT = max(1, int(os.getenv("PDF_VECTOR_INDEX_MAX_CONCURRENT", "1")))
+PDF_ENABLE_BACKGROUND_DOCLING_UPGRADE = _env_flag("PDF_ENABLE_BACKGROUND_DOCLING_UPGRADE", False)
 PDF_PARSE_METHOD_DOCLING = "docling"
 PDF_PARSE_METHOD_PYMUPDF = "pymupdf"
 PDF_PARSE_METHOD_FAILED = "parse_failed"
 PDF_UPGRADE_STATUS_SCHEDULED = "scheduled"
+PDF_UPGRADE_STATUS_DISABLED = "disabled"
 PDF_UPGRADE_STATUS_RUNNING = "running"
 PDF_UPGRADE_STATUS_QUEUED_GPU = "queued_gpu"
 PDF_UPGRADE_STATUS_RUNNING_GPU = "running_gpu"
@@ -1631,6 +1642,20 @@ async def _run_docling_background_upgrade(url: str, title: str, pdf_bytes: bytes
 def schedule_docling_upgrade(url: str, title: str, pdf_bytes: bytes) -> bool:
     """Schedule a background Docling upgrade unless one is already cached or running."""
     url_hash = _get_url_hash(url)
+    if not PDF_ENABLE_BACKGROUND_DOCLING_UPGRADE:
+        _record_high_quality_upgrade_state(
+            url,
+            PDF_UPGRADE_STATUS_DISABLED,
+            "Background Docling upgrade disabled by config (PDF_ENABLE_BACKGROUND_DOCLING_UPGRADE=false)",
+            high_quality_parse_pending=False,
+            high_quality_parse_ready=False,
+        )
+        logger.info(
+            f"[PDFUpgrade] disabled by config for {url_hash}; "
+            "skip scheduling background Docling upgrade"
+        )
+        return False
+
     if _has_docling_cache(url):
         _record_high_quality_upgrade_state(
             url,
@@ -2352,20 +2377,30 @@ def _parse_pdf_with_pymupdf(
     import tempfile as _tempfile
     tmp_file = _tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
     try:
+        logger.info(
+            f"[PyMuPDF] Starting fast parse: bytes={len(pdf_bytes)}, max_pages={max_pages}, "
+            f"image_export={images_output_dir is not None}"
+        )
         tmp_file.write(pdf_bytes)
         tmp_file.close()
 
+        logger.info(f"[PyMuPDF] Opening temporary PDF file: {tmp_file.name}")
         doc = pymupdf.open(tmp_file.name)
         total_pages = len(doc)
         pages_to_process = min(total_pages, max_pages) if max_pages > 0 else total_pages
         page_list = list(range(pages_to_process))
+        logger.info(
+            f"[PyMuPDF] Document opened: total_pages={total_pages}, pages_to_process={pages_to_process}"
+        )
 
         # Determine whether to extract images
         write_images = images_output_dir is not None
         image_path = str(images_output_dir) if write_images else ""
         if write_images:
             images_output_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"[PyMuPDF] Image export enabled: {image_path}")
 
+        logger.info("[PyMuPDF] Calling pymupdf4llm.to_markdown(page_chunks=True)")
         md_text = pymupdf4llm.to_markdown(
             doc,
             pages=page_list,
@@ -2378,6 +2413,7 @@ def _parse_pdf_with_pymupdf(
         )
 
         doc.close()
+        logger.info(f"[PyMuPDF] to_markdown completed: page_chunks={len(md_text)}")
 
         # md_text is a list of dicts when page_chunks=True
         # Each dict has "text", "metadata", "images", "tables", etc.
@@ -2430,6 +2466,7 @@ def _parse_pdf_with_pymupdf(
             )
 
         img_count = md_content.count("![")
+        logger.info("[PyMuPDF] Building structured content from page chunks")
         structured_content = _build_document_graph_from_pymupdf_chunks(md_text, PDF_PARSE_METHOD_PYMUPDF)
         logger.info(
             f"PyMuPDF fast extraction OK: {total_chars} chars, "
@@ -2439,7 +2476,7 @@ def _parse_pdf_with_pymupdf(
         return md_content, md_text
 
     except Exception as e:
-        logger.warning(f"PyMuPDF extraction failed: {e}")
+        logger.exception(f"PyMuPDF extraction failed: {e}")
         return None
     finally:
         # Clean up temp file
@@ -2511,12 +2548,20 @@ def _docling_subprocess_entry(
     """Child-process entrypoint for GPU-isolated Docling parsing."""
     try:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(physical_gpu_index)
+        logger.info(
+            f"[DoclingSubprocess] Starting child parse on physical_gpu_index={physical_gpu_index}, "
+            f"max_pages={max_pages}, image_export={bool(images_output_dir_str)}"
+        )
         result = _parse_pdf_with_docling(
             pdf_bytes,
             max_pages,
             images_output_dir=Path(images_output_dir_str) if images_output_dir_str else None,
             images_url_prefix=images_url_prefix,
             accelerator_device="cuda",
+        )
+        logger.info(
+            f"[DoclingSubprocess] Child parse finished on physical_gpu_index={physical_gpu_index}, "
+            f"success={result is not None}"
         )
         result_conn.send(
             {
@@ -2530,6 +2575,7 @@ def _docling_subprocess_entry(
             }
         )
     except Exception as e:
+        logger.exception(f"[DoclingSubprocess] Child parse crashed on gpu_index={physical_gpu_index}: {e}")
         try:
             result_conn.send({"ok": False, "error": str(e)})
         except Exception:
@@ -2632,6 +2678,10 @@ async def _parse_pdf_with_docling_on_assigned_gpu(
     """Run Docling in an isolated subprocess on the queue-assigned GPU."""
     loop = asyncio.get_running_loop()
     try:
+        logger.info(
+            f"[Docling] Starting GPU parse on assigned_device={assigned_device}, "
+            f"max_pages={max_pages}, image_export={images_output_dir is not None}"
+        )
         result = await loop.run_in_executor(
             None,
             _run_docling_in_isolated_process,
@@ -2662,6 +2712,10 @@ async def _parse_pdf_with_docling_via_gpu_queue(
     """Submit Docling parsing to the shared GPU queue and await the result."""
     from ..task_queue import TaskType, get_task_queue
 
+    logger.info(
+        f"[Docling] Preparing GPU queue parse: max_pages={max_pages}, "
+        f"image_export={images_output_dir is not None}, upgrade_url={bool(upgrade_url)}"
+    )
     queue = get_task_queue()
     worker_task = getattr(queue, "_worker_task", None)
     if worker_task is None or worker_task.done():
@@ -2760,6 +2814,10 @@ async def _parse_pdf_with_docling_on_cpu(
     """Run Docling on CPU in a worker thread when GPU parsing is unavailable."""
     loop = asyncio.get_running_loop()
     try:
+        logger.info(
+            f"[Docling] Starting CPU parse: max_pages={max_pages}, "
+            f"image_export={images_output_dir is not None}"
+        )
         result = await loop.run_in_executor(
             None,
             _parse_pdf_with_docling,
@@ -2804,8 +2862,13 @@ def _parse_pdf_with_docling(
 
     tmp_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
     try:
+        logger.info(
+            f"[Docling] Starting native parse: accelerator={accelerator_device}, "
+            f"bytes={len(pdf_bytes)}, max_pages={max_pages}, image_export={images_output_dir is not None}"
+        )
         tmp_file.write(pdf_bytes)
         tmp_file.close()
+        logger.info(f"[Docling] Temporary PDF created at {tmp_file.name}")
 
         pipeline_options = PdfPipelineOptions()
         pipeline_options.images_scale = 2.0
@@ -2815,6 +2878,11 @@ def _parse_pdf_with_docling(
             num_threads=4,
             device=AcceleratorDevice.CUDA if accelerator_device == "cuda" else AcceleratorDevice.CPU,
         )
+        logger.info(
+            f"[Docling] Pipeline configured: accelerator={accelerator_device}, images_scale={pipeline_options.images_scale}, "
+            f"generate_page_images={pipeline_options.generate_page_images}, "
+            f"generate_picture_images={pipeline_options.generate_picture_images}"
+        )
 
         converter = DocumentConverter(
             format_options={
@@ -2822,13 +2890,17 @@ def _parse_pdf_with_docling(
             }
         )
 
+        logger.info(f"[Docling] Running DocumentConverter.convert on {tmp_file.name}")
         conv_res = converter.convert(tmp_file.name)
+        logger.info("[Docling] DocumentConverter.convert completed; exporting markdown")
         markdown = conv_res.document.export_to_markdown(
             image_mode=ImageRefMode.PLACEHOLDER,
             page_break_placeholder="\n\n--- Page {page_no} ---\n\n",
         ).strip()
+        logger.info(f"[Docling] Markdown export completed: chars={len(markdown)}")
 
         if max_pages > 0:
+            logger.info(f"[Docling] Trimming markdown to max_pages={max_pages}")
             page_sections: list[str] = []
             for match in re.finditer(
                 r'--- Page (\d+) ---\n\n([\s\S]*?)(?=\n\n--- Page \d+ ---|\Z)',
@@ -2844,6 +2916,7 @@ def _parse_pdf_with_docling(
         extracted_links: list[str] = []
         exported_media: dict[str, dict[str, Any]] = {}
         if images_output_dir is not None:
+            logger.info(f"[Docling] Exporting figure/table images to {images_output_dir}")
             images_output_dir.mkdir(parents=True, exist_ok=True)
             figure_counter = 0
             for element, _level in conv_res.document.iterate_items():
@@ -2887,8 +2960,14 @@ def _parse_pdf_with_docling(
                     + "\n\n## Extracted Figures and Tables\n\n"
                     + "\n\n".join(extracted_links)
                 )
+            logger.info(
+                f"[Docling] Image export completed: exported_items={figure_counter}, markdown_links={len(extracted_links)}"
+            )
 
         page_count_hint = _extract_page_count(markdown)
+        logger.info(
+            f"[Docling] Building structured content from native document: page_count_hint={page_count_hint}"
+        )
         structured_content = _build_document_graph_from_docling_document(
             conv_res.document,
             PDF_PARSE_METHOD_DOCLING,
@@ -2903,7 +2982,7 @@ def _parse_pdf_with_docling(
         )
         return _to_parsed_pdf_result(markdown, PDF_PARSE_METHOD_DOCLING, structured_content)
     except Exception as e:
-        logger.warning(f"Docling extraction failed: {e}")
+        logger.exception(f"Docling extraction failed ({accelerator_device}): {e}")
         return None
     finally:
         try:

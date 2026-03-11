@@ -8,11 +8,12 @@ Supports annotations from viewer drawing, file import, upload, and ROI extractio
 import logging
 from typing import List, Optional, Set
 from sqlalchemy import select, delete, func, or_
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-from ..models import SegmentationAnnotation
+from ..models import SegmentationAnnotation, utc_now
 
 
 class SegmentationAnnotationRepository:
@@ -29,38 +30,45 @@ class SegmentationAnnotationRepository:
         source: str = "viewer",
     ) -> SegmentationAnnotation:
         """
-        Create or update a segmentation annotation.
-        If an annotation with the given annotation_id exists, update it; otherwise create new.
-        """
-        result = await db.execute(
-            select(SegmentationAnnotation)
-            .where(SegmentationAnnotation.annotation_id == annotation_id)
-            .where(SegmentationAnnotation.user_id == user_id)
-        )
-        existing = result.scalar_one_or_none()
+        Create or update a segmentation annotation atomically.
 
-        if existing:
-            existing.annotations = annotations
-            if source_dataset_id is not None:
-                existing.source_dataset_id = source_dataset_id
-            existing.status = status
-            existing.source = source
-            await db.flush()
-            await db.refresh(existing)
-            return existing
-        else:
-            annotation = SegmentationAnnotation(
+        ``annotation_id`` is globally unique in the database, so viewer auto-save
+        must use a PostgreSQL upsert here to avoid duplicate-key races when two
+        save requests for the same draft arrive concurrently.
+        """
+        timestamp = utc_now()
+        stmt = (
+            insert(SegmentationAnnotation)
+            .values(
                 annotation_id=annotation_id,
                 user_id=user_id,
                 source_dataset_id=source_dataset_id,
                 annotations=annotations,
                 status=status,
                 source=source,
+                created_at=timestamp,
+                updated_at=timestamp,
             )
-            db.add(annotation)
-            await db.flush()
-            await db.refresh(annotation)
-            return annotation
+            .on_conflict_do_update(
+                index_elements=[SegmentationAnnotation.annotation_id],
+                set_={
+                    "user_id": user_id,
+                    "source_dataset_id": source_dataset_id,
+                    "annotations": annotations,
+                    "status": status,
+                    "source": source,
+                    "updated_at": timestamp,
+                },
+            )
+            .returning(SegmentationAnnotation.id)
+        )
+        result = await db.execute(stmt)
+        annotation_pk = result.scalar_one()
+
+        annotation_result = await db.execute(
+            select(SegmentationAnnotation).where(SegmentationAnnotation.id == annotation_pk)
+        )
+        return annotation_result.scalar_one()
 
     @staticmethod
     async def get(

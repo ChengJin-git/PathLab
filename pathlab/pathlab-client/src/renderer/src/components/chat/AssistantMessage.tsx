@@ -1035,7 +1035,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
         {/* Model List Card */}
         {modelListConfig ? (
           <motion.div key="model-list-real" {...cardTransition}>
-            <ModelListCard config={modelListConfig} />
+            <ModelListCard config={modelListConfig} onToast={onToast} />
           </motion.div>
         ) : incompleteTag === 'MODEL_LIST' && (
           <motion.div key="model-list-skeleton" {...cardTransition}>

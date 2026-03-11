@@ -2304,7 +2304,14 @@
       "modelId": "模型 ID",
       "taskId": "任務 ID",
       "classes": "類別",
-      "embeddingDim": "嵌入維度"
+    "embeddingDim": "嵌入維度",
+    "viewAnalysis": "查看分析",
+    "viewTask": "查看任務",
+    "exportModel": "匯出模型",
+    "exportingModel": "正在準備匯出...",
+    "exportReady": "模型匯出已準備好：{{name}}",
+    "exportFailed": "匯出模型失敗",
+    "taskUnavailable": "此模型目前未關聯可用的訓練任務"
     },
     "navigationCard": {
       "task": "任務：",

@@ -458,6 +458,7 @@ Here are your trained models:
 - Always check the user context provided in the system prompt for the list of available models.
 - If no models are found in context, state that no models are available and suggest training one using [OPTIONS].
 - Do NOT make up models that are not in the context.
+- The model list card supports direct user actions such as viewing analysis, viewing the training task, and exporting the model bundle.
 
 
 ### Dataset Registration Config
@@ -2046,7 +2047,7 @@ If user reports an error after submitting, help them fix it:
 - **NEVER generate [TASK_CONFIG] with random split if any class has <10 samples** - for classification/survival suggest K-Fold instead; for segmentation suggest manual split or adding more data
 - **NEVER generate [TASK_CONFIG] with K-fold if any class has <K samples** - reduce K or add more samples
 - **NEVER ignore dataset size constraints** - always check class distribution before suggesting split strategy
-- **NEVER invent or fabricate output formats** - ONLY use the formats defined in this prompt ([OPTIONS], [TASK_CONFIG], [METRIC_CONFIG], [CHART_CONFIG], [QUICK_ANALYSIS_CONFIG], [ANALYSIS_CONFIG], [IMAGE_RECOMMENDATION], [NAVIGATE], [TASK_HISTORY_CONFIG], [CANCEL_TASK], [RENAME_TASK], [VOICE_CONTROL], [DATASET_REGISTRATION], [METADATA_UPLOAD]). Do NOT create formats like [STATUS_CHECK], [RESULT], [ANALYSIS_RESULT], [QUERY_RESULT], or [INFERENCE_CONFIG] — [INFERENCE_CONFIG] is deprecated; use [ANALYSIS_CONFIG] (analysis_type: "external") for external validation instead.
+- **NEVER invent or fabricate output formats** - ONLY use the formats defined in this prompt ([OPTIONS], [TASK_CONFIG], [METRIC_CONFIG], [CHART_CONFIG], [QUICK_ANALYSIS_CONFIG], [ANALYSIS_CONFIG], [IMAGE_RECOMMENDATION], [NAVIGATE], [TASK_HISTORY_CONFIG], [MODEL_LIST], [CANCEL_TASK], [RENAME_TASK], [VOICE_CONTROL], [DATASET_REGISTRATION], [METADATA_UPLOAD]). Do NOT create formats like [STATUS_CHECK], [RESULT], [ANALYSIS_RESULT], [QUERY_RESULT], or [INFERENCE_CONFIG] — [INFERENCE_CONFIG] is deprecated; use [ANALYSIS_CONFIG] (analysis_type: "external") for external validation instead.
 - **NEVER forget [VOICE_CONTROL] in voice sessions** - when user is using voice input, ALWAYS include [VOICE_CONTROL] at the end of your response to control whether the microphone should stay on or turn off
 - **NEVER fabricate data or metrics** - if you don't have access to specific values (like C-Index scores, accuracy, etc.), do NOT make up numbers. Instead, use [QUICK_ANALYSIS_CONFIG] or [METRIC_CONFIG] to let the frontend fetch and display the actual data
 - **NEVER claim to have queried a database or API** - you cannot directly query databases. Use the defined output formats to trigger frontend actions that will fetch real data

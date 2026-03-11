@@ -251,6 +251,8 @@ export default function WSIViewerPage() {
   const [showCreateDatasetDialog, setShowCreateDatasetDialog] = useState(false)
   const [focusedRegionId, setFocusedRegionId] = useState<string | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const annotationIdRef = useRef<string | null>(null)
+  const saveRequestRef = useRef<Promise<boolean> | null>(null)
   const effectiveDatasetId = datasetId ?? detail?.meta?.dataset_id
   const draftCacheKey = effectiveDatasetId ?? '__NO_DATASET__'
   const draftCacheRef = useRef<{
@@ -265,6 +267,10 @@ export default function WSIViewerPage() {
   const [savingAnnotations, setSavingAnnotations] = useState(false)
   // Pending navigation when user tries to leave with unsaved changes
   const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null)
+
+  useEffect(() => {
+    annotationIdRef.current = annotationId
+  }, [annotationId])
 
   // Determine if any annotated source slide is a WSI (not a patch image)
   // Used to disable segmentation dataset creation for WSI data
@@ -782,53 +788,103 @@ export default function WSIViewerPage() {
     return wsi_id ? { [wsi_id]: [] } : {}
   }, [allAnnotations, wsi_id])
 
-  // Manual save handler
-  const handleManualSave = useCallback(async () => {
-    setSavingAnnotations(true)
-    try {
-      const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
-      if (totalRegions === 0) {
-        if (effectiveDatasetId) {
-          const id = annotationId || crypto.randomUUID()
-          const emptyDatasetDraft = buildEmptyDatasetDraftAnnotations()
-          if (!annotationId) setAnnotationId(id)
+  const clearPendingSaveTimer = useCallback(() => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+  }, [])
+
+  const persistAnnotations = useCallback(async ({
+    showToast = true,
+  }: {
+    showToast?: boolean
+  } = {}) => {
+    clearPendingSaveTimer()
+
+    if (saveRequestRef.current) {
+      const saved = await saveRequestRef.current
+      if (showToast) {
+        if (saved) {
+          toast.success(t('annotation.saved'))
+        } else {
+          toast.error(t('annotation.saveFailed'))
+        }
+      }
+      return saved
+    }
+
+    const savePromise = (async () => {
+      setSavingAnnotations(true)
+      try {
+        const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
+        const currentAnnotationId = annotationIdRef.current
+
+        if (totalRegions === 0) {
+          if (effectiveDatasetId) {
+            const id = currentAnnotationId || crypto.randomUUID()
+            const emptyDatasetDraft = buildEmptyDatasetDraftAnnotations()
+            if (!currentAnnotationId) {
+              annotationIdRef.current = id
+              setAnnotationId(id)
+            }
+            await saveAnnotation({
+              annotation_id: id,
+              source_dataset_id: effectiveDatasetId,
+              annotations: emptyDatasetDraft,
+            })
+            updateDraftCache(id, emptyDatasetDraft)
+          } else if (currentAnnotationId) {
+            annotationIdRef.current = null
+            setAnnotationId(null)
+            await deleteAnnotation(currentAnnotationId)
+            updateDraftCache(null, null)
+          } else {
+            setHasUnsavedChanges(false)
+            return true
+          }
+        } else {
+          const id = currentAnnotationId || crypto.randomUUID()
+          if (!currentAnnotationId) {
+            annotationIdRef.current = id
+            setAnnotationId(id)
+          }
           await saveAnnotation({
             annotation_id: id,
             source_dataset_id: effectiveDatasetId,
-            annotations: emptyDatasetDraft,
+            annotations: allAnnotations,
           })
-          updateDraftCache(id, emptyDatasetDraft)
-        } else if (annotationId) {
-          // Nothing to save; if an annotation exists, delete it
-          const idToDelete = annotationId
-          setAnnotationId(null)
-          await deleteAnnotation(idToDelete)
-          updateDraftCache(null, null)
+          updateDraftCache(id, allAnnotations)
         }
-      } else {
-        const id = annotationId || crypto.randomUUID()
-        if (!annotationId) setAnnotationId(id)
-        await saveAnnotation({
-          annotation_id: id,
-          source_dataset_id: effectiveDatasetId,
-          annotations: allAnnotations,
-        })
-        updateDraftCache(id, allAnnotations)
+
+        setHasUnsavedChanges(false)
+        if (effectiveDatasetId) {
+          await refreshDatasetAnnotationSummary()
+        }
+        if (showToast) {
+          toast.success(t('annotation.saved'))
+        }
+        return true
+      } catch (err) {
+        console.error('Failed to save annotation:', err)
+        if (showToast) {
+          toast.error(t('annotation.saveFailed'))
+        }
+        return false
+      } finally {
+        saveRequestRef.current = null
+        setSavingAnnotations(false)
       }
-      setHasUnsavedChanges(false)
-      if (effectiveDatasetId) {
-        await refreshDatasetAnnotationSummary()
-      }
-      toast.success(t('annotation.saved'))
-      return true
-    } catch (err) {
-      console.error('Failed to save annotation:', err)
-      toast.error(t('annotation.saveFailed'))
-      return false
-    } finally {
-      setSavingAnnotations(false)
-    }
-  }, [allAnnotations, annotationId, buildEmptyDatasetDraftAnnotations, effectiveDatasetId, refreshDatasetAnnotationSummary, t, toast, updateDraftCache])
+    })()
+
+    saveRequestRef.current = savePromise
+    return await savePromise
+  }, [allAnnotations, buildEmptyDatasetDraftAnnotations, clearPendingSaveTimer, effectiveDatasetId, refreshDatasetAnnotationSummary, t, toast, updateDraftCache])
+
+  // Manual save handler
+  const handleManualSave = useCallback(async () => {
+    return await persistAnnotations({ showToast: true })
+  }, [persistAnnotations])
 
   const handleDeleteCrossSlideByLabel = useCallback(async (labels: string[]) => {
     const labelSet = new Set(labels)
@@ -913,37 +969,18 @@ export default function WSIViewerPage() {
   useEffect(() => {
     if (!annotationMode) return
     if (!hasUnsavedChanges) return
+    if (savingAnnotations) return
     const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
 
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    clearPendingSaveTimer()
 
     // For dataset-scoped annotations, persist empty drafts so intentional GT clearing
     // does not resurrect the dataset GT on the next load.
     if (totalRegions === 0) {
       if (effectiveDatasetId) {
-        const id = annotationId || crypto.randomUUID()
-        const emptyDatasetDraft = buildEmptyDatasetDraftAnnotations()
-        if (!annotationId) setAnnotationId(id)
-        saveAnnotation({
-          annotation_id: id,
-          source_dataset_id: effectiveDatasetId,
-          annotations: emptyDatasetDraft,
-        }).then(() => {
-          updateDraftCache(id, emptyDatasetDraft)
-          setHasUnsavedChanges(false)
-          refreshDatasetAnnotationSummary()
-        }).catch(err => {
-          console.error('Failed to save empty dataset annotation:', err)
-        })
-      } else if (annotationId) {
-        const idToDelete = annotationId
-        setAnnotationId(null)
-        deleteAnnotation(idToDelete).then(() => {
-          updateDraftCache(null, null)
-          setHasUnsavedChanges(false)
-        }).catch(err => {
-          console.error('Failed to delete empty annotation:', err)
-        })
+        void persistAnnotations({ showToast: false })
+      } else if (annotationIdRef.current) {
+        void persistAnnotations({ showToast: false })
       } else {
         setHasUnsavedChanges(false)
       }
@@ -951,28 +988,14 @@ export default function WSIViewerPage() {
     }
 
     saveTimerRef.current = setTimeout(async () => {
-      try {
-        const id = annotationId || crypto.randomUUID()
-        if (!annotationId) setAnnotationId(id)
-        await saveAnnotation({
-          annotation_id: id,
-          source_dataset_id: effectiveDatasetId,
-          annotations: allAnnotations,
-        })
-        updateDraftCache(id, allAnnotations)
-        setHasUnsavedChanges(false)
-        if (effectiveDatasetId) {
-          await refreshDatasetAnnotationSummary()
-        }
-      } catch (err) {
-        console.error('Failed to auto-save annotation:', err)
-      }
+      saveTimerRef.current = null
+      await persistAnnotations({ showToast: false })
     }, 2000)
 
     return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      clearPendingSaveTimer()
     }
-  }, [annotationMode, allAnnotations, annotationId, buildEmptyDatasetDraftAnnotations, effectiveDatasetId, hasUnsavedChanges, refreshDatasetAnnotationSummary, updateDraftCache])
+  }, [allAnnotations, annotationMode, clearPendingSaveTimer, effectiveDatasetId, hasUnsavedChanges, persistAnnotations, savingAnnotations])
 
   // Annotation: recovery when entering annotation mode
   useEffect(() => {

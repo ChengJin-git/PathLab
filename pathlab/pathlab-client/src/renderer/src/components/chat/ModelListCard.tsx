@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Box, Database, Tag, Brain, ChevronDown, ChevronUp, Network, Fingerprint, Activity, Clock } from 'lucide-react'
+import { Box, Database, Tag, Brain, ChevronDown, ChevronUp, Network, Fingerprint, Activity, Clock, Download, Loader2, LineChart, FolderKanban } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
+import { downloadTrainedModelExport } from '../../api'
 import { Card, CardContent } from '../ui/card'
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
@@ -21,6 +23,11 @@ export interface ModelInfo {
 
 export interface ModelListConfig {
   models: ModelInfo[]
+}
+
+interface ModelListCardProps {
+  config: ModelListConfig
+  onToast?: (toast: { type: 'error' | 'success' | 'info'; message: string }) => void
 }
 
 /**
@@ -44,13 +51,59 @@ export function removeModelListBlock(content: string): string {
   return content.replace(/\[MODEL_LIST\]([\s\S]*?)\[\/MODEL_LIST\]/g, '').trim()
 }
 
-export function ModelListCard({ config }: { config: ModelListConfig }) {
+export function ModelListCard({ config, onToast }: ModelListCardProps) {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const { models } = config
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [exportingModelId, setExportingModelId] = useState<string | null>(null)
 
   const toggleExpand = (id: string) => {
     setExpandedId(expandedId === id ? null : id)
+  }
+
+  const preserveChatReturnContext = () => {
+    const messagesContainer = document.querySelector('[data-chat-messages-container]')
+    if (messagesContainer) {
+      sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
+    }
+    const conversationId = document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
+    if (conversationId) {
+      sessionStorage.setItem('ai-chat-conversation-id', conversationId)
+    }
+  }
+
+  const handleViewAnalysis = (model: ModelInfo) => {
+    if (!model.task_id) {
+      onToast?.({ type: 'error', message: t('chatComponents.modelList.taskUnavailable') })
+      return
+    }
+    preserveChatReturnContext()
+    navigate(`/results?task=${encodeURIComponent(model.task_id)}`, { state: { fromAIChat: true } })
+  }
+
+  const handleViewTask = (model: ModelInfo) => {
+    if (!model.task_id) {
+      onToast?.({ type: 'error', message: t('chatComponents.modelList.taskUnavailable') })
+      return
+    }
+    preserveChatReturnContext()
+    navigate(`/task/${encodeURIComponent(model.task_id)}`, { state: { fromAIChat: true } })
+  }
+
+  const handleExportModel = async (model: ModelInfo) => {
+    if (exportingModelId === model.id) return
+    setExportingModelId(model.id)
+    try {
+      await downloadTrainedModelExport(model.id)
+      onToast?.({ type: 'success', message: t('chatComponents.modelList.exportReady', { name: model.name }) })
+    } catch (error) {
+      console.error('Failed to export model from AI chat:', error)
+      const message = error instanceof Error ? error.message : t('chatComponents.modelList.exportFailed')
+      onToast?.({ type: 'error', message })
+    } finally {
+      setExportingModelId(current => current === model.id ? null : current)
+    }
   }
 
   if (!models || models.length === 0) {
@@ -181,6 +234,50 @@ export function ModelListCard({ config }: { config: ModelListConfig }) {
                               <span>{new Date(model.created_at).toLocaleDateString()}</span>
                             </div>
                           )}
+                        </div>
+
+                        <div className="grid gap-2 pt-2 sm:grid-cols-3">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="justify-start gap-2"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleViewAnalysis(model)
+                            }}
+                          >
+                            <LineChart className="w-4 h-4" />
+                            {t('chatComponents.modelList.viewAnalysis')}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="justify-start gap-2"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleViewTask(model)
+                            }}
+                          >
+                            <FolderKanban className="w-4 h-4" />
+                            {t('chatComponents.modelList.viewTask')}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="justify-start gap-2"
+                            disabled={exportingModelId === model.id}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void handleExportModel(model)
+                            }}
+                          >
+                            {exportingModelId === model.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                            {exportingModelId === model.id
+                              ? t('chatComponents.modelList.exportingModel')
+                              : t('chatComponents.modelList.exportModel')}
+                          </Button>
                         </div>
                       </div>
                     </motion.div>

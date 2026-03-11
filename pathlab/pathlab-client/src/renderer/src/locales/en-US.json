@@ -2312,7 +2312,14 @@
       "modelId": "Model ID",
       "taskId": "Task ID",
       "classes": "Classes",
-      "embeddingDim": "Embedding Dim"
+    "embeddingDim": "Embedding Dim",
+    "viewAnalysis": "View Analysis",
+    "viewTask": "View Task",
+    "exportModel": "Export Model",
+    "exportingModel": "Preparing Export...",
+    "exportReady": "Model export is ready: {{name}}",
+    "exportFailed": "Failed to export model",
+    "taskUnavailable": "This model is not linked to an available training task"
     },
     "navigationCard": {
       "task": "Task:",
