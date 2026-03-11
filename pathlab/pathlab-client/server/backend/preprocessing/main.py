@@ -354,6 +354,7 @@ async def get_patch_image(wsi_id: str, db: AsyncSession = Depends(get_db)):
 async def get_thumbnail(
     wsi_id: str,
     size: int = Query(256, description="Max thumbnail size (width or height)"),
+    preset: Optional[str] = Query(None, description="Optional rendering preset for lightweight previews"),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -365,6 +366,7 @@ async def get_thumbnail(
     from PIL import Image
 
     try:
+        cache_headers = {"Cache-Control": "private, max-age=600"} if preset == "recommendation" else {}
         wsi = await WSIRepository.get_by_id(db, wsi_id)
         if not wsi:
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
@@ -387,7 +389,7 @@ async def get_thumbnail(
                 img.save(img_bytes, format='JPEG', quality=85)
                 img_bytes.seek(0)
 
-                return Response(content=img_bytes.getvalue(), media_type='image/jpeg')
+                return Response(content=img_bytes.getvalue(), media_type='image/jpeg', headers=cache_headers)
         else:
             # WSI file: use ASlide to get thumbnail
             slide = None
@@ -416,7 +418,7 @@ async def get_thumbnail(
                 thumbnail.save(img_bytes, format='JPEG', quality=85)
                 img_bytes.seek(0)
 
-                return Response(content=img_bytes.getvalue(), media_type='image/jpeg')
+                return Response(content=img_bytes.getvalue(), media_type='image/jpeg', headers=cache_headers)
             except Exception as e:
                 logger.error(f"Failed to generate WSI thumbnail: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to generate thumbnail: {str(e)}")

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, type ReactNode } from 'react'
+import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Image as ImageIcon, ExternalLink, AlertCircle, ImageOff, Layers } from 'lucide-react'
@@ -7,11 +7,11 @@ import {
   fetchWSIIds,
   fetchWSIDetail,
   fetchAllResults,
-  getThumbnailUrl,
+  getRecommendationThumbnailUrl as getThumbnailUrl,
   fetchAvailableHeatmaps,
   getRecommendationPatchCAMImageUrl as getPatchCAMImageUrl,
   getRecommendationHeatmapThumbnailUrl as getHeatmapThumbnailUrl,
-  getSegMaskImageUrl,
+  getRecommendationSegMaskImageUrl as getSegMaskImageUrl,
   getWSIGroundTruth,
   type WSISummary,
   type ResultWithWSI,
@@ -86,6 +86,78 @@ const imageCache = new Map<string, { images: ImageWithOverlays[]; error: string 
 const groundTruthMaskCache = new Map<string, AnnotationRegion[]>()
 const wsiDimensionCache = new Map<string, { width: number; height: number }>()
 const CARD_THUMBNAIL_SIZE = 160
+const OVERLAY_FETCH_CONCURRENCY = 2
+const DETAIL_FETCH_CONCURRENCY = 2
+const OVERLAY_THUMBNAIL_LOAD_CONCURRENCY = 2
+
+interface QueueWaiter {
+  cancelled: boolean
+  resolve: (release: () => void) => void
+}
+
+function createImageLoadQueue(limit: number) {
+  let active = 0
+  const waiters: QueueWaiter[] = []
+
+  const pump = () => {
+    while (active < limit && waiters.length > 0) {
+      const waiter = waiters.shift()
+      if (!waiter || waiter.cancelled) continue
+
+      active += 1
+      let released = false
+      waiter.resolve(() => {
+        if (released) return
+        released = true
+        active = Math.max(0, active - 1)
+        pump()
+      })
+    }
+  }
+
+  return {
+    acquire() {
+      let waiterRef: QueueWaiter | null = null
+      const promise = new Promise<() => void>((resolve) => {
+        waiterRef = { cancelled: false, resolve }
+        waiters.push(waiterRef)
+        pump()
+      })
+
+      return {
+        promise,
+        cancel: () => {
+          if (waiterRef) waiterRef.cancelled = true
+        }
+      }
+    }
+  }
+}
+
+const overlayThumbnailLoadQueue = createImageLoadQueue(OVERLAY_THUMBNAIL_LOAD_CONCURRENCY)
+
+async function mapWithConcurrencyLimit<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return []
+
+  const workerCount = Math.max(1, Math.min(limit, items.length))
+  const results = new Array<R>(items.length)
+  let nextIndex = 0
+
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex
+      nextIndex += 1
+      results[currentIndex] = await mapper(items[currentIndex], currentIndex)
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => worker()))
+  return results
+}
 
 function getFileExtensionFromName(filename: string): string {
   const lastDot = filename.lastIndexOf('.')
@@ -204,10 +276,36 @@ function OverlayThumbnailButton({
   loadingColorClass: string
   className?: string
 }) {
-  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [loadState, setLoadState] = useState<'queued' | 'loading' | 'ready' | 'error'>('queued')
+  const releaseLoadSlotRef = useRef<(() => void) | null>(null)
+
+  const releaseLoadSlot = () => {
+    releaseLoadSlotRef.current?.()
+    releaseLoadSlotRef.current = null
+  }
 
   useEffect(() => {
-    setLoadState('loading')
+    releaseLoadSlot()
+    setLoadState('queued')
+
+    let active = true
+    const ticket = overlayThumbnailLoadQueue.acquire()
+
+    void ticket.promise.then((releaseSlot) => {
+      if (!active) {
+        releaseSlot()
+        return
+      }
+
+      releaseLoadSlotRef.current = releaseSlot
+      setLoadState('loading')
+    })
+
+    return () => {
+      active = false
+      ticket.cancel()
+      releaseLoadSlot()
+    }
   }, [src])
 
   return (
@@ -217,15 +315,21 @@ function OverlayThumbnailButton({
       title={title}
     >
       <div className="relative w-full h-full bg-gray-100 rounded-lg overflow-hidden border border-gray-200 group-hover/img:border-orange-300 shadow-sm transition-colors">
-        {loadState !== 'error' && (
+        {loadState !== 'error' && loadState !== 'queued' && (
           <img
             src={src}
             alt={alt}
             className={`w-full h-full object-cover ${loadState === 'ready' ? 'opacity-100' : 'opacity-0'}`}
             loading="lazy"
             decoding="async"
-            onLoad={() => setLoadState('ready')}
-            onError={() => setLoadState('error')}
+            onLoad={() => {
+              releaseLoadSlot()
+              setLoadState('ready')
+            }}
+            onError={() => {
+              releaseLoadSlot()
+              setLoadState('error')
+            }}
           />
         )}
 
@@ -348,7 +452,7 @@ function GroundTruthMaskThumbnail({
   useEffect(() => {
     let active = true
 
-    if (imageDimensions) return
+    if (imageDimensions || status !== 'ready' || regions.length === 0 || !!renderDimensions) return
 
     const loadDimensions = async () => {
       try {
@@ -372,7 +476,7 @@ function GroundTruthMaskThumbnail({
     return () => {
       active = false
     }
-  }, [image.wsi_id, imageDimensions])
+  }, [image.wsi_id, imageDimensions, regions.length, renderDimensions, status])
 
   return (
     <button
@@ -505,6 +609,8 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
   )
 
   useEffect(() => {
+    let active = true
+
     // Check cache first
     const cached = imageCache.get(filterKey)
     if (cached) {
@@ -512,10 +618,16 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
       setError(cached.error)
       setIsOverlayInfoLoading(false)
       setIsLoading(false)
-      return
+      return () => {
+        active = false
+      }
     }
 
-    loadImages()
+    void loadImages(() => active)
+
+    return () => {
+      active = false
+    }
   }, [filterKey])
 
   /**
@@ -551,7 +663,8 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
     return filtered
   }
 
-  const loadImages = async () => {
+  const loadImages = async (isActive: () => boolean = () => true) => {
+    if (!isActive()) return
     setIsLoading(true)
     setIsOverlayInfoLoading(false)
     setError(null)
@@ -645,28 +758,44 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         resultPrediction: predictionByWsiId.get(img.wsi_id) ?? null,
       }))
 
+      if (!isActive()) return
       setImagesWithOverlays(baseImageInfo)
       setIsLoading(false)
 
       const hydratedImagesPromise = shouldHydrateLimitedImages
-        ? Promise.all(
-          limitedImages.map(async (img) => {
-            try {
-              const detail = await fetchWSIDetail(img.wsi_id)
-              return detail.meta
-            } catch {
-              return null
-            }
-          })
-        )
+        ? mapWithConcurrencyLimit(limitedImages, DETAIL_FETCH_CONCURRENCY, async (img) => {
+          if (!isActive()) return null
+          try {
+            const detail = await fetchWSIDetail(img.wsi_id)
+            return isActive() ? detail.meta : null
+          } catch {
+            return null
+          }
+        })
         : Promise.resolve<WSISummary[]>([])
 
       let imageOverlayInfo: ImageWithOverlays[]
       if (needsOverlayLookup) {
+        if (!isActive()) return
         setIsOverlayInfoLoading(true)
-        const overlayPromises = limitedImages.map(async (img) => {
+        imageOverlayInfo = await mapWithConcurrencyLimit(limitedImages, OVERLAY_FETCH_CONCURRENCY, async (img) => {
+          if (!isActive()) {
+            return {
+              image: img,
+              overlays: [],
+              resultPrediction: predictionByWsiId.get(img.wsi_id) ?? null,
+            }
+          }
+
           try {
             let overlays = await fetchAvailableHeatmaps(img.wsi_id)
+            if (!isActive()) {
+              return {
+                image: img,
+                overlays: [],
+                resultPrediction: predictionByWsiId.get(img.wsi_id) ?? null,
+              }
+            }
 
             // Apply heatmap_filter if specified
             if (recommendation.heatmap_filter) {
@@ -712,12 +841,12 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
             }
           }
         })
-        imageOverlayInfo = await Promise.all(overlayPromises)
       } else {
         imageOverlayInfo = baseImageInfo
       }
 
       const hydratedImages = await hydratedImagesPromise
+      if (!isActive()) return
       if (hydratedImages.length > 0) {
         const hydratedById = new Map(hydratedImages.filter((img): img is WSISummary => !!img).map(img => [img.wsi_id, img]))
         imageOverlayInfo = imageOverlayInfo.map(item => ({
@@ -728,16 +857,19 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         }))
       }
 
+      if (!isActive()) return
       setImagesWithOverlays(imageOverlayInfo)
       // Cache the result
       imageCache.set(filterKey, { images: imageOverlayInfo, error: null })
     } catch (err) {
+      if (!isActive()) return
       setImagesWithOverlays([])
       setError(t('chatComponents.imageRecommendation.failedToLoad'))
       console.error('Failed to load images:', err)
       // Cache the error state too
       imageCache.set(filterKey, { images: [], error: t('chatComponents.imageRecommendation.failedToLoad') })
     } finally {
+      if (!isActive()) return
       setIsOverlayInfoLoading(false)
       setIsLoading(false)
     }

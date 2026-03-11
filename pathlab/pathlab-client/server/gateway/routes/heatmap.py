@@ -16,6 +16,16 @@ from backend.auth.dependencies import get_wsi_with_access
 
 router = APIRouter(prefix="/heatmap", tags=["Heatmap & Visualization"])
 
+RECOMMENDATION_PRESET = "recommendation"
+DEFAULT_PROXY_TIMEOUT_SECONDS = 30.0
+PATCH_RECOMMENDATION_PROXY_TIMEOUT_SECONDS = 60.0
+
+
+def _get_patch_overlay_proxy_timeout(preset: Optional[str]) -> float:
+    if preset == RECOMMENDATION_PRESET:
+        return PATCH_RECOMMENDATION_PROXY_TIMEOUT_SECONDS
+    return DEFAULT_PROXY_TIMEOUT_SECONDS
+
 
 async def _check_wsi_access(wsi_id: str, user: User, db: AsyncSession):
     """Helper to check WSI access permission (ownership or elevated dataset permission)."""
@@ -159,14 +169,14 @@ async def get_patch_cam(
             "GET",
             f"/wsi/{wsi_id}/patch_cam",
             params=params,
-            timeout=30.0,
+            timeout=_get_patch_overlay_proxy_timeout(preset),
         )
 
     return await proxy_preprocessing_binary(
         "GET",
         f"/wsi/{wsi_id}/patch_cam",
         params=params,
-        timeout=30.0,
+        timeout=_get_patch_overlay_proxy_timeout(preset),
         default_media_type="image/png",
     )
 
@@ -176,6 +186,7 @@ async def get_seg_mask(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID"),
     fold_key: Optional[str] = Query(None, description="Fold key for k-fold results"),
+    preset: Optional[str] = Query(None, description="Optional rendering preset for lightweight previews"),
     size: Optional[int] = Query(None, description="Optional max thumbnail size for previews"),
     user: User = Depends(get_user_from_header_or_param),
     db: AsyncSession = Depends(get_db)
@@ -190,6 +201,8 @@ async def get_seg_mask(
         params["task_id"] = task_id
     if fold_key:
         params["fold_key"] = fold_key
+    if preset:
+        params["preset"] = preset
     if size is not None:
         params["size"] = size
 
@@ -197,7 +210,7 @@ async def get_seg_mask(
         "GET",
         f"/wsi/{wsi_id}/seg_mask",
         params=params,
-        timeout=30.0,
+        timeout=_get_patch_overlay_proxy_timeout(preset),
         default_media_type="image/png",
     )
 
@@ -309,6 +322,7 @@ async def get_heatmap_thumbnail(
 async def get_thumbnail(
     wsi_id: str,
     size: int = Query(256, description="Max thumbnail size (width or height)"),
+    preset: Optional[str] = Query(None, description="Optional rendering preset for lightweight previews"),
     user: User = Depends(get_user_from_header_or_param),
     db: AsyncSession = Depends(get_db)
 ):
@@ -323,10 +337,13 @@ async def get_thumbnail(
     Proxies to: GET /wsi/{wsi_id}/thumbnail
     """
     await _check_wsi_access(wsi_id, user, db)
+    params = {"size": size}
+    if preset:
+        params["preset"] = preset
     return await proxy_preprocessing_binary(
         "GET",
         f"/wsi/{wsi_id}/thumbnail",
-        params={"size": size},
+        params=params,
         timeout=30.0,
         default_media_type="image/jpeg",
     )

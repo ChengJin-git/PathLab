@@ -32,7 +32,11 @@ from .heatmap_utils import (
     normalize_attention,
     find_best_fold,
 )
-from .heatmap_preview_cache import ensure_recommendation_preview_cache
+from .heatmap_preview_cache import (
+    ensure_patch_cam_recommendation_preview_cache,
+    ensure_recommendation_preview_cache,
+    ensure_segmentation_recommendation_preview_cache,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1047,6 +1051,42 @@ async def get_patch_cam(
         else:
             cam_file = sorted(cam_files, key=lambda f: f.stat().st_mtime, reverse=True)[0]
 
+        if format != "json" and preset == RECOMMENDATION_PRESET:
+            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            if not wsi:
+                raise HTTPException(status_code=404, detail=f"Patch not found: {wsi_id}")
+
+            preview_path = ensure_patch_cam_recommendation_preview_cache(
+                wsi_id,
+                cam_file,
+                UPLOADS_DIR,
+                wsi_path=wsi.wsi_path,
+                file_size=getattr(wsi, "file_size", None),
+            )
+            if preview_path is not None:
+                from PIL import Image
+                import io
+
+                with Image.open(preview_path) as preview_img:
+                    blended_rgb = preview_img.convert("RGB")
+
+                source_w, source_h = blended_rgb.size
+                if size is not None and size > 0:
+                    scale = min(size / max(source_w, source_h), 1.0)
+                    if scale < 1.0:
+                        target_w = max(1, int(round(source_w * scale)))
+                        target_h = max(1, int(round(source_h * scale)))
+                        blended_rgb = blended_rgb.resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+                buf = io.BytesIO()
+                blended_rgb.save(buf, format='PNG')
+                buf.seek(0)
+                return Response(
+                    content=buf.getvalue(),
+                    media_type="image/png",
+                    headers=render_settings["cache_headers"],
+                )
+
         # Load CAM data
         cam = np.load(str(cam_file), allow_pickle=True)
         logger.info(f"Loaded CAM: shape={cam.shape}, min={cam.min():.4f}, max={cam.max():.4f}")
@@ -1169,6 +1209,7 @@ async def get_seg_mask(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID"),
     fold_key: Optional[str] = Query(None, description="Fold key for k-fold results"),
+    preset: Optional[str] = Query(None, description="Optional rendering preset for lightweight previews"),
     size: Optional[int] = Query(None, description="Optional max thumbnail size for previews"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1184,6 +1225,7 @@ async def get_seg_mask(
     import io
 
     try:
+        render_settings = _get_render_settings(preset, None, None, None, None)
         result_dir = AI_RESULTS_DIR / wsi_id
         if not result_dir.exists():
             raise HTTPException(status_code=404, detail="No results for this WSI")
@@ -1217,18 +1259,46 @@ async def get_seg_mask(
         else:
             mask_file = sorted(mask_files, key=lambda f: f.stat().st_mtime, reverse=True)[0]
 
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if not wsi:
+            raise HTTPException(status_code=404, detail=f"Patch not found: {wsi_id}")
+
+        if preset == RECOMMENDATION_PRESET:
+            preview_path = ensure_segmentation_recommendation_preview_cache(
+                wsi_id,
+                mask_file,
+                UPLOADS_DIR,
+                seg_colors=_SEG_COLORS,
+                wsi_path=wsi.wsi_path,
+                file_size=getattr(wsi, "file_size", None),
+            )
+            if preview_path is not None:
+                with Image.open(preview_path) as preview_img:
+                    blended_rgb = preview_img.convert("RGB")
+
+                source_w, source_h = blended_rgb.size
+                if size is not None and size > 0:
+                    scale = min(size / max(source_w, source_h), 1.0)
+                    if scale < 1.0:
+                        target_w = max(1, int(round(source_w * scale)))
+                        target_h = max(1, int(round(source_h * scale)))
+                        blended_rgb = blended_rgb.resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+                buf = io.BytesIO()
+                blended_rgb.save(buf, format='PNG')
+                buf.seek(0)
+                return Response(
+                    content=buf.getvalue(),
+                    media_type="image/png",
+                    headers=render_settings["cache_headers"],
+                )
+
         # Load mask: shape (num_classes, H, W), values 0/1
         mask = np.load(str(mask_file), allow_pickle=True)
         # Normalize persisted masks across historical dtypes (bool/float/uint8)
         # so viewer/chat overlay rendering always consumes a binary uint8 array.
         mask = (mask > 0).astype(np.uint8, copy=False)
         logger.info(f"Loaded seg mask: shape={mask.shape}")
-
-        # Load original image
-        from backend.database.repositories import WSIRepository
-        wsi = await WSIRepository.get_by_id(db, wsi_id)
-        if not wsi:
-            raise HTTPException(status_code=404, detail=f"Patch not found: {wsi_id}")
 
         file_path = Path(wsi.wsi_path)
         with Image.open(file_path) as img:
@@ -1277,7 +1347,11 @@ async def get_seg_mask(
         blended_rgb.save(buf, format='PNG')
         buf.seek(0)
 
-        return Response(content=buf.getvalue(), media_type="image/png")
+        return Response(
+            content=buf.getvalue(),
+            media_type="image/png",
+            headers=render_settings["cache_headers"],
+        )
 
     except HTTPException:
         raise

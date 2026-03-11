@@ -236,6 +236,23 @@ export function getSegMaskImageUrl(wsi_id: string, task_id?: string, fold_key?: 
 }
 
 /**
+ * Get segmentation mask overlay image URL optimized for recommendation card previews.
+ */
+export function getRecommendationSegMaskImageUrl(
+  wsi_id: string,
+  task_id?: string,
+  fold_key?: string,
+  size: number = 160,
+): string {
+  return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/seg_mask`, {
+    task_id,
+    fold_key,
+    preset: 'recommendation',
+    size,
+  })
+}
+
+/**
  * Get WSI heatmap thumbnail URL (rendered heatmap overlay on thumbnail)
  * @param wsi_id - The WSI ID
  * @param task_id - Optional task ID for specific heatmap
@@ -320,5 +337,15 @@ export function getPatchFileImageUrl(wsi_id: string): string {
  */
 export function getThumbnailUrl(wsi_id: string, size: number = 256): string {
   return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/thumbnail`, { size })
+}
+
+/**
+ * Get thumbnail image URL optimized for recommendation card previews.
+ */
+export function getRecommendationThumbnailUrl(wsi_id: string, size: number = 160): string {
+  return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/thumbnail`, {
+    size,
+    preset: 'recommendation',
+  })
 }
 

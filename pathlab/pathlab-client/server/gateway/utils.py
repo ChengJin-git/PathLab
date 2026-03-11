@@ -32,6 +32,13 @@ from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 SEGMENTATION_TASK_TYPE = "segmentation"
 SEGMENTATION_DATA_TYPE = "patch"
 SEGMENTATION_AGGREGATION_LEVEL = "file"
+PROXY_BINARY_CACHE_HEADER_NAMES = (
+    "cache-control",
+    "etag",
+    "last-modified",
+    "expires",
+    "content-disposition",
+)
 PREPROCESSING_COMPUTE_PATCHES_DEFAULTS = {
     "level": 0,
     "force_recompute": False,
@@ -486,9 +493,15 @@ async def proxy_preprocessing_binary(
         json_body=json_body,
         timeout=timeout,
     )
+    proxied_headers = {
+        header_name: header_value
+        for header_name in PROXY_BINARY_CACHE_HEADER_NAMES
+        if (header_value := response.headers.get(header_name)) is not None
+    }
     return Response(
         content=response.content,
         media_type=response.headers.get("content-type", default_media_type),
+        headers=proxied_headers,
     )
 
 
