@@ -254,15 +254,17 @@ function PendingThumbnailSlot({
   badgeLabel,
   badgeClassName,
   loadingColorClass,
+  className = 'relative flex-1 min-w-[60px] aspect-square md:flex-none md:flex-shrink-0 md:snap-start md:aspect-auto md:w-32 md:h-32',
 }: {
   title: string
   badgeLabel: string
   badgeClassName: string
   loadingColorClass: string
+  className?: string
 }) {
   return (
     <div
-      className="relative flex-1 min-w-[60px] aspect-square md:flex-none md:flex-shrink-0 md:snap-start md:aspect-auto md:w-32 md:h-32"
+      className={className}
       title={title}
       aria-label={title}
     >
@@ -860,24 +862,36 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                 + (recommendation.show_heatmap && (hasHeatmap || showOverlayLoadingPlaceholder) ? 1 : 0)
                 + (wantsPredictionMask && fileType === 'Patch' ? 1 : 0)
                 + (wantsGroundTruthMask && fileType === 'Patch' ? 1 : 0)
+              const useDesktopSegmentationGridLayout = isSegmentationCard && fileType === 'Patch' && thumbnailCount === 4
+              const thumbnailClassName = useDesktopSegmentationGridLayout
+                ? 'relative flex-1 min-w-[60px] aspect-square md:w-full md:aspect-square group/img'
+                : 'relative flex-1 min-w-[60px] aspect-square md:flex-none md:flex-shrink-0 md:snap-start md:aspect-auto md:w-32 md:h-32 group/img'
+              const thumbnailSlotClassName = useDesktopSegmentationGridLayout
+                ? 'relative flex-1 min-w-[60px] aspect-square md:w-full md:aspect-square'
+                : 'relative flex-1 min-w-[60px] aspect-square md:flex-none md:flex-shrink-0 md:snap-start md:aspect-auto md:w-32 md:h-32'
+              const thumbnailsContainerClassName = useDesktopSegmentationGridLayout
+                ? `${thumbnailCount > 2 ? 'grid grid-cols-2' : 'flex'} gap-2 w-full md:grid md:grid-cols-4`
+                : `${thumbnailCount > 2 ? 'grid grid-cols-2' : 'flex'} gap-2 w-full md:flex md:w-auto md:overflow-x-auto md:snap-x md:[&::-webkit-scrollbar]:hidden md:[-ms-overflow-style:none] md:[scrollbar-width:none] md:shrink-0`
               return (
                 <div
                   key={image.wsi_id}
                   className="group p-3 sm:p-4 bg-gray-50 hover:bg-orange-50 rounded-xl border border-gray-200 hover:border-orange-300 transition-all"
                 >
-                  <div className="flex flex-col md:flex-row md:flex-wrap md:items-start gap-3">
+                  <div className={useDesktopSegmentationGridLayout ? 'flex flex-col gap-3' : 'flex flex-col md:flex-row md:flex-wrap md:items-start gap-3'}>
                     {/* Images Container - keep 2×2 grid for >2 thumbnails on mobile/small screens; switch to horizontal strip on desktop */}
-                    <div className={`${thumbnailCount > 2 ? 'grid grid-cols-2' : 'flex'} gap-2 w-full md:flex md:w-auto md:overflow-x-auto md:snap-x md:[&::-webkit-scrollbar]:hidden md:[-ms-overflow-style:none] md:[scrollbar-width:none] md:shrink-0`}>
+                    <div className={thumbnailsContainerClassName}>
                       {/* Original image */}
                       <button
                         onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
-                        className="relative flex-1 min-w-[60px] aspect-square md:flex-none md:flex-shrink-0 md:snap-start md:aspect-auto md:w-32 md:h-32 group/img"
+                        className={thumbnailClassName}
                       >
                         <div className="w-full h-full bg-gray-100 rounded-lg overflow-hidden border border-gray-200 group-hover/img:border-orange-300 shadow-sm transition-colors">
                           <img
-                            src={getThumbnailUrl(image.wsi_id, 256)}
+                            src={getThumbnailUrl(image.wsi_id, CARD_THUMBNAIL_SIZE)}
                             alt={image.original_filename}
                             className="w-full h-full object-cover"
+                            loading="lazy"
+                            decoding="async"
                             onError={(e) => {
                               e.currentTarget.style.display = 'none'
                               const placeholder = e.currentTarget.nextElementSibling as HTMLElement
@@ -927,6 +941,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                             badgeClassName="bg-green-100/90 text-green-700"
                             loadingColorClass="text-green-500"
                             fallback={<Layers className="w-8 h-8 text-gray-300" />}
+                            className={thumbnailClassName}
                           />
                         ) : showOverlayLoadingPlaceholder ? (
                           <PendingThumbnailSlot
@@ -934,6 +949,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                             badgeLabel={t('chatComponents.imageRecommendation.heatmap')}
                             badgeClassName="bg-green-100/90 text-green-700"
                             loadingColorClass="text-green-500"
+                            className={thumbnailSlotClassName}
                           />
                         ) : null
                       )}
@@ -954,6 +970,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                             badgeClassName="bg-indigo-100/90 text-indigo-700"
                             loadingColorClass="text-indigo-500"
                             fallback={<Layers className="w-8 h-8 text-gray-300" />}
+                            className={thumbnailClassName}
                           />
                         ) : showOverlayLoadingPlaceholder ? (
                           <PendingThumbnailSlot
@@ -961,9 +978,10 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                             badgeLabel={t('chatComponents.imageRecommendation.modelPredictionMaskShort')}
                             badgeClassName="bg-indigo-100/90 text-indigo-700"
                             loadingColorClass="text-indigo-500"
+                            className={thumbnailSlotClassName}
                           />
                         ) : (
-                          <div className="relative flex-1 min-w-[60px] aspect-square md:flex-none md:flex-shrink-0 md:snap-start md:aspect-auto md:w-32 md:h-32">
+                          <div className={thumbnailSlotClassName}>
                             <div className="w-full h-full bg-gray-100 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center p-3 text-center">        
                               <div className="flex flex-col items-center gap-2 text-gray-500">
                                 <Layers className="w-6 h-6 opacity-50" />
@@ -982,7 +1000,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                       )}
 
                       {wantsGroundTruthMask && fileType === 'Patch' && (
-                        <div className="flex-1 min-w-[60px] aspect-square md:flex-none md:flex-shrink-0 md:snap-start md:aspect-auto md:w-32 md:h-32 shadow-sm rounded-lg">
+                        <div className={`${thumbnailSlotClassName} shadow-sm rounded-lg`}>
                           <GroundTruthMaskThumbnail
                             image={image}
                             onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
@@ -992,8 +1010,8 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                     </div>
 
                     {/* Image info */}
-                    <div className="w-full md:flex-1 md:min-w-0 flex flex-col pt-2 md:pt-1">
-                      <div className="flex justify-between items-start gap-2">
+                    <div className={`w-full md:min-w-0 flex flex-col pt-2 ${useDesktopSegmentationGridLayout ? 'md:pt-0' : 'md:flex-1 md:pt-1'}`}>
+                      <div className={useDesktopSegmentationGridLayout ? 'flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2' : 'flex justify-between items-start gap-2'}>
                         <p className="text-sm sm:text-base font-semibold text-gray-900 break-all leading-tight">
                           {image.original_filename}
                         </p>
