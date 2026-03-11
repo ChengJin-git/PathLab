@@ -626,11 +626,48 @@ async def _run_segmentation_analysis(
     if progress_callback:
         await progress_callback(90)
 
+    # Save detailed per-image results for download/export parity with other task types.
+    per_image_details = []
+    for row in ai_rows:
+        extra_metadata = row.extra_metadata or {}
+        metrics_dict = row.probs or {}
+        if not metrics_dict and extra_metadata:
+            metrics_dict = extra_metadata.get("metrics", {})
+
+        row_class_names = _normalize_segmentation_class_names(extra_metadata.get("class_names"))
+        per_image_details.append({
+            "wsi_id": row.wsi_id,
+            "has_ground_truth": bool(extra_metadata.get("has_ground_truth", False)),
+            "metrics": metrics_dict,
+            "num_classes": extra_metadata.get("num_classes"),
+            "class_names": row_class_names or class_names,
+            "image_size": extra_metadata.get("image_size"),
+        })
+
     # Save summary with chart paths and data
     summary["chart_paths"] = chart_paths
     summary["chart_data"] = chart_data
     await asyncio.to_thread(
         _write_json_sync, analysis_dir / "summary.json", summary
+    )
+
+    await asyncio.to_thread(
+        _write_json_sync,
+        analysis_dir / "results.json",
+        {
+            "task_id": task_id,
+            "task_type": "segmentation",
+            "num_samples": len(ai_rows),
+            "num_with_ground_truth": len(per_image_metrics),
+            "classes": class_names,
+            "metrics": summary_metrics,
+            "class_metrics": class_analysis["class_metrics"],
+            "best_val_metrics": best_val_metrics,
+            "test_metrics": test_metrics,
+            "metrics_source": metrics_source,
+            "chart_data": chart_data,
+            "wsi_results": per_image_details,
+        },
     )
 
     logger.info(f"Segmentation analysis completed for task {task_id}, saved to {analysis_dir}")

@@ -207,6 +207,30 @@ def _collect_missing_ai_result_artifacts(
     return missing_count, missing_artifacts
 
 
+def _analysis_has_required_files(analysis_run_dir: Path) -> bool:
+    if not analysis_run_dir.is_dir():
+        return False
+    return (
+        (analysis_run_dir / "summary.json").exists()
+        and (analysis_run_dir / "results.json").exists()
+    )
+
+
+def _iter_complete_analysis_runs(analysis_dir: Path):
+    if not analysis_dir.exists() or not analysis_dir.is_dir():
+        return
+    for item in sorted(analysis_dir.iterdir(), reverse=True):
+        if _analysis_has_required_files(item):
+            yield item
+
+
+def _read_latest_complete_analysis_sync(analysis_dir: Path) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    for item in _iter_complete_analysis_runs(analysis_dir):
+        with open(item / "summary.json", 'r') as f:
+            return item.name, json.load(f)
+    return None, None
+
+
 def _analysis_requires_training_metrics(task_type: str, charts: Optional[List[str]], is_kfold: bool) -> bool:
     if is_kfold:
         return True
@@ -885,7 +909,11 @@ async def get_analysis_tasks(
                 continue
 
         analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task.task_id
-        has_analysis = analysis_dir.exists() and any(analysis_dir.iterdir()) if analysis_dir.exists() else False
+        has_analysis = False
+        if analysis_dir.exists():
+            for item in _iter_complete_analysis_runs(analysis_dir):
+                has_analysis = True
+                break
 
         # Extract feature_extractor and split_strategy from preprocessing_config
         feature_extractor = None
@@ -2823,10 +2851,9 @@ async def start_external_validation(
             analysis_dir = uploads_dir / "logs" / "analysis" / existing_validation_id
             analysis_exists = False
             if analysis_dir.exists():
-                for item in sorted(analysis_dir.iterdir(), reverse=True):
-                    if item.is_dir() and (item / "summary.json").exists():
-                        analysis_exists = True
-                        break
+                for item in _iter_complete_analysis_runs(analysis_dir):
+                    analysis_exists = True
+                    break
 
             if analysis_exists:
                 logger.info(f"Both inference and analysis exist for {existing_validation_id}, skipping entirely")
@@ -2977,10 +3004,9 @@ async def get_completed_external_validations(
         analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task.task_id
         has_analysis = False
         if analysis_dir.exists():
-            for item in analysis_dir.iterdir():
-                if item.is_dir() and (item / "summary.json").exists():
-                    has_analysis = True
-                    break
+            for item in _iter_complete_analysis_runs(analysis_dir):
+                has_analysis = True
+                break
 
         items.append({
             "task_id": task.task_id,
@@ -4809,10 +4835,9 @@ async def _auto_trigger_external_validation_analysis(
     # Check if analysis already exists for this task
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id
     if analysis_dir.exists():
-        for item in sorted(analysis_dir.iterdir(), reverse=True):
-            if item.is_dir() and (item / "summary.json").exists():
-                logger.info(f"Analysis already exists for external validation {task_id}, skipping auto-trigger")
-                return
+        for item in _iter_complete_analysis_runs(analysis_dir):
+            logger.info(f"Analysis already exists for external validation {task_id}, skipping auto-trigger")
+            return
 
     state = get_analysis_state()
 
@@ -4912,15 +4937,12 @@ async def get_task_analysis(
     def _read_analyses():
         """Synchronous function to read analysis files."""
         result = []
-        for item in sorted(analysis_dir.iterdir(), reverse=True):
-            if item.is_dir():
-                # Each analysis run is in a timestamped directory
-                summary_file = item / "summary.json"
-                if summary_file.exists():
-                    with open(summary_file, 'r') as f:
-                        summary = json.load(f)
-                        summary["analysis_id"] = item.name
-                        result.append(summary)
+        for item in _iter_complete_analysis_runs(analysis_dir):
+            summary_file = item / "summary.json"
+            with open(summary_file, 'r') as f:
+                summary = json.load(f)
+                summary["analysis_id"] = item.name
+                result.append(summary)
         return result
 
     # Run file operations in thread pool to avoid blocking event loop
@@ -5218,16 +5240,10 @@ async def get_quick_analysis(
     analysis_id = None
 
     if analysis_dir.exists():
-        def _read_latest_analysis():
-            for item in sorted(analysis_dir.iterdir(), reverse=True):
-                if item.is_dir():
-                    summary_file = item / "summary.json"
-                    if summary_file.exists():
-                        with open(summary_file, 'r') as f:
-                            return item.name, json.load(f)
-            return None, None
-
-        analysis_id, latest_summary = await asyncio.to_thread(_read_latest_analysis)
+        analysis_id, latest_summary = await asyncio.to_thread(
+            _read_latest_complete_analysis_sync,
+            analysis_dir,
+        )
 
     # If no analysis exists and run_if_missing is True, submit analysis task to queue
     if latest_summary is None and run_if_missing:
@@ -5562,7 +5578,7 @@ async def get_analysis_status(
             for task_dir in analysis_base_dir.iterdir():
                 if task_dir.is_dir():
                     analysis_dir = task_dir / analysis_id
-                    if analysis_dir.exists() and (analysis_dir / "summary.json").exists():
+                    if _analysis_has_required_files(analysis_dir):
                         # Analysis exists on disk, check ownership (supports temp permissions)
                         task = await TrainingTaskRepository.get_by_id(db, task_dir.name)
                         if task:
