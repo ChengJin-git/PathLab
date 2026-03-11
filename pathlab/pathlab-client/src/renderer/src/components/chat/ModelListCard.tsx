@@ -23,6 +23,8 @@ export interface ModelListConfig {
   models: ModelInfo[]
 }
 
+const MAX_VISIBLE_MODELS = 5
+
 interface ModelListCardProps {
   config: ModelListConfig
   onToast?: (toast: { type: 'error' | 'success' | 'info'; message: string }) => void
@@ -53,6 +55,7 @@ export function ModelListCard({ config, onToast }: ModelListCardProps) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const { models } = config
+  const visibleModels = Array.isArray(models) ? models.slice(0, MAX_VISIBLE_MODELS) : []
   const [exportingModelId, setExportingModelId] = useState<string | null>(null)
 
   const preserveChatReturnContext = () => {
@@ -99,7 +102,7 @@ export function ModelListCard({ config, onToast }: ModelListCardProps) {
     }
   }
 
-  if (!models || models.length === 0) {
+  if (!visibleModels || visibleModels.length === 0) {
     return (
       <Card className="w-full max-w-full border-dashed bg-muted/20">
         <CardContent className="flex flex-col items-center justify-center py-8 text-muted-foreground">
@@ -115,12 +118,12 @@ export function ModelListCard({ config, onToast }: ModelListCardProps) {
       <div className="flex items-center gap-1.5 px-0.5">
         <Brain className="w-3.5 h-3.5 text-primary" />
         <span className="text-xs font-medium text-foreground/60">
-          {t('chatComponents.modelList.title', { count: models.length })}
+          {t('chatComponents.modelList.title', { count: visibleModels.length })}
         </span>
       </div>
 
       <div className="flex flex-col gap-2">
-        {models.map((model, index) => {
+        {visibleModels.map((model, index) => {
           const isSegType = model.task_type === 'segmentation' || model.task_type === 'patch_segmentation'
           const isSurvival = model.task_type === 'survival'
           const isExporting = exportingModelId === model.id

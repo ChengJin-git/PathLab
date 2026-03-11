@@ -55,6 +55,7 @@ router = APIRouter(tags=["Chat & Conversations"])
 SEGMENTATION_TASK_TYPES = {"segmentation", "patch_segmentation"}
 ACTIVE_TRAINING_STATUSES = {"pending", "queued", "patching", "resuming", "extracting", "training"}
 _EPOCH_PROGRESS_RE = re.compile(r"epoch\s+(\d+)\s*/\s*(\d+)", re.IGNORECASE)
+MAX_MODELS_IN_CHAT_CONTEXT = 5
 
 
 def _get_generation_cancelled_text(detected_lang: str) -> str:
@@ -67,6 +68,23 @@ def _get_generation_cancelled_text(detected_lang: str) -> str:
         "en_US": "*Response cancelled by user.*",
     }
     return cancel_messages.get(normalized, cancel_messages.get(normalized.split("_")[0], cancel_messages["en"]))
+
+
+def _get_ai_service_error_text(detected_lang: str) -> str:
+    """Return a localized, user-friendly AI service error message."""
+    normalized = (detected_lang or "en").replace("-", "_")
+    error_messages = {
+        "zh_CN": "❌ AI 服务暂时不可用。请稍后重试，或检查本地 vLLM、API Key 和网络连接。",
+        "zh_HK": "❌ AI 服務暫時不可用。請稍後重試，或檢查本地 vLLM、API Key 和網絡連線。",
+        "en": "❌ AI service is temporarily unavailable. Please try again, or check your local vLLM, API key, and network connection.",
+        "en_US": "❌ AI service is temporarily unavailable. Please try again, or check your local vLLM, API key, and network connection.",
+    }
+    return error_messages.get(normalized, error_messages.get(normalized.split("_")[0], error_messages["en"]))
+
+
+def _should_fallback_from_local_vllm_error(exc: Exception) -> bool:
+    """Return True when a local vLLM upstream request failure should trigger remote fallback."""
+    return isinstance(exc, httpx.HTTPError)
 
 
 async def _require_conversation_write_access(
@@ -922,6 +940,64 @@ def extract_text_from_content(content) -> str:
     return ""
 
 
+def _infer_model_request_filters(user_text: str) -> Dict[str, str]:
+    """Infer model task/data type filters from the latest user text.
+
+    Returns a dict with optional `task_type` / `data_type` values when a
+    single clear intent is detected. If multiple conflicting intents are
+    present (for example both classification and segmentation), that filter is
+    omitted to avoid over-filtering.
+    """
+    normalized_text = (user_text or "").strip().lower()
+    if not normalized_text:
+        return {}
+
+    task_type_keywords = {
+        "classification": ["classification", "classify", "classifier", "分类"],
+        "survival": ["survival", "prognosis", "prognostic", "生存", "预后"],
+        "segmentation": ["segmentation", "segment", "mask", "分割", "掩膜", "勾边", "圈区域"],
+    }
+    data_type_keywords = {
+        "wsi": ["wsi", "whole slide", "whole-slide", "全切片", "全视野", "病理大图", "大图"],
+        "patch": ["patch", "tile", "patches", "小图", "切块", "瓦片"],
+    }
+
+    def _detect_single_match(keyword_map: Dict[str, List[str]]) -> Optional[str]:
+        matches = [
+            value
+            for value, keywords in keyword_map.items()
+            if any(keyword in normalized_text for keyword in keywords)
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    filters: Dict[str, str] = {}
+    task_type = _detect_single_match(task_type_keywords)
+    data_type = _detect_single_match(data_type_keywords)
+    if task_type:
+        filters["task_type"] = task_type
+    if data_type:
+        filters["data_type"] = data_type
+    return filters
+
+
+def _matches_model_request_filters(model_meta: Dict[str, Any], filters: Dict[str, str]) -> bool:
+    """Return True when a model matches all inferred request filters."""
+    for key, expected in filters.items():
+        if expected and model_meta.get(key) != expected:
+            return False
+    return True
+
+
+def _format_model_filter_summary(filters: Dict[str, str]) -> str:
+    """Format inferred model filters for prompt context."""
+    parts = []
+    if filters.get("task_type"):
+        parts.append(f"task_type={filters['task_type']}")
+    if filters.get("data_type"):
+        parts.append(f"data_type={filters['data_type']}")
+    return ", ".join(parts)
+
+
 def _extract_images_from_content(content) -> list[str]:
     """Extract image base64 URLs from multimodal message content.
 
@@ -1564,6 +1640,25 @@ After saving, return here and start chatting!"""
         effective_base_url = openrouter_base_url
         effective_api_key = openrouter_api_key
 
+    provider_name = "Local vLLM" if use_local else "OpenRouter"
+
+    def _switch_to_remote_fallback(reason: Exception, *, stage: str) -> bool:
+        nonlocal use_local, effective_model, effective_base_url, effective_api_key, provider_name
+        if not use_local or not openrouter_api_key:
+            return False
+        if not _should_fallback_from_local_vllm_error(reason):
+            return False
+
+        logger.warning(
+            f"Local vLLM failed during {stage}: {reason}. Falling back to OpenRouter."
+        )
+        use_local = False
+        effective_model = openrouter_model
+        effective_base_url = openrouter_base_url
+        effective_api_key = openrouter_api_key
+        provider_name = "OpenRouter"
+        return True
+
     # Tool loop: up to 5 iterations (web search + read article)
     # Need enough iterations for: search → re-search → read article → stream summary
     max_tool_iterations = 5
@@ -1628,7 +1723,7 @@ After saving, return here and start chatting!"""
                     base_url=effective_base_url,
                     api_key=effective_api_key,
                     model=effective_model,
-                    source_name="API (streaming)",
+                    source_name=f"{provider_name} (streaming)",
                 ):
                     # _stream_from_openai_compatible yields SSE lines; forward them
                     if chunk == "data: [DONE]\n\n":
@@ -1647,8 +1742,11 @@ After saving, return here and start chatting!"""
                 logger.info("Client disconnected during streaming AI completion — stopping")
                 return
             except Exception as e:
+                if not streamed_response and _switch_to_remote_fallback(e, stage="streaming AI completion"):
+                    logger.info("Retrying streaming AI completion with remote fallback after local vLLM failure")
+                    continue
                 logger.error(f"Error in streaming AI completion: {e}")
-                error_msg = f"❌ Error: {str(e)}\n\nPlease check your API key and network connection."
+                error_msg = _get_ai_service_error_text(detected_lang)
                 yield f"data: {json.dumps({'content': error_msg})}\n\n"
                 yield "data: [DONE]\n\n"
                 return
@@ -1715,7 +1813,7 @@ After saving, return here and start chatting!"""
                 base_url=effective_base_url,
                 api_key=effective_api_key,
                 model=effective_model,
-                source_name="API",
+                source_name=provider_name,
             ):
                 if chunk == "data: [DONE]\n\n":
                     break
@@ -1749,8 +1847,11 @@ After saving, return here and start chatting!"""
             logger.info("Client disconnected during AI completion — stopping")
             return
         except Exception as e:
+            if not is_streaming_to_client and _switch_to_remote_fallback(e, stage="AI completion"):
+                logger.info("Retrying AI completion with remote fallback after local vLLM failure")
+                continue
             logger.error(f"Error in AI completion: {e}")
-            error_msg = f"❌ Error: {str(e)}\n\nPlease check your API key and network connection."
+            error_msg = _get_ai_service_error_text(detected_lang)
             yield f"data: {json.dumps({'content': error_msg})}\n\n"
             yield "data: [DONE]\n\n"
             return
@@ -2487,8 +2588,11 @@ async def chat_with_ai(
         db, user_id=user_id_filter, elevated_dataset_ids=elevated_dataset_ids
     )
 
-    # Fetch user's trained models
+    # Fetch user's trained models. Keep a larger internal scan window so we can
+    # deterministically filter for the current request, but only expose a small
+    # recent subset to the LLM/UI context for performance.
     trained_models = await TrainedModelRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter)
+    trained_models_total = await TrainedModelRepository.count(db, user_id=user_id_filter)
 
     # Fetch user's training tasks (recent 10 for context, with counts)
     training_tasks = await TrainingTaskRepository.get_all(db, limit=10, offset=0, user_id=user_id_filter)
@@ -2642,8 +2746,16 @@ async def chat_with_ai(
         "H-Optimus-0": 1536, "mSTAR": 1024, "GPFM": 1024,
     }
 
+    latest_user_text = ""
+    for msg in reversed(req.messages):
+        if msg.get("role") == "user":
+            latest_user_text = extract_text_from_content(msg.get("content", ""))
+            if latest_user_text.strip():
+                break
+    inferred_model_filters = _infer_model_request_filters(latest_user_text)
+
     if trained_models:
-        models_details = []
+        model_summaries = []
         # Batch query all training tasks to get detailed info with eager loading
         task_ids = list(set(m.task_id for m in trained_models if m.task_id))
         training_tasks_map = {}
@@ -2802,10 +2914,56 @@ async def chat_with_ai(
             else:
                 info_parts.append("compatible_validation_datasets=[]")
 
-            models_details.append(f"  - {model_name} ({', '.join(info_parts)})")
+            if m.created_at:
+                info_parts.append(f"created_at={m.created_at.isoformat()}Z")
 
-        models_list = "\n".join(models_details)
-        models_count = len(trained_models)
+            model_summaries.append({
+                "id": model_id,
+                "task_type": task_type,
+                "data_type": data_type,
+                "line": f"  - {model_name} ({', '.join(info_parts)})",
+            })
+
+        recent_model_summaries = model_summaries[:MAX_MODELS_IN_CHAT_CONTEXT]
+        models_sections = [
+            (
+                f"  NOTE: To keep chat responsive, only up to the {MAX_MODELS_IN_CHAT_CONTEXT} most recent "
+                f"models are expanded below. The user has {trained_models_total} total trained model(s)."
+            )
+        ]
+
+        if inferred_model_filters:
+            matching_model_summaries = [
+                summary for summary in model_summaries
+                if _matches_model_request_filters(summary, inferred_model_filters)
+            ][:MAX_MODELS_IN_CHAT_CONTEXT]
+            filter_summary = _format_model_filter_summary(inferred_model_filters)
+            models_sections.append(
+                f"  MATCHING CURRENT REQUEST (preferred for this turn; newest first; filters={filter_summary}):"
+            )
+            if matching_model_summaries:
+                models_sections.extend(summary["line"] for summary in matching_model_summaries)
+            else:
+                models_sections.append("  - None")
+
+            matching_model_ids = {summary["id"] for summary in matching_model_summaries}
+            other_recent_models = [
+                summary for summary in recent_model_summaries
+                if summary["id"] not in matching_model_ids
+            ]
+            if other_recent_models:
+                models_sections.append(
+                    f"  OTHER RECENT MODELS (newest first; max {MAX_MODELS_IN_CHAT_CONTEXT}):"
+                )
+                models_sections.extend(summary["line"] for summary in other_recent_models)
+        else:
+            models_sections.append(
+                f"  RECENT MODELS (newest first; max {MAX_MODELS_IN_CHAT_CONTEXT}):"
+            )
+            models_sections.extend(summary["line"] for summary in recent_model_summaries)
+
+        models_list = "\n".join(models_sections)
+        models_count = trained_models_total
     else:
         models_list = "  None - user needs to train a model first"
         models_count = 0
