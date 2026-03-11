@@ -3194,7 +3194,9 @@
     "metadata": "元数据",
     "downloadSummary": "下载摘要",
     "rawData": "原始数据",
-    "downloadFullResults": "下载完整结果"
+    "downloadFullResults": "下载完整结果",
+    "modelFiles": "模型文件",
+    "downloadModel": "导出模型"
   },
   "analysisCharts": {
     "confusionMatrix": "混淆矩阵",

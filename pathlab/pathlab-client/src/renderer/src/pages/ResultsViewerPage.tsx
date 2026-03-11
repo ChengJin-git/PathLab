@@ -1187,7 +1187,7 @@ export default function ResultsViewerPage() {
 
                         {expandedExtAnalysis === analysis.analysis_id && (
                           <div className="border-t border-gray-100 p-4 bg-gray-50">
-                            <AnalysisDetails analysis={analysis} taskId={validationProgress?.validation_id} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
+                            <AnalysisDetails analysis={analysis} taskId={validationProgress?.validation_id} modelId={selectedModelId ?? validationProgress?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
                           </div>
                         )}
                       </Card>
@@ -1208,7 +1208,7 @@ export default function ResultsViewerPage() {
                       <CheckCircle2 className="w-6 h-6 text-green-500" />
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
-                      <AnalysisDetails analysis={currentResult.summary} taskId={validationProgress?.validation_id} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
+                      <AnalysisDetails analysis={currentResult.summary} taskId={validationProgress?.validation_id} modelId={selectedModelId ?? validationProgress?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
                     </div>
                   </Card>
                 ) : extAnalyses.length > 0 ? (
@@ -1222,7 +1222,7 @@ export default function ResultsViewerPage() {
                       </div>
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
-                      <AnalysisDetails analysis={extAnalyses[0]} taskId={validationProgress?.validation_id} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
+                      <AnalysisDetails analysis={extAnalyses[0]} taskId={validationProgress?.validation_id} modelId={selectedModelId ?? validationProgress?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
                     </div>
                   </Card>
                 ) : (
@@ -1613,7 +1613,7 @@ export default function ResultsViewerPage() {
 
                         {expandedAnalysis === analysis.analysis_id && (
                           <div className="border-t border-gray-100 p-4 bg-gray-50">
-                            <AnalysisDetails analysis={analysis} taskId={selectedTaskId!} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
+                            <AnalysisDetails analysis={analysis} taskId={selectedTaskId!} modelId={selectedTask?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
                           </div>
                         )}
                       </Card>
@@ -1634,7 +1634,7 @@ export default function ResultsViewerPage() {
                       <CheckCircle2 className="w-6 h-6 text-green-500" />
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
-                      <AnalysisDetails analysis={currentResult.summary} taskId={selectedTaskId!} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
+                      <AnalysisDetails analysis={currentResult.summary} taskId={selectedTaskId!} modelId={selectedTask?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
                     </div>
                   </Card>
                 ) : analyses.length > 0 ? (
@@ -1648,7 +1648,7 @@ export default function ResultsViewerPage() {
                       </div>
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
-                      <AnalysisDetails analysis={analyses[0]} taskId={selectedTaskId!} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
+                      <AnalysisDetails analysis={analyses[0]} taskId={selectedTaskId!} modelId={selectedTask?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
                     </div>
                   </Card>
                 ) : (

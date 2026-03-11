@@ -2537,7 +2537,9 @@
     "metadata": "Metadata",
     "downloadSummary": "Download Summary",
     "rawData": "Raw Data",
-    "downloadFullResults": "Download Full Results"
+    "downloadFullResults": "Download Full Results",
+    "modelFiles": "Model Files",
+    "downloadModel": "Export Model"
   },
   "analysisCharts": {
     "confusionMatrix": "Confusion Matrix",

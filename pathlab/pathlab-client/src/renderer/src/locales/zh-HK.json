@@ -3186,7 +3186,9 @@
     "metadata": "中繼資料",
     "downloadSummary": "下載摘要",
     "rawData": "原始資料",
-    "downloadFullResults": "下載完整結果"
+    "downloadFullResults": "下載完整結果",
+    "modelFiles": "模型檔案",
+    "downloadModel": "匯出模型"
   },
   "analysisCharts": {
     "confusionMatrix": "混淆矩陣",

@@ -1,5 +1,5 @@
 import { API_BASE } from '../config'
-import { apiFetch, buildSearchParams, PaginatedResponse } from './client'
+import { apiFetch, buildSearchParams, downloadApiFile, PaginatedResponse } from './client'
 
 // ============================================================================
 // Training Task & Model APIs
@@ -88,6 +88,20 @@ export async function getTrainedModel(modelId: string): Promise<TrainedModel> {
     `${API_BASE}/models/${encodeURIComponent(modelId)}`,
     undefined,
     'Failed to fetch model'
+  )
+}
+
+/**
+ * Download trained model export bundle
+ * @param modelId - Model ID
+ * @throws {ApiError} If the request fails
+ */
+export async function downloadTrainedModelExport(modelId: string): Promise<void> {
+  await downloadApiFile(
+    `${API_BASE}/models/${encodeURIComponent(modelId)}/export`,
+    `${modelId}_export.zip`,
+    undefined,
+    'Failed to export model'
   )
 }
 
