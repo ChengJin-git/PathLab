@@ -26,7 +26,7 @@
 8. `message_feedbacks`
 9. `export_tasks`
 10. `training_tasks`
-11. `training_task_wsi`
+11. `training_task_wsi`（训练任务与 WSI 的关联表）
 12. `trained_models`
 13. `training_logs`
 14. `dataset_permissions`
@@ -45,7 +45,7 @@
 
 ## Repository 现状
 
-`repositories/__init__.py` 当前导出的是：
+`repositories/` 当前包含 15 个业务仓储模块，并由 `repositories/__init__.py` 统一导出：
 
 - `DataGroupRepository`
 - `DatasetRepository`

@@ -20,7 +20,7 @@
 - 删除训练任务相关衍生文件
 - 重置部分派生数据与悬挂符号链接清理辅助逻辑
 
-这些能力通过 Gateway 的 `/storage` 相关接口暴露给前端或运维流程。
+这些能力通过 Gateway 的 `/storage`、`/storage/scan-directory` 及相关后台任务接口暴露给前端或运维流程。
 
 ## 当前 uploads 目录现状
 
@@ -84,6 +84,7 @@
 - `/storage/stats`
 - `/storage/config`
 - `/storage/migrate`
+- `/storage/scan-directory`
 - `/storage/orphaned`
 - `/storage/orphaned/cleanup`
 - `/storage/orphaned-records`

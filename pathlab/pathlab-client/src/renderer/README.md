@@ -14,6 +14,9 @@
 
 - `vite.config.ts`：独立 Web 构建配置
 - `../electron.vite.config.ts`：Electron `main` / `preload` / `renderer` 联合构建配置
+- `../main/index.ts`：桌面模式主进程入口
+- `../main/sidecar-manager.ts`：桌面模式 sidecar 启停与端口发现
+- `../preload/index.ts`：渲染层可见的 IPC 桥接
 - `src/main.tsx`：前端运行时入口
 - `src/App.tsx`：页面路由定义
 - `src/config.ts`：Gateway / Preprocessing / AI 地址解析
@@ -43,7 +46,8 @@ src/renderer/
 `src/main.tsx` 当前会：
 
 - 根据 Electron / 浏览器环境选择 `HashRouter` 或 `BrowserRouter`
-- 启动时调用 `initializeApiConfig()` 初始化后端地址
+- 启动时调用 `initializeApiConfig()`，从 preload / Electron IPC 读取后端端口
+- 在端口更新时调用 `updateApiBase()` 刷新 `API_BASE` / `PREPROCESSING_BASE` / `AI_BASE`
 - 组合 `ToastProvider`、`AuthProvider`、`BackgroundTaskProvider`
 - 在浏览器模式注册 Service Worker
 
@@ -62,7 +66,7 @@ src/renderer/
 
 ## API 客户端现状
 
-`src/api/` 当前已经按业务拆分为多个模块，包括：
+`src/api/` 当前已经按业务拆分为 19 个 TypeScript 模块文件，包括：
 
 - `analysis`
 - `annotation`
@@ -84,8 +88,8 @@ src/renderer/
 
 ## 与后端的连接方式
 
-- Electron 模式：通过 preload 暴露的 IPC 获取 Gateway 动态端口
-- 浏览器模式：默认使用固定调试端口 `6100 / 6101 / 6102`，也可由环境变量覆盖
+- Electron 模式：通过 preload 暴露的 `getServicePorts()` / `onServicePorts()` 获取动态端口
+- 浏览器模式：优先读取 `VITE_API_BASE` / `VITE_PREPROCESSING_BASE` / `VITE_AI_BASE`，否则回退到 `6100 / 6101 / 6102`
 - `src/config.ts` 会统一导出 `API_BASE`、`PREPROCESSING_BASE`、`AI_BASE`
 
 ## 相关文档

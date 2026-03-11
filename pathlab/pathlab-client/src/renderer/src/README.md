@@ -44,13 +44,14 @@ src/
 
 - Electron 环境下使用 `HashRouter`
 - 浏览器环境下使用 `BrowserRouter`
-- `main.tsx` 会先调用 `initializeApiConfig()`，从 preload / Electron IPC 获取 Gateway 端口
+- `main.tsx` 会先调用 `initializeApiConfig()`，优先从 preload / Electron IPC 获取全部后端端口
+- 收到端口更新时会调用 `updateApiBase()`，刷新 `API_BASE` / `PREPROCESSING_BASE` / `AI_BASE`
 - 运行时组合 `ToastProvider`、`AuthProvider`、`BackgroundTaskProvider`
 - 浏览器模式会注册 Service Worker；Electron 模式不会注册
 
 ## API 客户端现状
 
-旧文档里提到的单体 `api.ts` 已经拆分为模块化目录。当前可见模块包括：
+旧文档里提到的单体 `api.ts` 已经拆分为模块化目录。当前可见 19 个 API 模块文件，包括：
 
 - `api/analysis.ts`
 - `api/annotation.ts`
@@ -72,7 +73,8 @@ src/
 
 ## 主要页面与状态模块
 
-- `AIChatPage.tsx`：AI 对话与 PDF 辅助阅读
+- `IntroductionPage.tsx` / `LoginPage.tsx`：公开入口与认证页面
+- `AIChatPage.tsx` / `ToolsPage.tsx`：AI 对话、工具页与 PDF 辅助阅读
 - `ListPage.tsx`：WSI 列表与数据浏览
 - `UploadPage.tsx`：数据注册 / 上传入口（路由为 `/register`）
 - `WSIViewerPage.tsx`：全屏阅片器
@@ -99,4 +101,4 @@ src/
 
 - [Frontend README](../README.md)
 - [Project README](../../../../../README.md)
-- [Backend README](../../../../server/README.md)
+- [Backend README](../../../server/README.md)

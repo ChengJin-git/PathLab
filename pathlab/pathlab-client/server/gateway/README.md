@@ -46,23 +46,24 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 - WSI 上传、列表、详情、权限检查
 - 训练任务、AI 任务与 GPU 队列观察
 - 模型管理、结果查看、报告导出
-- AI 对话、会话历史、PDF 缓存 / 检索与反馈
+- AI 对话、会话历史、网页检索、PDF 缓存 / 向量检索与反馈
 - 存储统计、扫描、清理与配置
 - GPU 信息、热图、标注、系统设置
 
 ## 路由目录现状
 
-`server/gateway/routes/` 当前包含 **29 个路由模块文件**（不含 `__init__.py`）。
+`server/gateway/routes/` 当前包含 **31 个路由模块文件**（不含 `__init__.py`）。
 
 除了上面 16 个顶层 router 外，目录里还有若干**被其他 router 复用的支持模块**，例如：
 
 - 分析相关：`classification_analysis.py`、`segmentation_analysis.py`、`survival_analysis.py`、`external_validation_analysis.py`
 - 分析辅助：`analysis_helpers.py`、`analysis_metrics.py`、`analysis_state.py`
-- 聊天辅助：`chat_pdf.py`、`chat_pdf_vectorstore.py`、`chat_feedback.py`
+- 聊天辅助：`chat_pdf.py`、`chat_pdf_vectorstore.py`、`chat_feedback.py`、`chat_patch_inference.py`
+- 运行时辅助：`transformers_runtime.py`
 - 存储辅助：`storage_scan.py`、`storage_tasks.py`
 - WSI 权限辅助：`wsi_permissions.py`
 
-这些文件通常通过导入被组合到顶层 router，而不是单独挂载。
+这些文件通常通过导入被组合到顶层 router，而不是单独挂载；当前也没有额外单列的 `deep-research` router 入口。
 
 ## 认证现状
 

@@ -31,7 +31,7 @@
 5. 用 Vite 构建前端到 `src/renderer/dist`
 6. 导出 `PATHLAB_DEBUG=1` 与固定端口环境变量
 7. 以 `nohup` 方式启动 `server/main.py`
-8. 通过 `http://127.0.0.1:6100/health` 做健康检查
+8. 通过 `http://127.0.0.1:6100/health` 做 Gateway 健康检查
 9. 将日志写入 `logs/backend.log`，并记录 `logs/backend.pid`
 
 该脚本是“直接执行型”的，不需要额外传 `start` 子命令。
@@ -49,7 +49,7 @@
 
 当前实现里：
 
-- `frontend` 会先构建到临时目录，再原子替换 `dist/`
+- `frontend` 会先构建到临时目录，补拷 `public/assets` / `public/images`，再原子替换 `dist/`
 - `backend` 会按 `AI → Preprocessing → Gateway` 顺序滚动重启
 - `preprocessing` 会读取 `PREPROCESSING_WORKERS` 与 `PREPROCESSING_MAX_REQUESTS`
 

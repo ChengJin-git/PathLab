@@ -6,11 +6,13 @@
 
 - `electron.vite.config.ts`：Electron `main` / `preload` / `renderer` 联合构建入口
 - `src/main/index.ts`：Electron 主进程入口
+- `src/main/sidecar-manager.ts`：Python sidecar 启停与端口发现
 - `src/preload/index.ts`：向渲染层暴露后端端口发现能力
 - `src/renderer/vite.config.ts`：独立 Web 构建入口
 - `server/main.py`：Python sidecar 统一入口
-- `build-python.sh` / `main.spec`：Python 侧打包辅助文件
+- `build-python.sh`、`main.spec`、`server/main.spec`：Python 侧打包辅助文件
 - `deploy/start.sh` / `deploy/hot-reload.sh`：固定端口部署与热更新脚本
+- `package.json`：Electron 开发 / 构建脚本定义（`dev`、`build`、`start` 等）
 
 ## 当前目录结构
 
@@ -18,7 +20,6 @@
 pathlab-client/
 ├── deploy/                 # 启动、热更新、Nginx、systemd 模板
 ├── logs/                   # 固定端口脚本输出日志
-├── scripts/                # 辅助脚本
 ├── server/                 # Python sidecar
 ├── src/
 │   ├── main/               # Electron 主进程
@@ -27,6 +28,7 @@ pathlab-client/
 ├── build-python.sh
 ├── electron.vite.config.ts
 ├── main.spec
+├── package.json
 └── README.md
 ```
 
@@ -38,6 +40,7 @@ pathlab-client/
 - `server/main.py` 自动选择可用端口
 - Gateway 端口通过 stdout / preload / IPC 传给渲染层
 - 前端运行时据此更新 API 基址
+- 主进程当前还处理 `pathlab://` 深链登录回调，并向渲染层暴露文件 / 目录选择 IPC
 
 ### 2. 固定端口调试 / 部署模式
 
@@ -46,6 +49,12 @@ pathlab-client/
 - 浏览器调试、Nginx 反向代理和本地运维脚本都按这组端口设计
 
 ## 当前代码层次
+
+### Electron 宿主
+
+- `src/main/index.ts` 负责窗口生命周期、深链回调、权限请求与 sidecar 启停
+- `src/preload/index.ts` 暴露认证回调、后端端口发现、文件 / 目录选择 IPC
+- `src/main/sidecar-manager.ts` 将 `Gateway / Preprocessing / AI` 端口变化推送给渲染层
 
 ### 前端
 
@@ -66,6 +75,7 @@ pathlab-client/
 - Gateway 当前直接注册 16 个顶层 router，并组合若干分析 / 聊天 / 存储辅助模块
 - 数据库当前可见 ORM 表为 17 个，其中标注表为 `segmentation_annotations`
 - 前端构建更应以 `vite.config.ts`、`electron.vite.config.ts` 与 `deploy/` 脚本为准，而不是沿用旧版 README 的脚本描述
+- 仓库中虽有 `server/backend/deep-research/` 目录，但当前 README 不再把它当作独立运行模块或单独文档入口
 
 ## 推荐阅读顺序
 

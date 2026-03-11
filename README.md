@@ -1,14 +1,15 @@
 # PathLab
 
-PathLab 是一个面向数字病理研究的桌面 / Web 一体化代码库。当前主应用位于 `pathlab/pathlab-client/`，采用 **Electron + React 前端** 与 **Python FastAPI sidecar** 的组合架构。
+PathLab 是一个面向数字病理研究的桌面 / Web 一体化代码库。当前主应用位于 `pathlab/pathlab-client/`，由 **Electron 主进程 / preload、React 渲染层、Python FastAPI sidecar** 共同组成。
 
 ## 当前仓库重点
 
-- Electron 主进程与 preload 位于 `pathlab/pathlab-client/src/main`、`src/preload`
+- Electron 主进程、preload 与 sidecar 管理位于 `pathlab/pathlab-client/src/main`、`src/preload`
 - React 前端源码位于 `pathlab/pathlab-client/src/renderer/src`
 - Python 统一入口位于 `pathlab/pathlab-client/server/main.py`
 - `server/main.py` 当前会拉起 3 个内部服务：`Gateway`、`Preprocessing`、`AI`
 - 固定端口部署、Nginx 与 systemd 模板位于 `pathlab/pathlab-client/deploy/`
+- `server/backend/deep-research/` 当前仍在代码树中，但不属于默认 sidecar 启动的独立服务
 
 ## 运行形态
 
@@ -26,6 +27,7 @@ PathLab 是一个面向数字病理研究的桌面 / Web 一体化代码库。�
 - AI 对话、会话持久化、PDF 缓存与语义检索辅助阅读
 - 存储统计、目录扫描、迁移、孤立文件 / 孤立记录清理
 - 浏览器模式 PWA 与 Electron 桌面模式双运行方式
+- 桌面端 `pathlab://` 深链登录回调与本地文件 / 目录选择能力
 
 ## 仓库结构
 
@@ -54,3 +56,5 @@ pathlab/
 - [Frontend](pathlab/pathlab-client/src/renderer/README.md)
 - [Frontend Source](pathlab/pathlab-client/src/renderer/src/README.md)
 - [Deployment](pathlab/pathlab-client/deploy/README.md)
+
+说明：仓库当前没有单独维护的 `deep-research` README；该目录未纳入 `server/main.py` 默认启动链，因此只在总览文档中顺带说明。
