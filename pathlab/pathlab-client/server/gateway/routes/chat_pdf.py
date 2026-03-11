@@ -43,20 +43,6 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _env_float(name: str, default: float | None = None) -> float | None:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    normalized = value.strip()
-    if not normalized:
-        return default
-    try:
-        return float(normalized)
-    except ValueError:
-        logger.warning(f"Invalid float for {name}={value!r}; using default {default!r}")
-        return default
-
-
 def _should_skip_marker_gpu_queue() -> tuple[bool, str]:
     return False, "Using GPU queue first for Marker best-effort parse"
 
@@ -547,15 +533,6 @@ def _has_high_quality_cache(url: str) -> bool:
     return _get_high_quality_cache_method(url) is not None
 
 
-def _has_marker_cache(url: str) -> bool:
-    try:
-        cache_dir = _get_pdf_cache_dir()
-        url_hash = _get_url_hash(url)
-        return (cache_dir / f"{url_hash}{MARKER_CACHE_SUFFIX}").exists()
-    except Exception:
-        return False
-
-
 def _save_marker_to_cache(
     url: str,
     markdown: str,
@@ -807,19 +784,6 @@ def _normalize_bbox(raw_bbox: Any) -> dict[str, Any] | None:
         "r": right,
         "b": bottom,
         "coord_origin": _coerce_text(coord_value) or "TOPLEFT",
-    }
-
-
-def _merge_bboxes(boxes: list[dict[str, Any] | None]) -> dict[str, Any] | None:
-    normalized = [box for box in boxes if isinstance(box, dict)]
-    if not normalized:
-        return None
-    return {
-        "l": min(float(box["l"]) for box in normalized),
-        "t": min(float(box["t"]) for box in normalized),
-        "r": max(float(box["r"]) for box in normalized),
-        "b": max(float(box["b"]) for box in normalized),
-        "coord_origin": _coerce_text(normalized[0].get("coord_origin")) or "TOPLEFT",
     }
 
 
