@@ -56,8 +56,8 @@ class Config:
     # GPU/VRAM settings
     DEFAULT_MIN_VRAM_MB = 2000  # 2GB - minimum VRAM for task execution
     MIN_INFERENCE_OVERHEAD_MB = 500  # Buffer for CUDA context, activations, etc.
-    DOCLING_GPU_QUEUE_WAIT_TIMEOUT_SECONDS = float(
-        os.getenv("DOCLING_GPU_QUEUE_WAIT_TIMEOUT_SECONDS", "30")
+    MARKER_GPU_QUEUE_WAIT_TIMEOUT_SECONDS = float(
+        os.getenv("MARKER_GPU_QUEUE_WAIT_TIMEOUT_SECONDS", "30")
     )
 
     # Feature cache

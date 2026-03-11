@@ -47,7 +47,6 @@ from .chat_pdf import (
     search_pdf_pages, get_cached_markdown, get_cached_pdf_meta, _split_md_into_pages,
     _get_url_hash, _get_pdf_cache_dir, _tokenize_for_search,
     detect_source_type, is_academic_content, format_reference_card, _ACADEMIC_SOURCE_TYPES,
-    PDF_PARSE_METHOD_DOCLING, PDF_PARSE_METHOD_PYMUPDF,
 )
 from .chat_pdf_vectorstore import search_pdf_chunks
 

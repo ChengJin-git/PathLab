@@ -43,15 +43,6 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _normalize_docling_ocr_engine(value: str | None) -> str:
-    normalized = (value or "auto").strip().lower()
-    if normalized in {"", "default"}:
-        return "auto"
-    if normalized in {"0", "false", "off"}:
-        return "none"
-    return normalized
-
-
 def _env_float(name: str, default: float | None = None) -> float | None:
     value = os.getenv(name)
     if value is None:
@@ -66,22 +57,14 @@ def _env_float(name: str, default: float | None = None) -> float | None:
         return default
 
 
-def _should_skip_docling_gpu_queue() -> tuple[bool, str]:
-    if DOCLING_PDF_DO_OCR and DOCLING_PDF_OCR_ENGINE == "tesseract":
-        return True, (
-            "Skipping GPU queue because DOCLING_PDF_OCR_ENGINE=tesseract is configured "
-            "for direct CPU diagnostic routing"
-        )
-    return False, "Using GPU queue first for Docling best-effort parse"
+def _should_skip_marker_gpu_queue() -> tuple[bool, str]:
+    return False, "Using GPU queue first for Marker best-effort parse"
 
 
 PDF_PARSE_MAX_CONCURRENT = max(1, int(os.getenv("PDF_PARSE_MAX_CONCURRENT", "1")))
 PDF_VECTOR_INDEX_MAX_CONCURRENT = max(1, int(os.getenv("PDF_VECTOR_INDEX_MAX_CONCURRENT", "1")))
-PDF_ENABLE_BACKGROUND_DOCLING_UPGRADE = _env_flag("PDF_ENABLE_BACKGROUND_DOCLING_UPGRADE", True)
-DOCLING_PDF_DO_OCR = _env_flag("DOCLING_PDF_DO_OCR", True)
-DOCLING_PDF_OCR_ENGINE = _normalize_docling_ocr_engine(os.getenv("DOCLING_PDF_OCR_ENGINE", "tesseract"))
-DOCLING_PDF_DOCUMENT_TIMEOUT_SECONDS = _env_float("DOCLING_PDF_DOCUMENT_TIMEOUT_SECONDS")
-PDF_PARSE_METHOD_DOCLING = "docling"
+PDF_ENABLE_BACKGROUND_MARKER_UPGRADE = _env_flag("PDF_ENABLE_BACKGROUND_MARKER_UPGRADE", True)
+PDF_PARSE_METHOD_MARKER = "marker"
 PDF_PARSE_METHOD_PYMUPDF = "pymupdf"
 PDF_PARSE_METHOD_FAILED = "parse_failed"
 PDF_UPGRADE_STATUS_SCHEDULED = "scheduled"
@@ -93,11 +76,11 @@ PDF_UPGRADE_STATUS_DIRECT_CPU = "direct_cpu"
 PDF_UPGRADE_STATUS_FALLBACK_CPU = "fallback_cpu"
 PDF_UPGRADE_STATUS_COMPLETED = "completed"
 PDF_UPGRADE_STATUS_FAILED = "failed"
-DOCLING_CACHE_SUFFIX = ".docling.md"
+MARKER_CACHE_SUFFIX = ".marker.md"
 PYMUPDF_CACHE_SUFFIX = ".md"
 STRUCTURED_CACHE_SUFFIX = ".structured.json"
 STRUCTURED_SCHEMA_VERSION = 2
-PdfParseMethod = Literal["docling", "pymupdf", "parse_failed"]
+PdfParseMethod = Literal["marker", "pymupdf", "parse_failed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +92,7 @@ class ParsedPdfResult:
 
 
 HIGH_QUALITY_CACHE_SUFFIXES: tuple[tuple[str, str], ...] = (
-    (DOCLING_CACHE_SUFFIX, PDF_PARSE_METHOD_DOCLING),
+    (MARKER_CACHE_SUFFIX, PDF_PARSE_METHOD_MARKER),
 )
 CACHED_MARKDOWN_CANDIDATES: tuple[tuple[str, str], ...] = (
     *HIGH_QUALITY_CACHE_SUFFIXES,
@@ -122,16 +105,16 @@ CACHE_ARTEFACT_SUFFIXES: tuple[str, ...] = (
     STRUCTURED_CACHE_SUFFIX,
     *(suffix for suffix, _method in CACHED_MARKDOWN_CANDIDATES),
 )
-DOCLING_SUBPROCESS_JOIN_TIMEOUT_SECONDS = 5.0
-_docling_upgrade_tasks: dict[str, asyncio.Task[None]] = {}
+MARKER_SUBPROCESS_JOIN_TIMEOUT_SECONDS = 5.0
+_marker_upgrade_tasks: dict[str, asyncio.Task[None]] = {}
 _vector_index_tasks: dict[str, asyncio.Task[None]] = {}
 _vector_index_pending: dict[str, dict[str, Any]] = {}
 _pdf_parse_semaphore: asyncio.Semaphore | None = None
 _vector_index_semaphore: asyncio.Semaphore | None = None
 
 
-class DoclingGpuQueueTimeout(RuntimeError):
-    """Raised when a Docling GPU task stays pending in the shared queue for too long."""
+class MarkerGpuQueueTimeout(RuntimeError):
+    """Raised when a Marker GPU task stays pending in the shared queue for too long."""
 
 
 def _get_pdf_cache_dir() -> Path:
@@ -346,7 +329,7 @@ def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any], str | None, str | 
                 try:
                     cached_md = md_candidate.read_text(encoding='utf-8')
                     cached_md_method = method
-                    if method == PDF_PARSE_METHOD_DOCLING:
+                    if method == PDF_PARSE_METHOD_MARKER:
                         logger.info(f"PDF cache: using high-quality parsed result for {url}")
                     break
                 except Exception:
@@ -548,48 +531,63 @@ def _save_markdown_to_cache(
         logger.error(f"Error saving markdown to cache: {e}")
 
 
-def _has_docling_cache(url: str) -> bool:
-    """Return True if a Docling high-quality result is already cached for this URL."""
+def _get_high_quality_cache_method(url: str) -> str | None:
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
-        return (cache_dir / f"{url_hash}{DOCLING_CACHE_SUFFIX}").exists()
+        for suffix, method in HIGH_QUALITY_CACHE_SUFFIXES:
+            if (cache_dir / f"{url_hash}{suffix}").exists():
+                return method
+        return None
+    except Exception:
+        return None
+
+
+def _has_high_quality_cache(url: str) -> bool:
+    return _get_high_quality_cache_method(url) is not None
+
+
+def _has_marker_cache(url: str) -> bool:
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        return (cache_dir / f"{url_hash}{MARKER_CACHE_SUFFIX}").exists()
     except Exception:
         return False
 
 
-def _save_docling_to_cache(
+def _save_marker_to_cache(
     url: str,
     markdown: str,
     paper_title: str = "",
     structured_content: dict[str, Any] | None = None,
 ) -> None:
-    """Save Docling high-quality parse result to cache."""
+    """Save Marker high-quality parse result to cache."""
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
-        docling_file = cache_dir / f"{url_hash}{DOCLING_CACHE_SUFFIX}"
-        docling_file.write_text(markdown, encoding='utf-8')
+        marker_file = cache_dir / f"{url_hash}{MARKER_CACHE_SUFFIX}"
+        marker_file.write_text(markdown, encoding='utf-8')
         page_count = _extract_page_count(markdown)
         _save_structured_to_cache(
             url,
-            structured_content or _build_document_graph_from_markdown(markdown, PDF_PARSE_METHOD_DOCLING),
+            structured_content or _build_document_graph_from_markdown(markdown, PDF_PARSE_METHOD_MARKER),
         )
         _update_meta_fields(
             url,
             page_count=page_count,
-            parse_method=PDF_PARSE_METHOD_DOCLING,
-            structured_parse_method=PDF_PARSE_METHOD_DOCLING,
+            parse_method=PDF_PARSE_METHOD_MARKER,
+            structured_parse_method=PDF_PARSE_METHOD_MARKER,
             structured_parse_ready=True,
             high_quality_parse_pending=False,
             high_quality_parse_ready=True,
             high_quality_upgrade_status=PDF_UPGRADE_STATUS_COMPLETED,
-            high_quality_upgrade_detail="High-quality Docling cache is ready",
+            high_quality_upgrade_detail="High-quality Marker cache is ready",
             high_quality_upgrade_updated_at=datetime.now().isoformat(),
         )
-        logger.info(f"Cached Docling markdown for {url} ({page_count} pages)")
+        logger.info(f"Cached Marker markdown for {url} ({page_count} pages)")
     except Exception as e:
-        logger.error(f"Error saving Docling markdown to cache: {e}")
+        logger.error(f"Error saving Marker markdown to cache: {e}")
 
 
 # ── Vector Index Helper ─────────────────────────────────────────────────────
@@ -1046,104 +1044,137 @@ def _build_document_graph_from_markdown(markdown: str, parse_method: PdfParseMet
     }
 
 
-def _extract_docling_page_bbox(element: Any, max_pages: int = 0) -> tuple[int | None, dict[str, Any] | None]:
-    page_boxes: dict[int, list[dict[str, Any]]] = {}
-    for prov in getattr(element, "prov", []) or []:
-        page_num = _safe_int(getattr(prov, "page_no", 0), 0)
-        if page_num <= 0 or (max_pages > 0 and page_num > max_pages):
-            continue
-        bbox = _normalize_bbox(getattr(prov, "bbox", None))
-        page_boxes.setdefault(page_num, [])
-        if bbox is not None:
-            page_boxes[page_num].append(bbox)
-    if not page_boxes:
-        return None, None
-    page_num = sorted(page_boxes)[0]
-    return page_num, _merge_bboxes(page_boxes.get(page_num, []))
+def _marker_image_block_id_from_name(image_name: str) -> str:
+    stem = Path(image_name).stem
+    if not stem:
+        return ""
+    return stem.replace("_", "/")
 
 
-def _docling_caption_text(element: Any, doc: Any) -> str:
-    if hasattr(element, "caption_text"):
+def _normalize_marker_markdown(markdown: str, first_page_id: int | None) -> str:
+    page_offset = 1 if first_page_id == 0 else 0
+
+    def _replace_page_marker(match: re.Match[str]) -> str:
+        page_num = int(match.group(1)) + page_offset
+        return f"--- Page {page_num} ---"
+
+    return re.sub(r"\{(\d+)\}<<<PATHLAB_MARKER_PAGE_BREAK>>>", _replace_page_marker, markdown).strip()
+
+
+def _extract_marker_text_from_html(html_content: str) -> str:
+    if not html_content:
+        return ""
+    try:
+        from bs4 import BeautifulSoup
+
+        text = BeautifulSoup(html_content, "html.parser").get_text("\n", strip=True)
+    except Exception:
+        text = re.sub(r"<[^>]+>", " ", html_content)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    return text.strip()
+
+
+def _extract_marker_table_rows(html_content: str) -> list[list[str]]:
+    if not html_content:
+        return []
+    try:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html_content, "html.parser")
+        table = soup.find("table")
+        if table is None:
+            return []
+        rows: list[list[str]] = []
+        for tr in table.find_all("tr"):
+            cells = [cell.get_text(" ", strip=True) for cell in tr.find_all(["th", "td"])]
+            if cells:
+                rows.append(cells)
+        return rows
+    except Exception:
+        return []
+
+
+def _collect_marker_section_titles(node: dict[str, Any], title_map: dict[str, str]) -> None:
+    block_type = _coerce_text(node.get("block_type")).lower()
+    node_id = _coerce_text(node.get("id"))
+    if block_type == "sectionheader" and node_id:
+        title_text = _extract_marker_text_from_html(_coerce_text(node.get("html")))
+        if title_text:
+            title_map[node_id] = title_text
+    for child in node.get("children") or []:
+        if isinstance(child, dict):
+            _collect_marker_section_titles(child, title_map)
+
+
+def _resolve_marker_section_path(section_hierarchy: Any, title_map: dict[str, str]) -> list[str]:
+    if not isinstance(section_hierarchy, dict):
+        return []
+    resolved: list[str] = []
+    def _sort_key(item: tuple[Any, Any]) -> tuple[int, str]:
+        key_text = _coerce_text(item[0])
         try:
-            return _coerce_text(element.caption_text(doc))
+            return (0, f"{int(key_text):06d}")
         except Exception:
-            return ""
+            return (1, key_text)
+
+    for _key, value in sorted(section_hierarchy.items(), key=_sort_key):
+        title = title_map.get(_coerce_text(value), _coerce_text(value))
+        if title and title not in resolved:
+            resolved.append(title)
+    return resolved
+
+
+def _find_marker_image_url(node: dict[str, Any], image_url_map: dict[str, str]) -> str:
+    node_id = _coerce_text(node.get("id"))
+    if node_id and image_url_map.get(node_id):
+        return image_url_map[node_id]
+    for child in node.get("children") or []:
+        if isinstance(child, dict):
+            image_url = _find_marker_image_url(child, image_url_map)
+            if image_url:
+                return image_url
     return ""
 
 
-def _docling_item_text(element: Any) -> str:
-    return _coerce_text(getattr(element, "text", None) or getattr(element, "orig", None))
+def _collect_marker_caption_text(node: dict[str, Any]) -> str:
+    parts: list[str] = []
+    self_text = _extract_marker_text_from_html(_coerce_text(node.get("html")))
+    if self_text:
+        parts.append(self_text)
+    for child in node.get("children") or []:
+        if not isinstance(child, dict):
+            continue
+        child_type = _coerce_text(child.get("block_type")).lower()
+        if child_type == "caption":
+            caption_text = _extract_marker_text_from_html(_coerce_text(child.get("html")))
+            if caption_text:
+                parts.append(caption_text)
+    deduped: list[str] = []
+    for part in parts:
+        if part not in deduped:
+            deduped.append(part)
+    return "\n".join(deduped).strip()
 
 
-def _docling_item_image(element: Any, exported_media: dict[str, dict[str, Any]]) -> str:
-    self_ref = _coerce_text(getattr(element, "self_ref", None))
-    media = exported_media.get(self_ref, {}) if self_ref else {}
-    if media.get("image"):
-        return _coerce_text(media.get("image"))
-
-    image_ref = getattr(element, "image", None)
-    uri = getattr(image_ref, "uri", None)
-    return _coerce_text(uri)
-
-
-def _docling_picture_summary(element: Any) -> str:
-    summaries: list[str] = []
-    try:
-        annotations = element.get_annotations()
-    except Exception:
-        annotations = []
-    for annotation in annotations or []:
-        kind = _coerce_text(getattr(annotation, "kind", None))
-        if kind == "classification":
-            classes = []
-            for predicted in getattr(annotation, "predicted_classes", []) or []:
-                class_name = _coerce_text(getattr(predicted, "class_name", None))
-                confidence = getattr(predicted, "confidence", None)
-                if class_name and confidence is not None:
-                    classes.append(f"{class_name} ({float(confidence):.2f})")
-                elif class_name:
-                    classes.append(class_name)
-            if classes:
-                summaries.append("Predicted classes: " + ", ".join(classes))
-    return "\n".join(summaries)
-
-
-def _docling_table_payload(element: Any) -> tuple[list[list[str]], str]:
-    try:
-        dataframe = element.export_to_dataframe()
-    except Exception:
-        dataframe = None
-
-    rows: list[list[str]] = []
-    if dataframe is not None:
-        columns = [str(col).strip() for col in getattr(dataframe, "columns", [])]
-        if columns:
-            rows.append(columns)
-        try:
-            iterator = dataframe.itertuples(index=False, name=None)
-        except Exception:
-            iterator = []
-        for row in iterator:
-            rows.append([_coerce_text(cell) for cell in row])
-
-    markdown = _build_markdown_table_from_rows(rows)
-    return rows, markdown
-
-
-def _build_document_graph_from_docling_document(
-    doc: Any,
+def _build_document_graph_from_marker_document(
+    rendered_json: dict[str, Any],
     parse_method: PdfParseMethod,
     *,
     max_pages: int = 0,
     page_count_hint: int = 0,
-    exported_media: dict[str, dict[str, Any]] | None = None,
+    image_url_map: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     blocks: list[dict[str, Any]] = []
     section_nodes: list[dict[str, Any]] = []
     page_node_map: dict[int, dict[str, Any]] = {}
     block_counter = 0
-    current_path: list[str] = []
-    exported_media = exported_media or {}
+    image_url_map = image_url_map or {}
+    section_title_map: dict[str, str] = {}
+
+    for child in rendered_json.get("children") or []:
+        if isinstance(child, dict):
+            _collect_marker_section_titles(child, section_title_map)
 
     initial_page_count = page_count_hint if page_count_hint > 0 else max_pages
     for page_num in range(1, max(initial_page_count, 0) + 1):
@@ -1176,123 +1207,117 @@ def _build_document_graph_from_docling_document(
         blocks.append(block)
         page_node["children"].append(block_id)
 
-    for element, _level in doc.iterate_items():
-        page_num, bbox = _extract_docling_page_bbox(element, max_pages=max_pages)
-        if page_num is None:
-            continue
+    def _walk(node: dict[str, Any], page_num: int, current_path: list[str], parent_type: str = "") -> None:
+        raw_type = _coerce_text(node.get("block_type"))
+        normalized_type = raw_type.lower()
+        if not normalized_type or normalized_type == "page":
+            for child in node.get("children") or []:
+                if isinstance(child, dict):
+                    _walk(child, page_num, current_path, normalized_type)
+            return
 
-        class_name = element.__class__.__name__.lower()
-        native_label = _coerce_text(getattr(element, "label", None)) or element.__class__.__name__
-        self_ref = _coerce_text(getattr(element, "self_ref", None))
+        if normalized_type in {"pageheader", "pagefooter", "footnote", "reference"}:
+            return
+
+        node_id = _coerce_text(node.get("id"))
+        html_content = _coerce_text(node.get("html"))
+        text = _extract_marker_text_from_html(html_content)
+        bbox = _normalize_bbox(node.get("bbox"))
+        resolved_path = _resolve_marker_section_path(node.get("section_hierarchy"), section_title_map) or current_path.copy()
         base_payload = {
             "bbox": bbox,
-            "section_path": current_path.copy(),
-            "source_backend": PDF_PARSE_METHOD_DOCLING,
-            "native_label": native_label,
-            "native_ref": self_ref,
+            "section_path": resolved_path.copy(),
+            "source_backend": PDF_PARSE_METHOD_MARKER,
+            "native_label": raw_type,
+            "native_ref": node_id,
         }
 
-        if "title" in class_name:
-            title_text = _docling_item_text(element)
+        next_path = resolved_path.copy()
+        if normalized_type == "sectionheader":
+            title_text = text
             if title_text:
-                current_path = [title_text]
+                next_path = resolved_path or [title_text]
+                if next_path[-1] != title_text:
+                    next_path = [*next_path, title_text]
                 _append_block(
                     page_num,
                     "section",
                     text=title_text,
-                    level=1,
-                    **{**base_payload, "section_path": current_path.copy()},
+                    level=max(1, len(next_path)),
+                    **{**base_payload, "section_path": next_path.copy()},
                 )
-            continue
+            for child in node.get("children") or []:
+                if isinstance(child, dict):
+                    _walk(child, page_num, next_path, normalized_type)
+            return
 
-        if "sectionheader" in class_name:
-            title_text = _docling_item_text(element)
-            if title_text:
-                level = max(1, _safe_int(getattr(element, "level", 1), 1))
-                current_path = current_path[: max(level - 1, 0)]
-                current_path.append(title_text)
-                _append_block(
-                    page_num,
-                    "section",
-                    text=title_text,
-                    level=level,
-                    **{**base_payload, "section_path": current_path.copy()},
-                )
-            continue
-
-        if "table" in class_name:
-            cells, table_markdown = _docling_table_payload(element)
+        if normalized_type == "table":
+            cells = _extract_marker_table_rows(html_content)
+            table_markdown = _build_markdown_table_from_rows(cells)
             _append_block(
                 page_num,
                 "table",
-                caption=_docling_caption_text(element, doc),
+                caption=_collect_marker_caption_text(node),
                 markdown=table_markdown,
                 cells=cells,
-                image=_docling_item_image(element, exported_media),
-                **{**base_payload, "section_path": current_path.copy()},
+                image=_find_marker_image_url(node, image_url_map),
+                **base_payload,
             )
-            continue
+            for child in node.get("children") or []:
+                if isinstance(child, dict) and _coerce_text(child.get("block_type")).lower() not in {"caption", "picture", "table"}:
+                    _walk(child, page_num, next_path, normalized_type)
+            return
 
-        if "picture" in class_name or native_label.lower() in {"picture", "chart"}:
-            image = _docling_item_image(element, exported_media)
-            caption = _docling_caption_text(element, doc)
-            vision_summary = _docling_picture_summary(element)
-            if image or caption or vision_summary:
+        if normalized_type in {"picture", "figure"}:
+            image_url = _find_marker_image_url(node, image_url_map)
+            caption = _collect_marker_caption_text(node)
+            if image_url or caption:
                 _append_block(
                     page_num,
                     "figure",
-                    image=image,
+                    image=image_url,
                     caption=caption,
-                    vision_summary=vision_summary,
-                    **{**base_payload, "section_path": current_path.copy()},
+                    vision_summary="",
+                    **base_payload,
                 )
-            continue
+            for child in node.get("children") or []:
+                if isinstance(child, dict) and _coerce_text(child.get("block_type")).lower() not in {"caption", "picture", "figure"}:
+                    _walk(child, page_num, next_path, normalized_type)
+            return
 
-        if "formula" in class_name or "equation" in class_name:
-            equation_text = _docling_item_text(element)
-            if equation_text:
-                _append_block(
-                    page_num,
-                    "equation",
-                    latex=equation_text,
-                    surrounding_text="",
-                    **{**base_payload, "section_path": current_path.copy()},
-                )
-            continue
-
-        if "code" in class_name:
-            code_text = _docling_item_text(element)
-            if code_text:
-                _append_block(
-                    page_num,
-                    "code",
-                    text=code_text,
-                    **{**base_payload, "section_path": current_path.copy()},
-                )
-            continue
-
-        if "list" in class_name:
-            list_text = _docling_item_text(element)
-            if list_text:
-                _append_block(
-                    page_num,
-                    "list",
-                    text=list_text,
-                    **{**base_payload, "section_path": current_path.copy()},
-                )
-            continue
-
-        text = _docling_item_text(element)
-        if text:
+        if normalized_type in {"equation", "formula"} and text:
             _append_block(
                 page_num,
-                "paragraph",
-                text=text,
-                **{**base_payload, "section_path": current_path.copy()},
+                "equation",
+                latex=text,
+                surrounding_text="",
+                **base_payload,
             )
+        elif normalized_type == "code" and text:
+            _append_block(page_num, "code", text=text, **base_payload)
+        elif normalized_type.startswith("list") and text:
+            _append_block(page_num, "list", text=text, **base_payload)
+        elif normalized_type == "caption" and parent_type in {"picture", "figure", "table"}:
+            return
+        elif text:
+            _append_block(page_num, "paragraph", text=text, **base_payload)
+
+        for child in node.get("children") or []:
+            if isinstance(child, dict):
+                _walk(child, page_num, next_path, normalized_type)
+
+    pages = [child for child in rendered_json.get("children") or [] if isinstance(child, dict)]
+    for page_index, page in enumerate(pages, start=1):
+        if max_pages > 0 and page_index > max_pages:
+            break
+        _get_page_node(page_index)
+        for child in page.get("children") or []:
+            if isinstance(child, dict):
+                _walk(child, page_index, [], "page")
 
     section_nodes.sort(key=lambda node: int(node.get("page_start") or 0))
-    page_count = page_count_hint or max(page_node_map.keys(), default=0)
+    total_pages = page_count_hint or len(pages)
+    page_count = min(total_pages, max_pages) if max_pages > 0 else total_pages
     return {
         "schema_version": STRUCTURED_SCHEMA_VERSION,
         "type": "document",
@@ -1549,35 +1574,35 @@ def get_cached_pdf_meta(url: str) -> dict[str, Any] | None:
         return None
 
 
-async def _parse_pdf_with_docling_best_effort(
+async def _parse_pdf_with_marker_best_effort(
     pdf_bytes: bytes,
     max_pages: int,
     images_output_dir: Path | None,
     images_url_prefix: str | None,
     upgrade_url: str | None = None,
 ) -> ParsedPdfResult | None:
-    """Run Docling via GPU queue when possible, otherwise CPU, and normalize the result."""
-    skip_gpu_queue, routing_detail = _should_skip_docling_gpu_queue()
-    fallback_detail = "GPU Docling path unavailable or failed; retrying high-quality upgrade on CPU"
-    logger.info(f"[Docling] Best-effort routing decision: {routing_detail}")
-    docling_result: ParsedPdfResult | None = None
+    """Run Marker via GPU queue when possible, otherwise CPU, and normalize the result."""
+    skip_gpu_queue, routing_detail = _should_skip_marker_gpu_queue()
+    fallback_detail = "GPU Marker path unavailable or failed; retrying high-quality upgrade on CPU"
+    logger.info(f"[Marker] Best-effort routing decision: {routing_detail}")
+    marker_result: ParsedPdfResult | None = None
     if not skip_gpu_queue:
         try:
-            docling_result = await _parse_pdf_with_docling_via_gpu_queue(
+            marker_result = await _parse_pdf_with_marker_via_gpu_queue(
                 pdf_bytes,
                 max_pages,
                 images_output_dir,
                 images_url_prefix,
                 upgrade_url=upgrade_url,
             )
-        except DoclingGpuQueueTimeout as e:
+        except MarkerGpuQueueTimeout as e:
             fallback_detail = str(e)
-            docling_result = None
+            marker_result = None
     else:
         fallback_detail = routing_detail
-        docling_result = None
+        marker_result = None
 
-    if docling_result is None:
+    if marker_result is None:
         if upgrade_url:
             _record_high_quality_upgrade_state(
                 upgrade_url,
@@ -1586,41 +1611,41 @@ async def _parse_pdf_with_docling_best_effort(
                 high_quality_parse_pending=True,
                 high_quality_parse_ready=False,
             )
-        docling_result = await _parse_pdf_with_docling_on_cpu(
+        marker_result = await _parse_pdf_with_marker_on_cpu(
             pdf_bytes,
             max_pages,
             images_output_dir,
             images_url_prefix,
         )
-    if docling_result is None:
+    if marker_result is None:
         return None
-    return docling_result
+    return marker_result
 
 
-def _register_docling_upgrade_task(url_hash: str, task: asyncio.Task[None]) -> None:
-    _docling_upgrade_tasks[url_hash] = task
+def _register_marker_upgrade_task(url_hash: str, task: asyncio.Task[None]) -> None:
+    _marker_upgrade_tasks[url_hash] = task
 
     def _cleanup(completed_task: asyncio.Task[None]) -> None:
-        current_task = _docling_upgrade_tasks.get(url_hash)
+        current_task = _marker_upgrade_tasks.get(url_hash)
         if current_task is completed_task:
-            _docling_upgrade_tasks.pop(url_hash, None)
+            _marker_upgrade_tasks.pop(url_hash, None)
         try:
             completed_task.result()
         except asyncio.CancelledError:
-            logger.info(f"Background Docling upgrade cancelled for {url_hash}")
+            logger.info(f"Background Marker upgrade cancelled for {url_hash}")
         except Exception as e:
-            logger.error(f"Background Docling upgrade failed for {url_hash}: {e}")
+            logger.error(f"Background Marker upgrade failed for {url_hash}: {e}")
 
     task.add_done_callback(_cleanup)
 
 
-async def _run_docling_background_upgrade(url: str, title: str, pdf_bytes: bytes) -> None:
-    """Upgrade a fast PyMuPDF parse to a high-quality Docling parse in the background."""
-    if _has_docling_cache(url):
+async def _run_marker_background_upgrade(url: str, title: str, pdf_bytes: bytes) -> None:
+    """Upgrade a fast PyMuPDF parse to a high-quality Marker parse in the background."""
+    if _has_high_quality_cache(url):
         _record_high_quality_upgrade_state(
             url,
             PDF_UPGRADE_STATUS_COMPLETED,
-            "High-quality Docling cache already exists; skipping background upgrade",
+            "High-quality cache already exists; skipping background upgrade",
             high_quality_parse_pending=False,
             high_quality_parse_ready=True,
         )
@@ -1634,12 +1659,12 @@ async def _run_docling_background_upgrade(url: str, title: str, pdf_bytes: bytes
         _record_high_quality_upgrade_state(
             url,
             PDF_UPGRADE_STATUS_RUNNING,
-            "Background Docling upgrade started",
+            "Background Marker upgrade started",
             high_quality_parse_pending=True,
             high_quality_parse_ready=False,
         )
         async def _run_upgrade_parse() -> ParsedPdfResult | None:
-            return await _parse_pdf_with_docling_best_effort(
+            return await _parse_pdf_with_marker_best_effort(
                 pdf_bytes,
                 0,
                 images_output_dir,
@@ -1648,21 +1673,21 @@ async def _run_docling_background_upgrade(url: str, title: str, pdf_bytes: bytes
             )
 
         result = await _run_with_pdf_parse_slot(
-            f"docling-background-upgrade:{url_hash}",
+            f"marker-background-upgrade:{url_hash}",
             _run_upgrade_parse,
         )
         if result is None or not result.markdown or result.markdown.startswith("[Error"):
             _record_high_quality_upgrade_state(
                 url,
                 PDF_UPGRADE_STATUS_FAILED,
-                "Background Docling upgrade produced no usable result",
+                "Background Marker upgrade produced no usable result",
                 level="warning",
                 high_quality_parse_pending=False,
                 high_quality_parse_ready=False,
             )
             return
 
-        await _save_docling_to_cache_async(
+        await _save_marker_to_cache_async(
             url,
             result.markdown,
             paper_title=title,
@@ -1671,7 +1696,7 @@ async def _run_docling_background_upgrade(url: str, title: str, pdf_bytes: bytes
         _record_high_quality_upgrade_state(
             url,
             PDF_UPGRADE_STATUS_COMPLETED,
-            "Background Docling upgrade completed; high-quality Docling cache is ready",
+            "Background Marker upgrade completed; high-quality Marker cache is ready",
             high_quality_parse_pending=False,
             high_quality_parse_ready=True,
         )
@@ -1679,46 +1704,46 @@ async def _run_docling_background_upgrade(url: str, title: str, pdf_bytes: bytes
         _record_high_quality_upgrade_state(
             url,
             PDF_UPGRADE_STATUS_FAILED,
-            f"Background Docling upgrade error: {e}",
+            f"Background Marker upgrade error: {e}",
             level="error",
             high_quality_parse_pending=False,
             high_quality_parse_ready=False,
         )
 
 
-def schedule_docling_upgrade(url: str, title: str, pdf_bytes: bytes) -> bool:
-    """Schedule a background Docling upgrade unless one is already cached or running."""
+def schedule_marker_upgrade(url: str, title: str, pdf_bytes: bytes) -> bool:
+    """Schedule a background Marker upgrade unless one is already cached or running."""
     url_hash = _get_url_hash(url)
-    if not PDF_ENABLE_BACKGROUND_DOCLING_UPGRADE:
+    if not PDF_ENABLE_BACKGROUND_MARKER_UPGRADE:
         _record_high_quality_upgrade_state(
             url,
             PDF_UPGRADE_STATUS_DISABLED,
-            "Background Docling upgrade disabled by config (PDF_ENABLE_BACKGROUND_DOCLING_UPGRADE=false)",
+            "Background Marker upgrade disabled by config (PDF_ENABLE_BACKGROUND_MARKER_UPGRADE=false)",
             high_quality_parse_pending=False,
             high_quality_parse_ready=False,
         )
         logger.info(
             f"[PDFUpgrade] disabled by config for {url_hash}; "
-            "skip scheduling background Docling upgrade"
+            "skip scheduling background Marker upgrade"
         )
         return False
 
-    if _has_docling_cache(url):
+    if _has_high_quality_cache(url):
         _record_high_quality_upgrade_state(
             url,
             PDF_UPGRADE_STATUS_COMPLETED,
-            "High-quality Docling cache already exists; no background upgrade needed",
+            "High-quality cache already exists; no background upgrade needed",
             high_quality_parse_pending=False,
             high_quality_parse_ready=True,
         )
         return False
 
-    existing_task = _docling_upgrade_tasks.get(url_hash)
+    existing_task = _marker_upgrade_tasks.get(url_hash)
     if existing_task is not None and not existing_task.done():
         _record_high_quality_upgrade_state(
             url,
             PDF_UPGRADE_STATUS_SCHEDULED,
-            "Background Docling upgrade already scheduled or running",
+            "Background Marker upgrade already scheduled or running",
             high_quality_parse_pending=True,
             high_quality_parse_ready=False,
         )
@@ -1727,12 +1752,12 @@ def schedule_docling_upgrade(url: str, title: str, pdf_bytes: bytes) -> bool:
     _record_high_quality_upgrade_state(
         url,
         PDF_UPGRADE_STATUS_SCHEDULED,
-        f"Scheduled background Docling upgrade for '{title}' after fast parse",
+        f"Scheduled background Marker upgrade for '{title}' after fast parse",
         high_quality_parse_pending=True,
         high_quality_parse_ready=False,
     )
-    task = asyncio.create_task(_run_docling_background_upgrade(url, title, pdf_bytes))
-    _register_docling_upgrade_task(url_hash, task)
+    task = asyncio.create_task(_run_marker_background_upgrade(url, title, pdf_bytes))
+    _register_marker_upgrade_task(url_hash, task)
     return True
 
 
@@ -2584,7 +2609,52 @@ def _extract_gpu_index_from_device(assigned_device: str | None) -> int | None:
     return int(match.group(1))
 
 
-def _docling_subprocess_entry(
+def _save_marker_rendered_images(
+    rendered_markdown: Any,
+    images_output_dir: Path | None,
+    images_url_prefix: str | None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    raw_image_url_map: dict[str, str] = {}
+    block_image_url_map: dict[str, str] = {}
+    if images_output_dir is None:
+        return raw_image_url_map, block_image_url_map
+
+    images_output_dir.mkdir(parents=True, exist_ok=True)
+    for image_index, (raw_name, image_obj) in enumerate((rendered_markdown.images or {}).items(), start=1):
+        suffix = Path(raw_name).suffix or ".png"
+        filename = f"figure-{image_index:03d}{suffix}"
+        image_path = images_output_dir / filename
+        image_obj.save(image_path)
+        image_url = f"{images_url_prefix}/{filename}" if images_url_prefix is not None else str(image_path)
+        raw_image_url_map[raw_name] = image_url
+        block_id = _marker_image_block_id_from_name(raw_name)
+        if block_id:
+            block_image_url_map[block_id] = image_url
+    return raw_image_url_map, block_image_url_map
+
+
+def _rewrite_marker_markdown_image_refs(markdown: str, raw_image_url_map: dict[str, str]) -> str:
+    normalized_markdown = markdown
+    for raw_name, image_url in raw_image_url_map.items():
+        normalized_markdown = normalized_markdown.replace(f"]({raw_name})", f"]({image_url})")
+    return normalized_markdown
+
+
+def _trim_paginated_markdown(markdown: str, max_pages: int) -> str:
+    if max_pages <= 0:
+        return markdown.strip()
+    page_sections: list[str] = []
+    for match in re.finditer(
+        r'--- Page (\d+) ---\n\n([\s\S]*?)(?=\n\n--- Page \d+ ---|\Z)',
+        markdown,
+    ):
+        if int(match.group(1)) > max_pages:
+            break
+        page_sections.append(f"--- Page {match.group(1)} ---\n\n{match.group(2).strip()}")
+    return "\n\n".join(section for section in page_sections if section.strip()).strip()
+
+
+def _marker_subprocess_entry(
     result_conn,
     pdf_bytes: bytes,
     max_pages: int,
@@ -2593,21 +2663,21 @@ def _docling_subprocess_entry(
     accelerator_device: str,
     physical_gpu_index: int | None,
 ) -> None:
-    """Child-process entrypoint for isolated Docling parsing."""
+    """Child-process entrypoint for isolated Marker parsing."""
     try:
         if accelerator_device == "cuda":
             if physical_gpu_index is None:
-                raise RuntimeError("Missing GPU index for CUDA Docling subprocess")
+                raise RuntimeError("Missing GPU index for CUDA Marker subprocess")
             os.environ["CUDA_VISIBLE_DEVICES"] = str(physical_gpu_index)
             device_detail = f"physical_gpu_index={physical_gpu_index}"
         else:
             os.environ["CUDA_VISIBLE_DEVICES"] = ""
             device_detail = "cpu"
         logger.info(
-            f"[DoclingSubprocess] Starting child parse on {device_detail}, "
+            f"[MarkerSubprocess] Starting child parse on {device_detail}, "
             f"max_pages={max_pages}, image_export={bool(images_output_dir_str)}"
         )
-        result = _parse_pdf_with_docling(
+        result = _parse_pdf_with_marker(
             pdf_bytes,
             max_pages,
             images_output_dir=Path(images_output_dir_str) if images_output_dir_str else None,
@@ -2615,7 +2685,7 @@ def _docling_subprocess_entry(
             accelerator_device=accelerator_device,
         )
         logger.info(
-            f"[DoclingSubprocess] Child parse finished on {device_detail}, "
+            f"[MarkerSubprocess] Child parse finished on {device_detail}, "
             f"success={result is not None}"
         )
         result_conn.send(
@@ -2631,7 +2701,7 @@ def _docling_subprocess_entry(
         )
     except Exception as e:
         logger.error(
-            f"[DoclingSubprocess] Child parse crashed on {accelerator_device}"
+            f"[MarkerSubprocess] Child parse crashed on {accelerator_device}"
             f"{f':{physical_gpu_index}' if physical_gpu_index is not None else ''}: {e}\n"
             f"{traceback.format_exc()}"
         )
@@ -2653,27 +2723,27 @@ def _docling_subprocess_entry(
             pass
 
 
-def _run_docling_in_isolated_process(
+def _run_marker_in_isolated_process(
     pdf_bytes: bytes,
     max_pages: int,
     images_output_dir_str: str | None,
     images_url_prefix: str | None,
     accelerator_device: str,
 ) -> ParsedPdfResult | None:
-    """Run Docling in a short-lived isolated subprocess."""
+    """Run Marker in a short-lived isolated subprocess."""
     normalized_device = accelerator_device.strip().lower()
     physical_gpu_index: int | None = None
     if normalized_device == "cuda":
         physical_gpu_index = _extract_gpu_index_from_device(accelerator_device)
         if physical_gpu_index is None:
-            raise RuntimeError(f"Invalid assigned GPU device for Docling parse: {accelerator_device}")
+            raise RuntimeError(f"Invalid assigned GPU device for Marker parse: {accelerator_device}")
     elif normalized_device != "cpu":
-        raise RuntimeError(f"Unsupported Docling accelerator device: {accelerator_device}")
+        raise RuntimeError(f"Unsupported Marker accelerator device: {accelerator_device}")
 
     ctx = multiprocessing.get_context('spawn')
     parent_conn, child_conn = ctx.Pipe(duplex=False)
     process = ctx.Process(
-        target=_docling_subprocess_entry,
+        target=_marker_subprocess_entry,
         args=(
             child_conn,
             pdf_bytes,
@@ -2697,22 +2767,22 @@ def _run_docling_in_isolated_process(
             if not process.is_alive():
                 break
 
-        process.join(timeout=DOCLING_SUBPROCESS_JOIN_TIMEOUT_SECONDS)
+        process.join(timeout=MARKER_SUBPROCESS_JOIN_TIMEOUT_SECONDS)
 
         if payload is None:
             raise RuntimeError(
-                f"Docling subprocess exited without returning a result "
+                f"Marker subprocess exited without returning a result "
                 f"(exitcode={process.exitcode})"
             )
         if not payload.get("ok"):
-            raise RuntimeError(payload.get("error") or "Unknown Docling subprocess error")
+            raise RuntimeError(payload.get("error") or "Unknown Marker subprocess error")
         result_payload = payload.get("result") or {}
         markdown = result_payload.get("markdown")
         if markdown is None:
             return None
         return ParsedPdfResult(
             markdown=markdown,
-            parse_method=result_payload.get("parse_method") or PDF_PARSE_METHOD_DOCLING,
+            parse_method=result_payload.get("parse_method") or PDF_PARSE_METHOD_MARKER,
             page_count=_safe_int(result_payload.get("page_count"), 0),
             structured_content=result_payload.get("structured_content") or {},
         )
@@ -2727,29 +2797,29 @@ def _run_docling_in_isolated_process(
             pass
         if process.is_alive():
             process.terminate()
-            process.join(timeout=DOCLING_SUBPROCESS_JOIN_TIMEOUT_SECONDS)
+            process.join(timeout=MARKER_SUBPROCESS_JOIN_TIMEOUT_SECONDS)
         if process.is_alive():
             process.kill()
-            process.join(timeout=DOCLING_SUBPROCESS_JOIN_TIMEOUT_SECONDS)
+            process.join(timeout=MARKER_SUBPROCESS_JOIN_TIMEOUT_SECONDS)
 
 
-async def _parse_pdf_with_docling_on_assigned_gpu(
+async def _parse_pdf_with_marker_on_assigned_gpu(
     pdf_bytes: bytes,
     max_pages: int,
     images_output_dir: Path | None,
     images_url_prefix: str | None,
     assigned_device: str,
 ) -> ParsedPdfResult | None:
-    """Run Docling in an isolated subprocess on the queue-assigned GPU."""
+    """Run Marker in an isolated subprocess on the queue-assigned GPU."""
     loop = asyncio.get_running_loop()
     try:
         logger.info(
-            f"[Docling] Starting GPU parse on assigned_device={assigned_device}, "
+            f"[Marker] Starting GPU parse on assigned_device={assigned_device}, "
             f"max_pages={max_pages}, image_export={images_output_dir is not None}"
         )
         result = await loop.run_in_executor(
             None,
-            _run_docling_in_isolated_process,
+            _run_marker_in_isolated_process,
             pdf_bytes,
             max_pages,
             str(images_output_dir) if images_output_dir else None,
@@ -2758,35 +2828,35 @@ async def _parse_pdf_with_docling_on_assigned_gpu(
         )
         if result is not None:
             logger.info(
-                f"Docling GPU parse completed on {assigned_device}: "
+                f"Marker GPU parse completed on {assigned_device}: "
                 f"{len(result.structured_content.get('blocks', []))} native blocks"
             )
         return result
     except Exception as e:
         logger.warning(
-            f"Docling GPU parse failed on {assigned_device}: {type(e).__name__}: {e!r}"
+            f"Marker GPU parse failed on {assigned_device}: {type(e).__name__}: {e!r}"
         )
         return None
 
 
-async def _parse_pdf_with_docling_via_gpu_queue(
+async def _parse_pdf_with_marker_via_gpu_queue(
     pdf_bytes: bytes,
     max_pages: int,
     images_output_dir: Path | None,
     images_url_prefix: str | None,
     upgrade_url: str | None = None,
 ) -> ParsedPdfResult | None:
-    """Submit Docling parsing to the shared GPU queue and await the result."""
+    """Submit Marker parsing to the shared GPU queue and await the result."""
     from ..task_queue import TaskType, get_task_queue
 
     logger.info(
-        f"[Docling] Preparing GPU queue parse: max_pages={max_pages}, "
+        f"[Marker] Preparing GPU queue parse: max_pages={max_pages}, "
         f"image_export={images_output_dir is not None}, upgrade_url={bool(upgrade_url)}"
     )
     queue = get_task_queue()
     worker_task = getattr(queue, "_worker_task", None)
     if worker_task is None or worker_task.done():
-        logger.warning("Task queue is not running; skipping Docling GPU parse")
+        logger.warning("Task queue is not running; skipping Marker GPU parse")
         return None
 
     loop = asyncio.get_running_loop()
@@ -2797,12 +2867,12 @@ async def _parse_pdf_with_docling_via_gpu_queue(
         _record_high_quality_upgrade_state(
             upgrade_url,
             PDF_UPGRADE_STATUS_QUEUED_GPU,
-            f"Waiting in GPU queue for Docling upgrade task {task_id}",
+            f"Waiting in GPU queue for Marker upgrade task {task_id}",
             high_quality_parse_pending=True,
             high_quality_parse_ready=False,
         )
 
-    async def _queued_docling_job(
+    async def _queued_marker_job(
         *,
         assigned_device: str,
         task_id: str | None = None,
@@ -2811,17 +2881,17 @@ async def _parse_pdf_with_docling_via_gpu_queue(
         try:
             if result_future.cancelled():
                 if task_id:
-                    logger.info(f"Skipping cancelled Docling queued job {task_id} before GPU parse starts")
+                    logger.info(f"Skipping cancelled Marker queued job {task_id} before GPU parse starts")
                 return
             if upgrade_url:
                 _record_high_quality_upgrade_state(
                     upgrade_url,
                     PDF_UPGRADE_STATUS_RUNNING_GPU,
-                    f"Docling upgrade started on {assigned_device} via GPU queue task {task_id or 'unknown'}",
+                    f"Marker upgrade started on {assigned_device} via GPU queue task {task_id or 'unknown'}",
                     high_quality_parse_pending=True,
                     high_quality_parse_ready=False,
                 )
-            result = await _parse_pdf_with_docling_on_assigned_gpu(
+            result = await _parse_pdf_with_marker_on_assigned_gpu(
                 pdf_bytes,
                 max_pages,
                 images_output_dir,
@@ -2832,14 +2902,14 @@ async def _parse_pdf_with_docling_via_gpu_queue(
                 result_future.set_result(result)
         except Exception as e:
             if task_id:
-                logger.warning(f"Docling queued job {task_id} failed on {assigned_device}: {e}")
+                logger.warning(f"Marker queued job {task_id} failed on {assigned_device}: {e}")
             if not result_future.done():
                 result_future.set_exception(e)
             raise
 
-    await queue.submit(task_id, TaskType.INFERENCE, _queued_docling_job)
+    await queue.submit(task_id, TaskType.INFERENCE, _queued_marker_job)
     try:
-        wait_timeout_seconds = max(0.0, float(Config.DOCLING_GPU_QUEUE_WAIT_TIMEOUT_SECONDS))
+        wait_timeout_seconds = max(0.0, float(Config.MARKER_GPU_QUEUE_WAIT_TIMEOUT_SECONDS))
         if wait_timeout_seconds > 0:
             try:
                 return await asyncio.wait_for(
@@ -2850,44 +2920,44 @@ async def _parse_pdf_with_docling_via_gpu_queue(
                 removed = await queue.cancel_pending_task(task_id)
                 if removed:
                     detail = (
-                        f"Docling GPU queue wait exceeded {wait_timeout_seconds:.1f}s before task {task_id} started; "
+                        f"Marker GPU queue wait exceeded {wait_timeout_seconds:.1f}s before task {task_id} started; "
                         "falling back to CPU"
                     )
                     logger.warning(detail)
                     if not result_future.done():
                         result_future.cancel()
-                    raise DoclingGpuQueueTimeout(detail)
+                    raise MarkerGpuQueueTimeout(detail)
 
                 logger.info(
-                    f"Docling GPU queue wait exceeded {wait_timeout_seconds:.1f}s for task {task_id}, "
+                    f"Marker GPU queue wait exceeded {wait_timeout_seconds:.1f}s for task {task_id}, "
                     "but the task is already running; continue waiting for GPU result"
                 )
         return await result_future
     except asyncio.CancelledError:
         removed = await queue.cancel_pending_task(task_id)
         if removed:
-            logger.info(f"Cancelled pending Docling GPU queue task {task_id}")
+            logger.info(f"Cancelled pending Marker GPU queue task {task_id}")
         if not result_future.done():
             result_future.cancel()
         raise
 
 
-async def _parse_pdf_with_docling_on_cpu(
+async def _parse_pdf_with_marker_on_cpu(
     pdf_bytes: bytes,
     max_pages: int,
     images_output_dir: Path | None,
     images_url_prefix: str | None,
 ) -> ParsedPdfResult | None:
-    """Run Docling on CPU in an isolated subprocess when GPU parsing is unavailable."""
+    """Run Marker on CPU in an isolated subprocess when GPU parsing is unavailable."""
     loop = asyncio.get_running_loop()
     try:
         logger.info(
-            f"[Docling] Starting CPU parse: max_pages={max_pages}, "
+            f"[Marker] Starting CPU parse: max_pages={max_pages}, "
             f"image_export={images_output_dir is not None}"
         )
         result = await loop.run_in_executor(
             None,
-            _run_docling_in_isolated_process,
+            _run_marker_in_isolated_process,
             pdf_bytes,
             max_pages,
             str(images_output_dir) if images_output_dir else None,
@@ -2896,207 +2966,96 @@ async def _parse_pdf_with_docling_on_cpu(
         )
         if result is not None:
             logger.info(
-                "Docling CPU parse completed: "
+                "Marker CPU parse completed: "
                 f"{len(result.structured_content.get('blocks', []))} native blocks"
             )
         return result
     except Exception as e:
-        logger.warning(f"Docling CPU parse failed: {type(e).__name__}: {e!r}")
+        logger.warning(f"Marker CPU parse failed: {type(e).__name__}: {e!r}")
         return None
 
 
-def _parse_pdf_with_docling(
+def _parse_pdf_with_marker(
     pdf_bytes: bytes,
     max_pages: int,
     images_output_dir: Path | None = None,
     images_url_prefix: str | None = None,
     accelerator_device: str = "cpu",
 ) -> ParsedPdfResult | None:
-    """High-quality PDF extraction using Docling.
-
-    Returns markdown with page markers and appends extracted figure/table links
-    when image export is enabled.
-    """
+    """High-quality PDF extraction using Marker."""
     try:
-        ensure_transformers_runtime_ready("Docling PDF parse")
-        from docling_core.types.doc import ImageRefMode, PictureItem, TableItem
-        from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
-        from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.pipeline_options import (
-            OcrAutoOptions,
-            PdfPipelineOptions,
-            RapidOcrOptions,
-            TesseractCliOcrOptions,
-        )
-        from docling.document_converter import DocumentConverter, PdfFormatOption
+        ensure_transformers_runtime_ready("Marker PDF parse")
+        from marker.converters.pdf import PdfConverter
+        from marker.models import create_model_dict
+        from marker.renderers.json import JSONRenderer
+        from marker.renderers.markdown import MarkdownRenderer
     except ImportError as e:
-        logger.info(f"Docling not available for structured fallback parse: {e}")
+        logger.info(f"Marker not available for structured fallback parse: {e}")
         return None
 
     tmp_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
     try:
         parse_started_at = time.perf_counter()
         logger.info(
-            f"[Docling] Starting native parse: accelerator={accelerator_device}, "
-            f"bytes={len(pdf_bytes)}, max_pages={max_pages}, image_export={images_output_dir is not None}, "
-            f"do_ocr_env={DOCLING_PDF_DO_OCR}, ocr_engine_env={DOCLING_PDF_OCR_ENGINE}, "
-            f"document_timeout_env={DOCLING_PDF_DOCUMENT_TIMEOUT_SECONDS}"
+            f"[Marker] Starting native parse: accelerator={accelerator_device}, "
+            f"bytes={len(pdf_bytes)}, max_pages={max_pages}, image_export={images_output_dir is not None}"
         )
         tmp_file.write(pdf_bytes)
         tmp_file.close()
-        logger.info(f"[Docling] Temporary PDF created at {tmp_file.name}")
-
-        pipeline_options = PdfPipelineOptions()
-        pipeline_options.images_scale = 2.0
-        pipeline_options.generate_page_images = True
-        pipeline_options.generate_picture_images = True
-        pipeline_options.accelerator_options = AcceleratorOptions(
-            num_threads=4,
-            device=AcceleratorDevice.CUDA if accelerator_device == "cuda" else AcceleratorDevice.CPU,
-        )
-        if DOCLING_PDF_DOCUMENT_TIMEOUT_SECONDS is not None and DOCLING_PDF_DOCUMENT_TIMEOUT_SECONDS > 0:
-            pipeline_options.document_timeout = DOCLING_PDF_DOCUMENT_TIMEOUT_SECONDS
-
-        requested_ocr_engine = DOCLING_PDF_OCR_ENGINE
-        resolved_ocr_engine = requested_ocr_engine
-        if not DOCLING_PDF_DO_OCR or requested_ocr_engine == "none":
-            pipeline_options.do_ocr = False
-            resolved_ocr_engine = "none"
-        elif requested_ocr_engine == "auto":
-            pipeline_options.do_ocr = True
-            pipeline_options.ocr_options = OcrAutoOptions()
-        elif requested_ocr_engine == "rapidocr":
-            pipeline_options.do_ocr = True
-            pipeline_options.ocr_options = RapidOcrOptions()
-        elif requested_ocr_engine == "tesseract":
-            pipeline_options.do_ocr = True
-            pipeline_options.ocr_options = TesseractCliOcrOptions()
-        else:
-            logger.warning(
-                f"[Docling] Unknown DOCLING_PDF_OCR_ENGINE={requested_ocr_engine!r}; falling back to auto"
-            )
-            pipeline_options.do_ocr = True
-            pipeline_options.ocr_options = OcrAutoOptions()
-            resolved_ocr_engine = "auto"
-
-        logger.info(
-            f"[Docling] Pipeline configured: accelerator={accelerator_device}, images_scale={pipeline_options.images_scale}, "
-            f"generate_page_images={pipeline_options.generate_page_images}, "
-            f"generate_picture_images={pipeline_options.generate_picture_images}, do_ocr={pipeline_options.do_ocr}, "
-            f"ocr_engine={resolved_ocr_engine}, document_timeout={pipeline_options.document_timeout}"
-        )
+        logger.info(f"[Marker] Temporary PDF created at {tmp_file.name}")
 
         converter_started_at = time.perf_counter()
-        logger.info("[Docling] Creating DocumentConverter")
-        converter = DocumentConverter(
-            format_options={
-                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
-            }
-        )
+        converter = PdfConverter(artifact_dict=create_model_dict(device=accelerator_device))
         logger.info(
-            f"[Docling] DocumentConverter created in {time.perf_counter() - converter_started_at:.2f}s"
+            f"[Marker] PdfConverter created in {time.perf_counter() - converter_started_at:.2f}s"
         )
 
         convert_started_at = time.perf_counter()
-        logger.info(f"[Docling] Running DocumentConverter.convert on {tmp_file.name}")
-        conv_res = converter.convert(tmp_file.name)
+        document = converter.build_document(tmp_file.name)
         logger.info(
-            f"[Docling] DocumentConverter.convert completed in {time.perf_counter() - convert_started_at:.2f}s; "
-            "exporting markdown"
+            f"[Marker] build_document completed in {time.perf_counter() - convert_started_at:.2f}s; exporting markdown/json"
         )
-        markdown = conv_res.document.export_to_markdown(
-            image_mode=ImageRefMode.PLACEHOLDER,
-            page_break_placeholder="\n\n--- Page {page_no} ---\n\n",
-        ).strip()
-        logger.info(f"[Docling] Markdown export completed: chars={len(markdown)}")
 
-        if max_pages > 0:
-            logger.info(f"[Docling] Trimming markdown to max_pages={max_pages}")
-            page_sections: list[str] = []
-            for match in re.finditer(
-                r'--- Page (\d+) ---\n\n([\s\S]*?)(?=\n\n--- Page \d+ ---|\Z)',
-                markdown,
-            ):
-                if int(match.group(1)) > max_pages:
-                    break
-                page_sections.append(
-                    f"--- Page {match.group(1)} ---\n\n{match.group(2).strip()}"
-                )
-            markdown = "\n\n".join(section for section in page_sections if section.strip())
+        markdown_renderer = MarkdownRenderer(
+            {
+                "paginate_output": True,
+                "page_separator": "<<<PATHLAB_MARKER_PAGE_BREAK>>>",
+            }
+        )
+        markdown_output = markdown_renderer(document)
+        raw_image_url_map, block_image_url_map = _save_marker_rendered_images(
+            markdown_output,
+            images_output_dir,
+            images_url_prefix,
+        )
+        first_page_id = _safe_int(getattr(document.pages[0], "page_id", 0), 0) if getattr(document, "pages", None) else 0
+        markdown = _normalize_marker_markdown(markdown_output.markdown, first_page_id)
+        markdown = _rewrite_marker_markdown_image_refs(markdown, raw_image_url_map)
+        markdown = _trim_paginated_markdown(markdown, max_pages)
 
-        extracted_links: list[str] = []
-        exported_media: dict[str, dict[str, Any]] = {}
-        if images_output_dir is not None:
-            logger.info(f"[Docling] Exporting figure/table images to {images_output_dir}")
-            images_output_dir.mkdir(parents=True, exist_ok=True)
-            figure_counter = 0
-            for element, _level in conv_res.document.iterate_items():
-                if not isinstance(element, (PictureItem, TableItem)):
-                    continue
-
-                image = element.get_image(conv_res.document)
-                if image is None:
-                    continue
-
-                figure_counter += 1
-                filename = f"figure-{figure_counter:03d}.png"
-                image_path = images_output_dir / filename
-                image.save(image_path, "PNG")
-
-                caption = ""
-                if hasattr(element, "caption_text"):
-                    try:
-                        caption = str(element.caption_text(conv_res.document) or "").strip()
-                    except Exception:
-                        caption = ""
-
-                image_ref = f"{images_url_prefix}/{filename}" if images_url_prefix is not None else str(image_path)
-                media_key = _coerce_text(getattr(element, 'self_ref', None))
-                if media_key:
-                    exported_media[media_key] = {
-                        "image": image_ref,
-                        "filename": filename,
-                        "caption": caption,
-                    }
-
-                if images_url_prefix is not None:
-                    link_title = f"Figure {figure_counter}"
-                    if caption:
-                        link_title = f"{link_title}: {caption}"
-                    extracted_links.append(f"![{link_title}]({images_url_prefix}/{filename})")
-
-            if extracted_links:
-                markdown = (
-                    markdown.rstrip()
-                    + "\n\n## Extracted Figures and Tables\n\n"
-                    + "\n\n".join(extracted_links)
-                )
-            logger.info(
-                f"[Docling] Image export completed: exported_items={figure_counter}, markdown_links={len(extracted_links)}"
-            )
-
-        page_count_hint = _extract_page_count(markdown)
+        rendered_json = JSONRenderer()(document).model_dump(mode="json")
+        page_count_hint = len(rendered_json.get("children") or [])
         logger.info(
-            f"[Docling] Building structured content from native document: page_count_hint={page_count_hint}"
+            f"[Marker] Building structured content from rendered JSON: page_count_hint={page_count_hint}"
         )
-        structured_content = _build_document_graph_from_docling_document(
-            conv_res.document,
-            PDF_PARSE_METHOD_DOCLING,
+        structured_content = _build_document_graph_from_marker_document(
+            rendered_json,
+            PDF_PARSE_METHOD_MARKER,
             max_pages=max_pages,
             page_count_hint=page_count_hint,
-            exported_media=exported_media,
+            image_url_map=block_image_url_map,
         )
         logger.info(
-            f"Docling extraction OK ({accelerator_device}): {len(markdown)} chars, "
-            f"{len(extracted_links)} extracted figures/tables, "
+            f"Marker extraction OK ({accelerator_device}): {len(markdown)} chars, "
+            f"{len(raw_image_url_map)} extracted images, "
             f"{len(structured_content.get('blocks', []))} native blocks, "
             f"elapsed={time.perf_counter() - parse_started_at:.2f}s"
         )
-        return _to_parsed_pdf_result(markdown, PDF_PARSE_METHOD_DOCLING, structured_content)
+        return _to_parsed_pdf_result(markdown, PDF_PARSE_METHOD_MARKER, structured_content)
     except Exception as e:
         elapsed = time.perf_counter() - parse_started_at if 'parse_started_at' in locals() else -1.0
         logger.error(
-            f"Docling extraction failed ({accelerator_device}) after {elapsed:.2f}s: "
+            f"Marker extraction failed ({accelerator_device}) after {elapsed:.2f}s: "
             f"{type(e).__name__}: {e!r}\n{traceback.format_exc()}"
         )
         return None
@@ -3113,10 +3072,10 @@ async def parse_pdf(
     images_output_dir: Path | None = None,
     images_url_prefix: str | None = None,
 ) -> ParsedPdfResult:
-    """Parse PDF with PyMuPDF first; fall back to Docling only if fast parse fails.
+    """Parse PDF with PyMuPDF first; fall back to Marker only if fast parse fails.
 
     Normal flow returns quickly with a PyMuPDF parse. Callers can schedule a
-    background Docling upgrade separately to improve fidelity and structure.
+    background Marker upgrade separately to improve fidelity and structure.
     """
     async def _run_parse() -> ParsedPdfResult:
         pymupdf_result = await _parse_pdf_with_pymupdf_in_worker_thread(
@@ -3133,23 +3092,23 @@ async def parse_pdf(
             )
             return pymupdf_result
 
-        logger.info("parse_pdf falling back to Docling native parse after PyMuPDF fast path miss")
-        docling_result = await _parse_pdf_with_docling_best_effort(
+        logger.info("parse_pdf falling back to Marker native parse after PyMuPDF fast path miss")
+        marker_result = await _parse_pdf_with_marker_best_effort(
             pdf_bytes,
             max_pages,
             images_output_dir,
             images_url_prefix,
         )
-        if docling_result is not None:
+        if marker_result is not None:
             logger.info(
-                "parse_pdf returning Docling native result: "
-                f"{docling_result.page_count} pages, "
-                f"{len(docling_result.structured_content.get('blocks', []))} structured blocks"
+                "parse_pdf returning Marker native result: "
+                f"{marker_result.page_count} pages, "
+                f"{len(marker_result.structured_content.get('blocks', []))} structured blocks"
             )
-            return docling_result
+            return marker_result
 
         return _to_parsed_pdf_result(
-            "[Error parsing PDF: PyMuPDF and Docling both failed]",
+            "[Error parsing PDF: PyMuPDF and Marker both failed]",
             PDF_PARSE_METHOD_FAILED,
         )
 
@@ -3467,15 +3426,15 @@ async def _save_markdown_to_cache_async(
     )
 
 
-async def _save_docling_to_cache_async(
+async def _save_marker_to_cache_async(
     url: str,
     markdown: str,
     paper_title: str,
     structured_content: dict[str, Any] | None,
 ) -> None:
-    """Persist Docling cache artifacts off the event loop."""
+    """Persist Marker cache artifacts off the event loop."""
     await asyncio.to_thread(
-        _save_docling_to_cache,
+        _save_marker_to_cache,
         url,
         markdown,
         paper_title,
@@ -3517,7 +3476,7 @@ async def process_pdf_url(
         "from_cache": False,
         "reference_card": None,
         "page_count": None,    # Total pages parsed (int), filled after parsing
-        "parse_method": None,  # "docling" or "pymupdf"
+        "parse_method": None,  # "marker" or "pymupdf"
         "structured_parse_method": None,
         "high_quality_pending": False,
         "image_count": 0,      # Number of extracted images on disk
@@ -3561,8 +3520,10 @@ async def process_pdf_url(
             pdf_content = cached_markdown
             logger.info(f"Using cached parsed markdown for {url}")
             if result["parse_method"] == PDF_PARSE_METHOD_PYMUPDF and use_cache and pdf_bytes:
-                schedule_docling_upgrade(url, str(result["title"] or title), pdf_bytes)
-                result["high_quality_pending"] = not _has_docling_cache(url)
+                schedule_marker_upgrade(url, str(result["title"] or title), pdf_bytes)
+                result["high_quality_pending"] = bool(
+                    (get_cached_pdf_meta(url) or {}).get("high_quality_parse_pending")
+                )
         else:
             url_hash = _get_url_hash(url)
             sync_images_output_dir = _get_pdf_cache_dir() / "images" / url_hash
@@ -3579,8 +3540,8 @@ async def process_pdf_url(
             result["page_count"] = parse_result.page_count
             result["structured_parse_method"] = parse_method
             if use_cache and not pdf_content.startswith("[Error"):
-                if parse_method == PDF_PARSE_METHOD_DOCLING:
-                    await _save_docling_to_cache_async(
+                if parse_method == PDF_PARSE_METHOD_MARKER:
+                    await _save_marker_to_cache_async(
                         url,
                         pdf_content,
                         paper_title=title,
@@ -3595,8 +3556,10 @@ async def process_pdf_url(
                         high_quality_pending=True,
                     )
                     if pdf_bytes:
-                        schedule_docling_upgrade(url, title, pdf_bytes)
-                        result["high_quality_pending"] = True
+                        schedule_marker_upgrade(url, title, pdf_bytes)
+                        result["high_quality_pending"] = bool(
+                            (get_cached_pdf_meta(url) or {}).get("high_quality_parse_pending")
+                        )
 
         # Guard: empty result (not an [Error prefix but no content extracted)
         if not pdf_content or not pdf_content.strip():
@@ -3620,14 +3583,12 @@ async def process_pdf_url(
         result["page_count"] = result["page_count"] or _extract_page_count(pdf_content)
         # parse_method may already be set from cache metadata or current parse.
         if not result["parse_method"]:
-            result["parse_method"] = (
-                PDF_PARSE_METHOD_DOCLING if _has_docling_cache(url) else PDF_PARSE_METHOD_PYMUPDF
-            )
+            result["parse_method"] = _get_high_quality_cache_method(url) or PDF_PARSE_METHOD_PYMUPDF
         if not result["structured_parse_method"]:
             structured_cached = get_cached_structured_content(url)
             if structured_cached:
                 result["structured_parse_method"] = structured_cached.get("parse_method")
-        if result["parse_method"] == PDF_PARSE_METHOD_DOCLING:
+        if result["parse_method"] == PDF_PARSE_METHOD_MARKER:
             result["high_quality_pending"] = False
 
         # ── Academic content detection ────────────────────────────────────────
@@ -3644,7 +3605,7 @@ async def process_pdf_url(
             _update_meta_academic_flag(url, academic)
 
         # Determine whether extracted images are already available.
-        # Both Docling and PyMuPDF write into the same per-document images dir.
+        # Both Marker and PyMuPDF write into the same per-document images dir.
         url_hash_for_images = _get_url_hash(url)
         images_dir_for_check = _get_pdf_cache_dir() / "images" / url_hash_for_images
         image_count_on_disk = 0

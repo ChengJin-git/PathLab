@@ -1,8 +1,8 @@
 """Thread-safe warmup helpers for shared Transformers runtime imports.
 
 This module prevents a race where concurrent first-time imports of
-`sentence_transformers` and `docling` can observe a partially initialized
-`transformers` package. We pre-import the specific symbols that Docling needs
+`sentence_transformers` and PDF parsing backends such as Marker can observe a
+partially initialized `transformers` package. We pre-import shared symbols
 under a process-local lock, and reuse the helper from both code paths.
 """
 
