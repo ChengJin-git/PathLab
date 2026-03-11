@@ -85,3 +85,6 @@ Thumbs.db
 temp/
 
 .specstory
+
+# agentv2 (experimental, not tracked)
+pathlab/pathlab-client/server/backend/agentv2/

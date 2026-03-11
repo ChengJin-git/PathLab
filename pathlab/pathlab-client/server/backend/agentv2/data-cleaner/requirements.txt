@@ -1,6 +1,0 @@
-openai
-pandas
-openpyxl
-xlrd
-clevercsv
-chardet
