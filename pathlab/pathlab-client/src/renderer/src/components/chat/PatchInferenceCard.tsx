@@ -145,6 +145,7 @@ export function PatchInferenceCard({ config, conversationId, messageId, referenc
     const liveTask = liveTasks[type]
     const effectiveRun = liveTask ? toRun(liveTask) : run
     const isBusy = submittingType === type || effectiveRun?.status === 'queued' || effectiveRun?.status === 'running'
+    const statusLabel = effectiveRun ? t(`chatComponents.patchInference.status.${effectiveRun.status}`) : ''
     const title = type === 'classification' ? t('chatComponents.patchInference.classificationTitle') : t('chatComponents.patchInference.segmentationTitle')
     const icon = type === 'classification' ? <Microscope className="w-4 h-4" /> : <Scissors className="w-4 h-4" />
 
@@ -155,7 +156,7 @@ export function PatchInferenceCard({ config, conversationId, messageId, referenc
           <div className="space-y-2 text-sm text-gray-700">
             <div className="flex items-center justify-between gap-3">
               <span className="truncate">{effectiveRun.model_name}</span>
-              <span className="text-xs px-2 py-1 rounded-full bg-blue-50 text-blue-700">{effectiveRun.status}</span>
+              <span className="text-xs px-2 py-1 rounded-full bg-blue-50 text-blue-700">{statusLabel}</span>
             </div>
             {isBusy && <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden"><div className="h-full bg-blue-500" style={{ width: `${effectiveRun.progress ?? 15}%` }} /></div>}
             {effectiveRun.status === 'completed' && type === 'classification' && effectiveRun.result?.predicted_label && (

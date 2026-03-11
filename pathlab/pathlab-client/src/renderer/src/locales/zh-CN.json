@@ -2530,6 +2530,13 @@
       "source": "来源判断",
       "classificationTitle": "分类",
       "segmentationTitle": "分割",
+      "status": {
+        "queued": "排队中",
+        "running": "执行中",
+        "completed": "已完成",
+        "failed": "失败",
+        "cancelled": "已取消"
+      },
       "missingImage": "我没有在附近的对话里找到这张图像，因此当前还不能启动推理。",
 	      "notReady": "这条消息暂时还不能持久化图像推理状态。",
 	      "submitting": "正在提交图像推理...",

@@ -2522,6 +2522,13 @@
       "source": "來源判斷",
       "classificationTitle": "分類",
       "segmentationTitle": "分割",
+      "status": {
+        "queued": "排隊中",
+        "running": "執行中",
+        "completed": "已完成",
+        "failed": "失敗",
+        "cancelled": "已取消"
+      },
       "missingImage": "我沒有在附近的對話裡找到這張圖像，因此目前還不能啟動推理。",
 	      "notReady": "這條訊息暫時還不能持久化圖像推理狀態。",
 	      "submitting": "正在提交圖像推理...",

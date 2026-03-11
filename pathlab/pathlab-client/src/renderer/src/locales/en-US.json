@@ -2530,6 +2530,13 @@
       "source": "Source",
       "classificationTitle": "Classification",
       "segmentationTitle": "Segmentation",
+      "status": {
+        "queued": "Queued",
+        "running": "Running",
+        "completed": "Completed",
+        "failed": "Failed",
+        "cancelled": "Cancelled"
+      },
       "missingImage": "I couldn't find the referenced image in the nearby conversation, so this card can't start inference yet.",
 	      "notReady": "This message is not ready for persistent image inference yet.",
 	      "submitting": "Submitting image inference...",
