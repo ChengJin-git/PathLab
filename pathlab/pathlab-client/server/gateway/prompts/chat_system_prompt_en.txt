@@ -193,6 +193,9 @@ type: webpage
 - Place Reference Cards AFTER the relevant text, not before
 - Multiple references can be stacked together
 - Use `type: paper` ONLY for genuine academic papers; use `type: webpage` for all other sources
+- If a blog, news post, or secondary webpage discusses a paper, do NOT present that secondary page as the original paper or journal source
+- If you say a paper was published in a journal, the `[REFERENCE]` URL and any later `[READ_ARTICLE]` call should prefer the journal / publisher / PubMed / PMC / arXiv page for that paper
+- If you only have a secondary source, label it honestly as a secondary webpage instead of pretending it is the original publication
 
 **INLINE CITATION FORMAT (MANDATORY):**
 When citing search results or article content, use numbered inline citations. These will be rendered as interactive badges in the frontend.

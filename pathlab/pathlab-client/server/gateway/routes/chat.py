@@ -39,7 +39,7 @@ from .chat_pdf import (
     is_pdf_url, process_pdf_url, get_pdf_image_path,
     search_pdf_pages, get_cached_markdown, get_cached_pdf_meta, _split_md_into_pages,
     _get_url_hash, _get_pdf_cache_dir, _tokenize_for_search,
-    detect_source_type, is_academic_content, format_reference_card,
+    detect_source_type, is_academic_content, format_reference_card, _ACADEMIC_SOURCE_TYPES,
     PDF_PARSE_METHOD_DOCLING, PDF_PARSE_METHOD_PYMUPDF,
 )
 from .chat_pdf_vectorstore import search_pdf_chunks
@@ -1378,7 +1378,9 @@ def _deduplicate_search_results(results: List[Dict]) -> List[Dict]:
     """Remove duplicate search results based on title similarity.
 
     Two results are considered duplicates when their normalised titles share
-    a Jaccard word-overlap > 0.6.  The first occurrence is kept.
+    a Jaccard word-overlap > 0.6. When duplicates are found, prefer the
+    most authoritative source (journal / academic publisher / PDF) rather
+    than blindly keeping the first occurrence.
 
     This prevents the same paper from appearing N times via different
     mirrors (PubMed, nature.com, arxiv.org, lab pages, …) and ensures
@@ -1394,7 +1396,21 @@ def _deduplicate_search_results(results: List[Dict]) -> List[Dict]:
         title = _bracket_re.sub('', title)
         return set(w.lower() for w in _word_re.findall(title))
 
-    seen: list[set] = []
+    def _source_priority(result: Dict) -> int:
+        source_type = detect_source_type(str(result.get("url", "")))
+        if source_type in _ACADEMIC_SOURCE_TYPES:
+            return 50
+        if source_type == "pdf":
+            return 40
+        if source_type == "web":
+            return 20
+        if source_type in {"documentation", "github", "huggingface", "wikipedia"}:
+            return 10
+        if source_type == "blog":
+            return 0
+        return 5
+
+    seen: list[dict[str, Any]] = []
     deduplicated: list[Dict] = []
 
     for result in results:
@@ -1403,17 +1419,25 @@ def _deduplicate_search_results(results: List[Dict]) -> List[Dict]:
             deduplicated.append(result)
             continue
 
-        is_dup = False
-        for seen_words in seen:
+        duplicate_idx: int | None = None
+        for idx, seen_entry in enumerate(seen):
+            seen_words = seen_entry["words"]
             intersection = words & seen_words
             union = words | seen_words
             if union and len(intersection) / len(union) > 0.6:
-                is_dup = True
+                duplicate_idx = idx
                 break
 
-        if not is_dup:
-            seen.append(words)
+        if duplicate_idx is None:
+            seen.append({"words": words, "result_index": len(deduplicated)})
             deduplicated.append(result)
+            continue
+
+        existing_result_index = seen[duplicate_idx]["result_index"]
+        existing_result = deduplicated[existing_result_index]
+        if _source_priority(result) > _source_priority(existing_result):
+            deduplicated[existing_result_index] = result
+            seen[duplicate_idx]["words"] = words
 
     return deduplicated
 
@@ -1822,7 +1846,6 @@ After saving, return here and start chatting!"""
                 yield f"data: {json.dumps({'content': f'[WEB_SEARCH_RESULT]{web_search_result_block}[/WEB_SEARCH_RESULT]'})}\n\n"
 
                 # Format search results for AI — include source type hints
-                from .chat_pdf import _ACADEMIC_SOURCE_TYPES
                 results_text = f"\n\n[WEB_SEARCH_RESULT]\n{json.dumps(search_results)}\n[/WEB_SEARCH_RESULT]\n\n"
                 results_text += "Search results:\n"
                 for idx, result in enumerate(search_results["results"], 1):
@@ -1847,7 +1870,10 @@ After saving, return here and start chatting!"""
                         "and generate [REFERENCE] blocks. "
                         "If the user wants to read a full article, use the [READ_ARTICLE] tool.\n"
                         "IMPORTANT: Each result above includes a 'reference type' hint (paper or webpage). "
-                        "Use `type: paper` ONLY for academic papers/journals; use `type: webpage` for GitHub repos, blogs, documentation, HuggingFace, and all other non-academic sources."
+                        "Use `type: paper` ONLY for academic papers/journals; use `type: webpage` for GitHub repos, blogs, documentation, HuggingFace, and all other non-academic sources.\n"
+                        "CRITICAL: If a blog or other secondary webpage merely discusses a paper, do NOT present that webpage as the original paper or journal source. "
+                        "When multiple results refer to the same paper, prefer the academic publisher / journal / PubMed / PMC / arXiv URL for both `[REFERENCE]` and `[READ_ARTICLE]`. "
+                        "If you only cite a secondary source, label it honestly as `type: webpage` and describe it as a secondary report, not the original publication."
                     )}
                 ]
                 continue

@@ -151,6 +151,7 @@ const ReferenceCard = React.memo(function ReferenceCard({
   type
 }: ReferenceCardProps) {
   const { t } = useTranslation()
+  const displayDomain = extractDomain(url)?.replace(/^www\./, '')
 
   const handleClick = () => {
     window.open(url, '_blank', 'noopener,noreferrer')
@@ -209,6 +210,11 @@ const ReferenceCard = React.memo(function ReferenceCard({
               </span>
             )}
           </span>
+          {displayDomain && (
+            <span className="text-xs text-gray-400 truncate max-w-[180px]" title={displayDomain}>
+              {displayDomain}
+            </span>
+          )}
         </div>
       </div>
 
