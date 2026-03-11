@@ -468,8 +468,13 @@ async def get_heatmap_thumbnail(
         if is_patch_file(str(file_path), file_size):
             # Patch file
             with Image.open(file_path) as img:
+                try:
+                    img.draft('RGB', (thumb_width, thumb_height))
+                except Exception:
+                    pass
+
+                img.thumbnail((thumb_width, thumb_height), Image.Resampling.LANCZOS)
                 thumbnail = img.convert('RGB')
-                thumbnail.thumbnail((thumb_width, thumb_height), Image.Resampling.LANCZOS)
         else:
             # WSI file
             aslide = _load_slide(str(file_path))

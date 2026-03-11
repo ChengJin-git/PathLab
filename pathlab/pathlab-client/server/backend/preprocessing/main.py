@@ -381,9 +381,14 @@ async def get_thumbnail(
         if is_patch_file(str(file_path), file_size):
             # Patch file: load directly with PIL and resize
             with Image.open(file_path) as img:
-                img = img.convert('RGB')
+                try:
+                    img.draft('RGB', (size, size))
+                except Exception:
+                    pass
+
                 # Resize to fit within size while maintaining aspect ratio
                 img.thumbnail((size, size), Image.Resampling.LANCZOS)
+                img = img.convert('RGB')
 
                 img_bytes = io.BytesIO()
                 img.save(img_bytes, format='JPEG', quality=85)

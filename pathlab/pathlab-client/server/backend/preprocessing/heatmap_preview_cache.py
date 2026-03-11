@@ -19,7 +19,7 @@ from .heatmap_utils import handle_multi_class_attention, load_result_meta, norma
 
 logger = logging.getLogger(__name__)
 
-RECOMMENDATION_PREVIEW_MAX_SIZE = 512
+RECOMMENDATION_PREVIEW_MAX_SIZE = 256
 RECOMMENDATION_OPACITY = 0.68
 RECOMMENDATION_BLUR_SCALE = 0.6
 RECOMMENDATION_CONTRAST_BOOST = 1.18
@@ -157,13 +157,21 @@ def _resolve_patch_size(uploads_dir: Path, wsi_id: str, preferred_patch_size: Op
         return 512
 
 
+def _load_patch_thumbnail(wsi_path: Path, size: int) -> tuple[Image.Image, int, int]:
+    with Image.open(wsi_path) as img:
+        slide_width, slide_height = img.size
+        try:
+            img.draft("RGB", (size, size))
+        except Exception:
+            pass
+
+        img.thumbnail((size, size), Image.Resampling.LANCZOS)
+        return img.convert("RGB"), slide_width, slide_height
+
+
 def _load_thumbnail_and_dims(wsi_path: Path, file_size: Optional[int], size: int) -> tuple[Image.Image, int, int]:
     if is_patch_file(str(wsi_path), file_size or wsi_path.stat().st_size):
-        with Image.open(wsi_path) as img:
-            slide_width, slide_height = img.size
-            thumbnail = img.convert("RGB")
-            thumbnail.thumbnail((size, size), Image.Resampling.LANCZOS)
-            return thumbnail, slide_width, slide_height
+        return _load_patch_thumbnail(wsi_path, size)
 
     slide = _load_slide(str(wsi_path))
     try:
