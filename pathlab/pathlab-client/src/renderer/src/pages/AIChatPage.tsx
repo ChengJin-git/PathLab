@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import {
   chatWithAI,
+  cancelChatPatchInferenceOnExit,
   getConversations,
   createConversation,
   getConversation,
@@ -30,7 +31,7 @@ import {
 import { AudioVisualizer } from '../components/common/AudioVisualizer'
 
 // Extracted modules
-import AssistantMessage, { parseSubmitTask, parseCancelTaskNow, isInternalOnlyMessage, removeContextLimitBlock } from '../components/chat/AssistantMessage'
+import AssistantMessage, { parseSubmitTask, parseCancelTaskNow, isInternalOnlyMessage, removeContextLimitBlock, removeResponseTruncatedBlock } from '../components/chat/AssistantMessage'
 import { sanitizeConfigBlocksForAI, isPdfContextMessage } from '../lib/chatMessageParser'
 import { SCENARIO_CARDS } from '../constants/scenarios'
 
@@ -49,10 +50,12 @@ import { CachedTaskData } from '../components/chat/TaskHistoryCard'
 import { parseCancelTaskConfig } from '../components/chat/CancelTaskCard'
 import { removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
 import { removeModelListBlock } from '../components/chat/ModelListCard'
-import { removePatchInferenceBlock } from '../components/chat/PatchInferenceCard'
+import { parsePatchInferenceConfig, removePatchInferenceBlock } from '../components/chat/PatchInferenceCard'
 import { removePdfParseStatusBlock } from '../components/chat/SearchingStatus'
 import { parseRenameTaskConfig, removeRenameTaskBlock } from '../components/chat/RenameTaskCard'
 import { MULTIMODAL_MODELS } from '../components/settings/GeneralTab'
+import { BEFORE_LOGOUT_EVENT } from '../contexts/AuthContext'
+import { useAuth } from '../contexts/AuthContext'
 
 
 interface Message {
@@ -83,15 +86,68 @@ interface FileAttachment {
 const PENDING_CANCELLED_RESPONSE_KEY_PREFIX = 'ai-chat-pending-cancelled-response:'
 const PENDING_CANCELLED_RESPONSE_RETRY_DELAY_MS = 1200
 const PENDING_CANCELLED_RESPONSE_MAX_RETRIES = 5
+const PENDING_PATCH_INFERENCE_CANCEL_KEY_PREFIX = 'ai-chat-pending-patch-inference-cancel:'
+const PENDING_PATCH_INFERENCE_CANCEL_RETRY_DELAY_MS = 1200
+const PENDING_PATCH_INFERENCE_CANCEL_MAX_RETRIES = 5
+const conversationHistoryCache = new Map<string, Conversation[]>()
 
 const getPendingCancelledResponseKey = (conversationId: string) =>
   `${PENDING_CANCELLED_RESPONSE_KEY_PREFIX}${conversationId}`
+
+const getPendingPatchInferenceCancelKey = (conversationId: string) =>
+  `${PENDING_PATCH_INFERENCE_CANCEL_KEY_PREFIX}${conversationId}`
+
+interface PendingPatchInferenceCancel {
+  messageId: number
+  content: string
+  timestamp: number
+}
+
+function readPendingPatchInferenceCancel(conversationId: string): PendingPatchInferenceCancel | null {
+  const raw = sessionStorage.getItem(getPendingPatchInferenceCancelKey(conversationId))
+  if (!raw) return null
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<PendingPatchInferenceCancel>
+    if (
+      typeof parsed.messageId === 'number'
+      && typeof parsed.content === 'string'
+      && typeof parsed.timestamp === 'number'
+    ) {
+      return {
+        messageId: parsed.messageId,
+        content: parsed.content,
+        timestamp: parsed.timestamp
+      }
+    }
+  } catch {
+    // Ignore malformed pending payloads.
+  }
+
+  sessionStorage.removeItem(getPendingPatchInferenceCancelKey(conversationId))
+  return null
+}
+
+const getConversationUpdatedAt = (conversation: Conversation): number => {
+  const timestamp = new Date(conversation.updated_at).getTime()
+  return Number.isNaN(timestamp) ? 0 : timestamp
+}
+
+const sortConversationsByUpdatedAt = (items: Conversation[]): Conversation[] =>
+  [...items].sort((a, b) => getConversationUpdatedAt(b) - getConversationUpdatedAt(a))
+
+const upsertConversation = (items: Conversation[], conversation: Conversation): Conversation[] =>
+  sortConversationsByUpdatedAt([
+    conversation,
+    ...items.filter((item) => item.conversation_id !== conversation.conversation_id)
+  ])
 
 export default function AIChatPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const { conversationId: urlConversationId } = useParams<{ conversationId?: string }>()
   const { t } = useTranslation()
+  const { user, isLoading: isAuthLoading } = useAuth()
 
   // Chat state
   const [messages, setMessages] = useState<Message[]>([])
@@ -174,6 +230,7 @@ export default function AIChatPage() {
   const messagesRef = useRef<Message[]>([])
   messagesRef.current = messages
   const pendingCancelledRetryTimersRef = useRef<Map<string, number>>(new Map())
+  const pendingPatchInferenceCancelRetryTimersRef = useRef<Map<string, number>>(new Map())
   // Ref to skip loading conversation when we just created it (to avoid overwriting in-progress messages)
   const skipConversationLoadRef = useRef(false)
   // Ref to track current input value for voice transcript appending
@@ -318,6 +375,65 @@ export default function AIChatPage() {
     return `*${t('aiChat.generationCancelled')}*`
   }, [t])
 
+  const buildPendingPatchInferenceCancelPayload = useCallback(() => {
+    const conversationId = currentConversationIdRef.current
+    if (!conversationId) return null
+
+    for (let index = messagesRef.current.length - 1; index >= 0; index -= 1) {
+      const message = messagesRef.current[index]
+      if (message.role !== 'assistant') continue
+
+      const config = parsePatchInferenceConfig(message.content)
+      if (!config) continue
+
+      const hasActiveRun = [config.classification_run, config.segmentation_run].some(run =>
+        Boolean(run?.task_id) && (run?.status === 'queued' || run?.status === 'running')
+      )
+      if (!hasActiveRun) continue
+
+      const messageId = Number(message.id)
+      if (!Number.isFinite(messageId) || messageId >= 1000000000) continue
+
+      return {
+        conversationId,
+        pending: {
+          messageId,
+          content: buildCancelledMessageContent(),
+          timestamp: Date.now()
+        }
+      }
+    }
+
+    return null
+  }, [buildCancelledMessageContent])
+
+  const persistPatchInferenceExitCancellation = useCallback(async (
+    conversationId: string,
+    pending: PendingPatchInferenceCancel,
+    keepalive: boolean = false
+  ) => {
+    await cancelChatPatchInferenceOnExit({
+      conversation_id: conversationId,
+      message_id: pending.messageId,
+      cancel_message: pending.content
+    }, { keepalive })
+  }, [])
+
+  const markPendingPatchInferenceCancellationOnExit = useCallback(() => {
+    const payload = buildPendingPatchInferenceCancelPayload()
+    if (!payload) return
+
+    const pendingKey = getPendingPatchInferenceCancelKey(payload.conversationId)
+    const existing = readPendingPatchInferenceCancel(payload.conversationId)
+    if (!existing || existing.messageId !== payload.pending.messageId || existing.content !== payload.pending.content) {
+      sessionStorage.setItem(pendingKey, JSON.stringify(payload.pending))
+    }
+
+    void persistPatchInferenceExitCancellation(payload.conversationId, payload.pending, true).catch(error => {
+      console.warn('Failed to persist patch inference cancellation on exit:', error)
+    })
+  }, [buildPendingPatchInferenceCancelPayload, persistPatchInferenceExitCancellation])
+
   const markPendingCancelledResponseOnExit = useCallback(() => {
     const conversationId = currentConversationIdRef.current
     if (!conversationId || generationPhaseRef.current !== 'thinking') return
@@ -370,6 +486,52 @@ export default function AIChatPage() {
 
     runAttempt(1)
   }, [mapConversationMessages])
+
+  const refreshPendingPatchInferenceCancellation = useCallback((conversationId: string) => {
+    const pendingKey = getPendingPatchInferenceCancelKey(conversationId)
+
+    const runAttempt = (attempt: number) => {
+      if (!sessionStorage.getItem(pendingKey)) return
+
+      const existingTimer = pendingPatchInferenceCancelRetryTimersRef.current.get(conversationId)
+      if (existingTimer) {
+        window.clearTimeout(existingTimer)
+      }
+
+      const timerId = window.setTimeout(async () => {
+        pendingPatchInferenceCancelRetryTimersRef.current.delete(conversationId)
+
+        const pending = readPendingPatchInferenceCancel(conversationId)
+        if (!pending) return
+
+        try {
+          await persistPatchInferenceExitCancellation(conversationId, pending)
+          const latestConversation = await getConversation(conversationId)
+          const sortedApiMessages = [...latestConversation.messages].sort((a, b) => a.id - b.id)
+          const lastMessage = sortedApiMessages[sortedApiMessages.length - 1]
+          const hasCancelMessage = lastMessage?.role === 'assistant' && lastMessage.content.trim() === pending.content.trim()
+
+          if (hasCancelMessage) {
+            sessionStorage.removeItem(pendingKey)
+            if (currentConversationIdRef.current === conversationId) {
+              setMessages(mapConversationMessages(sortedApiMessages))
+            }
+            return
+          }
+        } catch (error) {
+          console.warn('Failed to refresh pending patch inference cancellation:', error)
+        }
+
+        if (attempt < PENDING_PATCH_INFERENCE_CANCEL_MAX_RETRIES) {
+          runAttempt(attempt + 1)
+        }
+      }, PENDING_PATCH_INFERENCE_CANCEL_RETRY_DELAY_MS)
+
+      pendingPatchInferenceCancelRetryTimersRef.current.set(conversationId, timerId)
+    }
+
+    runAttempt(1)
+  }, [mapConversationMessages, persistPatchInferenceExitCancellation])
 
   useEffect(() => {
     // Don't scroll to bottom if we're restoring scroll position
@@ -430,11 +592,6 @@ export default function AIChatPage() {
     }
   }, [input])
 
-  // Load conversations on mount
-  useEffect(() => {
-    loadConversations()
-  }, [])
-
   // Abort any in-progress generation when the component unmounts (e.g., navigating away).
   // This triggers the AbortError catch in executeChatGeneration, which fills the cancel text.
   useEffect(() => {
@@ -449,9 +606,29 @@ export default function AIChatPage() {
       window.removeEventListener('pagehide', handlePageExit)
       pendingCancelledRetryTimersRef.current.forEach(timerId => window.clearTimeout(timerId))
       pendingCancelledRetryTimersRef.current.clear()
+      pendingPatchInferenceCancelRetryTimersRef.current.forEach(timerId => window.clearTimeout(timerId))
+      pendingPatchInferenceCancelRetryTimersRef.current.clear()
       abortControllerRef.current?.abort()
     }
   }, [markPendingCancelledResponseOnExit])
+
+  useEffect(() => {
+    const handlePageHide = () => {
+      markPendingPatchInferenceCancellationOnExit()
+    }
+
+    const handleBeforeLogout = () => {
+      markPendingPatchInferenceCancellationOnExit()
+    }
+
+    window.addEventListener('pagehide', handlePageHide)
+    window.addEventListener(BEFORE_LOGOUT_EVENT, handleBeforeLogout)
+
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide)
+      window.removeEventListener(BEFORE_LOGOUT_EVENT, handleBeforeLogout)
+    }
+  }, [markPendingPatchInferenceCancellationOnExit])
 
   // Handle initial message from navigation state
   useEffect(() => {
@@ -476,18 +653,68 @@ export default function AIChatPage() {
     }
   }, [location, toggleVoiceSession, navigate])
 
-  const loadConversations = async () => {
+  const setConversationsAndCache = useCallback((nextConversations: Conversation[]) => {
+    const normalizedConversations = sortConversationsByUpdatedAt(nextConversations)
+    setConversations(normalizedConversations)
+
+    if (user?.id) {
+      conversationHistoryCache.set(user.id, normalizedConversations)
+    }
+  }, [user?.id])
+
+  const updateConversationsAndCache = useCallback((
+    updater: (prevConversations: Conversation[]) => Conversation[]
+  ) => {
+    setConversations((prevConversations) => {
+      const nextConversations = sortConversationsByUpdatedAt(updater(prevConversations))
+
+      if (user?.id) {
+        conversationHistoryCache.set(user.id, nextConversations)
+      }
+
+      return nextConversations
+    })
+  }, [user?.id])
+
+  const loadConversations = useCallback(async (options?: { showLoading?: boolean }) => {
+    const showLoading = options?.showLoading ?? true
+
     try {
-      setIsLoadingConversations(true)
+      if (showLoading) {
+        setIsLoadingConversations(true)
+      }
+
       const convs = await getConversations()
-      setConversations(convs)
+      setConversationsAndCache(convs)
     } catch (error) {
       console.error('Failed to load conversations:', error)
       showToastRef.current('error', t('aiChat.historyLoadFailed'))
     } finally {
-      setIsLoadingConversations(false)
+      if (showLoading) {
+        setIsLoadingConversations(false)
+      }
     }
-  }
+  }, [setConversationsAndCache, t])
+
+  useEffect(() => {
+    if (isAuthLoading) {
+      return
+    }
+
+    if (!user?.id) {
+      setConversations([])
+      setIsLoadingConversations(false)
+      return
+    }
+
+    if (conversationHistoryCache.has(user.id)) {
+      setConversations(conversationHistoryCache.get(user.id) ?? [])
+      setIsLoadingConversations(false)
+      return
+    }
+
+    void loadConversations()
+  }, [isAuthLoading, loadConversations, user?.id])
 
   const handleNewChat = useCallback(() => {
     setMessages([])
@@ -514,9 +741,11 @@ export default function AIChatPage() {
       const pendingCancelledKey = getPendingCancelledResponseKey(conversationId)
       const pendingCancelledAt = sessionStorage.getItem(pendingCancelledKey)
       const hasPendingCancelledResponse = Boolean(pendingCancelledAt)
+      const pendingPatchInferenceCancel = readPendingPatchInferenceCancel(conversationId)
+      const pendingPatchInferenceCancelKey = getPendingPatchInferenceCancelKey(conversationId)
       const hasAssistantReply = sortedApiMessages[sortedApiMessages.length - 1]?.role === 'assistant'
 
-      const messagesToShow = hasPendingCancelledResponse && !hasAssistantReply
+      let messagesToShow = hasPendingCancelledResponse && !hasAssistantReply
         ? [...loadedMessages, {
             id: `pending-cancelled-${conversationId}`,
             role: 'assistant' as const,
@@ -524,6 +753,24 @@ export default function AIChatPage() {
             timestamp: new Date(Number(pendingCancelledAt) || Date.now())
           }]
         : loadedMessages
+
+      const hasPersistedPatchInferenceCancel = Boolean(pendingPatchInferenceCancel)
+        && sortedApiMessages[sortedApiMessages.length - 1]?.role === 'assistant'
+        && sortedApiMessages[sortedApiMessages.length - 1]?.content.trim() === pendingPatchInferenceCancel?.content.trim()
+
+      if (pendingPatchInferenceCancel) {
+        if (hasPersistedPatchInferenceCancel) {
+          sessionStorage.removeItem(pendingPatchInferenceCancelKey)
+        } else {
+          messagesToShow = [...messagesToShow, {
+            id: `pending-patch-cancelled-${conversationId}`,
+            role: 'assistant' as const,
+            content: pendingPatchInferenceCancel.content,
+            timestamp: new Date(pendingPatchInferenceCancel.timestamp || Date.now())
+          }]
+          refreshPendingPatchInferenceCancellation(conversationId)
+        }
+      }
 
       if (hasPendingCancelledResponse) {
         if (hasAssistantReply) {
@@ -591,7 +838,7 @@ export default function AIChatPage() {
         setIsLoadingConversations(true)
         try {
           await Promise.all(conversations.map(conv => deleteConversation(conv.conversation_id)))
-          await loadConversations()
+          setConversationsAndCache([])
           handleNewChat()
         } catch (error) {
           console.error('Failed to delete all conversations:', error)
@@ -600,7 +847,9 @@ export default function AIChatPage() {
         }
       } else {
         await deleteConversation(deleteConfirmId)
-        await loadConversations()
+        updateConversationsAndCache((prevConversations) =>
+          prevConversations.filter((conversation) => conversation.conversation_id !== deleteConfirmId)
+        )
         if (currentConversationId === deleteConfirmId) {
           handleNewChat()
         }
@@ -1038,13 +1287,24 @@ export default function AIChatPage() {
         )
         trackingId = newId
       }, abortController.signal, () => {
-        // Context limit reached — append [CONTEXT_LIMIT] block to the AI message
+        // True context-window overflow — append [CONTEXT_LIMIT] block to the AI message
         const contextLimitBlock = '\n\n[CONTEXT_LIMIT][/CONTEXT_LIMIT]'
         const currentTrackingId = trackingId
         setMessages(prev =>
           prev.map(m =>
             m.id === currentTrackingId
               ? { ...m, content: m.content + contextLimitBlock }
+              : m
+          )
+        )
+      }, () => {
+        // Output was truncated — append [RESPONSE_TRUNCATED] block to the AI message
+        const responseTruncatedBlock = '\n\n[RESPONSE_TRUNCATED][/RESPONSE_TRUNCATED]'
+        const currentTrackingId = trackingId
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === currentTrackingId
+              ? { ...m, content: m.content + responseTruncatedBlock }
               : m
           )
         )
@@ -1245,11 +1505,11 @@ export default function AIChatPage() {
         const newConv = await createConversation(title)
         conversationId = newConv.conversation_id
         setCurrentConversationId(conversationId)
+        updateConversationsAndCache((prevConversations) => upsertConversation(prevConversations, newConv))
         // Skip the next conversation load triggered by URL change (to avoid overwriting in-progress messages)
         skipConversationLoadRef.current = true
         // Update URL with new conversation ID for page refresh support
         navigate(`/dashboard/${conversationId}`, { replace: true })
-        await loadConversations()
       } catch (error) {
         console.error('Failed to create conversation:', error)
       }
@@ -1380,6 +1640,8 @@ export default function AIChatPage() {
     cleaned = removePdfParseStatusBlock(cleaned)
     // Remove CONTEXT_LIMIT block - UI-only warning card
     cleaned = removeContextLimitBlock(cleaned)
+    // Remove RESPONSE_TRUNCATED block - UI-only warning card
+    cleaned = removeResponseTruncatedBlock(cleaned)
     return cleaned.trim()
   }, [])
 

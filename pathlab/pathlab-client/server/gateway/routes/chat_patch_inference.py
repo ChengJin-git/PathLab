@@ -157,6 +157,54 @@ async def cleanup_chat_patch_tasks_from_message(
                 _CONVERSATION_INDEX.pop(conversation_id, None)
 
 
+async def cancel_chat_patch_tasks_for_message(
+    conversation_id: str,
+    message_id: int,
+) -> list[Dict[str, Any]]:
+    """Cancel active chat patch tasks for one assistant message and return final task snapshots."""
+    task_queue = get_task_queue()
+    async with _TASK_LOCK:
+        task_ids = [
+            task_id
+            for task_id in _CONVERSATION_INDEX.get(conversation_id, set())
+            if (task := _TASKS.get(task_id)) and task.message_id == message_id
+        ]
+        snapshots: list[Dict[str, Any]] = []
+        for task_id in task_ids:
+            task = _TASKS.get(task_id)
+            if not task:
+                continue
+            snapshot = task.to_public_dict()
+            if snapshot["status"] not in {"completed", "failed", "cancelled"}:
+                snapshot["status"] = "cancelled"
+                snapshot["progress"] = 100
+                snapshot["error"] = "Task cancelled"
+                snapshot["updated_at"] = _utcnow_iso()
+            snapshots.append(snapshot)
+
+    for task_id in task_ids:
+        if task_queue and task_queue.is_task_in_queue(task_id):
+            await task_queue.cancel_task(task_id)
+
+    async with _TASK_LOCK:
+        for task_id in task_ids:
+            task = _TASKS.pop(task_id, None)
+            if task:
+                if task.status not in {"completed", "failed", "cancelled"}:
+                    task.status = "cancelled"
+                    task.progress = 100
+                    task.error = "Task cancelled"
+                    task.updated_at = _utcnow_iso()
+                await asyncio.to_thread(_cleanup_task_files, task)
+        remaining = _CONVERSATION_INDEX.get(conversation_id)
+        if remaining is not None:
+            remaining.difference_update(task_ids)
+            if not remaining:
+                _CONVERSATION_INDEX.pop(conversation_id, None)
+
+    return snapshots
+
+
 async def _run_chat_patch_task(task_id: str, assigned_device: Optional[str] = None) -> None:
     await _update_task(task_id, status="running", progress=5, error=None)
     try:

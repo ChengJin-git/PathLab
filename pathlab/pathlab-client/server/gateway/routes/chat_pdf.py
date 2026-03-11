@@ -418,6 +418,7 @@ def _save_pdf_to_cache(url: str, pdf_bytes: bytes, title: str = "", markdown: st
             'high_quality_upgrade_status': None,
             'high_quality_upgrade_detail': None,
             'high_quality_upgrade_updated_at': None,
+            **_build_cached_article_meta_fields(url, title),
         }
         with open(meta_file, 'w') as f:
             json.dump(meta, f, indent=2)
@@ -442,6 +443,20 @@ def _extract_page_count(markdown: str) -> int:
     return max(page_nums) if page_nums else 0
 
 
+def _extract_arxiv_id(url: str) -> str | None:
+    match = re.search(r'arxiv\.org/(?:abs|pdf|html)/([\w\.\-]+)', url, re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(1).replace('.pdf', '')
+
+
+def _extract_openreview_id(url: str) -> str | None:
+    match = re.search(r'openreview\.net/(?:forum|note|pdf)\?id=([^&#]+)', url, re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(1)
+
+
 def _update_meta_fields(url: str, **fields: Any) -> None:
     """Best-effort update for cached PDF metadata fields."""
     try:
@@ -455,6 +470,14 @@ def _update_meta_fields(url: str, **fields: Any) -> None:
         for key, value in fields.items():
             if value is not None:
                 meta[key] = value
+        title_for_lookup = str(meta.get('title') or '')
+        source_type = str(meta.get('source_type') or detect_source_type(url))
+        meta['source_type'] = source_type
+        meta['source_priority'] = _cached_article_source_priority_for_source(source_type)
+        meta['normalized_title'] = _normalize_cached_article_lookup_text(title_for_lookup)
+        meta['doi'] = _extract_doi(url)
+        meta['arxiv_id'] = _extract_arxiv_id(url)
+        meta['openreview_id'] = _extract_openreview_id(url)
         with open(meta_file, 'w') as f:
             json.dump(meta, f, indent=2)
     except Exception as e:
@@ -3474,6 +3497,171 @@ def is_academic_content(content: str, source_type: str) -> bool:
         f"{'academic' if is_academic else 'non-academic'}"
     )
     return is_academic
+
+
+def _normalize_cached_article_lookup_text(text: str) -> str:
+    """Normalize a paper/article lookup string for conservative cache matching."""
+    normalized = str(text or "").strip().lower()
+    if not normalized:
+        return ""
+
+    normalized = normalized.strip('"\'`“”‘’《》〈〉「」『』[]()')
+    normalized = re.sub(r'^(?:please\s+)?(?:read|open|view|show\s+me|look(?:\s+at)?)\s+', '', normalized)
+    normalized = re.sub(r'\s+(?:paper|article|pdf)\s*$', '', normalized)
+    normalized = re.sub(r'https?://\S+', ' ', normalized)
+    tokens = _tokenize_for_search(normalized)
+    return " ".join(tokens)
+
+
+def _cached_article_source_priority_for_source(source_type: str) -> int:
+    if source_type in _ACADEMIC_SOURCE_TYPES:
+        return 50
+    if source_type == "pdf":
+        return 40
+    if source_type == "web":
+        return 20
+    if source_type in {"documentation", "github", "huggingface", "wikipedia"}:
+        return 10
+    if source_type == "blog":
+        return 0
+    return 5
+
+
+def _cached_article_source_priority(url: str) -> int:
+    return _cached_article_source_priority_for_source(detect_source_type(url))
+
+
+def _cached_article_variant_kind(source_type: str) -> str:
+    if source_type in {"arxiv", "biorxiv"}:
+        return "preprint"
+    if source_type == "openreview":
+        return "openreview"
+    if source_type in _ACADEMIC_SOURCE_TYPES:
+        return "formal"
+    return "generic"
+
+
+def _detect_cached_article_query_preference(query: str) -> str | None:
+    query_lower = str(query or "").lower()
+    if not query_lower:
+        return None
+
+    if any(keyword in query_lower for keyword in (
+        "arxiv", "preprint", "预印本", "預印本", "bioarxiv", "biorxiv", "medrxiv",
+    )):
+        return "preprint"
+    if "openreview" in query_lower:
+        return "openreview"
+    if any(keyword in query_lower for keyword in (
+        "journal", "publisher", "published", "official version",
+        "正式版", "期刊版", "出版版", "正式发表", "正式發表",
+    )):
+        return "formal"
+    return None
+
+
+def _build_cached_article_meta_fields(url: str, title: str) -> dict[str, Any]:
+    source_type = detect_source_type(url)
+    return {
+        "source_type": source_type,
+        "source_priority": _cached_article_source_priority_for_source(source_type),
+        "normalized_title": _normalize_cached_article_lookup_text(title),
+        "doi": _extract_doi(url),
+        "arxiv_id": _extract_arxiv_id(url),
+        "openreview_id": _extract_openreview_id(url),
+    }
+
+
+def find_cached_articles_by_title(query: str, max_results: int = 5) -> list[dict[str, Any]]:
+    """Return strong local cache matches for a paper/article title query.
+
+    This is intentionally conservative: only exact matches on normalized title are
+    returned, so callers can safely skip external web search when a local hit is
+    found.
+    """
+    normalized_query = _normalize_cached_article_lookup_text(query)
+    if not normalized_query:
+        return []
+
+    query_tokens = _tokenize_for_search(normalized_query)
+    if len(query_tokens) < 2 and len(normalized_query) < 8:
+        return []
+
+    cache_dir = _get_pdf_cache_dir()
+    matches: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    now = datetime.now()
+    query_preference = _detect_cached_article_query_preference(query)
+
+    for meta_file in cache_dir.glob("*.json"):
+        if meta_file.name.endswith(STRUCTURED_CACHE_SUFFIX):
+            continue
+
+        try:
+            meta = json.loads(meta_file.read_text(encoding='utf-8'))
+        except Exception:
+            continue
+        if not isinstance(meta, dict):
+            continue
+
+        url = str(meta.get("url") or "").strip()
+        title = str(meta.get("title") or "").strip()
+        if not url or not title or url in seen_urls:
+            continue
+
+        normalized_title = str(meta.get("normalized_title") or "").strip()
+        if not normalized_title:
+            normalized_title = _normalize_cached_article_lookup_text(title)
+        if not normalized_title or normalized_title != normalized_query:
+            continue
+
+        cached_at_raw = str(meta.get("cached_at") or "").strip()
+        cached_at_dt: datetime | None = None
+        if cached_at_raw:
+            try:
+                cached_at_dt = datetime.fromisoformat(cached_at_raw)
+            except Exception:
+                cached_at_dt = None
+        if cached_at_dt is not None and now - cached_at_dt > timedelta(days=PDF_CACHE_TTL_DAYS):
+            continue
+
+        url_hash = meta_file.stem
+        has_markdown_cache = any((cache_dir / f"{url_hash}{suffix}").exists() for suffix, _ in CACHED_MARKDOWN_CANDIDATES)
+        if not has_markdown_cache:
+            continue
+
+        source_type = str(meta.get("source_type") or detect_source_type(url))
+        variant_kind = _cached_article_variant_kind(source_type)
+        matches.append({
+            "title": title,
+            "url": url,
+            "snippet": f"Local cache hit — {variant_kind} version already downloaded and parsed.",
+            "source_type": source_type,
+            "is_academic": bool(meta.get("is_academic", source_type in _ACADEMIC_SOURCE_TYPES)),
+            "cached_at": cached_at_raw,
+            "match_type": "exact_normalized_title",
+            "variant_kind": variant_kind,
+            "normalized_title": normalized_title,
+            "doi": meta.get("doi"),
+            "arxiv_id": meta.get("arxiv_id"),
+            "openreview_id": meta.get("openreview_id"),
+            "source_priority": int(meta.get("source_priority", _cached_article_source_priority_for_source(source_type))),
+        })
+        seen_urls.add(url)
+
+    if query_preference:
+        preferred_matches = [match for match in matches if match.get("variant_kind") == query_preference]
+        if preferred_matches:
+            matches = preferred_matches
+
+    matches.sort(
+        key=lambda item: (
+            int(item.get("source_priority", 0)),
+            str(item.get("cached_at") or ""),
+        ),
+        reverse=True,
+    )
+    return matches[:max(1, max_results)]
 
 
 async def _save_markdown_to_cache_async(

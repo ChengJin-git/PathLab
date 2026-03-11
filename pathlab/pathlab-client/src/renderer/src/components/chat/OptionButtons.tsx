@@ -10,6 +10,16 @@ interface OptionButtonsProps {
   disabled?: boolean
 }
 
+function isDisallowedModelOverflowOption(optionText: string): boolean {
+  const normalized = optionText.trim().toLowerCase()
+  const mentionsChineseModels = normalized.includes('模型')
+  const mentionsEnglishModels = normalized.includes('model')
+  const asksForAllChinese = normalized.includes('全部') || normalized.includes('所有')
+  const asksForAllEnglish = normalized.includes('show all') || normalized.includes('all models')
+
+  return (mentionsChineseModels && asksForAllChinese) || (mentionsEnglishModels && asksForAllEnglish)
+}
+
 /**
  * Parse [OPTIONS] block from message content
  * Format:
@@ -47,7 +57,9 @@ export function parseOptions(content: string): Option[] | null {
     }
   }
 
-  return options.length > 0 ? options : null
+  const filteredOptions = options.filter(option => !isDisallowedModelOverflowOption(option.text))
+
+  return filteredOptions.length > 0 ? filteredOptions : null
 }
 
 /**

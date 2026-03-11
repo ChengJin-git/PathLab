@@ -35,8 +35,10 @@ from ..models import (
     UpdateMessageRequest,
     AddMessageRequest,
     ChatPatchInferenceRequest,
+    ChatPatchInferenceExitRequest,
 )
 from .chat_patch_inference import (
+    cancel_chat_patch_tasks_for_message,
     cleanup_chat_patch_tasks_from_message,
     cleanup_conversation_chat_patch_tasks,
     create_chat_patch_task,
@@ -47,6 +49,7 @@ from .chat_pdf import (
     search_pdf_pages, get_cached_markdown, get_cached_pdf_meta, _split_md_into_pages,
     _get_url_hash, _get_pdf_cache_dir, _tokenize_for_search,
     detect_source_type, is_academic_content, format_reference_card, _ACADEMIC_SOURCE_TYPES,
+    find_cached_articles_by_title,
 )
 from .chat_pdf_vectorstore import search_pdf_chunks
 
@@ -56,6 +59,7 @@ SEGMENTATION_TASK_TYPES = {"segmentation", "patch_segmentation"}
 ACTIVE_TRAINING_STATUSES = {"pending", "queued", "patching", "resuming", "extracting", "training"}
 _EPOCH_PROGRESS_RE = re.compile(r"epoch\s+(\d+)\s*/\s*(\d+)", re.IGNORECASE)
 MAX_MODELS_IN_CHAT_CONTEXT = 5
+_PATCH_INFERENCE_BLOCK_RE = re.compile(r"\[PATCH_INFERENCE\]([\s\S]*?)\[/PATCH_INFERENCE\]")
 
 
 def _get_generation_cancelled_text(detected_lang: str) -> str:
@@ -70,6 +74,59 @@ def _get_generation_cancelled_text(detected_lang: str) -> str:
     return cancel_messages.get(normalized, cancel_messages.get(normalized.split("_")[0], cancel_messages["en"]))
 
 
+def _apply_patch_inference_exit_updates(
+    content: str,
+    task_updates: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> str:
+    """Mark in-message image inference runs as cancelled or with the latest terminal snapshot."""
+    match = _PATCH_INFERENCE_BLOCK_RE.search(content or "")
+    if not match:
+        return content
+
+    try:
+        config = json.loads(match.group(1).strip())
+    except Exception:
+        return content
+
+    updates = task_updates or {}
+    changed = False
+    for key in ("classification_run", "segmentation_run"):
+        run = config.get(key)
+        if not isinstance(run, dict):
+            continue
+
+        task_id = str(run.get("task_id") or "")
+        if task_id and task_id in updates:
+            merged_run = {
+                **run,
+                "status": updates[task_id].get("status", run.get("status")),
+                "progress": updates[task_id].get("progress", run.get("progress")),
+                "result": updates[task_id].get("result", run.get("result")),
+                "error": updates[task_id].get("error", run.get("error")),
+            }
+            if merged_run != run:
+                config[key] = merged_run
+                changed = True
+            continue
+
+        if run.get("status") in {"queued", "running"}:
+            merged_run = {
+                **run,
+                "status": "cancelled",
+                "progress": 100,
+                "error": "Task cancelled",
+            }
+            if merged_run != run:
+                config[key] = merged_run
+                changed = True
+
+    if not changed:
+        return content
+
+    next_block = f"[PATCH_INFERENCE]\n{json.dumps(config, ensure_ascii=False, indent=2)}\n[/PATCH_INFERENCE]"
+    return _PATCH_INFERENCE_BLOCK_RE.sub(next_block, content, count=1)
+
+
 def _get_ai_service_error_text(detected_lang: str) -> str:
     """Return a localized, user-friendly AI service error message."""
     normalized = (detected_lang or "en").replace("-", "_")
@@ -80,6 +137,63 @@ def _get_ai_service_error_text(detected_lang: str) -> str:
         "en_US": "❌ AI service is temporarily unavailable. Please try again, or check your local vLLM, API key, and network connection.",
     }
     return error_messages.get(normalized, error_messages.get(normalized.split("_")[0], error_messages["en"]))
+
+
+def _truncate_error_detail(text: str, limit: int = 1200) -> str:
+    """Trim upstream error payloads so logs stay readable."""
+    normalized = " ".join((text or "").split())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 3] + "..."
+
+
+async def _raise_for_status_with_detail(response: httpx.Response) -> None:
+    """Raise HTTPStatusError enriched with a trimmed upstream response body."""
+    if not response.is_error:
+        return
+
+    detail = ""
+    with suppress(Exception):
+        await response.aread()
+        detail = response.text or ""
+
+    status_kind = "Client" if 400 <= response.status_code < 500 else "Server"
+    message = (
+        f"{status_kind} error '{response.status_code} {response.reason_phrase}' "
+        f"for url '{response.request.url}'"
+    )
+    if detail.strip():
+        message = f"{message} | response_body={_truncate_error_detail(detail)}"
+
+    raise httpx.HTTPStatusError(message, request=response.request, response=response)
+
+
+def _is_context_length_exceeded_error(exc: Exception) -> bool:
+    """Return True only for explicit upstream context-window overflow errors."""
+    pieces = [str(exc)]
+    response = getattr(exc, "response", None)
+    if response is not None:
+        with suppress(Exception):
+            if response.text:
+                pieces.append(response.text)
+
+    haystack = " ".join(piece for piece in pieces if piece).lower()
+    strong_patterns = (
+        "maximum context length",
+        "context length exceeded",
+        "exceeds the model's context length",
+        "exceeds model context length",
+        "context window",
+        "reduce the length of the messages",
+        "prompt is too long",
+        "input is too long",
+        "maximum number of tokens",
+    )
+    if any(pattern in haystack for pattern in strong_patterns):
+        return True
+
+    requested_tokens = "requested" in haystack and "tokens" in haystack
+    return requested_tokens and ("context" in haystack or "length" in haystack)
 
 
 def _should_fallback_from_local_vllm_error(exc: Exception) -> bool:
@@ -1288,16 +1402,17 @@ async def _stream_from_openai_compatible(
                 "max_tokens": 2048,
             }
         ) as response:
-            response.raise_for_status()
+            await _raise_for_status_with_detail(response)
 
             last_finish_reason = None
             async for line in response.aiter_lines():
                 if line.startswith("data: "):
                     data = line[6:]
                     if data == "[DONE]":
-                        # Emit context_limit event before [DONE] if output was truncated
+                        # Emit response_truncated before [DONE] when generation hit
+                        # the output-length limit (finish_reason="length").
                         if last_finish_reason == "length":
-                            yield f"data: {json.dumps({'context_limit': True})}\n\n"
+                            yield f"data: {json.dumps({'response_truncated': True})}\n\n"
                         yield "data: [DONE]\n\n"
                         break
                     try:
@@ -1315,7 +1430,7 @@ async def _stream_from_openai_compatible(
                         continue
             # If stream ended without [DONE] but finish_reason was "length"
             if last_finish_reason == "length":
-                yield f"data: {json.dumps({'context_limit': True})}\n\n"
+                yield f"data: {json.dumps({'response_truncated': True})}\n\n"
 
 
 async def _check_local_vllm_available(base_url: str, api_key: str = None) -> tuple[bool, str | None]:
@@ -1377,7 +1492,7 @@ async def _call_ai_complete(
                 "max_tokens": 2048,
             }
         )
-        response.raise_for_status()
+        await _raise_for_status_with_detail(response)
         data = response.json()
 
         if "choices" in data and len(data["choices"]) > 0:
@@ -1553,6 +1668,24 @@ def _deduplicate_search_results(results: List[Dict]) -> List[Dict]:
     return deduplicated
 
 
+def _format_search_results_for_ai(search_results: Dict) -> str:
+    """Format search-like results for the next AI iteration."""
+    results_text = f"\n\n[WEB_SEARCH_RESULT]\n{json.dumps(search_results)}\n[/WEB_SEARCH_RESULT]\n\n"
+    results_text += "Search results:\n"
+    for idx, result in enumerate(search_results.get("results", []), 1):
+        r_url = str(result.get("url", "") or "")
+        src_type = str(result.get("source_type") or detect_source_type(r_url))
+        is_academic_src = src_type in _ACADEMIC_SOURCE_TYPES
+        ref_type = "paper" if is_academic_src else "webpage"
+        results_text += (
+            f"{idx}. {result.get('title', '')}\n"
+            f"   URL: {r_url}\n"
+            f"   Source: {src_type} (reference type: {ref_type})\n"
+            f"   {result.get('snippet', '')}\n\n"
+        )
+    return results_text
+
+
 async def stream_ai_response(
     messages: List[Dict],
     api_key: str = None,
@@ -1709,6 +1842,7 @@ After saving, return here and start chatting!"""
     _stream_next_iteration = False
     _response_already_streamed = False
     full_response = ""
+    _final_response_truncated = False
     _search_count = 0  # Track consecutive web searches to prevent infinite loops
     _MAX_SEARCHES = 2  # Max web searches per user message
 
@@ -1718,6 +1852,7 @@ After saving, return here and start chatting!"""
         if _stream_next_iteration:
             try:
                 streamed_response = ""
+                response_truncated = False
                 async for chunk in _stream_from_openai_compatible(
                     messages=current_messages,
                     base_url=effective_base_url,
@@ -1728,15 +1863,17 @@ After saving, return here and start chatting!"""
                     # _stream_from_openai_compatible yields SSE lines; forward them
                     if chunk == "data: [DONE]\n\n":
                         break  # we emit our own [DONE] below
-                    yield chunk
-                    # Buffer for citation extraction
                     if chunk.startswith("data: "):
                         try:
                             d = json.loads(chunk[6:])
+                            if d.get("response_truncated"):
+                                response_truncated = True
+                                continue
                             if "content" in d and d["content"] is not None:
                                 streamed_response += d["content"]
                         except (json.JSONDecodeError, KeyError):
                             pass
+                    yield chunk
                 full_response = streamed_response
             except ClientDisconnectedError:
                 logger.info("Client disconnected during streaming AI completion — stopping")
@@ -1745,6 +1882,11 @@ After saving, return here and start chatting!"""
                 if not streamed_response and _switch_to_remote_fallback(e, stage="streaming AI completion"):
                     logger.info("Retrying streaming AI completion with remote fallback after local vLLM failure")
                     continue
+                if _is_context_length_exceeded_error(e):
+                    logger.warning(f"Context length exceeded during streaming AI completion: {e}")
+                    yield f"data: {json.dumps({'context_limit': True})}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
                 logger.error(f"Error in streaming AI completion: {e}")
                 error_msg = _get_ai_service_error_text(detected_lang)
                 yield f"data: {json.dumps({'content': error_msg})}\n\n"
@@ -1791,6 +1933,9 @@ After saving, return here and start chatting!"""
                 ref_block = "\n".join(reference_cards_to_emit)
                 yield f"data: {json.dumps({'content': ref_block})}\n\n"
 
+            if response_truncated and full_response.strip():
+                yield f"data: {json.dumps({'response_truncated': True})}\n\n"
+
             yield "data: [DONE]\n\n"
             return
 
@@ -1806,6 +1951,7 @@ After saving, return here and start chatting!"""
         pending_sse_chunks: list[str] = []
         decided_streaming = False
         is_streaming_to_client = False
+        iteration_response_truncated = False
 
         try:
             async for chunk in _stream_from_openai_compatible(
@@ -1817,6 +1963,15 @@ After saving, return here and start chatting!"""
             ):
                 if chunk == "data: [DONE]\n\n":
                     break
+
+                if chunk.startswith("data: "):
+                    try:
+                        control_data = json.loads(chunk[6:])
+                        if control_data.get("response_truncated"):
+                            iteration_response_truncated = True
+                            continue
+                    except (json.JSONDecodeError, KeyError):
+                        pass
 
                 # Accumulate content for tool detection
                 if chunk.startswith("data: "):
@@ -1850,6 +2005,11 @@ After saving, return here and start chatting!"""
             if not is_streaming_to_client and _switch_to_remote_fallback(e, stage="AI completion"):
                 logger.info("Retrying AI completion with remote fallback after local vLLM failure")
                 continue
+            if _is_context_length_exceeded_error(e):
+                logger.warning(f"Context length exceeded during AI completion: {e}")
+                yield f"data: {json.dumps({'context_limit': True})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
             logger.error(f"Error in AI completion: {e}")
             error_msg = _get_ai_service_error_text(detected_lang)
             yield f"data: {json.dumps({'content': error_msg})}\n\n"
@@ -1868,6 +2028,7 @@ After saving, return here and start chatting!"""
                 pending_sse_chunks = []
 
         full_response = content_so_far
+        _final_response_truncated = iteration_response_truncated and bool(full_response.strip())
 
         # Mark if response was already streamed to client.
         # Do NOT break here — always continue to tool detection below.
@@ -1904,20 +2065,66 @@ After saving, return here and start chatting!"""
             ]
             continue
 
-        # #2: AI wants to search but Exa API key is not configured
-        if search_match and not exa_api_key:
-            logger.warning("AI requested [WEB_SEARCH] but no Exa API key is configured")
-            current_messages = current_messages + [
-                {"role": "assistant", "content": full_response},
-                {"role": "user", "content": (
-                    "Web search is currently unavailable (API key not configured). "
-                    "Please answer the user's question using your existing knowledge. "
-                    "Do NOT attempt to use [WEB_SEARCH] again."
-                )}
-            ]
-            continue
+        if search_match:
+            query = search_match.get("query", "")
+            reason = search_match.get("reason", "")
+            ai_num_results = min(int(search_match.get("num_results", 5)), 10)
+            if ai_num_results < 1:
+                ai_num_results = 5
 
-        if search_match and exa_api_key:
+            cached_article_matches = find_cached_articles_by_title(query, max_results=ai_num_results)
+            if cached_article_matches:
+                if _response_already_streamed:
+                    yield f"data: {json.dumps({'content': '__CLEAR_CONTENT__'})}\n\n"
+
+                logger.info(
+                    f"Using {len(cached_article_matches)} locally cached article match(es) for WEB_SEARCH query: {query}"
+                )
+                local_search_results = {
+                    "query": query,
+                    "reason": reason,
+                    "source": "local_cache",
+                    "results": cached_article_matches,
+                }
+                web_search_result_block = json.dumps(local_search_results)
+                yield f"data: {json.dumps({'content': f'[WEB_SEARCH_RESULT]{web_search_result_block}[/WEB_SEARCH_RESULT]'})}\n\n"
+
+                local_results_text = _format_search_results_for_ai(local_search_results)
+                if len(cached_article_matches) == 1:
+                    cache_instruction = (
+                        "I found a single strong LOCAL CACHE match for this article request. "
+                        "Prefer this cached URL instead of using [WEB_SEARCH] again. "
+                        "If the user wants the full article, use the [READ_ARTICLE] tool with this URL."
+                    )
+                else:
+                    cache_instruction = (
+                        "I found multiple LOCAL CACHE candidates with the same normalized title. "
+                        "Do NOT guess and do NOT use [WEB_SEARCH] again yet. "
+                        "If the user did not clearly specify which one they mean, ask a brief clarification question first."
+                    )
+
+                current_messages = current_messages + [
+                    {"role": "assistant", "content": full_response},
+                    {"role": "user", "content": (
+                        f"I found locally cached article matches for '{query}':\n{local_results_text}\n\n"
+                        f"{cache_instruction}"
+                    )}
+                ]
+                continue
+
+            # #2: AI wants to search but Exa API key is not configured
+            if not exa_api_key:
+                logger.warning("AI requested [WEB_SEARCH] but no Exa API key is configured")
+                current_messages = current_messages + [
+                    {"role": "assistant", "content": full_response},
+                    {"role": "user", "content": (
+                        "Web search is currently unavailable (API key not configured). "
+                        "Please answer the user's question using your existing knowledge. "
+                        "Do NOT attempt to use [WEB_SEARCH] again."
+                    )}
+                ]
+                continue
+
             # #4: Enforce search count limit
             _search_count += 1
             if _search_count > _MAX_SEARCHES:
@@ -1938,12 +2145,6 @@ After saving, return here and start chatting!"""
             # instead of being concatenated with the initial text.
             if _response_already_streamed:
                 yield f"data: {json.dumps({'content': '__CLEAR_CONTENT__'})}\n\n"
-
-            query = search_match.get("query", "")
-            reason = search_match.get("reason", "")
-            ai_num_results = min(int(search_match.get("num_results", 5)), 10)
-            if ai_num_results < 1:
-                ai_num_results = 5
 
             # Emit search status to frontend
             search_status = json.dumps({"query": query, "reason": reason})
@@ -1982,19 +2183,7 @@ After saving, return here and start chatting!"""
                 yield f"data: {json.dumps({'content': f'[WEB_SEARCH_RESULT]{web_search_result_block}[/WEB_SEARCH_RESULT]'})}\n\n"
 
                 # Format search results for AI — include source type hints
-                results_text = f"\n\n[WEB_SEARCH_RESULT]\n{json.dumps(search_results)}\n[/WEB_SEARCH_RESULT]\n\n"
-                results_text += "Search results:\n"
-                for idx, result in enumerate(search_results["results"], 1):
-                    r_url = result.get("url", "")
-                    src_type = detect_source_type(r_url)
-                    is_academic_src = src_type in _ACADEMIC_SOURCE_TYPES
-                    ref_type = "paper" if is_academic_src else "webpage"
-                    results_text += (
-                        f"{idx}. {result['title']}\n"
-                        f"   URL: {r_url}\n"
-                        f"   Source: {src_type} (reference type: {ref_type})\n"
-                        f"   {result['snippet']}\n\n"
-                    )
+                results_text = _format_search_results_for_ai(search_results)
 
                 # Add search results to messages for next AI iteration
                 current_messages = current_messages + [
@@ -2256,18 +2445,17 @@ After saving, return here and start chatting!"""
     if _needs_fallback:
         _FALLBACK_MSGS = {
             "zh-CN": (
-                "抱歉，我在获取论文全文时遇到了一些问题，处理流程未能完成。"
-                "您可以再发一条消息让我重试，或者换一个关键词搜索试试看 😊"
+                "抱歉，这次请求在处理中断了，未能完整完成。"
+                "您可以再发一条消息让我重试，或者换一种说法试试看 😊"
             ),
             "zh-HK": (
-                "抱歉，我在獲取論文全文時遇到了一些問題，處理流程未能完成。"
-                "您可以再發一條訊息讓我重試，或者換一個關鍵詞搜尋試試看 😊"
+                "抱歉，這次請求在處理途中中斷了，未能完整完成。"
+                "您可以再發一條訊息讓我重試，或者換一種說法試試看 😊"
             ),
             "en": (
-                "Sorry, I ran into some issues while trying to retrieve the full text "
-                "and couldn't complete the process. "
+                "Sorry, this request was interrupted before it could finish. "
                 "Feel free to send another message so I can try again, "
-                "or try searching with different keywords 😊"
+                "or try rephrasing it 😊"
             ),
         }
         fallback_msg = _FALLBACK_MSGS.get(detected_lang, _FALLBACK_MSGS["en"])
@@ -2291,6 +2479,9 @@ After saving, return here and start chatting!"""
         _CHUNK_SIZE = 80
         for i in range(0, len(final_response_text), _CHUNK_SIZE):
             yield f"data: {json.dumps({'content': final_response_text[i:i+_CHUNK_SIZE]})}\n\n"
+
+    if _final_response_truncated and final_response_text.strip() and not _needs_fallback:
+        yield f"data: {json.dumps({'response_truncated': True})}\n\n"
 
     # Inject CITATION_CONTEXTS before [DONE] if article was read
     if article_pdf_content and final_response_text:
@@ -2521,6 +2712,54 @@ async def get_chat_patch_inference_status(
     if task.user_id != str(user.id) and not user.is_admin():
         raise HTTPException(status_code=403, detail="You don't have permission to view this task")
     return task.to_public_dict()
+
+
+@router.post("/patch-inference/cancel-on-exit")
+async def cancel_chat_patch_inference_on_exit(
+    req: ChatPatchInferenceExitRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel active chat image inference for a message and persist a localized cancel reply."""
+    conversation = await ChatRepository.get_conversation(db, req.conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if not check_data_ownership(conversation.user_id, user):
+        raise HTTPException(status_code=403, detail="You don't have permission to modify this conversation")
+
+    target_message = next((message for message in conversation.messages if message.id == req.message_id), None)
+    if not target_message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    task_snapshots = await cancel_chat_patch_tasks_for_message(req.conversation_id, req.message_id)
+    task_updates = {snapshot["task_id"]: snapshot for snapshot in task_snapshots if snapshot.get("task_id")}
+
+    updated_content = _apply_patch_inference_exit_updates(target_message.content, task_updates)
+    updated_message = updated_content != target_message.content
+    if updated_message:
+        await ChatRepository.update_message(db, req.message_id, updated_content)
+
+    last_message = max(conversation.messages, key=lambda message: message.id, default=None)
+    cancel_message = req.cancel_message.strip()
+    added_cancel_message = False
+    if cancel_message and not (
+        last_message
+        and last_message.role == "assistant"
+        and (last_message.content or "").strip() == cancel_message
+    ):
+        await ChatRepository.add_message(db, {
+            "conversation_id": req.conversation_id,
+            "role": "assistant",
+            "content": cancel_message,
+        })
+        added_cancel_message = True
+
+    await db.commit()
+    return {
+        "cancelled_task_count": len(task_snapshots),
+        "updated_message": updated_message,
+        "added_cancel_message": added_cancel_message,
+    }
 
 
 @router.post("/chat")

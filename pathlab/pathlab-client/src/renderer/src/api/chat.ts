@@ -40,6 +40,7 @@ export async function chatWithAI(
   onMessageId?: (messageId: number) => void,
   signal?: AbortSignal,
   onContextLimit?: () => void,
+  onResponseTruncated?: () => void,
   onPdfContext?: (pdfContext: string) => void
 ): Promise<void> {
   // Get AI configuration from localStorage
@@ -137,9 +138,13 @@ export async function chatWithAI(
             if (parsed.message_id && onMessageId) {
               onMessageId(parsed.message_id)
             }
-            // Handle context_limit event — LLM output was truncated (finish_reason: "length")
+            // Handle true context-window overflow signaled by the backend.
             if (parsed.context_limit && onContextLimit) {
               onContextLimit()
+            }
+            // Handle generation truncated by output-length limit (finish_reason: "length").
+            if (parsed.response_truncated && onResponseTruncated) {
+              onResponseTruncated()
             }
             // Handle hidden pdf_context event so the frontend can keep its local
             // message history aligned with the backend conversation state.
@@ -216,6 +221,18 @@ export interface ChatPatchInferenceTask {
   error?: string | null
   created_at: string
   updated_at: string
+}
+
+export interface ChatPatchInferenceExitRequest {
+  conversation_id: string
+  message_id: number
+  cancel_message: string
+}
+
+export interface ChatPatchInferenceExitResponse {
+  cancelled_task_count: number
+  updated_message: boolean
+  added_cancel_message: boolean
 }
 
 /**
@@ -379,6 +396,22 @@ export async function getChatPatchInferenceTask(taskId: string): Promise<ChatPat
     `${API_BASE}/patch-inference/${encodeURIComponent(taskId)}`,
     undefined,
     'Failed to fetch chat patch inference task'
+  )
+}
+
+export async function cancelChatPatchInferenceOnExit(
+  request: ChatPatchInferenceExitRequest,
+  options?: { keepalive?: boolean }
+): Promise<ChatPatchInferenceExitResponse> {
+  return apiFetch<ChatPatchInferenceExitResponse>(
+    `${API_BASE}/patch-inference/cancel-on-exit`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+      keepalive: options?.keepalive ?? false
+    },
+    'Failed to cancel chat image inference on page exit'
   )
 }
 

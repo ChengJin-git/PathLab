@@ -197,6 +197,11 @@ export function PatchInferenceCard({ config, conversationId, messageId, referenc
     )
   }
 
+  const visibleSections = ([
+    { type: 'classification' as const, models: config.classification_models ?? [], run: config.classification_run },
+    { type: 'segmentation' as const, models: config.segmentation_models ?? [], run: config.segmentation_run },
+  ]).filter(({ models, run }) => Boolean(run?.task_id || models.length > 0))
+
   return (
     <div className="mt-4 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-4 shadow-sm space-y-4">
       <div className="flex items-start gap-3">
@@ -219,10 +224,15 @@ export function PatchInferenceCard({ config, conversationId, messageId, referenc
         <div className="flex items-center gap-2 text-sm text-blue-700"><Loader2 className="w-4 h-4 animate-spin" />{t('chatComponents.patchInference.submitting')}</div>
       )}
 
-      <div className="grid gap-3 md:grid-cols-2">
-        {renderSection('classification', config.classification_models, config.classification_run)}
-        {renderSection('segmentation', config.segmentation_models, config.segmentation_run)}
-      </div>
+      {visibleSections.length > 0 ? (
+        <div className={`grid gap-3 ${visibleSections.length > 1 ? 'md:grid-cols-2' : ''}`}>
+          {visibleSections.map(({ type, models, run }) => (
+            <div key={type}>{renderSection(type, models, run)}</div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-xs text-gray-500">{t('chatComponents.patchInference.noModel')}</div>
+      )}
     </div>
   )
 }

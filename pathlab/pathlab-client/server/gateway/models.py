@@ -181,6 +181,14 @@ class ChatPatchInferenceRequest(BaseModel):
     source: Optional[str] = None
 
 
+class ChatPatchInferenceExitRequest(BaseModel):
+    """Request model for cancelling chat image inference during page exit/logout."""
+
+    conversation_id: str
+    message_id: int
+    cancel_message: str = Field(min_length=1, max_length=4000)
+
+
 class MessageFeedbackRequest(BaseModel):
     """Request model for submitting feedback on a message"""
     feedback_type: Optional[str] = None  # "thumbs_up", "thumbs_down", or None

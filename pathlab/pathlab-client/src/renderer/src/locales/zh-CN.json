@@ -1275,7 +1275,7 @@
     "failedToSaveMetadataStatus": "保存元数据上传状态到服务器失败",
     "metadataUploaded": "元数据已上传：{{count}} 个文件已更新",
     "failedToSaveAnalysisStatus": "保存分析状态到服务器失败",
-    "failedToSavePatchInferenceStatus": "保存 patch 推理状态到服务器失败",
+	    "failedToSavePatchInferenceStatus": "保存图像推理状态到服务器失败",
     "aiErrorFallback": "抱歉，我遇到了错误。请重试。",
     "generationCancelled": "用户取消了回答。",
     "generationTimeout": "回答超时，请重试。",
@@ -1323,6 +1323,10 @@
       "title": "上下文长度已达上限",
       "description": "当前对话已过长，AI 无法有效处理。为确保最佳回答质量，请开始新的对话。",
       "newResearch": "新建研究"
+    },
+    "responseTruncated": {
+      "title": "回答已被截断",
+      "description": "本次回答达到了模型的输出长度上限，内容可能尚未完整显示。你可以再发一条消息，例如“继续”，让我接着回答。"
     },
     "disclaimer": "PathLab 智能助手可能会出错，请注意核实重要信息。",
     "uploadedExcelWarning": "\n\n📎 **上传的 Excel：{{name}}**\n **警告：此文件有多个工作表（{{sheets}}）**\n请仅将数据工作表另存为单独的 CSV 文件并重新上传。",
@@ -2517,17 +2521,17 @@
       "taskRenamedSuccess": "任务已成功重命名为\"{{newName}}\"！"
     },
     "patchInference": {
-      "title": "Patch 图像推理",
-      "summaryFallback": "我找到了可能适合这张图像的 patch 模型。",
+	      "title": "图像推理",
+	      "summaryFallback": "我找到了可能适合这张图像的模型。",
       "source": "来源判断",
       "classificationTitle": "分类",
       "segmentationTitle": "分割",
       "missingImage": "我没有在附近的对话里找到这张图像，因此当前还不能启动推理。",
-      "notReady": "这条消息暂时还不能持久化 patch 推理状态。",
-      "submitting": "正在提交临时 patch 推理...",
-      "startFailed": "启动临时 patch 推理失败",
-      "failed": "Patch 推理失败。",
-      "noModel": "当前没有可用于该推理类型的兼容模型。",
+	      "notReady": "这条消息暂时还不能持久化图像推理状态。",
+	      "submitting": "正在提交图像推理...",
+	      "startFailed": "启动图像推理失败",
+	      "failed": "图像推理失败。",
+	      "noModel": "当前没有可用的图像推理模型。",
       "noSegmentationMask": "未检测到阳性分割区域。"
     },
     "referenceCard": {

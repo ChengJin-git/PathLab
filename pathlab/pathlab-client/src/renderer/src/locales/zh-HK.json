@@ -1271,7 +1271,7 @@
     "failedToSaveMetadataStatus": "儲存元數據上傳狀態到伺服器失敗",
     "metadataUploaded": "元數據已上傳：{{count}} 個檔案已更新",
     "failedToSaveAnalysisStatus": "儲存分析狀態到伺服器失敗",
-    "failedToSavePatchInferenceStatus": "儲存 patch 推理狀態到伺服器失敗",
+	    "failedToSavePatchInferenceStatus": "儲存圖像推理狀態到伺服器失敗",
     "aiErrorFallback": "抱歉，我遇到了錯誤。請重試。",
     "generationCancelled": "用戶取消了回答。",
     "generationTimeout": "回答超時，請重試。",
@@ -1319,6 +1319,10 @@
       "title": "上下文長度已達上限",
       "description": "當前對話已過長，AI 無法有效處理。為確保最佳回答質素，請開始新的對話。",
       "newResearch": "新建研究"
+    },
+    "responseTruncated": {
+      "title": "回答已被截斷",
+      "description": "本次回答達到了模型的輸出長度上限，內容可能尚未完整顯示。你可以再發一條訊息，例如「繼續」，讓我接著回答。"
     },
     "disclaimer": "PathLab 智能助手可能會出錯，請注意核實重要資訊。",
     "uploadedExcelWarning": "\n\n📎 **上傳的 Excel：{{name}}**\n **警告：此檔案有多個工作表（{{sheets}}）**\n請僅將資料工作表另存為單獨的 CSV 檔案並重新上傳。",
@@ -2509,17 +2513,17 @@
       "taskRenamedSuccess": "任務已成功重新命名為\"{{newName}}\"！"
     },
     "patchInference": {
-      "title": "Patch 圖像推理",
-      "summaryFallback": "我找到了可能適合這張圖像的 patch 模型。",
+	      "title": "圖像推理",
+	      "summaryFallback": "我找到了可能適合這張圖像的模型。",
       "source": "來源判斷",
       "classificationTitle": "分類",
       "segmentationTitle": "分割",
       "missingImage": "我沒有在附近的對話裡找到這張圖像，因此目前還不能啟動推理。",
-      "notReady": "這條訊息暫時還不能持久化 patch 推理狀態。",
-      "submitting": "正在提交臨時 patch 推理...",
-      "startFailed": "啟動臨時 patch 推理失敗",
-      "failed": "Patch 推理失敗。",
-      "noModel": "目前沒有可用於該推理類型的相容模型。",
+	      "notReady": "這條訊息暫時還不能持久化圖像推理狀態。",
+	      "submitting": "正在提交圖像推理...",
+	      "startFailed": "啟動圖像推理失敗",
+	      "failed": "圖像推理失敗。",
+	      "noModel": "目前沒有可用的圖像推理模型。",
       "noSegmentationMask": "未檢測到陽性分割區域。"
     },
     "referenceCard": {
