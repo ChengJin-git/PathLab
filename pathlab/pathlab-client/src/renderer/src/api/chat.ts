@@ -110,51 +110,79 @@ export async function chatWithAI(
   // dropped, causing "blank first load, content after refresh" bugs.
   let lineBuffer = ''
 
+  const handleSseLine = (line: string): boolean => {
+    const normalizedLine = line.endsWith('\r') ? line.slice(0, -1) : line
+    if (!normalizedLine.startsWith('data: ')) {
+      return false
+    }
+
+    const data = normalizedLine.slice(6)
+    if (data === '[DONE]') {
+      return true
+    }
+
+    try {
+      const parsed = JSON.parse(data)
+      if (parsed.content) {
+        onChunk(parsed.content)
+      }
+      // Handle message_id event for persistence
+      if (parsed.message_id && onMessageId) {
+        onMessageId(parsed.message_id)
+      }
+      // Handle true context-window overflow signaled by the backend.
+      if (parsed.context_limit && onContextLimit) {
+        onContextLimit()
+      }
+      // Handle generation truncated by output-length limit (finish_reason: "length").
+      if (parsed.response_truncated && onResponseTruncated) {
+        onResponseTruncated()
+      }
+      // Handle hidden pdf_context event so the frontend can keep its local
+      // message history aligned with the backend conversation state.
+      if (typeof parsed.pdf_context === 'string' && onPdfContext) {
+        onPdfContext(parsed.pdf_context)
+      }
+    } catch {
+      // Skip invalid JSON
+    }
+
+    return false
+  }
+
+  const processChunkText = (text: string, flushRemainder: boolean = false): boolean => {
+    const lines = (lineBuffer + text).split('\n')
+    // The last element may be an incomplete line — save it for the next iteration.
+    // If `text` ended with '\n', the last element is '' (complete), which is fine.
+    lineBuffer = lines.pop() || ''
+
+    for (const line of lines) {
+      if (handleSseLine(line)) {
+        return true
+      }
+    }
+
+    if (flushRemainder && lineBuffer) {
+      const trailingLine = lineBuffer
+      lineBuffer = ''
+      if (handleSseLine(trailingLine)) {
+        return true
+      }
+    }
+
+    return false
+  }
+
   try {
     while (true) {
       const { done, value } = await reader.read()
-      if (done) break
+      const chunk = decoder.decode(value ?? new Uint8Array(), { stream: !done })
 
-      const chunk = decoder.decode(value, { stream: true })
-      // Prepend any leftover from the previous read
-      const text = lineBuffer + chunk
-      const lines = text.split('\n')
-      // The last element may be an incomplete line — save it for the next iteration.
-      // If `text` ended with '\n', the last element is '' (complete), which is fine.
-      lineBuffer = lines.pop() || ''
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6)
-          if (data === '[DONE]') {
-            return
-          }
-          try {
-            const parsed = JSON.parse(data)
-            if (parsed.content) {
-              onChunk(parsed.content)
-            }
-            // Handle message_id event for persistence
-            if (parsed.message_id && onMessageId) {
-              onMessageId(parsed.message_id)
-            }
-            // Handle true context-window overflow signaled by the backend.
-            if (parsed.context_limit && onContextLimit) {
-              onContextLimit()
-            }
-            // Handle generation truncated by output-length limit (finish_reason: "length").
-            if (parsed.response_truncated && onResponseTruncated) {
-              onResponseTruncated()
-            }
-            // Handle hidden pdf_context event so the frontend can keep its local
-            // message history aligned with the backend conversation state.
-            if (typeof parsed.pdf_context === 'string' && onPdfContext) {
-              onPdfContext(parsed.pdf_context)
-            }
-          } catch (e) {
-            // Skip invalid JSON
-          }
-        }
+      if (processChunkText(chunk, done)) {
+        return
+      }
+      if (done) {
+        break
       }
     }
   } finally {
