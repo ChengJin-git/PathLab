@@ -5,18 +5,17 @@ import { Loader2, Image as ImageIcon, ExternalLink, AlertCircle, ImageOff, Layer
 import {
   fetchWSIList,
   fetchWSIIds,
-  fetchWSIDetail,
   fetchAllResults,
   getRecommendationThumbnailUrl as getThumbnailUrl,
   fetchAvailableHeatmaps,
   getRecommendationPatchCAMImageUrl as getPatchCAMImageUrl,
   getRecommendationHeatmapThumbnailUrl as getHeatmapThumbnailUrl,
   getRecommendationSegMaskImageUrl as getSegMaskImageUrl,
+  getGroundTruthThumbnailUrl,
   getWSIGroundTruth,
   type WSISummary,
   type ResultWithWSI,
-  type AvailableHeatmap,
-  type AnnotationRegion
+  type AvailableHeatmap
 } from '../../api'
 import { getFileType } from '../../constants/fileTypes'
 import { parseLastChatBlockJson, stripChatBlocks } from './chatBlockParsing'
@@ -83,8 +82,6 @@ export function removeImageRecommendationBlock(content: string): string {
 
 // Global cache for loaded images with heatmap info (persists across component remounts)
 const imageCache = new Map<string, { images: ImageWithOverlays[]; error: string | null }>()
-const groundTruthMaskCache = new Map<string, AnnotationRegion[]>()
-const wsiDimensionCache = new Map<string, { width: number; height: number }>()
 const CARD_THUMBNAIL_SIZE = 160
 const OVERLAY_FETCH_CONCURRENCY = 2
 const DETAIL_FETCH_CONCURRENCY = 2
@@ -201,42 +198,6 @@ function dedupeLatestResultsByWsi(items: ResultWithWSI[]): ResultWithWSI[] {
     deduped.push(item)
   }
   return deduped
-}
-
-function hexToRgba(color: string, alpha: number): string {
-  const normalized = color.replace('#', '')
-  const expanded = normalized.length === 3
-    ? normalized.split('').map(ch => ch + ch).join('')
-    : normalized
-
-  if (expanded.length !== 6) return `rgba(59, 130, 246, ${alpha})`
-
-  const r = Number.parseInt(expanded.slice(0, 2), 16)
-  const g = Number.parseInt(expanded.slice(2, 4), 16)
-  const b = Number.parseInt(expanded.slice(4, 6), 16)
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
-}
-
-function inferDimensionsFromRegions(regions: AnnotationRegion[]): { width: number; height: number } | null {
-  if (regions.length === 0) return null
-
-  let maxX = 0
-  let maxY = 0
-
-  for (const region of regions) {
-    maxX = Math.max(maxX, region.x + region.width)
-    maxY = Math.max(maxY, region.y + region.height)
-
-    if (region.type === 'polygon' && region.points) {
-      for (const [x, y] of region.points) {
-        maxX = Math.max(maxX, x)
-        maxY = Math.max(maxY, y)
-      }
-    }
-  }
-
-  if (maxX <= 0 || maxY <= 0) return null
-  return { width: Math.ceil(maxX), height: Math.ceil(maxY) }
 }
 
 function getLatestSegmentationMaskOverlay(overlays: AvailableHeatmap[], taskId?: string): AvailableHeatmap | undefined {
@@ -393,90 +354,58 @@ function GroundTruthMaskThumbnail({
   onClick: () => void
 }) {
   const { t } = useTranslation()
-  const [regions, setRegions] = useState<AnnotationRegion[]>([])
-  const [status, setStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading')
-  const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(() => {
-    if (image.width && image.height && image.width > 0 && image.height > 0) {
-      return { width: image.width, height: image.height }
-    }
-    return wsiDimensionCache.get(image.wsi_id) || null
-  })
-  const renderDimensions = useMemo(
-    () => imageDimensions ?? inferDimensionsFromRegions(regions),
-    [imageDimensions, regions]
+  const [status, setStatus] = useState<'queued' | 'loading' | 'ready' | 'empty' | 'error'>('queued')
+  const isActiveRef = useRef(true)
+  const releaseLoadSlotRef = useRef<(() => void) | null>(null)
+  const gtThumbnailUrl = useMemo(
+    () => getGroundTruthThumbnailUrl(image.wsi_id, CARD_THUMBNAIL_SIZE),
+    [image.wsi_id]
   )
-  const isWaitingForDimensions = status === 'ready' && regions.length > 0 && !renderDimensions
+
+  const releaseLoadSlot = () => {
+    releaseLoadSlotRef.current?.()
+    releaseLoadSlotRef.current = null
+  }
 
   useEffect(() => {
     let active = true
-    const loadGroundTruth = async () => {
-      const cached = groundTruthMaskCache.get(image.wsi_id)
-      if (cached) {
-        if (!active) return
-        setRegions(cached)
-        setStatus(cached.length > 0 ? 'ready' : 'empty')
+    isActiveRef.current = true
+
+    releaseLoadSlot()
+    setStatus('queued')
+    const ticket = overlayThumbnailLoadQueue.acquire()
+
+    void ticket.promise.then((releaseSlot) => {
+      if (!active) {
+        releaseSlot()
         return
       }
 
-      try {
-        const gtResult = await getWSIGroundTruth(image.wsi_id)
+      releaseLoadSlotRef.current = releaseSlot
+      setStatus('loading')
+    })
 
-        if (!active) return
+    return () => {
+      active = false
+      isActiveRef.current = false
+      ticket.cancel()
+      releaseLoadSlot()
+    }
+  }, [gtThumbnailUrl])
 
+  const handleLoadError = () => {
+    releaseLoadSlot()
+    void getWSIGroundTruth(image.wsi_id)
+      .then((gtResult) => {
+        if (!isActiveRef.current) return
         const nextRegions = gtResult.annotations?.[image.wsi_id] || []
-        const width = gtResult.width
-        const height = gtResult.height
-
-        if (typeof width === 'number' && typeof height === 'number' && width > 0 && height > 0) {
-          const nextDimensions = { width, height }
-          wsiDimensionCache.set(image.wsi_id, nextDimensions)
-          setImageDimensions(nextDimensions)
-        }
-
-        groundTruthMaskCache.set(image.wsi_id, nextRegions)
-        setRegions(nextRegions)
-        setStatus(nextRegions.length > 0 ? 'ready' : 'empty')
-      } catch {
-        if (!active) return
+        setStatus(nextRegions.length > 0 ? 'error' : 'empty')
+      })
+      .catch(() => {
+        if (!isActiveRef.current) return
         setStatus('error')
-      }
-    }
-
-    loadGroundTruth()
-
-    return () => {
-      active = false
-    }
-  }, [image.wsi_id])
-
-  useEffect(() => {
-    let active = true
-
-    if (imageDimensions || status !== 'ready' || regions.length === 0 || !!renderDimensions) return
-
-    const loadDimensions = async () => {
-      try {
-        const detail = await fetchWSIDetail(image.wsi_id)
-        if (!active) return
-
-        const width = detail.meta?.width
-        const height = detail.meta?.height
-        if (typeof width === 'number' && typeof height === 'number' && width > 0 && height > 0) {
-          const nextDimensions = { width, height }
-          wsiDimensionCache.set(image.wsi_id, nextDimensions)
-          setImageDimensions(nextDimensions)
-        }
-      } catch {
-        // Fallback to annotation bounds if metadata request fails.
-      }
-    }
-
-    loadDimensions()
-
-    return () => {
-      active = false
-    }
-  }, [image.wsi_id, imageDimensions, regions.length, renderDimensions, status])
+      })
+  }
 
   return (
     <button
@@ -485,66 +414,25 @@ function GroundTruthMaskThumbnail({
       title={t('chatComponents.imageRecommendation.groundTruthMask')}
     >
       <div className="relative w-full h-full bg-gray-100 rounded-lg overflow-hidden border border-gray-200 group-hover/img:border-orange-300 shadow-sm transition-colors">
-        <img
-          src={getThumbnailUrl(image.wsi_id, CARD_THUMBNAIL_SIZE)}
-          alt={`${t('chatComponents.imageRecommendation.groundTruthMask')}: ${image.original_filename}`}
-          className="w-full h-full object-cover"
-          loading="lazy"
-          decoding="async"
-          onError={(e) => {
-            e.currentTarget.style.display = 'none'
-            const placeholder = e.currentTarget.nextElementSibling as HTMLElement | null
-            if (placeholder) placeholder.style.display = 'flex'
-          }}
-        />
-        <div className="hidden absolute inset-0 items-center justify-center bg-gray-100">
-          <ImageOff className="w-8 h-8 text-gray-300" />
-        </div>
+        {status !== 'queued' && status !== 'empty' && status !== 'error' && (
+          <img
+            src={gtThumbnailUrl}
+            alt={`${t('chatComponents.imageRecommendation.groundTruthMask')}: ${image.original_filename}`}
+            className={`w-full h-full object-cover ${status === 'ready' ? 'opacity-100' : 'opacity-0'}`}
+            loading="lazy"
+            decoding="async"
+            onLoad={() => {
+              releaseLoadSlot()
+              setStatus('ready')
+            }}
+            onError={handleLoadError}
+          />
+        )}
 
-        {(status === 'loading' || isWaitingForDimensions) && (
+        {(status === 'queued' || status === 'loading') && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/70">
             <Loader2 className="w-5 h-5 text-violet-500 animate-spin" />
           </div>
-        )}
-
-        {status === 'ready' && regions.length > 0 && renderDimensions && (
-          <svg
-            className="absolute inset-0 w-full h-full pointer-events-none"
-            viewBox={`0 0 ${renderDimensions.width} ${renderDimensions.height}`}
-            preserveAspectRatio="xMidYMid slice"
-          >
-            {regions.map((region) => {
-              const stroke = region.color || '#8b5cf6'
-              const fill = hexToRgba(stroke, 0.18)
-
-              if (region.type === 'polygon' && region.points && region.points.length >= 3) {
-                return (
-                  <polygon
-                    key={region.id}
-                    points={region.points.map(([x, y]) => `${x},${y}`).join(' ')}
-                    fill={fill}
-                    stroke={stroke}
-                    strokeWidth={3}
-                    vectorEffect="non-scaling-stroke"
-                  />
-                )
-              }
-
-              return (
-                <rect
-                  key={region.id}
-                  x={region.x}
-                  y={region.y}
-                  width={region.width}
-                  height={region.height}
-                  fill={fill}
-                  stroke={stroke}
-                  strokeWidth={3}
-                  vectorEffect="non-scaling-stroke"
-                />
-              )
-            })}
-          </svg>
         )}
 
         {status === 'empty' && (
@@ -560,6 +448,12 @@ function GroundTruthMaskThumbnail({
             <span className="px-2 py-1 text-[10px] font-medium rounded bg-black/60 text-white">
               {t('chatComponents.imageRecommendation.gtMaskUnavailable')}
             </span>
+          </div>
+        )}
+
+        {status === 'error' && (
+          <div className="absolute inset-0 hidden items-center justify-center bg-gray-100">
+            <ImageOff className="w-8 h-8 text-gray-300" />
           </div>
         )}
       </div>
