@@ -1,4 +1,5 @@
-import { Download, FlaskConical } from 'lucide-react'
+import { useState } from 'react'
+import { Download, FlaskConical, Loader2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, MetricCurveChart, PerClassMetricBarChart, type LossCurveData, type KFoldLossCurveData } from '../charts/AnalysisCharts'
 import { downloadApiFile, downloadTrainedModelExport, withAuthTokenQuery } from '../../api'
@@ -81,6 +82,7 @@ export interface AnalysisDetailsProps {
 
 export function AnalysisDetails({ analysis, taskId, modelId, selectedMetrics, selectedCharts, isExternal = false }: AnalysisDetailsProps) {
   const { t } = useTranslation()
+  const [isExportingModel, setIsExportingModel] = useState(false)
   const effectiveTaskId = analysis.task_id || taskId
   const isSurvival = analysis.task_type === 'wsi_survival' || analysis.task_type === 'survival' || analysis.task_type === 'external_validation_survival'
   const isSegmentation = analysis.task_type === 'segmentation' || analysis.task_type === 'patch_segmentation'
@@ -160,11 +162,14 @@ export function AnalysisDetails({ analysis, taskId, modelId, selectedMetrics, se
 
   const handleModelExport = async (e: React.MouseEvent) => {
     e.preventDefault()
-    if (!modelId) return
+    if (!modelId || isExportingModel) return
+    setIsExportingModel(true)
     try {
       await downloadTrainedModelExport(modelId)
     } catch (error) {
       console.error('Model export failed:', error)
+    } finally {
+      setIsExportingModel(false)
     }
   }
 
@@ -551,14 +556,18 @@ export function AnalysisDetails({ analysis, taskId, modelId, selectedMetrics, se
         {modelId && (
           <button
             onClick={handleModelExport}
-            className="flex-1 flex items-center justify-center gap-3 px-6 py-4 bg-white hover:bg-sky-50 text-sky-700 rounded-xl text-sm font-bold border border-sky-100 shadow-sm transition-all hover:border-sky-200 active:scale-[0.98]"
+            disabled={isExportingModel}
+            className={`flex-1 flex items-center justify-center gap-3 px-6 py-4 rounded-xl text-sm font-bold border shadow-sm transition-all ${isExportingModel
+              ? 'bg-sky-50 text-sky-700 border-sky-200 cursor-wait opacity-90'
+              : 'bg-white hover:bg-sky-50 text-sky-700 border-sky-100 hover:border-sky-200 active:scale-[0.98]'
+            }`}
           >
-            <div className="p-2 bg-sky-50 rounded-lg group-hover:bg-white transition-colors">
-              <Download className="w-5 h-5" />
+            <div className={`p-2 rounded-lg transition-colors ${isExportingModel ? 'bg-white' : 'bg-sky-50 group-hover:bg-white'}`}>
+              {isExportingModel ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
             </div>
             <div className="text-left">
               <div className="text-[10px] uppercase tracking-wider opacity-60">{t('analysisDetails.modelFiles')}</div>
-              {t('analysisDetails.downloadModel')}
+              {isExportingModel ? t('analysisDetails.exportingModel') : t('analysisDetails.downloadModel')}
             </div>
           </button>
         )}

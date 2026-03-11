@@ -31,6 +31,8 @@ from backend.common.config import Config
 
 _pdf_cache_dir: Path | None = None
 PDF_CACHE_TTL_DAYS = 7
+PDF_PARSE_MAX_CONCURRENT = max(1, int(os.getenv("PDF_PARSE_MAX_CONCURRENT", "1")))
+PDF_VECTOR_INDEX_MAX_CONCURRENT = max(1, int(os.getenv("PDF_VECTOR_INDEX_MAX_CONCURRENT", "1")))
 PDF_PARSE_METHOD_DOCLING = "docling"
 PDF_PARSE_METHOD_PYMUPDF = "pymupdf"
 PDF_PARSE_METHOD_FAILED = "parse_failed"
@@ -72,6 +74,10 @@ CACHE_ARTEFACT_SUFFIXES: tuple[str, ...] = (
 )
 DOCLING_SUBPROCESS_JOIN_TIMEOUT_SECONDS = 5.0
 _docling_upgrade_tasks: dict[str, asyncio.Task[None]] = {}
+_vector_index_tasks: dict[str, asyncio.Task[None]] = {}
+_vector_index_pending: dict[str, dict[str, Any]] = {}
+_pdf_parse_semaphore: asyncio.Semaphore | None = None
+_vector_index_semaphore: asyncio.Semaphore | None = None
 
 
 class DoclingGpuQueueTimeout(RuntimeError):
@@ -119,6 +125,35 @@ def get_pdf_image_path(url_hash: str, filename: str) -> Path:
         # (will result in a 404 at the endpoint level).
 
     return images_dir / filename
+
+
+def _get_pdf_parse_semaphore() -> asyncio.Semaphore:
+    global _pdf_parse_semaphore
+    if _pdf_parse_semaphore is None:
+        _pdf_parse_semaphore = asyncio.Semaphore(PDF_PARSE_MAX_CONCURRENT)
+    return _pdf_parse_semaphore
+
+
+def _get_vector_index_semaphore() -> asyncio.Semaphore:
+    global _vector_index_semaphore
+    if _vector_index_semaphore is None:
+        _vector_index_semaphore = asyncio.Semaphore(PDF_VECTOR_INDEX_MAX_CONCURRENT)
+    return _vector_index_semaphore
+
+
+async def _run_with_pdf_parse_slot(slot_label: str, work: Callable[[], Any]) -> Any:
+    semaphore = _get_pdf_parse_semaphore()
+    if semaphore.locked():
+        logger.info(
+            f"[PDFParse] Waiting for parse slot '{slot_label}' "
+            f"(max_concurrent={PDF_PARSE_MAX_CONCURRENT})"
+        )
+    async with semaphore:
+        logger.info(
+            f"[PDFParse] Acquired parse slot '{slot_label}' "
+            f"(max_concurrent={PDF_PARSE_MAX_CONCURRENT})"
+        )
+        return await work()
 
 
 PDF_URL_PATTERNS = [
@@ -459,7 +494,6 @@ def _save_markdown_to_cache(
             high_quality_parse_ready=False,
         )
         logger.info(f"Cached PyMuPDF markdown for {url} ({page_count} pages)")
-        _trigger_vector_index(url_hash, markdown, paper_title, structured_content)
     except Exception as e:
         logger.error(f"Error saving markdown to cache: {e}")
 
@@ -504,12 +538,82 @@ def _save_docling_to_cache(
             high_quality_upgrade_updated_at=datetime.now().isoformat(),
         )
         logger.info(f"Cached Docling markdown for {url} ({page_count} pages)")
-        _trigger_vector_index(url_hash, markdown, paper_title, structured_content)
     except Exception as e:
         logger.error(f"Error saving Docling markdown to cache: {e}")
 
 
 # ── Vector Index Helper ─────────────────────────────────────────────────────
+
+def _run_vector_index_sync(
+    url_hash: str,
+    markdown: str,
+    paper_title: str,
+    structured_content: dict[str, Any] | None = None,
+) -> int:
+    """Index PDF content into the vector store in a worker thread."""
+    from .chat_pdf_vectorstore import index_pdf_to_vectorstore
+    return index_pdf_to_vectorstore(
+        url_hash,
+        markdown,
+        paper_title or "Unknown",
+        structured_content=structured_content,
+    )
+
+
+def _register_vector_index_task(url_hash: str, task: asyncio.Task[None]) -> None:
+    _vector_index_tasks[url_hash] = task
+
+    def _cleanup(completed_task: asyncio.Task[None]) -> None:
+        current_task = _vector_index_tasks.get(url_hash)
+        if current_task is completed_task:
+            _vector_index_tasks.pop(url_hash, None)
+        try:
+            completed_task.result()
+        except asyncio.CancelledError:
+            logger.info(f"[VectorIndex] Background indexing cancelled for {url_hash}")
+        except Exception as e:
+            logger.error(f"[VectorIndex] Background indexing failed for {url_hash}: {e}")
+
+        if url_hash in _vector_index_pending and url_hash not in _vector_index_tasks:
+            logger.info(f"[VectorIndex] Rescheduling pending background index for {url_hash}")
+            next_task = asyncio.create_task(_run_vector_index_worker(url_hash))
+            _register_vector_index_task(url_hash, next_task)
+
+    task.add_done_callback(_cleanup)
+
+
+async def _run_vector_index_worker(url_hash: str) -> None:
+    semaphore = _get_vector_index_semaphore()
+    while True:
+        async with semaphore:
+            payload = _vector_index_pending.pop(url_hash, None)
+            if payload is None:
+                logger.info(f"[VectorIndex] No pending job found for {url_hash}; worker exiting")
+                return
+
+            parse_method = str(payload.get("parse_method") or "unknown")
+            logger.info(
+                f"[VectorIndex] Starting background index for {url_hash} "
+                f"(parse_method={parse_method}, max_concurrent={PDF_VECTOR_INDEX_MAX_CONCURRENT})"
+            )
+            try:
+                indexed = await asyncio.to_thread(
+                    _run_vector_index_sync,
+                    url_hash,
+                    str(payload.get("markdown") or ""),
+                    str(payload.get("paper_title") or "Unknown"),
+                    payload.get("structured_content") if isinstance(payload, dict) else None,
+                )
+                logger.info(
+                    f"[VectorIndex] Finished background index for {url_hash}: "
+                    f"{indexed} chunks (parse_method={parse_method})"
+                )
+            except Exception as e:
+                logger.error(f"[VectorIndex] Failed background index for {url_hash}: {e}")
+
+        if url_hash not in _vector_index_pending:
+            return
+
 
 def _trigger_vector_index(
     url_hash: str,
@@ -517,17 +621,37 @@ def _trigger_vector_index(
     paper_title: str,
     structured_content: dict[str, Any] | None = None,
 ) -> None:
-    """Index PDF content into the vector store (best-effort, non-blocking)."""
+    """Schedule PDF vector indexing in the background, coalescing repeated requests per URL."""
     try:
-        from .chat_pdf_vectorstore import index_pdf_to_vectorstore
-        index_pdf_to_vectorstore(
-            url_hash,
-            markdown,
-            paper_title or "Unknown",
-            structured_content=structured_content,
+        parse_method = "unknown"
+        if isinstance(structured_content, dict):
+            parse_method = str(structured_content.get("parse_method") or parse_method)
+
+        _vector_index_pending[url_hash] = {
+            "markdown": markdown,
+            "paper_title": paper_title or "Unknown",
+            "structured_content": structured_content,
+            "parse_method": parse_method,
+        }
+
+        existing_task = _vector_index_tasks.get(url_hash)
+        if existing_task is not None and not existing_task.done():
+            logger.info(
+                f"[VectorIndex] Updated pending background index for {url_hash} "
+                f"(parse_method={parse_method})"
+            )
+            return
+
+        task = asyncio.create_task(_run_vector_index_worker(url_hash))
+        _register_vector_index_task(url_hash, task)
+        logger.info(
+            f"[VectorIndex] Scheduled background index for {url_hash} "
+            f"(parse_method={parse_method})"
         )
+    except RuntimeError as e:
+        logger.warning(f"[VectorIndex] No running event loop for {url_hash}: {e}")
     except Exception as e:
-        logger.error(f"[VectorIndex] Failed to index {url_hash}: {e}")
+        logger.error(f"[VectorIndex] Failed to schedule index for {url_hash}: {e}")
 
 
 # ── BM25 Page-Level Search ──────────────────────────────────────────────────
@@ -1456,12 +1580,18 @@ async def _run_docling_background_upgrade(url: str, title: str, pdf_bytes: bytes
             high_quality_parse_pending=True,
             high_quality_parse_ready=False,
         )
-        result = await _parse_pdf_with_docling_best_effort(
-            pdf_bytes,
-            0,
-            images_output_dir,
-            images_url_prefix,
-            upgrade_url=url,
+        async def _run_upgrade_parse() -> ParsedPdfResult | None:
+            return await _parse_pdf_with_docling_best_effort(
+                pdf_bytes,
+                0,
+                images_output_dir,
+                images_url_prefix,
+                upgrade_url=url,
+            )
+
+        result = await _run_with_pdf_parse_slot(
+            f"docling-background-upgrade:{url_hash}",
+            _run_upgrade_parse,
         )
         if result is None or not result.markdown or result.markdown.startswith("[Error"):
             _record_high_quality_upgrade_state(
@@ -1474,7 +1604,7 @@ async def _run_docling_background_upgrade(url: str, title: str, pdf_bytes: bytes
             )
             return
 
-        _save_docling_to_cache(
+        await _save_docling_to_cache_async(
             url,
             result.markdown,
             paper_title=title,
@@ -2793,39 +2923,42 @@ async def parse_pdf(
     Normal flow returns quickly with a PyMuPDF parse. Callers can schedule a
     background Docling upgrade separately to improve fidelity and structure.
     """
-    pymupdf_result = await _parse_pdf_with_pymupdf_in_worker_thread(
-        pdf_bytes,
-        max_pages,
-        images_output_dir,
-        images_url_prefix,
-    )
-    if pymupdf_result is not None:
-        logger.info(
-            "parse_pdf returning PyMuPDF fast-path result: "
-            f"{pymupdf_result.page_count} pages, "
-            f"{len(pymupdf_result.structured_content.get('blocks', []))} structured blocks"
+    async def _run_parse() -> ParsedPdfResult:
+        pymupdf_result = await _parse_pdf_with_pymupdf_in_worker_thread(
+            pdf_bytes,
+            max_pages,
+            images_output_dir,
+            images_url_prefix,
         )
-        return pymupdf_result
+        if pymupdf_result is not None:
+            logger.info(
+                "parse_pdf returning PyMuPDF fast-path result: "
+                f"{pymupdf_result.page_count} pages, "
+                f"{len(pymupdf_result.structured_content.get('blocks', []))} structured blocks"
+            )
+            return pymupdf_result
 
-    logger.info("parse_pdf falling back to Docling native parse after PyMuPDF fast path miss")
-    docling_result = await _parse_pdf_with_docling_best_effort(
-        pdf_bytes,
-        max_pages,
-        images_output_dir,
-        images_url_prefix,
-    )
-    if docling_result is not None:
-        logger.info(
-            "parse_pdf returning Docling native result: "
-            f"{docling_result.page_count} pages, "
-            f"{len(docling_result.structured_content.get('blocks', []))} structured blocks"
+        logger.info("parse_pdf falling back to Docling native parse after PyMuPDF fast path miss")
+        docling_result = await _parse_pdf_with_docling_best_effort(
+            pdf_bytes,
+            max_pages,
+            images_output_dir,
+            images_url_prefix,
         )
-        return docling_result
+        if docling_result is not None:
+            logger.info(
+                "parse_pdf returning Docling native result: "
+                f"{docling_result.page_count} pages, "
+                f"{len(docling_result.structured_content.get('blocks', []))} structured blocks"
+            )
+            return docling_result
 
-    return _to_parsed_pdf_result(
-        "[Error parsing PDF: PyMuPDF and Docling both failed]",
-        PDF_PARSE_METHOD_FAILED,
-    )
+        return _to_parsed_pdf_result(
+            "[Error parsing PDF: PyMuPDF and Docling both failed]",
+            PDF_PARSE_METHOD_FAILED,
+        )
+
+    return await _run_with_pdf_parse_slot("foreground-parse", _run_parse)
 
 
 async def summarize_pdf_content(
@@ -3131,6 +3264,12 @@ async def _save_markdown_to_cache_async(
         structured_content,
         high_quality_pending=high_quality_pending,
     )
+    _trigger_vector_index(
+        _get_url_hash(url),
+        markdown,
+        paper_title,
+        structured_content,
+    )
 
 
 async def _save_docling_to_cache_async(
@@ -3143,6 +3282,12 @@ async def _save_docling_to_cache_async(
     await asyncio.to_thread(
         _save_docling_to_cache,
         url,
+        markdown,
+        paper_title,
+        structured_content,
+    )
+    _trigger_vector_index(
+        _get_url_hash(url),
         markdown,
         paper_title,
         structured_content,

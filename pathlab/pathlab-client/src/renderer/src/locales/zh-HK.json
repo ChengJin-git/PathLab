@@ -3188,7 +3188,8 @@
     "rawData": "原始資料",
     "downloadFullResults": "下載完整結果",
     "modelFiles": "模型檔案",
-    "downloadModel": "匯出模型"
+    "downloadModel": "匯出模型",
+    "exportingModel": "正在準備匯出..."
   },
   "analysisCharts": {
     "confusionMatrix": "混淆矩陣",

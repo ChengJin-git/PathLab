@@ -74,10 +74,58 @@ def _resolve_model_artifact_dir(model) -> Path:
     return fallback
 
 
+def _resolve_export_root_dir(model) -> Path:
+    if model.config_path:
+        config_path = Path(model.config_path).expanduser()
+        if config_path.exists():
+            return config_path.parent
+
+    if model.model_path:
+        model_path = Path(model.model_path).expanduser()
+        if model_path.exists():
+            if model_path.parent.name.startswith("fold_"):
+                return model_path.parent.parent
+            return model_path.parent
+
+    return _resolve_model_artifact_dir(model)
+
+
+def _safe_relative_path(path: Path, base_dir: Path) -> Path:
+    try:
+        return path.relative_to(base_dir)
+    except ValueError:
+        return Path(path.name)
+
+
+def _collect_export_files(model) -> list[tuple[Path, Path, bool]]:
+    if not model.model_path:
+        raise FileNotFoundError("Model file not found")
+
+    model_path = Path(model.model_path).expanduser()
+    if not model_path.exists() or not model_path.is_file():
+        raise FileNotFoundError("Model file not found")
+
+    export_root_dir = _resolve_export_root_dir(model)
+    export_files: list[tuple[Path, Path, bool]] = [
+        (model_path, _safe_relative_path(model_path, export_root_dir), False),
+    ]
+
+    if model.config_path:
+        config_path = Path(model.config_path).expanduser()
+        if config_path.exists() and config_path.is_file():
+            export_files.append((config_path, _safe_relative_path(config_path, export_root_dir), True))
+
+    metrics_path = export_root_dir / "metrics.json"
+    if metrics_path.exists() and metrics_path.is_file():
+        export_files.append((metrics_path, _safe_relative_path(metrics_path, export_root_dir), False))
+
+    return export_files
+
+
 def _build_model_export_archive(model, task) -> tuple[str, str]:
-    artifact_dir = _resolve_model_artifact_dir(model)
     export_root = Path(model.model_id)
     task_type = task.data_group.task_type if task and task.data_group else None
+    export_files = _collect_export_files(model)
 
     manifest = {
         "model_id": model.model_id,
@@ -87,7 +135,7 @@ def _build_model_export_archive(model, task) -> tuple[str, str]:
         "feature_extractor": model.feature_extractor,
         "aggregator": model.aggregator,
         "classes": model.classes,
-        "artifact_dir_name": artifact_dir.name,
+        "exported_files": [str(relative_path) for _, relative_path, _ in export_files],
     }
     readme = "\n".join([
         "PathLab Model Export",
@@ -99,20 +147,18 @@ def _build_model_export_archive(model, task) -> tuple[str, str]:
         f"Aggregator / Architecture: {model.aggregator or 'N/A'}",
         f"Classes: {', '.join(model.classes or []) if model.classes else 'N/A'}",
         "",
-        "This package contains the artifacts saved under the model output directory.",
+        "This package contains the final model artifacts required for reuse.",
+        "Intermediate training checkpoints are intentionally excluded from this export.",
         "Depending on the training pipeline, additional feature extractor or backbone assets may need to be provided separately during deployment.",
     ])
 
     archive_fd, archive_path = tempfile.mkstemp(prefix=f"{model.model_id}_", suffix=".zip")
     os.close(archive_fd)
 
-    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for file_path in sorted(artifact_dir.rglob("*")):
-            if not file_path.is_file() or file_path.is_symlink():
-                continue
-
-            archive_member = export_root / file_path.relative_to(artifact_dir)
-            if file_path.name == "config.json":
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
+        for file_path, relative_path, should_sanitize in export_files:
+            archive_member = export_root / relative_path
+            if should_sanitize:
                 try:
                     payload = json.loads(file_path.read_text(encoding="utf-8"))
                     sanitized_payload = _sanitize_export_config(payload)
@@ -124,13 +170,18 @@ def _build_model_export_archive(model, task) -> tuple[str, str]:
                 except Exception as exc:
                     logger.warning("Failed to sanitize config for model export %s: %s", model.model_id, exc)
 
-            archive.write(file_path, arcname=str(archive_member))
+            archive.write(file_path, arcname=str(archive_member), compress_type=zipfile.ZIP_STORED)
 
         archive.writestr(
             str(export_root / "export_manifest.json"),
             json.dumps(manifest, ensure_ascii=False, indent=2),
+            compress_type=zipfile.ZIP_STORED,
         )
-        archive.writestr(str(export_root / "README.txt"), readme)
+        archive.writestr(
+            str(export_root / "README.txt"),
+            readme,
+            compress_type=zipfile.ZIP_STORED,
+        )
 
     return archive_path, f"{model.model_id}_export.zip"
 
