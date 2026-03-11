@@ -133,12 +133,12 @@ export function ModelListCard({ config, onToast }: ModelListCardProps) {
               transition={{ delay: index * 0.05 }}
             >
               <div className={cn(
-                "rounded-xl border bg-white shadow-sm overflow-hidden",
+                "rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden",
                 isSurvival
-                  ? "border-l-[3px] border-l-orange-400"
+                  ? "border-l-[3px] border-l-orange-300"
                   : isSegType
-                  ? "border-l-[3px] border-l-violet-400"
-                  : "border-l-[3px] border-l-blue-400"
+                  ? "border-l-[3px] border-l-violet-300"
+                  : "border-l-[3px] border-l-blue-300"
               )}>
                 {/* Header */}
                 <div className="px-3 pt-3 pb-2">
