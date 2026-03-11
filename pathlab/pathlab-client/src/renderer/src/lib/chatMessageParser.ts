@@ -10,7 +10,8 @@
  * which would cause new config cards to initialize as already submitted.
  *
  * Also strips frontend-only status blocks ([SEARCH_STATUS], [WEB_SEARCH_RESULT],
- * [PDF_PARSE_STATUS]) that are emitted by the backend purely as UI indicators during
+ * [PDF_PARSE_STATUS]) and UI-only action blocks ([OPTIONS], [MODEL_LIST]) that are
+ * emitted by the backend/frontend purely for rendering during
  * streaming. If these blocks are sent back to the AI as conversation history the AI
  * will interpret them as already-available search results and refuse to perform a new
  * web search on subsequent turns.
@@ -23,6 +24,8 @@ export function sanitizeConfigBlocksForAI(content: string): string {
   sanitized = sanitized.replace(/\[WEB_SEARCH_RESULT\][\s\S]*?\[\/WEB_SEARCH_RESULT\]/g, '')
   sanitized = sanitized.replace(/\[PDF_PARSE_STATUS\][\s\S]*?\[\/PDF_PARSE_STATUS\]/g, '')
   sanitized = sanitized.replace(/\[CITATION_CONTEXTS\][\s\S]*?\[\/CITATION_CONTEXTS\]/g, '')
+  sanitized = sanitized.replace(/\[OPTIONS\][\s\S]*?\[\/OPTIONS\]/g, '')
+  sanitized = sanitized.replace(/\[MODEL_LIST\][\s\S]*?\[\/MODEL_LIST\]/g, '')
 
   // Fields to strip per config block type
   const PERSISTENCE_FIELDS: Record<string, string[]> = {

@@ -178,6 +178,7 @@ export default function AIChatPage() {
   // Ref to track current input value for voice transcript appending
   const inputRef = useRef('')
   inputRef.current = input
+  const pendingProgrammaticSubmitRef = useRef(false)
 
   const formRef = useRef<HTMLFormElement>(null)
 
@@ -227,9 +228,18 @@ export default function AIChatPage() {
   // Programmatically submit the chat form after setting input.
   // Uses ref-based approach instead of DOM query to avoid fragile setTimeout + querySelector patterns.
   const submitFormProgrammatically = useCallback((text: string) => {
+    if (generationPhaseRef.current !== 'idle' || pendingProgrammaticSubmitRef.current) {
+      return
+    }
+
+    pendingProgrammaticSubmitRef.current = true
     setInput(text)
     inputRef.current = text
     setTimeout(() => {
+      if (generationPhaseRef.current !== 'idle') {
+        pendingProgrammaticSubmitRef.current = false
+        return
+      }
       formRef.current?.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }))
     }, 50)
   }, [])
@@ -1137,6 +1147,7 @@ export default function AIChatPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    pendingProgrammaticSubmitRef.current = false
     // Use inputRef.current to get the latest value, avoiding stale closure issues
     // when form is submitted programmatically (e.g., from voice transcription)
     const currentInputValue = inputRef.current.trim()
