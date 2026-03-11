@@ -21,6 +21,13 @@ interface PatchOverlayStackProps {
   highlightedRegionId?: string | null
   slideWidth: number
   slideHeight: number
+  annotationMode: boolean
+  drawingTool: 'rect' | 'polygon'
+  currentLabel: string
+  currentColor: string
+  onRegionCreated: (region: Omit<AnnotationRegion, 'id'>) => void
+  onRegionTooLarge?: () => void
+  isLabelDropdownOpen?: boolean
 }
 
 export function PatchOverlayStack({
@@ -34,6 +41,13 @@ export function PatchOverlayStack({
   highlightedRegionId = null,
   slideWidth,
   slideHeight,
+  annotationMode,
+  drawingTool,
+  currentLabel,
+  currentColor,
+  onRegionCreated,
+  onRegionTooLarge,
+  isLabelDropdownOpen = false,
 }: PatchOverlayStackProps) {
   return (
     <div
@@ -67,6 +81,13 @@ export function PatchOverlayStack({
         highlightedRegionId={highlightedRegionId}
         slideWidth={slideWidth}
         slideHeight={slideHeight}
+        annotationMode={annotationMode}
+        drawingTool={drawingTool}
+        currentLabel={currentLabel}
+        currentColor={currentColor}
+        onRegionCreated={onRegionCreated}
+        onRegionTooLarge={onRegionTooLarge}
+        isLabelDropdownOpen={isLabelDropdownOpen}
       />
     </div>
   )

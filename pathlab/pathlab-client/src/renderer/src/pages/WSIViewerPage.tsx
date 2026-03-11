@@ -639,11 +639,58 @@ export default function WSIViewerPage() {
     }
   }, [])
 
+  const focusPatchRegion = useCallback((region: AnnotationRegion) => {
+    if (slideWidth <= 0 || slideHeight <= 0) {
+      return
+    }
+
+    const container = patchContainerRef.current
+    if (!container) {
+      return
+    }
+
+    const stackSide = Math.min(container.clientWidth, container.clientHeight, 600)
+    if (stackSide <= 0) {
+      return
+    }
+
+    const regionCenterX = region.x + region.width / 2
+    const regionCenterY = region.y + region.height / 2
+    const targetWidth = Math.max(region.width * FOCUS_REGION_PADDING_MULTIPLIER, slideWidth * 0.15)
+    const targetHeight = Math.max(region.height * FOCUS_REGION_PADDING_MULTIPLIER, slideHeight * 0.15)
+    const nextZoom = clamp(Math.min(slideWidth / targetWidth, slideHeight / targetHeight), 1, 10)
+
+    const baseScale = Math.min(stackSide / slideWidth, stackSide / slideHeight)
+    const renderedWidth = slideWidth * baseScale
+    const renderedHeight = slideHeight * baseScale
+    const renderedLeft = (stackSide - renderedWidth) / 2
+    const renderedTop = (stackSide - renderedHeight) / 2
+    const baseX = renderedLeft + regionCenterX * baseScale
+    const baseY = renderedTop + regionCenterY * baseScale
+    const centerX = stackSide / 2
+    const centerY = stackSide / 2
+
+    setPatchZoom(nextZoom)
+    setPatchPan({
+      x: -nextZoom * (baseX - centerX),
+      y: -nextZoom * (baseY - centerY),
+    })
+  }, [slideHeight, slideWidth])
+
   const handleFocusRegion = useCallback((regionId: string) => {
     setFocusedRegionId(regionId)
 
     const region = currentRegions.find(item => item.id === regionId)
-    if (!region || !osdViewer?.viewport || !window.OpenSeadragon || slideWidth <= 0 || slideHeight <= 0) {
+    if (!region || slideWidth <= 0 || slideHeight <= 0) {
+      return
+    }
+
+    if (isPatchLevel) {
+      focusPatchRegion(region)
+      return
+    }
+
+    if (!osdViewer?.viewport || !window.OpenSeadragon) {
       return
     }
 
@@ -680,7 +727,7 @@ export default function WSIViewerPage() {
       osdViewer.viewport.fitBounds(bounds, false)
       osdViewer.viewport.applyConstraints()
     }
-  }, [currentRegions, osdViewer, slideHeight, slideWidth])
+  }, [currentRegions, focusPatchRegion, isPatchLevel, osdViewer, slideHeight, slideWidth])
 
   const handleRegionCreated = useCallback((region: Omit<AnnotationRegion, 'id'>) => {
     const newRegion: AnnotationRegion = {
@@ -743,32 +790,6 @@ export default function WSIViewerPage() {
   }, [wsi_id])
 
   const handleLabelChange = useCallback((label: string) => {
-    const defaultLabel = t('annotation.defaultLabel')
-    // When user sets a real label and there are regions with the default label,
-    // replace all default-label regions with the new label and remove the default from colors
-    if (label !== defaultLabel) {
-      setAllAnnotations(prev => {
-        const updated: typeof prev = {}
-        let changed = false
-        for (const [wsiId, regions] of Object.entries(prev)) {
-          updated[wsiId] = regions.map(r => {
-            if (r.label === defaultLabel) {
-              changed = true
-              return { ...r, label }
-            }
-            return r
-          })
-        }
-        return changed ? updated : prev
-      })
-      setLabelColors(prev => {
-        if (prev[defaultLabel]) {
-          const { [defaultLabel]: _, ...rest } = prev
-          return rest
-        }
-        return prev
-      })
-    }
     setCurrentLabel(label)
     if (label) {
       setLabelColors(prev => {
@@ -779,7 +800,7 @@ export default function WSIViewerPage() {
         }
       })
     }
-  }, [t])
+  }, [])
 
   const buildEmptyDatasetDraftAnnotations = useCallback((): AnnotationsMap => {
     if (Object.keys(allAnnotations).length > 0) {
@@ -1286,6 +1307,13 @@ export default function WSIViewerPage() {
                 highlightedRegionId={focusedRegionId}
                 slideWidth={slideWidth}
                 slideHeight={slideHeight}
+                annotationMode={annotationMode}
+                drawingTool={drawingTool}
+                currentLabel={currentLabel}
+                currentColor={currentColor}
+                onRegionCreated={handleRegionCreated}
+                onRegionTooLarge={handleRegionTooLarge}
+                isLabelDropdownOpen={isLabelDropdownOpen}
               />
             </div>
           ) : (

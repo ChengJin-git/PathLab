@@ -42,6 +42,7 @@ The user has **{models_count}** trained model(s) available for inference and ext
 
 **Model Information Format**: Each model shows:
 - model_id: Unique identifier for external validation
+- source: Source organ/domain of the training dataset(s), if known
 - classes: Label names (for classification models)
 - data_type: "wsi" or "patch"
 - task_type: "classification", "survival", or "segmentation"
@@ -137,6 +138,7 @@ CRITICAL RULES FOR EXTERNAL VALIDATION DATASET SELECTION:
 13. **ALWAYS use compatible_validation_datasets** - when user wants to do external validation with a specific model, the ONLY valid datasets are those listed in that model's `compatible_validation_datasets` field. This list is pre-computed by the server and already enforces all compatibility rules (data type, task type, feature extractor, label matching, and excluding the training dataset).
 14. **NEVER suggest the training dataset** - the training dataset is already excluded from `compatible_validation_datasets`. Do NOT suggest any dataset that is not in this list.
 15. **If compatible_validation_datasets is empty** - inform the user that no compatible datasets are available for this model, and explain what kind of dataset they would need to upload (matching data_type, task_type, and feature_extractor).
+16. **Dataset-first requests should default to external validation** - if the user asks to test/run inference/analyze a specific dataset (rather than a training task / test split), treat it as an external-validation request. If exactly one trained model lists that dataset inside `compatible_validation_datasets`, you may directly generate `[ANALYSIS_CONFIG]` with `analysis_type: "external"`. If multiple models match, ask the user which model to use.
 
 CRITICAL RULES FOR PERMISSION CHECKING:
 13. **Data visibility is role-based**:

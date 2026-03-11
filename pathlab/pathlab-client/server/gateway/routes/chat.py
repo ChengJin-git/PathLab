@@ -2626,11 +2626,29 @@ async def chat_with_ai(
             else:
                 data_type = "unknown"
                 task_type = "unknown"
-            # Resolve training dataset names using the stats_datasets lookup
+            # Resolve training dataset names / sources using the stats_datasets lookup
             dataset_id_to_name = {ds["dataset_id"]: ds["dataset_name"] for ds in stats_datasets}
+            dataset_id_to_source = {}
+            for ds in stats_datasets:
+                ds_id = ds.get("dataset_id")
+                if not ds_id:
+                    continue
+                rich_ds = rich_datasets_map.get(ds_id, {})
+                ds_source = rich_ds.get("source_organ") or ds.get("source_organ")
+                if isinstance(ds_source, str):
+                    ds_source = ds_source.strip()
+                if ds_source:
+                    dataset_id_to_source[ds_id] = ds_source
             training_dataset_names = [
                 dataset_id_to_name[did] for did in training_dataset_ids if did in dataset_id_to_name
             ]
+            training_dataset_sources = []
+            seen_sources = set()
+            for did in training_dataset_ids:
+                ds_source = dataset_id_to_source.get(did)
+                if ds_source and ds_source not in seen_sources:
+                    training_dataset_sources.append(ds_source)
+                    seen_sources.add(ds_source)
 
             # Get embedding dimension for WSI models
             embed_dim = EXTRACTOR_EMBED_DIM.get(model_feature_extractor, 0)
@@ -2688,7 +2706,10 @@ async def chat_with_ai(
                 if embed_dim > 0:
                     info_parts.append(f"embedding_dim={embed_dim}")
 
-            # Add training dataset names for reference
+            # Add training dataset source / names for reference
+            if training_dataset_sources:
+                info_parts.append(f"source={', '.join(training_dataset_sources)}")
+
             if training_dataset_names:
                 info_parts.append(f"trained_on_dataset={', '.join(training_dataset_names)}")
 

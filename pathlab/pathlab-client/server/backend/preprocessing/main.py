@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Path as PathParam, Query, Depends, Request
 from fastapi.responses import Response, JSONResponse
-from PIL import Image
+from PIL import Image, ImageDraw
 import io
 import os
 import gc
@@ -1121,6 +1121,15 @@ async def _extract_single_region(
             _read_wsi_region, slide, region.x, region.y, region.width, region.height
         )
 
+    if region.type == "polygon" and region.points and len(region.points) >= 3:
+        cropped = await asyncio.to_thread(
+            _apply_polygon_mask_to_crop,
+            cropped,
+            region.x,
+            region.y,
+            region.points,
+        )
+
     # Save as JPEG
     await asyncio.to_thread(_save_image_jpeg, cropped, output_path)
 
@@ -1161,6 +1170,39 @@ def _read_wsi_region(slide, x: int, y: int, w: int, h: int) -> Image.Image:
         background.paste(region, mask=region.split()[3])
         return background
     return region.convert("RGB")
+
+
+def _apply_polygon_mask_to_crop(
+    cropped: Image.Image,
+    bbox_x: int,
+    bbox_y: int,
+    points: List[List[int]],
+) -> Image.Image:
+    """Keep polygon pixels inside the bbox crop and fill the outside area with white."""
+    image = cropped.convert("RGB")
+    if image.width <= 0 or image.height <= 0:
+        return image
+
+    polygon = []
+    max_x = max(image.width - 1, 0)
+    max_y = max(image.height - 1, 0)
+    for point in points:
+        if len(point) < 2:
+            continue
+        rel_x = min(max(int(round(point[0] - bbox_x)), 0), max_x)
+        rel_y = min(max(int(round(point[1] - bbox_y)), 0), max_y)
+        polygon.append((rel_x, rel_y))
+
+    if len(polygon) < 3:
+        return image
+
+    mask = Image.new("L", image.size, 0)
+    draw = ImageDraw.Draw(mask)
+    draw.polygon(polygon, fill=255)
+
+    background = Image.new("RGB", image.size, (255, 255, 255))
+    background.paste(image, mask=mask)
+    return background
 
 
 def _save_image_jpeg(img: Image.Image, output_path: Path):

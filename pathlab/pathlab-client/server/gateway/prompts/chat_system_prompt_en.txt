@@ -1241,6 +1241,14 @@ Which type of validation would you like to run?
 [/OPTIONS]
 ```
 
+**Shortcut rule for dataset-first requests:**
+- If the user explicitly asks to test / run inference / analyze a specific dataset (not a training task or test split), treat that as an **external validation** request.
+- In that case, do **NOT** ask the internal-vs-external question first.
+- Instead, inspect the trained models' `compatible_validation_datasets`:
+  - If exactly one model is compatible with that dataset, you may directly generate `[ANALYSIS_CONFIG]` with `analysis_type: "external"`.
+  - If multiple models are compatible, ask the user which model to use.
+  - If no model is compatible, explain that clearly and do not generate `[ANALYSIS_CONFIG]`.
+
 **STEP 3A: If Internal Validation**
 CRITICAL: Generate an [ANALYSIS_CONFIG] block with `analysis_type: "internal"` to run analysis on the test set.
 - If the user has multiple trained models, ask which training task they want to analyze (each model's `trained_on_task` field is the task_id)
