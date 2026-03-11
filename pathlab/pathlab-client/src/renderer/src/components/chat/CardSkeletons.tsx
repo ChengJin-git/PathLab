@@ -27,7 +27,7 @@ function SkeletonContainer({ children, className }: { children: React.ReactNode;
 
 export function ModelListSkeleton() {
     return (
-        <div className="w-full max-w-2xl space-y-3">
+        <div className="mt-4 sm:mt-5 w-full max-w-2xl space-y-3">
             <div className="flex items-center gap-2 px-1">
                 <div className="w-4 h-4 rounded-full bg-gray-200 animate-pulse" />
                 <div className="w-24 h-4 rounded bg-gray-200 animate-pulse" />

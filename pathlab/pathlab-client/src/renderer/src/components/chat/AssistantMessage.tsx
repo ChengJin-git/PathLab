@@ -1034,19 +1034,11 @@ const AssistantMessage = React.memo(function AssistantMessage({
 
         {/* Model List Card */}
         {modelListConfig ? (
-          <motion.div
-            key="model-list-real"
-            {...cardTransition}
-            className={options ? 'mt-4 sm:mt-5' : undefined}
-          >
+          <motion.div key="model-list-real" {...cardTransition}>
             <ModelListCard config={modelListConfig} onToast={onToast} />
           </motion.div>
         ) : incompleteTag === 'MODEL_LIST' && (
-          <motion.div
-            key="model-list-skeleton"
-            {...cardTransition}
-            className={options ? 'mt-4 sm:mt-5' : undefined}
-          >
+          <motion.div key="model-list-skeleton" {...cardTransition}>
             <ModelListSkeleton />
           </motion.div>
         )}

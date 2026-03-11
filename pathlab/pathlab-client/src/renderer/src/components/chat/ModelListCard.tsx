@@ -118,7 +118,7 @@ export function ModelListCard({ config, onToast }: ModelListCardProps) {
   }
 
   return (
-    <div className="w-full max-w-full space-y-3">
+    <div className="mt-4 sm:mt-5 w-full max-w-full space-y-3">
       <div className="flex items-center justify-between px-1">
         <h3 className="text-sm font-medium text-foreground/80 flex items-center gap-2">
           <Brain className="w-4 h-4 text-primary" />
