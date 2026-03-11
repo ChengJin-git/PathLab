@@ -66,7 +66,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
   const [maintenanceNoticeMessage, setMaintenanceNoticeMessage] = useState<string | null>(null)
   const [needsMaintenanceAcknowledgment, setNeedsMaintenanceAcknowledgment] = useState(false)
   const toast = useToast()
-  const { t } = useTranslation()
+  const { i18n } = useTranslation()
 
   // Track whether user was logged in, to show toast only on forced logout (not initial load)
   const userRef = useRef<AuthUser | null>(null)
@@ -82,7 +82,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       if (userRef.current && !sessionExpiredHandled.current) {
         sessionExpiredHandled.current = true
         toast.warning(
-          t('auth.sessionExpired'),
+          i18n.t('auth.sessionExpired'),
           5000
         )
         setUser(null)
@@ -94,7 +94,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
 
     window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
     return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
-  }, [toast, t])
+  }, [i18n, toast])
 
   // Refresh dataset permissions (for temporary elevated access)
   const refreshDatasetPermissions = useCallback(async () => {

@@ -80,7 +80,13 @@ export function MetricCard({ config, onError }: MetricCardProps) {
 
       try {
         // First validate task exists
-        const tasks = await getTrainingTasks()
+        const response = await getTrainingTasks()
+        const tasks = Array.isArray(response)
+          ? response
+          : Array.isArray(response?.items)
+            ? response.items
+            : []
+
         const found = tasks.some(task => task.task_id === config.task_id && task.status === 'completed')
         
         if (!found) {

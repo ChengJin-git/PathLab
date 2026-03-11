@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Loader2, Image as ImageIcon, ExternalLink, AlertCircle, ImageOff, Layers } from 'lucide-react'
 import {
   fetchWSIList,
+  fetchWSIIds,
   fetchWSIDetail,
   fetchAllResults,
   getThumbnailUrl,
@@ -13,10 +14,12 @@ import {
   getSegMaskImageUrl,
   getWSIGroundTruth,
   type WSISummary,
+  type ResultWithWSI,
   type AvailableHeatmap,
   type AnnotationRegion
 } from '../../api'
 import { getFileType } from '../../constants/fileTypes'
+import { parseLastChatBlockJson, stripChatBlocks } from './chatBlockParsing'
 
 type SegmentationMaskSource = 'gt' | 'model_pred' | 'both'
 
@@ -68,22 +71,14 @@ interface ImageRecommendationCardProps {
  * Parse [IMAGE_RECOMMENDATION] block from message content
  */
 export function parseImageRecommendation(content: string): ImageRecommendation | null {
-  const match = content.match(/\[IMAGE_RECOMMENDATION\]([\s\S]*?)\[\/IMAGE_RECOMMENDATION\]/)
-  if (!match) return null
-
-  try {
-    const jsonStr = match[1].trim()
-    return JSON.parse(jsonStr)
-  } catch {
-    return null
-  }
+  return parseLastChatBlockJson<ImageRecommendation>(content, 'IMAGE_RECOMMENDATION', { allowIncompleteLast: true })
 }
 
 /**
  * Remove [IMAGE_RECOMMENDATION] block from content for display
  */
 export function removeImageRecommendationBlock(content: string): string {
-  return content.replace(/\[IMAGE_RECOMMENDATION\][\s\S]*?\[\/IMAGE_RECOMMENDATION\]/g, '').trim()
+  return stripChatBlocks(content, 'IMAGE_RECOMMENDATION').trim()
 }
 
 // Global cache for loaded images with heatmap info (persists across component remounts)
@@ -91,6 +86,50 @@ const imageCache = new Map<string, { images: ImageWithOverlays[]; error: string 
 const groundTruthMaskCache = new Map<string, AnnotationRegion[]>()
 const wsiDimensionCache = new Map<string, { width: number; height: number }>()
 const CARD_THUMBNAIL_SIZE = 160
+
+function getFileExtensionFromName(filename: string): string {
+  const lastDot = filename.lastIndexOf('.')
+  return lastDot >= 0 ? filename.slice(lastDot).toLowerCase() : ''
+}
+
+function inferResultDataType(result: ResultWithWSI, recommendation: ImageRecommendation): 'wsi' | 'patch' | null {
+  if (recommendation.filters?.data_type === 'wsi' || recommendation.filters?.data_type === 'patch') {
+    return recommendation.filters.data_type
+  }
+  return getFileType(getFileExtensionFromName(result.original_filename), 0) === 'Patch' ? 'patch' : 'wsi'
+}
+
+function buildPreviewSummaryFromResult(result: ResultWithWSI, recommendation: ImageRecommendation): WSISummary {
+  return {
+    wsi_id: result.wsi_id,
+    original_filename: result.original_filename,
+    dataset_id: recommendation.filters?.dataset_id ?? null,
+    dataset_name: null,
+    case_id: result.case_id,
+    label: result.label,
+    file_extension: getFileExtensionFromName(result.original_filename),
+    age: null,
+    gender: null,
+    source: null,
+    event_time: null,
+    event_status: null,
+    split: null,
+    file_size: null,
+    data_type: inferResultDataType(result, recommendation),
+    created_at: result.created_at,
+  }
+}
+
+function dedupeLatestResultsByWsi(items: ResultWithWSI[]): ResultWithWSI[] {
+  const seen = new Set<string>()
+  const deduped: ResultWithWSI[] = []
+  for (const item of items) {
+    if (seen.has(item.wsi_id)) continue
+    seen.add(item.wsi_id)
+    deduped.push(item)
+  }
+  return deduped
+}
 
 function hexToRgba(color: string, alpha: number): string {
   const normalized = color.replace('#', '')
@@ -153,6 +192,7 @@ function OverlayThumbnailButton({
   badgeClassName,
   fallback,
   loadingColorClass,
+  className = 'relative flex-1 min-w-[60px] aspect-square md:flex-none md:flex-shrink-0 md:snap-start md:aspect-auto md:w-32 md:h-32 group/img',
 }: {
   src: string
   alt: string
@@ -162,6 +202,7 @@ function OverlayThumbnailButton({
   badgeClassName: string
   fallback: ReactNode
   loadingColorClass: string
+  className?: string
 }) {
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
 
@@ -172,7 +213,7 @@ function OverlayThumbnailButton({
   return (
     <button
       onClick={onClick}
-      className="relative flex-shrink-0 snap-start group/img w-32 h-32"
+      className={className}
       title={title}
     >
       <div className="relative w-full h-full bg-gray-100 rounded-lg overflow-hidden border border-gray-200 group-hover/img:border-orange-300 shadow-sm transition-colors">
@@ -221,7 +262,7 @@ function PendingThumbnailSlot({
 }) {
   return (
     <div
-      className="relative flex-shrink-0 snap-start w-32 h-32"
+      className="relative flex-1 min-w-[60px] aspect-square md:flex-none md:flex-shrink-0 md:snap-start md:aspect-auto md:w-32 md:h-32"
       title={title}
       aria-label={title}
     >
@@ -515,12 +556,12 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
     try {
       let displayImages: WSISummary[] = []
       let predictionByWsiId = new Map<string, string | null>()
+      let shouldHydrateLimitedImages = false
 
       // If has_predictions is true, fetch from results endpoint
       if (recommendation.filters?.has_predictions) {
         const resultsData = await fetchAllResults()
-        // Convert ResultWithWSI to WSISummary-like objects
-        let resultsWithWsi = resultsData.items
+        let resultsWithWsi = dedupeLatestResultsByWsi(resultsData.items)
 
         // Apply pred filter (filter by AI prediction result) - use exact match to avoid substring issues
         // e.g., "MSIH" should NOT match "nonMSIH"
@@ -539,31 +580,44 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
           )
         }
 
+        if (recommendation.filters?.dataset_id) {
+          const matchingWsiIds = await fetchWSIIds(
+            recommendation.filters.dataset_id,
+            recommendation.filters.data_type && recommendation.filters.data_type !== 'all'
+              ? recommendation.filters.data_type
+              : undefined,
+          )
+          const allowedIds = new Set(matchingWsiIds.items)
+          resultsWithWsi = resultsWithWsi.filter(r => allowedIds.has(r.wsi_id))
+        }
+
+        if (recommendation.filters?.data_type && recommendation.filters.data_type !== 'all') {
+          resultsWithWsi = resultsWithWsi.filter(r => inferResultDataType(r, recommendation) === recommendation.filters!.data_type)
+        }
+
         predictionByWsiId = new Map(resultsWithWsi.map(r => [r.wsi_id, r.pred ?? null]))
 
-        // We need to get full WSI info, so fetch WSI list and merge
-        const wsiResult = await fetchWSIList(recommendation.filters?.dataset_id)
-
-        // Filter to only WSIs that have predictions (and match both pred and label filters if specified)
-        const wsiIdsWithPredictions = new Set(resultsWithWsi.map(r => r.wsi_id))
-        let filtered = wsiResult.items.filter(w => wsiIdsWithPredictions.has(w.wsi_id))
-
-        // Apply event_status filter (for survival datasets: 0=censored, 1=event)
-        if (recommendation.filters?.event_status !== undefined && recommendation.filters?.event_status !== null) {
+        const requiresFullWsiScan = recommendation.filters?.event_status !== undefined && recommendation.filters?.event_status !== null
+        if (requiresFullWsiScan) {
+          const wsiResult = await fetchWSIList(recommendation.filters?.dataset_id)
+          const wsiIdsWithPredictions = new Set(resultsWithWsi.map(r => r.wsi_id))
+          let filtered = wsiResult.items.filter(w => wsiIdsWithPredictions.has(w.wsi_id))
           filtered = filtered.filter(s => s.event_status === recommendation.filters!.event_status)
-        }
 
-        // Apply data_type filter
-        if (recommendation.filters?.data_type && recommendation.filters.data_type !== 'all') {
-          filtered = filtered.filter(s => {
-            const fileType = getFileType(s.file_extension, s.file_size, s.data_type)
-            return recommendation.filters!.data_type === 'wsi'
-              ? fileType === 'WSI'
-              : fileType === 'Patch'
-          })
-        }
+          if (recommendation.filters?.data_type && recommendation.filters.data_type !== 'all') {
+            filtered = filtered.filter(s => {
+              const fileType = getFileType(s.file_extension, s.file_size, s.data_type)
+              return recommendation.filters!.data_type === 'wsi'
+                ? fileType === 'WSI'
+                : fileType === 'Patch'
+            })
+          }
 
-        displayImages = filtered
+          displayImages = filtered
+        } else {
+          displayImages = resultsWithWsi.map(result => buildPreviewSummaryFromResult(result, recommendation))
+          shouldHydrateLimitedImages = true
+        }
       } else {
         // Normal fetch without predictions filter
         displayImages = await fetchAndFilterWSIList(recommendation)
@@ -591,6 +645,19 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
 
       setImagesWithOverlays(baseImageInfo)
       setIsLoading(false)
+
+      const hydratedImagesPromise = shouldHydrateLimitedImages
+        ? Promise.all(
+          limitedImages.map(async (img) => {
+            try {
+              const detail = await fetchWSIDetail(img.wsi_id)
+              return detail.meta
+            } catch {
+              return null
+            }
+          })
+        )
+        : Promise.resolve<WSISummary[]>([])
 
       let imageOverlayInfo: ImageWithOverlays[]
       if (needsOverlayLookup) {
@@ -646,6 +713,17 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         imageOverlayInfo = await Promise.all(overlayPromises)
       } else {
         imageOverlayInfo = baseImageInfo
+      }
+
+      const hydratedImages = await hydratedImagesPromise
+      if (hydratedImages.length > 0) {
+        const hydratedById = new Map(hydratedImages.filter((img): img is WSISummary => !!img).map(img => [img.wsi_id, img]))
+        imageOverlayInfo = imageOverlayInfo.map(item => ({
+          ...item,
+          image: hydratedById.get(item.image.wsi_id)
+            ? { ...item.image, ...hydratedById.get(item.image.wsi_id)! }
+            : item.image,
+        }))
       }
 
       setImagesWithOverlays(imageOverlayInfo)
@@ -704,7 +782,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
   return (
     <div className="mt-4 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="px-5 py-4 bg-gradient-to-r from-orange-50 to-amber-50 border-b border-gray-100">
+      <div className="px-3 py-3 sm:px-5 sm:py-4 bg-gradient-to-r from-orange-50 to-amber-50 border-b border-gray-100">
         <h3 className="font-semibold text-gray-900 flex items-center gap-2">
           <ImageIcon className="w-4 h-4 text-orange-600" />
           {t(isSegmentationCard
@@ -750,7 +828,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
       </div>
 
       {/* Content */}
-      <div className="p-4">
+      <div className="p-3 sm:p-4">
         {isLoading ? (
           <div className="flex items-center justify-center py-8 text-gray-500">
             <Loader2 className="w-5 h-5 animate-spin mr-2" />
@@ -777,19 +855,23 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
               const hasHeatmap = !!latestHeatmap
               const displayPrediction = resultPrediction ?? latestHeatmap?.prediction ?? null
               const showOverlayLoadingPlaceholder = needsOverlayLookup && isOverlayInfoLoading
+              // Count thumbnails to decide mobile layout: ≤2 → flex row, >2 → 2×2 grid
+              const thumbnailCount = 1
+                + (recommendation.show_heatmap && (hasHeatmap || showOverlayLoadingPlaceholder) ? 1 : 0)
+                + (wantsPredictionMask && fileType === 'Patch' ? 1 : 0)
+                + (wantsGroundTruthMask && fileType === 'Patch' ? 1 : 0)
               return (
                 <div
                   key={image.wsi_id}
-                  className="group p-4 bg-gray-50 hover:bg-orange-50 rounded-xl border border-gray-200
-                             hover:border-orange-300 transition-all"
+                  className="group p-3 sm:p-4 bg-gray-50 hover:bg-orange-50 rounded-xl border border-gray-200 hover:border-orange-300 transition-all"
                 >
-                  <div className="flex flex-wrap items-center gap-4">
-                    {/* Images Container - Scrollable horizontal list */}
-                    <div className="flex gap-2 overflow-x-auto pb-0 snap-x [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] shrink-0 max-w-full">
+                  <div className="flex flex-col md:flex-row md:flex-wrap md:items-start gap-3">
+                    {/* Images Container - keep 2×2 grid for >2 thumbnails on mobile/small screens; switch to horizontal strip on desktop */}
+                    <div className={`${thumbnailCount > 2 ? 'grid grid-cols-2' : 'flex'} gap-2 w-full md:flex md:w-auto md:overflow-x-auto md:snap-x md:[&::-webkit-scrollbar]:hidden md:[-ms-overflow-style:none] md:[scrollbar-width:none] md:shrink-0`}>
                       {/* Original image */}
                       <button
                         onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
-                        className="relative flex-shrink-0 snap-start group/img w-32 h-32"
+                        className="relative flex-1 min-w-[60px] aspect-square md:flex-none md:flex-shrink-0 md:snap-start md:aspect-auto md:w-32 md:h-32 group/img"
                       >
                         <div className="w-full h-full bg-gray-100 rounded-lg overflow-hidden border border-gray-200 group-hover/img:border-orange-300 shadow-sm transition-colors">
                           <img
@@ -858,23 +940,21 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
 
                       {wantsPredictionMask && fileType === 'Patch' && (
                         latestSegmentationMask ? (
-                          <div className="shadow-sm rounded-lg">
-                            <OverlayThumbnailButton
-                              src={getSegMaskImageUrl(
-                                image.wsi_id,
-                                latestSegmentationMask.task_id || segmentationMaskConfig?.task_id,
-                                latestSegmentationMask.fold_key || undefined,
-                                CARD_THUMBNAIL_SIZE,
-                              )}
-                              alt={`${t('chatComponents.imageRecommendation.modelPredictionMask')}: ${image.original_filename}`}
-                              onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
-                              title={t('chatComponents.imageRecommendation.modelPredictionMask')}
-                              badgeLabel={t('chatComponents.imageRecommendation.modelPredictionMaskShort')}
-                              badgeClassName="bg-indigo-100/90 text-indigo-700"
-                              loadingColorClass="text-indigo-500"
-                              fallback={<Layers className="w-8 h-8 text-gray-300" />}
-                            />
-                          </div>
+                          <OverlayThumbnailButton
+                            src={getSegMaskImageUrl(
+                              image.wsi_id,
+                              latestSegmentationMask.task_id || segmentationMaskConfig?.task_id,
+                              latestSegmentationMask.fold_key || undefined,
+                              CARD_THUMBNAIL_SIZE,
+                            )}
+                            alt={`${t('chatComponents.imageRecommendation.modelPredictionMask')}: ${image.original_filename}`}
+                            onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
+                            title={t('chatComponents.imageRecommendation.modelPredictionMask')}
+                            badgeLabel={t('chatComponents.imageRecommendation.modelPredictionMaskShort')}
+                            badgeClassName="bg-indigo-100/90 text-indigo-700"
+                            loadingColorClass="text-indigo-500"
+                            fallback={<Layers className="w-8 h-8 text-gray-300" />}
+                          />
                         ) : showOverlayLoadingPlaceholder ? (
                           <PendingThumbnailSlot
                             title={t('chatComponents.imageRecommendation.modelPredictionMask')}
@@ -883,8 +963,8 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                             loadingColorClass="text-indigo-500"
                           />
                         ) : (
-                          <div className="relative flex-shrink-0 snap-start w-32 h-32">
-                            <div className="w-full h-full bg-gray-100 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center p-3 text-center">
+                          <div className="relative flex-1 min-w-[60px] aspect-square md:flex-none md:flex-shrink-0 md:snap-start md:aspect-auto md:w-32 md:h-32">
+                            <div className="w-full h-full bg-gray-100 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center p-3 text-center">        
                               <div className="flex flex-col items-center gap-2 text-gray-500">
                                 <Layers className="w-6 h-6 opacity-50" />
                                 <span className="text-[10px] font-medium leading-tight">
@@ -902,7 +982,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                       )}
 
                       {wantsGroundTruthMask && fileType === 'Patch' && (
-                        <div className="w-32 h-32 flex-shrink-0 snap-start shadow-sm rounded-lg">
+                        <div className="flex-1 min-w-[60px] aspect-square md:flex-none md:flex-shrink-0 md:snap-start md:aspect-auto md:w-32 md:h-32 shadow-sm rounded-lg">
                           <GroundTruthMaskThumbnail
                             image={image}
                             onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
@@ -912,9 +992,9 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                     </div>
 
                     {/* Image info */}
-                    <div className="flex-1 min-w-[240px] flex flex-col pt-1">
+                    <div className="w-full md:flex-1 md:min-w-0 flex flex-col pt-2 md:pt-1">
                       <div className="flex justify-between items-start gap-2">
-                        <p className="text-base font-semibold text-gray-900 break-all leading-tight">
+                        <p className="text-sm sm:text-base font-semibold text-gray-900 break-all leading-tight">
                           {image.original_filename}
                         </p>
                         <button
@@ -943,9 +1023,9 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                           </div>
                         )}
                         {wantsPredictionMask && latestSegmentationMask?.task_name && (
-                          <div className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-md font-medium border border-indigo-100">
-                            <span className="font-bold text-indigo-500 uppercase tracking-wider text-[10px]">{t('chatComponents.imageRecommendation.maskModel')}</span>
-                            <span className="text-indigo-900">{latestSegmentationMask.task_name}</span>
+                          <div className="inline-flex max-w-full flex-wrap items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-md font-medium border border-indigo-100">
+                            <span className="shrink-0 font-bold text-indigo-500 uppercase tracking-wider text-[10px]">{t('chatComponents.imageRecommendation.maskModel')}</span>
+                            <span className="min-w-0 whitespace-normal break-words text-indigo-900">{latestSegmentationMask.task_name}</span>
                           </div>
                         )}
                         {image.event_status !== null && (
@@ -973,7 +1053,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
 
       {/* Footer */}
       {imagesWithOverlays.length > 0 && (
-        <div className="px-5 py-3 bg-gray-50 border-t border-gray-100">
+        <div className="px-3 py-2 sm:px-5 sm:py-3 bg-gray-50 border-t border-gray-100">
           <button
             onClick={() => {
               // Save scroll position and conversation ID before navigating

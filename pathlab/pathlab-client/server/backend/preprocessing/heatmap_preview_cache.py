@@ -11,7 +11,6 @@ from typing import Optional
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 
-from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 from backend.common.file_types import is_patch_file
 from backend.common.slide_utils import load_slide as _load_slide
 
@@ -25,6 +24,42 @@ RECOMMENDATION_OPACITY = 0.68
 RECOMMENDATION_BLUR_SCALE = 0.6
 RECOMMENDATION_CONTRAST_BOOST = 1.18
 RECOMMENDATION_SATURATION_BOOST = 1.25
+
+
+def _delete_preview_if_possible(preview_path: Path) -> None:
+    try:
+        preview_path.unlink()
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        logger.warning("Failed to delete recommendation preview cache %s: %s", preview_path, exc)
+
+
+def _is_preview_cache_readable(preview_path: Path) -> bool:
+    try:
+        with Image.open(preview_path) as preview:
+            preview.load()
+        return True
+    except Exception as exc:
+        logger.warning("Unreadable recommendation preview cache %s, will regenerate: %s", preview_path, exc)
+        _delete_preview_if_possible(preview_path)
+        return False
+
+
+def _save_preview_image(preview_image: Image.Image, preview_path: Path) -> None:
+    preview_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_preview_path = preview_path.with_name(f"{preview_path.name}.tmp")
+    _delete_preview_if_possible(temp_preview_path)
+
+    image_to_save = preview_image.copy()
+    image_to_save.info.pop("icc_profile", None)
+
+    try:
+        image_to_save.save(temp_preview_path, format="PNG")
+        temp_preview_path.replace(preview_path)
+    except Exception:
+        _delete_preview_if_possible(temp_preview_path)
+        raise
 
 
 def build_recommendation_preview_path(attention_file: Path, class_idx: Optional[int] = None) -> Path:
@@ -87,6 +122,8 @@ def _load_wsi_metadata(
 
 
 def _resolve_patch_size(uploads_dir: Path, wsi_id: str, preferred_patch_size: Optional[int]) -> int:
+    from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
+
     if preferred_patch_size is not None:
         try:
             return max(1, int(preferred_patch_size))
@@ -176,6 +213,8 @@ def render_recommendation_preview(
     wsi_path: Optional[str | Path] = None,
     file_size: Optional[int] = None,
 ) -> Image.Image:
+    from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
+
     metadata = _load_wsi_metadata(uploads_dir, wsi_id, wsi_path=wsi_path, file_size=file_size)
     wsi_path = Path(metadata["wsi_path"])
     thumbnail, slide_width, slide_height = _load_thumbnail_and_dims(
@@ -252,7 +291,8 @@ def ensure_recommendation_preview_cache(
         and not overwrite
         and preview_path.stat().st_mtime >= attention_file.stat().st_mtime
     ):
-        return preview_path
+        if _is_preview_cache_readable(preview_path):
+            return preview_path
 
     try:
         preview_image = render_recommendation_preview(
@@ -264,8 +304,7 @@ def ensure_recommendation_preview_cache(
             wsi_path=wsi_path,
             file_size=file_size,
         )
-        preview_path.parent.mkdir(parents=True, exist_ok=True)
-        preview_image.save(preview_path, format="PNG")
+        _save_preview_image(preview_image, preview_path)
         return preview_path
     except Exception as exc:
         logger.warning("Failed to cache recommendation preview for %s from %s: %s", wsi_id, attention_file, exc)

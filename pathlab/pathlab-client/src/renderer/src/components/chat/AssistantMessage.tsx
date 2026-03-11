@@ -36,11 +36,13 @@ import PatchInferenceCard, { parsePatchInferenceConfig, removePatchInferenceBloc
 import { RenameTaskCard, parseRenameTaskConfig, removeRenameTaskBlock } from './RenameTaskCard'
 import { removeVoiceControlBlock } from './VoiceControlBlock'
 import SearchingStatus, {
+  parseAllSearchStatus,
   parseSearchStatus,
   removeSearchStatusBlock,
   SearchCompletedCard,
   SummarizingSearchStatus,
   SummarizingPdfStatus,
+  parseAllWebSearchResults,
   parseWebSearchResult,
   removeWebSearchResultBlock,
   parseAllPdfParseStatus,
@@ -62,6 +64,7 @@ import {
   ModelListSkeleton,
   cardTransition
 } from './CardSkeletons'
+import { stripChatBlocks } from './chatBlockParsing'
 
 // Props interface for AssistantMessage component
 export interface AssistantMessageProps {
@@ -114,7 +117,7 @@ const SPECIAL_BLOCK_TAGS = [
   'VOICE_CONTROL',
   'SUBMIT_TASK',  // Voice command to trigger submit on existing TaskConfigCard
   'CANCEL_TASK_NOW',  // Voice command to trigger cancel on existing CancelTaskCard
-  'DATASET_UPLOAD',
+  'DATASET_REGISTRATION',
   'METADATA_UPLOAD',
   'MODEL_LIST',
   'PATCH_INFERENCE',
@@ -123,6 +126,7 @@ const SPECIAL_BLOCK_TAGS = [
   'SEARCH_STATUS',
   'WEB_SEARCH_RESULT',
   'WEB_SEARCH',
+  'READ_ARTICLE',
   'CITATION_CONTEXTS'
 ]
 
@@ -283,7 +287,8 @@ export function removeCitationContextsBlock(content: string): string {
 /**
  * Check if an assistant message contains only internal-use blocks (no user-facing content).
  * Such messages should not be rendered as visible bubbles.
- * This handles the case where AI responds with only [VOICE_CONTROL], [SUBMIT_TASK], or [CANCEL_TASK_NOW].
+ * This handles pure internal control / tool blocks such as [VOICE_CONTROL],
+ * [SUBMIT_TASK], [CANCEL_TASK_NOW], [WEB_SEARCH], or [READ_ARTICLE].
  */
 export function isInternalOnlyMessage(content: string): boolean {
   if (!content) return false // empty content shows "Thinking..." indicator
@@ -291,6 +296,9 @@ export function isInternalOnlyMessage(content: string): boolean {
   stripped = removeVoiceControlBlock(stripped)
   stripped = removeSubmitTaskBlock(stripped)
   stripped = removeCancelTaskNowBlock(stripped)
+  stripped = stripChatBlocks(stripped, ['WEB_SEARCH', 'READ_ARTICLE', 'CITATION_CONTEXTS'])
+  stripped = removeEmptyFencedCodeBlocks(stripped)
+  stripped = removeDanglingFenceArtifacts(stripped)
   return stripped.trim() === ''
 }
 
@@ -334,6 +342,23 @@ function removeEmptyFencedCodeBlocks(content: string): string {
     /(^|\n)```[^\n`]*\r?\n(?:[ \t]*\r?\n)*```[ \t]*(?=\n|$)/g,
     '$1'
   )
+}
+
+function removeDanglingFenceArtifacts(content: string): string {
+  let cleaned = content
+
+  cleaned = cleaned.replace(/(^|\n)```[^\n`]*\r?\n(?:[ \t]*\r?\n?)*$/g, '$1')
+
+  const meaningfulLines = cleaned
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+
+  if (meaningfulLines.length > 0 && meaningfulLines.every(line => /^```[^`]*$/.test(line))) {
+    return ''
+  }
+
+  return cleaned
 }
 
 const CODE_FONT_STACK = 'JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace'
@@ -438,8 +463,10 @@ const AssistantMessage = React.memo(function AssistantMessage({
   // Parse special blocks
   const contextLimitReached = parseContextLimit(content)
   const responseTruncated = parseResponseTruncated(content)
-  const searchStatus = parseSearchStatus(content)
-  const webSearchResult = parseWebSearchResult(content)
+  const searchStatuses = parseAllSearchStatus(content)
+  const searchStatus = searchStatuses?.at(-1) ?? parseSearchStatus(content)
+  const webSearchResults = parseAllWebSearchResults(content)
+  const webSearchResult = webSearchResults?.at(-1) ?? parseWebSearchResult(content)
   const options = parseOptions(content)
   const taskConfig = parseTaskConfig(content)
   const imageRecommendation = parseImageRecommendation(content)
@@ -509,8 +536,9 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const citationMap = useMemo(() => {
     const map = new Map<number, { title: string; url: string; snippet: string; source: string; pageInfo?: string }>()
     // 1) Web search results — index is 1-based ordinal
-    if (webSearchResult?.results) {
-      webSearchResult.results.forEach((r, i) => {
+    const flattenedWebSearchResults = webSearchResults?.flatMap(result => result.results ?? []) ?? []
+    if (flattenedWebSearchResults.length > 0) {
+      flattenedWebSearchResults.forEach((r, i) => {
         const source = getHostnameFromUrl(r.url) || 'Unknown'
         map.set(i + 1, { title: r.title, url: r.url, snippet: r.snippet, source })
       })
@@ -577,7 +605,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
       }
     }
     return map
-  }, [webSearchResult, citationContexts, articleCitationRenumber, referenceCards])
+  }, [webSearchResults, citationContexts, articleCitationRenumber, referenceCards])
 
   // Custom ReactMarkdown components:
   // - img: inject auth token for /pdf-images/ URLs so <img> tags can load authenticated images
@@ -759,6 +787,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   // Some internal control blocks may be wrapped in ```text fences by the model.
   // After stripping the inner blocks above, that can leave behind an empty code block.
   displayContent = removeEmptyFencedCodeBlocks(displayContent)
+  displayContent = removeDanglingFenceArtifacts(displayContent)
 
   // Convert pdf-image links to images: [text](…/pdf-images/…) → ![text](…/pdf-images/…)
   // The AI sometimes uses markdown link syntax instead of image syntax for figure references,
@@ -861,21 +890,24 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent, isStreaming)
   displayContent = cleanedContent
 
-  // Show searching indicator only while streaming and before results arrive
-  const showSearchingStatus = !!searchStatus && !webSearchResult && isStreaming
+  const searchStatusCount = searchStatuses?.length ?? (searchStatus ? 1 : 0)
+  const webSearchResultCount = webSearchResults?.length ?? (webSearchResult ? 1 : 0)
+
+  // Show searching indicator only while streaming and before the latest results arrive
+  const showSearchingStatus = !!searchStatus && isStreaming && searchStatusCount > webSearchResultCount
 
   // PDF parsing status: show animated indicator while any PDF is still "parsing" or "downloading".
   // Hide entirely during web-search streaming — the AI may autonomously trigger
   // [READ_ARTICLE] and cached PDFs finish before the summary text appears, which
   // looks confusing alongside "Summarizing search results…".
   const hasPdfParsingInProgress = pdfParseStatusItems?.some(i => i.status === 'parsing' || i.status === 'downloading') ?? false
-  const isWebSearchStreaming = isStreaming && !!webSearchResult
+  const isWebSearchStreaming = isStreaming && webSearchResultCount > 0
   const showPdfParsingStatus = !!pdfParseStatusItems && hasPdfParsingInProgress && isStreaming && !isWebSearchStreaming
 
   // Show "summarizing search results" indicator after search completes but before
   // the AI starts streaming actual summary text. This fills the visual gap between
   // the search-completed card and the streamed markdown content.
-  const showSummarizingSearch = !!webSearchResult && isStreaming && !displayContent.trim()
+  const showSummarizingSearch = webSearchResultCount > 0 && !showSearchingStatus && isStreaming && !displayContent.trim()
 
   // Show completed card when all PDFs are done (not streaming OR all statuses are final).
   // Hide during web-search streaming to avoid "Parsed N PDFs" card appearing before
@@ -896,13 +928,14 @@ const AssistantMessage = React.memo(function AssistantMessage({
       )}
 
       {/* Search Completed Card */}
-      {webSearchResult && (
+      {webSearchResults?.map((result, index) => (
         <SearchCompletedCard
-          query={webSearchResult.query}
-          resultCount={webSearchResult.results?.length || 0}
-          results={webSearchResult.results}
+          key={`${result.query}-${index}`}
+          query={result.query}
+          resultCount={result.results?.length || 0}
+          results={result.results}
         />
-      )}
+      ))}
 
       {/* Summarizing Search Results indicator */}
       {showSummarizingSearch && <SummarizingSearchStatus />}

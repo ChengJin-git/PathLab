@@ -54,6 +54,7 @@ from .chat_pdf import (
 from .chat_pdf_vectorstore import search_pdf_chunks
 from .chat_training_recommendation import (
     build_training_recommendation_evidence_context,
+    detect_no_web_search_mode,
     detect_training_recommendation_profile,
     looks_like_training_recommendation_query,
 )
@@ -65,6 +66,7 @@ ACTIVE_TRAINING_STATUSES = {"pending", "queued", "patching", "resuming", "extrac
 _EPOCH_PROGRESS_RE = re.compile(r"epoch\s+(\d+)\s*/\s*(\d+)", re.IGNORECASE)
 MAX_MODELS_IN_CHAT_CONTEXT = 5
 _PATCH_INFERENCE_BLOCK_RE = re.compile(r"\[PATCH_INFERENCE\]([\s\S]*?)\[/PATCH_INFERENCE\]")
+_TOOL_BLOCK_RE = re.compile(r'\[(?:READ_ARTICLE|WEB_SEARCH)\].*?\[/(?:READ_ARTICLE|WEB_SEARCH)\]', re.DOTALL)
 
 
 def _get_generation_cancelled_text(detected_lang: str) -> str:
@@ -87,6 +89,90 @@ def _has_training_recommendation_context(messages: list[dict]) -> bool:
         if "[TRAINING_RECOMMENDATION_CONTEXT]" in raw:
             return True
     return False
+
+
+def _build_no_web_search_instruction(detected_lang: str, no_web_search_mode: str | None) -> str:
+    mode = no_web_search_mode or "analysis_results"
+
+    if mode == "image_visualization":
+        if detected_lang == "zh-CN":
+            return (
+                "当前这轮是站内图像/热力图浏览回合，不是训练推荐，也不是文献检索。"
+                "绝对不要使用 `[WEB_SEARCH]`。请直接继续帮助用户查看该数据集的图像/热力图，"
+                "优先输出 `[IMAGE_RECOMMENDATION]`，如果还有必要，只追问剩余的可视化细节。"
+            )
+        if detected_lang == "zh-HK":
+            return (
+                "當前這輪是站內影像/熱力圖瀏覽回合，不是訓練推薦，也不是文獻檢索。"
+                "絕對不要使用 `[WEB_SEARCH]`。請直接繼續幫助使用者查看該資料集的影像/熱力圖，"
+                "優先輸出 `[IMAGE_RECOMMENDATION]`，如果還有必要，只追問剩餘的可視化細節。"
+            )
+        return (
+            "This turn is for in-app image/heatmap browsing, not for training recommendation or literature search. "
+            "Do NOT use `[WEB_SEARCH]`. Continue by helping the user browse existing images/heatmaps, "
+            "prefer `[IMAGE_RECOMMENDATION]`, and only ask for any remaining visualization-specific details if needed."
+        )
+
+    if mode == "patch_inference":
+        if detected_lang == "zh-CN":
+            return (
+                "当前这轮是站内图像分析/图像推理回合，不是文献检索。绝对不要使用 `[WEB_SEARCH]`。"
+                "请直接基于现有图像与模型上下文继续，优先输出普通说明或 `[PATCH_INFERENCE]`。"
+            )
+        if detected_lang == "zh-HK":
+            return (
+                "當前這輪是站內影像分析/影像推理回合，不是文獻檢索。絕對不要使用 `[WEB_SEARCH]`。"
+                "請直接基於現有影像與模型上下文繼續，優先輸出普通說明或 `[PATCH_INFERENCE]`。"
+            )
+        return (
+            "This turn is for in-app image analysis/inference, not literature search. "
+            "Do NOT use `[WEB_SEARCH]`. Continue using the existing image and model context, "
+            "prefer normal guidance or `[PATCH_INFERENCE]` when appropriate."
+        )
+
+    if detected_lang == "zh-CN":
+        return (
+            "当前这轮是站内分析/验证/结果展示流程，不是文献检索。绝对不要使用 `[WEB_SEARCH]`。"
+            "请直接使用已有任务、模型和数据集上下文继续，优先输出 `[ANALYSIS_CONFIG]`、`[METRIC_CONFIG]`、`[CHART_CONFIG]` 或 `[QUICK_ANALYSIS_CONFIG]`。"
+        )
+    if detected_lang == "zh-HK":
+        return (
+            "當前這輪是站內分析/驗證/結果展示流程，不是文獻檢索。絕對不要使用 `[WEB_SEARCH]`。"
+            "請直接使用已有任務、模型和資料集上下文繼續，優先輸出 `[ANALYSIS_CONFIG]`、`[METRIC_CONFIG]`、`[CHART_CONFIG]` 或 `[QUICK_ANALYSIS_CONFIG]`。"
+        )
+    return (
+        "This turn is for in-app analysis/validation/result display, not literature search. "
+        "Do NOT use `[WEB_SEARCH]`. Continue with the existing task/model/dataset context, "
+        "prefer `[ANALYSIS_CONFIG]`, `[METRIC_CONFIG]`, `[CHART_CONFIG]`, or `[QUICK_ANALYSIS_CONFIG]`."
+    )
+
+
+def _prepare_generation_messages(
+    messages: List[Dict],
+    detected_lang: str,
+    disable_web_search: bool,
+    no_web_search_mode: str | None,
+) -> List[Dict]:
+    prepared_messages = messages.copy()
+    if disable_web_search:
+        prepared_messages = prepared_messages + [
+            {"role": "user", "content": _build_no_web_search_instruction(detected_lang, no_web_search_mode)}
+        ]
+    return prepared_messages
+
+
+def _should_stream_sniffed_response(
+    disable_web_search: bool,
+    stripped_content: str,
+    tool_prefixes: tuple[str, ...],
+) -> bool:
+    if disable_web_search:
+        return False
+    return not any(stripped_content.startswith(prefix) for prefix in tool_prefixes)
+
+
+def _strip_tool_blocks(text: str) -> str:
+    return _TOOL_BLOCK_RE.sub('', text or '').strip()
 
 
 def _looks_like_training_model_recommendation_output(text: str) -> bool:
@@ -2041,7 +2127,9 @@ async def stream_ai_response(
     base_url: str = None,
     model: str = None,
     detected_lang: str = "en",
-    request: Request = None
+    request: Request = None,
+    disable_web_search: bool = False,
+    no_web_search_mode: str | None = None,
 ) -> AsyncIterator[str]:
     """
     Stream AI response using OpenAI-compatible API with Exa search support.
@@ -2144,7 +2232,7 @@ After saving, return here and start chatting!"""
     # Tool loop: up to 5 iterations (web search + read article)
     # Need enough iterations for: search → re-search → read article → stream summary
     max_tool_iterations = 5
-    current_messages = messages.copy()
+    current_messages = _prepare_generation_messages(messages, detected_lang, disable_web_search, no_web_search_mode)
     _requires_training_recommendation_search = _has_training_recommendation_context(current_messages)
     article_pdf_content: str | None = None  # raw PDF markdown (with page markers) for citation context extraction
     _per_paper_pdf_content: dict[int, str] | None = None  # per-paper content for multi-paper follow-ups
@@ -2337,10 +2425,12 @@ After saving, return here and start chatting!"""
                     if len(content_so_far) >= _SNIFF_CHARS:
                         decided_streaming = True
                         stripped = content_so_far.lstrip()
-                        if any(stripped.startswith(p) for p in _TOOL_PREFIXES):
-                            is_streaming_to_client = False
-                        else:
-                            is_streaming_to_client = True
+                        is_streaming_to_client = _should_stream_sniffed_response(
+                            disable_web_search,
+                            stripped,
+                            _TOOL_PREFIXES,
+                        )
+                        if is_streaming_to_client:
                             for pc in pending_sse_chunks:
                                 yield pc
                             pending_sse_chunks = []
@@ -2369,10 +2459,12 @@ After saving, return here and start chatting!"""
         # Short responses that never crossed the sniff threshold
         if not decided_streaming:
             stripped = content_so_far.lstrip()
-            if any(stripped.startswith(p) for p in _TOOL_PREFIXES):
-                is_streaming_to_client = False
-            else:
-                is_streaming_to_client = True
+            is_streaming_to_client = _should_stream_sniffed_response(
+                disable_web_search,
+                stripped,
+                _TOOL_PREFIXES,
+            )
+            if is_streaming_to_client:
                 for pc in pending_sse_chunks:
                     yield pc
                 pending_sse_chunks = []
@@ -2406,6 +2498,16 @@ After saving, return here and start chatting!"""
 
         # #19: Retry on malformed tool block JSON
         if _search_json_error:
+            if disable_web_search:
+                cleaned_response = _strip_tool_blocks(full_response)
+                if cleaned_response:
+                    current_messages = current_messages + [
+                        {"role": "assistant", "content": cleaned_response}
+                    ]
+                    current_messages = current_messages + [
+                        {"role": "user", "content": _build_no_web_search_instruction(detected_lang, no_web_search_mode)}
+                    ]
+                continue
             current_messages = current_messages + [
                 {"role": "assistant", "content": full_response},
                 {"role": "user", "content": (
@@ -2421,6 +2523,20 @@ After saving, return here and start chatting!"""
             ai_num_results = min(int(search_match.get("num_results", 5)), 10)
             if ai_num_results < 1:
                 ai_num_results = 5
+
+            if disable_web_search:
+                logger.info(
+                    f"Blocking [WEB_SEARCH] for no-search mode {no_web_search_mode!r} (query={query!r}, reason={reason!r})"
+                )
+                cleaned_response = _strip_tool_blocks(full_response)
+                if cleaned_response:
+                    current_messages = current_messages + [
+                        {"role": "assistant", "content": cleaned_response}
+                    ]
+                current_messages = current_messages + [
+                    {"role": "user", "content": _build_no_web_search_instruction(detected_lang, no_web_search_mode)},
+                ]
+                continue
 
             cached_article_matches = find_cached_articles_by_title(query, max_results=ai_num_results)
             if cached_article_matches:
@@ -2850,11 +2966,7 @@ After saving, return here and start chatting!"""
         fallback_msg = _FALLBACK_MSGS.get(detected_lang, _FALLBACK_MSGS["en"])
         # Strip the raw tool block from the response — only keep natural text
         if _has_dangling_tool_block:
-            import re as _re
-            cleaned = _re.sub(
-                r'\[(?:READ_ARTICLE|WEB_SEARCH)\].*?\[/(?:READ_ARTICLE|WEB_SEARCH)\]',
-                '', final_response_text, flags=_re.DOTALL
-            ).strip()
+            cleaned = _strip_tool_blocks(final_response_text)
             if cleaned:
                 _CHUNK_SIZE = 80
                 for i in range(0, len(cleaned), _CHUNK_SIZE):
@@ -3832,7 +3944,8 @@ async def chat_with_ai(
 
     # ── Evidence-backed training recommendation context ──────────────────────
     training_recommendation_profile: str | None = None
-    if looks_like_training_recommendation_query(latest_user_text):
+    no_web_search_mode = detect_no_web_search_mode(req.messages)
+    if looks_like_training_recommendation_query(latest_user_text) and not no_web_search_mode:
         training_recommendation_profile = detect_training_recommendation_profile(latest_user_text)
         bundled_ctx = await build_training_recommendation_evidence_context(latest_user_text, detected_lang)
 
@@ -3909,7 +4022,16 @@ async def chat_with_ai(
         full_response = ""
         saved_to_db = False  # Track whether we already persisted via [DONE]
         try:
-            async for chunk in stream_ai_response(messages, api_key, base_url, model, detected_lang, request):
+            async for chunk in stream_ai_response(
+                messages,
+                api_key,
+                base_url,
+                model,
+                detected_lang,
+                request,
+                disable_web_search=bool(no_web_search_mode),
+                no_web_search_mode=no_web_search_mode,
+            ):
                 # Intercept pdf_context event: persist it as a hidden user message,
                 # and also forward the event so the frontend can mirror that hidden
                 # state locally for immediate follow-up questions.
