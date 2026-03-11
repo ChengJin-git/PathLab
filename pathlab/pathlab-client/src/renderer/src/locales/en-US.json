@@ -1314,6 +1314,8 @@
     "goodResponse": "Good response",
     "badResponse": "Bad response",
     "copy": "Copy",
+    "copied": "Copied",
+    "copyCodeBlockAria": "Copy code block",
     "regenerate": "Regenerate",
     "resubmit": "Resubmit",
     "deleteMessageAndContinue": "Delete this message and continue from here",

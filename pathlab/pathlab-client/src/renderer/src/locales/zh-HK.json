@@ -1310,6 +1310,8 @@
     "goodResponse": "回答有幫助",
     "badResponse": "回答不佳",
     "copy": "複製",
+    "copied": "已複製",
+    "copyCodeBlockAria": "複製程式碼區塊",
     "regenerate": "重新生成",
     "resubmit": "重新提交",
     "deleteMessageAndContinue": "刪除此訊息並從此處繼續",

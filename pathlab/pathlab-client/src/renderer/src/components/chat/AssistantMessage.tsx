@@ -460,7 +460,19 @@ function renderHighlightedCode(codeText: string, language: string): React.ReactN
   })
 }
 
-function MarkdownCodeBlock({ className, children }: { className?: string; children: React.ReactNode }) {
+function MarkdownCodeBlock({
+  className,
+  children,
+  copyLabel,
+  copiedLabel,
+  copyAriaLabel,
+}: {
+  className?: string
+  children: React.ReactNode
+  copyLabel: string
+  copiedLabel: string
+  copyAriaLabel: string
+}) {
   const [copied, setCopied] = useState(false)
   const language = normalizeCodeLanguage(className)
   const codeText = String(children ?? '').replace(/\n$/, '')
@@ -486,10 +498,10 @@ function MarkdownCodeBlock({ className, children }: { className?: string; childr
           type="button"
           onClick={copyCode}
           className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] font-medium text-slate-200 transition-colors hover:bg-slate-700"
-          aria-label="Copy code block"
+          aria-label={copyAriaLabel}
         >
           {copied ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />}
-          {copied ? 'Copied' : 'Copy'}
+          {copied ? copiedLabel : copyLabel}
         </button>
       </div>
       <pre className="max-h-[420px] overflow-x-auto overflow-y-auto px-4 py-3 text-[12px] leading-6">
@@ -530,6 +542,9 @@ const AssistantMessage = React.memo(function AssistantMessage({
   onMessageContentReplace
 }: AssistantMessageProps) {
   const { t } = useTranslation()
+  const codeCopyLabel = t('aiChat.copy')
+  const codeCopiedLabel = t('aiChat.copied')
+  const codeCopyAriaLabel = t('aiChat.copyCodeBlockAria')
 
   // Parse special blocks
   const contextLimitReached = parseContextLimit(content)
@@ -733,7 +748,16 @@ const AssistantMessage = React.memo(function AssistantMessage({
           </code>
         )
       }
-      return <MarkdownCodeBlock className={className}>{children}</MarkdownCodeBlock>
+      return (
+        <MarkdownCodeBlock
+          className={className}
+          copyLabel={codeCopyLabel}
+          copiedLabel={codeCopiedLabel}
+          copyAriaLabel={codeCopyAriaLabel}
+        >
+          {children}
+        </MarkdownCodeBlock>
+      )
     },
     a: ({ href, children, ...rest }) => {
       // Detect #cite-N hash links and render InlineCitation component
@@ -783,7 +807,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
         </a>
       )
     },
-  }), [citationMap])
+  }), [citationMap, codeCopyAriaLabel, codeCopiedLabel, codeCopyLabel])
 
   // Remove special blocks from display content
   // Keep the text content but strip out the special markup blocks

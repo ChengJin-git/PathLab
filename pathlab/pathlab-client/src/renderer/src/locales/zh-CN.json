@@ -1314,6 +1314,8 @@
     "goodResponse": "回答有帮助",
     "badResponse": "回答不佳",
     "copy": "复制",
+    "copied": "已复制",
+    "copyCodeBlockAria": "复制代码块",
     "regenerate": "重新生成",
     "resubmit": "重新提交",
     "deleteMessageAndContinue": "删除此消息并从此处继续",
