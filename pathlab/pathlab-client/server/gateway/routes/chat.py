@@ -375,6 +375,8 @@ _PDF_SUPPLEMENT_PROMPTS = {
         "LONG PAPERS: For papers with many pages, only the beginning, end, and most relevant "
         "middle sections are shown. If the user asks about a section not visible here, tell them "
         "you can search for specific pages or topics if they ask a follow-up question. "
+        "Do NOT mention internal parser names, upgrade steps, or GPU/CPU execution details. "
+        "If the user asks about processing status, only state whether the PDF is processing, available, or failed. "
         "CRITICAL: The [REFERENCE] blocks in the context are already correctly formatted. "
         "Copy them verbatim into your response - DO NOT modify their format or content."
     ),
@@ -395,6 +397,8 @@ _PDF_SUPPLEMENT_PROMPTS = {
         "如果用户询问某张图片，但当前检索到的论文内容里没有对应图片链接，请明确说明当前解析内容未包含该图片，禁止猜测。\n\n"
         "## 其他规则\n"
         "长论文提示：对于页数很多的论文，仅展示了开头、结尾和最相关的中间部分。"
+        "不要提及内部解析器名称、升级流程或 GPU/CPU 执行细节。"
+        "如果用户询问处理状态，只能说明 PDF 处于处理中、可用或失败。"
         "如果用户问到未展示的章节，请告知用户可以通过追问来搜索特定页面或主题。"
         "重要：上下文中的 [REFERENCE] 块格式已正确，请原样复制到回答中，不要修改格式或内容。"
     ),
@@ -415,6 +419,8 @@ _PDF_SUPPLEMENT_PROMPTS = {
         "如果用戶詢問某張圖片，但當前檢索到的論文內容裡沒有對應圖片連結，請明確說明當前解析內容未包含該圖片，禁止猜測。\n\n"
         "## 其他規則\n"
         "長論文提示：對於頁數很多的論文，僅展示了開頭、結尾和最相關的中間部分。"
+        "不要提及內部解析器名稱、升級流程或 GPU/CPU 執行細節。"
+        "如果用戶詢問處理狀態，只能說明 PDF 處於處理中、可用或失敗。"
         "如果用戶問到未展示的章節，請告知用戶可以透過追問來搜尋特定頁面或主題。"
         "重要：上下文中的 [REFERENCE] 區塊格式已正確，請原樣複製到回答中，不要修改格式或內容。"
     ),
@@ -441,6 +447,8 @@ _READ_ARTICLE_PROMPTS = {
         "## OTHER RULES\n"
         "For long articles, only head/tail sections are shown. If the user asks about a missing section, "
         "tell them to ask a more specific follow-up question.\n"
+        "Do NOT mention internal parser names, upgrade steps, or GPU/CPU execution details.\n"
+        "If the user asks about processing status, only state whether the PDF is processing, available, or failed.\n"
         "CRITICAL: The [REFERENCE] blocks are already correctly formatted. "
         "Copy them verbatim into your response."
     ),
@@ -458,6 +466,8 @@ _READ_ARTICLE_PROMPTS = {
         "如果用户询问的图片在当前解析内容中没有对应链接，请明确说明当前内容未包含该图片。\n\n"
         "## 其他规则\n"
         "长文章仅展示了开头和结尾部分。如果用户问到未展示的章节，请告知用户提出更具体的问题。\n"
+        "不要提及内部解析器名称、升级流程或 GPU/CPU 执行细节。\n"
+        "如果用户询问处理状态，只能说明 PDF 处于处理中、可用或失败。\n"
         "重要：[REFERENCE] 块格式已正确，请原样复制到回答中。"
     ),
     "zh_HK": (
@@ -474,6 +484,8 @@ _READ_ARTICLE_PROMPTS = {
         "如果用戶詢問的圖片在當前解析內容中沒有對應連結，請明確說明當前內容未包含該圖片。\n\n"
         "## 其他規則\n"
         "長文章僅展示了開頭和結尾部分。如果用戶問到未展示的章節，請告知用戶提出更具體的問題。\n"
+        "不要提及內部解析器名稱、升級流程或 GPU/CPU 執行細節。\n"
+        "如果用戶詢問處理狀態，只能說明 PDF 處於處理中、可用或失敗。\n"
         "重要：[REFERENCE] 區塊格式已正確，請原樣複製到回答中。"
     ),
 }
@@ -490,6 +502,8 @@ _PDF_FOLLOWUP_NOTE = {
         "Do NOT use training knowledge to fill gaps. "
         "When quoting original text from the paper, use blockquotes (> ...) to clearly distinguish "
         "the paper's original words from your own analysis.\n"
+        "Do NOT mention internal parser names, upgrade steps, or GPU/CPU execution details.\n"
+        "If the user asks about processing status, only state whether the PDF is processing, available, or failed.\n"
         "If a paper's images are available (shown in Paper Registry), include image links verbatim."
     ),
     "zh_CN": (
@@ -498,6 +512,8 @@ _PDF_FOLLOWUP_NOTE = {
         "如果用户询问的信息不在这些片段中，请告诉用户提出更具体的追问以便系统检索。\n"
         "严格 Grounding：你的回答**必须完全基于**下方论文内容，**禁止**用训练知识填补空白。"
         "引用论文原文时，请使用引用块（> ...）来清楚区分论文原文和你自己的分析。\n"
+        "不要提及内部解析器名称、升级流程或 GPU/CPU 执行细节。\n"
+        "如果用户询问处理状态，只能说明 PDF 处于处理中、可用或失败。\n"
         "如果论文图片可用（见 Paper Registry），请将图片链接原样包含在回答中。"
     ),
     "zh_HK": (
@@ -506,30 +522,11 @@ _PDF_FOLLOWUP_NOTE = {
         "如果用戶詢問的資訊不在這些片段中，請告訴用戶提出更具體的追問以便系統檢索。\n"
         "嚴格 Grounding：你的回答**必須完全基於**下方論文內容，**禁止**用訓練知識填補空白。"
         "引用論文原文時，請使用引用區塊（> ...）來清楚區分論文原文和你自己的分析。\n"
+        "不要提及內部解析器名稱、升級流程或 GPU/CPU 執行細節。\n"
+        "如果用戶詢問處理狀態，只能說明 PDF 處於處理中、可用或失敗。\n"
         "如果論文圖片可用（見 Paper Registry），請將圖片連結原樣包含在回答中。"
     ),
 }
-
-
-def _describe_pdf_parse_quality(
-    parse_method: str | None,
-    image_count: int,
-    images_ready: bool,
-) -> str:
-    if parse_method == PDF_PARSE_METHOD_DOCLING:
-        return (
-            f"Structured (Docling) — {image_count} images extracted"
-            if images_ready else
-            "Structured (Docling) — no extracted images"
-        )
-    if parse_method == PDF_PARSE_METHOD_PYMUPDF:
-        image_label = (
-            f"{image_count} images extracted"
-            if images_ready else
-            "no extracted images"
-        )
-        return f"Fast (PyMuPDF) — {image_label}"
-    return "Parser unavailable"
 
 
 def _describe_pdf_image_status(image_count: int) -> str:
@@ -674,7 +671,7 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
         image_status = _describe_pdf_image_status(image_count)
 
         registry_lines.append(
-            f"- [{label} {idx}] {title} ({url}) | Parse: {parse_method or 'unknown'} | Images: {image_status}"
+            f"- [{label} {idx}] {title} ({url}) | Images: {image_status}"
         )
         paper_metas.append({
             'url': url, 'meta': meta, 'title': title,
@@ -704,13 +701,6 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
         is_academic = pd.get('is_academic', False)
         label = "Paper" if is_academic else "Doc"
         content_type = "Academic Paper" if is_academic else "General Document"
-        _img_count = pd['image_count']
-        _imgs_ready = _img_count > 0
-        quality_label = _describe_pdf_parse_quality(
-            parse_method,
-            _img_count,
-            _imgs_ready,
-        )
         page_info = f"{page_count} pages" if page_count else "page count unknown"
 
         enhanced_parts.append(
@@ -718,7 +708,6 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
             f"- **URL**: {url}\n"
             f"- **Content type**: {content_type}\n"
             f"- **Total pages**: {page_info}\n"
-            f"- **Parse quality**: {quality_label}\n"
         )
 
         # Read full cached markdown (always re-reads from disk → picks up newer high-quality cache)
@@ -1991,14 +1980,6 @@ After saving, return here and start chatting!"""
 
                     # Build metadata
                     page_count = pdf_result.get("page_count")
-                    parse_method = pdf_result.get("parse_method")
-                    _img_count = pdf_result.get("image_count", 0)
-                    _imgs_ready = pdf_result.get("images_ready", False)
-                    quality_label = _describe_pdf_parse_quality(
-                        parse_method,
-                        _img_count,
-                        _imgs_ready,
-                    )
                     page_info = f"{page_count} pages" if page_count else "page count unknown"
                     is_academic = pdf_result.get("is_academic", False)
                     label = "Paper" if is_academic else "Doc"
@@ -2007,8 +1988,7 @@ After saving, return here and start chatting!"""
                     article_parts = [
                         f"### {ref_label} {article_title}\n"
                         f"- **URL**: {article_url}\n"
-                        f"- **Total pages**: {page_info}\n"
-                        f"- **Parse quality**: {quality_label}\n",
+                        f"- **Total pages**: {page_info}\n",
                         content,
                     ]
                     if pdf_result.get("reference_card"):

@@ -34,6 +34,13 @@ PDF_CACHE_TTL_DAYS = 7
 PDF_PARSE_METHOD_DOCLING = "docling"
 PDF_PARSE_METHOD_PYMUPDF = "pymupdf"
 PDF_PARSE_METHOD_FAILED = "parse_failed"
+PDF_UPGRADE_STATUS_SCHEDULED = "scheduled"
+PDF_UPGRADE_STATUS_RUNNING = "running"
+PDF_UPGRADE_STATUS_QUEUED_GPU = "queued_gpu"
+PDF_UPGRADE_STATUS_RUNNING_GPU = "running_gpu"
+PDF_UPGRADE_STATUS_FALLBACK_CPU = "fallback_cpu"
+PDF_UPGRADE_STATUS_COMPLETED = "completed"
+PDF_UPGRADE_STATUS_FAILED = "failed"
 DOCLING_CACHE_SUFFIX = ".docling.md"
 PYMUPDF_CACHE_SUFFIX = ".md"
 STRUCTURED_CACHE_SUFFIX = ".structured.json"
@@ -65,6 +72,10 @@ CACHE_ARTEFACT_SUFFIXES: tuple[str, ...] = (
 )
 DOCLING_SUBPROCESS_JOIN_TIMEOUT_SECONDS = 5.0
 _docling_upgrade_tasks: dict[str, asyncio.Task[None]] = {}
+
+
+class DoclingGpuQueueTimeout(RuntimeError):
+    """Raised when a Docling GPU task stays pending in the shared queue for too long."""
 
 
 def _get_pdf_cache_dir() -> Path:
@@ -283,6 +294,9 @@ def _save_pdf_to_cache(url: str, pdf_bytes: bytes, title: str = "", markdown: st
             'structured_parse_ready': False,
             'high_quality_parse_pending': False,
             'high_quality_parse_ready': False,
+            'high_quality_upgrade_status': None,
+            'high_quality_upgrade_detail': None,
+            'high_quality_upgrade_updated_at': None,
         }
         with open(meta_file, 'w') as f:
             json.dump(meta, f, indent=2)
@@ -324,6 +338,26 @@ def _update_meta_fields(url: str, **fields: Any) -> None:
             json.dump(meta, f, indent=2)
     except Exception as e:
         logger.error(f"Error updating meta for {url}: {e}")
+
+
+def _record_high_quality_upgrade_state(
+    url: str,
+    status: str,
+    detail: str,
+    *,
+    level: str = "info",
+    **extra_fields: Any,
+) -> None:
+    """Record internal high-quality upgrade state to backend logs and cache meta."""
+    _update_meta_fields(
+        url,
+        high_quality_upgrade_status=status,
+        high_quality_upgrade_detail=detail,
+        high_quality_upgrade_updated_at=datetime.now().isoformat(),
+        **extra_fields,
+    )
+    log_fn = getattr(logger, level, logger.info)
+    log_fn(f"[PDFUpgrade] {status} | {url} | {detail}")
 
 
 def _update_meta_with_parse_info(url: str, page_count: int, parse_method: str) -> None:
@@ -453,6 +487,9 @@ def _save_docling_to_cache(
             structured_parse_ready=True,
             high_quality_parse_pending=False,
             high_quality_parse_ready=True,
+            high_quality_upgrade_status=PDF_UPGRADE_STATUS_COMPLETED,
+            high_quality_upgrade_detail="High-quality Docling cache is ready",
+            high_quality_upgrade_updated_at=datetime.now().isoformat(),
         )
         logger.info(f"Cached Docling markdown for {url} ({page_count} pages)")
         _trigger_vector_index(url_hash, markdown, paper_title, structured_content)
@@ -811,15 +848,30 @@ async def _parse_pdf_with_docling_best_effort(
     max_pages: int,
     images_output_dir: Path | None,
     images_url_prefix: str | None,
+    upgrade_url: str | None = None,
 ) -> ParsedPdfResult | None:
     """Run Docling via GPU queue when possible, otherwise CPU, and normalize the result."""
-    docling_markdown = await _parse_pdf_with_docling_via_gpu_queue(
-        pdf_bytes,
-        max_pages,
-        images_output_dir,
-        images_url_prefix,
-    )
+    fallback_detail = "GPU Docling path unavailable or failed; retrying high-quality upgrade on CPU"
+    try:
+        docling_markdown = await _parse_pdf_with_docling_via_gpu_queue(
+            pdf_bytes,
+            max_pages,
+            images_output_dir,
+            images_url_prefix,
+            upgrade_url=upgrade_url,
+        )
+    except DoclingGpuQueueTimeout as e:
+        fallback_detail = str(e)
+        docling_markdown = None
     if docling_markdown is None:
+        if upgrade_url:
+            _record_high_quality_upgrade_state(
+                upgrade_url,
+                PDF_UPGRADE_STATUS_FALLBACK_CPU,
+                fallback_detail,
+                high_quality_parse_pending=True,
+                high_quality_parse_ready=False,
+            )
         docling_markdown = await _parse_pdf_with_docling_on_cpu(
             pdf_bytes,
             max_pages,
@@ -851,7 +903,13 @@ def _register_docling_upgrade_task(url_hash: str, task: asyncio.Task[None]) -> N
 async def _run_docling_background_upgrade(url: str, title: str, pdf_bytes: bytes) -> None:
     """Upgrade a fast PyMuPDF parse to a high-quality Docling parse in the background."""
     if _has_docling_cache(url):
-        _update_meta_fields(url, high_quality_parse_pending=False, high_quality_parse_ready=True)
+        _record_high_quality_upgrade_state(
+            url,
+            PDF_UPGRADE_STATUS_COMPLETED,
+            "High-quality Docling cache already exists; skipping background upgrade",
+            high_quality_parse_pending=False,
+            high_quality_parse_ready=True,
+        )
         return
 
     url_hash = _get_url_hash(url)
@@ -859,16 +917,29 @@ async def _run_docling_background_upgrade(url: str, title: str, pdf_bytes: bytes
     images_url_prefix = f"{Config.GATEWAY_SERVICE_URL}/pdf-images/{url_hash}"
 
     try:
-        logger.info(f"Starting background Docling upgrade for {url}")
+        _record_high_quality_upgrade_state(
+            url,
+            PDF_UPGRADE_STATUS_RUNNING,
+            "Background Docling upgrade started",
+            high_quality_parse_pending=True,
+            high_quality_parse_ready=False,
+        )
         result = await _parse_pdf_with_docling_best_effort(
             pdf_bytes,
             0,
             images_output_dir,
             images_url_prefix,
+            upgrade_url=url,
         )
         if result is None or not result.markdown or result.markdown.startswith("[Error"):
-            _update_meta_fields(url, high_quality_parse_pending=False, high_quality_parse_ready=False)
-            logger.warning(f"Background Docling upgrade produced no usable result for {url}")
+            _record_high_quality_upgrade_state(
+                url,
+                PDF_UPGRADE_STATUS_FAILED,
+                "Background Docling upgrade produced no usable result",
+                level="warning",
+                high_quality_parse_pending=False,
+                high_quality_parse_ready=False,
+            )
             return
 
         _save_docling_to_cache(
@@ -877,25 +948,55 @@ async def _run_docling_background_upgrade(url: str, title: str, pdf_bytes: bytes
             paper_title=title,
             structured_content=result.structured_content,
         )
-        logger.info(f"Background Docling upgrade completed for {url}")
+        _record_high_quality_upgrade_state(
+            url,
+            PDF_UPGRADE_STATUS_COMPLETED,
+            "Background Docling upgrade completed; high-quality Docling cache is ready",
+            high_quality_parse_pending=False,
+            high_quality_parse_ready=True,
+        )
     except Exception as e:
-        _update_meta_fields(url, high_quality_parse_pending=False, high_quality_parse_ready=False)
-        logger.error(f"Background Docling upgrade error for {url}: {e}")
+        _record_high_quality_upgrade_state(
+            url,
+            PDF_UPGRADE_STATUS_FAILED,
+            f"Background Docling upgrade error: {e}",
+            level="error",
+            high_quality_parse_pending=False,
+            high_quality_parse_ready=False,
+        )
 
 
 def schedule_docling_upgrade(url: str, title: str, pdf_bytes: bytes) -> bool:
     """Schedule a background Docling upgrade unless one is already cached or running."""
     url_hash = _get_url_hash(url)
     if _has_docling_cache(url):
-        _update_meta_fields(url, high_quality_parse_pending=False, high_quality_parse_ready=True)
+        _record_high_quality_upgrade_state(
+            url,
+            PDF_UPGRADE_STATUS_COMPLETED,
+            "High-quality Docling cache already exists; no background upgrade needed",
+            high_quality_parse_pending=False,
+            high_quality_parse_ready=True,
+        )
         return False
 
     existing_task = _docling_upgrade_tasks.get(url_hash)
     if existing_task is not None and not existing_task.done():
-        _update_meta_fields(url, high_quality_parse_pending=True, high_quality_parse_ready=False)
+        _record_high_quality_upgrade_state(
+            url,
+            PDF_UPGRADE_STATUS_SCHEDULED,
+            "Background Docling upgrade already scheduled or running",
+            high_quality_parse_pending=True,
+            high_quality_parse_ready=False,
+        )
         return False
 
-    _update_meta_fields(url, high_quality_parse_pending=True, high_quality_parse_ready=False)
+    _record_high_quality_upgrade_state(
+        url,
+        PDF_UPGRADE_STATUS_SCHEDULED,
+        f"Scheduled background Docling upgrade for '{title}' after fast parse",
+        high_quality_parse_pending=True,
+        high_quality_parse_ready=False,
+    )
     task = asyncio.create_task(_run_docling_background_upgrade(url, title, pdf_bytes))
     _register_docling_upgrade_task(url_hash, task)
     return True
@@ -1867,6 +1968,7 @@ async def _parse_pdf_with_docling_via_gpu_queue(
     max_pages: int,
     images_output_dir: Path | None,
     images_url_prefix: str | None,
+    upgrade_url: str | None = None,
 ) -> str | None:
     """Submit Docling parsing to the shared GPU queue and await the result."""
     from ..task_queue import TaskType, get_task_queue
@@ -1881,6 +1983,15 @@ async def _parse_pdf_with_docling_via_gpu_queue(
     result_future: asyncio.Future[str | None] = loop.create_future()
     task_id = f"pdf-parse-{uuid.uuid4().hex}"
 
+    if upgrade_url:
+        _record_high_quality_upgrade_state(
+            upgrade_url,
+            PDF_UPGRADE_STATUS_QUEUED_GPU,
+            f"Waiting in GPU queue for Docling upgrade task {task_id}",
+            high_quality_parse_pending=True,
+            high_quality_parse_ready=False,
+        )
+
     async def _queued_docling_job(
         *,
         assigned_device: str,
@@ -1892,6 +2003,14 @@ async def _parse_pdf_with_docling_via_gpu_queue(
                 if task_id:
                     logger.info(f"Skipping cancelled Docling queued job {task_id} before GPU parse starts")
                 return
+            if upgrade_url:
+                _record_high_quality_upgrade_state(
+                    upgrade_url,
+                    PDF_UPGRADE_STATUS_RUNNING_GPU,
+                    f"Docling upgrade started on {assigned_device} via GPU queue task {task_id or 'unknown'}",
+                    high_quality_parse_pending=True,
+                    high_quality_parse_ready=False,
+                )
             result = await _parse_pdf_with_docling_on_assigned_gpu(
                 pdf_bytes,
                 max_pages,
@@ -1910,6 +2029,29 @@ async def _parse_pdf_with_docling_via_gpu_queue(
 
     await queue.submit(task_id, TaskType.INFERENCE, _queued_docling_job)
     try:
+        wait_timeout_seconds = max(0.0, float(Config.DOCLING_GPU_QUEUE_WAIT_TIMEOUT_SECONDS))
+        if wait_timeout_seconds > 0:
+            try:
+                return await asyncio.wait_for(
+                    asyncio.shield(result_future),
+                    timeout=wait_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                removed = await queue.cancel_pending_task(task_id)
+                if removed:
+                    detail = (
+                        f"Docling GPU queue wait exceeded {wait_timeout_seconds:.1f}s before task {task_id} started; "
+                        "falling back to CPU"
+                    )
+                    logger.warning(detail)
+                    if not result_future.done():
+                        result_future.cancel()
+                    raise DoclingGpuQueueTimeout(detail)
+
+                logger.info(
+                    f"Docling GPU queue wait exceeded {wait_timeout_seconds:.1f}s for task {task_id}, "
+                    "but the task is already running; continue waiting for GPU result"
+                )
         return await result_future
     except asyncio.CancelledError:
         removed = await queue.cancel_pending_task(task_id)
