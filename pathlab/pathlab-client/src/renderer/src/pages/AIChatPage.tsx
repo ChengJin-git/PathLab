@@ -117,6 +117,27 @@ interface PendingPatchInferenceCancel {
   timestamp: number
 }
 
+function hasActivePatchInferenceRun(content: string | null | undefined): boolean {
+  if (!content) return false
+
+  const config = parsePatchInferenceConfig(content)
+  if (!config) return false
+
+  return [config.classification_run, config.segmentation_run].some(run =>
+    Boolean(run?.task_id) && (run?.status === 'queued' || run?.status === 'running')
+  )
+}
+
+function hasPersistedPatchInferenceCancellation(
+  messages: ConversationWithMessages['messages'],
+  pending: PendingPatchInferenceCancel
+): boolean {
+  const targetMessage = messages.find(message => message.id === pending.messageId)
+  if (!targetMessage || targetMessage.role !== 'assistant') return false
+
+  return !hasActivePatchInferenceRun(targetMessage.content)
+}
+
 function readPendingPatchInferenceCancel(conversationId: string): PendingPatchInferenceCancel | null {
   const raw = sessionStorage.getItem(getPendingPatchInferenceCancelKey(conversationId))
   if (!raw) return null
@@ -523,10 +544,9 @@ export default function AIChatPage() {
           await persistPatchInferenceExitCancellation(conversationId, pending)
           const latestConversation = await getConversation(conversationId)
           const sortedApiMessages = [...latestConversation.messages].sort((a, b) => a.id - b.id)
-          const lastMessage = sortedApiMessages[sortedApiMessages.length - 1]
-          const hasCancelMessage = lastMessage?.role === 'assistant' && lastMessage.content.trim() === pending.content.trim()
+          const cancellationPersisted = hasPersistedPatchInferenceCancellation(sortedApiMessages, pending)
 
-          if (hasCancelMessage) {
+          if (cancellationPersisted) {
             sessionStorage.removeItem(pendingKey)
             if (currentConversationIdRef.current === conversationId) {
               setMessages(mapConversationMessages(sortedApiMessages))
@@ -612,6 +632,7 @@ export default function AIChatPage() {
   useEffect(() => {
     const handlePageExit = () => {
       markPendingCancelledResponseOnExit()
+      markPendingPatchInferenceCancellationOnExit()
     }
 
     window.addEventListener('pagehide', handlePageExit)
@@ -625,7 +646,7 @@ export default function AIChatPage() {
       pendingPatchInferenceCancelRetryTimersRef.current.clear()
       abortControllerRef.current?.abort()
     }
-  }, [markPendingCancelledResponseOnExit])
+  }, [markPendingCancelledResponseOnExit, markPendingPatchInferenceCancellationOnExit])
 
   useEffect(() => {
     const handlePageHide = () => {
@@ -771,8 +792,7 @@ export default function AIChatPage() {
         : loadedMessages
 
       const hasPersistedPatchInferenceCancel = Boolean(pendingPatchInferenceCancel)
-        && sortedApiMessages[sortedApiMessages.length - 1]?.role === 'assistant'
-        && sortedApiMessages[sortedApiMessages.length - 1]?.content.trim() === pendingPatchInferenceCancel?.content.trim()
+        && hasPersistedPatchInferenceCancellation(sortedApiMessages, pendingPatchInferenceCancel)
 
       if (pendingPatchInferenceCancel) {
         if (hasPersistedPatchInferenceCancel) {
