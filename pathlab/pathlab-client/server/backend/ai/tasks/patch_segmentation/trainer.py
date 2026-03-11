@@ -297,6 +297,19 @@ class SegmentationTrainer:
         return configured_metric or self._get_primary_iou_metric_key()
 
     @staticmethod
+    def _format_metric_label(metric_key: str) -> str:
+        metric_labels = {
+            "iou": "IoU",
+            "miou": "mIoU",
+            "dice": "Dice",
+            "accuracy": "Accuracy",
+            "f1": "F1",
+            "precision": "Precision",
+            "recall": "Recall",
+        }
+        return metric_labels.get(metric_key, metric_key.replace("_", " ").title())
+
+    @staticmethod
     def _seed_dataloader_worker(_worker_id: int) -> None:
         worker_seed = torch.initial_seed() % (2 ** 32)
         random.seed(worker_seed)
@@ -822,9 +835,11 @@ class SegmentationTrainer:
             best_path = save_dir / "best_model.pth"
             torch.save(checkpoint, best_path)
             monitor_metric = self._get_monitor_metric()
+            monitor_metric_label = self._format_metric_label(monitor_metric)
             self._log_info(
-                f"Saved best model with {monitor_metric}: {metrics.get(monitor_metric, 0):.4f}",
-                {"epoch": epoch, monitor_metric: metrics.get(monitor_metric, 0)},
+                f"Best validation model saved at epoch {epoch} | "
+                f"Val {monitor_metric_label}: {metrics.get(monitor_metric, 0):.4f}",
+                {"epoch": epoch, f"val_{monitor_metric}": metrics.get(monitor_metric, 0)},
             )
         
         return checkpoint_path
@@ -861,6 +876,7 @@ class SegmentationTrainer:
             patience = early_stopping_patience or training_cfg.get("early_stopping_patience", 15)
             use_amp = training_cfg.get("use_amp", True) and self.device != "cpu"
             monitor_metric = self._get_monitor_metric()
+            monitor_metric_label = self._format_metric_label(monitor_metric)
             primary_iou_metric = self._get_primary_iou_metric_key()
             primary_iou_label = self._get_primary_iou_metric_label()
 
@@ -1001,7 +1017,7 @@ class SegmentationTrainer:
                     self._log_info(
                         f"Early stopping triggered at epoch {epoch}. "
                         f"No improvement for {patience} epochs. "
-                        f"Best {monitor_metric}: {best_metric:.4f} at epoch {best_epoch}",
+                        f"Best validation {monitor_metric_label}: {best_metric:.4f} at epoch {best_epoch}",
                         {
                             "epoch": epoch,
                             "best_epoch": best_epoch,
@@ -1021,7 +1037,7 @@ class SegmentationTrainer:
                 else:
                     self.model.load_state_dict(best_state_dict)
                 self._log_info(
-                    f"Restored best model from epoch {best_epoch}",
+                    f"Restored best validation model from epoch {best_epoch}",
                     {"best_epoch": best_epoch, f"best_{monitor_metric}": best_metric},
                 )
 
@@ -1033,10 +1049,11 @@ class SegmentationTrainer:
                 self._update_training_progress(96)
                 test_loss, test_metrics = self._validate(self.model, test_loader)
                 self._log_info(
-                    f"Test Results | Loss: {test_loss:.4f} | "
-                    f"{primary_iou_label}: {test_metrics.get(primary_iou_metric, 0):.4f} | "
-                    f"Dice: {test_metrics.get('dice', 0):.4f} | "
-                    f"Accuracy: {test_metrics.get('accuracy', 0):.4f}",
+                    f"Final test results using best validation model | "
+                    f"Test Loss: {test_loss:.4f} | "
+                    f"Test {primary_iou_label}: {test_metrics.get(primary_iou_metric, 0):.4f} | "
+                    f"Test Dice: {test_metrics.get('dice', 0):.4f} | "
+                    f"Test Accuracy: {test_metrics.get('accuracy', 0):.4f}",
                     {
                         "test_loss": test_loss,
                         f"test_{primary_iou_metric}": test_metrics.get(primary_iou_metric, 0),
@@ -1062,7 +1079,7 @@ class SegmentationTrainer:
 
             self._log_info(
                 f"Training completed in {total_time/60:.1f} minutes. "
-                f"Best {monitor_metric}: {best_metric:.4f} at epoch {best_epoch}",
+                f"Best validation {monitor_metric_label}: {best_metric:.4f} at epoch {best_epoch}",
                 {
                     "training_time_sec": total_time,
                     "best_epoch": best_epoch,

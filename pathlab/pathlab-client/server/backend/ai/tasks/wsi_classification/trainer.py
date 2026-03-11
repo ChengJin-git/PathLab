@@ -891,6 +891,7 @@ class WSIClassificationTrainer(BaseTrainer):
 
             epoch_loss = running_loss / max(1, len(train_dataset))
             history["train_loss"].append(epoch_loss)
+            prefix = f"{run_name} " if run_name else ""
 
             # Validation - run in thread pool (DataLoader + GPU inference are blocking)
             val_metrics = {"loss": None, "accuracy": None, "auc": None}
@@ -904,6 +905,9 @@ class WSIClassificationTrainer(BaseTrainer):
                 # Use AUC for model selection if available (higher is better)
                 # Fallbck to Loss (lower is better) if AUC is None
                 is_improvement = False
+                selection_metric_key = "val_auc" if val_metrics["auc"] is not None else "val_loss"
+                selection_metric_label = "Val AUC" if val_metrics["auc"] is not None else "Val Loss"
+                selection_metric_value = val_metrics["auc"] if val_metrics["auc"] is not None else val_metrics["loss"]
                 if val_metrics["auc"] is not None:
                      if best_val_auc is None or val_metrics["auc"] > best_val_auc:
                         best_val_auc = val_metrics["auc"]
@@ -917,6 +921,21 @@ class WSIClassificationTrainer(BaseTrainer):
                     best_val_loss = val_metrics["loss"]
                     best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                     epochs_without_improvement = 0
+                    best_metadata = {
+                        "epoch": epoch,
+                        selection_metric_key: selection_metric_value,
+                        "val_loss": val_metrics["loss"],
+                        "val_accuracy": val_metrics["accuracy"],
+                    }
+                    if fold_idx is not None:
+                        best_metadata["fold"] = fold_idx
+                    if val_metrics["auc"] is not None:
+                        best_metadata["val_auc"] = val_metrics["auc"]
+                    await logger.info(
+                        f"{prefix}Best validation model updated at epoch {epoch} | "
+                        f"{selection_metric_label}: {selection_metric_value:.4f}",
+                        metadata=best_metadata,
+                    )
                 else:
                     epochs_without_improvement += 1
 
@@ -935,7 +954,6 @@ class WSIClassificationTrainer(BaseTrainer):
             if fold_idx is not None:
                 metadata["fold"] = fold_idx
 
-            prefix = f"{run_name} " if run_name else ""
             log_parts = [
                 f"{prefix}Epoch {epoch}/{epochs}",
                 f"Train Loss: {epoch_loss:.4f}",
@@ -1422,9 +1440,17 @@ class WSIClassificationTrainer(BaseTrainer):
         test_metrics = None
         if test_dataset is not None and len(test_dataset) > 0:
             test_metrics = await asyncio.to_thread(self._evaluate_split, model, test_dataset, classes, train_criterion)
+            test_metadata = {f"test_{k}": v for k, v in test_metrics.items()}
+            test_log_parts = [
+                "Final test results using best validation model",
+                f"Test Loss: {test_metrics['loss']:.4f}",
+                f"Test Acc: {test_metrics['accuracy']:.4f}",
+            ]
+            if test_metrics.get("auc") is not None:
+                test_log_parts.append(f"Test AUC: {test_metrics['auc']:.4f}")
             await logger.info(
-                f"Test metrics: loss={test_metrics['loss']:.4f}, acc={test_metrics['accuracy']:.4f}",
-                metadata=test_metrics
+                " | ".join(test_log_parts),
+                metadata=test_metadata
             )
 
         # Save checkpoint - blocking disk I/O
@@ -1669,9 +1695,13 @@ class WSIClassificationTrainer(BaseTrainer):
             )
 
             auc_str = f"{val_metrics['auc']:.4f}" if val_metrics['auc'] is not None else 'N/A'
+            fold_summary_metadata = {"fold": fold_idx + 1, **{f"val_{k}": v for k, v in val_metrics.items()}}
             await logger.info(
-                f"Fold {fold_idx + 1} complete: acc={val_metrics['accuracy']:.4f}, auc={auc_str}",
-                metadata={"fold": fold_idx + 1, **val_metrics}
+                f"Fold {fold_idx + 1} validation summary | "
+                f"Val Loss: {val_metrics['loss']:.4f} | "
+                f"Val Acc: {val_metrics['accuracy']:.4f} | "
+                f"Val AUC: {auc_str}",
+                metadata=fold_summary_metadata
             )
 
         # Calculate aggregated statistics (basic metrics from training, rounded to 4 decimal places)

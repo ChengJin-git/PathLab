@@ -470,6 +470,18 @@ class PatchClassificationTrainer(BaseTrainer):
             is_improvement = False
             # Prefer AUC if available, else Accuracy
             check_metric = val_metrics.get("auc") if val_metrics.get("auc") is not None else val_metrics.get("accuracy")
+            if val_metrics.get("auc") is not None:
+                selection_metric_key = "val_auc"
+                selection_metric_label = "Val AUC"
+                selection_metric_value = val_metrics["auc"]
+            elif val_metrics.get("accuracy") is not None:
+                selection_metric_key = "val_accuracy"
+                selection_metric_label = "Val Acc"
+                selection_metric_value = val_metrics["accuracy"]
+            else:
+                selection_metric_key = "val_loss"
+                selection_metric_label = "Val Loss"
+                selection_metric_value = val_loss
 
             if check_metric is not None:
                  if best_val_metric is None or check_metric > best_val_metric:
@@ -488,11 +500,36 @@ class PatchClassificationTrainer(BaseTrainer):
                 best_val_metrics = val_metrics if val_loader else None
                 epochs_without_improvement = 0  # Reset counter
 
+                best_metadata = {
+                    "epoch": epoch,
+                    selection_metric_key: selection_metric_value,
+                    "val_loss": val_loss,
+                    "val_accuracy": val_acc,
+                }
+                if val_metrics.get("auc") is not None:
+                    best_metadata["val_auc"] = val_metrics["auc"]
+                await logger.info(
+                    f"Best validation model saved at epoch {epoch} | "
+                    f"{selection_metric_label}: {selection_metric_value:.4f}",
+                    best_metadata,
+                )
+
                 if test_loader is not None:
                     best_test_metrics = await asyncio.to_thread(self._evaluate, model, test_loader, criterion)
+                    test_snapshot_metadata = {
+                        "epoch": epoch,
+                        **{f"test_{k}": v for k, v in best_test_metrics.items()},
+                    }
+                    test_log_parts = [
+                        f"Best-model test snapshot at epoch {epoch}",
+                        f"Test Loss: {best_test_metrics.get('loss', 0):.4f}",
+                        f"Test Acc: {best_test_metrics.get('accuracy', 0):.4f}",
+                    ]
+                    if best_test_metrics.get("auc") is not None:
+                        test_log_parts.append(f"Test AUC: {best_test_metrics['auc']:.4f}")
                     await logger.info(
-                        f"New best model at epoch {epoch} - val_loss: {val_loss:.4f}, test_acc: {best_test_metrics['accuracy']:.4f}",
-                        {"epoch": epoch, **best_test_metrics}
+                        " | ".join(test_log_parts),
+                        test_snapshot_metadata,
                     )
 
                 self._save_checkpoint(
@@ -712,6 +749,18 @@ class PatchClassificationTrainer(BaseTrainer):
                 # Select best model based on accuracy/AUC (higher is better)
                 is_improvement = False
                 check_metric = val_metrics.get("auc") if val_metrics.get("auc") is not None else val_metrics.get("accuracy")
+                if val_metrics.get("auc") is not None:
+                    selection_metric_key = "val_auc"
+                    selection_metric_label = "Val AUC"
+                    selection_metric_value = val_metrics["auc"]
+                elif val_metrics.get("accuracy") is not None:
+                    selection_metric_key = "val_accuracy"
+                    selection_metric_label = "Val Acc"
+                    selection_metric_value = val_metrics["accuracy"]
+                else:
+                    selection_metric_key = "val_loss"
+                    selection_metric_label = "Val Loss"
+                    selection_metric_value = val_loss
 
                 if check_metric is not None:
                      if best_val_metric is None or check_metric > best_val_metric:
@@ -726,6 +775,20 @@ class PatchClassificationTrainer(BaseTrainer):
                     best_val_loss = val_loss # Update for logging
                     best_state_dict = {k: v.cpu().clone() for k, v in classifier_head.state_dict().items()}
                     epochs_without_improvement = 0
+                    best_metadata = {
+                        "fold": fold_idx + 1,
+                        "epoch": epoch,
+                        selection_metric_key: selection_metric_value,
+                        "val_loss": val_loss,
+                        "val_accuracy": val_acc,
+                    }
+                    if val_metrics.get("auc") is not None:
+                        best_metadata["val_auc"] = val_metrics["auc"]
+                    await logger.info(
+                        f"[Fold {fold_idx + 1}] Best validation model updated at epoch {epoch} | "
+                        f"{selection_metric_label}: {selection_metric_value:.4f}",
+                        best_metadata,
+                    )
                 else:
                     epochs_without_improvement += 1
 
@@ -817,10 +880,18 @@ class PatchClassificationTrainer(BaseTrainer):
                 progress_range=fold_saving_range,
             )
 
-            await logger.info(
-                f"Fold {fold_idx + 1} complete: acc={final_val_metrics['accuracy']:.4f}",
-                metadata={"fold": fold_idx + 1, **final_val_metrics}
-            )
+            fold_summary_metadata = {
+                "fold": fold_idx + 1,
+                **{f"val_{k}": v for k, v in final_val_metrics.items()},
+            }
+            fold_summary_parts = [
+                f"Fold {fold_idx + 1} validation summary",
+                f"Val Loss: {final_val_metrics.get('loss', 0):.4f}",
+                f"Val Acc: {final_val_metrics['accuracy']:.4f}",
+            ]
+            if final_val_metrics.get("auc") is not None:
+                fold_summary_parts.append(f"Val AUC: {final_val_metrics['auc']:.4f}")
+            await logger.info(" | ".join(fold_summary_parts), metadata=fold_summary_metadata)
 
         # Calculate aggregated statistics (basic metrics from training, rounded to 4 decimal places)
         aggregated = {

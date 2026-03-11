@@ -655,6 +655,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 # Select best model based on C-Index (higher is better)
                 # Fallback to loss (lower is better) if C-Index is invalid
                 is_improvement = False
+                selection_metric_key = "val_c_index"
+                selection_metric_label = "Val C-Index"
+                selection_metric_value = val_c_index
                 if val_c_index is not None and val_c_index > best_val_c_index:
                     best_val_c_index = val_c_index
                     is_improvement = True
@@ -663,6 +666,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     if val_loss < best_val_loss:
                         best_val_loss = val_loss
                         is_improvement = True
+                        selection_metric_key = "val_loss"
+                        selection_metric_label = "Val Loss"
+                        selection_metric_value = val_loss
 
                 if is_improvement:
                     # best_val_c_index updated above if applicable
@@ -670,6 +676,17 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                         best_val_loss = val_loss
                     best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                     epochs_without_improvement = 0
+                    best_metadata = {
+                        "epoch": epoch,
+                        selection_metric_key: selection_metric_value,
+                        "val_loss": val_loss,
+                        "val_c_index": val_c_index,
+                    }
+                    await logger.info(
+                        f"Best validation model updated at epoch {epoch} | "
+                        f"{selection_metric_label}: {selection_metric_value:.4f}",
+                        metadata=best_metadata,
+                    )
                 else:
                     epochs_without_improvement += 1
 
@@ -724,7 +741,11 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 model, test_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level,
             )
             test_metrics = {"loss": test_loss, "c_index": test_c_index}
-            await logger.info(f"Test metrics: loss={test_loss:.4f}, c_index={test_c_index:.4f}", metadata=test_metrics)
+            await logger.info(
+                f"Final test results using best validation model | "
+                f"Test Loss: {test_loss:.4f} | Test C-Index: {test_c_index:.4f}",
+                metadata={"test_loss": test_loss, "test_c_index": test_c_index},
+            )
 
         # Save checkpoint
         ckpt_path = model_dir / "aggregator.pth"
@@ -1319,6 +1340,16 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     best_val_loss = val_loss
                     best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                     epochs_without_improvement = 0
+                    await logger.info(
+                        f"[Fold {fold_idx + 1}] Best validation model updated at epoch {epoch} | "
+                        f"Val Loss: {val_loss:.4f}",
+                        metadata={
+                            "fold": fold_idx + 1,
+                            "epoch": epoch,
+                            "val_loss": val_loss,
+                            "val_c_index": val_c_index,
+                        },
+                    )
                 else:
                     epochs_without_improvement += 1
 
@@ -1408,8 +1439,13 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             )
 
             await logger.info(
-                f"Fold {fold_idx + 1} complete: c_index={final_val_c_index:.4f}",
-                metadata={"fold": fold_idx + 1, "c_index": round(float(final_val_c_index), 4)}
+                f"Fold {fold_idx + 1} validation summary | "
+                f"Val Loss: {final_val_loss:.4f} | Val C-Index: {final_val_c_index:.4f}",
+                metadata={
+                    "fold": fold_idx + 1,
+                    "val_loss": round(float(final_val_loss), 4),
+                    "val_c_index": round(float(final_val_c_index), 4),
+                }
             )
 
         # Calculate aggregated statistics (basic metrics from training, rounded to 4 decimal places)
