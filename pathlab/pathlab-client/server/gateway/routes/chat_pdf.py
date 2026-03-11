@@ -89,7 +89,7 @@ CACHE_ARTEFACT_SUFFIXES: tuple[str, ...] = (
     '.pdf.partial',
     '.json',
     STRUCTURED_CACHE_SUFFIX,
-    *(suffix for suffix, _method in CACHED_MARKDOWN_CANDIDATES),
+    *(suffix for suffix, _ in CACHED_MARKDOWN_CANDIDATES),
 )
 MARKER_SUBPROCESS_JOIN_TIMEOUT_SECONDS = 5.0
 _marker_upgrade_tasks: dict[str, asyncio.Task[None]] = {}
@@ -414,15 +414,6 @@ def _record_high_quality_upgrade_state(
     log_fn(f"[PDFUpgrade] {status} | {url} | {detail}")
 
 
-def _update_meta_with_parse_info(url: str, page_count: int, parse_method: str) -> None:
-    """Update the cached JSON metadata with page_count and parse_method.
-
-    This is a best-effort update: failures are logged but never raised so that
-    the caller (cache-save path) is never disrupted.
-    """
-    _update_meta_fields(url, page_count=page_count, parse_method=parse_method)
-
-
 def _update_meta_academic_flag(url: str, is_academic: bool) -> None:
     """Persist the is_academic flag to the cached JSON metadata.
 
@@ -487,12 +478,13 @@ def get_cached_structured_content(url: str) -> dict[str, Any] | None:
 def _save_markdown_to_cache(
     url: str,
     markdown: str,
-    paper_title: str = "",
+    _paper_title: str = "",
     structured_content: dict[str, Any] | None = None,
     *,
     high_quality_pending: bool = False,
 ) -> None:
     """Save pymupdf-parsed markdown to cache (fast tier)."""
+    del _paper_title
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
@@ -536,10 +528,11 @@ def _has_high_quality_cache(url: str) -> bool:
 def _save_marker_to_cache(
     url: str,
     markdown: str,
-    paper_title: str = "",
+    _paper_title: str = "",
     structured_content: dict[str, Any] | None = None,
 ) -> None:
     """Save Marker high-quality parse result to cache."""
+    del _paper_title
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
@@ -1082,7 +1075,7 @@ def _resolve_marker_section_path(section_hierarchy: Any, title_map: dict[str, st
         except Exception:
             return (1, key_text)
 
-    for _key, value in sorted(section_hierarchy.items(), key=_sort_key):
+    for value in (item[1] for item in sorted(section_hierarchy.items(), key=_sort_key)):
         title = title_map.get(_coerce_text(value), _coerce_text(value))
         if title and title not in resolved:
             resolved.append(title)
@@ -1500,7 +1493,7 @@ def get_cached_markdown(url: str) -> str | None:
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
-        for suffix, _method in CACHED_MARKDOWN_CANDIDATES:
+        for suffix, _ in CACHED_MARKDOWN_CANDIDATES:
             md_file = cache_dir / f"{url_hash}{suffix}"
             if md_file.exists():
                 return md_file.read_text(encoding='utf-8')
@@ -2840,7 +2833,7 @@ async def _parse_pdf_with_marker_via_gpu_queue(
         *,
         assigned_device: str,
         task_id: str | None = None,
-        **_ignored_kwargs: Any,
+        **_: Any,
     ) -> None:
         try:
             if result_future.cancelled():
