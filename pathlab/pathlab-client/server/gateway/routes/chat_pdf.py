@@ -2986,7 +2986,8 @@ async def _parse_pdf_with_marker_via_gpu_queue(
                 removed = await queue.cancel_pending_task(task_id)
                 if removed:
                     detail = (
-                        f"Marker GPU queue wait exceeded {wait_timeout_seconds:.1f}s before task {task_id} started; "
+                        f"Marker GPU result not ready after {wait_timeout_seconds:.1f}s and task {task_id} "
+                        f"had not started on GPU; "
                         (
                             "skipping CPU fallback for background upgrade"
                             if upgrade_url
@@ -2999,8 +3000,8 @@ async def _parse_pdf_with_marker_via_gpu_queue(
                     raise MarkerGpuQueueTimeout(detail)
 
                 logger.info(
-                    f"Marker GPU queue wait exceeded {wait_timeout_seconds:.1f}s for task {task_id}, "
-                    "but the task is already running; continue waiting for GPU result"
+                    f"Marker GPU result not ready after {wait_timeout_seconds:.1f}s; "
+                    f"task {task_id} already started on GPU, continue waiting without CPU fallback"
                 )
         return await result_future
     except asyncio.CancelledError:

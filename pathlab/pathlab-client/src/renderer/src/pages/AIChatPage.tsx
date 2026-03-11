@@ -1048,6 +1048,29 @@ export default function AIChatPage() {
               : m
           )
         )
+      }, (pdfContext) => {
+        const hiddenContent = `[PDF_CONTEXT]\n${pdfContext}\n[/PDF_CONTEXT]`
+        const hiddenMessage: Message = {
+          id: `pdfctx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          role: 'user',
+          content: hiddenContent,
+          timestamp: new Date()
+        }
+        const currentTrackingId = trackingId
+        setMessages(prev => {
+          if (prev.some(m => m.role === 'user' && m.content === hiddenContent)) {
+            return prev
+          }
+          const assistantIndex = prev.findIndex(m => m.id === currentTrackingId)
+          if (assistantIndex === -1) {
+            return [...prev, hiddenMessage]
+          }
+          return [
+            ...prev.slice(0, assistantIndex),
+            hiddenMessage,
+            ...prev.slice(assistantIndex)
+          ]
+        })
       })
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {

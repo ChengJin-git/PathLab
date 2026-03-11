@@ -3097,8 +3097,9 @@ async def chat_with_ai(
         saved_to_db = False  # Track whether we already persisted via [DONE]
         try:
             async for chunk in stream_ai_response(messages, api_key, base_url, model, detected_lang, request):
-                # Intercept pdf_context event - save to DB as hidden user message but don't
-                # yield to frontend. This lets follow-up questions reference the PDF content.
+                # Intercept pdf_context event: persist it as a hidden user message,
+                # and also forward the event so the frontend can mirror that hidden
+                # state locally for immediate follow-up questions.
                 if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":
                     try:
                         data = json.loads(chunk[6:])
@@ -3115,7 +3116,13 @@ async def chat_with_ai(
                                         await db_session.commit()
                                     finally:
                                         await db_session.close()
-                            continue  # Don't yield this to frontend
+                            # Also forward the hidden pdf_context event to the frontend
+                            # so the in-memory message list can stay in sync with the DB.
+                            # The frontend does not render [PDF_CONTEXT] bubbles, but it
+                            # needs the hidden message locally for immediate follow-up turns
+                            # before a conversation reload happens.
+                            yield chunk
+                            continue
                     except (json.JSONDecodeError, KeyError):
                         pass
 

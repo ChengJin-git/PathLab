@@ -39,7 +39,8 @@ export async function chatWithAI(
   conversationId?: string,
   onMessageId?: (messageId: number) => void,
   signal?: AbortSignal,
-  onContextLimit?: () => void
+  onContextLimit?: () => void,
+  onPdfContext?: (pdfContext: string) => void
 ): Promise<void> {
   // Get AI configuration from localStorage
   const apiKey = localStorage.getItem('openrouter_api_key') || ''
@@ -139,6 +140,11 @@ export async function chatWithAI(
             // Handle context_limit event — LLM output was truncated (finish_reason: "length")
             if (parsed.context_limit && onContextLimit) {
               onContextLimit()
+            }
+            // Handle hidden pdf_context event so the frontend can keep its local
+            // message history aligned with the backend conversation state.
+            if (typeof parsed.pdf_context === 'string' && onPdfContext) {
+              onPdfContext(parsed.pdf_context)
             }
           } catch (e) {
             // Skip invalid JSON
