@@ -538,6 +538,8 @@ def _format_pdf_block_label(chunk: dict[str, Any]) -> str:
     block_index = int(chunk.get("chunk_index", 0)) + 1
     label_map = {
         "paragraph": "Paragraph",
+        "list": "List",
+        "code": "Code",
         "table": "Table",
         "figure": "Figure",
         "equation": "Equation",

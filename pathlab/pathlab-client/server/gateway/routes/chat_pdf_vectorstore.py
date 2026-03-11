@@ -220,6 +220,10 @@ def _stringify_block_for_embedding(block: dict, paper_title: str) -> str:
         body = str(block.get("text") or "")
     elif block_type == "section":
         body = str(block.get("text") or "")
+    elif block_type == "list":
+        body = str(block.get("text") or "")
+    elif block_type == "code":
+        body = str(block.get("text") or "")
     elif block_type == "table":
         body = str(block.get("caption") or "")
         table_markdown = str(block.get("markdown") or "")
@@ -242,7 +246,7 @@ def _stringify_block_for_embedding(block: dict, paper_title: str) -> str:
 
 def _stringify_block_for_display(block: dict) -> str:
     block_type = str(block.get("type") or "paragraph")
-    if block_type in {"paragraph", "section"}:
+    if block_type in {"paragraph", "section", "list", "code"}:
         return str(block.get("text") or "").strip()
     if block_type == "table":
         caption = str(block.get("caption") or "").strip()

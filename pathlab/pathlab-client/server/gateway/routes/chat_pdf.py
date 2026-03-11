@@ -21,7 +21,7 @@ import uuid
 import gc
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 from datetime import datetime, timedelta
 import httpx
 
@@ -44,7 +44,7 @@ PDF_UPGRADE_STATUS_FAILED = "failed"
 DOCLING_CACHE_SUFFIX = ".docling.md"
 PYMUPDF_CACHE_SUFFIX = ".md"
 STRUCTURED_CACHE_SUFFIX = ".structured.json"
-STRUCTURED_SCHEMA_VERSION = 1
+STRUCTURED_SCHEMA_VERSION = 2
 PdfParseMethod = Literal["docling", "pymupdf", "parse_failed"]
 
 
@@ -413,7 +413,19 @@ def get_cached_structured_content(url: str) -> dict[str, Any] | None:
         structured_file = cache_dir / f"{url_hash}{STRUCTURED_CACHE_SUFFIX}"
         if not structured_file.exists():
             return None
-        return json.loads(structured_file.read_text(encoding='utf-8'))
+        structured_content = json.loads(structured_file.read_text(encoding='utf-8'))
+        if not isinstance(structured_content, dict):
+            return None
+        schema_version = _safe_int(structured_content.get("schema_version"), 0)
+        if schema_version < STRUCTURED_SCHEMA_VERSION:
+            logger.info(
+                f"Ignoring stale structured cache for {url}: "
+                f"schema_version={schema_version}, expected>={STRUCTURED_SCHEMA_VERSION}"
+            )
+            return None
+        if not isinstance(structured_content.get("blocks"), list):
+            return None
+        return structured_content
     except Exception:
         return None
 
@@ -563,163 +575,292 @@ def _parse_markdown_table_rows(table_lines: list[str]) -> list[list[str]]:
     return rows
 
 
+def _coerce_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value).strip()
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_bbox(raw_bbox: Any) -> dict[str, Any] | None:
+    if raw_bbox is None:
+        return None
+
+    coord_origin = None
+    values: tuple[Any, Any, Any, Any] | None = None
+
+    if isinstance(raw_bbox, dict):
+        if all(key in raw_bbox for key in ("l", "t", "r", "b")):
+            values = (raw_bbox.get("l"), raw_bbox.get("t"), raw_bbox.get("r"), raw_bbox.get("b"))
+        elif all(key in raw_bbox for key in ("x0", "y0", "x1", "y1")):
+            values = (raw_bbox.get("x0"), raw_bbox.get("y0"), raw_bbox.get("x1"), raw_bbox.get("y1"))
+        coord_origin = raw_bbox.get("coord_origin")
+    elif isinstance(raw_bbox, (list, tuple)) and len(raw_bbox) >= 4:
+        values = (raw_bbox[0], raw_bbox[1], raw_bbox[2], raw_bbox[3])
+    else:
+        if hasattr(raw_bbox, "as_tuple"):
+            try:
+                values = tuple(raw_bbox.as_tuple())[:4]  # type: ignore[assignment]
+            except Exception:
+                values = None
+        if values is None:
+            l = getattr(raw_bbox, "l", getattr(raw_bbox, "x0", None))
+            t = getattr(raw_bbox, "t", getattr(raw_bbox, "y0", None))
+            r = getattr(raw_bbox, "r", getattr(raw_bbox, "x1", None))
+            b = getattr(raw_bbox, "b", getattr(raw_bbox, "y1", None))
+            if None not in (l, t, r, b):
+                values = (l, t, r, b)
+        coord_origin = getattr(raw_bbox, "coord_origin", coord_origin)
+
+    if values is None:
+        return None
+
+    try:
+        left, top, right, bottom = (float(v) for v in values)
+    except (TypeError, ValueError):
+        return None
+
+    coord_value = getattr(coord_origin, "value", coord_origin)
+    return {
+        "l": left,
+        "t": top,
+        "r": right,
+        "b": bottom,
+        "coord_origin": _coerce_text(coord_value) or "TOPLEFT",
+    }
+
+
+def _merge_bboxes(boxes: list[dict[str, Any] | None]) -> dict[str, Any] | None:
+    normalized = [box for box in boxes if isinstance(box, dict)]
+    if not normalized:
+        return None
+    return {
+        "l": min(float(box["l"]) for box in normalized),
+        "t": min(float(box["t"]) for box in normalized),
+        "r": max(float(box["r"]) for box in normalized),
+        "b": max(float(box["b"]) for box in normalized),
+        "coord_origin": _coerce_text(normalized[0].get("coord_origin")) or "TOPLEFT",
+    }
+
+
+def _build_markdown_table_from_rows(rows: list[list[str]]) -> str:
+    normalized_rows = [
+        [str(cell).strip() for cell in row]
+        for row in rows
+        if isinstance(row, list) and any(str(cell).strip() for cell in row)
+    ]
+    if not normalized_rows:
+        return ""
+
+    header = normalized_rows[0]
+    separator = ["---"] * len(header)
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join(separator) + " |",
+    ]
+    for row in normalized_rows[1:]:
+        padded = row + [""] * max(0, len(header) - len(row))
+        lines.append("| " + " | ".join(padded[:len(header)]) + " |")
+    return "\n".join(lines)
+
+
+def _extract_markdown_image(markdown_text: str) -> tuple[str, str]:
+    match = re.search(r'!\[([^\]]*)\]\(([^)]+)\)', markdown_text)
+    if not match:
+        return "", ""
+    return match.group(1).strip(), match.group(2).strip()
+
+
+def _make_page_node(page_num: int) -> dict[str, Any]:
+    return {
+        "id": f"page-{page_num}",
+        "type": "section",
+        "title": f"Page {page_num}",
+        "page_start": page_num,
+        "page_end": page_num,
+        "children": [],
+    }
+
+
+def _append_blocks_from_markdown_text(
+    *,
+    page_num: int,
+    page_text: str,
+    page_node: dict[str, Any],
+    blocks: list[dict[str, Any]],
+    next_block_id: Callable[[str, int], str],
+    current_path: list[str] | None = None,
+    base_payload: dict[str, Any] | None = None,
+) -> list[str]:
+    if not page_text.strip():
+        return list(current_path or [])
+
+    working_path = list(current_path or [])
+    common_payload = dict(base_payload or {})
+    paragraph_buffer: list[str] = []
+    table_buffer: list[str] = []
+    equation_buffer: list[str] = []
+    in_equation = False
+
+    def _append_block(block_type: str, **payload: Any) -> None:
+        block_id = next_block_id(block_type, page_num)
+        merged_payload = {
+            **common_payload,
+            **payload,
+        }
+        merged_payload.setdefault("section_path", working_path.copy())
+        block = {
+            "id": block_id,
+            "type": block_type,
+            "page": page_num,
+            "parent_id": page_node["id"],
+            **merged_payload,
+        }
+        blocks.append(block)
+        page_node["children"].append(block_id)
+
+    def _flush_paragraph() -> None:
+        if not paragraph_buffer:
+            return
+        text = "\n".join(paragraph_buffer).strip()
+        paragraph_buffer.clear()
+        if text:
+            _append_block("paragraph", text=text, section_path=working_path.copy())
+
+    def _flush_table() -> None:
+        if not table_buffer:
+            return
+        table_markdown = "\n".join(table_buffer).strip()
+        rows = _parse_markdown_table_rows(table_buffer)
+        table_buffer.clear()
+        if table_markdown:
+            _append_block(
+                "table",
+                markdown=table_markdown,
+                cells=rows,
+                caption="",
+                section_path=working_path.copy(),
+            )
+
+    def _flush_equation() -> None:
+        if not equation_buffer:
+            return
+        latex = "\n".join(equation_buffer).strip()
+        equation_buffer.clear()
+        if latex:
+            _append_block(
+                "equation",
+                latex=latex,
+                surrounding_text="",
+                section_path=working_path.copy(),
+            )
+
+    for raw_line in page_text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+
+        if stripped.startswith("$$"):
+            _flush_paragraph()
+            _flush_table()
+            if in_equation and stripped != "$$":
+                equation_buffer.append(stripped)
+            in_equation = not in_equation
+            if not in_equation:
+                _flush_equation()
+            continue
+
+        if in_equation:
+            equation_buffer.append(line)
+            continue
+
+        heading_match = re.match(r'^(#{1,6})\s+(.*)$', stripped)
+        image_match = re.match(r'^!\[([^\]]*)\]\(([^)]+)\)$', stripped)
+
+        if not stripped:
+            _flush_paragraph()
+            _flush_table()
+            continue
+
+        if heading_match:
+            _flush_paragraph()
+            _flush_table()
+            level = len(heading_match.group(1))
+            title = heading_match.group(2).strip()
+            working_path = working_path[: max(level - 1, 0)]
+            working_path.append(title)
+            _append_block(
+                "section",
+                text=title,
+                level=level,
+                section_path=working_path.copy(),
+            )
+            continue
+
+        if image_match:
+            _flush_paragraph()
+            _flush_table()
+            _append_block(
+                "figure",
+                image=image_match.group(2).strip(),
+                caption=image_match.group(1).strip(),
+                vision_summary="",
+                section_path=working_path.copy(),
+            )
+            continue
+
+        if stripped.startswith("|") and stripped.endswith("|"):
+            _flush_paragraph()
+            table_buffer.append(stripped)
+            continue
+
+        if table_buffer:
+            _flush_table()
+
+        paragraph_buffer.append(stripped)
+
+    _flush_paragraph()
+    _flush_table()
+    _flush_equation()
+    return working_path
+
+
 def _build_document_graph_from_markdown(markdown: str, parse_method: PdfParseMethod) -> dict[str, Any]:
     """Normalize markdown into a lightweight Document Graph / Block Graph sidecar."""
     page_entries = _split_md_into_pages(markdown)
     blocks: list[dict[str, Any]] = []
     section_nodes: list[dict[str, Any]] = []
     block_counter = 0
+    current_path: list[str] = []
 
     def _next_block_id(prefix: str, page_num: int) -> str:
         nonlocal block_counter
         block_counter += 1
         return f"{prefix}-p{page_num}-{block_counter}"
 
-    def _append_block(page_num: int, page_node: dict[str, Any], block_type: str, **payload: Any) -> None:
-        block_id = _next_block_id(block_type, page_num)
-        block = {
-            "id": block_id,
-            "type": block_type,
-            "page": page_num,
-            "parent_id": page_node["id"],
-            **payload,
-        }
-        blocks.append(block)
-        page_node["children"].append(block_id)
-
     for page_num, page_text in page_entries:
-        page_node = {
-            "id": f"page-{page_num}",
-            "type": "section",
-            "title": f"Page {page_num}",
-            "page_start": page_num,
-            "page_end": page_num,
-            "children": [],
-        }
+        page_node = _make_page_node(page_num)
         section_nodes.append(page_node)
-
-        paragraph_buffer: list[str] = []
-        table_buffer: list[str] = []
-        equation_buffer: list[str] = []
-        in_equation = False
-        current_path: list[str] = []
-
-        def _flush_paragraph() -> None:
-            if not paragraph_buffer:
-                return
-            text = "\n".join(paragraph_buffer).strip()
-            paragraph_buffer.clear()
-            if text:
-                _append_block(
-                    page_num,
-                    page_node,
-                    "paragraph",
-                    text=text,
-                    section_path=current_path.copy(),
-                )
-
-        def _flush_table() -> None:
-            if not table_buffer:
-                return
-            table_markdown = "\n".join(table_buffer).strip()
-            rows = _parse_markdown_table_rows(table_buffer)
-            table_buffer.clear()
-            if table_markdown:
-                _append_block(
-                    page_num,
-                    page_node,
-                    "table",
-                    markdown=table_markdown,
-                    cells=rows,
-                    caption="",
-                    section_path=current_path.copy(),
-                )
-
-        def _flush_equation() -> None:
-            if not equation_buffer:
-                return
-            latex = "\n".join(equation_buffer).strip()
-            equation_buffer.clear()
-            if latex:
-                _append_block(
-                    page_num,
-                    page_node,
-                    "equation",
-                    latex=latex,
-                    surrounding_text="",
-                    section_path=current_path.copy(),
-                )
-
-        for raw_line in page_text.splitlines():
-            line = raw_line.rstrip()
-            stripped = line.strip()
-
-            if stripped.startswith("$$"):
-                _flush_paragraph()
-                _flush_table()
-                if in_equation and stripped != "$$":
-                    equation_buffer.append(stripped)
-                in_equation = not in_equation
-                if not in_equation:
-                    _flush_equation()
-                continue
-
-            if in_equation:
-                equation_buffer.append(line)
-                continue
-
-            heading_match = re.match(r'^(#{1,6})\s+(.*)$', stripped)
-            image_match = re.match(r'^!\[([^\]]*)\]\(([^)]+)\)$', stripped)
-
-            if not stripped:
-                _flush_paragraph()
-                _flush_table()
-                continue
-
-            if heading_match:
-                _flush_paragraph()
-                _flush_table()
-                level = len(heading_match.group(1))
-                title = heading_match.group(2).strip()
-                current_path = current_path[: max(level - 1, 0)]
-                current_path.append(title)
-                _append_block(
-                    page_num,
-                    page_node,
-                    "section",
-                    text=title,
-                    level=level,
-                    section_path=current_path.copy(),
-                )
-                continue
-
-            if image_match:
-                _flush_paragraph()
-                _flush_table()
-                _append_block(
-                    page_num,
-                    page_node,
-                    "figure",
-                    image=image_match.group(2).strip(),
-                    caption=image_match.group(1).strip(),
-                    vision_summary="",
-                    section_path=current_path.copy(),
-                )
-                continue
-
-            if stripped.startswith("|") and stripped.endswith("|"):
-                _flush_paragraph()
-                table_buffer.append(stripped)
-                continue
-
-            if table_buffer:
-                _flush_table()
-
-            paragraph_buffer.append(stripped)
-
-        _flush_paragraph()
-        _flush_table()
-        _flush_equation()
+        current_path = _append_blocks_from_markdown_text(
+            page_num=page_num,
+            page_text=page_text,
+            page_node=page_node,
+            blocks=blocks,
+            next_block_id=_next_block_id,
+            current_path=current_path,
+            base_payload={
+                "source_backend": parse_method,
+                "native_label": "markdown",
+                "native_ref": f"markdown-page-{page_num}",
+            },
+        )
 
     return {
         "schema_version": STRUCTURED_SCHEMA_VERSION,
@@ -731,8 +872,399 @@ def _build_document_graph_from_markdown(markdown: str, parse_method: PdfParseMet
     }
 
 
-def _to_parsed_pdf_result(markdown: str, parse_method: PdfParseMethod) -> ParsedPdfResult:
-    structured_content = _build_document_graph_from_markdown(markdown, parse_method)
+def _extract_docling_page_bbox(element: Any, max_pages: int = 0) -> tuple[int | None, dict[str, Any] | None]:
+    page_boxes: dict[int, list[dict[str, Any]]] = {}
+    for prov in getattr(element, "prov", []) or []:
+        page_num = _safe_int(getattr(prov, "page_no", 0), 0)
+        if page_num <= 0 or (max_pages > 0 and page_num > max_pages):
+            continue
+        bbox = _normalize_bbox(getattr(prov, "bbox", None))
+        page_boxes.setdefault(page_num, [])
+        if bbox is not None:
+            page_boxes[page_num].append(bbox)
+    if not page_boxes:
+        return None, None
+    page_num = sorted(page_boxes)[0]
+    return page_num, _merge_bboxes(page_boxes.get(page_num, []))
+
+
+def _docling_caption_text(element: Any, doc: Any) -> str:
+    if hasattr(element, "caption_text"):
+        try:
+            return _coerce_text(element.caption_text(doc))
+        except Exception:
+            return ""
+    return ""
+
+
+def _docling_item_text(element: Any) -> str:
+    return _coerce_text(getattr(element, "text", None) or getattr(element, "orig", None))
+
+
+def _docling_item_image(element: Any, exported_media: dict[str, dict[str, Any]]) -> str:
+    self_ref = _coerce_text(getattr(element, "self_ref", None))
+    media = exported_media.get(self_ref, {}) if self_ref else {}
+    if media.get("image"):
+        return _coerce_text(media.get("image"))
+
+    image_ref = getattr(element, "image", None)
+    uri = getattr(image_ref, "uri", None)
+    return _coerce_text(uri)
+
+
+def _docling_picture_summary(element: Any) -> str:
+    summaries: list[str] = []
+    try:
+        annotations = element.get_annotations()
+    except Exception:
+        annotations = []
+    for annotation in annotations or []:
+        kind = _coerce_text(getattr(annotation, "kind", None))
+        if kind == "classification":
+            classes = []
+            for predicted in getattr(annotation, "predicted_classes", []) or []:
+                class_name = _coerce_text(getattr(predicted, "class_name", None))
+                confidence = getattr(predicted, "confidence", None)
+                if class_name and confidence is not None:
+                    classes.append(f"{class_name} ({float(confidence):.2f})")
+                elif class_name:
+                    classes.append(class_name)
+            if classes:
+                summaries.append("Predicted classes: " + ", ".join(classes))
+    return "\n".join(summaries)
+
+
+def _docling_table_payload(element: Any) -> tuple[list[list[str]], str]:
+    try:
+        dataframe = element.export_to_dataframe()
+    except Exception:
+        dataframe = None
+
+    rows: list[list[str]] = []
+    if dataframe is not None:
+        columns = [str(col).strip() for col in getattr(dataframe, "columns", [])]
+        if columns:
+            rows.append(columns)
+        try:
+            iterator = dataframe.itertuples(index=False, name=None)
+        except Exception:
+            iterator = []
+        for row in iterator:
+            rows.append([_coerce_text(cell) for cell in row])
+
+    markdown = _build_markdown_table_from_rows(rows)
+    return rows, markdown
+
+
+def _build_document_graph_from_docling_document(
+    doc: Any,
+    parse_method: PdfParseMethod,
+    *,
+    max_pages: int = 0,
+    page_count_hint: int = 0,
+    exported_media: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    blocks: list[dict[str, Any]] = []
+    section_nodes: list[dict[str, Any]] = []
+    page_node_map: dict[int, dict[str, Any]] = {}
+    block_counter = 0
+    current_path: list[str] = []
+    exported_media = exported_media or {}
+
+    initial_page_count = page_count_hint if page_count_hint > 0 else max_pages
+    for page_num in range(1, max(initial_page_count, 0) + 1):
+        page_node = _make_page_node(page_num)
+        section_nodes.append(page_node)
+        page_node_map[page_num] = page_node
+
+    def _next_block_id(prefix: str, page_num: int) -> str:
+        nonlocal block_counter
+        block_counter += 1
+        return f"{prefix}-p{page_num}-{block_counter}"
+
+    def _get_page_node(page_num: int) -> dict[str, Any]:
+        if page_num not in page_node_map:
+            page_node = _make_page_node(page_num)
+            page_node_map[page_num] = page_node
+            section_nodes.append(page_node)
+        return page_node_map[page_num]
+
+    def _append_block(page_num: int, block_type: str, **payload: Any) -> None:
+        page_node = _get_page_node(page_num)
+        block_id = _next_block_id(block_type, page_num)
+        block = {
+            "id": block_id,
+            "type": block_type,
+            "page": page_num,
+            "parent_id": page_node["id"],
+            **payload,
+        }
+        blocks.append(block)
+        page_node["children"].append(block_id)
+
+    for element, _level in doc.iterate_items():
+        page_num, bbox = _extract_docling_page_bbox(element, max_pages=max_pages)
+        if page_num is None:
+            continue
+
+        class_name = element.__class__.__name__.lower()
+        native_label = _coerce_text(getattr(element, "label", None)) or element.__class__.__name__
+        self_ref = _coerce_text(getattr(element, "self_ref", None))
+        base_payload = {
+            "bbox": bbox,
+            "section_path": current_path.copy(),
+            "source_backend": PDF_PARSE_METHOD_DOCLING,
+            "native_label": native_label,
+            "native_ref": self_ref,
+        }
+
+        if "title" in class_name:
+            title_text = _docling_item_text(element)
+            if title_text:
+                current_path = [title_text]
+                _append_block(
+                    page_num,
+                    "section",
+                    text=title_text,
+                    level=1,
+                    **{**base_payload, "section_path": current_path.copy()},
+                )
+            continue
+
+        if "sectionheader" in class_name:
+            title_text = _docling_item_text(element)
+            if title_text:
+                level = max(1, _safe_int(getattr(element, "level", 1), 1))
+                current_path = current_path[: max(level - 1, 0)]
+                current_path.append(title_text)
+                _append_block(
+                    page_num,
+                    "section",
+                    text=title_text,
+                    level=level,
+                    **{**base_payload, "section_path": current_path.copy()},
+                )
+            continue
+
+        if "table" in class_name:
+            cells, table_markdown = _docling_table_payload(element)
+            _append_block(
+                page_num,
+                "table",
+                caption=_docling_caption_text(element, doc),
+                markdown=table_markdown,
+                cells=cells,
+                image=_docling_item_image(element, exported_media),
+                **{**base_payload, "section_path": current_path.copy()},
+            )
+            continue
+
+        if "picture" in class_name or native_label.lower() in {"picture", "chart"}:
+            image = _docling_item_image(element, exported_media)
+            caption = _docling_caption_text(element, doc)
+            vision_summary = _docling_picture_summary(element)
+            if image or caption or vision_summary:
+                _append_block(
+                    page_num,
+                    "figure",
+                    image=image,
+                    caption=caption,
+                    vision_summary=vision_summary,
+                    **{**base_payload, "section_path": current_path.copy()},
+                )
+            continue
+
+        if "formula" in class_name or "equation" in class_name:
+            equation_text = _docling_item_text(element)
+            if equation_text:
+                _append_block(
+                    page_num,
+                    "equation",
+                    latex=equation_text,
+                    surrounding_text="",
+                    **{**base_payload, "section_path": current_path.copy()},
+                )
+            continue
+
+        if "code" in class_name:
+            code_text = _docling_item_text(element)
+            if code_text:
+                _append_block(
+                    page_num,
+                    "code",
+                    text=code_text,
+                    **{**base_payload, "section_path": current_path.copy()},
+                )
+            continue
+
+        if "list" in class_name:
+            list_text = _docling_item_text(element)
+            if list_text:
+                _append_block(
+                    page_num,
+                    "list",
+                    text=list_text,
+                    **{**base_payload, "section_path": current_path.copy()},
+                )
+            continue
+
+        text = _docling_item_text(element)
+        if text:
+            _append_block(
+                page_num,
+                "paragraph",
+                text=text,
+                **{**base_payload, "section_path": current_path.copy()},
+            )
+
+    section_nodes.sort(key=lambda node: int(node.get("page_start") or 0))
+    page_count = page_count_hint or max(page_node_map.keys(), default=0)
+    return {
+        "schema_version": STRUCTURED_SCHEMA_VERSION,
+        "type": "document",
+        "parse_method": parse_method,
+        "page_count": page_count,
+        "children": section_nodes,
+        "blocks": blocks,
+    }
+
+
+def _build_document_graph_from_pymupdf_chunks(
+    page_chunks: list[dict[str, Any]],
+    parse_method: PdfParseMethod,
+) -> dict[str, Any]:
+    blocks: list[dict[str, Any]] = []
+    section_nodes: list[dict[str, Any]] = []
+    block_counter = 0
+    current_path: list[str] = []
+
+    def _next_block_id(prefix: str, page_num: int) -> str:
+        nonlocal block_counter
+        block_counter += 1
+        return f"{prefix}-p{page_num}-{block_counter}"
+
+    for chunk in page_chunks:
+        metadata = chunk.get("metadata", {}) if isinstance(chunk, dict) else {}
+        page_num = _safe_int(metadata.get("page", metadata.get("page_number", 0)), 0)
+        if page_num <= 0:
+            continue
+        page_text = str(chunk.get("text") or "")
+        page_node = _make_page_node(page_num)
+        section_nodes.append(page_node)
+
+        page_boxes = chunk.get("page_boxes")
+        if not isinstance(page_boxes, list) or not page_boxes:
+            current_path = _append_blocks_from_markdown_text(
+                page_num=page_num,
+                page_text=page_text,
+                page_node=page_node,
+                blocks=blocks,
+                next_block_id=_next_block_id,
+                current_path=current_path,
+                base_payload={
+                    "source_backend": PDF_PARSE_METHOD_PYMUPDF,
+                    "native_label": "text",
+                    "native_ref": f"pymupdf-page-{page_num}",
+                },
+            )
+            continue
+
+        block_count_before = len(blocks)
+        for page_box in page_boxes:
+            if not isinstance(page_box, dict):
+                continue
+            position = page_box.get("pos")
+            box_text = ""
+            if isinstance(position, (list, tuple)) and len(position) >= 2:
+                start = _safe_int(position[0], 0)
+                stop = _safe_int(position[1], 0)
+                box_text = page_text[start:stop].strip()
+
+            native_label = (_coerce_text(page_box.get("class")) or "text").lower()
+            bbox = _normalize_bbox(page_box.get("bbox"))
+            native_ref = f"page-box-{page_num}-{_safe_int(page_box.get('index'), len(blocks))}"
+            base_payload = {
+                "bbox": bbox,
+                "source_backend": PDF_PARSE_METHOD_PYMUPDF,
+                "native_label": native_label,
+                "native_ref": native_ref,
+            }
+
+            if native_label == "table":
+                rows = _parse_markdown_table_rows(box_text.splitlines())
+                blocks.append({
+                    "id": _next_block_id("table", page_num),
+                    "type": "table",
+                    "page": page_num,
+                    "parent_id": page_node["id"],
+                    "caption": "",
+                    "markdown": box_text,
+                    "cells": rows,
+                    "section_path": current_path.copy(),
+                    **base_payload,
+                })
+                page_node["children"].append(blocks[-1]["id"])
+                continue
+
+            if native_label in {"picture", "image"}:
+                caption, image = _extract_markdown_image(box_text)
+                if image or caption or box_text:
+                    blocks.append({
+                        "id": _next_block_id("figure", page_num),
+                        "type": "figure",
+                        "page": page_num,
+                        "parent_id": page_node["id"],
+                        "image": image,
+                        "caption": caption or box_text,
+                        "vision_summary": "",
+                        "section_path": current_path.copy(),
+                        **base_payload,
+                    })
+                    page_node["children"].append(blocks[-1]["id"])
+                continue
+
+            current_path = _append_blocks_from_markdown_text(
+                page_num=page_num,
+                page_text=box_text,
+                page_node=page_node,
+                blocks=blocks,
+                next_block_id=_next_block_id,
+                current_path=current_path,
+                base_payload=base_payload,
+            )
+
+        if len(blocks) == block_count_before and page_text:
+            current_path = _append_blocks_from_markdown_text(
+                page_num=page_num,
+                page_text=page_text,
+                page_node=page_node,
+                blocks=blocks,
+                next_block_id=_next_block_id,
+                current_path=current_path,
+                base_payload={
+                    "source_backend": PDF_PARSE_METHOD_PYMUPDF,
+                    "native_label": "text",
+                    "native_ref": f"pymupdf-page-{page_num}",
+                },
+            )
+
+    section_nodes.sort(key=lambda node: int(node.get("page_start") or 0))
+    return {
+        "schema_version": STRUCTURED_SCHEMA_VERSION,
+        "type": "document",
+        "parse_method": parse_method,
+        "page_count": max((int(node.get("page_start") or 0) for node in section_nodes), default=0),
+        "children": section_nodes,
+        "blocks": blocks,
+    }
+
+
+def _to_parsed_pdf_result(
+    markdown: str,
+    parse_method: PdfParseMethod,
+    structured_content: dict[str, Any] | None = None,
+) -> ParsedPdfResult:
+    structured_content = structured_content or _build_document_graph_from_markdown(markdown, parse_method)
     return ParsedPdfResult(
         markdown=markdown,
         parse_method=parse_method,
@@ -853,7 +1385,7 @@ async def _parse_pdf_with_docling_best_effort(
     """Run Docling via GPU queue when possible, otherwise CPU, and normalize the result."""
     fallback_detail = "GPU Docling path unavailable or failed; retrying high-quality upgrade on CPU"
     try:
-        docling_markdown = await _parse_pdf_with_docling_via_gpu_queue(
+        docling_result = await _parse_pdf_with_docling_via_gpu_queue(
             pdf_bytes,
             max_pages,
             images_output_dir,
@@ -862,8 +1394,8 @@ async def _parse_pdf_with_docling_best_effort(
         )
     except DoclingGpuQueueTimeout as e:
         fallback_detail = str(e)
-        docling_markdown = None
-    if docling_markdown is None:
+        docling_result = None
+    if docling_result is None:
         if upgrade_url:
             _record_high_quality_upgrade_state(
                 upgrade_url,
@@ -872,15 +1404,15 @@ async def _parse_pdf_with_docling_best_effort(
                 high_quality_parse_pending=True,
                 high_quality_parse_ready=False,
             )
-        docling_markdown = await _parse_pdf_with_docling_on_cpu(
+        docling_result = await _parse_pdf_with_docling_on_cpu(
             pdf_bytes,
             max_pages,
             images_output_dir,
             images_url_prefix,
         )
-    if docling_markdown is None:
+    if docling_result is None:
         return None
-    return _to_parsed_pdf_result(docling_markdown, PDF_PARSE_METHOD_DOCLING)
+    return docling_result
 
 
 def _register_docling_upgrade_task(url_hash: str, task: asyncio.Task[None]) -> None:
@@ -1657,7 +2189,7 @@ def _parse_pdf_with_pymupdf(
     max_pages: int = 10,
     images_output_dir: Path | None = None,
     images_url_prefix: str | None = None,
-) -> str | None:
+) -> tuple[str, list[dict[str, Any]]] | None:
     """Fast PDF extraction using pymupdf4llm. No GPU required, typically <5 seconds.
 
     Uses pymupdf4llm.to_markdown() for high-quality Markdown output including:
@@ -1768,11 +2300,13 @@ def _parse_pdf_with_pymupdf(
             )
 
         img_count = md_content.count("![")
+        structured_content = _build_document_graph_from_pymupdf_chunks(md_text, PDF_PARSE_METHOD_PYMUPDF)
         logger.info(
             f"PyMuPDF fast extraction OK: {total_chars} chars, "
-            f"{len(page_sections)} pages, {img_count} images"
+            f"{len(page_sections)} pages, {img_count} images, "
+            f"{len(structured_content.get('blocks', []))} structured blocks"
         )
-        return md_content
+        return md_content, md_text
 
     except Exception as e:
         logger.warning(f"PyMuPDF extraction failed: {e}")
@@ -1792,15 +2326,17 @@ def _parse_pdf_with_pymupdf_result(
     images_url_prefix: str | None = None,
 ) -> ParsedPdfResult | None:
     """Run PyMuPDF extraction and normalization in one worker-thread job."""
-    markdown = _parse_pdf_with_pymupdf(
+    parsed = _parse_pdf_with_pymupdf(
         pdf_bytes,
         max_pages,
         images_output_dir=images_output_dir,
         images_url_prefix=images_url_prefix,
     )
-    if markdown is None:
+    if parsed is None:
         return None
-    return _to_parsed_pdf_result(markdown, PDF_PARSE_METHOD_PYMUPDF)
+    markdown, page_chunks = parsed
+    structured_content = _build_document_graph_from_pymupdf_chunks(page_chunks, PDF_PARSE_METHOD_PYMUPDF)
+    return _to_parsed_pdf_result(markdown, PDF_PARSE_METHOD_PYMUPDF, structured_content)
 
 
 async def _parse_pdf_with_pymupdf_in_worker_thread(
@@ -1845,14 +2381,24 @@ def _docling_subprocess_entry(
     """Child-process entrypoint for GPU-isolated Docling parsing."""
     try:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(physical_gpu_index)
-        markdown = _parse_pdf_with_docling(
+        result = _parse_pdf_with_docling(
             pdf_bytes,
             max_pages,
             images_output_dir=Path(images_output_dir_str) if images_output_dir_str else None,
             images_url_prefix=images_url_prefix,
             accelerator_device="cuda",
         )
-        result_conn.send({"ok": True, "markdown": markdown})
+        result_conn.send(
+            {
+                "ok": True,
+                "result": {
+                    "markdown": result.markdown if result is not None else None,
+                    "parse_method": result.parse_method if result is not None else None,
+                    "page_count": result.page_count if result is not None else 0,
+                    "structured_content": result.structured_content if result is not None else None,
+                },
+            }
+        )
     except Exception as e:
         try:
             result_conn.send({"ok": False, "error": str(e)})
@@ -1878,7 +2424,7 @@ def _run_docling_in_isolated_process(
     images_output_dir_str: str | None,
     images_url_prefix: str | None,
     assigned_device: str,
-) -> str | None:
+) -> ParsedPdfResult | None:
     """Run Docling in a short-lived subprocess pinned to the assigned GPU."""
     physical_gpu_index = _extract_gpu_index_from_device(assigned_device)
     if physical_gpu_index is None:
@@ -1919,7 +2465,16 @@ def _run_docling_in_isolated_process(
             )
         if not payload.get("ok"):
             raise RuntimeError(payload.get("error") or "Unknown Docling subprocess error")
-        return payload.get("markdown")
+        result_payload = payload.get("result") or {}
+        markdown = result_payload.get("markdown")
+        if markdown is None:
+            return None
+        return ParsedPdfResult(
+            markdown=markdown,
+            parse_method=result_payload.get("parse_method") or PDF_PARSE_METHOD_DOCLING,
+            page_count=_safe_int(result_payload.get("page_count"), 0),
+            structured_content=result_payload.get("structured_content") or {},
+        )
     finally:
         try:
             parent_conn.close()
@@ -1943,7 +2498,7 @@ async def _parse_pdf_with_docling_on_assigned_gpu(
     images_output_dir: Path | None,
     images_url_prefix: str | None,
     assigned_device: str,
-) -> str | None:
+) -> ParsedPdfResult | None:
     """Run Docling in an isolated subprocess on the queue-assigned GPU."""
     loop = asyncio.get_running_loop()
     try:
@@ -1956,7 +2511,11 @@ async def _parse_pdf_with_docling_on_assigned_gpu(
             images_url_prefix,
             assigned_device,
         )
-        logger.info(f"Docling GPU parse completed on {assigned_device}")
+        if result is not None:
+            logger.info(
+                f"Docling GPU parse completed on {assigned_device}: "
+                f"{len(result.structured_content.get('blocks', []))} native blocks"
+            )
         return result
     except Exception as e:
         logger.warning(f"Docling GPU parse failed on {assigned_device}: {e}")
@@ -1969,7 +2528,7 @@ async def _parse_pdf_with_docling_via_gpu_queue(
     images_output_dir: Path | None,
     images_url_prefix: str | None,
     upgrade_url: str | None = None,
-) -> str | None:
+) -> ParsedPdfResult | None:
     """Submit Docling parsing to the shared GPU queue and await the result."""
     from ..task_queue import TaskType, get_task_queue
 
@@ -1980,7 +2539,7 @@ async def _parse_pdf_with_docling_via_gpu_queue(
         return None
 
     loop = asyncio.get_running_loop()
-    result_future: asyncio.Future[str | None] = loop.create_future()
+    result_future: asyncio.Future[ParsedPdfResult | None] = loop.create_future()
     task_id = f"pdf-parse-{uuid.uuid4().hex}"
 
     if upgrade_url:
@@ -2067,7 +2626,7 @@ async def _parse_pdf_with_docling_on_cpu(
     max_pages: int,
     images_output_dir: Path | None,
     images_url_prefix: str | None,
-) -> str | None:
+) -> ParsedPdfResult | None:
     """Run Docling on CPU in a worker thread when GPU parsing is unavailable."""
     loop = asyncio.get_running_loop()
     try:
@@ -2081,7 +2640,10 @@ async def _parse_pdf_with_docling_on_cpu(
             "cpu",
         )
         if result is not None:
-            logger.info("Docling CPU parse completed")
+            logger.info(
+                "Docling CPU parse completed: "
+                f"{len(result.structured_content.get('blocks', []))} native blocks"
+            )
         return result
     except Exception as e:
         logger.warning(f"Docling CPU parse failed: {e}")
@@ -2094,7 +2656,7 @@ def _parse_pdf_with_docling(
     images_output_dir: Path | None = None,
     images_url_prefix: str | None = None,
     accelerator_device: str = "cpu",
-) -> str | None:
+) -> ParsedPdfResult | None:
     """High-quality PDF extraction using Docling.
 
     Returns markdown with page markers and appends extracted figure/table links
@@ -2150,6 +2712,7 @@ def _parse_pdf_with_docling(
             markdown = "\n\n".join(section for section in page_sections if section.strip())
 
         extracted_links: list[str] = []
+        exported_media: dict[str, dict[str, Any]] = {}
         if images_output_dir is not None:
             images_output_dir.mkdir(parents=True, exist_ok=True)
             figure_counter = 0
@@ -2173,6 +2736,15 @@ def _parse_pdf_with_docling(
                     except Exception:
                         caption = ""
 
+                image_ref = f"{images_url_prefix}/{filename}" if images_url_prefix is not None else str(image_path)
+                media_key = _coerce_text(getattr(element, 'self_ref', None))
+                if media_key:
+                    exported_media[media_key] = {
+                        "image": image_ref,
+                        "filename": filename,
+                        "caption": caption,
+                    }
+
                 if images_url_prefix is not None:
                     link_title = f"Figure {figure_counter}"
                     if caption:
@@ -2186,11 +2758,20 @@ def _parse_pdf_with_docling(
                     + "\n\n".join(extracted_links)
                 )
 
-        logger.info(
-            f"Docling extraction OK: {len(markdown)} chars, "
-            f"{len(extracted_links)} extracted figures/tables"
+        page_count_hint = _extract_page_count(markdown)
+        structured_content = _build_document_graph_from_docling_document(
+            conv_res.document,
+            PDF_PARSE_METHOD_DOCLING,
+            max_pages=max_pages,
+            page_count_hint=page_count_hint,
+            exported_media=exported_media,
         )
-        return markdown
+        logger.info(
+            f"Docling extraction OK ({accelerator_device}): {len(markdown)} chars, "
+            f"{len(extracted_links)} extracted figures/tables, "
+            f"{len(structured_content.get('blocks', []))} native blocks"
+        )
+        return _to_parsed_pdf_result(markdown, PDF_PARSE_METHOD_DOCLING, structured_content)
     except Exception as e:
         logger.warning(f"Docling extraction failed: {e}")
         return None
@@ -2219,8 +2800,14 @@ async def parse_pdf(
         images_url_prefix,
     )
     if pymupdf_result is not None:
+        logger.info(
+            "parse_pdf returning PyMuPDF fast-path result: "
+            f"{pymupdf_result.page_count} pages, "
+            f"{len(pymupdf_result.structured_content.get('blocks', []))} structured blocks"
+        )
         return pymupdf_result
 
+    logger.info("parse_pdf falling back to Docling native parse after PyMuPDF fast path miss")
     docling_result = await _parse_pdf_with_docling_best_effort(
         pdf_bytes,
         max_pages,
@@ -2228,6 +2815,11 @@ async def parse_pdf(
         images_url_prefix,
     )
     if docling_result is not None:
+        logger.info(
+            "parse_pdf returning Docling native result: "
+            f"{docling_result.page_count} pages, "
+            f"{len(docling_result.structured_content.get('blocks', []))} structured blocks"
+        )
         return docling_result
 
     return _to_parsed_pdf_result(
