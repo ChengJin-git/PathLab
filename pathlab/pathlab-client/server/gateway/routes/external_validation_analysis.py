@@ -10,7 +10,7 @@ import json
 import logging
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
@@ -54,6 +54,9 @@ def _build_segmentation_class_summary(
     metric_specs = {
         "iou_per_class": ("iou", "per_class_iou", "IoU"),
         "dice_per_class": ("dice", "per_class_dice", "Dice"),
+        "precision_per_class": ("precision", None, "Precision"),
+        "recall_per_class": ("recall", None, "Recall"),
+        "f1_per_class": ("f1", None, "F1"),
     }
 
     class_metrics: Dict[str, Dict[str, float]] = {name: {} for name in class_names}
@@ -96,12 +99,13 @@ def _build_segmentation_class_summary(
             })
 
         per_class_data[raw_key] = per_class_entries
-        chart_data[chart_key] = {
-            "classes": class_names[:len(means)],
-            "means": [round(float(v), 4) for v in means.tolist()],
-            "stds": [round(float(v), 4) for v in stds.tolist()],
-            "metric_name": metric_name,
-        }
+        if chart_key:
+            chart_data[chart_key] = {
+                "classes": class_names[:len(means)],
+                "means": [round(float(v), 4) for v in means.tolist()],
+                "stds": [round(float(v), 4) for v in stds.tolist()],
+                "metric_name": metric_name,
+            }
 
     return {
         "classes": class_names,
@@ -109,6 +113,33 @@ def _build_segmentation_class_summary(
         "chart_data": chart_data,
         "per_class_data": per_class_data,
     }
+
+
+def _resolve_segmentation_primary_metric_key(
+    class_names: List[str],
+    results_with_gt: List[Dict[str, Any]],
+) -> str:
+    if len(class_names) > 1:
+        return "miou"
+
+    for result in results_with_gt:
+        metrics = result.get("metrics") or {}
+        if "miou" in metrics:
+            return "miou"
+        iou_per_class = metrics.get("iou_per_class")
+        if isinstance(iou_per_class, list) and len(iou_per_class) > 1:
+            return "miou"
+
+    return "iou"
+
+
+def _resolve_segmentation_metric_value(metrics: Dict[str, Any], metric_key: str) -> Optional[float]:
+    value = metrics.get(metric_key)
+    if value is None and metric_key == "miou":
+        value = metrics.get("iou")
+    elif value is None and metric_key == "iou":
+        value = metrics.get("miou")
+    return float(value) if value is not None else None
 
 
 async def _run_external_validation_analysis(task, request, db, progress_callback=None, progress_config=None, submitted_by=None):
@@ -511,11 +542,16 @@ async def _run_external_validation_segmentation_analysis(task, request, db, mode
     }
 
     if has_metrics:
-        metric_keys = ["iou", "dice", "accuracy", "precision", "recall"]
         results_with_gt = [r for r in image_results if r.get("has_ground_truth") and r.get("metrics")]
+        primary_metric_key = _resolve_segmentation_primary_metric_key(class_names, results_with_gt)
+        metric_keys = [primary_metric_key, "dice", "accuracy", "precision", "recall", "f1"]
 
         for key in metric_keys:
-            values = [r["metrics"].get(key) for r in results_with_gt if r["metrics"].get(key) is not None]
+            values = [
+                value for r in results_with_gt
+                for value in [_resolve_segmentation_metric_value(r["metrics"], key)]
+                if value is not None
+            ]
             if values:
                 metrics[key] = {
                     "mean": float(np.mean(values)),

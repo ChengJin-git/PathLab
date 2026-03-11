@@ -27,8 +27,15 @@ from backend.auth import User
 from backend.auth.dependencies import require_admin
 from ..dependencies import logger
 from ..models import ScanDirectoryRequest, CheckExternalFilesRequest, DeleteUnavailableFilesRequest
+from ..scan_sessions import build_scan_response, create_scan_session, get_scan_session
+from ..utils import (
+    build_segmentation_annotation_index,
+    get_scan_file_data_type,
+    is_tiff_family,
+    resolve_segmentation_annotation_match,
+)
 from backend.common.config import Config
-from backend.common.file_types import WSI_EXTENSIONS, TIF_EXTENSIONS, SIZE_THRESHOLD
+from backend.common.file_types import PATCH_EXTENSIONS, WSI_EXTENSIONS
 
 router = APIRouter()
 
@@ -37,7 +44,7 @@ router = APIRouter()
 # Directory Scanning
 # ==============================================================================
 
-def _scan_directory_for_wsi(directory: str) -> list:
+def _scan_directory_for_wsi(directory: str, *, include_annotation_json: bool = False) -> list:
     """
     Scan a directory for WSI and patch files (non-recursive).
     Handles special formats: MRXS (requires data folder), TMAP (may have DT files).
@@ -45,93 +52,69 @@ def _scan_directory_for_wsi(directory: str) -> list:
     Supports:
     - WSI files: .svs, .ndpi, .mrxs, .tmap, etc.
     - Patch files: .jpg, .jpeg, .png, .bmp
-    - TIF/TIFF files: classified by size (>= 100MB = WSI, < 100MB = patch)
+    - TIF/TIFF files: first use slide inspection, then fallback heuristics
+
+    External import applies the TIFF/TIFF dataset rule at scan time as well:
+    if any scanned TIFF/TIFF is classified as WSI, all scanned TIFF/TIFF files
+    are displayed as WSI for this batch preview.
 
     Returns list of dicts with file info including data_type ('wsi' or 'patch').
     """
     import uuid as uuid_module
-    from backend.common.file_types import PATCH_EXTENSIONS
 
     dir_path = Path(directory)
     if not dir_path.exists() or not dir_path.is_dir():
         return []
 
     results = []
+    pending_tiff_items = []
     seen_stems = set()  # Track processed file stems to avoid duplicates
 
-    # Build a set of all items in directory for quick lookup
-    all_items = {item.name: item for item in dir_path.iterdir()}
+    entries = list(dir_path.iterdir())
+    all_items = {item.name: item for item in entries}
+    annotation_index = build_segmentation_annotation_index(dir_path) if include_annotation_json else {}
 
-    for item in dir_path.iterdir():
-        if not item.is_file():
-            continue
-
-        ext = item.suffix.lower()
-        file_size = item.stat().st_size
-
-        # Determine file type: WSI, patch, or skip
-        data_type = None
-        if ext in WSI_EXTENSIONS:
-            data_type = 'wsi'
-        elif ext in PATCH_EXTENSIONS:
-            data_type = 'patch'
-        elif ext in TIF_EXTENSIONS:
-            # TIF/TIFF: classify by size
-            data_type = 'wsi' if file_size >= SIZE_THRESHOLD else 'patch'
-
-        if data_type is None:
-            continue
-
-        # Skip if we've already processed this stem (for MRXS/TMAP handling)
-        if item.stem in seen_stems:
-            continue
-        seen_stems.add(item.stem)
-
-        # Total size includes main file + associated files
+    def _build_file_info(item: Path, *, file_size: int, data_type: str) -> dict:
         total_size = file_size
+        ext = item.suffix.lower()
 
         file_info = {
             "path": str(item),
             "filename": item.name,
-            "size": file_size,  # Will be updated to include associated files
+            "size": file_size,
             "extension": ext,
             "format_type": "standard",
-            "data_type": data_type,  # 'wsi' or 'patch'
+            "data_type": data_type,
             "valid": True,
             "validation_message": None,
-            "has_annotation_json": False,  # Will be checked below
+            "has_annotation_json": False,
         }
 
-        # Handle MRXS format - requires data folder with same name
         if ext == '.mrxs':
             file_info["format_type"] = "mrxs"
             data_folder_name = item.stem
             if data_folder_name in all_items and all_items[data_folder_name].is_dir():
                 data_folder_path = all_items[data_folder_name]
                 file_info["associated_data"] = str(data_folder_path)
-                # Calculate total size of data folder
                 try:
                     for root, dirs, files in os.walk(data_folder_path):
                         for f in files:
                             total_size += os.path.getsize(os.path.join(root, f))
                 except OSError:
-                    pass  # Ignore errors when calculating folder size
+                    pass
             else:
                 file_info["valid"] = False
                 file_info["validation_message"] = f"Missing required data folder: {data_folder_name}/"
-
-        # Handle TMAP format - may have DT files
         elif ext == '.tmap':
             file_info["format_type"] = "tmap"
             dt_files = []
-            for name, other_item in all_items.items():
+            for other_item in all_items.values():
                 if other_item.is_file() and other_item.stem == item.stem:
                     other_ext = other_item.suffix.lower()
                     if other_ext.startswith('.dt') and len(other_ext) > 3:
                         suffix_num = other_ext[3:]
                         if suffix_num.isdigit():
                             dt_files.append(str(other_item))
-                            # Add DT file size to total
                             try:
                                 total_size += other_item.stat().st_size
                             except OSError:
@@ -139,23 +122,60 @@ def _scan_directory_for_wsi(directory: str) -> list:
             if dt_files:
                 file_info["associated_data"] = sorted(dt_files)
 
-        # Check if a matching COCO annotation JSON exists (case-insensitive stem match)
-        stem_lower = item.stem.lower()
-        json_path_exact = item.parent / f"{item.stem}.json"
-        json_path_lower = item.parent / f"{stem_lower}.json"
-        if json_path_exact.exists() or json_path_lower.exists():
-            file_info["has_annotation_json"] = True
-        else:
-            # Case-insensitive scan via all_items
-            for name in all_items:
-                if name.lower() == f"{stem_lower}.json" and all_items[name].is_file():
-                    file_info["has_annotation_json"] = True
-                    break
+        if include_annotation_json:
+            matched_annotation_path, _annotation_error = resolve_segmentation_annotation_match(
+                item,
+                annotation_index=annotation_index,
+            )
+            file_info["has_annotation_json"] = matched_annotation_path is not None
 
-        # Update size to include associated files
         file_info["size"] = total_size
+        return file_info
 
-        results.append(file_info)
+    for item in entries:
+        if not item.is_file():
+            continue
+
+        ext = item.suffix.lower()
+        if ext not in WSI_EXTENSIONS and ext not in PATCH_EXTENSIONS and not is_tiff_family(item):
+            continue
+
+        if item.stem in seen_stems:
+            continue
+        seen_stems.add(item.stem)
+
+        try:
+            file_size = item.stat().st_size
+        except OSError:
+            file_size = 0
+
+        if ext in WSI_EXTENSIONS:
+            results.append(_build_file_info(item, file_size=file_size, data_type="wsi"))
+        elif ext in PATCH_EXTENSIONS:
+            results.append(_build_file_info(item, file_size=file_size, data_type="patch"))
+        else:
+            pending_tiff_items.append((item, file_size))
+
+    if pending_tiff_items:
+        sorted_tiff_items = sorted(pending_tiff_items, key=lambda entry: entry[1], reverse=True)
+        checked_tiff_items: list[tuple[Path, int, str]] = []
+        tiff_batch_has_wsi = False
+
+        for item, file_size in sorted_tiff_items:
+            data_type = get_scan_file_data_type(item, file_size)
+            checked_tiff_items.append((item, file_size, data_type))
+            if data_type == "wsi":
+                tiff_batch_has_wsi = True
+                break
+
+        if tiff_batch_has_wsi:
+            for item, file_size, _data_type in checked_tiff_items:
+                results.append(_build_file_info(item, file_size=file_size, data_type="wsi"))
+            for item, file_size in sorted_tiff_items[len(checked_tiff_items):]:
+                results.append(_build_file_info(item, file_size=file_size, data_type="wsi"))
+        else:
+            for item, file_size, data_type in checked_tiff_items:
+                results.append(_build_file_info(item, file_size=file_size, data_type=data_type))
 
     # Sort by filename for consistent ordering
     results.sort(key=lambda x: x["filename"].lower())
@@ -196,6 +216,18 @@ async def scan_directory(
     """
     try:
         directory = request.directory_path
+        page = max(1, request.page)
+        page_size = min(max(1, request.page_size), 500)
+        include_annotation_json = request.task_type == 'segmentation'
+
+        if request.scan_id:
+            session = get_scan_session(request.scan_id, str(user.id))
+            if session is None:
+                raise HTTPException(status_code=404, detail="Scan session not found or expired")
+            if session["directory"] != directory:
+                raise HTTPException(status_code=400, detail="Scan session does not match requested directory")
+            if not include_annotation_json or session.get("annotation_scan_enabled"):
+                return build_scan_response(session, page=page, page_size=page_size)
 
         # Validate directory exists
         if not os.path.exists(directory):
@@ -208,18 +240,18 @@ async def scan_directory(
             raise HTTPException(status_code=400, detail=f"Directory is not readable: {directory}")
 
         # Scan directory in thread pool to avoid blocking
-        files = await asyncio.to_thread(_scan_directory_for_wsi, directory)
-
-        valid_count = sum(1 for f in files if f["valid"])
-        total_size = sum(f["size"] for f in files)
-
-        return {
-            "directory": directory,
-            "files": files,
-            "total_count": len(files),
-            "valid_count": valid_count,
-            "total_size": total_size,
-        }
+        files = await asyncio.to_thread(
+            _scan_directory_for_wsi,
+            directory,
+            include_annotation_json=include_annotation_json,
+        )
+        session = create_scan_session(
+            directory=directory,
+            files=files,
+            user_id=str(user.id),
+            annotation_scan_enabled=include_annotation_json,
+        )
+        return build_scan_response(session, page=page, page_size=page_size)
 
     except HTTPException:
         raise

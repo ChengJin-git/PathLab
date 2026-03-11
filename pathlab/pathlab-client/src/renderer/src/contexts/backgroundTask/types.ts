@@ -5,11 +5,11 @@
 import { TrainingTaskDetail, UploadSplitsResponse } from '../../api'
 
 // Task types - includes server-side training tasks and storage tasks
-export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'analysis' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'metadata_upload' | 'extraction'
+export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'analysis' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'delete_dataset' | 'cleanup_empty_datasets' | 'unbind_dataset' | 'reset_derived_data' | 'metadata_upload' | 'extraction'
 export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
 
 // Storage task type from backend
-export type StorageTaskType = 'batch_import' | 'delete_external' | 'batch_update_metadata'
+export type StorageTaskType = 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'delete_dataset' | 'cleanup_empty_datasets' | 'unbind_dataset' | 'reset_derived_data'
 
 // Training task status from backend (more granular)
 export type TrainingTaskStatus = 'pending' | 'queued' | 'patching' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
@@ -120,7 +120,7 @@ export interface BackgroundTaskContextType {
   cancelTask: (taskId: string) => void
   cancelServerTask: (task: BackgroundTask) => Promise<boolean>  // Cancel training/inference task on server
   clearCompletedTasks: () => void
-  removeTask: (taskId: string) => void
+  removeTask: (task: BackgroundTask) => void
   togglePanel: () => void
   refreshDiskSpace: () => Promise<void>
   getMetadataUploadResult: (datasetName: string) => MetadataUploadResult | undefined

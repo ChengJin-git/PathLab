@@ -6,6 +6,7 @@ Most route logic has been moved to separate files in routes/ directory.
 """
 import asyncio
 import httpx
+from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +18,6 @@ from backend.database.repositories import (
     TrainingTaskRepository,
     ExportTaskRepository,
     StorageTaskRepository,
-    ResearchJobRepository,
 )
 from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 from .pipeline import run_training_pipeline
@@ -38,28 +38,9 @@ from .routes import (
     heatmap_router,
     settings_router,
     gpu_router,
+    annotation_router,
 )
 from backend.common.config import Config
-
-# Import agent chat router (removed - replaced by research_chat)
-
-# Import research chat router (deep-research proxy)
-research_chat_router = None
-shutdown_inproc_deep_research_app = None
-try:
-    from gateway.routes.research_chat import (
-        router as research_chat_router,
-        _shutdown_inproc_deep_research_app as shutdown_inproc_deep_research_app,
-    )
-    logger.info("✅ Research chat router loaded successfully")
-    print("✅ Research chat router loaded successfully")
-except Exception as e:
-    logger.error(f"❌ Failed to load research chat router: {e}")
-    print(f"❌ Failed to load research chat router: {e}")
-    import traceback
-    traceback.print_exc()
-    research_chat_router = None
-    shutdown_inproc_deep_research_app = None
 
 
 @asynccontextmanager
@@ -74,6 +55,12 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing database...")
     await init_db()
     logger.info("✓ Database initialized")
+
+    # Initialize Redis connection pool
+    from backend.common.redis_client import init_redis, close_redis
+    logger.info("Initializing Redis...")
+    await init_redis()
+    logger.info("✓ Redis initialized")
 
     # Detect GPU count and determine max_concurrent
     try:
@@ -104,26 +91,22 @@ async def lifespan(app: FastAPI):
     # and start writing progress files while resume_interrupted_tasks() is still awaiting.
     # If cleanup ran after resume, it could delete freshly-written progress files.
     from backend.common.progress_store import cleanup_all_progress
-    cleanup_all_progress()
-
-    # Mark research jobs that were running when gateway died as "interrupted"
-    async for db in get_db():
-        try:
-            interrupted = await ResearchJobRepository.mark_interrupted_jobs(db)
-            await db.commit()
-            if interrupted:
-                logger.info(f"Marked {interrupted} research job(s) as interrupted")
-        except Exception as e:
-            logger.error(f"Failed to mark interrupted research jobs: {e}")
-        break
+    await cleanup_all_progress()
 
     # Resume interrupted training tasks
-    # Tasks with status 'pending', 'running', 'extracting', or 'training' were interrupted
-    # by system shutdown/crash and need to be resumed (pending tasks lose their queue position)
+    # Tasks with status 'pending', 'queued', 'patching', 'extracting', or 'training'
+    # were interrupted by system shutdown/crash and need to be resumed.
+    # Pending/queued tasks lose their in-memory queue position across restart.
     await resume_interrupted_tasks()
 
     # Cleanup old finished tasks (completed/failed/cancelled older than 7 days)
     await cleanup_old_tasks()
+
+    # Cleanup expired PDF cache files
+    from .routes.chat_pdf import cleanup_expired_pdf_cache
+    # Run synchronous cleanup in thread pool
+    import asyncio
+    await asyncio.get_event_loop().run_in_executor(None, cleanup_expired_pdf_cache)
 
     yield  # Application runs here
 
@@ -132,31 +115,17 @@ async def lifespan(app: FastAPI):
     await shutdown_task_queue()
     logger.info("✓ Task queue manager stopped")
 
-    if shutdown_inproc_deep_research_app is not None:
-        logger.info("Shutting down in-process deep-research app...")
-        await shutdown_inproc_deep_research_app()
-        logger.info("✓ In-process deep-research app stopped")
-
     logger.info("Closing database connections...")
     await close_db()
     logger.info("✓ Database connections closed")
 
+    logger.info("Closing Redis connections...")
+    await close_redis()
+    logger.info("✓ Redis connections closed")
+
 
 # Create FastAPI app with lifespan
 app = FastAPI(title="PathLab Gateway", lifespan=lifespan)
-
-# Add request logging middleware
-@app.middleware("http")
-async def log_requests(request, call_next):
-    """Log all incoming requests for debugging"""
-    if request.url.path == "/chat":
-        logger.info(f"[Middleware] Incoming request: {request.method} {request.url.path}?{request.url.query}")
-        print(f"[Middleware] Incoming request: {request.method} {request.url.path}?{request.url.query}")
-    response = await call_next(request)
-    if request.url.path == "/chat":
-        logger.info(f"[Middleware] Response status: {response.status_code}")
-        print(f"[Middleware] Response status: {response.status_code}")
-    return response
 
 # Enable CORS for dev and on-prem SPA
 app.add_middleware(
@@ -170,6 +139,17 @@ app.add_middleware(
 # Serve user avatars as static files
 # These are stored in uploads/avatars/
 app.mount("/avatars", StaticFiles(directory=str(Config.get_uploads_dir() / "avatars")), name="avatars")
+
+# Serve frontend static assets (images, js, css) for direct Gateway access without Nginx
+# In production Nginx serves these; this ensures they work on dev / direct 127.0.0.1:6100 access
+_renderer_dist = Path(__file__).resolve().parent.parent.parent / "src" / "renderer" / "dist"
+if _renderer_dist.is_dir():
+    _images_dir = _renderer_dist / "images"
+    if _images_dir.is_dir():
+        app.mount("/images", StaticFiles(directory=str(_images_dir)), name="frontend-images")
+    _assets_dir = _renderer_dist / "assets"
+    if _assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="frontend-assets")
 
 
 async def wait_for_services_ready(timeout: float = 60.0, check_interval: float = 2.0) -> bool:
@@ -259,9 +239,9 @@ async def resume_interrupted_tasks():
     """
     Resume training tasks that were interrupted by system shutdown or crash.
 
-    Recoverable tasks are those with status 'pending', 'running', 'extracting',
-    'training', or 'resuming'.
-    - 'pending' tasks are included because the in-memory queue is lost on restart
+    Recoverable tasks are those with status 'pending', 'queued', 'patching',
+    'extracting', 'training', or 'resuming'.
+    - 'pending' and 'queued' tasks are included because the in-memory queue is lost on restart
     - 'resuming' tasks are included because a previous restart may have claimed them
       but the pipeline never started (e.g., due to another crash)
     - Failed tasks (status='failed') are NOT resumed as they failed normally.
@@ -403,25 +383,13 @@ app.include_router(ai_tasks_router)
 app.include_router(results_router)
 app.include_router(models_router)
 app.include_router(chat_router)
-if research_chat_router is not None:
-    try:
-        app.include_router(research_chat_router)
-        logger.info("✅ Research chat router registered at /agent/research/*")
-        print("✅ Research chat router registered at /agent/research/*")
-    except Exception as e:
-        logger.error(f"❌ Failed to register research chat router: {e}")
-        print(f"❌ Failed to register research chat router: {e}")
-        import traceback
-        traceback.print_exc()
-else:
-    logger.warning("⚠️ Research chat router is None, skipping registration")
-    print("⚠️ Research chat router is None, skipping registration")
 app.include_router(storage_router)
 app.include_router(queue_router)
 app.include_router(asr_router)
 app.include_router(heatmap_router)
 app.include_router(settings_router)
 app.include_router(gpu_router)
+app.include_router(annotation_router)
 
 logger.info("Gateway service initialized with all route modules")
 

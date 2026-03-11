@@ -317,13 +317,13 @@ export const DEFAULT_SEG_BACKBONE = 'resnet50'
 
 /**
  * Check whether a segmentation backbone/encoder name refers to a Foundation Model.
- * Mirrors backend `is_fm_encoder()` logic in segmentors/__init__.py:
- * FM if it's a known FM extractor but NOT a traditional SMP encoder.
+ * Mirrors backend segmentation capability logic:
+ * FM if it's a known extractor with spatial support and NOT a traditional SMP encoder.
  */
 export function isSegFmEncoder(encoderName: string | undefined): boolean {
   if (!encoderName) return false
   return (
-    FEATURE_EXTRACTORS.some((e) => e.id === encoderName) &&
+    FEATURE_EXTRACTORS.some((e) => e.id === encoderName && e.supports_spatial) &&
     !SEGMENTATION_BACKBONES.some((b) => b.id === encoderName)
   )
 }

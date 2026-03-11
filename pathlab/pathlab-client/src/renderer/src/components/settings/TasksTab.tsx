@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Layers, RefreshCw, Minus, Plus, CheckCircle, Cpu } from 'lucide-react'
+import { Layers, RefreshCw, Minus, Plus, CheckCircle, Cpu, AlertCircle } from 'lucide-react'
 import { Card } from '../ui/card'
 import { QueueStatus, getQueueStatus, updateQueueConfig, getQueueConfig } from '../../api'
 import { ShowConfirmDialog } from './ConfirmDialog'
@@ -56,6 +56,50 @@ export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProp
     } finally { setTaskSaving(false) }
   }
   const isSingleGPU = queueStatus?.gpu_count === 1
+  const queueDiagnosis = queueStatus
+    ? (() => {
+        if (!queueStatus.is_running) {
+          return {
+            tone: 'red' as const,
+            message: t('settings.tasksTab.diagnosisQueueStopped')
+          }
+        }
+        if (queueStatus.pending_count === 0) {
+          return {
+            tone: 'blue' as const,
+            message: t('settings.tasksTab.diagnosisNoPending')
+          }
+        }
+        if (queueStatus.running_count >= queueStatus.max_concurrent) {
+          return {
+            tone: 'amber' as const,
+            message: t('settings.tasksTab.diagnosisWaitingForSlot', {
+              running: queueStatus.running_count,
+              max: queueStatus.max_concurrent
+            })
+          }
+        }
+        if (queueStatus.vram_available === false) {
+          return {
+            tone: 'amber' as const,
+            message: t('settings.tasksTab.diagnosisWaitingForVram', {
+              details: queueStatus.vram_status || t('settings.tasksTab.vramStatusUnknown')
+            })
+          }
+        }
+        return {
+          tone: 'green' as const,
+          message: t('settings.tasksTab.diagnosisAutoStart')
+        }
+      })()
+    : null
+  const diagnosisClasses = queueDiagnosis?.tone === 'red'
+    ? 'bg-red-50 border-red-200 text-red-800'
+    : queueDiagnosis?.tone === 'amber'
+      ? 'bg-amber-50 border-amber-200 text-amber-800'
+      : queueDiagnosis?.tone === 'green'
+        ? 'bg-green-50 border-green-200 text-green-800'
+        : 'bg-blue-50 border-blue-200 text-blue-800'
 
   return (
     <div className="space-y-6">
@@ -121,6 +165,18 @@ export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProp
                 </div>
               </div>
             </div>
+
+            {queueDiagnosis && (
+              <div className={`p-4 rounded-xl border ${diagnosisClasses}`}>
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold">{t('settings.tasksTab.diagnosisTitle')}</p>
+                    <p className="text-sm leading-6">{queueDiagnosis.message}</p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Settings Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
@@ -216,6 +272,23 @@ export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProp
                     {t('settings.tasksTab.timeoutDescription')}
                   </p>
                 </form>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-4 h-4 mt-0.5 text-slate-600 flex-shrink-0" />
+                <div className="space-y-2 text-sm text-slate-700">
+                  <p className="font-semibold text-slate-900">{t('settings.tasksTab.whyQueuedTitle')}</p>
+                  <p>{t('settings.tasksTab.whyQueuedIntro')}</p>
+                  <ul className="list-disc pl-5 space-y-1.5">
+                    <li>{t('settings.tasksTab.reasonConcurrency')}</li>
+                    <li>{t('settings.tasksTab.reasonGpuVram')}</li>
+                    <li>{t('settings.tasksTab.reasonSharedQueue')}</li>
+                    <li>{t('settings.tasksTab.reasonCancellation')}</li>
+                    <li>{t('settings.tasksTab.reasonRecovery')}</li>
+                  </ul>
+                </div>
               </div>
             </div>
 

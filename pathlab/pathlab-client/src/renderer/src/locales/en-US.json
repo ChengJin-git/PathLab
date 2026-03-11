@@ -128,11 +128,6 @@
     "noRecentTasks": "No recent tasks",
     "untitledTask": "Untitled Task"
   },
-  "deepResearchPage": {
-    "backToAIChat": "Back to AI Chat",
-    "loadingDeepResearch": "Loading Deep Research...",
-    "restoringConversation": "Restoring your research conversation."
-  },
   "loginPage": {
     "title": "Digital Pathology",
     "titleSuffix": "",
@@ -155,7 +150,10 @@
     "donate": "Donate",
     "enterUsername": "Enter your username",
     "enterPassword": "Enter your password",
-    "buildVersion": "Build v1.1.0-stable"
+    "buildVersion": "Build v1.0.0-stable",
+    "legalNotice": "Before signing in, you may review the Terms of Service and Privacy Notice. First access still requires acceptance before you can enter the system.",
+    "viewTerms": "View Terms of Service",
+    "viewPrivacy": "View Privacy Notice"
   },
   "settings": {
     "title": "Settings",
@@ -181,9 +179,7 @@
     "gatewayService": "Gateway Service",
     "wsiService": "WSI Service",
     "aiService": "AI Service",
-    "about": {
-      "title": "About"
-    },
+    "about": "About",
     "aboutText1Part1": "PathLab",
     "aboutText1Part2": " is an AI-powered pathology analysis platform for pathology image analysis.",
     "aboutText2": "The platform integrates state-of-the-art deep learning models with an intuitive AI assistant to help researchers set up and run pathology analysis tasks.",
@@ -258,6 +254,108 @@
       "granting": "Granting...",
       "grantAccess": "Grant Access ({{count}})",
       "close": "Close"
+    },
+    "permissionCenterModal": {
+      "title": "Permission Center",
+      "description": "Switch between user-centric and dataset-centric authorization from one place.",
+      "byUser": "By User",
+      "byDataset": "By Dataset",
+      "userBrowser": "Users",
+      "datasetBrowser": "Datasets",
+      "userCount": "{{count}} users",
+      "searchDatasets": "Search datasets...",
+      "searchUsers": "Search users...",
+      "datasetCount": "{{count}} datasets",
+      "loadingUsers": "Loading users...",
+      "loadingDatasets": "Loading datasets...",
+      "noUsers": "No users found",
+      "noDatasets": "No datasets found",
+      "itemsPerPage": "Per page",
+      "pageInfo": "Page {{current}} / {{total}} · {{count}} items",
+      "previous": "Prev",
+      "next": "Next",
+      "datasetMeta": "{{count}} files",
+      "failedToLoadDatasets": "Failed to load datasets",
+      "failedToLoadUsers": "Failed to load users",
+      "failedToLoadUserPermissions": "Failed to load user permissions",
+      "failedToLoadDatasetPermissions": "Failed to load dataset permissions",
+      "selectUser": "User",
+      "selectUserPlaceholder": "Select a user",
+      "currentPermissions": "Current Permissions",
+      "currentPermissionsCount": "{{count}} active permissions",
+      "loadingUserPermissions": "Loading user permissions...",
+      "noCurrentPermissions": "This user does not currently have dataset access",
+      "selectedUserName": "Selected user: {{name}}",
+      "selectUserHint": "Select a user above to manage permissions",
+      "grantDatasets": "Grant Datasets",
+      "visibleDatasetsCount": "Visible datasets on this page: {{count}}",
+      "selectVisibleDatasets": "Select all available datasets on this page ({{count}})",
+      "allPageItemsSelected": "All {{count}} available items on this page are selected.",
+      "selectAllMatchingItems": "Select all matching items",
+      "allMatchingItemsSelected": "All {{count}} matching items are selected.",
+      "clearSelection": "Clear selection",
+      "selectingAll": "Selecting...",
+      "alreadyGranted": "Already granted",
+      "granting": "Submitting...",
+      "grantSelectedDatasets": "Grant Datasets ({{count}})",
+      "currentAccess": "Current Access",
+      "currentAccessCount": "{{count}} users currently have access",
+      "loadingDatasetPermissions": "Loading dataset permissions...",
+      "noCurrentAccess": "No users currently have access to this dataset",
+      "grantUsers": "Grant Users",
+      "selectedDatasetName": "Selected dataset: {{name}}",
+      "selectDatasetHint": "Select a dataset card above to manage access",
+      "selectVisibleUsers": "Select all visible users ({{count}})",
+      "noUsersMatchingSearch": "No users match the current search",
+      "noUsersAvailable": "All eligible users already have access",
+      "grantSelectedUsers": "Grant Users ({{count}})",
+      "partialGrantWarning": "Some grants failed ({{failed}}). Please review and retry if needed.",
+      "partialRevokeWarning": "Some revocations failed ({{failed}}). Please review and retry if needed.",
+      "failedToSelectAllDatasets": "Failed to select all matching datasets",
+      "failedToSelectAllUsers": "Failed to select all matching users",
+      "failedToGrantUserPermissions": "Failed to grant datasets to this user",
+      "failedToGrantDatasetPermissions": "Failed to grant this dataset to selected users",
+      "revokePermission": "Revoke Permission",
+      "revokeUserPermissionConfirm": "Are you sure you want to revoke {{userName}}'s access to \"{{datasetName}}\"?",
+      "revokeDatasetPermissionConfirm": "Are you sure you want to revoke {{userName}}'s access to \"{{datasetName}}\"?",
+      "failedToRevokeUserPermission": "Failed to revoke permission from this user",
+      "failedToRevokeDatasetPermission": "Failed to revoke access from this dataset",
+      "revokeAllPermissions": "Revoke All Permissions",
+      "revokeAllUserPermissionsConfirm": "Are you sure you want to revoke all dataset access from {{userName}}?",
+      "revokeAllDatasetPermissionsConfirm": "Are you sure you want to revoke access for {{count}} users from \"{{datasetName}}\"?",
+      "failedToRevokeUserPermissions": "Failed to revoke all permissions from this user",
+      "failedToRevokeDatasetPermissions": "Failed to revoke selected users from this dataset",
+      "revokeAll": "Revoke All"
+    },
+    "datasetPermissionModal": {
+      "title": "Manage Dataset Access",
+      "description": "Grant or revoke access starting from a dataset instead of a user.",
+      "loadingData": "Loading datasets and users...",
+      "failedToLoad": "Failed to load dataset permission center",
+      "failedToLoadPermissions": "Failed to load dataset permissions",
+      "failedToGrantPermissions": "Failed to grant dataset permissions",
+      "failedToRevokePermission": "Failed to revoke dataset permission",
+      "failedToRevokePermissions": "Failed to revoke dataset permissions",
+      "dataset": "Dataset",
+      "selectDataset": "Select dataset",
+      "noDatasets": "No datasets available",
+      "currentAccess": "Current Access",
+      "currentAccessCount": "{{count}} users currently have access",
+      "loadingPermissions": "Loading permissions...",
+      "noCurrentAccess": "No users currently have access to this dataset",
+      "grantAccess": "Grant Access",
+      "availableUsersCount": "{{count}} users can be granted access",
+      "searchUsers": "Search users to grant...",
+      "selectAllFiltered": "Select all visible users ({{count}})",
+      "noUsersAvailable": "All eligible users already have access",
+      "noUsersMatchingSearch": "No users match the current search",
+      "granting": "Granting...",
+      "grantSelected": "Grant Access ({{count}})",
+      "revokePermission": "Revoke Permission",
+      "revokePermissionConfirm": "Are you sure you want to revoke {{userName}}'s access to \"{{datasetName}}\"?",
+      "revokeAllPermissions": "Revoke All Permissions",
+      "revokeAllPermissionsConfirm": "Are you sure you want to revoke access for {{count}} users from \"{{datasetName}}\"?",
+      "revokeAll": "Revoke All"
     },
     "modelsTab": {
       "failedToLoadModels": "Failed to load models",
@@ -379,6 +477,20 @@
       "saving": "Saving...",
       "save": "Save",
       "timeoutDescription": "Maximum time allowed for a single task (in seconds)",
+      "diagnosisTitle": "Current diagnosis",
+      "diagnosisQueueStopped": "The queue worker is not running, so pending tasks will not advance automatically.",
+      "diagnosisNoPending": "There are currently no pending tasks.",
+      "diagnosisWaitingForSlot": "There are pending tasks, but running tasks have already reached the concurrency limit ({{running}} / {{max}}). A free slot is required first.",
+      "diagnosisWaitingForVram": "There are pending tasks, but GPU / VRAM conditions are not satisfied yet: {{details}}",
+      "diagnosisAutoStart": "Pending tasks already satisfy the concurrency limit and will continue automatically once a suitable GPU / VRAM window is available.",
+      "vramStatusUnknown": "VRAM status is currently unavailable",
+      "whyQueuedTitle": "Why can a task stay queued?",
+      "whyQueuedIntro": "The queue does auto-fill freed slots, but “max concurrent tasks” is an upper bound, not a guarantee that all tasks can start immediately.",
+      "reasonConcurrency": "A task can only continue when a concurrency slot becomes free.",
+      "reasonGpuVram": "Even with a free slot, the scheduler still needs an available GPU and enough free VRAM.",
+      "reasonSharedQueue": "Training jobs, inference jobs, and AI Chat Page PDF high-quality GPU parsing all share the same GPU queue.",
+      "reasonCancellation": "Cancelled tasks release resources asynchronously; once resources are actually released, later tasks are retried automatically.",
+      "reasonRecovery": "After a restart or power loss, queued training tasks that were persisted in the database are automatically re-queued; transient AI Chat Page PDF parsing jobs are not persisted and must be retriggered by a new request.",
       "running": "Running",
       "pending": "Pending",
       "unableToLoadQueue": "Unable to load queue status"
@@ -478,6 +590,8 @@
       "publishNotice": "Publish",
       "failedToSendNotice": "Failed to send notice",
       "createUser": "Create User",
+      "openPermissionCenter": "Permission Center",
+      "managePermissionsByDataset": "By Dataset",
       "refresh": "Refresh",
       "usersSelected": "{{count}} selected",
       "activate": "Activate",
@@ -601,6 +715,12 @@
       "filesSelected": "{{count}} files selected",
       "registering": "Registering...",
       "registerSelected": "Register Selected ({{count}})",
+      "showingRange": "Showing {{start}}-{{end}} of {{total}} files",
+      "pageIndicator": "Page {{page}} / {{totalPages}}",
+      "previousPage": "Previous page",
+      "nextPage": "Next page",
+      "wsiType": "WSI",
+      "patchType": "Patch",
       "importTaskSubmitted": "Import task submitted",
       "taskId": "Task ID",
       "filesBeingRegistered": "Files are being registered in the background",
@@ -644,29 +764,20 @@
       "modelNameHint": "Model name will be appended as ?model=... to the URL",
       "dashscopeApiKey": "DashScope API Key",
       "forQwen3Asr": "For Qwen3-ASR realtime.",
-      "searchProvider": "Search Provider",
-      "searchProviderHelp": "AI Chat and Deep Research will use the same web search provider selected here.",
-      "searchProviderOptions": {
-        "exa": "Exa",
-        "tavily": "Tavily"
-      },
       "exaApiKey": "Exa Search API Key",
-	      "tavilyApiKey": "Tavily API Key",
-	      "jinaApiKey": "Jina Reader API Key",
-	      "jinaApiKeyHelp": "Used by Deep Research for web page reading and article crawling.",
       "forWebSearch": "For AI web search capabilities.",
       "searching": "Searching...",
       "searchedPages": "Searched {{count}} pages",
       "summarizingSearch": "Summarizing search results...",
-	      "webSearchCard": "Web Research",
-	      "webResearchCard": "Web Research",
-      "downloadingPdf": "Downloading PDF paper...",
-      "parsingPdf": "Parsing PDF paper...",
-      "pdfParsedCount": "Parsed {{count}} PDF papers",
-      "pdfDownloadFailed": "PDF download failed",
-      "pdfParseFailed": "PDF parsing failed",
-      "pdfFailedCount": "{{count}} PDFs failed",
-      "summarizingPdf": "Generating paper summary..."
+      "webSearchCard": "Web Search",
+      "downloadingPdf": "Fetching document content...",
+      "parsingPdf": "Processing document content...",
+      "pdfParsedCount": "Processed {{count}} documents",
+      "pdfDownloadFailed": "Document fetch failed",
+      "pdfParseFailed": "Document parsing failed",
+      "pdfParseBusy": "The system is currently busy and cannot process this document right now. Please try again later.",
+      "pdfFailedCount": "{{count}} documents failed",
+      "summarizingPdf": "Generating content summary..."
     }
   },
   "layout": {
@@ -789,6 +900,8 @@
     "heatmapOverlayAlt": "Heatmap Overlay",
     "showHeatmap": "Show Heatmap",
     "hideHeatmap": "Hide Heatmap",
+    "showPredictionMask": "Show Prediction Mask",
+    "hidePredictionMask": "Hide Prediction Mask",
     "opacity": "Opacity",
     "activation": "Activation",
     "lowToHigh": "Low → High",
@@ -826,6 +939,7 @@
     "metric": "Metric",
     "value": "Value",
     "label": "Label",
+    "annotationStatus": "Annotation",
     "count": "Count",
     "truePred": "True \\ Pred",
     "colWsiId": "WSI ID",
@@ -988,10 +1102,19 @@
       "trainingDirs": "Training Directories",
       "logs": "Logs"
     },
+    "emptyDatasets": {
+      "title": "Empty Dataset Cleanup",
+      "description": "Remove historical dataset records that no longer contain any files. The cleanup runs as a background task so the page stays responsive.",
+      "button": "Cleanup Empty Datasets",
+      "starting": "Starting...",
+      "started": "Started background cleanup for {{count}} empty datasets",
+      "noop": "No empty datasets found"
+    },
     "errors": {
       "loadStatsFailed": "Failed to load storage stats",
       "detectOrphanedFailed": "Failed to detect orphaned files",
-      "cleanupFailed": "Failed to cleanup orphaned files"
+      "cleanupFailed": "Failed to cleanup orphaned files",
+      "cleanupEmptyDatasetsFailed": "Failed to start empty dataset cleanup"
     }
   },
   "newTask": {
@@ -1087,6 +1210,11 @@
       "created": "Created",
       "name": "Name"
     },
+    "pagination": {
+      "itemsPerPage": "Per page",
+      "summary": "Showing {{start}} to {{end}} of {{total}} tasks",
+      "pageInfo": "Page {{current}} / {{total}}"
+    },
     "columns": {
       "data": "Data",
       "extractor": "Feature Extractor",
@@ -1141,12 +1269,14 @@
     "failedToDeleteMessage": "Failed to delete message",
     "messageDeleted": "Message deleted",
     "cannotRegenerate": "Cannot regenerate: no user message found",
+    "cannotResubmitMissingFiles": "This message can't be resubmitted because its original uploaded file data is no longer available.",
     "failedToSaveTaskStatus": "Failed to save task status to server",
     "failedToSaveRegistrationStatus": "Failed to save registration status to server",
     "registrationStarted": "Registration started in background",
     "failedToSaveMetadataStatus": "Failed to save metadata upload status to server",
     "metadataUploaded": "Metadata uploaded: {{count}} files updated",
     "failedToSaveAnalysisStatus": "Failed to save analysis status to server",
+	    "failedToSavePatchInferenceStatus": "Failed to save image inference status to server",
     "aiErrorFallback": "Sorry, I encountered an error. Please try again.",
     "generationCancelled": "Response cancelled by user.",
     "generationTimeout": "Response timed out. Please try again.",
@@ -1160,13 +1290,6 @@
     "daysAgo": "{{count}}d ago",
     "closeHistory": "Close history",
     "history": "History",
-    "researchStages": {
-      "coordinating": "Coordinating...",
-      "planning": "Planning...",
-      "researching": "Researching...",
-      "coding": "Coding...",
-      "writingReport": "Writing report..."
-    },
     "sidebar": {
       "tools": "Tools",
       "dataRepository": "Data Repository",
@@ -1182,7 +1305,6 @@
     "deleteConversation": "Delete conversation",
     "closeChatHistory": "Close chat history",
     "openChatHistory": "Open chat history",
-    "newChat": "New Chat",
     "chat": "Chat",
     "back": "Back",
     "welcomeTitle": "Hello, I'm PathLab Agent",
@@ -1192,7 +1314,10 @@
     "goodResponse": "Good response",
     "badResponse": "Bad response",
     "copy": "Copy",
+    "copied": "Copied",
+    "copyCodeBlockAria": "Copy code block",
     "regenerate": "Regenerate",
+    "resubmit": "Resubmit",
     "deleteMessageAndContinue": "Delete this message and continue from here",
     "attachment": "Attachment",
     "listening": "Listening...",
@@ -1203,13 +1328,9 @@
       "description": "This conversation has become too long for the AI to process effectively. To ensure the best quality responses, please start a new conversation.",
       "newResearch": "New Research"
     },
-    "researchHandoff": {
-      "reportContextSummary": "Research report context attached (collapsed by default)",
-      "eyebrow": "Source deep research",
-      "title": "Attached research card",
-      "description": "This reply is grounded in a deep research result. You can jump back to the original research card to review the report and activity log.",
-      "open": "Open research card",
-      "openHint": "View the source report and activity trail"
+    "responseTruncated": {
+      "title": "Response truncated",
+      "description": "This reply hit the model's output-length limit, so it may be incomplete. You can send another message such as \"continue\" to let the AI keep going."
     },
     "disclaimer": "PathLab Agent can make mistakes. Consider checking important information.",
     "uploadedExcelWarning": "\n\n📎 **Uploaded Excel: {{name}}**\n **Warning: This file has multiple sheets ({{sheets}})**\nPlease save only the data sheet as a separate CSV file and re-upload.",
@@ -1258,12 +1379,6 @@
         "title": "Browse Images",
         "description": "Browse and analyze WSI or patches",
         "prompt": "I want to browse and analyze some pathology images (WSI or patches). Can you help me find the right ones based on my needs?"
-      },
-      "deepResearch": {
-        "title": "Deep Research",
-        "description": "AI-powered literature review and planning report",
-        "welcomeTitle": "Welcome to Deep Research",
-        "welcomeDescription": "Describe your research question and I will help you plan, investigate, and summarize the evidence."
       }
     },
     "taskSuccess": {
@@ -1461,11 +1576,13 @@
     "metricLabels": {
       "accuracy": "Accuracy",
       "iou": "IoU",
+      "miou": "mIoU",
       "dice": "Dice",
       "precision": "Precision",
       "recall": "Recall",
       "sensitivity": "Sensitivity",
       "specificity": "Specificity",
+      "weighted_kappa": "Weighted Kappa",
       "f1": "F1 Score",
       "auc": "AUC",
       "c_index": "C-Index",
@@ -1474,11 +1591,13 @@
     "metricDescriptions": {
       "accuracy": "Overall prediction accuracy",
       "iou": "Intersection over Union (Jaccard Index)",
+      "miou": "Mean Intersection over Union across segmentation classes",
       "dice": "Dice coefficient for segmentation overlap",
       "precision": "Positive predictive value",
       "recall": "True positive rate",
       "sensitivity": "True positive rate",
       "specificity": "True negative rate",
+      "weighted_kappa": "Quadratic-weighted Cohen's kappa agreement score",
       "f1": "Harmonic mean of precision and recall",
       "auc": "Area under ROC curve",
       "c_index": "Concordance index for survival prediction",
@@ -1524,6 +1643,7 @@
     "noDatasetsDescription": "Register your first dataset to get started with WSI analysis.",
     "editDataset": "Edit Dataset",
     "deleteDataset": "Delete Dataset",
+    "datasetDeleteStarted": "Started deleting dataset \"{{name}}\" in the background",
     "exportLabels": "Export Labels",
     "exportLabelsWithSplit": "Export Labels with Split",
     "exportSuccess": "Labels exported successfully",
@@ -1550,11 +1670,18 @@
       "clear": "Clear filters",
       "summary": "Showing {{shown}} of {{total}} datasets",
       "compactSummary": "{{shown}} / {{total}} datasets",
+      "selectSourceOrgan": "Select source organ",
+      "unknownSourceOrgan": "Unknown",
       "groups": {
         "taskType": "Task Type",
         "dataType": "Data Type",
-        "dataLevel": "Data Level"
+        "dataLevel": "Data Level",
+        "sourceOrgan": "Source Organ"
       }
+    },
+    "view": {
+      "iconView": "Icon view",
+      "listView": "List view"
     },
     "newDataset": "New Dataset",
     "newDatasetDescription": "Register slides to create a new dataset",
@@ -1589,6 +1716,7 @@
     "timeMonths": "Time (months)",
     "status": "Status",
     "label": "Label",
+    "annotationStatus": "Annotation Status",
     "patientInfo": "Patient Info",
     "action": "Action",
     "allPageSelected": "All {{count}} items on this page are selected.",
@@ -1601,6 +1729,9 @@
     "event": "Event",
     "censored": "Censored",
     "noLabel": "No Label",
+    "maskMatched": "Mask Matched",
+    "maskMissing": "Mask Missing",
+    "maskMatchedCount": "{{matched}}/{{total}} matched",
     "notSpecified": "Not specified",
     "sourcePrefix": "Source:",
     "viewFile": "View File",
@@ -1608,6 +1739,7 @@
     "deleteFile": "Delete File",
     "noCaseId": "No Case ID",
     "slidesCount": "{{count}} slides",
+    "slideCountSingle": "{{count}} slide",
     "mixed": "Mixed",
     "seeSlides": "See slides",
     "eventCount": "{{count}} Event",
@@ -1621,7 +1753,13 @@
     "cases": "cases",
     "slidesTotal": "{{count}} slides total",
     "files": "files",
-    "goTo": "Go to"
+    "goTo": "Go to",
+    "pagination": {
+      "goToPage": "Go to page",
+      "itemsPerPage": "Per page",
+      "summary": "Showing {{start}} to {{end}} of {{total}} datasets",
+      "pageInfo": "Page {{current}} / {{total}}"
+    }
   },
   "training": {
     "batchEdit": {
@@ -2080,6 +2218,7 @@
       "processing": "Processing...",
       "waitingForValidation": "Waiting for validation...",
       "taskNotFound": "Task not found",
+      "accessRevoked": "Your access to this analysis was revoked. You can no longer view it.",
       "analysisInProgress": "Analysis in progress",
       "noResults": "No results available",
       "fetchFailed": "Failed to fetch analysis results",
@@ -2184,7 +2323,14 @@
       "modelId": "Model ID",
       "taskId": "Task ID",
       "classes": "Classes",
-      "embeddingDim": "Embedding Dim"
+    "embeddingDim": "Embedding Dim",
+    "viewAnalysis": "View Analysis",
+    "viewTask": "View Task",
+    "exportModel": "Export Model",
+    "exportingModel": "Preparing Export...",
+    "exportReady": "Model export is ready: {{name}}",
+    "exportFailed": "Failed to export model",
+    "taskUnavailable": "This model is not linked to an available training task"
     },
     "navigationCard": {
       "task": "Task:",
@@ -2209,6 +2355,7 @@
       "loadingCharts": "Loading charts...",
       "chartsUnavailable": "Charts Unavailable",
       "taskNotFound": "Task not found or not completed",
+      "accessRevoked": "Your access to this visualization was revoked. You can no longer view it.",
       "noAnalysisResults": "No analysis results found",
       "fetchError": "Failed to fetch chart data",
       "taskLabel": "Task",
@@ -2274,6 +2421,9 @@
       "selectDatasetLabel": "Select Dataset",
       "loading": "Loading...",
       "chooseDataset": "Choose a dataset...",
+      "datasetWithSource": "{{name}} (source: {{source}})",
+      "sourceLabel": "Source: {{source}}",
+      "unknownSource": "Unknown",
       "dataGrouping": "Data Grouping",
       "fileLevel": "File Level",
       "fileLevelDesc": "Each file is an independent sample",
@@ -2328,6 +2478,7 @@
       "label": "Label",
       "event": "Event",
       "censored": "Censored",
+      "survivalTimeMonths": "Survival Time (m)",
       "time": "Time",
       "pred": "Pred",
       "dataset": "Dataset",
@@ -2373,6 +2524,27 @@
       "taskCancelledSuccess": "Task {{taskId}} cancelled successfully!",
       "taskRenamedSuccess": "Task renamed to \"{{newName}}\" successfully!"
     },
+    "patchInference": {
+	      "title": "Image inference",
+	      "summaryFallback": "I found models that may match this image.",
+      "source": "Source",
+      "classificationTitle": "Classification",
+      "segmentationTitle": "Segmentation",
+      "status": {
+        "queued": "Queued",
+        "running": "Running",
+        "completed": "Completed",
+        "failed": "Failed",
+        "cancelled": "Cancelled"
+      },
+      "missingImage": "I couldn't find the referenced image in the nearby conversation, so this card can't start inference yet.",
+	      "notReady": "This message is not ready for persistent image inference yet.",
+	      "submitting": "Submitting image inference...",
+	      "startFailed": "Failed to start image inference",
+	      "failed": "Image inference failed.",
+	      "noModel": "No compatible image inference model is available.",
+      "noSegmentationMask": "No positive segmentation mask was detected."
+    },
     "referenceCard": {
       "references": "References",
       "paper": "Paper",
@@ -2404,7 +2576,10 @@
     "metadata": "Metadata",
     "downloadSummary": "Download Summary",
     "rawData": "Raw Data",
-    "downloadFullResults": "Download Full Results"
+    "downloadFullResults": "Download Full Results",
+    "modelFiles": "Model Files",
+    "downloadModel": "Export Model",
+    "exportingModel": "Preparing Export..."
   },
   "analysisCharts": {
     "confusionMatrix": "Confusion Matrix",
@@ -2461,6 +2636,7 @@
       "unspecified": "Unspecified",
       "sourceOrganTissue": "Source (Organ/Tissue)",
       "sourcePlaceholder": "e.g., Lung, Breast",
+      "selectSourceOrgan": "Select source organ",
       "cancel": "Cancel",
       "saving": "Saving...",
       "saveChanges": "Save Changes",
@@ -2483,7 +2659,12 @@
       "dataLevel": "Data Level",
       "caseLevel": "Case Level",
       "fileLevel": "File Level",
-      "changingDataLevelWarning": "Changing data level may affect existing analyses"
+      "changingDataLevelWarning": "Changing data level may affect existing analyses",
+      "selectDatasetSource": "Please select a dataset source",
+      "unknownSourceOrgan": "Unknown",
+      "datasetSourceDescription": "This source will be applied to all files in the dataset.",
+      "otherSource": "Other",
+      "otherSourcePlaceholder": "Enter a custom source"
     },
     "fileMetadata": {
       "setMetadataForFiles": "Set Metadata for Files",
@@ -2501,6 +2682,7 @@
       "unspecified": "Unspecified",
       "sourceOrganTissue": "Source (Organ/Tissue)",
       "sourcePlaceholder": "e.g., Lung, Breast",
+      "selectSourceOrgan": "Select source organ",
       "filesSelected": "{{count}} files selected",
       "cancel": "Cancel",
       "uploadAllFiles": "Upload All Files"
@@ -2585,7 +2767,13 @@
       "fileLevel": "File Level",
       "fileLevelDesc": "Each slide is independent",
       "segmentationPatchOnly": "Segmentation only supports patch image data, not whole slide image data.",
-      "nextChooseFiles": "Next: Choose Files"
+      "nextChooseFiles": "Next: Choose Files",
+      "sourceOrganTissue": "Source (Organ/Tissue)",
+      "selectDatasetSource": "Please select a dataset source",
+      "unknownSourceOrgan": "Unknown",
+      "otherSource": "Other",
+      "otherSourcePlaceholder": "Enter a custom source",
+      "datasetSourceDescription": "This source will be applied to all files uploaded into the dataset."
     },
     "successStep": {
       "importSuccessful": "Import Successful",
@@ -2658,9 +2846,12 @@
       "kFold": "K-Fold",
       "folds": "folds",
       "riskGroup": "Risk Group",
+      "classes": "Classes",
       "prediction": "Prediction",
+      "predictionMask": "Prediction Mask",
       "patchHeatmap": "Patch Heatmap",
       "patches": "patches",
+      "noClasses": "No classes",
       "riskScore": "Risk Score"
     }
   },
@@ -2689,6 +2880,10 @@
       "storage": "Storage",
       "batchImport": "Batch Import",
       "metadataUpdate": "Metadata Update",
+      "deleteDataset": "Delete Dataset",
+      "cleanupEmptyDatasets": "Cleanup Empty Datasets",
+      "unbindDataset": "Unbind Dataset",
+      "resetDerivedData": "Reset Derived Data",
       "deleteExternal": "Delete External",
       "extraction": "Extraction",
       "task": "Task",
@@ -2734,8 +2929,8 @@
     }
   },
   "disclaimer": {
-    "title": "User Agreement & Disclaimer",
-    "fullTitle": "PathLab Terms of Service and User Agreement",
+    "title": "Terms of Service & Medical Disclaimer",
+    "fullTitle": "PathLab Terms of Service, User Agreement, and Medical Disclaimer",
     "operator": "Operator: SmartLab",
     "contact": "Contact",
     "scopeLabel": "Scope",
@@ -2744,15 +2939,19 @@
     "processing": "Processing...",
     "agreeAndContinue": "I Agree & Continue",
     "important": "Important",
-    "importantText": "By clicking \"I Agree & Continue\", you confirm that you have read and understood these Terms of Service, including the medical disclaimers and limitations of liability.",
+    "importantText": "By clicking \"I Agree & Continue\", you agree to these Terms, the medical disclaimer, and the Privacy Notice and Privacy Policy, consent to the use of electronic records to evidence your acceptance, and confirm that you understand the medical notices and liability limits.",
+    "privacyNoticeTitle": "Privacy Notice",
+    "privacyNoticeText": "Please review the Privacy Notice and Privacy Policy before continuing.",
+    "viewPrivacyPolicy": "View Privacy Notice & Policy",
     "yourIpAddress": "Your IP address is",
     "sections": {
       "s1": {
         "title": "1. Acceptance",
         "items": [
-          "1.1 By registering, signing in, downloading, installing, accessing, or using the Services, you acknowledge that you have read, understood, and agree to be bound by these Terms.",
+          "1.1 By clicking \"I Agree & Continue\" or otherwise registering, signing in, downloading, installing, accessing, or using the Services, you acknowledge that you have read, understood, and agree to be bound by these Terms.",
           "1.2 If you use the Services on behalf of an organization, you represent that you have authority to bind that organization, and the organization is responsible for your use.",
-          "1.3 If you do not agree to these Terms, do not use the Services."
+          "1.3 We may retain electronic records of acceptance, including available account identifiers, timestamps, and IP information submitted or detected at acceptance, to evidence assent, security, and compliance. In Hong Kong, this is intended to operate consistently with <lawCap553>the Electronic Transactions Ordinance (Cap. 553)</lawCap553>.",
+          "1.4 If you do not agree to these Terms, do not use the Services."
         ]
       },
       "s2": {
@@ -2788,28 +2987,31 @@
       "s5": {
         "title": "5. Services",
         "items": [
-          "5.1 Local Inference and Viewing: The Workbench supports WSI visualization, tiling, local inference, and overlay visualization of results entirely on your local machine.",
-          "5.2 Training and Task System: The Workbench may support creating and running local training tasks. Outcomes may vary based on data, configuration, environment, and randomness.",
-          "5.3 AI Chat and Wizard: The Services may provide an LLM-based assistant for parameter extraction, workflow guidance, and report assistance.",
-          "5.4 Report Generation: The Services may provide auto-generated analysis reports or templates; Outputs may vary by model and inputs.",
-          "5.5 Updates and Changes: We may update, modify, suspend, or discontinue features, APIs, models, algorithms, Outputs, or dependencies."
+          "5.1 Workbench Functions: The Services may support WSI upload, file-path registration, viewing, annotation, tiling, inference, and visualization of results.",
+          "5.2 Training and Task System: The Services may support local or connected training, task orchestration, and result generation. Outcomes may vary based on data, configuration, environment, and randomness.",
+          "5.3 AI Chat and Assistance: The Services may provide an LLM-based assistant for parameter extraction, workflow guidance, report drafting, and document or PDF parsing.",
+          "5.4 Voice and Search Features: Where enabled, the Services may transcribe audio input and retrieve third-party web content or search results.",
+          "5.5 Administrative Features: The Services may support account administration, temporary dataset permissions, maintenance notices, storage-path configuration, and similar operational controls.",
+          "5.6 Updates and Changes: We may update, modify, suspend, or discontinue features, APIs, models, algorithms, Outputs, integrations, or dependencies."
         ]
       },
       "s6": {
         "title": "6. Local Data Privacy and Compliance",
         "items": [
-          "6.1 Responsibility: You are solely responsible for local security, access controls, backup, retention, and deletion of your Data in accordance with your institutional requirements and applicable laws (e.g., HIPAA, GDPR).",
-          "6.2 No Central Storage: The Platform does not provide cloud storage for your whole slide images. You must maintain your own local storage and backups.",
-          "6.3 Data Exports: Any reports or data you choose to export or share are your sole responsibility."
+          "6.1 Responsibility: You are solely responsible for establishing a lawful basis, giving required notices, obtaining required consents, de-identifying data where required, and maintaining local security, access controls, backup, retention, and deletion of your Data in accordance with applicable law and institutional policy.",
+          "6.2 No General Cloud Storage: The Platform does not provide general cloud storage for your whole slide images by default. However, account records, dataset metadata, annotations, task records, results, permissions, and acceptance or notice records may be stored on service components that you operate or connect to.",
+          "6.3 Client-Side Caching: The web or desktop client may use browser storage, local caches, and PWA caching to improve performance. If you use a shared device, you are responsible for managing sessions, clearing caches, and controlling local access.",
+          "6.4 Data Exports: Any reports or data you choose to export, download, or share are your sole responsibility."
         ]
       },
       "s7": {
         "title": "7. Your Content, Data, and License to Us",
         "items": [
           "7.1 Your Ownership: As between you and the Platform, you retain rights to your Content and Data to the extent you own them.",
-          "7.2 License to the Platform: You grant us a limited license to process your Data locally on your device solely for the purpose of providing the Services (e.g., running inference, generating reports). Usage telemetry may be collected as described in Section 13.",
-          "7.3 Compliance: You represent that you have all necessary rights and permissions and that your Content and Data do not infringe third-party rights and comply with applicable law and institutional policies.",
-          "7.4 Sensitive Data Restrictions: Unless properly authorized and compliant, you must not submit patient-identifiable information in AI chat prompts, feedback forms, or other channels that may leave your local environment."
+          "7.2 License to the Platform: You grant us a limited license to host, process, transmit, display, index, and use your Content and Data only as necessary to provide the features you choose to use.",
+          "7.3 External Provider Processing: If you use features configured to call external providers, relevant prompts, audio, documents, metadata, IP information, or security tokens may be transmitted to those providers for that feature.",
+          "7.4 Compliance: You represent that you have all necessary rights and permissions and that your Content and Data do not infringe third-party rights and comply with applicable law and institutional policies.",
+          "7.5 Sensitive Data Restrictions: Unless properly authorized and compliant, you must not submit patient-identifiable information in AI chat prompts, feedback forms, voice features, search features, or other channels that may leave your local environment."
         ]
       },
       "s8": {
@@ -2817,7 +3019,7 @@
         "items": [
           "8.1 License: Models provided with the Service are for use within the Workbench only, unless explicitly stated otherwise.",
           "8.2 No Reverse Engineering: You must not reverse engineer, decompile, or attempt to extract proprietary model weights or architectures if they are protected.",
-          "8.3 Research Use: Unless certified, models are for Research Use Only and not for clinical diagnosis."
+          "8.3 Research Use: Unless expressly stated otherwise in writing for a specific deployment, models and Outputs are for research or workflow support only and not for clinical diagnosis or treatment decisions."
         ]
       },
       "s9": {
@@ -2837,8 +3039,9 @@
       "s10": {
         "title": "10. Third-Party Services and Open Source",
         "items": [
-          "10.1 The Services may integrate third-party services or rely on open source components (for example OpenCSG, Docker, databases, and UI components). Those components are governed by their respective licenses and terms.",
-          "10.2 We do not warrant the availability, security, or compliance of third-party services. To the extent permitted by law, we are not liable for interruptions or losses caused by third parties."
+          "10.1 The Services may integrate third-party providers or rely on open source components, including authentication or bot-protection services, public IP lookup, AI model APIs, speech recognition, web search, PDF parsing, databases, infrastructure, and UI libraries.",
+          "10.2 Those providers and components are governed by their own licenses, policies, and terms. Availability, security, data handling, and regional compliance may differ from the Platform.",
+          "10.3 To the extent permitted by law, we are not liable for interruptions or losses caused by third parties, and we may replace, reroute, or disable integrations at any time."
         ]
       },
       "s11": {
@@ -2858,33 +3061,37 @@
       "s13": {
         "title": "13. Privacy, Telemetry, and Logs",
         "items": [
-          "13.1 We may collect minimally necessary telemetry and logs, including but not limited to IP address, operating system, and browser information for security, auditing, troubleshooting, and product improvement, such as feature usage events, error logs, and performance metrics.",
-          "13.2 We will use reasonable measures to apply access controls and encrypted storage for telemetry and log data.",
-          "13.3 Our Privacy Policy governs personal data handling and forms part of these Terms."
+          "13.1 For security and service operation, we may collect or use account identifiers, agreement acceptance and notice acknowledgment records, IP addresses submitted or detected during login or acceptance, device, browser, and application details, audit events, error logs, performance metrics, and records relating to datasets, tasks, permissions, and results.",
+          "13.2 We use such data to authenticate users, enforce permissions, detect abuse, troubleshoot, maintain the Services, and comply with legal obligations.",
+          "13.3 We will take reasonable steps to protect personal data and to retain it no longer than reasonably necessary, subject to applicable law and legitimate operational needs, including where applicable <lawCap486>the Personal Data (Privacy) Ordinance (Cap. 486)</lawCap486>.",
+          "13.4 Where we separately provide a privacy notice, personal information collection statement, consent prompt, or in-product notice, it also applies to the relevant processing.",
+          "13.5 Where required by applicable law, including where applicable <lawCap486>the Personal Data (Privacy) Ordinance (Cap. 486)</lawCap486>, you may request access to and correction of personal data we hold about you through the contact channel we provide."
         ]
       },
       "s14": {
         "title": "14. Medical and Model Output Notices",
         "items": [
           "14.1 No Medical Advice: Outputs are for informational purposes only and do not constitute medical advice, diagnosis, or treatment.",
-          "14.2 Human Review Required: Any clinical decision must be independently evaluated and confirmed by qualified medical professionals.",
-          "14.3 No Accuracy Guarantee: Models may be biased or incorrect and may not generalize across populations, scanners, stains, and workflows."
+          "14.2 No Medical Device Representation: Unless expressly stated otherwise in writing for a specific deployment, the Services are not represented as a registered, approved, or certified medical device or clinical decision system.",
+          "14.3 Human Review Required: Any clinical, diagnostic, or patient-care decision must be independently evaluated and confirmed by qualified medical professionals.",
+          "14.4 No Accuracy Guarantee: Models may be biased or incorrect and may not generalize across populations, scanners, stains, laboratories, or workflows."
         ]
       },
       "s15": {
         "title": "15. Disclaimers",
         "items": [
           "15.1 To the maximum extent permitted by law, the Services are provided \"as is\" and \"as available\" without warranties of any kind.",
-          "15.2 We do not warrant uninterrupted availability, error-free operation, or fitness for your particular needs.",
-          "15.3 You assume all risks associated with use of the Services."
+          "15.2 We do not warrant uninterrupted availability, error-free operation, security, compatibility, or fitness for your particular needs, nor that third-party integrations or external content will remain available.",
+          "15.3 Third-party content, search results, transcriptions, parsed documents, and model Outputs may be incomplete, inaccurate, delayed, or unsuitable for your purpose.",
+          "15.4 Nothing in these Terms excludes or limits liability that cannot lawfully be excluded or limited. In Hong Kong, this includes limits arising under <lawCap71>the Control of Exemption Clauses Ordinance (Cap. 71)</lawCap71> and other mandatory law, including liability for death or personal injury caused by negligence, fraud, or fraudulent misrepresentation."
         ]
       },
       "s16": {
         "title": "16. Limitation of Liability",
         "items": [
-          "16.1 To the maximum extent permitted by law, the Platform and its developers are not liable for indirect, incidental, special, punitive, or consequential damages, including loss of profits, goodwill, business interruption, or data loss.",
-          "16.2 Our total liability (if any) arising out of or related to the Services will not exceed the total fees you actually paid to us for the Services in the 12 months preceding the event giving rise to the claim; if you paid no fees, liability will not exceed 1,000 HKD or equivalent, whichever is lower.",
-          "16.3 Some jurisdictions do not allow certain limitations, so these limitations may not apply to you to the extent prohibited."
+          "16.1 Subject to Section 15.4 and to the maximum extent permitted by law, the Platform and its developers are not liable for indirect, incidental, special, punitive, or consequential damages, including loss of profits, goodwill, business interruption, or data loss.",
+          "16.2 Subject to Section 15.4, our total liability (if any) arising out of or related to the Services will not exceed the total fees you actually paid to us for the Services in the 12 months preceding the event giving rise to the claim.",
+          "16.3 If you paid no fees, then subject to Section 15.4 and mandatory law, our total liability will not exceed HKD 1,000."
         ]
       },
       "s17": {
@@ -2907,15 +3114,16 @@
       "s19": {
         "title": "19. Changes to These Terms",
         "items": [
-          "19.1 We may update these Terms for compliance, security, or product iteration and will provide reasonable notice (for example in-product notice or email) where appropriate.",
-          "19.2 Continued use after the effective date of changes constitutes acceptance of the updated Terms."
+          "19.1 We may update these Terms for compliance, security, legal, or product reasons and will provide reasonable notice (for example in-product notice or email) where appropriate.",
+          "19.2 For material changes, we may require renewed click-through acceptance before continued access to some or all of the Services.",
+          "19.3 Continued use after the effective date of changes, or renewed acceptance where required, constitutes acceptance of the updated Terms."
         ]
       },
       "s20": {
         "title": "20. Governing Law and Dispute Resolution",
         "items": [
           "20.1 These Terms are governed by the laws of Hong Kong Special Administrative Region.",
-          "20.2 Disputes will first be attempted to be resolved through good-faith negotiation. If unresolved, disputes will be resolved by arbitration at the Hong Kong International Arbitration Centre or litigation in the courts of Hong Kong, depending on the mechanism you select and apply consistently.",
+          "20.2 The parties will first attempt in good faith to resolve any dispute. Any dispute not resolved will be subject to the exclusive jurisdiction of the courts of Hong Kong.",
           "20.3 You agree that electronic communications and records are admissible evidence."
         ]
       },
@@ -2925,7 +3133,86 @@
           "21.1 Severability: If any provision is invalid, the remainder remains in effect.",
           "21.2 No Waiver: Failure to enforce a provision is not a waiver.",
           "21.3 Assignment: You may not assign these Terms without our written consent. We may assign in connection with merger, reorganization, or asset transfer.",
-          "21.4 Entire Agreement: These Terms, the Privacy Policy, and posted rules constitute the entire agreement regarding the Services."
+          "21.4 Entire Agreement: These Terms, any separately provided privacy notice, personal information collection statement, consent prompt, and posted rules or notices constitute the entire agreement regarding the Services.",
+          "21.5 Language: If there is any inconsistency between language versions, the English version prevails to the extent permitted by law."
+        ]
+      }
+    }
+  },
+  "privacyPolicy": {
+    "title": "Privacy Notice",
+    "fullTitle": "PathLab Privacy Notice and Privacy Policy",
+    "operator": "Operator: SmartLab",
+    "contact": "Contact",
+    "introLabel": "How to read this notice",
+    "introText": "This notice explains, at a high level, how we handle personal data in connection with PathLab. In Hong Kong, relevant handling of personal data may be subject to <lawCap486>the Personal Data (Privacy) Ordinance (Cap. 486)</lawCap486>. It should be read together with the Terms of Service, medical notices, and any feature-specific prompts or notices shown in the product.",
+    "important": "Important",
+    "importantText": "Where a feature-specific notice, consent prompt, or institutional deployment notice states different details, the more specific notice governs that processing to the extent of the inconsistency.",
+    "backToTerms": "Back to Terms",
+    "sections": {
+      "s1": {
+        "title": "1. Scope and roles",
+        "items": [
+          "1.1 This Privacy Notice and Privacy Policy describes how SmartLab may collect, use, store, disclose, or otherwise process personal data in connection with account access to and use of the Services.",
+          "1.2 It covers data relating to account registration and login, agreement acceptance, maintenance notices, datasets, annotations, permissions, tasks, results, AI features, and support or feedback interactions.",
+          "1.3 If you use the Services on behalf of an institution, that institution may separately determine the purposes and means of handling source datasets and patient or research data that it uploads or manages through the Services."
+        ]
+      },
+      "s2": {
+        "title": "2. Categories of data we may handle",
+        "items": [
+          "2.1 Account and profile data, such as username, nickname, role, avatar, and related account identifiers.",
+          "2.2 Authentication and security data, such as login timestamps, agreement acceptance records, notice acknowledgment records, IP addresses submitted or detected during login or acceptance, and anti-abuse verification results where enabled.",
+          "2.3 Device, browser, client, and local storage data, such as application version, browser type, operating environment, local cache state, and similar troubleshooting information.",
+          "2.4 Service operation data, such as dataset metadata, file-path registration details, annotations, permissions, task records, reports, outputs, and audit or error logs.",
+          "2.5 Feature inputs, such as prompts, uploaded documents, parsed PDF content, search queries, voice audio, transcripts, and feedback that you choose to submit through enabled features."
+        ]
+      },
+      "s3": {
+        "title": "3. Purposes of processing",
+        "items": [
+          "3.1 To provide, authenticate, secure, maintain, and support the Services and related user accounts.",
+          "3.2 To operate requested features, including AI assistance, document parsing, speech transcription, search, task orchestration, visualization, and reporting.",
+          "3.3 To enforce permissions, investigate misuse, detect abuse, troubleshoot incidents, improve reliability, and comply with legal, regulatory, or institutional requirements."
+        ]
+      },
+      "s4": {
+        "title": "4. Data sources and your responsibilities",
+        "items": [
+          "4.1 We may receive personal data from you directly, from your organization or administrator, from your device or browser, or from integrations and service providers used to operate the Services.",
+          "4.2 You are responsible for ensuring that any patient, research, employee, or third-party data you upload, connect, or submit is lawfully collected, lawfully shared, and de-identified where required.",
+          "4.3 Local browser storage, desktop storage, or PWA caches may retain copies of certain data on your device. You are responsible for managing local access on shared machines."
+        ]
+      },
+      "s5": {
+        "title": "5. Disclosure, processors, and cross-border handling",
+        "items": [
+          "5.1 We may disclose or make data available to service providers and processors that support authentication, bot protection, public IP lookup, AI model APIs, speech recognition, web search, PDF parsing, hosting, infrastructure, storage, security, and similar operations.",
+          "5.2 Authorized administrators or institutional personnel may access relevant records where necessary for account administration, security response, auditing, permissions management, or legal compliance.",
+          "5.3 If you use external-provider features, relevant data may be processed outside Hong Kong or outside your institution's environment, subject to that provider's terms and policies. You remain responsible for determining whether that use is appropriate under your own compliance obligations and, where applicable, <lawCap486>the Personal Data (Privacy) Ordinance (Cap. 486)</lawCap486>."
+        ]
+      },
+      "s6": {
+        "title": "6. Retention and security",
+        "items": [
+          "6.1 We seek not to retain personal data for longer than is reasonably necessary for the disclosed purposes, subject to legal obligations, dispute handling, security needs, and legitimate operational requirements.",
+          "6.2 We use reasonable technical and organizational measures to protect personal data, including access controls and security monitoring where appropriate.",
+          "6.3 No internet or local computing environment is completely secure, and we cannot guarantee absolute security or uninterrupted availability."
+        ]
+      },
+      "s7": {
+        "title": "7. Access, correction, and contact",
+        "items": [
+          "7.1 Subject to applicable law, including where applicable <lawCap486>the Personal Data (Privacy) Ordinance (Cap. 486)</lawCap486>, you may request access to and correction of personal data we hold about you.",
+          "7.2 Requests and privacy-related enquiries may be sent to the contact address stated in this notice.",
+          "7.3 You may also manage or remove local device copies, browser storage, and cached data under your control."
+        ]
+      },
+      "s8": {
+        "title": "8. Changes to this notice",
+        "items": [
+          "8.1 We may update this Privacy Notice and Privacy Policy from time to time for legal, operational, security, or product reasons.",
+          "8.2 Where appropriate, we will provide notice through the product, by email, or by requiring renewed acceptance before continued use of some or all Services."
         ]
       }
     }

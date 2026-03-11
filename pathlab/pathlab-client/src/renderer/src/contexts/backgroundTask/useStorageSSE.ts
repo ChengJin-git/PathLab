@@ -1,5 +1,5 @@
 /**
- * SSE subscription hook for storage tasks (batch import, delete external, metadata update)
+ * SSE subscription hook for storage tasks (batch import, dataset deletion, metadata update, etc.)
  */
 
 import { useState, useEffect } from 'react'
@@ -9,7 +9,7 @@ import type { BackgroundTask, TaskType, TaskStatus, StorageTaskType } from './ty
 
 /**
  * Custom hook that manages the storage SSE connection and owns the storage tasks state.
- * Only connects when the user is admin. Returns the converted BackgroundTask[].
+ * Connects for authenticated users and returns only their own storage tasks.
  */
 export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: boolean) {
   const [storageTasks, setStorageTasks] = useState<BackgroundTask[]>([])
@@ -18,8 +18,8 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
     // Get auth token for SSE (EventSource doesn't support custom headers)
     const token = getAuthToken()
 
-    // Don't connect SSE if not authenticated, not admin, or no subscribers
-    if (!token || !isAdmin || !enabled) {
+    // Don't connect SSE if not authenticated or if there are no subscribers
+    if (!token || !isLoggedIn || !enabled) {
       return
     }
 
@@ -76,6 +76,22 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
               taskTypeDisplay = 'batch_update_metadata'
               taskPrefix = 'update'
               itemNamePrefix = 'Metadata Update'
+            } else if (task.task_type === 'delete_dataset') {
+              taskTypeDisplay = 'delete_dataset'
+              taskPrefix = 'delete_dataset'
+              itemNamePrefix = 'Delete Dataset'
+            } else if (task.task_type === 'cleanup_empty_datasets') {
+              taskTypeDisplay = 'cleanup_empty_datasets'
+              taskPrefix = 'cleanup_empty'
+              itemNamePrefix = 'Cleanup Empty Datasets'
+            } else if (task.task_type === 'unbind_dataset') {
+              taskTypeDisplay = 'unbind_dataset'
+              taskPrefix = 'unbind_dataset'
+              itemNamePrefix = 'Unbind Dataset'
+            } else if (task.task_type === 'reset_derived_data') {
+              taskTypeDisplay = 'reset_derived_data'
+              taskPrefix = 'reset'
+              itemNamePrefix = 'Reset Derived Data'
             } else {
               taskTypeDisplay = 'delete_external'
               taskPrefix = 'delete_ext'
@@ -104,9 +120,11 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
                 taskStatus = 'pending'
             }
 
-            const displayName = task.task_type === 'batch_import'
-              ? `${task.params?.dataset_name || 'Dataset'} (${task.processed_items || 0}/${task.total_items || 0})`
-              : `${itemNamePrefix} (${task.processed_items || 0}/${task.total_items || 0})`
+            const displayBaseName = task.task_type === 'batch_import' || task.task_type === 'delete_dataset'
+              ? task.params?.dataset_name || 'Dataset'
+              : itemNamePrefix
+
+            const displayName = `${displayBaseName} (${task.processed_items || 0}/${task.total_items || 0})`
 
             return {
               id: `${taskPrefix}_${task.task_id}`,
@@ -147,7 +165,7 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
     return () => {
       eventSource.close()
     }
-  }, [isAdmin, isLoggedIn, enabled])  // Re-connect SSE when login state, admin status, or subscription changes
+  }, [isAdmin, isLoggedIn, enabled])
 
   return { storageTasks }
 }

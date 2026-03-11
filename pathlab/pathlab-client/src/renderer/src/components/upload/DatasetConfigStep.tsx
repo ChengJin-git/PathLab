@@ -1,10 +1,11 @@
-import React, { useCallback } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, ArrowRight, Tags, Activity, Users, FileImage, Plus, Layers, Info } from 'lucide-react'
 import { PageHeader } from '../PageHeader'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import type { UploadMode, DataLevel } from './types'
+import { organSources } from './types'
 
 export interface DatasetConfigStepProps {
   datasetName: string
@@ -13,22 +14,73 @@ export interface DatasetConfigStepProps {
   onUploadModeChange: (mode: UploadMode) => void
   dataLevel: DataLevel
   onDataLevelChange: (level: DataLevel) => void
+  datasetSourceSelection: string
+  datasetSourceCustom: string
+  onDatasetSourceSelectionChange: (value: string) => void
+  onDatasetSourceCustomChange: (value: string) => void
   isExistingDataset: boolean
   existingDatasets: string[]
   showValidation: boolean
   fromAIChat: boolean
+  existingDatasetSource?: string
   onNext: () => void
   onBack: () => void
 }
 
 export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
   datasetName, onDatasetNameChange, uploadMode, onUploadModeChange,
-  dataLevel, onDataLevelChange, isExistingDataset, existingDatasets,
-  showValidation, fromAIChat, onNext, onBack
+  dataLevel, onDataLevelChange, datasetSourceSelection, datasetSourceCustom,
+  onDatasetSourceSelectionChange, onDatasetSourceCustomChange, isExistingDataset, existingDatasets,
+  showValidation, fromAIChat, existingDatasetSource, onNext, onBack
 }) => {
   const { t } = useTranslation()
+  const debounceTimerRef = useRef<NodeJS.Timeout>()
+  const [debouncedSourceCustom, setDebouncedSourceCustom] = useState(datasetSourceCustom)
 
   const isSegmentation = uploadMode === 'segmentation'
+  const isOtherSource = datasetSourceSelection === 'Other'
+  const canEditSource = !isExistingDataset
+  const sourceCustomPlaceholder = isOtherSource
+    ? t('uploadComponents.datasetConfig.otherSourcePlaceholder')
+    : datasetSourceSelection
+      ? ''
+      : t('uploadComponents.datasetConfig.selectDatasetSource')
+
+  // Sync external datasetSourceCustom changes (e.g., when selection changes to non-Other)
+  useEffect(() => {
+    if (!isOtherSource) {
+      setDebouncedSourceCustom('')
+    }
+  }, [isOtherSource])
+
+  // Handle debounced input for custom source
+  useEffect(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      onDatasetSourceCustomChange(debouncedSourceCustom)
+    }, 300)
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current)
+      }
+    }
+  }, [debouncedSourceCustom, onDatasetSourceCustomChange])
+
+  // Auto-fill source for existing datasets
+  useEffect(() => {
+    if (isExistingDataset && existingDatasetSource) {
+      if (organSources.includes(existingDatasetSource)) {
+        // Source is in the select options
+        onDatasetSourceSelectionChange(existingDatasetSource)
+      } else {
+        // Source is not in options, put in "Other" + custom field
+        onDatasetSourceSelectionChange('Other')
+        setDebouncedSourceCustom(existingDatasetSource)
+      }
+    }
+  }, [isExistingDataset, existingDatasetSource, onDatasetSourceSelectionChange])
 
   // When switching to segmentation, force data level to 'file' (patch-only)
   const handleUploadModeChange = useCallback((mode: UploadMode) => {
@@ -200,6 +252,45 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                   </div>
                 )}
               </div>
+              </div>
+
+              <div>
+                <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">
+                  {t('uploadComponents.datasetConfig.sourceOrganTissue')}
+                </label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+                  <select
+                    value={datasetSourceSelection}
+                    onChange={(e) => onDatasetSourceSelectionChange(e.target.value)}
+                    disabled={!canEditSource}
+                    className={`w-full px-4 sm:px-5 py-3 border rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all ${
+                      !canEditSource 
+                        ? 'bg-slate-100 border-slate-200 cursor-not-allowed opacity-60' 
+                        : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
+                    }`}
+                  >
+                    <option value="">{t('uploadComponents.datasetConfig.selectDatasetSource')}</option>
+                    {organSources.filter((source) => source !== 'Other').map((source) => (
+                      <option key={source} value={source}>{source}</option>
+                    ))}
+                    <option value="Other">{t('uploadComponents.datasetConfig.otherSource')}</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={isOtherSource ? debouncedSourceCustom : ''}
+                    onChange={(e) => setDebouncedSourceCustom(e.target.value)}
+                    disabled={!isOtherSource || !canEditSource}
+                    placeholder={sourceCustomPlaceholder}
+                    className={`w-full px-4 sm:px-5 py-3 border rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all ${
+                      !isOtherSource || !canEditSource
+                        ? 'bg-slate-100 border-slate-200 cursor-not-allowed opacity-60'
+                        : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
+                    }`}
+                  />
+                </div>
+                <p className="mt-3 text-sm text-slate-400">
+                  {t('uploadComponents.datasetConfig.datasetSourceDescription')}
+                </p>
               </div>
 
               <Button

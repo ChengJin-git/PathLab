@@ -2,7 +2,10 @@
  * File Type Constants
  *
  * Centralized file extension definitions for WSI and patch image files.
- * This mirrors the backend's backend/common/file_types.py — keep in sync.
+ * Keep extension lists and TIFF fallback threshold in sync with the backend.
+ * Note: authoritative TIFF classification happens in the backend, where ASlide
+ * can inspect pyramid levels and metadata. The frontend only keeps a lightweight
+ * size-based fallback heuristic for local UI decisions.
  */
 
 // WSI file extensions (excluding .tif/.tiff which need size check)
@@ -20,13 +23,13 @@ export const PATCH_EXTENSIONS: readonly string[] = [
   '.jpg', '.jpeg', '.png', '.bmp',
 ] as const
 
-// TIFF extensions that require size-based classification
+// TIFF extensions that use a lightweight frontend size-based fallback
 export const TIF_EXTENSIONS: readonly string[] = [
   '.tif', '.tiff',
 ] as const
 
-// File size threshold for determining WSI vs Patch for .tif/.tiff files (100 MB)
-export const SIZE_THRESHOLD = 100 * 1024 * 1024
+// File size threshold for determining WSI vs Patch for .tif/.tiff files (32 MB)
+export const SIZE_THRESHOLD = 32 * 1024 * 1024
 
 // All supported extensions (WSI + TIF + Patch)
 export const ALL_EXTENSIONS: readonly string[] = [
@@ -58,7 +61,13 @@ export function isSupportedName(name: string): boolean {
 }
 
 /** Determine whether a file should be treated as a WSI or Patch */
-export function getFileType(fileExtension: string | null, fileSize: number | null): 'WSI' | 'Patch' {
+export function getFileType(
+  fileExtension: string | null,
+  fileSize: number | null,
+  authoritativeDataType?: 'wsi' | 'patch' | null,
+): 'WSI' | 'Patch' {
+  if (authoritativeDataType === 'wsi') return 'WSI'
+  if (authoritativeDataType === 'patch') return 'Patch'
   if (!fileExtension) return 'WSI'
   const ext = fileExtension.toLowerCase()
 

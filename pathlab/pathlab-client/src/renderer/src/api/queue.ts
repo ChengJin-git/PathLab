@@ -1,5 +1,6 @@
 import { API_BASE } from '../config'
 import { apiFetch } from './client'
+import { invalidateTrainingTasksCache } from './training'
 
 // ============================================================================
 // GPU Task Queue APIs
@@ -105,10 +106,14 @@ export interface CancelQueueTaskResponse {
  * @throws {ApiError} If the request fails
  */
 export async function cancelQueueTask(taskId: string): Promise<CancelQueueTaskResponse> {
-  return apiFetch<CancelQueueTaskResponse>(
+  const result = await apiFetch<CancelQueueTaskResponse>(
     `${API_BASE}/queue/${taskId}`,
     { method: 'DELETE' },
     'Failed to cancel task'
   )
+  if (result.cancelled) {
+    invalidateTrainingTasksCache()
+  }
+  return result
 }
 

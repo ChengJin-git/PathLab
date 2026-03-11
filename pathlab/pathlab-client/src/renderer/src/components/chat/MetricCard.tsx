@@ -31,6 +31,9 @@ const METRIC_ICONS: Record<string, React.ReactNode> = {
   specificity: <Percent className="w-4 h-4" />,
   c_index: <TrendingUp className="w-4 h-4" />,
   integrated_brier_score: <Activity className="w-4 h-4" />,
+  iou: <Activity className="w-4 h-4" />,
+  miou: <Activity className="w-4 h-4" />,
+  dice: <Activity className="w-4 h-4" />,
 }
 
 /**

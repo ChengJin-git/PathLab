@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import time
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Union
@@ -44,12 +45,15 @@ from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 from backend.ai.permission_revocation import is_permission_revoked, PermissionRevokedException
+from backend.preprocessing.heatmap_preview_cache import ensure_recommendation_preview_cache
 from backend.ai.tasks.training_utils import (
     safe_update_progress as _safe_update_progress,
     scoped_db,
     is_kfold_splits,
     get_num_folds,
     calculate_kfold_classification_metrics,
+    calculate_progress_update_interval,
+    interpolate_progress,
 )
 import logging
 
@@ -57,6 +61,10 @@ import logging
 # WSIs with fewer patches are skipped during feature extraction and training
 # to avoid low-quality inputs that would degrade model performance.
 MIN_PATCHES_THRESHOLD = 100
+
+# Throttle WSI-classification result persistence to reduce end-of-training I/O spikes.
+SAVE_FILE_IO_MAX_WORKERS = 4
+SAVE_FILE_IO_BATCH_SIZE = 32
 
 
 class WSIClassificationTrainer(BaseTrainer):
@@ -860,6 +868,8 @@ class WSIClassificationTrainer(BaseTrainer):
                 torch.cuda.empty_cache()  # Release cached GPU memory
                 raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
 
+            epoch_start_time = time.time()
+
             # Run training epoch in thread pool to avoid blocking the event loop.
             # DataLoader iteration triggers torch.load() and GPU ops are blocking.
             running_loss, stop_reason = await asyncio.to_thread(
@@ -881,6 +891,7 @@ class WSIClassificationTrainer(BaseTrainer):
 
             epoch_loss = running_loss / max(1, len(train_dataset))
             history["train_loss"].append(epoch_loss)
+            prefix = f"{run_name} " if run_name else ""
 
             # Validation - run in thread pool (DataLoader + GPU inference are blocking)
             val_metrics = {"loss": None, "accuracy": None, "auc": None}
@@ -894,6 +905,9 @@ class WSIClassificationTrainer(BaseTrainer):
                 # Use AUC for model selection if available (higher is better)
                 # Fallbck to Loss (lower is better) if AUC is None
                 is_improvement = False
+                selection_metric_key = "val_auc" if val_metrics["auc"] is not None else "val_loss"
+                selection_metric_label = "Val AUC" if val_metrics["auc"] is not None else "Val Loss"
+                selection_metric_value = val_metrics["auc"] if val_metrics["auc"] is not None else val_metrics["loss"]
                 if val_metrics["auc"] is not None:
                      if best_val_auc is None or val_metrics["auc"] > best_val_auc:
                         best_val_auc = val_metrics["auc"]
@@ -907,29 +921,57 @@ class WSIClassificationTrainer(BaseTrainer):
                     best_val_loss = val_metrics["loss"]
                     best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                     epochs_without_improvement = 0
+                    best_metadata = {
+                        "epoch": epoch,
+                        selection_metric_key: selection_metric_value,
+                        "val_loss": val_metrics["loss"],
+                        "val_accuracy": val_metrics["accuracy"],
+                    }
+                    if fold_idx is not None:
+                        best_metadata["fold"] = fold_idx
+                    if val_metrics["auc"] is not None:
+                        best_metadata["val_auc"] = val_metrics["auc"]
+                    await logger.info(
+                        f"{prefix}Best validation model updated at epoch {epoch} | "
+                        f"{selection_metric_label}: {selection_metric_value:.4f}",
+                        metadata=best_metadata,
+                    )
                 else:
                     epochs_without_improvement += 1
 
-            # Log progress
-            log_msg = f"{run_name} Epoch {epoch}/{epochs} - train_loss: {epoch_loss:.4f}"
-            if val_dataset is not None and len(val_dataset) > 0:
-                log_msg += f", val_loss: {val_metrics['loss']:.4f}, val_acc: {val_metrics['accuracy']:.4f}"
+            # Update learning rate before logging so live LR matches the next-epoch optimizer state.
+            scheduler.step()
+            current_lr = optimizer.param_groups[0]["lr"]
+            epoch_time = time.time() - epoch_start_time
 
             # Prepare metadata with val_ prefix for validation metrics
-            metadata = {"epoch": epoch, "train_loss": epoch_loss}
+            metadata = {
+                "epoch": epoch,
+                "train_loss": epoch_loss,
+                "lr": current_lr,
+                "epoch_time_sec": epoch_time,
+            }
             if fold_idx is not None:
                 metadata["fold"] = fold_idx
+
+            log_parts = [
+                f"{prefix}Epoch {epoch}/{epochs}",
+                f"Train Loss: {epoch_loss:.4f}",
+            ]
             if val_dataset is not None and len(val_dataset) > 0:
                 metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
-            await logger.info(log_msg, metadata=metadata)
+                log_parts.append(f"Val Loss: {val_metrics['loss']:.4f}")
+                log_parts.append(f"Val Acc: {val_metrics['accuracy']:.4f}")
+                if val_metrics.get("auc") is not None:
+                    log_parts.append(f"Val AUC: {val_metrics['auc']:.4f}")
+            log_parts.append(f"LR: {current_lr:.2e}")
+            log_parts.append(f"Time: {epoch_time:.1f}s")
+            await logger.info(" | ".join(log_parts), metadata=metadata)
 
             # Calculate progress using epoch (not epoch-1) to ensure progress updates immediately from first epoch
             # For patch tasks, frontend maps 66-100 to 0-100, so we need immediate updates
             progress = progress_base + int(epoch / epochs * progress_range)
             await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
-
-            # Update learning rate
-            scheduler.step()
 
             # Early stopping check
             if val_dataset is not None and len(val_dataset) > 0 and epochs_without_improvement >= early_stopping_patience:
@@ -1191,6 +1233,16 @@ class WSIClassificationTrainer(BaseTrainer):
             async with scoped_db(session_maker) as db:
                 wsi_case_map = await TrainingTaskRepository.get_wsi_case_ids(db, self.task_id)
 
+            # Keep case-level mappings aligned with the filtered valid WSI set.
+            # Some task WSIs may have been excluded above due to missing/corrupted/
+            # low-patch features and must not re-enter training through case mapping.
+            valid_wsi_ids = set(all_wsi_ids)
+            wsi_case_map = {
+                wsi_id: case_id
+                for wsi_id, case_id in wsi_case_map.items()
+                if wsi_id in valid_wsi_ids
+            }
+
             # Build case_to_wsi mapping and case_labels
             case_to_wsi = {}
             for wsi_id, case_id in wsi_case_map.items():
@@ -1201,8 +1253,14 @@ class WSIClassificationTrainer(BaseTrainer):
             # case_labels: use label from first WSI in each case
             case_labels = {}
             for case_id, wsi_ids_in_case in case_to_wsi.items():
-                if wsi_ids_in_case:
-                    case_labels[case_id] = labels[wsi_ids_in_case[0]]
+                first_valid_wsi = next((wsi_id for wsi_id in wsi_ids_in_case if wsi_id in labels), None)
+                if first_valid_wsi is None:
+                    await logger.warning(
+                        f"[Case-Level] Skipping case {case_id}: no valid WSI remained after filtering",
+                        metadata={"case_id": case_id, "wsi_ids": wsi_ids_in_case[:20]}
+                    )
+                    continue
+                case_labels[case_id] = labels[first_valid_wsi]
 
             # Convert splits to case-level
             case_splits = self._convert_splits_to_case_level(splits_map, wsi_case_map)
@@ -1382,9 +1440,17 @@ class WSIClassificationTrainer(BaseTrainer):
         test_metrics = None
         if test_dataset is not None and len(test_dataset) > 0:
             test_metrics = await asyncio.to_thread(self._evaluate_split, model, test_dataset, classes, train_criterion)
+            test_metadata = {f"test_{k}": v for k, v in test_metrics.items()}
+            test_log_parts = [
+                "Final test results using best validation model",
+                f"Test Loss: {test_metrics['loss']:.4f}",
+                f"Test Acc: {test_metrics['accuracy']:.4f}",
+            ]
+            if test_metrics.get("auc") is not None:
+                test_log_parts.append(f"Test AUC: {test_metrics['auc']:.4f}")
             await logger.info(
-                f"Test metrics: loss={test_metrics['loss']:.4f}, acc={test_metrics['accuracy']:.4f}",
-                metadata=test_metrics
+                " | ".join(test_log_parts),
+                metadata=test_metadata
             )
 
         # Save checkpoint - blocking disk I/O
@@ -1629,9 +1695,13 @@ class WSIClassificationTrainer(BaseTrainer):
             )
 
             auc_str = f"{val_metrics['auc']:.4f}" if val_metrics['auc'] is not None else 'N/A'
+            fold_summary_metadata = {"fold": fold_idx + 1, **{f"val_{k}": v for k, v in val_metrics.items()}}
             await logger.info(
-                f"Fold {fold_idx + 1} complete: acc={val_metrics['accuracy']:.4f}, auc={auc_str}",
-                metadata={"fold": fold_idx + 1, **val_metrics}
+                f"Fold {fold_idx + 1} validation summary | "
+                f"Val Loss: {val_metrics['loss']:.4f} | "
+                f"Val Acc: {val_metrics['accuracy']:.4f} | "
+                f"Val AUC: {auc_str}",
+                metadata=fold_summary_metadata
             )
 
         # Calculate aggregated statistics (basic metrics from training, rounded to 4 decimal places)
@@ -1754,10 +1824,10 @@ class WSIClassificationTrainer(BaseTrainer):
         - Batch database inserts for performance
 
         Progress allocation within the given range:
-        - 0-20%: Inference
-        - 20-80%: File I/O (per-file progress)
-        - 80-90%: Database insert
-        - 90-100%: Metrics calculation
+        - 0-50%: Inference + result preparation
+        - 50-85%: File I/O (per-file progress)
+        - 85-90%: Database insert
+        - 90-100%: Final metrics / completion handoff
 
         Args:
             model: Trained model for inference
@@ -1800,13 +1870,26 @@ class WSIClassificationTrainer(BaseTrainer):
         else:
             total_wsi = len(dataset)
 
-        # Calculate progress points based on progress_base and progress_range
-        # Allocation: 20% inference, 60% file I/O, 10% DB, 10% metrics
+        # Calculate progress points based on progress_base and progress_range.
+        # Keep the last integer slot for the final completed=100 handoff.
+        max_saving_progress = progress_base + max(progress_range - 1, 0)
         progress_inference = progress_base
-        progress_file_io_start = progress_base + int(progress_range * 0.2)
-        progress_file_io_end = progress_base + int(progress_range * 0.8)
-        progress_db = progress_base + int(progress_range * 0.8)
-        progress_metrics = progress_base + int(progress_range * 0.9)
+        progress_file_io_start = max(
+            progress_inference,
+            min(max_saving_progress, progress_base + int(progress_range * 0.5)),
+        )
+        progress_file_io_end = max(
+            progress_file_io_start,
+            min(max_saving_progress, progress_base + int(progress_range * 0.85)),
+        )
+        progress_db = max(
+            progress_file_io_end,
+            min(max_saving_progress, progress_base + int(progress_range * 0.9)),
+        )
+        progress_metrics = max(
+            progress_db,
+            min(max_saving_progress, progress_base + int(progress_range * 0.95)),
+        )
 
         await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_inference)
         unit_name = "slides" if is_case_level else "WSI slides"
@@ -1830,6 +1913,13 @@ class WSIClassificationTrainer(BaseTrainer):
             num_workers=0,
         )
 
+        running_loop = asyncio.get_running_loop()
+        inference_update_interval = calculate_progress_update_interval(
+            total_wsi,
+            target_updates=25,
+            max_interval=200,
+        )
+
         # Phase 1: Run inference and collect results in thread pool.
         # DataLoader triggers torch.load() in __getitem__(), and GPU inference is blocking.
         def _run_inference():
@@ -1840,6 +1930,7 @@ class WSIClassificationTrainer(BaseTrainer):
             all_sample_ids = []
             inference_results = []
             db_records = []
+            processed_wsi = 0
 
             with torch.inference_mode():
                 for batch in inference_loader:
@@ -1950,6 +2041,7 @@ class WSIClassificationTrainer(BaseTrainer):
                                     "aggregation_level": "case",
                                 }
                             })
+                        processed_wsi += max(1, len(slide_wsi_ids))
                     else:
                         # Slide-level: original behavior
                         wsi_id = sample_id
@@ -1997,6 +2089,19 @@ class WSIClassificationTrainer(BaseTrainer):
                                 "attention_file": attention_file_path,
                             }
                         })
+                        processed_wsi += 1
+
+                    if processed_wsi % inference_update_interval == 0 or processed_wsi >= total_wsi:
+                        inference_progress = interpolate_progress(
+                            progress_inference,
+                            progress_file_io_start,
+                            processed_wsi,
+                            total_wsi,
+                        )
+                        asyncio.run_coroutine_threadsafe(
+                            _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, inference_progress),
+                            running_loop,
+                        )
 
             return all_probs, all_preds, all_labels_list, all_sample_ids, inference_results, db_records
 
@@ -2008,12 +2113,25 @@ class WSIClassificationTrainer(BaseTrainer):
             f"[Saving] Writing {total_wsi} result files to disk...",
             metadata={"phase": "writing_files", "num_files": total_wsi}
         )
+        await logger.info(
+            "[Saving] Using throttled file I/O to reduce disk pressure",
+            metadata={
+                "phase": "writing_files",
+                "max_workers": SAVE_FILE_IO_MAX_WORKERS,
+                "batch_size": SAVE_FILE_IO_BATCH_SIZE,
+            }
+        )
 
         # Track completed files for progress updates
         completed_count = [0]  # Use list for mutable reference in closure
         progress_lock = asyncio.Lock()
-        # Calculate file I/O progress range (60% of total range)
+        # Calculate file I/O progress range within the allocated saving window
         file_io_progress_range = progress_file_io_end - progress_file_io_start
+        file_update_interval = calculate_progress_update_interval(
+            total_wsi,
+            target_updates=20,
+            max_interval=200,
+        )
 
         def save_single_wsi_files(item, fold_suffix: str, task_id: str):
             """Synchronous function to save files for a single WSI."""
@@ -2027,6 +2145,7 @@ class WSIClassificationTrainer(BaseTrainer):
             if attention_np is not None:
                 attention_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy"
                 np.save(attention_file, attention_np)
+                ensure_recommendation_preview_cache(wsi_id, attention_file, Config.get_uploads_dir())
 
             if raw_attention_np is not None:
                 raw_attention_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_attention_raw.npy"
@@ -2045,21 +2164,27 @@ class WSIClassificationTrainer(BaseTrainer):
             )
             async with progress_lock:
                 completed_count[0] += 1
-                # Update progress every 10% of files or at least every 500 files (reduced frequency for performance)
-                update_interval = max(1, min(total // 10, 500))
-                if completed_count[0] % update_interval == 0 or completed_count[0] == total:
+                if completed_count[0] % file_update_interval == 0 or completed_count[0] == total:
                     # Progress based on file completion within the file I/O range
-                    file_progress = file_io_start + int(completed_count[0] / total * file_io_range)
+                    file_progress = interpolate_progress(
+                        file_io_start,
+                        file_io_start + file_io_range,
+                        completed_count[0],
+                        total,
+                    )
                     await _safe_update_progress(session_maker_ref, task_id_for_update, TaskStatus.TRAINING, file_progress)
             return result
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
-            tasks = [
-                save_with_progress(executor, item, fold_suffix, task_id, total_wsi, session_maker, self.task_id,
-                                   progress_file_io_start, file_io_progress_range)
-                for item in inference_results
-            ]
-            await asyncio.gather(*tasks)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=SAVE_FILE_IO_MAX_WORKERS) as executor:
+            for batch_start in range(0, total_wsi, SAVE_FILE_IO_BATCH_SIZE):
+                batch_items = inference_results[batch_start:batch_start + SAVE_FILE_IO_BATCH_SIZE]
+                tasks = [
+                    save_with_progress(executor, item, fold_suffix, task_id, total_wsi, session_maker, self.task_id,
+                                       progress_file_io_start, file_io_progress_range)
+                    for item in batch_items
+                ]
+                await asyncio.gather(*tasks)
+                await asyncio.sleep(0)
 
         # Phase 3: Batch database insert
         await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_db)

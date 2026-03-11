@@ -1,6 +1,6 @@
 import { API_BASE } from '../config'
 import { createCache, DEFAULT_CACHE_TTL } from '../lib/cache'
-import { apiFetch } from './client'
+import { apiFetch, buildSearchParams } from './client'
 import { invalidateHeatmapAvailabilityCache } from './heatmap'
 
 // ============================================================================
@@ -109,10 +109,7 @@ export interface DeleteWSIResultsResponse {
  * @throws {ApiError} If the request fails
  */
 export async function deleteWSIResults(wsi_id: string, task_id?: string): Promise<DeleteWSIResultsResponse> {
-  const params = new URLSearchParams()
-  if (task_id) {
-    params.set('task_id', task_id)
-  }
+  const params = buildSearchParams({ task_id })
 
   const url = `${API_BASE}/results/wsi/${encodeURIComponent(wsi_id)}${params.toString() ? '?' + params.toString() : ''}`
 

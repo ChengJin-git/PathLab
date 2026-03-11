@@ -1,83 +1,81 @@
 # PathLab Client
 
-`pathlab-client/` 是当前主应用目录，包含 Electron 主进程、React 渲染层、Python sidecar，以及固定端口 Web / 运维部署脚本。
+`pathlab-client/` 是当前主应用目录，包含 Electron 宿主、React 渲染层、Python sidecar，以及固定端口部署所需的运维脚本。
 
 ## 当前入口文件
 
 - `electron.vite.config.ts`：Electron `main` / `preload` / `renderer` 联合构建入口
-- `src/main/index.ts`：Electron 主进程入口，负责窗口、深链、sidecar 生命周期与 IPC
-- `src/preload/index.ts`：向渲染层暴露登录跳转、文件选择、Gateway 端口发现等能力
-- `src/renderer/vite.config.ts`：独立 Web 构建配置
+- `src/main/index.ts`：Electron 主进程入口
+- `src/main/sidecar-manager.ts`：Python sidecar 启停与端口发现
+- `src/preload/index.ts`：向渲染层暴露后端端口发现能力
+- `src/renderer/vite.config.ts`：独立 Web 构建入口
 - `server/main.py`：Python sidecar 统一入口
-- `deploy/start.sh` / `deploy/hot-reload.sh`：固定端口部署脚本
-
-## 运行模式
-
-| 模式 | 启动方式 | 适用场景 | 说明 |
-|------|---------|---------|------|
-| Electron 开发 | `npm run dev` | 本地联调 | `electron-vite dev`，主进程拉起 Python sidecar，默认动态端口发现 |
-| Electron 打包 | `npm run build:linux` / `build:win` / `build:mac` | 桌面分发 | 生成 Electron 构建产物，运行时仍由主进程拉起 sidecar |
-| 固定端口调试 | `PATHLAB_DEBUG=1 python server/main.py` | 后端/前端分离调试 | 固定 `5100 / 5101 / 5102` |
-| Web / 运维部署 | `deploy/start.sh` / `deploy/hot-reload.sh` | 浏览器访问、Nginx 代理 | 固定 `6100 / 6101 / 6102`，并构建 `src/renderer/dist` |
-
-## 功能特性
-
-- **WSI 阅片器**：基于 OpenSeadragon 的全切片图像可视化
-- **AI Chat**：流式对话、会话持久化、PDF 引用与辅助阅读
-- **Deep Research**：研究计划、执行、报告与研究作业持久化
-- **训练系统**：19 个特征提取器 + 8 个 MIL 聚合器
-- **任务类型**：WSI 分类、WSI 生存预测、Patch 分类、Patch 分割
-- **推理与结果**：当前公开推理接口以 WSI 分类为主，支持热图 / Patch CAM / 分割结果查看
-- **模型管理**：训练模型保存、激活、默认模型切换与外部验证相关能力
-- **存储管理**：统计、迁移、批量导入、派生数据重置、孤立项清理
-- **GPU 队列**：并发控制、任务恢复、状态推送
-- **语音识别**：Gateway 暴露 Qwen3-ASR 相关接口
-- **本地认证**：FastAPI-Users + JWT + 用户 `nonce` 控制
+- `build-python.sh`、`main.spec`、`server/main.spec`：Python 侧打包辅助文件
+- `deploy/start.sh` / `deploy/hot-reload.sh`：固定端口部署与热更新脚本
+- `package.json`：Electron 开发 / 构建脚本定义（`dev`、`build`、`start` 等）
 
 ## 当前目录结构
 
 ```text
 pathlab-client/
 ├── deploy/                 # 启动、热更新、Nginx、systemd 模板
-├── server/                 # Python sidecar 与共享后端模块
+├── logs/                   # 固定端口脚本输出日志
+├── server/                 # Python sidecar
 ├── src/
 │   ├── main/               # Electron 主进程
-│   ├── preload/            # Electron preload / IPC 桥
+│   ├── preload/            # Electron preload
 │   └── renderer/           # React + Vite 前端
+├── build-python.sh
 ├── electron.vite.config.ts
+├── main.spec
 ├── package.json
 └── README.md
 ```
 
+## 运行方式说明
+
+### 1. Electron / 动态端口模式
+
+- 主进程启动 sidecar
+- `server/main.py` 自动选择可用端口
+- Gateway 端口通过 stdout / preload / IPC 传给渲染层
+- 前端运行时据此更新 API 基址
+- 主进程当前还处理 `pathlab://` 深链登录回调，并向渲染层暴露文件 / 目录选择 IPC
+
+### 2. 固定端口调试 / 部署模式
+
+- `PATHLAB_DEBUG=1` 时使用 `6100 / 6101 / 6102`
+- `deploy/start.sh` 与 `deploy/hot-reload.sh` 也围绕这组端口工作
+- 浏览器调试、Nginx 反向代理和本地运维脚本都按这组端口设计
+
 ## 当前代码层次
+
+### Electron 宿主
+
+- `src/main/index.ts` 负责窗口生命周期、深链回调、权限请求与 sidecar 启停
+- `src/preload/index.ts` 暴露认证回调、后端端口发现、文件 / 目录选择 IPC
+- `src/main/sidecar-manager.ts` 将 `Gateway / Preprocessing / AI` 端口变化推送给渲染层
 
 ### 前端
 
 - React 18 + TypeScript + Vite + Tailwind CSS
-- Electron 下使用 `HashRouter`，Web 构建下使用 `BrowserRouter`
+- BrowserRouter / HashRouter 双运行时
 - 模块化 API 客户端位于 `src/renderer/src/api/`
-- Deep Research 前端位于 `src/renderer/src/pages/DeepResearch/` 与 `src/renderer/src/lib/deep-research/`
-- PWA 能力由 `vite-plugin-pwa` 提供；Electron 渲染进程也复用同一套 React 应用
-
-### Electron 宿主层
-
-- 主进程负责启动 / 停止 Python sidecar
-- 通过 `pathlab://auth` 深链接收 OAuth 回调
-- preload 当前暴露：外部 URL 打开、Gateway 端口获取、文件/目录选择、Deep Research 前端日志落盘
+- 浏览器模式支持 PWA；Electron 模式不注册 Service Worker
 
 ### 后端
 
-- FastAPI Gateway 负责对外 API、认证、业务编排
-- Preprocessing 负责 WSI 信息、缩略图、DZI、tile、patch 与热图底层接口
-- AI 服务负责训练、推理与特征提取
-- PostgreSQL + Redis + `uploads/` 文件系统共同组成运行时状态层
+- Gateway 负责认证、公开 API、任务编排与静态资源挂载
+- Preprocessing 负责 WSI 信息、图像、缩略图、DZI、瓦片与部分热图辅助逻辑
+- AI 服务负责训练、推理与模型相关内部能力
+- PostgreSQL + Redis + `uploads/` 共同组成运行时状态层
 
 ## 当前已确认的实现事实
 
-- Gateway 当前无条件注册 15 个 router，并在 `research_chat.py` 可成功导入时额外注册 Deep Research 代理路由
-- `server/backend/database/models.py` 当前定义 18 个业务 ORM 表；加上 `users` 共 19 个可见 ORM 表
-- 标注表当前模型名为 `segmentation_annotations`
-- `annotation.py` 路由模块仍存在，但当前 `gateway/main.py` 没有直接 `include_router(annotation_router)`
+- Gateway 当前直接注册 16 个顶层 router，并组合若干分析 / 聊天 / 存储辅助模块
+- 数据库当前可见 ORM 表为 17 个，其中标注表为 `segmentation_annotations`
+- 前端构建更应以 `vite.config.ts`、`electron.vite.config.ts` 与 `deploy/` 脚本为准，而不是沿用旧版 README 的脚本描述
+- 仓库中虽有 `server/backend/deep-research/` 目录，但当前 README 不再把它当作独立运行模块或单独文档入口
 
 ## 推荐阅读顺序
 

@@ -61,6 +61,7 @@ export function EditMetadataModal({ taskType, editingWSI, updating, onConfirm, o
   }
 
   const isSurvival = taskType === 'survival'
+  const isSegmentation = taskType === 'segmentation'
   const labelHint = t('training.editMetadata.labelHint')
 
   return (
@@ -112,7 +113,7 @@ export function EditMetadataModal({ taskType, editingWSI, updating, onConfirm, o
               />
             </div>
           </div>
-        ) : (
+        ) : !isSegmentation ? (
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">{labelHint}</label>
             <input
@@ -123,7 +124,7 @@ export function EditMetadataModal({ taskType, editingWSI, updating, onConfirm, o
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
-        )}
+        ) : null}
 
         <div className="mb-4">
           <label className="block text-sm font-medium text-gray-700 mb-2">{t('training.editMetadata.caseId')}</label>

@@ -11,7 +11,17 @@ from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 
-from ..models import DataGroup, Dataset, WSISlide, AITask, AIResult, TrainingTaskWSI, utc_now
+from ..models import (
+    DataGroup,
+    Dataset,
+    DatasetPermission,
+    SegmentationAnnotation,
+    WSISlide,
+    AITask,
+    AIResult,
+    TrainingTaskWSI,
+    utc_now,
+)
 
 
 class DatasetRepository:
@@ -106,6 +116,24 @@ class DatasetRepository:
         return result.scalars().all()
 
     @staticmethod
+    async def get_empty_datasets(db: AsyncSession) -> List[Dataset]:
+        """Get datasets that no longer have any WSI rows."""
+        empty_dataset_ids = (
+            select(Dataset.dataset_id)
+            .outerjoin(WSISlide, Dataset.dataset_id == WSISlide.dataset_id)
+            .group_by(Dataset.dataset_id)
+            .having(func.count(WSISlide.id) == 0)
+        )
+
+        result = await db.execute(
+            select(Dataset)
+            .options(selectinload(Dataset.data_group))
+            .where(Dataset.dataset_id.in_(empty_dataset_ids))
+            .order_by(Dataset.name)
+        )
+        return result.scalars().all()
+
+    @staticmethod
     async def get_by_ids(db: AsyncSession, dataset_ids: List[str]) -> List[Dataset]:
         """Get multiple datasets by IDs in a single query (batch operation)"""
         if not dataset_ids:
@@ -135,8 +163,9 @@ class DatasetRepository:
 
         Deletion order (PostgreSQL FK-safe):
         1. Leaf records of WSI slides (ai_results, ai_tasks, training_task_wsi)
-        2. WSI slides in this dataset
-        3. The dataset itself (dataset_permissions auto-cascade via DB ondelete=CASCADE)
+        2. Dataset-level records (segmentation annotations, permissions)
+        3. WSI slides in this dataset
+        4. The dataset itself
         """
         # Get all wsi_ids in this dataset
         wsi_query = await db.execute(
@@ -155,6 +184,13 @@ class DatasetRepository:
             await db.execute(
                 delete(TrainingTaskWSI).where(TrainingTaskWSI.wsi_id.in_(wsi_ids))
             )
+
+        await db.execute(
+            delete(SegmentationAnnotation).where(SegmentationAnnotation.source_dataset_id == dataset_id)
+        )
+        await db.execute(
+            delete(DatasetPermission).where(DatasetPermission.dataset_id == dataset_id)
+        )
 
         # Delete WSI slides
         await db.execute(

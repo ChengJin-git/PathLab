@@ -1,5 +1,5 @@
 import { API_BASE } from '../config'
-import { apiFetch, apiFetchBlob } from './client'
+import { apiFetch, apiFetchBlob, buildSearchParams } from './client'
 
 // ============================================================================
 // Message Feedback APIs
@@ -58,23 +58,38 @@ export async function submitMessageFeedback(
   taskType?: 'training' | 'inference' | 'analysis' | 'registration' | null,
   taskTitle?: string | null
 ): Promise<MessageFeedback> {
+  const payload: Record<string, unknown> = {}
+
+  if (feedbackType !== undefined) payload.feedback_type = feedbackType
+  if (taskHelpfulness !== undefined) payload.task_helpfulness = taskHelpfulness
+  if (relatedTaskId !== undefined) payload.related_task_id = relatedTaskId
+  if (timeToActionSeconds !== undefined) payload.time_to_action_seconds = timeToActionSeconds
+  if (messageContent !== undefined) payload.message_content = messageContent
+  if (contextMessages !== undefined) payload.context_messages = contextMessages
+  if (taskType !== undefined) payload.task_type = taskType
+  if (taskTitle !== undefined) payload.task_title = taskTitle
+
   return apiFetch(
     `${API_BASE}/messages/${messageId}/feedback`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        feedback_type: feedbackType,
-        task_helpfulness: taskHelpfulness,
-        related_task_id: relatedTaskId,
-        time_to_action_seconds: timeToActionSeconds,
-        message_content: messageContent,
-        context_messages: contextMessages,
-        task_type: taskType,
-        task_title: taskTitle
-      })
+      body: JSON.stringify(payload)
     },
     'Failed to submit feedback'
+  )
+}
+
+/**
+ * Delete the current user's feedback for a message
+ * @param messageId - Message ID (number)
+ * @throws {ApiError} If the request fails
+ */
+export async function deleteMessageFeedback(messageId: number): Promise<void> {
+  await apiFetch(
+    `${API_BASE}/messages/${messageId}/feedback`,
+    { method: 'DELETE' },
+    'Failed to delete feedback'
   )
 }
 
@@ -139,12 +154,13 @@ export async function getAdminFeedbacks(
   helpfulness?: 'helpful' | 'not_helpful' | null,
   userId?: string | null
 ): Promise<AdminFeedbackListResponse> {
-  const params = new URLSearchParams()
-  params.append('skip', skip.toString())
-  params.append('limit', limit.toString())
-  if (feedbackType) params.append('feedback_type', feedbackType)
-  if (helpfulness) params.append('helpfulness', helpfulness)
-  if (userId) params.append('user_id', userId)
+  const params = buildSearchParams({
+    skip,
+    limit,
+    feedback_type: feedbackType || undefined,
+    helpfulness: helpfulness || undefined,
+    user_id: userId || undefined,
+  })
 
   return apiFetch(
     `${API_BASE}/admin/feedbacks?${params.toString()}`,

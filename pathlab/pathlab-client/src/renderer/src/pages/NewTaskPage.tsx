@@ -180,12 +180,15 @@ export default function NewTaskPage() {
   // Auto-adjust default parameters when taskType changes
   useEffect(() => {
     if (wizard.taskType === 'survival') {
+      trainingConfig.setLearningRate(TRAINING_DEFAULTS.learningRate)
       trainingConfig.setEpochs(30)
       trainingConfig.setTrainBatchSize(TRAINING_DEFAULTS.batchSize)
     } else if (wizard.taskType === 'segmentation') {
+      trainingConfig.setLearningRate(SEG_TRAINING_DEFAULTS.learningRate)
       trainingConfig.setEpochs(SEG_TRAINING_DEFAULTS.epochs)
       trainingConfig.setTrainBatchSize(SEG_TRAINING_DEFAULTS.batchSize)
     } else {
+      trainingConfig.setLearningRate(TRAINING_DEFAULTS.learningRate)
       trainingConfig.setEpochs(TRAINING_DEFAULTS.epochs)
       trainingConfig.setTrainBatchSize(TRAINING_DEFAULTS.batchSize)
     }
@@ -375,12 +378,13 @@ export default function NewTaskPage() {
     if (!editingWSI) return
     setUpdating(true)
     try {
+      const isSegmentationTask = wizard.taskType === 'segmentation'
       const age = data.age ? parseInt(data.age) : undefined
       const event_time = data.event_time ? parseFloat(data.event_time) : undefined
       const event_status = data.event_status ? parseInt(data.event_status) : undefined
 
       await updateWSIMetadata(editingWSI.wsi_id, {
-        label: data.label,
+        label: isSegmentationTask ? undefined : (data.label || undefined),
         case_id: data.case_id,
         age: age,
         gender: data.gender,
@@ -419,8 +423,9 @@ export default function NewTaskPage() {
     event_status: string
   }) => {
     if (dataSelection.selectedIds.size === 0) return
+    const isSegmentationTask = wizard.taskType === 'segmentation'
     const hasUpdates =
-      data.label ||
+      (!isSegmentationTask && data.label) ||
       data.case_id ||
       data.age ||
       data.gender ||
@@ -440,7 +445,7 @@ export default function NewTaskPage() {
 
       const request = {
         wsi_ids: Array.from(dataSelection.selectedIds),
-        label: data.label || undefined,
+        label: isSegmentationTask ? undefined : (data.label || undefined),
         case_id: data.case_id || undefined,
         age: age,
         gender: data.gender || undefined,

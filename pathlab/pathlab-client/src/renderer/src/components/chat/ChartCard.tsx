@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, BarChart3, AlertCircle, RefreshCw } from 'lucide-react'
-import { getTaskQuickAnalysis, getTrainingTasks } from '../../api'
+import { getTaskQuickAnalysis } from '../../api'
+import { ApiError } from '../../api/client'
 import {
   ConfusionMatrixChart,
   RocCurveChart,
@@ -69,23 +70,25 @@ export function ChartCard({ config, onError }: ChartCardProps) {
   const onErrorRef = useRef(onError)
   onErrorRef.current = onError
 
+  const getChartErrorMessage = (err: unknown) => {
+    if (err instanceof ApiError) {
+      if (err.isAuthError()) {
+        return t('chatComponents.chartCard.accessRevoked')
+      }
+      if (err.isNotFound()) {
+        return t('chatComponents.chartCard.taskNotFound')
+      }
+    }
+    return err instanceof Error ? err.message : t('chatComponents.chartCard.fetchError')
+  }
+
   useEffect(() => {
     const fetchData = async () => {
       setIsLoading(true)
       setError('')
+      setTaskExists(true)
 
       try {
-        // Validate task exists
-        const tasks = await getTrainingTasks()
-        const found = tasks.some(item => item.task_id === config.task_id && item.status === 'completed')
-
-        if (!found) {
-          setTaskExists(false)
-          setError(t('chatComponents.chartCard.taskNotFound'))
-          return
-        }
-        setTaskExists(true)
-
         // Fetch quick analysis with specified charts
         const result = await getTaskQuickAnalysis(config.task_id, {
           charts: config.charts,
@@ -93,13 +96,16 @@ export function ChartCard({ config, onError }: ChartCardProps) {
         })
 
         if (!result.has_analysis) {
+          setChartData({})
           setError(result.message || t('chatComponents.chartCard.noAnalysisResults'))
           return
         }
 
         setChartData(result.chart_data || {})
       } catch (err) {
-        const msg = err instanceof Error ? err.message : t('chatComponents.chartCard.fetchError')
+        setChartData({})
+        setTaskExists(!(err instanceof ApiError && err.isNotFound()))
+        const msg = getChartErrorMessage(err)
         setError(msg)
         onErrorRef.current?.(msg)
       } finally {

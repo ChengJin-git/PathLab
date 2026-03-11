@@ -55,6 +55,7 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const uploadMode = config.upload_mode || 'classification'
+  const isSegmentation = uploadMode === 'segmentation'
   const onSuccessCalledRef = useRef(false)
 
   // On mount, reconnect to an existing background task for this dataset (survives navigation)
@@ -362,7 +363,9 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
                   {t('chatComponents.metadataUpload.orClickToBrowse')} <code className="bg-gray-100 px-1 rounded">filename</code>
                   {uploadMode === 'survival'
                     ? <>, <code className="bg-gray-100 px-1 rounded">event_time</code>, <code className="bg-gray-100 px-1 rounded">event_status</code></>
-                    : <>, <code className="bg-gray-100 px-1 rounded">label</code></>
+                    : isSegmentation
+                      ? <>, <code className="bg-gray-100 px-1 rounded">split</code>, <code className="bg-gray-100 px-1 rounded">case_id</code></>
+                      : <>, <code className="bg-gray-100 px-1 rounded">label</code></>
                   }
                 </p>
               </div>

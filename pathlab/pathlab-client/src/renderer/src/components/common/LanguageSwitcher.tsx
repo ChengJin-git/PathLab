@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Globe, Check } from 'lucide-react'
 import { supportedLanguages, changeLanguage, SupportedLanguage } from '../../i18n'
+import { Select } from '../ui/select'
 
 interface LanguageSwitcherProps {
   className?: string
@@ -14,6 +15,7 @@ export function LanguageSwitcher({ className, variant = 'dropdown' }: LanguageSw
   const containerRef = useRef<HTMLDivElement>(null)
   
   const currentLang = supportedLanguages.find(l => l.code === i18n.language) || supportedLanguages[0]
+  const options = supportedLanguages.map((lang) => ({ value: lang.code, label: lang.nativeName }))
   
   const handleChange = (langCode: string) => {
     changeLanguage(langCode as SupportedLanguage)
@@ -82,19 +84,15 @@ export function LanguageSwitcher({ className, variant = 'dropdown' }: LanguageSw
   }
 
   return (
-    <div className={`relative ${className || ''}`}>
-      <select
-        value={i18n.language}
-        onChange={(e) => handleChange(e.target.value)}
-        className="appearance-none bg-white border border-gray-200 rounded-lg px-3 py-1.5 pr-8 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-100 focus:border-primary-300 cursor-pointer hover:bg-gray-50 transition-colors"
-      >
-        {supportedLanguages.map((lang) => (
-          <option key={lang.code} value={lang.code}>
-            {lang.nativeName}
-          </option>
-        ))}
-      </select>
-      <Globe className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+    <div className={`relative w-[152px] ${className || ''}`}>
+      <Globe className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-slate-400" />
+      <Select
+        value={currentLang.code}
+        onChange={handleChange}
+        options={options}
+        triggerClassName="h-11 rounded-xl border-slate-200/90 bg-white/95 pl-9 pr-3 text-sm font-medium text-slate-700 shadow-md shadow-slate-200/60 backdrop-blur-sm hover:bg-white"
+        dropdownClassName="rounded-xl border-slate-200 p-1.5 shadow-xl shadow-slate-200/70"
+      />
     </div>
   )
 }

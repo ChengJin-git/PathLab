@@ -454,6 +454,8 @@ async def extract_features(req: FeatureExtractionRequest):
         await handle_training_error_scoped(e, req.task_id, scoped_session, "Feature extraction")
         cleanup_gpu_memory()
         raise
+    finally:
+        await scoped_logger.close()
 
 
 # =============================================================================
@@ -618,6 +620,7 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
         await handle_training_error_scoped(e, req.task_id, scoped_session, "WSI Classification")
 
     finally:
+        await scoped_logger.close()
         await cleanup_training_scoped(req.task_id)
 
 
@@ -731,6 +734,7 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
         await handle_training_error_scoped(e, req.task_id, scoped_session, "WSI Survival")
 
     finally:
+        await scoped_logger.close()
         await cleanup_training_scoped(req.task_id)
 
 
@@ -785,8 +789,8 @@ async def train_patch_classification(req: PatchClassificationTrainRequest) -> Tr
         user_id = task.user_id
         preprocessing_config = task.preprocessing_config
 
-        # Mark task as training and log start
-        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=66)
+        # Mark task as training from 0% and let the trainer advance it to 100%.
+        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=0)
         split_strategy_desc = _get_split_strategy_description(splits_map, preprocessing_config)
         splits_count_desc = _format_splits_count(splits_map)
         await training_logger.info(
@@ -858,6 +862,7 @@ async def train_patch_classification(req: PatchClassificationTrainRequest) -> Tr
         await handle_training_error_scoped(e, req.task_id, scoped_session, "Patch Classification")
 
     finally:
+        await scoped_logger.close()
         await cleanup_training_scoped(req.task_id)
 
 
@@ -898,7 +903,6 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
     _validate_patch_segmentation_loss_names(req.loss_names)
 
     scoped_session = ScopedSession(req.task_id)
-    scoped_logger = ScopedTrainingLogger(req.task_id)
 
     # Phase 1: Validation - short-lived session
     async with scoped_session.session() as (training_logger, db):
@@ -909,15 +913,16 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         user_id = task.user_id
         preprocessing_config = task.preprocessing_config or {}
 
-        # Patch-level tasks use the same 66-100 backend progress range as patch classification.
-        # Frontend maps that range back to 0-100 for display.
-        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=66)
+        # Mark task as training from 0% and let the trainer advance it through the training phase.
+        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=0)
         await training_logger.info(
             f"[Training] Starting Patch Segmentation ({req.architecture}/{req.backbone})",
             {"task_type": "patch_segmentation", "architecture": req.architecture,
              "backbone": req.backbone, "epochs": req.epochs, "lr": req.lr}
         )
     # Session closed here - connection released before training starts
+
+    trainer = None
 
     try:
         # Phase 2: Build config and run training in thread pool
@@ -931,7 +936,9 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
                 "lr": req.lr,
                 "optimizer": req.optimizer,
                 "early_stopping_patience": req.early_stopping_patience,
+                "seed": req.seed,
             },
+            "monitor_metric": "miou" if req.num_classes > 1 else "iou",
             "save_dir": save_dir,
         }
         segmentation_dataset = preprocessing_config.get("segmentation_dataset")
@@ -972,17 +979,9 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
             config=config,
         )
 
-        event_loop = asyncio.get_running_loop()
-
         # Run sync training in thread pool to avoid blocking event loop
         results = await asyncio.to_thread(
-            trainer.train_model,
-            req.epochs,
-            req.lr,
-            req.early_stopping_patience,
-            scoped_logger,
-            scoped_session.get_session_maker(),
-            event_loop,
+            trainer.train_model, req.epochs, req.lr, req.early_stopping_patience
         )
 
         # Build TrainResponse from results dict
@@ -1052,8 +1051,8 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         return result
 
     except TrainingCancelledException as e:
-        await scoped_logger.info(f"Patch Segmentation training cancelled: {e}")
         async with scoped_session.session() as (training_logger, db):
+            await training_logger.info(f"Patch Segmentation training cancelled: {e}")
             await _safe_update_status(db, req.task_id, TaskStatus.CANCELLED, error_message=str(e))
         return TrainResponse.cancelled(req.task_id, TaskType.PATCH_SEGMENTATION, message=str(e))
 
@@ -1061,4 +1060,6 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         await handle_training_error_scoped(e, req.task_id, scoped_session, "Patch Segmentation")
 
     finally:
+        if trainer is not None:
+            trainer.release_resources()
         await cleanup_training_scoped(req.task_id)

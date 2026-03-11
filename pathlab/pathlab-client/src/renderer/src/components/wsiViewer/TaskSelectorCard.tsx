@@ -7,11 +7,13 @@ import { formatClasses } from './utils'
 
 interface TaskSelectorCardProps {
   availableHeatmaps: AvailableHeatmap[]
+  selectedTaskEntries: AvailableHeatmap[]
   selectedTaskId: string | undefined
   setSelectedTaskId: (id: string | undefined) => void
   selectedFoldKey: string | undefined
   setSelectedFoldKey: (key: string) => void
   availableFolds: string[]
+  supportsFoldSelection: boolean
   uniqueTasks: (AvailableHeatmap & { isKFold?: boolean; numFolds?: number })[]
   isTaskDropdownOpen: boolean
   setIsTaskDropdownOpen: (open: boolean) => void
@@ -23,11 +25,13 @@ interface TaskSelectorCardProps {
 
 export function TaskSelectorCard({
   availableHeatmaps,
+  selectedTaskEntries,
   selectedTaskId,
   setSelectedTaskId,
   selectedFoldKey,
   setSelectedFoldKey,
   availableFolds,
+  supportsFoldSelection,
   uniqueTasks,
   isTaskDropdownOpen,
   setIsTaskDropdownOpen,
@@ -37,6 +41,24 @@ export function TaskSelectorCard({
   isPatchLevel
 }: TaskSelectorCardProps) {
   const { t } = useTranslation()
+  const selectedTask = selectedTaskEntries.find(h => h.data_type === 'wsi' || h.data_type === 'patch')
+    ?? selectedTaskEntries[0]
+    ?? availableHeatmaps.find(h => h.task_id === selectedTaskId)
+  const segmentationTask = selectedTaskEntries.find(
+    h => h.task_type === 'segmentation' || h.task_type === 'patch_segmentation' || h.data_type === 'patch_segmentation'
+  )
+  const currentTaskType = heatmapData?.task_type
+    ?? segmentationTask?.task_type
+    ?? selectedTask?.task_type
+    ?? (segmentationTask?.data_type === 'patch_segmentation' || selectedTask?.data_type === 'patch_segmentation'
+      ? 'patch_segmentation'
+      : undefined)
+  const isSurvivalTask = currentTaskType === 'survival'
+  const isSegmentationTask = !!segmentationTask || currentTaskType === 'segmentation' || currentTaskType === 'patch_segmentation'
+  const displayPrediction = isPatchLevel ? (patchCAMData?.prediction ?? selectedTask?.prediction) : (heatmapData?.prediction ?? selectedTask?.prediction)
+  const displayProbs = isPatchLevel ? (patchCAMData?.probs ?? selectedTask?.probs) : (heatmapData?.probs ?? selectedTask?.probs)
+  const displayClasses = segmentationTask?.classes ?? selectedTask?.classes ?? patchCAMData?.classes ?? heatmapData?.classes ?? []
+
   return (
     <Card className="mb-4 overflow-visible">
       <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 bg-gradient-to-br from-gray-50 to-white">
@@ -63,13 +85,13 @@ export function TaskSelectorCard({
             <div className="flex flex-col items-start gap-1">
               <span className="text-gray-900 font-semibold text-sm tracking-tight text-left capitalize">
                 {(() => {
-                  const task = availableHeatmaps.find(h => h.task_id === selectedTaskId);
+                  const task = selectedTask;
                   if (!task) return t('wsiViewerComponents.taskSelector.selectATask');
                   return formatClasses(task.classes) || task.task_name || task.task_type?.replace(/_/g, ' ');
                 })()}
               </span>
               {(() => {
-                const task = availableHeatmaps.find(h => h.task_id === selectedTaskId);
+                const task = selectedTask;
                 if (task?.feature_extractor || task?.aggregator) {
                   return (
                     <div className="flex items-center gap-1">
@@ -175,7 +197,7 @@ export function TaskSelectorCard({
         </div>
 
         {/* K-Fold Selector - show when multiple folds are available */}
-        {availableFolds.length > 1 && (
+        {supportsFoldSelection && availableFolds.length > 1 && (
           <div className="mt-3">
             <div className="flex items-center gap-2 mb-2">
               <span className="text-xs text-gray-500 font-medium uppercase tracking-wider">{t('wsiViewerComponents.taskSelector.kFold')}</span>
@@ -198,22 +220,26 @@ export function TaskSelectorCard({
           </div>
         )}
 
-        {/* Selected task prediction info - supports both WSI heatmap and patch heatmap */}
-        {(heatmapData || patchCAMData) && (
-          <div className={`mt-3 p-3 rounded-lg border ${heatmapData?.task_type === 'survival'
+        {/* Selected task info - supports heatmap, patch CAM, and segmentation mask tasks */}
+        {(heatmapData || patchCAMData || (selectedTask && isSegmentationTask)) && (
+          <div className={`mt-3 p-3 rounded-lg border ${isSurvivalTask
             ? 'bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-200'
-            : (heatmapData?.task_type === 'segmentation' || heatmapData?.task_type === 'patch_segmentation')
+            : isSegmentationTask
               ? 'bg-gradient-to-br from-violet-50 to-purple-50 border-violet-200'
               : 'bg-gradient-to-br from-indigo-50 to-blue-50 border-indigo-200'
             }`}>
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
-                <span className={`text-xs font-semibold uppercase tracking-wider ${heatmapData?.task_type === 'survival' ? 'text-emerald-700' : (heatmapData?.task_type === 'segmentation' || heatmapData?.task_type === 'patch_segmentation') ? 'text-violet-700' : 'text-indigo-700'
+                <span className={`text-xs font-semibold uppercase tracking-wider ${isSurvivalTask ? 'text-emerald-700' : isSegmentationTask ? 'text-violet-700' : 'text-indigo-700'
                   }`}>
-                  {heatmapData?.task_type === 'survival' ? t('wsiViewerComponents.taskSelector.riskGroup') : t('wsiViewerComponents.taskSelector.prediction')}
+                  {isSurvivalTask
+                    ? t('wsiViewerComponents.taskSelector.riskGroup')
+                    : isSegmentationTask
+                      ? t('wsiViewerComponents.taskSelector.classes')
+                      : t('wsiViewerComponents.taskSelector.prediction')}
                 </span>
                 {/* Show fold info for K-Fold trained models */}
-                {heatmapData?.fold_key && (
+                {supportsFoldSelection && heatmapData?.fold_key && (
                   <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700">
                     {heatmapData.fold_key.replace('_', ' ').replace('fold', 'Fold')}
                   </span>
@@ -221,14 +247,16 @@ export function TaskSelectorCard({
               </div>
               {isPatchLevel ? (
                 <Badge variant="secondary" className="bg-orange-50 text-orange-700 text-[10px]">
-                  {t('wsiViewerComponents.taskSelector.patchHeatmap')}
+                  {isSegmentationTask
+                    ? t('wsiViewerComponents.taskSelector.predictionMask')
+                    : t('wsiViewerComponents.taskSelector.patchHeatmap')}
                 </Badge>
               ) : (
                 <span className="text-xs text-gray-500">{heatmapData?.num_patches?.toLocaleString()} {t('wsiViewerComponents.taskSelector.patches')}</span>
               )}
             </div>
             {/* Survival task: show risk group and risk score */}
-            {heatmapData?.task_type === 'survival' ? (
+            {isSurvivalTask ? (
               <>
                 <div className={`text-lg font-bold ${heatmapData?.risk_group === 'High Risk' ? 'text-red-600' : 'text-emerald-600'
                   }`}>
@@ -242,14 +270,29 @@ export function TaskSelectorCard({
                   </div>
                 )}
               </>
+            ) : isSegmentationTask ? (
+              <>
+                <div className="text-lg font-bold text-violet-700">
+                  {formatClasses(displayClasses, 99) || t('wsiViewerComponents.taskSelector.noClasses')}
+                </div>
+                {displayClasses.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {displayClasses.map((cls) => (
+                      <span key={cls} className="text-xs bg-white/70 px-2 py-0.5 rounded border border-violet-100">
+                        {cls}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </>
             ) : (
               <>
                 {/* Classification task: show prediction and probabilities */}
-                <div className={`text-lg font-bold ${(heatmapData?.task_type === 'segmentation' || heatmapData?.task_type === 'patch_segmentation') ? 'text-violet-700' : 'text-indigo-700'}`}>
-                  {(isPatchLevel ? patchCAMData?.prediction : heatmapData?.prediction) || 'N/A'}
+                <div className="text-lg font-bold text-indigo-700">
+                  {displayPrediction || 'N/A'}
                 </div>
                 {(() => {
-                  const probs = isPatchLevel ? patchCAMData?.probs : heatmapData?.probs
+                  const probs = displayProbs
                   if (probs && Object.keys(probs).length > 0) {
                     return (
                       <div className="mt-2 flex flex-wrap gap-1.5">
@@ -257,7 +300,7 @@ export function TaskSelectorCard({
                           .sort(([, a], [, b]) => (b as number) - (a as number))
                           .slice(0, 3)
                           .map(([cls, prob]) => (
-                            <span key={cls} className={`text-xs bg-white/70 px-2 py-0.5 rounded border ${(heatmapData?.task_type === 'segmentation' || heatmapData?.task_type === 'patch_segmentation') ? 'border-violet-100' : 'border-indigo-100'}`}>
+                            <span key={cls} className="text-xs bg-white/70 px-2 py-0.5 rounded border border-indigo-100">
                               {cls}: {((prob as number) * 100).toFixed(1)}%
                             </span>
                           ))}

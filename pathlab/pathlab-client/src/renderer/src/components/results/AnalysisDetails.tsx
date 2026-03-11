@@ -1,7 +1,8 @@
-import { Download, FlaskConical } from 'lucide-react'
+import { useState } from 'react'
+import { Download, FlaskConical, Loader2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, MetricCurveChart, PerClassMetricBarChart, type LossCurveData, type KFoldLossCurveData } from '../charts/AnalysisCharts'
-import { getAuthToken } from '../../api'
+import { downloadApiFile, downloadTrainedModelExport, withAuthTokenQuery } from '../../api'
 import { API_BASE } from '../../config'
 
 // --- Types shared with ResultsViewerPage ---
@@ -54,6 +55,7 @@ export interface AnalysisSummary {
   timestamp: string
   description: string | null
   num_samples: number
+  num_classes?: number
   classes?: string[]
   is_binary?: boolean
   requested_metrics?: string[]
@@ -67,41 +69,34 @@ export interface AnalysisSummary {
   submitted_by?: string
 }
 
-// --- Auth helpers ---
-
-function authFetchOptions(options: RequestInit = {}): RequestInit {
-  const token = getAuthToken()
-  return {
-    ...options,
-    headers: {
-      ...options.headers,
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    }
-  }
-}
-
-function authUrl(url: string): string {
-  const token = getAuthToken()
-  if (!token) return url
-  const separator = url.includes('?') ? '&' : '?'
-  return `${url}${separator}token=${encodeURIComponent(token)}`
-}
-
 // --- Component ---
 
 export interface AnalysisDetailsProps {
   analysis: AnalysisSummary
   taskId?: string
+  modelId?: string
   selectedMetrics?: string[]
   selectedCharts?: string[]
   isExternal?: boolean
 }
 
-export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCharts, isExternal = false }: AnalysisDetailsProps) {
+export function AnalysisDetails({ analysis, taskId, modelId, selectedMetrics, selectedCharts, isExternal = false }: AnalysisDetailsProps) {
   const { t } = useTranslation()
+  const [isExportingModel, setIsExportingModel] = useState(false)
   const effectiveTaskId = analysis.task_id || taskId
   const isSurvival = analysis.task_type === 'wsi_survival' || analysis.task_type === 'survival' || analysis.task_type === 'external_validation_survival'
   const isSegmentation = analysis.task_type === 'segmentation' || analysis.task_type === 'patch_segmentation'
+  const segmentationClassCount = isSegmentation
+    ? Math.max(
+      analysis.num_classes ?? 0,
+      analysis.classes?.filter(Boolean).length ?? 0,
+      analysis.class_metrics ? Object.keys(analysis.class_metrics).length : 0,
+      analysis.metrics.miou != null ? 2 : 0,
+      analysis.metrics.iou != null ? 1 : 0
+    )
+    : 0
+  const segmentationPrimaryMetricKey = segmentationClassCount > 1 ? 'miou' : 'iou'
+  const segmentationFallbackMetricKey = segmentationPrimaryMetricKey === 'miou' ? 'iou' : 'miou'
   const showKFoldTraining = !isSegmentation && Boolean(analysis.kfold_training)
   const showKFoldLossCurve = Boolean(
     !isSegmentation &&
@@ -131,11 +126,13 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
     'f1': 'f1',
     'macro_auc': 'auc',
     'auc': 'auc',
+    'weighted_kappa': 'weighted_kappa',
     'c_index': 'c_index',
     'integrated_brier_score': 'integrated_brier_score',
     'ibs': 'integrated_brier_score',
     // Segmentation-specific
     'iou': 'iou',
+    'miou': 'miou',
     'dice': 'dice',
     'recall': 'recall',
   }
@@ -143,6 +140,8 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
   const shouldShowMetric = (key: string): boolean => {
     if (!selectedMetrics || selectedMetrics.length === 0) return true
     const metricId = metricKeyToId[key]
+    if (metricId === 'iou' && selectedMetrics.includes('miou')) return true
+    if (metricId === 'miou' && selectedMetrics.includes('iou')) return true
     return metricId ? selectedMetrics.includes(metricId) : false
   }
 
@@ -154,25 +153,30 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
   const handleDownload = async (e: React.MouseEvent, url: string, filename: string) => {
     e.preventDefault()
     try {
-      const response = await fetch(url, authFetchOptions())
-      if (!response.ok) throw new Error('Download failed')
-      const blob = await response.blob()
-      const blobUrl = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = blobUrl
-      link.download = filename
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      window.URL.revokeObjectURL(blobUrl)
+      await downloadApiFile(url, filename, undefined, 'Download failed')
     } catch (error) {
       console.error('Download failed:', error)
       window.open(url, '_blank')
     }
   }
 
+  const handleModelExport = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (!modelId || isExportingModel) return
+    setIsExportingModel(true)
+    try {
+      await downloadTrainedModelExport(modelId)
+    } catch (error) {
+      console.error('Model export failed:', error)
+    } finally {
+      setIsExportingModel(false)
+    }
+  }
+
+  const isRawMetric = (key: string) => ['c_index', 'integrated_brier_score', 'ibs', 'weighted_kappa'].includes(key)
+
   const formatMetricValue = (key: string, value: number) => {
-    if (key === 'c_index' || key === 'integrated_brier_score' || key === 'ibs') {
+    if (isRawMetric(key)) {
       return value.toFixed(4)
     }
     return `${(value * 100).toFixed(1)}%`
@@ -180,7 +184,40 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
 
   const getMetricDisplayName = (key: string) => {
     if (key === 'c_index') return 'C-Index'
+    if (key === 'miou') return 'mIoU'
+    if (key === 'iou') return 'IoU'
+    if (key === 'weighted_kappa') return 'Weighted Kappa'
     return key.replace('macro_', '').replace(/_/g, ' ')
+  }
+
+  const visibleMetricEntries = (() => {
+    if (!isSegmentation) {
+      return Object.entries(analysis.metrics).filter(([key]) => shouldShowMetric(key))
+    }
+
+    const normalizedEntries: Array<[string, number]> = []
+    const primaryMetricValue = analysis.metrics[segmentationPrimaryMetricKey] ?? analysis.metrics[segmentationFallbackMetricKey]
+
+    if (primaryMetricValue != null) {
+      normalizedEntries.push([segmentationPrimaryMetricKey, primaryMetricValue])
+    }
+
+    Object.entries(analysis.metrics).forEach(([key, value]) => {
+      if (key === segmentationPrimaryMetricKey || key === segmentationFallbackMetricKey) return
+      normalizedEntries.push([key, value])
+    })
+
+    return normalizedEntries.filter(([key]) => shouldShowMetric(key))
+  })()
+
+  const getMetricCI = (key: string) => {
+    const directCI = analysis.bootstrap_ci?.metrics_ci?.[key] || analysis.bootstrap_ci?.metrics_ci?.[`macro_${key}`]
+    if (directCI) return directCI
+
+    if (!isSegmentation || (key !== 'iou' && key !== 'miou')) return undefined
+
+    return analysis.bootstrap_ci?.metrics_ci?.[segmentationFallbackMetricKey]
+      || analysis.bootstrap_ci?.metrics_ci?.[`macro_${segmentationFallbackMetricKey}`]
   }
 
   return (
@@ -206,7 +243,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                 <div key={key} className="bg-white p-3 rounded-lg border border-purple-200">
                   <p className="text-xs text-gray-500 uppercase">{getMetricDisplayName(key)}</p>
                   <p className="text-lg font-bold text-purple-600">
-                    {key === 'c_index'
+                    {isRawMetric(key)
                       ? `${stats.mean.toFixed(4)} ± ${stats.std.toFixed(4)}`
                       : `${(stats.mean * 100).toFixed(1)}% ± ${(stats.std * 100).toFixed(1)}%`
                     }
@@ -255,7 +292,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                         return (
                           <td key={key} className="py-2 text-center">
                             {val !== undefined
-                              ? (key === 'c_index' ? val.toFixed(4) : `${(val * 100).toFixed(1)}%`)
+                              ? (isRawMetric(key) ? val.toFixed(4) : `${(val * 100).toFixed(1)}%`)
                               : '-'
                             }
                           </td>
@@ -274,17 +311,16 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
 
 
       {/* Metrics Grid */}
-      {Object.entries(analysis.metrics).filter(([key]) => !key.includes('recall') && shouldShowMetric(key)).length > 0 && (
+      {visibleMetricEntries.length > 0 && (
       <div className="pt-4">
         <h5 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
           <div className={`w-1.5 h-6 ${accentBg} rounded-full`} />
           {t('analysisDetails.metrics')}
         </h5>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {Object.entries(analysis.metrics)
-            .filter(([key]) => !key.includes('recall') && shouldShowMetric(key))
+          {visibleMetricEntries
             .map(([key, value]) => {
-              const ci = analysis.bootstrap_ci?.metrics_ci?.[key] || analysis.bootstrap_ci?.metrics_ci?.[`macro_${key}`]
+              const ci = getMetricCI(key)
               return (
                 <div key={key} className={`p-4 sm:p-6 rounded-2xl border-2 transition-all hover:shadow-md ${isSurvival ? 'bg-emerald-50/50 border-emerald-100 hover:border-emerald-200' : isSegmentation ? 'bg-violet-50/50 border-violet-100 hover:border-violet-200' : `bg-white border-gray-100 ${accentHoverBorder}`}`}>
                   <p className="text-xs text-gray-400 uppercase font-bold tracking-wider mb-2">{getMetricDisplayName(key)}</p>
@@ -309,8 +345,12 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
       {/* Per-Class Metrics */}
       {!isSurvival && analysis.class_metrics && Object.keys(analysis.class_metrics).length > 0 && (() => {
         const classMetricsList = Object.values(analysis.class_metrics)
+        const isMetricSelected = (metricId: string, aliases: string[] = []): boolean => {
+          if (!selectedMetrics || selectedMetrics.length === 0) return true
+          return [metricId, ...aliases].some(id => selectedMetrics.includes(id))
+        }
         const perClassColumns = isSegmentation ? [
-          { id: 'iou', label: 'IoU', getValue: (m: any) => m.iou || 0, getCIKey: 'iou' },
+          { id: 'iou', label: 'IoU', aliases: ['miou'], getValue: (m: any) => m.iou || 0, getCIKey: 'iou' },
           { id: 'dice', label: 'Dice', getValue: (m: any) => m.dice || 0, getCIKey: 'dice' },
           { id: 'precision', label: 'Precision', getValue: (m: any) => m.precision || 0, getCIKey: 'precision' },
           { id: 'recall', label: 'Recall', getValue: (m: any) => m.recall || 0, getCIKey: 'recall' },
@@ -323,7 +363,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
           { id: 'auc', label: 'AUC', getValue: (m: any) => m.auc || 0, getCIKey: 'auc' }
         ]
         const visibleColumns = perClassColumns.filter(col =>
-          (!selectedMetrics || selectedMetrics.length === 0 || selectedMetrics.includes(col.id)) &&
+          isMetricSelected(col.id, 'aliases' in col ? (col.aliases || []) : []) &&
           (!isSegmentation || classMetricsList.some(metrics => typeof metrics[col.id] === 'number'))
         )
         const showSupportColumn = !isSegmentation || classMetricsList.some(metrics => typeof metrics.support === 'number')
@@ -401,7 +441,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`)} alt={t('analysisDetails.confusionMatrix')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={withAuthTokenQuery(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/confusion_matrix.png`)} alt={t('analysisDetails.confusionMatrix')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             ))}
 
@@ -419,7 +459,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`)} alt={t('analysisDetails.rocCurve')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={withAuthTokenQuery(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/roc_curve.png`)} alt={t('analysisDetails.rocCurve')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             ))}
 
@@ -441,7 +481,7 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`)} alt={t('analysisDetails.lossCurve')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={withAuthTokenQuery(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/loss_curve.png`)} alt={t('analysisDetails.lossCurve')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             ))}
 
@@ -459,28 +499,28 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
-                <img src={authUrl(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/km_curve.png`)} alt={t('analysisDetails.kmCurve')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                <img src={withAuthTokenQuery(`${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/km_curve.png`)} alt={t('analysisDetails.kmCurve')} className="w-full" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
               </div>
             ))}
 
             {/* IoU Curve */}
             {shouldShowChart('iou_curve') && analysis.chart_data?.iou_curve && (
-              <MetricCurveChart data={analysis.chart_data.iou_curve} title="IoU Curve" />
+              <MetricCurveChart data={analysis.chart_data.iou_curve} />
             )}
 
             {/* Dice Curve */}
             {shouldShowChart('dice_curve') && analysis.chart_data?.dice_curve && (
-              <MetricCurveChart data={analysis.chart_data.dice_curve} title="Dice Curve" />
+              <MetricCurveChart data={analysis.chart_data.dice_curve} />
             )}
 
             {/* External Segmentation Per-Class IoU */}
             {shouldShowChart('per_class_iou') && analysis.chart_data?.per_class_iou && (
-              <PerClassMetricBarChart data={analysis.chart_data.per_class_iou} title="Per-Class IoU" />
+              <PerClassMetricBarChart data={analysis.chart_data.per_class_iou} title={`${analysis.chart_data.per_class_iou.metric_name} ${t('analysisDetails.perClassPerformance')}`} />
             )}
 
             {/* External Segmentation Per-Class Dice */}
             {shouldShowChart('per_class_dice') && analysis.chart_data?.per_class_dice && (
-              <PerClassMetricBarChart data={analysis.chart_data.per_class_dice} title="Per-Class Dice" />
+              <PerClassMetricBarChart data={analysis.chart_data.per_class_dice} title={`${analysis.chart_data.per_class_dice.metric_name} ${t('analysisDetails.perClassPerformance')}`} />
             )}
           </div>
         </div>
@@ -513,6 +553,24 @@ export function AnalysisDetails({ analysis, taskId, selectedMetrics, selectedCha
             {t('analysisDetails.downloadFullResults')}
           </div>
         </button>
+        {modelId && (
+          <button
+            onClick={handleModelExport}
+            disabled={isExportingModel}
+            className={`flex-1 flex items-center justify-center gap-3 px-6 py-4 rounded-xl text-sm font-bold border shadow-sm transition-all ${isExportingModel
+              ? 'bg-sky-50 text-sky-700 border-sky-200 cursor-wait opacity-90'
+              : 'bg-white hover:bg-sky-50 text-sky-700 border-sky-100 hover:border-sky-200 active:scale-[0.98]'
+            }`}
+          >
+            <div className={`p-2 rounded-lg transition-colors ${isExportingModel ? 'bg-white' : 'bg-sky-50 group-hover:bg-white'}`}>
+              {isExportingModel ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+            </div>
+            <div className="text-left">
+              <div className="text-[10px] uppercase tracking-wider opacity-60">{t('analysisDetails.modelFiles')}</div>
+              {isExportingModel ? t('analysisDetails.exportingModel') : t('analysisDetails.downloadModel')}
+            </div>
+          </button>
+        )}
       </div>
     </div>
   )

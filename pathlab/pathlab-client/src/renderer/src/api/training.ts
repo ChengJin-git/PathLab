@@ -1,5 +1,6 @@
 import { API_BASE } from '../config'
-import { apiFetch, PaginatedResponse } from './client'
+import { createKeyedCache, DEFAULT_CACHE_TTL } from '../lib/cache'
+import { apiFetch, buildSearchParams, downloadApiFile, PaginatedResponse } from './client'
 
 // ============================================================================
 // Training Task & Model APIs
@@ -92,6 +93,20 @@ export async function getTrainedModel(modelId: string): Promise<TrainedModel> {
 }
 
 /**
+ * Download trained model export bundle
+ * @param modelId - Model ID
+ * @throws {ApiError} If the request fails
+ */
+export async function downloadTrainedModelExport(modelId: string): Promise<void> {
+  await downloadApiFile(
+    `${API_BASE}/models/${encodeURIComponent(modelId)}/export`,
+    `${modelId}_export.zip`,
+    undefined,
+    'Failed to export model'
+  )
+}
+
+/**
  * Update training task name
  * @param taskId - Task ID
  * @param taskName - New task name
@@ -101,7 +116,7 @@ export async function updateTrainingTaskName(
   taskId: string,
   taskName: string
 ): Promise<TrainingTask> {
-  return apiFetch<TrainingTask>(
+  const result = await apiFetch<TrainingTask>(
     `${API_BASE}/tasks/training/${encodeURIComponent(taskId)}`,
     {
       method: 'PATCH',
@@ -110,6 +125,8 @@ export async function updateTrainingTaskName(
     },
     'Failed to update task name'
   )
+  invalidateTrainingTasksCache()
+  return result
 }
 
 /**
@@ -185,18 +202,80 @@ export interface TrainingTaskCreateResult extends TrainingTask {
   wsi_count: number
 }
 
+export interface TrainingTaskListStats {
+  total: number
+  running: number
+  completed: number
+  failed: number
+  cancelled: number
+}
+
+export interface TrainingTaskListQuery {
+  page?: number
+  page_size?: number
+  search?: string
+  status_filter?: 'all' | 'running' | 'completed' | 'failed' | 'cancelled'
+  sort_by?: 'updated' | 'created' | 'name'
+  forceRefresh?: boolean
+}
+
+export interface TrainingTaskListResponse extends PaginatedResponse<TrainingTask> {
+  page: number
+  page_size: number
+  stats: TrainingTaskListStats
+}
+
+const trainingTaskListCache = createKeyedCache<TrainingTaskListResponse>(DEFAULT_CACHE_TTL)
+
+function buildTrainingTaskListUrl(options?: TrainingTaskListQuery): string {
+  const params = buildSearchParams({
+    page: options?.page,
+    page_size: options?.page_size,
+    search: options?.search || undefined,
+    status_filter: options?.status_filter || undefined,
+    sort_by: options?.sort_by || undefined,
+  })
+
+  const queryString = params.toString()
+  return queryString ? `${API_BASE}/tasks/training?${queryString}` : `${API_BASE}/tasks/training`
+}
+
+function buildTrainingTaskListCacheKey(options?: TrainingTaskListQuery): string {
+  return JSON.stringify({
+    page: options?.page ?? 1,
+    page_size: options?.page_size ?? null,
+    search: options?.search ?? null,
+    status_filter: options?.status_filter ?? null,
+    sort_by: options?.sort_by ?? null,
+  })
+}
+
+export function invalidateTrainingTasksCache(): void {
+  trainingTaskListCache.invalidateAll()
+}
+
+export async function prefetchTrainingTasks(options?: TrainingTaskListQuery): Promise<void> {
+  try {
+    await getTrainingTasks(options)
+  } catch {
+    // Ignore prefetch failures so they don't affect the active page.
+  }
+}
+
 /**
  * Get all training tasks
  * @returns List of training tasks
  * @throws {ApiError} If the request fails
  */
-export async function getTrainingTasks(): Promise<TrainingTask[]> {
-  const data = await apiFetch<PaginatedResponse<TrainingTask>>(
-    `${API_BASE}/tasks/training`,
-    undefined,
-    'Failed to get training tasks'
+export async function getTrainingTasks(options?: TrainingTaskListQuery): Promise<TrainingTaskListResponse> {
+  const url = buildTrainingTaskListUrl(options)
+  const cacheKey = buildTrainingTaskListCacheKey(options)
+
+  return trainingTaskListCache.get(
+    cacheKey,
+    () => apiFetch<TrainingTaskListResponse>(url, undefined, 'Failed to get training tasks'),
+    options?.forceRefresh === true
   )
-  return data.items || []
 }
 
 /**
@@ -223,11 +302,13 @@ export async function deleteTrainingTask(
   taskId: string,
   mode: string = 'standard'
 ): Promise<TrainingTaskDeleteResult> {
-  return apiFetch<TrainingTaskDeleteResult>(
+  const result = await apiFetch<TrainingTaskDeleteResult>(
     `${API_BASE}/tasks/training/${taskId}?mode=${mode}`,
     { method: 'DELETE' },
     'Failed to delete training task'
   )
+  invalidateTrainingTasksCache()
+  return result
 }
 
 /**
@@ -243,6 +324,7 @@ export interface SplitConfig {
 
 export interface TrainingTaskConfig {
   task_id?: string     // Client-generated task_id for fire-and-forget submission
+  rerun_from_task_id?: string  // Admin rerun only: preserve owner from source task
   task_name: string
   task_type: 'classification' | 'survival' | 'segmentation' | 'external_validation'
   data_type: 'wsi' | 'patch'
@@ -252,7 +334,7 @@ export interface TrainingTaskConfig {
   preprocessing: {
     // Note: tile_size removed - auto-determined by PrePATH-style tiling based on WSI magnification
     level?: number
-    feature_extractor: string
+    feature_extractor: string  // Classification/WSI extractor; for segmentation should mirror model.backbone for metadata consistency
     feature_batch_size: number
     use_gpu: boolean
     // Tissue segmentation parameters
@@ -270,7 +352,7 @@ export interface TrainingTaskConfig {
   model: {
     aggregator: string
     classifier?: string  // Classifier head for patch-level: linear, mlp, attention
-    backbone?: string  // For patch-level tasks
+    backbone?: string  // Patch classification extractor or segmentation seg_backbone
     learning_rate: number
     epochs: number
     optimizer: string
@@ -278,7 +360,7 @@ export interface TrainingTaskConfig {
     auto_balance?: boolean  // Auto-balance class weights for imbalanced datasets
     early_stopping_patience?: number  // Number of epochs to wait before early stopping
     // Segmentation-specific fields
-    architecture?: string      // Segmentation architecture (unet, deeplabv3, etc.)
+    architecture?: string      // Segmentation architecture; MUST be conv_decoder when backbone is an FM extractor
     loss_names?: string[]      // Segmentation loss function names
     loss_weights?: number[]    // Segmentation loss function weights
   }
@@ -295,7 +377,7 @@ export async function createTrainingTask(taskConfig: TrainingTaskConfig): Promis
   // Get HuggingFace token from localStorage for gated models
   const huggingfaceToken = localStorage.getItem('huggingface_token') || ''
 
-  return apiFetch<TrainingTaskCreateResult>(
+  const result = await apiFetch<TrainingTaskCreateResult>(
     `${API_BASE}/tasks/training`,
     {
       method: 'POST',
@@ -307,6 +389,8 @@ export async function createTrainingTask(taskConfig: TrainingTaskConfig): Promis
     },
     'Failed to create training task'
   )
+  invalidateTrainingTasksCache()
+  return result
 }
 
 /**

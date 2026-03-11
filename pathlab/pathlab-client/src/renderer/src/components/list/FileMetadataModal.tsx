@@ -1,19 +1,27 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
+import { organSources } from '../upload/types'
 
-export type FileMetadataMap = Map<string, { label: string; case_id: string; age: string; gender: string; source: string }>
+export type FileMetadataMap = Map<string, { label: string; case_id: string; age: string; gender: string }>
 
 export interface FileMetadataModalProps {
   selectedFiles: File[]
   fileMetadata: FileMetadataMap
-  onUpdateMetadata: (fileName: string, field: 'label' | 'case_id' | 'age' | 'gender' | 'source', value: string) => void
+  datasetType?: 'classification' | 'survival' | 'segmentation'
+  datasetSourceSelection: string
+  datasetSourceCustom: string
+  onDatasetSourceSelectionChange: (value: string) => void
+  onDatasetSourceCustomChange: (value: string) => void
+  onUpdateMetadata: (fileName: string, field: 'label' | 'case_id' | 'age' | 'gender', value: string) => void
   onCancel: () => void
   onConfirm: () => void
   uploading: boolean
 }
 
-export function FileMetadataModal({ selectedFiles, fileMetadata, onUpdateMetadata, onCancel, onConfirm, uploading }: FileMetadataModalProps) {
+export function FileMetadataModal({ selectedFiles, fileMetadata, datasetType = 'classification', datasetSourceSelection, datasetSourceCustom, onDatasetSourceSelectionChange, onDatasetSourceCustomChange, onUpdateMetadata, onCancel, onConfirm, uploading }: FileMetadataModalProps) {
   const { t } = useTranslation()
+  const showLabelField = datasetType !== 'segmentation'
+  const isOtherSource = datasetSourceSelection === 'Other'
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
@@ -23,6 +31,44 @@ export function FileMetadataModal({ selectedFiles, fileMetadata, onUpdateMetadat
         </div>
 
         <div className="flex-1 overflow-y-auto p-6">
+          <div className="mb-6 bg-blue-50 rounded-xl p-4 border border-blue-100">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t('listComponents.fileMetadata.sourceOrganTissue')}
+                </label>
+                <select
+                  value={datasetSourceSelection}
+                  onChange={(e) => onDatasetSourceSelectionChange(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white"
+                >
+                  <option value="">{t('listComponents.editModals.selectDatasetSource')}</option>
+                  {organSources.filter((source) => source !== 'Other').map((source) => (
+                    <option key={source} value={source}>{source}</option>
+                  ))}
+                  <option value="Other">{t('listComponents.editModals.otherSource')}</option>
+                </select>
+              </div>
+              {isOtherSource && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {t('listComponents.editModals.otherSource')}
+                  </label>
+                  <input
+                    type="text"
+                    value={datasetSourceCustom}
+                    onChange={(e) => onDatasetSourceCustomChange(e.target.value)}
+                    placeholder={t('listComponents.editModals.otherSourcePlaceholder')}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  />
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              {t('listComponents.editModals.datasetSourceDescription')}
+            </p>
+          </div>
+
           <div className="space-y-4">
             {selectedFiles.map((file, index) => (
               <div key={index} className="bg-gray-50 rounded-xl p-4 border border-gray-200">
@@ -36,18 +82,20 @@ export function FileMetadataModal({ selectedFiles, fileMetadata, onUpdateMetadat
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-gray-900 truncate mb-3">{file.name}</p>
                     <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          {t('listComponents.fileMetadata.labelDiseaseClassification')}
-                        </label>
-                        <input
-                          type="text"
-                          placeholder={t('listComponents.fileMetadata.labelPlaceholder')}
-                          value={fileMetadata.get(file.name)?.label || ''}
-                          onChange={(e) => onUpdateMetadata(file.name, 'label', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                        />
-                      </div>
+                      {showLabelField && (
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            {t('listComponents.fileMetadata.labelDiseaseClassification')}
+                          </label>
+                          <input
+                            type="text"
+                            placeholder={t('listComponents.fileMetadata.labelPlaceholder')}
+                            value={fileMetadata.get(file.name)?.label || ''}
+                            onChange={(e) => onUpdateMetadata(file.name, 'label', e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                          />
+                        </div>
+                      )}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                           {t('listComponents.fileMetadata.caseId')}
@@ -86,18 +134,6 @@ export function FileMetadataModal({ selectedFiles, fileMetadata, onUpdateMetadat
                           <option value="Female">{t('listComponents.fileMetadata.female')}</option>
                           <option value="Unspecified">{t('listComponents.fileMetadata.unspecified')}</option>
                         </select>
-                      </div>
-                      <div className="col-span-2">
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          {t('listComponents.fileMetadata.sourceOrganTissue')}
-                        </label>
-                        <input
-                          type="text"
-                          placeholder={t('listComponents.fileMetadata.sourcePlaceholder')}
-                          value={fileMetadata.get(file.name)?.source || ''}
-                          onChange={(e) => onUpdateMetadata(file.name, 'source', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                        />
                       </div>
                     </div>
                   </div>

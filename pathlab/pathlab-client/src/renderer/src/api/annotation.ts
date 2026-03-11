@@ -1,5 +1,5 @@
 import { API_BASE } from '../config'
-import { apiFetch, getAuthToken } from './client'
+import { apiFetch, withAuthTokenQuery } from './client'
 
 // ============================================================================
 // Annotation Types
@@ -44,6 +44,8 @@ export interface DatasetGroundTruthResponse {
   annotations: AnnotationsMap
   record_count: number
   source: 'ground_truth'
+  width?: number | null
+  height?: number | null
 }
 
 export interface AnnotationSummaryLabel {
@@ -239,7 +241,7 @@ export async function extractRegions(req: ExtractRegionsRequest): Promise<Extrac
  * Returns null if not authenticated.
  */
 export function getExtractProgressSSEUrl(taskId: string): string | null {
-  const token = getAuthToken()
-  if (!token) return null
-  return `${API_BASE}/annotation/extract/${encodeURIComponent(taskId)}/stream?token=${encodeURIComponent(token)}`
+  const baseUrl = `${API_BASE}/annotation/extract/${encodeURIComponent(taskId)}/stream`
+  const authedUrl = withAuthTokenQuery(baseUrl)
+  return authedUrl === baseUrl ? null : authedUrl
 }

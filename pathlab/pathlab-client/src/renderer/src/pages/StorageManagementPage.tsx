@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { HardDrive, RefreshCw, Trash2, Search, CheckCircle, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react'
-import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, OrphanedFilesInfo, CleanupResult, OrphanedFile } from '../api'
+import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, startCleanupEmptyDatasetsTask, OrphanedFilesInfo, CleanupResult, OrphanedFile } from '../api'
 import { PageHeader, Card, Button } from '../components/common'
+import { useToast } from '../contexts/ToastContext'
 import { formatBytes } from '../lib/utils'
 
 export default function StorageManagementPage() {
   const { t } = useTranslation()
+  const { success: toastSuccess, error: toastError } = useToast()
   const [stats, setStats] = useState<StorageStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -17,6 +19,7 @@ export default function StorageManagementPage() {
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null)
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
+  const [startingEmptyDatasetCleanup, setStartingEmptyDatasetCleanup] = useState(false)
 
   const categoryLabels: { [key: string]: string } = {
     coordinates: t('storagePage.categories.coordinates'),
@@ -96,6 +99,23 @@ export default function StorageManagementPage() {
       setError(err instanceof Error ? err.message : t('storagePage.errors.cleanupFailed'))
     } finally {
       setLoadingOrphaned(false)
+    }
+  }
+
+  const handleStartEmptyDatasetCleanup = async () => {
+    setStartingEmptyDatasetCleanup(true)
+    try {
+      const result = await startCleanupEmptyDatasetsTask()
+      if (result.task_id === 'no-op') {
+        toastSuccess(t('storagePage.emptyDatasets.noop'))
+      } else {
+        toastSuccess(t('storagePage.emptyDatasets.started', { count: result.total_items }))
+      }
+    } catch (err) {
+      console.error('Failed to start empty dataset cleanup:', err)
+      toastError(err instanceof Error ? err.message : t('storagePage.errors.cleanupEmptyDatasetsFailed'))
+    } finally {
+      setStartingEmptyDatasetCleanup(false)
     }
   }
 
@@ -289,6 +309,32 @@ export default function StorageManagementPage() {
               </div>
             </div>
           </div>
+        </div>
+      </Card>
+
+      <Card
+        title={t('storagePage.emptyDatasets.title')}
+        icon={Trash2}
+        iconColor="text-rose-600"
+        className="mb-6"
+        headerAction={
+          <Button
+            onClick={handleStartEmptyDatasetCleanup}
+            disabled={loading || startingEmptyDatasetCleanup}
+            variant="danger"
+            size="sm"
+            icon={Trash2}
+          >
+            {startingEmptyDatasetCleanup
+              ? t('storagePage.emptyDatasets.starting')
+              : t('storagePage.emptyDatasets.button')}
+          </Button>
+        }
+      >
+        <div className="p-6">
+          <p className="text-sm text-gray-700 leading-6">
+            {t('storagePage.emptyDatasets.description')}
+          </p>
         </div>
       </Card>
 

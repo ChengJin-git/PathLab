@@ -26,7 +26,8 @@ export const CLASSIFICATION_METRICS: readonly MetricDefinition[] = [
   { id: 'sensitivity', label: 'Sensitivity', description: 'True positive rate', labelKey: 'resultsPage.metricLabels.sensitivity', descriptionKey: 'resultsPage.metricDescriptions.sensitivity' },
   { id: 'specificity', label: 'Specificity', description: 'True negative rate', labelKey: 'resultsPage.metricLabels.specificity', descriptionKey: 'resultsPage.metricDescriptions.specificity' },
   { id: 'f1', label: 'F1 Score', description: 'Harmonic mean of precision and recall', labelKey: 'resultsPage.metricLabels.f1', descriptionKey: 'resultsPage.metricDescriptions.f1' },
-  { id: 'auc', label: 'AUC', description: 'Area under ROC curve', labelKey: 'resultsPage.metricLabels.auc', descriptionKey: 'resultsPage.metricDescriptions.auc' }
+  { id: 'auc', label: 'AUC', description: 'Area under ROC curve', labelKey: 'resultsPage.metricLabels.auc', descriptionKey: 'resultsPage.metricDescriptions.auc' },
+  { id: 'weighted_kappa', label: 'Weighted Kappa', description: 'Quadratic-weighted Cohen\'s kappa agreement score', labelKey: 'resultsPage.metricLabels.weighted_kappa', descriptionKey: 'resultsPage.metricDescriptions.weighted_kappa' }
 ] as const
 
 /**
@@ -43,6 +44,7 @@ export const SURVIVAL_METRICS: readonly MetricDefinition[] = [
  */
 export const SEGMENTATION_METRICS: readonly MetricDefinition[] = [
   { id: 'iou', label: 'IoU', description: 'Intersection over Union (Jaccard Index)', labelKey: 'resultsPage.metricLabels.iou', descriptionKey: 'resultsPage.metricDescriptions.iou' },
+  { id: 'miou', label: 'mIoU', description: 'Mean Intersection over Union across segmentation classes', labelKey: 'resultsPage.metricLabels.miou', descriptionKey: 'resultsPage.metricDescriptions.miou' },
   { id: 'dice', label: 'Dice', description: 'Dice coefficient (F1 for segmentation)', labelKey: 'resultsPage.metricLabels.dice', descriptionKey: 'resultsPage.metricDescriptions.dice' },
   { id: 'accuracy', label: 'Accuracy', description: 'Pixel-level accuracy', labelKey: 'resultsPage.metricLabels.accuracy', descriptionKey: 'resultsPage.metricDescriptions.accuracy' },
   { id: 'precision', label: 'Precision', description: 'Pixel-level precision', labelKey: 'resultsPage.metricLabels.precision', descriptionKey: 'resultsPage.metricDescriptions.precision' },
@@ -120,11 +122,13 @@ export const METRIC_COLORS: Record<string, string> = {
   recall: 'text-teal-600 bg-teal-50 border-teal-200',
   sensitivity: 'text-teal-600 bg-teal-50 border-teal-200',
   specificity: 'text-orange-600 bg-orange-50 border-orange-200',
+  weighted_kappa: 'text-slate-700 bg-slate-50 border-slate-200',
   c_index: 'text-indigo-600 bg-indigo-50 border-indigo-200',
   integrated_brier_score: 'text-emerald-600 bg-emerald-50 border-emerald-200',
   loss: 'text-red-600 bg-red-50 border-red-200',
   // Segmentation-specific metrics
   iou: 'text-cyan-600 bg-cyan-50 border-cyan-200',
+  miou: 'text-cyan-700 bg-cyan-50 border-cyan-300',
   dice: 'text-violet-600 bg-violet-50 border-violet-200',
 }
 
@@ -137,6 +141,7 @@ export const METRIC_ABBREVIATIONS: Record<string, string> = {
   recall: 'REC',
   sensitivity: 'SENS',
   specificity: 'SPEC',
+  weighted_kappa: 'WKAP',
   f1: 'F1',
   auc: 'AUC',
   tp: 'TP',
@@ -151,6 +156,7 @@ export const METRIC_ABBREVIATIONS: Record<string, string> = {
   integrated_brier_score: 'IBS',
   // Segmentation-specific
   iou: 'IoU',
+  miou: 'mIoU',
   dice: 'DICE',
 }
 
@@ -159,7 +165,7 @@ export const METRIC_ABBREVIATIONS: Record<string, string> = {
  */
 export const RAW_VALUE_METRICS = new Set([
   'loss', 'train_loss', 'val_loss', 'test_loss',
-  'c_index', 'integrated_brier_score', 
+  'c_index', 'integrated_brier_score', 'weighted_kappa',
   'mse', 'rmse', 'mae',
   'log_loss', 'cross_entropy',
 ])
@@ -171,7 +177,7 @@ export const RAW_VALUE_METRICS = new Set([
 /**
  * Default metrics to show for classification tasks.
  */
-export const DEFAULT_CLASSIFICATION_METRICS = ['accuracy', 'precision', 'sensitivity', 'f1', 'auc', 'specificity']
+export const DEFAULT_CLASSIFICATION_METRICS = ['accuracy', 'precision', 'sensitivity', 'f1', 'auc', 'specificity', 'weighted_kappa']
 
 /**
  * Default charts to show for classification tasks.
@@ -229,6 +235,8 @@ export function isPercentageMetric(metricName: string): boolean {
  * Format metric name for display (remove prefixes, capitalize).
  */
 export function formatMetricName(name: string): string {
+  if (name === 'miou') return 'mIoU'
+  if (name === 'iou') return 'IoU'
   return name
     .replace('macro_', '')
     .replace(/_/g, ' ')
@@ -243,5 +251,14 @@ export function formatMetricValue(value: number, metricName: string): string {
     return `${(value * 100).toFixed(2)}%`
   }
   return value.toFixed(4)
+}
+
+export function getSegmentationMetrics(numClasses = 1): readonly MetricDefinition[] {
+  return SEGMENTATION_METRICS.filter(metric => (numClasses > 1 ? metric.id !== 'iou' : metric.id !== 'miou'))
+}
+
+export function getDefaultSegmentationMetrics(numClasses = 1): string[] {
+  const primaryMetric = numClasses > 1 ? 'miou' : 'iou'
+  return [primaryMetric, 'dice', 'accuracy', 'precision', 'recall', 'f1']
 }
 

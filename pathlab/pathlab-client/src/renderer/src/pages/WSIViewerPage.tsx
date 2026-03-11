@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo, type SyntheticEvent } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
@@ -12,7 +12,6 @@ import {
   PatchCAMData,
   fetchPatchCAMData,
   getPatchCAMImageUrl,
-  getPatchFileImageUrl,
   getSegMaskImageUrl,
 } from '../api'
 import WSIViewer from '../components/WSIViewer'
@@ -25,8 +24,10 @@ import { AttentionPatchesPanel } from '../components/wsiViewer/AttentionPatchesP
 import { DeleteResultsModal } from '../components/wsiViewer/DeleteResultsModal'
 import { AnnotationToolbar, getColorForLabel } from '../components/wsiViewer/AnnotationToolbar'
 import { AnnotationOverlay } from '../components/wsiViewer/AnnotationOverlay'
+import { PatchOverlayStack, type PatchOverlayLayer } from '../components/wsiViewer/PatchOverlayStack'
 import { AnnotationListPanel } from '../components/wsiViewer/AnnotationListPanel'
 import { CreateDatasetDialog } from '../components/wsiViewer/CreateDatasetDialog'
+import { ViewerOverlayControls } from '../components/wsiViewer/ViewerOverlayControls'
 import {
   AnnotationRegion,
   AnnotationsMap,
@@ -43,11 +44,25 @@ import { useToast } from '../contexts/ToastContext'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { getFileType } from '../constants/fileTypes'
 
+const PATCH_OVERLAY_PREVIEW_SIZE = 768
+
 const FOCUS_REGION_PADDING_MULTIPLIER = 1.8
 const FOCUS_REGION_MIN_SIZE = 512
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
+}
+
+interface ViewerNavigationState {
+  fromAIChat?: boolean
+  fromDataset?: boolean
+  datasetId?: string
+  datasetName?: string
+  conversationId?: string
+  chatScrollPosition?: string
+  selectedTaskId?: string
+  selectedFoldKey?: string
+  initialShowHeatmap?: boolean
 }
 
 export default function WSIViewerPage() {
@@ -57,11 +72,16 @@ export default function WSIViewerPage() {
   const { wsi_id = '' } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
-  const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
-  const fromDataset = (location.state as { fromDataset?: boolean } | null)?.fromDataset === true
-  const datasetId = (location.state as { datasetId?: string } | null)?.datasetId
-  const datasetName = (location.state as { datasetName?: string } | null)?.datasetName
-  const conversationId = (location.state as { conversationId?: string } | null)?.conversationId
+  const navigationState = (location.state as ViewerNavigationState | null) ?? null
+  const fromAIChat = navigationState?.fromAIChat === true
+  const fromDataset = navigationState?.fromDataset === true
+  const datasetId = navigationState?.datasetId
+  const datasetName = navigationState?.datasetName
+  const conversationId = navigationState?.conversationId
+  const chatScrollPosition = navigationState?.chatScrollPosition
+  const preferredTaskId = navigationState?.selectedTaskId
+  const preferredFoldKey = navigationState?.selectedFoldKey
+  const initialShowHeatmap = navigationState?.initialShowHeatmap === true
   const [detail, setDetail] = useState<any>()
   const [showHeatmap, setShowHeatmap] = useState(false)
   const [showSegMask, setShowSegMask] = useState(false)
@@ -119,27 +139,6 @@ export default function WSIViewerPage() {
       }
     }
   }
-
-  // Mouse wheel zoom for patch viewer - use non-passive event listener to allow preventDefault
-  useEffect(() => {
-    const container = patchContainerRef.current
-    if (!container) return
-
-    const handleWheel = (e: WheelEvent) => {
-      e.preventDefault()
-      if (e.deltaY < 0) {
-        setPatchZoom(prev => Math.min(prev * 1.1, 10))
-      } else {
-        setPatchZoom(prev => Math.max(prev / 1.1, 0.5))
-      }
-    }
-
-    // Use { passive: false } to allow preventDefault
-    container.addEventListener('wheel', handleWheel, { passive: false })
-    return () => {
-      container.removeEventListener('wheel', handleWheel)
-    }
-  }, [])
 
   // Pan and click handlers for patch viewer
   const [clickStart, setClickStart] = useState({ x: 0, y: 0 })
@@ -215,8 +214,12 @@ export default function WSIViewerPage() {
       if (deleteMode === 'all' || !heatmaps.find(h => h.task_id === selectedTaskId)) {
         if (heatmaps.length > 0) {
           setSelectedTaskId(heatmaps[0].task_id ?? undefined)
+          setSelectedFoldKey(undefined)
+          setShowHeatmap(false)
+          setShowSegMask(false)
         } else {
           setSelectedTaskId(undefined)
+          setSelectedFoldKey(undefined)
           setHeatmapData(null)
           setShowHeatmap(false)
           setShowSegMask(false)
@@ -248,6 +251,8 @@ export default function WSIViewerPage() {
   const [showCreateDatasetDialog, setShowCreateDatasetDialog] = useState(false)
   const [focusedRegionId, setFocusedRegionId] = useState<string | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const annotationIdRef = useRef<string | null>(null)
+  const saveRequestRef = useRef<Promise<boolean> | null>(null)
   const effectiveDatasetId = datasetId ?? detail?.meta?.dataset_id
   const draftCacheKey = effectiveDatasetId ?? '__NO_DATASET__'
   const draftCacheRef = useRef<{
@@ -262,6 +267,10 @@ export default function WSIViewerPage() {
   const [savingAnnotations, setSavingAnnotations] = useState(false)
   // Pending navigation when user tries to leave with unsaved changes
   const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null)
+
+  useEffect(() => {
+    annotationIdRef.current = annotationId
+  }, [annotationId])
 
   // Determine if any annotated source slide is a WSI (not a patch image)
   // Used to disable segmentation dataset creation for WSI data
@@ -326,10 +335,21 @@ export default function WSIViewerPage() {
       try {
         const heatmaps = await fetchAvailableHeatmaps(wsi_id)
         setAvailableHeatmaps(heatmaps)
-        // Auto-select first heatmap if available
-        if (heatmaps.length > 0 && heatmaps[0].task_id) {
-          setSelectedTaskId(heatmaps[0].task_id)
-          setShowHeatmap(true)
+        const isHeatmapEntry = (entry: AvailableHeatmap) => entry.data_type === 'wsi' || entry.data_type === 'patch'
+        const preferredExactEntry = preferredTaskId
+          ? heatmaps.find(h => h.task_id === preferredTaskId && h.fold_key === preferredFoldKey && isHeatmapEntry(h))
+          : undefined
+        const preferredTaskEntry = preferredTaskId
+          ? heatmaps.find(h => h.task_id === preferredTaskId && isHeatmapEntry(h))
+          : undefined
+        const fallbackEntry = heatmaps.find(isHeatmapEntry) ?? heatmaps[0]
+        const initialEntry = preferredExactEntry ?? preferredTaskEntry ?? fallbackEntry
+
+        if (initialEntry?.task_id) {
+          setSelectedTaskId(initialEntry.task_id)
+          setSelectedFoldKey(preferredExactEntry?.fold_key || undefined)
+          setShowHeatmap(initialShowHeatmap && isHeatmapEntry(initialEntry))
+          setShowSegMask(false)
         }
       } catch (err) {
         console.error('Failed to fetch available heatmaps:', err)
@@ -339,7 +359,7 @@ export default function WSIViewerPage() {
       }
     }
     loadData()
-  }, [wsi_id])
+  }, [initialShowHeatmap, preferredFoldKey, preferredTaskId, wsi_id])
 
   // Handle heatmap loaded callback from WSIViewer
   const handleHeatmapLoaded = useCallback((data: HeatmapData | null) => {
@@ -352,16 +372,83 @@ export default function WSIViewerPage() {
     }
   }, [])
 
-  // Get selected task and check if it's patch-level
-  const selectedTask = availableHeatmaps.find(h => h.task_id === selectedTaskId && (!h.fold_key || h.fold_key === selectedFoldKey))
-  const isPatchLevel = selectedTask?.data_type === 'patch'
-  const isPatchSegmentation = selectedTask?.data_type === 'patch_segmentation'
+  const handleSelectedTaskChange = useCallback((taskId: string | undefined) => {
+    setSelectedTaskId(taskId)
+    setSelectedFoldKey(undefined)
+    setSelectedClassIdx(undefined)
+    setShowHeatmap(false)
+    setShowSegMask(false)
+  }, [])
+
+  const handleSelectedFoldChange = useCallback((foldKey: string) => {
+    setSelectedFoldKey(foldKey)
+    setSelectedClassIdx(undefined)
+    setShowHeatmap(false)
+    setShowSegMask(false)
+  }, [])
+
+  const selectedTaskGroup = useMemo(() => {
+    if (!selectedTaskId) return []
+    return availableHeatmaps.filter(h => h.task_id === selectedTaskId)
+  }, [availableHeatmaps, selectedTaskId])
+
+  const isSegmentationTask = selectedTaskGroup.some(
+    h => h.task_type === 'segmentation' || h.task_type === 'patch_segmentation' || h.data_type === 'patch_segmentation'
+  )
+
+  const effectiveFoldKey = isSegmentationTask ? undefined : selectedFoldKey
+
+  const selectedTaskEntries = useMemo(() => {
+    if (selectedTaskGroup.length === 0) return []
+
+    if (effectiveFoldKey) {
+      const foldEntries = selectedTaskGroup.filter(h => h.fold_key === effectiveFoldKey)
+      if (foldEntries.length > 0) return foldEntries
+    }
+
+    const nonFoldEntries = selectedTaskGroup.filter(h => !h.fold_key)
+    return nonFoldEntries.length > 0 ? nonFoldEntries : selectedTaskGroup
+  }, [effectiveFoldKey, selectedTaskGroup])
+
+  const selectedTask = selectedTaskEntries.find(h => h.data_type === 'wsi' || h.data_type === 'patch') ?? selectedTaskEntries[0]
+  const selectedSegmentationEntry = selectedTaskEntries.find(
+    h => h.task_type === 'segmentation' || h.task_type === 'patch_segmentation' || h.data_type === 'patch_segmentation'
+  )
+  const hasPatchHeatmap = selectedTaskEntries.some(h => h.data_type === 'patch')
+  const isPatchLevel = selectedTaskEntries.some(h => h.data_type === 'patch' || h.data_type === 'patch_segmentation')
+  const canShowHeatmapOverlay = selectedTaskEntries.some(h => h.data_type === 'wsi' || h.data_type === 'patch')
+  const canShowSegMaskOverlay = selectedTaskEntries.some(h => h.data_type === 'patch_segmentation')
+  const shouldShowOverlayControls = canShowHeatmapOverlay || canShowSegMaskOverlay
+  const segmentationClasses = selectedSegmentationEntry?.classes ?? []
+  const viewerDataLevel: 'wsi' | 'patch' = selectedTask?.data_type === 'patch' ? 'patch' : 'wsi'
+
+  // Mouse wheel zoom for patch viewer - wait until the conditional patch container is mounted
+  useEffect(() => {
+    if (!isPatchLevel) return
+
+    const container = patchContainerRef.current
+    if (!container) return
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      if (e.deltaY < 0) {
+        setPatchZoom(prev => Math.min(prev * 1.1, 10))
+      } else {
+        setPatchZoom(prev => Math.max(prev / 1.1, 0.5))
+      }
+    }
+
+    container.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      container.removeEventListener('wheel', handleWheel)
+    }
+  }, [isPatchLevel])
 
   // Get available folds for the selected task (K-fold support)
   const availableFolds = useMemo(() => {
-    if (!selectedTaskId) return []
-    const folds = availableHeatmaps
-      .filter(h => h.task_id === selectedTaskId && h.fold_key)
+    if (selectedTaskGroup.length === 0 || isSegmentationTask) return []
+    const folds = selectedTaskGroup
+      .filter(h => h.fold_key)
       .map(h => h.fold_key!)
       .filter((v, i, a) => a.indexOf(v) === i)  // unique
       .sort((a, b) => {
@@ -371,7 +458,7 @@ export default function WSIViewerPage() {
         return numA - numB
       })
     return folds
-  }, [availableHeatmaps, selectedTaskId])
+  }, [isSegmentationTask, selectedTaskGroup])
 
   // Get unique tasks for dropdown (deduplicate K-fold entries)
   const uniqueTasks = useMemo(() => {
@@ -402,14 +489,79 @@ export default function WSIViewerPage() {
     }
   }, [availableFolds, selectedFoldKey])
 
+  useEffect(() => {
+    if (!canShowHeatmapOverlay && showHeatmap) {
+      setShowHeatmap(false)
+    }
+  }, [canShowHeatmapOverlay, showHeatmap])
+
+  useEffect(() => {
+    if (!canShowSegMaskOverlay && showSegMask) {
+      setShowSegMask(false)
+    }
+  }, [canShowSegMaskOverlay, showSegMask])
+
   // Load patch CAM data when selecting a patch-level task
   useEffect(() => {
-    if (isPatchLevel && selectedTaskId) {
-      fetchPatchCAMData(wsi_id, selectedTaskId, selectedFoldKey).then(setPatchCAMData)
+    if (hasPatchHeatmap && selectedTaskId) {
+      fetchPatchCAMData(wsi_id, selectedTaskId, effectiveFoldKey).then(setPatchCAMData)
     } else {
       setPatchCAMData(null)
     }
-  }, [wsi_id, selectedTaskId, selectedFoldKey, isPatchLevel])
+  }, [wsi_id, selectedTaskId, effectiveFoldKey, hasPatchHeatmap])
+
+  const patchHeatmapPreviewUrl = useMemo(() => {
+    if (!selectedTaskId || !canShowHeatmapOverlay) return null
+    return getPatchCAMImageUrl(wsi_id, selectedTaskId, effectiveFoldKey, PATCH_OVERLAY_PREVIEW_SIZE)
+  }, [canShowHeatmapOverlay, effectiveFoldKey, selectedTaskId, wsi_id])
+
+  const patchSegMaskPreviewUrl = useMemo(() => {
+    if (!selectedTaskId || !canShowSegMaskOverlay) return null
+    return getSegMaskImageUrl(wsi_id, selectedTaskId, effectiveFoldKey, PATCH_OVERLAY_PREVIEW_SIZE)
+  }, [canShowSegMaskOverlay, effectiveFoldKey, selectedTaskId, wsi_id])
+
+  const patchOverlayLayers = useMemo<PatchOverlayLayer[]>(() => {
+    const layers: PatchOverlayLayer[] = []
+
+    if (showHeatmap && patchHeatmapPreviewUrl) {
+      layers.push({
+        key: 'pred-heatmap',
+        src: patchHeatmapPreviewUrl,
+        alt: t('wsiViewer.heatmapOverlayAlt'),
+        opacity: heatmapOpacity,
+      })
+    }
+
+    if (showSegMask && patchSegMaskPreviewUrl) {
+      layers.push({
+        key: 'pred-mask',
+        src: patchSegMaskPreviewUrl,
+        alt: t('wsiViewer.showPredictionMask'),
+      })
+    }
+
+    return layers
+  }, [heatmapOpacity, patchHeatmapPreviewUrl, patchSegMaskPreviewUrl, showHeatmap, showSegMask, t])
+
+  const handleToggleHeatmap = useCallback(() => {
+    setShowHeatmap(prev => !prev)
+  }, [])
+
+  const handleToggleSegMask = useCallback(() => {
+    setShowSegMask(prev => !prev)
+  }, [])
+
+  useEffect(() => {
+    if (!isPatchLevel) return
+
+    ;[patchHeatmapPreviewUrl, patchSegMaskPreviewUrl]
+      .filter((url): url is string => !!url)
+      .forEach((url) => {
+        const img = new Image()
+        img.decoding = 'async'
+        img.src = url
+      })
+  }, [isPatchLevel, patchHeatmapPreviewUrl, patchSegMaskPreviewUrl])
 
   const currentIndex = allWSIs.findIndex(w => w.wsi_id === wsi_id)
   const prevWSI = currentIndex > 0 ? allWSIs[currentIndex - 1] : null
@@ -479,11 +631,66 @@ export default function WSIViewerPage() {
     setSlideHeight(info.height)
   }, [])
 
+  const handlePatchImageLoad = useCallback((event: SyntheticEvent<HTMLImageElement>) => {
+    const image = event.currentTarget
+    if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+      setSlideWidth(image.naturalWidth)
+      setSlideHeight(image.naturalHeight)
+    }
+  }, [])
+
+  const focusPatchRegion = useCallback((region: AnnotationRegion) => {
+    if (slideWidth <= 0 || slideHeight <= 0) {
+      return
+    }
+
+    const container = patchContainerRef.current
+    if (!container) {
+      return
+    }
+
+    const stackSide = Math.min(container.clientWidth, container.clientHeight, 600)
+    if (stackSide <= 0) {
+      return
+    }
+
+    const regionCenterX = region.x + region.width / 2
+    const regionCenterY = region.y + region.height / 2
+    const targetWidth = Math.max(region.width * FOCUS_REGION_PADDING_MULTIPLIER, slideWidth * 0.15)
+    const targetHeight = Math.max(region.height * FOCUS_REGION_PADDING_MULTIPLIER, slideHeight * 0.15)
+    const nextZoom = clamp(Math.min(slideWidth / targetWidth, slideHeight / targetHeight), 1, 10)
+
+    const baseScale = Math.min(stackSide / slideWidth, stackSide / slideHeight)
+    const renderedWidth = slideWidth * baseScale
+    const renderedHeight = slideHeight * baseScale
+    const renderedLeft = (stackSide - renderedWidth) / 2
+    const renderedTop = (stackSide - renderedHeight) / 2
+    const baseX = renderedLeft + regionCenterX * baseScale
+    const baseY = renderedTop + regionCenterY * baseScale
+    const centerX = stackSide / 2
+    const centerY = stackSide / 2
+
+    setPatchZoom(nextZoom)
+    setPatchPan({
+      x: -nextZoom * (baseX - centerX),
+      y: -nextZoom * (baseY - centerY),
+    })
+  }, [slideHeight, slideWidth])
+
   const handleFocusRegion = useCallback((regionId: string) => {
     setFocusedRegionId(regionId)
 
     const region = currentRegions.find(item => item.id === regionId)
-    if (!region || !osdViewer?.viewport || !window.OpenSeadragon || slideWidth <= 0 || slideHeight <= 0) {
+    if (!region || slideWidth <= 0 || slideHeight <= 0) {
+      return
+    }
+
+    if (isPatchLevel) {
+      focusPatchRegion(region)
+      return
+    }
+
+    if (!osdViewer?.viewport || !window.OpenSeadragon) {
       return
     }
 
@@ -520,7 +727,7 @@ export default function WSIViewerPage() {
       osdViewer.viewport.fitBounds(bounds, false)
       osdViewer.viewport.applyConstraints()
     }
-  }, [currentRegions, osdViewer, slideHeight, slideWidth])
+  }, [currentRegions, focusPatchRegion, isPatchLevel, osdViewer, slideHeight, slideWidth])
 
   const handleRegionCreated = useCallback((region: Omit<AnnotationRegion, 'id'>) => {
     const newRegion: AnnotationRegion = {
@@ -583,32 +790,6 @@ export default function WSIViewerPage() {
   }, [wsi_id])
 
   const handleLabelChange = useCallback((label: string) => {
-    const defaultLabel = t('annotation.defaultLabel')
-    // When user sets a real label and there are regions with the default label,
-    // replace all default-label regions with the new label and remove the default from colors
-    if (label !== defaultLabel) {
-      setAllAnnotations(prev => {
-        const updated: typeof prev = {}
-        let changed = false
-        for (const [wsiId, regions] of Object.entries(prev)) {
-          updated[wsiId] = regions.map(r => {
-            if (r.label === defaultLabel) {
-              changed = true
-              return { ...r, label }
-            }
-            return r
-          })
-        }
-        return changed ? updated : prev
-      })
-      setLabelColors(prev => {
-        if (prev[defaultLabel]) {
-          const { [defaultLabel]: _, ...rest } = prev
-          return rest
-        }
-        return prev
-      })
-    }
     setCurrentLabel(label)
     if (label) {
       setLabelColors(prev => {
@@ -619,7 +800,7 @@ export default function WSIViewerPage() {
         }
       })
     }
-  }, [t])
+  }, [])
 
   const buildEmptyDatasetDraftAnnotations = useCallback((): AnnotationsMap => {
     if (Object.keys(allAnnotations).length > 0) {
@@ -628,53 +809,103 @@ export default function WSIViewerPage() {
     return wsi_id ? { [wsi_id]: [] } : {}
   }, [allAnnotations, wsi_id])
 
-  // Manual save handler
-  const handleManualSave = useCallback(async () => {
-    setSavingAnnotations(true)
-    try {
-      const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
-      if (totalRegions === 0) {
-        if (effectiveDatasetId) {
-          const id = annotationId || crypto.randomUUID()
-          const emptyDatasetDraft = buildEmptyDatasetDraftAnnotations()
-          if (!annotationId) setAnnotationId(id)
+  const clearPendingSaveTimer = useCallback(() => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+  }, [])
+
+  const persistAnnotations = useCallback(async ({
+    showToast = true,
+  }: {
+    showToast?: boolean
+  } = {}) => {
+    clearPendingSaveTimer()
+
+    if (saveRequestRef.current) {
+      const saved = await saveRequestRef.current
+      if (showToast) {
+        if (saved) {
+          toast.success(t('annotation.saved'))
+        } else {
+          toast.error(t('annotation.saveFailed'))
+        }
+      }
+      return saved
+    }
+
+    const savePromise = (async () => {
+      setSavingAnnotations(true)
+      try {
+        const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
+        const currentAnnotationId = annotationIdRef.current
+
+        if (totalRegions === 0) {
+          if (effectiveDatasetId) {
+            const id = currentAnnotationId || crypto.randomUUID()
+            const emptyDatasetDraft = buildEmptyDatasetDraftAnnotations()
+            if (!currentAnnotationId) {
+              annotationIdRef.current = id
+              setAnnotationId(id)
+            }
+            await saveAnnotation({
+              annotation_id: id,
+              source_dataset_id: effectiveDatasetId,
+              annotations: emptyDatasetDraft,
+            })
+            updateDraftCache(id, emptyDatasetDraft)
+          } else if (currentAnnotationId) {
+            annotationIdRef.current = null
+            setAnnotationId(null)
+            await deleteAnnotation(currentAnnotationId)
+            updateDraftCache(null, null)
+          } else {
+            setHasUnsavedChanges(false)
+            return true
+          }
+        } else {
+          const id = currentAnnotationId || crypto.randomUUID()
+          if (!currentAnnotationId) {
+            annotationIdRef.current = id
+            setAnnotationId(id)
+          }
           await saveAnnotation({
             annotation_id: id,
             source_dataset_id: effectiveDatasetId,
-            annotations: emptyDatasetDraft,
+            annotations: allAnnotations,
           })
-          updateDraftCache(id, emptyDatasetDraft)
-        } else if (annotationId) {
-          // Nothing to save; if an annotation exists, delete it
-          const idToDelete = annotationId
-          setAnnotationId(null)
-          await deleteAnnotation(idToDelete)
-          updateDraftCache(null, null)
+          updateDraftCache(id, allAnnotations)
         }
-      } else {
-        const id = annotationId || crypto.randomUUID()
-        if (!annotationId) setAnnotationId(id)
-        await saveAnnotation({
-          annotation_id: id,
-          source_dataset_id: effectiveDatasetId,
-          annotations: allAnnotations,
-        })
-        updateDraftCache(id, allAnnotations)
+
+        setHasUnsavedChanges(false)
+        if (effectiveDatasetId) {
+          await refreshDatasetAnnotationSummary()
+        }
+        if (showToast) {
+          toast.success(t('annotation.saved'))
+        }
+        return true
+      } catch (err) {
+        console.error('Failed to save annotation:', err)
+        if (showToast) {
+          toast.error(t('annotation.saveFailed'))
+        }
+        return false
+      } finally {
+        saveRequestRef.current = null
+        setSavingAnnotations(false)
       }
-      setHasUnsavedChanges(false)
-      if (effectiveDatasetId) {
-        await refreshDatasetAnnotationSummary()
-      }
-      toast.success(t('annotation.saved'))
-      return true
-    } catch (err) {
-      console.error('Failed to save annotation:', err)
-      toast.error(t('annotation.saveFailed'))
-      return false
-    } finally {
-      setSavingAnnotations(false)
-    }
-  }, [allAnnotations, annotationId, buildEmptyDatasetDraftAnnotations, effectiveDatasetId, refreshDatasetAnnotationSummary, t, toast, updateDraftCache])
+    })()
+
+    saveRequestRef.current = savePromise
+    return await savePromise
+  }, [allAnnotations, buildEmptyDatasetDraftAnnotations, clearPendingSaveTimer, effectiveDatasetId, refreshDatasetAnnotationSummary, t, toast, updateDraftCache])
+
+  // Manual save handler
+  const handleManualSave = useCallback(async () => {
+    return await persistAnnotations({ showToast: true })
+  }, [persistAnnotations])
 
   const handleDeleteCrossSlideByLabel = useCallback(async (labels: string[]) => {
     const labelSet = new Set(labels)
@@ -759,37 +990,18 @@ export default function WSIViewerPage() {
   useEffect(() => {
     if (!annotationMode) return
     if (!hasUnsavedChanges) return
+    if (savingAnnotations) return
     const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
 
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    clearPendingSaveTimer()
 
     // For dataset-scoped annotations, persist empty drafts so intentional GT clearing
     // does not resurrect the dataset GT on the next load.
     if (totalRegions === 0) {
       if (effectiveDatasetId) {
-        const id = annotationId || crypto.randomUUID()
-        const emptyDatasetDraft = buildEmptyDatasetDraftAnnotations()
-        if (!annotationId) setAnnotationId(id)
-        saveAnnotation({
-          annotation_id: id,
-          source_dataset_id: effectiveDatasetId,
-          annotations: emptyDatasetDraft,
-        }).then(() => {
-          updateDraftCache(id, emptyDatasetDraft)
-          setHasUnsavedChanges(false)
-          refreshDatasetAnnotationSummary()
-        }).catch(err => {
-          console.error('Failed to save empty dataset annotation:', err)
-        })
-      } else if (annotationId) {
-        const idToDelete = annotationId
-        setAnnotationId(null)
-        deleteAnnotation(idToDelete).then(() => {
-          updateDraftCache(null, null)
-          setHasUnsavedChanges(false)
-        }).catch(err => {
-          console.error('Failed to delete empty annotation:', err)
-        })
+        void persistAnnotations({ showToast: false })
+      } else if (annotationIdRef.current) {
+        void persistAnnotations({ showToast: false })
       } else {
         setHasUnsavedChanges(false)
       }
@@ -797,28 +1009,14 @@ export default function WSIViewerPage() {
     }
 
     saveTimerRef.current = setTimeout(async () => {
-      try {
-        const id = annotationId || crypto.randomUUID()
-        if (!annotationId) setAnnotationId(id)
-        await saveAnnotation({
-          annotation_id: id,
-          source_dataset_id: effectiveDatasetId,
-          annotations: allAnnotations,
-        })
-        updateDraftCache(id, allAnnotations)
-        setHasUnsavedChanges(false)
-        if (effectiveDatasetId) {
-          await refreshDatasetAnnotationSummary()
-        }
-      } catch (err) {
-        console.error('Failed to auto-save annotation:', err)
-      }
+      saveTimerRef.current = null
+      await persistAnnotations({ showToast: false })
     }, 2000)
 
     return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      clearPendingSaveTimer()
     }
-  }, [annotationMode, allAnnotations, annotationId, buildEmptyDatasetDraftAnnotations, effectiveDatasetId, hasUnsavedChanges, refreshDatasetAnnotationSummary, updateDraftCache])
+  }, [allAnnotations, annotationMode, clearPendingSaveTimer, effectiveDatasetId, hasUnsavedChanges, persistAnnotations, savingAnnotations])
 
   // Annotation: recovery when entering annotation mode
   useEffect(() => {
@@ -923,6 +1121,12 @@ export default function WSIViewerPage() {
           <button
             onClick={() => guardedNavigate(() => {
               if (fromAIChat) {
+                if (conversationId) {
+                  sessionStorage.setItem('ai-chat-conversation-id', conversationId)
+                }
+                if (chatScrollPosition) {
+                  sessionStorage.setItem('ai-chat-scroll-position', chatScrollPosition)
+                }
                 navigate(conversationId ? `/dashboard/${conversationId}` : '/dashboard')
               } else if (fromDataset && datasetId) {
                 navigate('/wsi-list', { state: { dataset_id: datasetId } })
@@ -955,7 +1159,8 @@ export default function WSIViewerPage() {
                     fromDataset,
                     datasetId,
                     datasetName,
-                    conversationId
+                    conversationId,
+                    chatScrollPosition,
                   }
                 }))}
                 disabled={!prevWSI}
@@ -972,7 +1177,8 @@ export default function WSIViewerPage() {
                     fromDataset,
                     datasetId,
                     datasetName,
-                    conversationId
+                    conversationId,
+                    chatScrollPosition,
                   }
                 }))}
                 disabled={!nextWSI}
@@ -1037,8 +1243,8 @@ export default function WSIViewerPage() {
           </div>
         </div>
         <div className="flex-1 relative bg-gray-100 overflow-hidden">
-          {/* Conditional Viewer: WSI Viewer for WSI-level, Patch Viewer for patch-level / seg mask */}
-          {(isPatchLevel || isPatchSegmentation) ? (
+          {/* Conditional Viewer: WSI Viewer for WSI-level, Patch Viewer for patch-level results */}
+          {isPatchLevel ? (
             // Patch-level heatmap viewer with zoom/pan controls
             // Note: wheel event is handled via useEffect with { passive: false } to allow preventDefault
             <div
@@ -1087,41 +1293,28 @@ export default function WSIViewerPage() {
                 </button>
               </div>
 
-              <div
-                className="relative max-w-[600px] max-h-full aspect-square transition-transform duration-100"
-                style={{
+              <PatchOverlayStack
+                wsiId={wsi_id}
+                baseImageAlt={t('wsiViewer.patchAlt')}
+                overlayLayers={patchOverlayLayers}
+                containerStyle={{
                   transform: `scale(${patchZoom}) translate(${patchPan.x / patchZoom}px, ${patchPan.y / patchZoom}px)`,
                   transformOrigin: 'center center'
                 }}
-              >
-                {/* Patch image */}
-                <img
-                  src={getPatchFileImageUrl(wsi_id)}
-                  alt={t('wsiViewer.patchAlt')}
-                  className="w-full h-full object-contain rounded-xl shadow-lg select-none"
-                  draggable={false}
-                />
-                {/* CAM overlay (for both classification and segmentation) */}
-                {showHeatmap && selectedTaskId && (
-                  <img
-                    src={getPatchCAMImageUrl(wsi_id, selectedTaskId, selectedFoldKey)}
-                    alt={t('wsiViewer.heatmapOverlayAlt')}
-                    className="absolute inset-0 w-full h-full object-contain rounded-xl pointer-events-none select-none"
-                    style={{ opacity: heatmapOpacity }}
-                    draggable={false}
-                  />
-                )}
-                {/* Segmentation mask overlay (only for segmentation tasks) */}
-                {isPatchSegmentation && showSegMask && selectedTaskId && (
-                  <img
-                    src={getSegMaskImageUrl(wsi_id, selectedTaskId, selectedFoldKey)}
-                    alt="Segmentation Mask"
-                    className="absolute inset-0 w-full h-full object-contain rounded-xl pointer-events-none select-none"
-                    style={{ opacity: 1 }}
-                    draggable={false}
-                  />
-                )}
-              </div>
+                onBaseImageLoad={handlePatchImageLoad}
+                regions={currentRegions}
+                labelColors={labelColors}
+                highlightedRegionId={focusedRegionId}
+                slideWidth={slideWidth}
+                slideHeight={slideHeight}
+                annotationMode={annotationMode}
+                drawingTool={drawingTool}
+                currentLabel={currentLabel}
+                currentColor={currentColor}
+                onRegionCreated={handleRegionCreated}
+                onRegionTooLarge={handleRegionTooLarge}
+                isLabelDropdownOpen={isLabelDropdownOpen}
+              />
             </div>
           ) : (
             // WSI-level viewer
@@ -1131,9 +1324,9 @@ export default function WSIViewerPage() {
                 showHeatmap={showHeatmap}
                 heatmapOpacity={heatmapOpacity}
                 taskId={selectedTaskId}
-                foldKey={selectedFoldKey}
+                foldKey={effectiveFoldKey}
                 classIdx={selectedClassIdx}
-                dataLevel={(selectedTask?.data_type === 'patch_segmentation' ? 'wsi' : selectedTask?.data_type) || 'wsi'}
+                dataLevel={viewerDataLevel}
                 onHeatmapLoaded={handleHeatmapLoaded}
                 onViewerReady={handleViewerReady}
                 onSlideInfo={handleSlideInfo}
@@ -1157,65 +1350,18 @@ export default function WSIViewerPage() {
           )}
 
           {/* Heatmap Controls Overlay */}
-          {availableHeatmaps.length > 0 && (
-            <div className="absolute bottom-4 left-4 right-4 sm:right-auto bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border border-gray-200 p-2 sm:p-3 z-20">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-                {/* CAM / Heatmap toggle */}
-                <button
-                  onClick={() => setShowHeatmap(!showHeatmap)}
-                  className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${showHeatmap
-                    ? 'bg-indigo-100 text-indigo-700 border border-indigo-300'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200'
-                    }`}
-                >
-                  <Layers className="w-4 h-4" />
-                  {isPatchSegmentation
-                    ? (showHeatmap ? 'Hide CAM' : 'Show CAM')
-                    : (showHeatmap ? t('wsiViewer.hideHeatmap') : t('wsiViewer.showHeatmap'))
-                  }
-                </button>
-
-                {/* Segmentation mask toggle (only for segmentation tasks) */}
-                {isPatchSegmentation && (
-                  <button
-                    onClick={() => setShowSegMask(!showSegMask)}
-                    className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${showSegMask
-                      ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200'
-                      }`}
-                  >
-                    <Layers className="w-4 h-4" />
-                    {showSegMask ? 'Hide Mask' : 'Show Mask'}
-                  </button>
-                )}
-
-                {showHeatmap && (
-                  <div className="flex items-center gap-2 px-2 sm:px-0 sm:pl-3 border-t sm:border-t-0 sm:border-l border-gray-200 pt-2 sm:pt-0">
-                    <span className="text-[10px] sm:text-xs text-gray-500 whitespace-nowrap">{t('wsiViewer.opacity')}:</span>
-                    <input
-                      type="range"
-                      min="0.1"
-                      max="0.9"
-                      step="0.1"
-                      value={heatmapOpacity}
-                      onChange={(e) => setHeatmapOpacity(parseFloat(e.target.value))}
-                      className="flex-1 sm:w-20 accent-indigo-600"
-                    />
-                    <span className="text-[10px] sm:text-xs text-gray-600 w-8 text-right px-1">{Math.round(heatmapOpacity * 100)}%</span>
-                  </div>
-                )}
-              </div>
-
-              {showHeatmap && (
-                <div className="mt-2 pt-2 border-t border-gray-100">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-gray-400 uppercase tracking-wide">{t('wsiViewer.activation')}:</span>
-                    <div className="flex-1 h-2 rounded-full bg-gradient-to-r from-blue-500 via-green-500 via-yellow-500 to-red-500"></div>
-                    <span className="text-[10px] text-gray-500">{t('wsiViewer.lowToHigh')}</span>
-                  </div>
-                </div>
-              )}
-            </div>
+          {availableHeatmaps.length > 0 && shouldShowOverlayControls && (
+            <ViewerOverlayControls
+              canShowHeatmapOverlay={canShowHeatmapOverlay}
+              showHeatmap={showHeatmap}
+              onToggleHeatmap={handleToggleHeatmap}
+              heatmapOpacity={heatmapOpacity}
+              onHeatmapOpacityChange={setHeatmapOpacity}
+              canShowSegMaskOverlay={canShowSegMaskOverlay}
+              showSegMask={showSegMask}
+              onToggleSegMask={handleToggleSegMask}
+              segmentationClasses={segmentationClasses}
+            />
           )}
         </div>
       </div>
@@ -1279,11 +1425,13 @@ export default function WSIViewerPage() {
               <>
                 <TaskSelectorCard
                   availableHeatmaps={availableHeatmaps}
+                  selectedTaskEntries={selectedTaskEntries}
                   selectedTaskId={selectedTaskId}
-                  setSelectedTaskId={setSelectedTaskId}
-                  selectedFoldKey={selectedFoldKey}
-                  setSelectedFoldKey={setSelectedFoldKey}
+                  setSelectedTaskId={handleSelectedTaskChange}
+                  selectedFoldKey={effectiveFoldKey}
+                  setSelectedFoldKey={handleSelectedFoldChange}
                   availableFolds={availableFolds}
+                  supportsFoldSelection={!isSegmentationTask}
                   uniqueTasks={uniqueTasks}
                   isTaskDropdownOpen={isTaskDropdownOpen}
                   setIsTaskDropdownOpen={setIsTaskDropdownOpen}

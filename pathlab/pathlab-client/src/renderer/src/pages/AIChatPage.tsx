@@ -4,38 +4,34 @@ import { useTranslation } from 'react-i18next'
 
 import {
   chatWithAI,
+  cancelChatPatchInferenceOnExit,
+  getConversations,
   createConversation,
   getConversation,
-  updateConversationTitle,
+  deleteConversation,
   updateMessage,
   addMessage,
   deleteMessagesFrom,
   submitMessageFeedback,
   getConversationFeedbacks,
+  type Conversation,
+  type ConversationWithMessages,
   type ChatMessage,
   type ChatMessageContent
 } from '../api'
 import { useVoiceSession } from '../lib/useVoiceSession'
 import { formatFileSize } from '../lib/utils'
-import { syncDeepResearchTrainingChatLinkTitle as syncDeepResearchTrainingChatLinkTitleInStore } from '../lib/deep-research/store/store'
 import * as XLSX from 'xlsx'
 import {
-  Bot, User, Trash2,
-  Paperclip, X, Sparkles, FileSpreadsheet,
-  ThumbsUp, ThumbsDown, ChevronRight
+  Send, Loader2, Bot, User, MessageSquare, Trash2, Plus, Clock,
+  Mic, MicOff, Paperclip, X, Sparkles, FileSpreadsheet, History,
+  ThumbsUp, ThumbsDown, Square, Menu,
+  Database, Brain, LineChart, ChevronRight, Wrench
 } from 'lucide-react'
-import { ChatInputShell } from '../components/common/ChatInputShell'
-import { VoiceSessionOverlay } from '../components/common/VoiceSessionOverlay'
+import { AudioVisualizer } from '../components/common/AudioVisualizer'
 
 // Extracted modules
-import AssistantMessage, {
-  parseSubmitTask,
-  parseCancelTaskNow,
-  parseConversationTitle,
-  isInternalOnlyMessage,
-  removeContextLimitBlock,
-  removeConversationTitleBlock
-} from '../components/chat/AssistantMessage'
+import AssistantMessage, { parseSubmitTask, parseCancelTaskNow, isInternalOnlyMessage, removeContextLimitBlock, removeResponseTruncatedBlock } from '../components/chat/AssistantMessage'
 import { sanitizeConfigBlocksForAI, isPdfContextMessage } from '../lib/chatMessageParser'
 import { SCENARIO_CARDS } from '../constants/scenarios'
 
@@ -54,9 +50,12 @@ import { CachedTaskData } from '../components/chat/TaskHistoryCard'
 import { parseCancelTaskConfig } from '../components/chat/CancelTaskCard'
 import { removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
 import { removeModelListBlock } from '../components/chat/ModelListCard'
+import { parsePatchInferenceConfig, removePatchInferenceBlock } from '../components/chat/PatchInferenceCard'
 import { removePdfParseStatusBlock } from '../components/chat/SearchingStatus'
 import { parseRenameTaskConfig, removeRenameTaskBlock } from '../components/chat/RenameTaskCard'
 import { MULTIMODAL_MODELS } from '../components/settings/GeneralTab'
+import { BEFORE_LOGOUT_EVENT } from '../contexts/AuthContext'
+import { useAuth } from '../contexts/AuthContext'
 
 
 interface Message {
@@ -84,140 +83,120 @@ interface FileAttachment {
   preview: string[] // first few rows for preview
 }
 
-interface ResearchJumpPayload {
-  conversationId: string
-  researchId?: string
-  title?: string
-}
+const BACKEND_MESSAGE_ID_THRESHOLD = 1000000000
 
-interface TrainingChatLinkPayload {
-  conversationId: string
-  title?: string
-}
-
-const MAX_RECOMMENDED_CONVERSATION_TITLE_LENGTH = 160
-
-function parseTaggedBlock(content: string, tag: string): string | null {
-  const match = content.match(new RegExp(`\\[${tag}\\]([\\s\\S]*?)\\[\\/${tag}\\]`, 'i'))
-  if (!match) return null
-  const value = (match[1] ?? '').trim()
-  return value.length > 0 ? value : null
-}
-
-function removeTaggedBlock(content: string, tag: string): string {
-  return content.replace(new RegExp(`\\[${tag}\\][\\s\\S]*?\\[\\/${tag}\\]`, 'gi'), '').trim()
-}
-
-function parseResearchJumpBlock(content: string): ResearchJumpPayload | null {
-  const raw = parseTaggedBlock(content, 'RESEARCH_JUMP')
-  if (!raw) return null
-  try {
-    const parsed = JSON.parse(raw)
-    const conversationId =
-      typeof parsed?.conversation_id === 'string'
-        ? parsed.conversation_id.trim()
-        : ''
-    if (!conversationId) {
-      return null
-    }
-    return {
-      conversationId,
-      researchId:
-        typeof parsed?.research_id === 'string' && parsed.research_id.trim().length > 0
-          ? parsed.research_id.trim()
-          : undefined,
-      title:
-        typeof parsed?.title === 'string' && parsed.title.trim().length > 0
-          ? parsed.title.trim()
-          : undefined
-    }
-  } catch {
+const getPersistedMessageId = (messageId: string): number | null => {
+  const numericId = parseInt(messageId, 10)
+  if (Number.isNaN(numericId) || numericId >= BACKEND_MESSAGE_ID_THRESHOLD) {
     return null
   }
+  return numericId
 }
 
-function parseTrainingChatLinkBlock(content: string): TrainingChatLinkPayload | null {
-  const raw = parseTaggedBlock(content, 'TRAINING_CHAT_LINK')
+const hasReplayableAttachmentData = (message: Message): boolean => (
+  !parseCSVPreview(message.content) || Boolean(message.csvAttachments?.length)
+)
+
+const PENDING_CANCELLED_RESPONSE_KEY_PREFIX = 'ai-chat-pending-cancelled-response:'
+const PENDING_CANCELLED_RESPONSE_RETRY_DELAY_MS = 1200
+const PENDING_CANCELLED_RESPONSE_MAX_RETRIES = 5
+const PENDING_PATCH_INFERENCE_CANCEL_KEY_PREFIX = 'ai-chat-pending-patch-inference-cancel:'
+const PENDING_PATCH_INFERENCE_CANCEL_RETRY_DELAY_MS = 1200
+const PENDING_PATCH_INFERENCE_CANCEL_MAX_RETRIES = 5
+const conversationHistoryCache = new Map<string, Conversation[]>()
+
+const getPendingCancelledResponseKey = (conversationId: string) =>
+  `${PENDING_CANCELLED_RESPONSE_KEY_PREFIX}${conversationId}`
+
+const getPendingPatchInferenceCancelKey = (conversationId: string) =>
+  `${PENDING_PATCH_INFERENCE_CANCEL_KEY_PREFIX}${conversationId}`
+
+interface PendingPatchInferenceCancel {
+  messageId: number
+  content: string
+  timestamp: number
+}
+
+function hasActivePatchInferenceRun(content: string | null | undefined): boolean {
+  if (!content) return false
+
+  const config = parsePatchInferenceConfig(content)
+  if (!config) return false
+
+  return [config.classification_run, config.segmentation_run].some(run =>
+    Boolean(run?.task_id) && (run?.status === 'queued' || run?.status === 'running')
+  )
+}
+
+function hasPersistedPatchInferenceCancellation(
+  messages: ConversationWithMessages['messages'],
+  pending: PendingPatchInferenceCancel
+): boolean {
+  const targetMessage = messages.find(message => message.id === pending.messageId)
+  if (!targetMessage || targetMessage.role !== 'assistant') return false
+
+  return !hasActivePatchInferenceRun(targetMessage.content)
+}
+
+function readPendingPatchInferenceCancel(conversationId: string): PendingPatchInferenceCancel | null {
+  const raw = sessionStorage.getItem(getPendingPatchInferenceCancelKey(conversationId))
   if (!raw) return null
-  try {
-    const parsed = JSON.parse(raw)
-    const conversationId =
-      typeof parsed?.conversation_id === 'string'
-        ? parsed.conversation_id.trim()
-        : ''
-    if (!conversationId) {
-      return null
-    }
-    return {
-      conversationId,
-      title:
-        typeof parsed?.title === 'string' && parsed.title.trim().length > 0
-          ? parsed.title.trim()
-          : undefined
-    }
-  } catch {
-    return null
-  }
-}
 
-function replaceTrainingChatLinkTitle(content: string, nextTitle: string): string {
-  return content.replace(/\[TRAINING_CHAT_LINK\]([\s\S]*?)\[\/TRAINING_CHAT_LINK\]/i, (match, jsonPayload) => {
-    try {
-      const parsed = JSON.parse((jsonPayload ?? '').trim())
-      if (!parsed || typeof parsed !== 'object' || typeof parsed.conversation_id !== 'string') {
-        return match
+  try {
+    const parsed = JSON.parse(raw) as Partial<PendingPatchInferenceCancel>
+    if (
+      typeof parsed.messageId === 'number'
+      && typeof parsed.content === 'string'
+      && typeof parsed.timestamp === 'number'
+    ) {
+      return {
+        messageId: parsed.messageId,
+        content: parsed.content,
+        timestamp: parsed.timestamp
       }
-      parsed.title = nextTitle
-      return `[TRAINING_CHAT_LINK]\n${JSON.stringify(parsed, null, 2)}\n[/TRAINING_CHAT_LINK]`
-    } catch {
-      return match
     }
-  })
+  } catch {
+    // Ignore malformed pending payloads.
+  }
+
+  sessionStorage.removeItem(getPendingPatchInferenceCancelKey(conversationId))
+  return null
 }
 
-function normalizeConversationTitle(rawTitle: string | null | undefined): string | null {
-  if (!rawTitle) return null
-  const normalized = rawTitle
-    .replace(/\s+/g, ' ')
-    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
-    .trim()
-
-  if (!normalized) return null
-
-  return normalized.length > MAX_RECOMMENDED_CONVERSATION_TITLE_LENGTH
-    ? normalized.slice(0, MAX_RECOMMENDED_CONVERSATION_TITLE_LENGTH).trim()
-    : normalized
+const getConversationUpdatedAt = (conversation: Conversation): number => {
+  const timestamp = new Date(conversation.updated_at).getTime()
+  return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
-interface AIChatNavigationState {
-  forceNewChat?: boolean
-  preCreatedConversationId?: string
-  reportContext?: string
-  initialMessage?: string
-  autoStartRecording?: boolean
-  fromDashboard?: boolean
-  fromDeepResearchStartTraining?: boolean
-  restoreAIChatFromSession?: boolean
-}
+const sortConversationsByUpdatedAt = (items: Conversation[]): Conversation[] =>
+  [...items].sort((a, b) => getConversationUpdatedAt(b) - getConversationUpdatedAt(a))
+
+const upsertConversation = (items: Conversation[], conversation: Conversation): Conversation[] =>
+  sortConversationsByUpdatedAt([
+    conversation,
+    ...items.filter((item) => item.conversation_id !== conversation.conversation_id)
+  ])
 
 export default function AIChatPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const { conversationId: urlConversationId } = useParams<{ conversationId?: string }>()
   const { t } = useTranslation()
+  const { user, isLoading: isAuthLoading } = useAuth()
 
   // Chat state
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
 
   // Generation lifecycle: single enum replaces 3 independent booleans
-  // idle → thinking (waiting for first chunk) → streaming (receiving chunks) → pdf_waiting (post-stream PDF parse) → idle
-  type GenerationPhase = 'idle' | 'thinking' | 'streaming' | 'pdf_waiting'
+  // idle → thinking (waiting for first chunk) → streaming (receiving chunks) → idle
+  type GenerationPhase = 'idle' | 'thinking' | 'streaming'
   const [generationPhase, setGenerationPhase] = useState<GenerationPhase>('idle')
   // Derived booleans for backward compatibility with existing read sites
   const isLoading = generationPhase === 'thinking'
   const isGenerating = generationPhase !== 'idle'
-  const isPdfWaiting = generationPhase === 'pdf_waiting'
+  const generationPhaseRef = useRef<GenerationPhase>('idle')
+  generationPhaseRef.current = generationPhase
 
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([])
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([])
@@ -226,7 +205,38 @@ export default function AIChatPage() {
   const generationIdRef = useRef(0)
 
   // Conversation management
+  const [conversations, setConversations] = useState<Conversation[]>([])
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
+  const currentConversationIdRef = useRef<string | null>(null)
+  currentConversationIdRef.current = currentConversationId
+  // Initialize from localStorage, defaulting to true on desktop, false on mobile
+  const [showHistory, setShowHistory] = useState(() => {
+    // Mobile always defaults to hidden (false) regardless of previous state
+    if (window.innerWidth < 1024) {
+      return false
+    }
+
+    const saved = localStorage.getItem('ai-chat-sidebar-open')
+    if (saved !== null) {
+      return saved === 'true'
+    }
+    return true
+  })
+
+  // Persist sidebar state
+  useEffect(() => {
+    localStorage.setItem('ai-chat-sidebar-open', String(showHistory))
+  }, [showHistory])
+
+  // Listen for mobile sidebar toggle from Layout header hamburger button
+  useEffect(() => {
+    const handleToggle = () => setShowHistory((prev) => !prev)
+    window.addEventListener('toggle-ai-sidebar', handleToggle)
+    return () => window.removeEventListener('toggle-ai-sidebar', handleToggle)
+  }, [])
+
+  const [isLoadingConversations, setIsLoadingConversations] = useState(false)
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
 
   // UI state
   const [showWelcomeHero, setShowWelcomeHero] = useState(true)
@@ -234,6 +244,7 @@ export default function AIChatPage() {
 
   // Feedback state: messageId -> feedback type
   const [feedbacks, setFeedbacks] = useState<Map<number, 'thumbs_up' | 'thumbs_down'>>(new Map())
+  const [pendingFeedbackIds, setPendingFeedbackIds] = useState<Set<number>>(new Set())
   // Helpfulness feedback state: messageId -> helpfulness type (for task submission feedback)
   const [helpfulnessFeedbacks, setHelpfulnessFeedbacks] = useState<Map<number, 'helpful' | 'not_helpful'>>(new Map())
 
@@ -249,18 +260,19 @@ export default function AIChatPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const initialMessageSent = useRef(false)
   const scrollRestoredRef = useRef(false)
-  // Report context from deep research handoff — injected into system prompt by backend
-  const reportContextRef = useRef<string | undefined>(undefined)
   // Ref for aborting AI generation
   const abortControllerRef = useRef<AbortController | null>(null)
   // Ref to access latest messages in callbacks
   const messagesRef = useRef<Message[]>([])
   messagesRef.current = messages
+  const pendingCancelledRetryTimersRef = useRef<Map<string, number>>(new Map())
+  const pendingPatchInferenceCancelRetryTimersRef = useRef<Map<string, number>>(new Map())
   // Ref to skip loading conversation when we just created it (to avoid overwriting in-progress messages)
   const skipConversationLoadRef = useRef(false)
   // Ref to track current input value for voice transcript appending
   const inputRef = useRef('')
   inputRef.current = input
+  const pendingProgrammaticSubmitRef = useRef(false)
 
   const formRef = useRef<HTMLFormElement>(null)
 
@@ -278,49 +290,15 @@ export default function AIChatPage() {
     return el.scrollHeight - el.scrollTop - el.clientHeight < 150
   }, [])
 
-  const scrollContainerTo = useCallback((target: 'top' | 'bottom') => {
-    if (scrollRafRef.current !== null) {
-      cancelAnimationFrame(scrollRafRef.current)
-    }
-    scrollRafRef.current = requestAnimationFrame(() => {
-      scrollRafRef.current = null
-      const el = messagesContainerRef.current
-      if (!el) return
-      el.scrollTo({ top: target === 'top' ? 0 : el.scrollHeight, behavior: 'auto' })
-    })
-  }, [])
-
-  const scrollToTop = useCallback(() => {
-    scrollContainerTo('top')
-  }, [scrollContainerTo])
-
   const scrollToBottom = useCallback(() => {
     // Skip if user has scrolled away — let them read in peace
     if (userScrolledAwayRef.current) return
-    scrollContainerTo('bottom')
-  }, [scrollContainerTo])
-
-  useEffect(() => {
-    return () => {
-      if (scrollRafRef.current !== null) {
-        cancelAnimationFrame(scrollRafRef.current)
-      }
-    }
+    if (scrollRafRef.current !== null) return // already scheduled
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    })
   }, [])
-
-  const preserveAiChatReturnContext = useCallback(() => {
-    const aiConversationId = currentConversationId || urlConversationId || null
-
-    if (messagesContainerRef.current) {
-      sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainerRef.current.scrollTop))
-    }
-
-    if (aiConversationId) {
-      sessionStorage.setItem('ai-chat-conversation-id', aiConversationId)
-    }
-
-    return aiConversationId
-  }, [currentConversationId, urlConversationId])
 
   // Detect user scroll intent via wheel / touchmove on the messages container.
   // When user scrolls UP → mark as "scrolled away".
@@ -344,9 +322,18 @@ export default function AIChatPage() {
   // Programmatically submit the chat form after setting input.
   // Uses ref-based approach instead of DOM query to avoid fragile setTimeout + querySelector patterns.
   const submitFormProgrammatically = useCallback((text: string) => {
+    if (generationPhaseRef.current !== 'idle' || pendingProgrammaticSubmitRef.current) {
+      return
+    }
+
+    pendingProgrammaticSubmitRef.current = true
     setInput(text)
     inputRef.current = text
     setTimeout(() => {
+      if (generationPhaseRef.current !== 'idle') {
+        pendingProgrammaticSubmitRef.current = false
+        return
+      }
       formRef.current?.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }))
     }, 50)
   }, [])
@@ -386,60 +373,6 @@ export default function AIChatPage() {
   const realtimeIsRecording = voiceState === 'recording'
   const realtimeIsConnecting = voiceState === 'connecting'
 
-  const resetChatView = useCallback((options?: {
-    currentConversationId?: string | null
-    reportContext?: string
-    showWelcomeHero?: boolean
-  }) => {
-    abortControllerRef.current?.abort()
-    stopVoiceSession()
-    userScrolledAwayRef.current = false
-    scrollRestoredRef.current = false
-    skipConversationLoadRef.current = false
-    initialMessageSent.current = false
-    sessionStorage.removeItem('ai-chat-conversation-id')
-    sessionStorage.removeItem('ai-chat-scroll-position')
-    setMessages([])
-    setCurrentConversationId(options?.currentConversationId ?? null)
-    reportContextRef.current = options?.reportContext
-    setInput('')
-    inputRef.current = ''
-    setImageAttachments([])
-    setFileAttachments([])
-    setShowWelcomeHero(options?.showWelcomeHero ?? true)
-    setFeedbacks(new Map())
-    setHelpfulnessFeedbacks(new Map())
-    scrollToTop()
-  }, [scrollToTop, stopVoiceSession])
-
-  const syncDeepResearchTrainingLinkTitle = useCallback(async (chatConversationId: string, nextTitle: string) => {
-    const researchJump = messagesRef.current
-      .filter(message => message.role === 'user')
-      .map(message => parseResearchJumpBlock(message.content))
-      .find((value): value is ResearchJumpPayload => value !== null)
-
-    if (!researchJump?.conversationId) return
-
-    syncDeepResearchTrainingChatLinkTitleInStore(researchJump.conversationId, chatConversationId, nextTitle)
-
-    try {
-      const deepResearchConversation = await getConversation(researchJump.conversationId)
-      const linkedMessage = deepResearchConversation.messages.find(message => {
-        const payload = parseTrainingChatLinkBlock(message.content)
-        return payload?.conversationId === chatConversationId
-      })
-
-      if (!linkedMessage) return
-
-      const updatedContent = replaceTrainingChatLinkTitle(linkedMessage.content, nextTitle)
-      if (updatedContent === linkedMessage.content) return
-
-      await updateMessage(researchJump.conversationId, linkedMessage.id, updatedContent)
-    } catch (error) {
-      console.warn('Failed to sync deep research training link title:', error)
-    }
-  }, [])
-
   // Pre-compute CSV content mapping: assistant message ID -> most recent CSV from any previous user message
   // Uses O(n) single pass: track the most recent CSV as we iterate forward.
   // Only recalculates when message count changes — CSV attachments are on user messages
@@ -462,27 +395,191 @@ export default function AIChatPage() {
     return map
   }, [messages.length])
 
-  useEffect(() => {
-    if (messages.length === 0) {
-      userScrolledAwayRef.current = false
-      scrollRestoredRef.current = false
-      scrollToTop()
-      return
+  const mapConversationMessages = useCallback((apiMessages: ConversationWithMessages['messages']): Message[] => {
+    return apiMessages.map(msg => ({
+      id: String(msg.id),
+      role: msg.role as 'user' | 'assistant',
+      content: msg.content,
+      ...((msg as { metadata?: { images?: string[] } | null }).metadata?.images?.length
+        ? { images: (msg as { metadata?: { images?: string[] } | null }).metadata!.images }
+        : {}),
+      timestamp: new Date(msg.created_at)
+    }))
+  }, [])
+
+  const buildCancelledMessageContent = useCallback(() => {
+    return `*${t('aiChat.generationCancelled')}*`
+  }, [t])
+
+  const buildPendingPatchInferenceCancelPayload = useCallback(() => {
+    const conversationId = currentConversationIdRef.current
+    if (!conversationId) return null
+
+    for (let index = messagesRef.current.length - 1; index >= 0; index -= 1) {
+      const message = messagesRef.current[index]
+      if (message.role !== 'assistant') continue
+
+      const config = parsePatchInferenceConfig(message.content)
+      if (!config) continue
+
+      const hasActiveRun = [config.classification_run, config.segmentation_run].some(run =>
+        Boolean(run?.task_id) && (run?.status === 'queued' || run?.status === 'running')
+      )
+      if (!hasActiveRun) continue
+
+      const messageId = Number(message.id)
+      if (!Number.isFinite(messageId) || messageId >= 1000000000) continue
+
+      return {
+        conversationId,
+        pending: {
+          messageId,
+          content: buildCancelledMessageContent(),
+          timestamp: Date.now()
+        }
+      }
     }
 
+    return null
+  }, [buildCancelledMessageContent])
+
+  const persistPatchInferenceExitCancellation = useCallback(async (
+    conversationId: string,
+    pending: PendingPatchInferenceCancel,
+    keepalive: boolean = false
+  ) => {
+    await cancelChatPatchInferenceOnExit({
+      conversation_id: conversationId,
+      message_id: pending.messageId,
+      cancel_message: pending.content
+    }, { keepalive })
+  }, [])
+
+  const markPendingPatchInferenceCancellationOnExit = useCallback(() => {
+    const payload = buildPendingPatchInferenceCancelPayload()
+    if (!payload) return
+
+    const pendingKey = getPendingPatchInferenceCancelKey(payload.conversationId)
+    const existing = readPendingPatchInferenceCancel(payload.conversationId)
+    if (!existing || existing.messageId !== payload.pending.messageId || existing.content !== payload.pending.content) {
+      sessionStorage.setItem(pendingKey, JSON.stringify(payload.pending))
+    }
+
+    void persistPatchInferenceExitCancellation(payload.conversationId, payload.pending, true).catch(error => {
+      console.warn('Failed to persist patch inference cancellation on exit:', error)
+    })
+  }, [buildPendingPatchInferenceCancelPayload, persistPatchInferenceExitCancellation])
+
+  const markPendingCancelledResponseOnExit = useCallback(() => {
+    const conversationId = currentConversationIdRef.current
+    if (!conversationId || generationPhaseRef.current !== 'thinking') return
+
+    const lastMessage = messagesRef.current[messagesRef.current.length - 1]
+    if (lastMessage?.role !== 'assistant' || lastMessage.content.trim()) return
+
+    sessionStorage.setItem(getPendingCancelledResponseKey(conversationId), String(Date.now()))
+  }, [])
+
+  const refreshPendingCancelledResponse = useCallback((conversationId: string) => {
+    const pendingKey = getPendingCancelledResponseKey(conversationId)
+
+    const runAttempt = (attempt: number) => {
+      if (!sessionStorage.getItem(pendingKey)) return
+
+      const existingTimer = pendingCancelledRetryTimersRef.current.get(conversationId)
+      if (existingTimer) {
+        window.clearTimeout(existingTimer)
+      }
+
+      const timerId = window.setTimeout(async () => {
+        pendingCancelledRetryTimersRef.current.delete(conversationId)
+
+        if (!sessionStorage.getItem(pendingKey)) return
+
+        try {
+          const latestConversation = await getConversation(conversationId)
+          const sortedApiMessages = [...latestConversation.messages].sort((a, b) => a.id - b.id)
+          const hasAssistantReply = sortedApiMessages[sortedApiMessages.length - 1]?.role === 'assistant'
+
+          if (hasAssistantReply) {
+            sessionStorage.removeItem(pendingKey)
+            if (currentConversationIdRef.current === conversationId) {
+              setMessages(mapConversationMessages(sortedApiMessages))
+            }
+            return
+          }
+        } catch (error) {
+          console.warn('Failed to refresh pending cancelled response:', error)
+        }
+
+        if (attempt < PENDING_CANCELLED_RESPONSE_MAX_RETRIES) {
+          runAttempt(attempt + 1)
+        }
+      }, PENDING_CANCELLED_RESPONSE_RETRY_DELAY_MS)
+
+      pendingCancelledRetryTimersRef.current.set(conversationId, timerId)
+    }
+
+    runAttempt(1)
+  }, [mapConversationMessages])
+
+  const refreshPendingPatchInferenceCancellation = useCallback((conversationId: string) => {
+    const pendingKey = getPendingPatchInferenceCancelKey(conversationId)
+
+    const runAttempt = (attempt: number) => {
+      if (!sessionStorage.getItem(pendingKey)) return
+
+      const existingTimer = pendingPatchInferenceCancelRetryTimersRef.current.get(conversationId)
+      if (existingTimer) {
+        window.clearTimeout(existingTimer)
+      }
+
+      const timerId = window.setTimeout(async () => {
+        pendingPatchInferenceCancelRetryTimersRef.current.delete(conversationId)
+
+        const pending = readPendingPatchInferenceCancel(conversationId)
+        if (!pending) return
+
+        try {
+          await persistPatchInferenceExitCancellation(conversationId, pending)
+          const latestConversation = await getConversation(conversationId)
+          const sortedApiMessages = [...latestConversation.messages].sort((a, b) => a.id - b.id)
+          const cancellationPersisted = hasPersistedPatchInferenceCancellation(sortedApiMessages, pending)
+
+          if (cancellationPersisted) {
+            sessionStorage.removeItem(pendingKey)
+            if (currentConversationIdRef.current === conversationId) {
+              setMessages(mapConversationMessages(sortedApiMessages))
+            }
+            return
+          }
+        } catch (error) {
+          console.warn('Failed to refresh pending patch inference cancellation:', error)
+        }
+
+        if (attempt < PENDING_PATCH_INFERENCE_CANCEL_MAX_RETRIES) {
+          runAttempt(attempt + 1)
+        }
+      }, PENDING_PATCH_INFERENCE_CANCEL_RETRY_DELAY_MS)
+
+      pendingPatchInferenceCancelRetryTimersRef.current.set(conversationId, timerId)
+    }
+
+    runAttempt(1)
+  }, [mapConversationMessages, persistPatchInferenceExitCancellation])
+
+  useEffect(() => {
     // Don't scroll to bottom if we're restoring scroll position
     if (scrollRestoredRef.current) {
       scrollRestoredRef.current = false
       return
     }
     scrollToBottom()
-  }, [messages, scrollToBottom, scrollToTop])
+  }, [messages])
 
   // Restore conversation from URL (supports page refresh)
-  // Only restore from sessionStorage when another page explicitly returns to AI Chat.
+  // Also supports legacy sessionStorage restore for backward compatibility
   useEffect(() => {
-    const state = location.state as AIChatNavigationState | null
-
     // Priority 1: Load from URL if conversationId is present
     if (urlConversationId) {
       // Skip loading if we just created this conversation (to avoid overwriting in-progress messages)
@@ -490,56 +587,31 @@ export default function AIChatPage() {
         skipConversationLoadRef.current = false
         return
       }
-      // If this is a forceNewChat handoff with a pre-created conversation that
-      // matches the URL, set the ID synchronously instead of loading async.
-      // This prevents a race where submitFormProgrammatically fires before the
-      // async handleLoadConversation resolves, causing a duplicate conversation.
-      if (state?.forceNewChat && state?.preCreatedConversationId === urlConversationId) {
-        setCurrentConversationId(urlConversationId)
-        if (state.reportContext) reportContextRef.current = state.reportContext
-        return
-      }
       handleLoadConversation(urlConversationId)
       return
     }
 
-    // Explicit new chat handoff (e.g. from Deep Research start training):
-    // skip legacy restore and ensure we start from a clean chat state.
-    if (state?.forceNewChat) {
-      resetChatView({
-        currentConversationId: state.preCreatedConversationId ?? null,
-        reportContext: state.reportContext,
-        showWelcomeHero: !(state.preCreatedConversationId || state.initialMessage)
-      })
-      if (state?.preCreatedConversationId) {
-        skipConversationLoadRef.current = true
-        navigate(`/dashboard/${state.preCreatedConversationId}`, { replace: true })
-      }
-      return
-    }
-
-    // Priority 2: Explicit restore from sessionStorage (for back navigation from AI-origin pages)
-    if (!state?.restoreAIChatFromSession) {
-      sessionStorage.removeItem('ai-chat-conversation-id')
-      sessionStorage.removeItem('ai-chat-scroll-position')
-      return
-    }
-
+    // Priority 2: Legacy - restore from sessionStorage (for back navigation from other pages)
     const savedConversationId = sessionStorage.getItem('ai-chat-conversation-id')
     if (savedConversationId) {
       handleLoadConversation(savedConversationId)
       sessionStorage.removeItem('ai-chat-conversation-id')
     }
-  }, [urlConversationId, location.state, navigate, resetChatView])
+  }, [urlConversationId])
 
   // Restore scroll position after messages are loaded (when returning from another page).
   // Depends on messages.length instead of messages to avoid re-running on every streaming chunk.
   // Scroll restore only matters when message count changes (initial load / conversation switch).
-  useLayoutEffect(() => {
+  useEffect(() => {
     const savedScrollPosition = sessionStorage.getItem('ai-chat-scroll-position')
     if (savedScrollPosition && messagesContainerRef.current && messages.length > 0) {
-      messagesContainerRef.current.scrollTop = parseInt(savedScrollPosition, 10)
-      scrollRestoredRef.current = true
+      // Use requestAnimationFrame to ensure DOM is ready after messages render
+      requestAnimationFrame(() => {
+        if (messagesContainerRef.current) {
+          messagesContainerRef.current.scrollTop = parseInt(savedScrollPosition, 10)
+          scrollRestoredRef.current = true
+        }
+      })
       sessionStorage.removeItem('ai-chat-scroll-position')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -558,14 +630,45 @@ export default function AIChatPage() {
   // Abort any in-progress generation when the component unmounts (e.g., navigating away).
   // This triggers the AbortError catch in executeChatGeneration, which fills the cancel text.
   useEffect(() => {
+    const handlePageExit = () => {
+      markPendingCancelledResponseOnExit()
+      markPendingPatchInferenceCancellationOnExit()
+    }
+
+    window.addEventListener('pagehide', handlePageExit)
+
     return () => {
+      handlePageExit()
+      window.removeEventListener('pagehide', handlePageExit)
+      pendingCancelledRetryTimersRef.current.forEach(timerId => window.clearTimeout(timerId))
+      pendingCancelledRetryTimersRef.current.clear()
+      pendingPatchInferenceCancelRetryTimersRef.current.forEach(timerId => window.clearTimeout(timerId))
+      pendingPatchInferenceCancelRetryTimersRef.current.clear()
       abortControllerRef.current?.abort()
     }
-  }, [])
+  }, [markPendingCancelledResponseOnExit, markPendingPatchInferenceCancellationOnExit])
+
+  useEffect(() => {
+    const handlePageHide = () => {
+      markPendingPatchInferenceCancellationOnExit()
+    }
+
+    const handleBeforeLogout = () => {
+      markPendingPatchInferenceCancellationOnExit()
+    }
+
+    window.addEventListener('pagehide', handlePageHide)
+    window.addEventListener(BEFORE_LOGOUT_EVENT, handleBeforeLogout)
+
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide)
+      window.removeEventListener(BEFORE_LOGOUT_EVENT, handleBeforeLogout)
+    }
+  }, [markPendingPatchInferenceCancellationOnExit])
 
   // Handle initial message from navigation state
   useEffect(() => {
-    const state = location.state as AIChatNavigationState | null
+    const state = location.state as { initialMessage?: string; autoStartRecording?: boolean; fromDashboard?: boolean } | null
 
     if (state?.initialMessage && !initialMessageSent.current) {
       initialMessageSent.current = true
@@ -586,40 +689,138 @@ export default function AIChatPage() {
     }
   }, [location, toggleVoiceSession, navigate])
 
-  const handleNewChat = () => {
-    resetChatView()
+  const setConversationsAndCache = useCallback((nextConversations: Conversation[]) => {
+    const normalizedConversations = sortConversationsByUpdatedAt(nextConversations)
+    setConversations(normalizedConversations)
+
+    if (user?.id) {
+      conversationHistoryCache.set(user.id, normalizedConversations)
+    }
+  }, [user?.id])
+
+  const updateConversationsAndCache = useCallback((
+    updater: (prevConversations: Conversation[]) => Conversation[]
+  ) => {
+    setConversations((prevConversations) => {
+      const nextConversations = sortConversationsByUpdatedAt(updater(prevConversations))
+
+      if (user?.id) {
+        conversationHistoryCache.set(user.id, nextConversations)
+      }
+
+      return nextConversations
+    })
+  }, [user?.id])
+
+  const loadConversations = useCallback(async (options?: { showLoading?: boolean }) => {
+    const showLoading = options?.showLoading ?? true
+
+    try {
+      if (showLoading) {
+        setIsLoadingConversations(true)
+      }
+
+      const convs = await getConversations()
+      setConversationsAndCache(convs)
+    } catch (error) {
+      console.error('Failed to load conversations:', error)
+      showToastRef.current('error', t('aiChat.historyLoadFailed'))
+    } finally {
+      if (showLoading) {
+        setIsLoadingConversations(false)
+      }
+    }
+  }, [setConversationsAndCache, t])
+
+  useEffect(() => {
+    if (isAuthLoading) {
+      return
+    }
+
+    if (!user?.id) {
+      setConversations([])
+      setIsLoadingConversations(false)
+      return
+    }
+
+    if (conversationHistoryCache.has(user.id)) {
+      setConversations(conversationHistoryCache.get(user.id) ?? [])
+      setIsLoadingConversations(false)
+      return
+    }
+
+    void loadConversations()
+  }, [isAuthLoading, loadConversations, user?.id])
+
+  const handleNewChat = useCallback(() => {
+    setMessages([])
+    setCurrentConversationId(null)
+    setInput('')
+    setImageAttachments([])
+    setFileAttachments([])
+    setShowHistory(false)
+    setShowWelcomeHero(true)
+    setFeedbacks(new Map())
+    setPendingFeedbackIds(new Set())
+    setHelpfulnessFeedbacks(new Map())
     // Update URL to base path (remove conversationId from URL)
     if (urlConversationId) {
       navigate('/dashboard', { replace: true })
     }
-  }
+  }, [navigate, urlConversationId])
 
   const handleLoadConversation = async (conversationId: string) => {
     try {
       const conv = await getConversation(conversationId)
-
-      if (sessionStorage.getItem('ai-chat-scroll-position') !== null) {
-        scrollRestoredRef.current = true
-      }
-
-      // Restore report context from conversation record (for reloaded training handoff chats)
-      reportContextRef.current = conv.report_context || undefined
-
       // Sort messages by id to ensure chronological order (defense-in-depth)
       const sortedApiMessages = [...conv.messages].sort((a, b) => a.id - b.id)
-      const loadedMessages: Message[] = sortedApiMessages.map(msg => ({
-        id: String(msg.id),
-        role: msg.role as 'user' | 'assistant',
-        content: msg.content,
-        // Restore persisted images from extra_metadata
-        ...((msg as { metadata?: { images?: string[] } | null }).metadata?.images?.length
-          ? { images: (msg as { metadata?: { images?: string[] } | null }).metadata!.images }
-          : {}),
-        timestamp: new Date(msg.created_at)
-      }))
-      setMessages(loadedMessages)
+      const loadedMessages = mapConversationMessages(sortedApiMessages)
+      const pendingCancelledKey = getPendingCancelledResponseKey(conversationId)
+      const pendingCancelledAt = sessionStorage.getItem(pendingCancelledKey)
+      const hasPendingCancelledResponse = Boolean(pendingCancelledAt)
+      const pendingPatchInferenceCancel = readPendingPatchInferenceCancel(conversationId)
+      const pendingPatchInferenceCancelKey = getPendingPatchInferenceCancelKey(conversationId)
+      const hasAssistantReply = sortedApiMessages[sortedApiMessages.length - 1]?.role === 'assistant'
+
+      let messagesToShow = hasPendingCancelledResponse && !hasAssistantReply
+        ? [...loadedMessages, {
+            id: `pending-cancelled-${conversationId}`,
+            role: 'assistant' as const,
+            content: buildCancelledMessageContent(),
+            timestamp: new Date(Number(pendingCancelledAt) || Date.now())
+          }]
+        : loadedMessages
+
+      const hasPersistedPatchInferenceCancel = Boolean(pendingPatchInferenceCancel)
+        && hasPersistedPatchInferenceCancellation(sortedApiMessages, pendingPatchInferenceCancel)
+
+      if (pendingPatchInferenceCancel) {
+        if (hasPersistedPatchInferenceCancel) {
+          sessionStorage.removeItem(pendingPatchInferenceCancelKey)
+        } else {
+          messagesToShow = [...messagesToShow, {
+            id: `pending-patch-cancelled-${conversationId}`,
+            role: 'assistant' as const,
+            content: pendingPatchInferenceCancel.content,
+            timestamp: new Date(pendingPatchInferenceCancel.timestamp || Date.now())
+          }]
+          refreshPendingPatchInferenceCancellation(conversationId)
+        }
+      }
+
+      if (hasPendingCancelledResponse) {
+        if (hasAssistantReply) {
+          sessionStorage.removeItem(pendingCancelledKey)
+        } else {
+          refreshPendingCancelledResponse(conversationId)
+        }
+      }
+
+      setMessages(messagesToShow)
       setCurrentConversationId(conversationId)
+      setShowHistory(false)
       setShowWelcomeHero(false)
+      setPendingFeedbackIds(new Set())
 
       // Update URL to reflect the current conversation (for page refresh support)
       if (urlConversationId !== conversationId) {
@@ -656,7 +857,50 @@ export default function AIChatPage() {
     }
   }
 
+  const handleDeleteAllHistory = () => {
+    if (conversations.length === 0) return
+    setDeleteConfirmId('all-conversations')
+  }
 
+  const handleDeleteConversation = async (conversationId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setDeleteConfirmId(conversationId)
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmId) return
+
+    try {
+      if (deleteConfirmId === 'all-conversations') {
+        setIsLoadingConversations(true)
+        try {
+          await Promise.all(conversations.map(conv => deleteConversation(conv.conversation_id)))
+          setConversationsAndCache([])
+          handleNewChat()
+        } catch (error) {
+          console.error('Failed to delete all conversations:', error)
+        } finally {
+          setIsLoadingConversations(false)
+        }
+      } else {
+        await deleteConversation(deleteConfirmId)
+        updateConversationsAndCache((prevConversations) =>
+          prevConversations.filter((conversation) => conversation.conversation_id !== deleteConfirmId)
+        )
+        if (currentConversationId === deleteConfirmId) {
+          handleNewChat()
+        }
+      }
+    } catch (error) {
+      console.error('Failed to delete:', error)
+    } finally {
+      setDeleteConfirmId(null)
+    }
+  }
+
+  const cancelDelete = () => {
+    setDeleteConfirmId(null)
+  }
 
   // File upload validation constants
   const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB
@@ -873,7 +1117,7 @@ export default function AIChatPage() {
     if (files.length > 0) {
       handleFileSelect(files)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageAttachments.length, fileAttachments.length, t])
 
   // Native capture-phase drop listener: resets drag overlay even when a child
@@ -914,7 +1158,7 @@ export default function AIChatPage() {
 
     document.addEventListener('paste', handlePaste)
     return () => document.removeEventListener('paste', handlePaste)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageAttachments.length, fileAttachments.length, t])
 
   const handleScenarioCardClick = (card: typeof SCENARIO_CARDS[number]) => {
@@ -1080,10 +1324,7 @@ export default function AIChatPage() {
         )
         trackingId = newId
       }, abortController.signal, () => {
-        if (generationIdRef.current === currentGenerationId) {
-          setGenerationPhase('pdf_waiting')
-        }
-        // Context limit reached — append [CONTEXT_LIMIT] block to the AI message
+        // True context-window overflow — append [CONTEXT_LIMIT] block to the AI message
         const contextLimitBlock = '\n\n[CONTEXT_LIMIT][/CONTEXT_LIMIT]'
         const currentTrackingId = trackingId
         setMessages(prev =>
@@ -1093,7 +1334,41 @@ export default function AIChatPage() {
               : m
           )
         )
-      }, reportContextRef.current, { voiceSessionActive })
+      }, () => {
+        // Output was truncated — append [RESPONSE_TRUNCATED] block to the AI message
+        const responseTruncatedBlock = '\n\n[RESPONSE_TRUNCATED][/RESPONSE_TRUNCATED]'
+        const currentTrackingId = trackingId
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === currentTrackingId
+              ? { ...m, content: m.content + responseTruncatedBlock }
+              : m
+          )
+        )
+      }, (pdfContext) => {
+        const hiddenContent = `[PDF_CONTEXT]\n${pdfContext}\n[/PDF_CONTEXT]`
+        const hiddenMessage: Message = {
+          id: `pdfctx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          role: 'user',
+          content: hiddenContent,
+          timestamp: new Date()
+        }
+        const currentTrackingId = trackingId
+        setMessages(prev => {
+          if (prev.some(m => m.role === 'user' && m.content === hiddenContent)) {
+            return prev
+          }
+          const assistantIndex = prev.findIndex(m => m.id === currentTrackingId)
+          if (assistantIndex === -1) {
+            return [...prev, hiddenMessage]
+          }
+          return [
+            ...prev.slice(0, assistantIndex),
+            hiddenMessage,
+            ...prev.slice(assistantIndex)
+          ]
+        })
+      })
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         if (isTimeoutAbort) {
@@ -1169,29 +1444,13 @@ export default function AIChatPage() {
           setTimeout(async () => {
             const finalMsg = messagesRef.current.find(m => m.id === finalTrackingId)
             if (!finalMsg || !finalMsg.content) return
-            const suggestedTitle = normalizeConversationTitle(parseConversationTitle(finalMsg.content))
-            const cleanedContent = removeConversationTitleBlock(finalMsg.content)
-            const contentToPersist = cleanedContent || finalMsg.content
-
-            if (cleanedContent !== finalMsg.content) {
-              setMessages(prev => prev.map(m =>
-                m.id === finalTrackingId ? { ...m, content: cleanedContent } : m
-              ))
-            }
-
             const numericId = parseInt(finalTrackingId, 10)
             const isBackendId = !isNaN(numericId) && numericId < 1000000000
             try {
-              if (suggestedTitle) {
-                await updateConversationTitle(conversationId, suggestedTitle)
-                window.dispatchEvent(new CustomEvent('conversations-changed'))
-                void syncDeepResearchTrainingLinkTitle(conversationId, suggestedTitle)
-              }
-
               if (isBackendId) {
-                await updateMessage(conversationId, numericId, contentToPersist)
+                await updateMessage(conversationId, numericId, finalMsg.content)
               } else {
-                const saved = await addMessage(conversationId, 'assistant', contentToPersist)
+                const saved = await addMessage(conversationId, 'assistant', finalMsg.content)
                 setMessages(prev => prev.map(m =>
                   m.id === finalTrackingId ? { ...m, id: String(saved.id) } : m
                 ))
@@ -1205,10 +1464,11 @@ export default function AIChatPage() {
         options?.onFinally?.()
       }
     }
-  }, [syncDeepResearchTrainingLinkTitle, t, voiceSessionActive])
+  }, [t])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    pendingProgrammaticSubmitRef.current = false
     // Use inputRef.current to get the latest value, avoiding stale closure issues
     // when form is submitted programmatically (e.g., from voice transcription)
     const currentInputValue = inputRef.current.trim()
@@ -1282,12 +1542,11 @@ export default function AIChatPage() {
         const newConv = await createConversation(title)
         conversationId = newConv.conversation_id
         setCurrentConversationId(conversationId)
+        updateConversationsAndCache((prevConversations) => upsertConversation(prevConversations, newConv))
         // Skip the next conversation load triggered by URL change (to avoid overwriting in-progress messages)
         skipConversationLoadRef.current = true
         // Update URL with new conversation ID for page refresh support
         navigate(`/dashboard/${conversationId}`, { replace: true })
-        // Notify sidebar to refresh its conversation list
-        window.dispatchEvent(new CustomEvent('conversations-changed'))
       } catch (error) {
         console.error('Failed to create conversation:', error)
       }
@@ -1369,6 +1628,17 @@ export default function AIChatPage() {
     }
   }, [currentConversationId, showToast, t])
 
+  const replaceMessageContent = useCallback(async (
+    messageId: string,
+    updatedContent: string,
+    errorToastKey?: string
+  ) => {
+    setMessages(prev => prev.map(message =>
+      message.id === messageId ? { ...message, content: updatedContent } : message
+    ))
+    await persistMessageUpdate(messageId, updatedContent, errorToastKey)
+  }, [persistMessageUpdate])
+
   /** Add a new assistant message to backend and remap its local ID (add+remap pattern). */
   const persistNewAssistantMessage = useCallback(async (
     localMessageId: string,
@@ -1402,12 +1672,13 @@ export default function AIChatPage() {
     // Remove VOICE_CONTROL block - it's for internal use only
     cleaned = removeVoiceControlBlock(cleaned)
     cleaned = removeModelListBlock(cleaned)
+    cleaned = removePatchInferenceBlock(cleaned)
     // Remove PDF_PARSE_STATUS blocks - internal status tags
     cleaned = removePdfParseStatusBlock(cleaned)
     // Remove CONTEXT_LIMIT block - UI-only warning card
     cleaned = removeContextLimitBlock(cleaned)
-    // Remove CONVERSATION_TITLE block - internal title recommendation only
-    cleaned = removeConversationTitleBlock(cleaned)
+    // Remove RESPONSE_TRUNCATED block - UI-only warning card
+    cleaned = removeResponseTruncatedBlock(cleaned)
     return cleaned.trim()
   }, [])
 
@@ -1435,11 +1706,59 @@ export default function AIChatPage() {
     }
   }, [cleanMessageContent, showToast, t])
 
+  const deleteConversationBranchFromMessage = useCallback(async (messageId: string): Promise<boolean> => {
+    if (!currentConversationId) return true
+
+    const persistedMessageId = getPersistedMessageId(messageId)
+    if (persistedMessageId === null) {
+      return true
+    }
+
+    try {
+      await deleteMessagesFrom(currentConversationId, persistedMessageId)
+      return true
+    } catch (error) {
+      console.error('Failed to delete messages from backend:', error)
+      showToast('error', t('aiChat.failedToDeleteMessage'))
+      return false
+    }
+  }, [currentConversationId, showToast, t])
+
+  const resolveReplayContext = useCallback((messageIndex: number) => {
+    const currentMessages = messagesRef.current
+    const targetMessage = currentMessages[messageIndex]
+    if (!targetMessage) return null
+
+    const userMessageIndex = targetMessage.role === 'user' ? messageIndex : messageIndex - 1
+    const userMessage = currentMessages[userMessageIndex]
+
+    if (userMessageIndex < 0 || userMessage?.role !== 'user') {
+      showToast('error', t('aiChat.cannotRegenerate'))
+      return null
+    }
+
+    if (!hasReplayableAttachmentData(userMessage)) {
+      showToast('error', t('aiChat.cannotResubmitMissingFiles'))
+      return null
+    }
+
+    return {
+      currentMessages,
+      targetMessage,
+      userMessage,
+      userMessageIndex,
+    }
+  }, [showToast, t])
+
   // Handle thumbs up/down feedback for a message
   const handleFeedback = useCallback(async (messageId: string, feedbackType: 'thumbs_up' | 'thumbs_down') => {
-    const numericId = parseInt(messageId, 10)
-    if (isNaN(numericId)) {
+    const numericId = getPersistedMessageId(messageId)
+    if (numericId === null) {
       showToast('error', t('aiChat.invalidMessageId'))
+      return
+    }
+
+    if (pendingFeedbackIds.has(numericId)) {
       return
     }
 
@@ -1483,6 +1802,12 @@ export default function AIChatPage() {
     }
 
     // Then submit to backend in background
+    setPendingFeedbackIds(prev => {
+      const next = new Set(prev)
+      next.add(numericId)
+      return next
+    })
+
     try {
       if (currentFeedback === feedbackType) {
         await submitMessageFeedback(numericId, null)
@@ -1490,9 +1815,9 @@ export default function AIChatPage() {
         await submitMessageFeedback(
           numericId,
           feedbackType,
-          null, // taskHelpfulness
-          null, // relatedTaskId
-          null, // timeToActionSeconds
+          undefined, // taskHelpfulness
+          undefined, // relatedTaskId
+          undefined, // timeToActionSeconds
           messageContent,
           contextMessages
         )
@@ -1520,8 +1845,14 @@ export default function AIChatPage() {
         })
       }
       showToast('error', t('aiChat.failedToSubmitFeedback'))
+    } finally {
+      setPendingFeedbackIds(prev => {
+        const next = new Set(prev)
+        next.delete(numericId)
+        return next
+      })
     }
-  }, [feedbacks, showToast, t])
+  }, [feedbacks, pendingFeedbackIds, showToast, t])
 
   // Format timestamp for display
   const formatTimestamp = (date: Date): string => {
@@ -1578,14 +1909,14 @@ export default function AIChatPage() {
     try {
       await submitMessageFeedback(
         numericId,
-        null, // feedbackType
+        undefined, // feedbackType
         helpfulness,
         relatedTaskId,
         timeToActionSeconds,
-        null, // messageContent (not needed for task feedback)
-        null, // contextMessages (not needed for task feedback)
-        taskType || null,
-        taskTitle || null
+        undefined, // messageContent (not needed for task feedback)
+        undefined, // contextMessages (not needed for task feedback)
+        taskType ?? undefined,
+        taskTitle ?? undefined
       )
     } catch (error) {
       console.error('Failed to submit helpfulness feedback:', error)
@@ -1607,48 +1938,46 @@ export default function AIChatPage() {
     const targetMessage = currentMessages[messageIndex]
     if (!targetMessage) return
 
-    // If we have a conversation and a valid message ID, delete from backend
-    if (currentConversationId) {
-      const messageId = parseInt(targetMessage.id, 10)
-      // Only call API if messageId is a valid number (from database)
-      // New messages created during streaming have timestamp-based IDs that are not persisted yet
-      if (!isNaN(messageId)) {
-        try {
-          await deleteMessagesFrom(currentConversationId, messageId)
-        } catch (error) {
-          console.error('Failed to delete messages from backend:', error)
-          showToast('error', t('aiChat.failedToDeleteMessage'))
-          return
-        }
-      }
+    if (!(await deleteConversationBranchFromMessage(targetMessage.id))) {
+      return
     }
 
     // Update local state
     const newMessages = currentMessages.slice(0, messageIndex)
     setMessages(newMessages)
     showToast('info', t('aiChat.messageDeleted'))
-  }, [isGenerating, currentConversationId, showToast, t])
+  }, [deleteConversationBranchFromMessage, isGenerating, showToast, t])
 
-  // Regenerate AI response for a specific message
-  const handleRegenerate = useCallback(async (messageIndex: number) => {
+  const handleResubmitMessage = useCallback(async (messageIndex: number) => {
     if (isGenerating) return
 
-    // Find the user message that prompted this response
-    const currentMessages = messagesRef.current
-    const userMessageIndex = messageIndex - 1
-    if (userMessageIndex < 0 || currentMessages[userMessageIndex].role !== 'user') {
-      showToast('error', t('aiChat.cannotRegenerate'))
+    const replayContext = resolveReplayContext(messageIndex)
+    if (!replayContext) {
       return
     }
 
-    // Remove the current assistant message and keep messages up to (not including) it
-    const newMessages = currentMessages.slice(0, messageIndex)
-    setMessages(newMessages)
+    if (!(await deleteConversationBranchFromMessage(replayContext.userMessage.id))) {
+      return
+    }
 
-    // Build chat messages and execute generation with shared helper
-    const chatMessages = buildChatMessages(newMessages)
+    const resentUserMessage: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: replayContext.userMessage.content,
+      images: replayContext.userMessage.images ? [...replayContext.userMessage.images] : undefined,
+      csvAttachments: replayContext.userMessage.csvAttachments?.map(attachment => ({ ...attachment })),
+      timestamp: new Date()
+    }
+
+    const newMessages = replayContext.currentMessages.slice(0, replayContext.userMessageIndex)
+    const messagesToSend = [...newMessages, resentUserMessage]
+    setShowWelcomeHero(false)
+    userScrolledAwayRef.current = false
+    setMessages(messagesToSend)
+
+    const chatMessages = buildChatMessages(messagesToSend)
     await executeChatGeneration(chatMessages, currentConversationId || undefined)
-  }, [isGenerating, currentConversationId, showToast, t, buildChatMessages, executeChatGeneration])
+  }, [buildChatMessages, currentConversationId, deleteConversationBranchFromMessage, executeChatGeneration, isGenerating, resolveReplayContext])
 
   // Stop AI generation and voice recording
   const handleStopGeneration = useCallback(() => {
@@ -1891,17 +2220,17 @@ export default function AIChatPage() {
     // Different message for external validation vs internal analysis
     const successContent = isExternalValidation
       ? `${t('aiChat.taskSuccess.externalValidationStarted', { taskId })}${quickAnalysisBlock}\n\n[NAVIGATE]\n${JSON.stringify({
-        target: '/results',
-        state: { selectedTaskId: taskId, pageMode: 'external-validation' },
-        buttonTextKey: 'aiChat.taskSuccess.viewResults',
-        descriptionKey: 'aiChat.taskSuccess.validationResultsDesc'
-      }, null, 2)}\n[/NAVIGATE]`
+          target: '/results',
+          state: { selectedTaskId: taskId, pageMode: 'external-validation' },
+          buttonTextKey: 'aiChat.taskSuccess.viewResults',
+          descriptionKey: 'aiChat.taskSuccess.validationResultsDesc'
+        }, null, 2)}\n[/NAVIGATE]`
       : `${t('aiChat.taskSuccess.analysisCompleted')}\n\n[NAVIGATE]\n${JSON.stringify({
-        target: '/results',
-        state: { selectedTaskId: taskId },
-        buttonTextKey: 'aiChat.taskSuccess.viewAnalysisResults',
-        descriptionKey: 'aiChat.taskSuccess.analysisResultsDesc'
-      }, null, 2)}\n[/NAVIGATE]`
+          target: '/results',
+          state: { selectedTaskId: taskId },
+          buttonTextKey: 'aiChat.taskSuccess.viewAnalysisResults',
+          descriptionKey: 'aiChat.taskSuccess.analysisResultsDesc'
+        }, null, 2)}\n[/NAVIGATE]`
 
     const successMessage: Message = {
       id: Date.now().toString(),
@@ -1943,33 +2272,10 @@ export default function AIChatPage() {
     await persistMessageUpdate(messageId, updatedContent)
   }, [persistMessageUpdate])
 
-  // Handle quick analysis data loaded - persist cached data to message content
-  const handleQuickAnalysisDataLoaded = useCallback(async (data: CachedAnalysisData, messageId: string) => {
-    // Find the message from ref to avoid stale closure
-    const currentMessage = messagesRef.current.find(m => m.id === messageId)
-    if (!currentMessage) return
-
-    const updatedContent = currentMessage.content.replace(
-      /\[QUICK_ANALYSIS_CONFIG\]([\s\S]*?)\[\/QUICK_ANALYSIS_CONFIG\]/,
-      (_match, json) => {
-        try {
-          const config = JSON.parse(json.trim())
-          config.cached_data = data
-          return `[QUICK_ANALYSIS_CONFIG]\n${JSON.stringify(config, null, 2)}\n[/QUICK_ANALYSIS_CONFIG]`
-        } catch {
-          return _match
-        }
-      }
-    )
-
-    // Update local state
-    setMessages(prev => prev.map(m =>
-      m.id === messageId ? { ...m, content: updatedContent } : m
-    ))
-
-    // Persist to backend
-    await persistMessageUpdate(messageId, updatedContent)
-  }, [persistMessageUpdate])
+  // Do not persist quick-analysis payloads into message content.
+  // Analysis visibility must always be revalidated against current backend permissions.
+  const handleQuickAnalysisDataLoaded = useCallback((_data: CachedAnalysisData, _messageId: string) => {
+  }, [])
 
   return (
     <div
@@ -1989,410 +2295,528 @@ export default function AIChatPage() {
         </div>
       )}
 
+      {/* Mobile sidebar overlay backdrop */}
+      {showHistory && (
+        <div
+          className="fixed top-16 inset-x-0 bottom-0 bg-black/20 z-30 lg:hidden backdrop-blur-sm transition-opacity"
+          onClick={() => setShowHistory(false)}
+        />
+      )}
+
+      {/* Gemini-style Sidebar - always rendered, inline on desktop, overlay on mobile */}
+      {/* Mobile: always fixed + translate-x slide (never participates in flex layout) */}
+      {/* Desktop: inline flex child with width animation */}
+      <div
+        className={`bg-gray-50 border-r border-gray-200 flex flex-col overflow-hidden
+          fixed top-16 bottom-0 left-0 z-40 w-72 transition-transform duration-300 ease-in-out
+          ${showHistory ? 'translate-x-0' : '-translate-x-full'}
+          lg:relative lg:top-auto lg:bottom-auto lg:z-auto lg:flex-shrink-0 lg:translate-x-0 lg:transition-all
+          ${showHistory ? 'lg:w-72' : 'lg:w-14'}
+        `}
+        role="navigation"
+        aria-label={t('aiChat.history')}
+      >
+        {/* Sidebar Top Icons - hidden on mobile (header hamburger handles it) */}
+        <div className={`hidden lg:flex items-center gap-1 p-2 pt-3 ${showHistory ? 'px-3' : 'flex-col'}`}>
+          <button
+            onClick={() => setShowHistory(!showHistory)}
+            className="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors flex-shrink-0"
+            title={showHistory ? t('aiChat.closeChatHistory') : t('aiChat.openChatHistory')}
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Expanded sidebar content - always rendered, fade in/out with opacity */}
+        <div className={`w-[268px] min-w-[268px] flex flex-col flex-1 overflow-hidden transition-opacity duration-300 ease-in-out pt-6 lg:pt-0 ${showHistory ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+            {/* New Research Task Button */}
+            <div className="px-3 pb-3 pt-0">
+              <button
+                onClick={handleNewChat}
+                className="w-full px-4 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 transition-all shadow-sm flex items-center justify-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                {t('aiChat.newResearchTask')}
+              </button>
+            </div>
+
+            {/* Tools Section */}
+            <div className="px-3 pb-2 border-b border-gray-100">
+              <div className="flex items-center gap-2 px-2 mb-2">
+                <Wrench className="w-4 h-4 text-gray-400" />
+                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest">{t('aiChat.sidebar.tools')}</h3>
+              </div>
+              <div className="space-y-0.5">
+                <button
+                  onClick={() => { navigate('/register'); setShowHistory(false) }}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-orange-50 hover:text-orange-700 transition-colors group"
+                >
+                  <Plus className="w-4 h-4 text-orange-500 group-hover:text-orange-600" />
+                  <span className="flex-1 text-left">{t('aiChat.sidebar.registerData')}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-orange-400 opacity-0 group-hover:opacity-100 transition-all" />
+                </button>
+                <button
+                  onClick={() => { navigate('/wsi-list'); setShowHistory(false) }}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors group"
+                >
+                  <Database className="w-4 h-4 text-blue-500 group-hover:text-blue-600" />
+                  <span className="flex-1 text-left">{t('aiChat.sidebar.dataRepository')}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-all" />
+                </button>
+                <button
+                  onClick={() => { navigate('/task-list'); setShowHistory(false) }}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700 transition-colors group"
+                >
+                  <Brain className="w-4 h-4 text-violet-500 group-hover:text-violet-600" />
+                  <span className="flex-1 text-left">{t('aiChat.sidebar.analysisLab')}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-violet-400 opacity-0 group-hover:opacity-100 transition-all" />
+                </button>
+                <button
+                  onClick={() => { navigate('/tools'); setShowHistory(false) }}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 transition-colors group"
+                >
+                  <LineChart className="w-4 h-4 text-emerald-500 group-hover:text-emerald-600" />
+                  <span className="flex-1 text-left">{t('aiChat.sidebar.insightsReports')}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-emerald-400 opacity-0 group-hover:opacity-100 transition-all" />
+                </button>
+              </div>
+            </div>
+
+            {/* History Section */}
+            <div className="flex items-center justify-between px-5 pt-3 pb-1">
+              <div className="flex items-center gap-2">
+                <History className="w-4 h-4 text-gray-400" />
+                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest">{t('aiChat.history')}</h3>
+              </div>
+              {conversations.length > 0 && (
+                <button
+                  onClick={handleDeleteAllHistory}
+                  className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  title={t('aiChat.deleteAllHistory')}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3">
+              {isLoadingConversations ? (
+                <div className="flex flex-col items-center justify-center py-12">
+                  <Loader2 className="w-8 h-8 text-primary-500 animate-spin mb-3" />
+                  <p className="text-sm text-gray-500">{t('aiChat.loadingConversations')}</p>
+                </div>
+              ) : conversations.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <div className="w-16 h-16 rounded-full bg-gray-50 flex items-center justify-center mb-3">
+                    <MessageSquare className="w-8 h-8 text-gray-300" />
+                  </div>
+                  <p className="text-sm font-medium text-gray-900 mb-1">{t('aiChat.noConversationsYet')}</p>
+                  <p className="text-xs text-gray-500">{t('aiChat.startNewChat')}</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {conversations.map((conv) => (
+                    <div
+                      key={conv.conversation_id}
+                      onClick={() => handleLoadConversation(conv.conversation_id)}
+                      className={`group relative p-3 rounded-xl cursor-pointer transition-all border ${currentConversationId === conv.conversation_id
+                        ? 'bg-primary-50 border-primary-200 shadow-sm'
+                        : 'hover:bg-gray-50 border-transparent hover:border-gray-100'
+                        }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <h3 className={`text-sm font-medium truncate mb-1 ${currentConversationId === conv.conversation_id ? 'text-primary-900' : 'text-gray-900'
+                            }`}>
+                            {conv.title}
+                          </h3>
+                          <div className="flex items-center gap-1 text-xs text-gray-500">
+                            <Clock className="w-3 h-3" />
+                            {new Date(conv.updated_at).toLocaleDateString([], {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => handleDeleteConversation(conv.conversation_id, e)}
+                          className="sm:opacity-0 sm:group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                          title={t('aiChat.deleteConversation')}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+        </div>
+      </div>
+
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col min-w-0 h-full relative z-10 overflow-hidden">
 
         <div ref={messagesContainerRef} data-chat-messages-container data-current-conversation-id={currentConversationId || ''} className="flex-1 overflow-y-auto custom-scrollbar" role="log" aria-label={t('aiChat.chatMessages')} aria-live="polite">
           <div className="px-4 pt-6 pb-40">
-            <div className="max-w-4xl mx-auto space-y-6">
-              {/* Gemini-style Welcome Hero with Scenario Cards */}
-              {messages.length === 0 && showWelcomeHero && (
-                <div className="flex flex-col items-center justify-center min-h-[calc(100vh-16rem)] pt-6 pb-12 text-center space-y-3 sm:space-y-4">
-                  {/* Hero Title */}
-                  <div className="space-y-1.5 sm:space-y-2">
-                    <div className="flex items-center justify-center gap-2 mb-1 sm:mb-2">
-                      <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg">
-                        <Sparkles className="w-5 h-5 sm:w-7 sm:h-7 text-white" />
-                      </div>
+          <div className="max-w-4xl mx-auto space-y-6">
+            {/* Gemini-style Welcome Hero with Scenario Cards */}
+            {messages.length === 0 && showWelcomeHero && (
+              <div className="flex flex-col items-center justify-center min-h-[calc(100vh-16rem)] pt-6 pb-12 text-center space-y-3 sm:space-y-4">
+                {/* Hero Title */}
+                <div className="space-y-1.5 sm:space-y-2">
+                  <div className="flex items-center justify-center gap-2 mb-1 sm:mb-2">
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg">
+                      <Sparkles className="w-5 h-5 sm:w-7 sm:h-7 text-white" />
                     </div>
-                    <h1 className="text-xl sm:text-3xl font-bold bg-gradient-to-r from-gray-900 via-gray-700 to-gray-900 bg-clip-text text-transparent">
-                      {t('aiChat.welcomeTitle')}
-                    </h1>
-                    <p className="text-gray-500 max-w-lg mx-auto text-sm sm:text-base">
-                      {t('aiChat.welcomeDescription')}
-                    </p>
                   </div>
-
-                  {/* Scenario Cards */}
-                  <div className="grid grid-cols-2 gap-2 sm:gap-3 w-full max-w-2xl mt-2">
-                    {SCENARIO_CARDS.map((card) => {
-                      const Icon = card.icon
-                      return (
-                        <button
-                          key={card.id}
-                          onClick={() => handleScenarioCardClick(card)}
-                          className={`${card.bgColor} p-3 sm:p-4 rounded-2xl text-left transition-all duration-200 hover:shadow-md hover:scale-[1.02] group border border-transparent hover:border-gray-200`}
-                        >
-                          <div className="flex items-start gap-2.5 sm:gap-3">
-                            <div className={`shrink-0 w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white shadow-sm flex items-center justify-center group-hover:shadow-md transition-shadow`}>
-                              <Icon className={`w-4 h-4 ${card.iconColor}`} />
-                            </div>
-                            <div className="min-w-0">
-                              <h3 className="text-xs sm:text-sm font-semibold text-gray-900 mb-0.5">{t(card.titleKey)}</h3>
-                              <p className="text-xs text-gray-600 leading-snug">{t(card.descriptionKey)}</p>
-                            </div>
-                          </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-
-                  {/* Deep Research Card - Full Width */}
-                  <button
-                    onClick={() => {
-                      const returnToAIChatConversationId = preserveAiChatReturnContext()
-                      navigate('/deep-research?new=1', {
-                        state: returnToAIChatConversationId ? { returnToAIChatConversationId } : undefined
-                      })
-                    }}
-                    className="w-full max-w-2xl bg-indigo-50 hover:bg-indigo-100 p-3 sm:p-4 rounded-2xl text-left transition-all duration-200 hover:shadow-md hover:scale-[1.02] group border border-transparent hover:border-gray-200 mt-1 sm:mt-0"
-                  >
-                    <div className="flex items-start gap-2.5 sm:gap-3">
-                      <div className="shrink-0 w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white shadow-sm flex items-center justify-center group-hover:shadow-md transition-shadow">
-                        <Sparkles className="w-4 h-4 text-indigo-600" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <h3 className="text-xs sm:text-sm font-semibold text-gray-900">{t('aiChat.scenarioCards.deepResearch.title')}</h3>
-                          <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-100 px-1.5 py-0.5 rounded-full">Beta</span>
-                        </div>
-                        <p className="text-xs text-gray-600 leading-snug">{t('aiChat.scenarioCards.deepResearch.description')}</p>
-                      </div>
-                    </div>
-                  </button>
-
+                  <h1 className="text-xl sm:text-3xl font-bold bg-gradient-to-r from-gray-900 via-gray-700 to-gray-900 bg-clip-text text-transparent">
+                    {t('aiChat.welcomeTitle')}
+                  </h1>
+                  <p className="text-gray-500 max-w-lg mx-auto text-sm sm:text-base">
+                    {t('aiChat.welcomeDescription')}
+                  </p>
                 </div>
-              )}
 
-              {/* Find the last message with a TaskConfigCard/CancelTaskCard to only pass triggers to it */}
-              {(() => {
-                // Find the index of the last message that contains a TaskConfigCard
-                let lastTaskConfigIndex = -1
-                let lastCancelTaskIndex = -1
-                for (let i = messages.length - 1; i >= 0; i--) {
-                  const msg = messages[i]
-                  if (msg.role === 'assistant') {
-                    if (lastTaskConfigIndex === -1 && parseTaskConfig(msg.content)) {
-                      lastTaskConfigIndex = i
-                    }
-                    if (lastCancelTaskIndex === -1 && parseCancelTaskConfig(msg.content)) {
-                      lastCancelTaskIndex = i
-                    }
-                    // Stop if both found
-                    if (lastTaskConfigIndex !== -1 && lastCancelTaskIndex !== -1) {
-                      break
-                    }
+                {/* Scenario Cards */}
+                <div className="grid grid-cols-2 gap-2 sm:gap-3 w-full max-w-2xl mt-2">
+                  {SCENARIO_CARDS.map((card) => {
+                    const Icon = card.icon
+                    return (
+                      <button
+                        key={card.id}
+                        onClick={() => handleScenarioCardClick(card)}
+                        className={`${card.bgColor} p-3 sm:p-4 rounded-2xl text-left transition-all duration-200 hover:shadow-md hover:scale-[1.02] group border border-transparent hover:border-gray-200`}
+                      >
+                        <div className="flex items-start gap-2.5 sm:gap-3">
+                          <div className={`shrink-0 w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white shadow-sm flex items-center justify-center group-hover:shadow-md transition-shadow`}>
+                            <Icon className={`w-4 h-4 ${card.iconColor}`} />
+                          </div>
+                          <div className="min-w-0">
+                            <h3 className="text-xs sm:text-sm font-semibold text-gray-900 mb-0.5">{t(card.titleKey)}</h3>
+                            <p className="text-xs text-gray-600 leading-snug">{t(card.descriptionKey)}</p>
+                          </div>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+            {/* Find the last message with a TaskConfigCard/CancelTaskCard to only pass triggers to it */}
+            {(() => {
+              // Find the index of the last message that contains a TaskConfigCard
+              let lastTaskConfigIndex = -1
+              let lastCancelTaskIndex = -1
+              for (let i = messages.length - 1; i >= 0; i--) {
+                const msg = messages[i]
+                if (msg.role === 'assistant') {
+                  if (lastTaskConfigIndex === -1 && parseTaskConfig(msg.content)) {
+                    lastTaskConfigIndex = i
+                  }
+                  if (lastCancelTaskIndex === -1 && parseCancelTaskConfig(msg.content)) {
+                    lastCancelTaskIndex = i
+                  }
+                  // Stop if both found
+                  if (lastTaskConfigIndex !== -1 && lastCancelTaskIndex !== -1) {
+                    break
                   }
                 }
-                return messages.map((message, index) => {
-                  // Skip rendering assistant messages that contain only internal blocks (e.g., VOICE_CONTROL only)
-                  if (message.role === 'assistant' && isInternalOnlyMessage(message.content)) {
-                    return null
-                  }
-                  // Skip rendering hidden PDF context user messages (stored for AI follow-up context only)
-                  if (message.role === 'user' && isPdfContextMessage(message.content)) {
-                    return null
-                  }
-                  return (
-                    <div
-                      key={message.id}
-                      className={`flex gap-4 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'} items-start`}
-                    >
-                      {/* Avatar */}
-                      <div className="flex-shrink-0 mt-1">
-                        <div
-                          className={`hidden w-8 h-8 rounded-full flex items-center justify-center border shadow-sm ${message.role === 'user'
-                            ? 'bg-white border-gray-100'
-                            : 'bg-white border-gray-100'
-                            }`}
-                        >
-                          {message.role === 'user' ? (
-                            <User className="w-5 h-5 text-gray-600" />
-                          ) : (
-                            <Bot className="w-5 h-5 text-primary-600" />
-                          )}
-                        </div>
-                      </div>
+              }
+              return messages.map((message, index) => {
+              // Skip rendering assistant messages that contain only internal blocks (e.g., VOICE_CONTROL only)
+              if (message.role === 'assistant' && isInternalOnlyMessage(message.content)) {
+                return null
+              }
+              // Skip rendering hidden PDF context user messages (stored for AI follow-up context only)
+              if (message.role === 'user' && isPdfContextMessage(message.content)) {
+                return null
+              }
+              return (
+              <div
+                key={message.id}
+                className={`flex gap-4 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'} items-start`}
+              >
+                {/* Avatar */}
+                <div className="flex-shrink-0 mt-1">
+                  <div
+                    className={`hidden w-8 h-8 rounded-full flex items-center justify-center border shadow-sm ${message.role === 'user'
+                      ? 'bg-white border-gray-100'
+                      : 'bg-white border-gray-100'
+                      }`}
+                  >
+                    {message.role === 'user' ? (
+                      <User className="w-5 h-5 text-gray-600" />
+                    ) : (
+                      <Bot className="w-5 h-5 text-primary-600" />
+                    )}
+                  </div>
+                </div>
 
-                      {/* Message Content */}
-                      <div className={`flex-1 min-w-0 max-w-[80%] flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
-                        {/* User Images */}
-                        {message.role === 'user' && message.images && message.images.length > 0 && (
-                          <div className="flex flex-wrap gap-2 mb-2 justify-end">
-                            {message.images.map((img, idx) => (
-                              <img
-                                key={idx}
-                                src={img}
-                                alt={t('aiChat.attachmentAlt', { index: idx + 1 })}
-                                className="max-w-[200px] max-h-[200px] rounded-xl object-cover border border-gray-200 shadow-sm"
-                              />
-                            ))}
-                          </div>
-                        )}
+                {/* Message Content */}
+                <div className={`flex-1 min-w-0 max-w-[80%] flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
+                  {/* User Images */}
+                  {message.role === 'user' && message.images && message.images.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-2 justify-end">
+                      {message.images.map((img, idx) => (
+                        <img
+                          key={idx}
+                          src={img}
+                          alt={t('aiChat.attachmentAlt', { index: idx + 1 })}
+                          className="max-w-[200px] max-h-[200px] rounded-xl object-cover border border-gray-200 shadow-sm"
+                        />
+                      ))}
+                    </div>
+                  )}
 
-                        {/* Message Bubble */}
-                        <div
-                          className={`relative px-5 py-3.5 text-[15px] leading-7 shadow-sm w-full overflow-hidden ${message.role === 'user'
-                            ? 'bg-gradient-to-br from-primary-500 to-primary-600 text-white rounded-[20px] rounded-tr-sm selection:bg-white/30'
-                            : 'bg-white border border-gray-100 text-gray-900 rounded-[20px] rounded-tl-sm'
-                            }`}
-                        >
-                          {message.role === 'user' ? (
-                            (() => {
-                              // Parse CSV preview from user message
-                              const csvPreview = parseCSVPreview(message.content)
-                              let displayContent = csvPreview ? removeCSVPreviewBlock(message.content) : message.content
-                              const reportContext = parseTaggedBlock(displayContent, 'RESEARCH_REPORT_CONTEXT')
-                              if (reportContext) {
-                                displayContent = removeTaggedBlock(displayContent, 'RESEARCH_REPORT_CONTEXT')
-                              }
-                              const trainingHandoffContext = parseTaggedBlock(displayContent, 'TRAINING_HANDOFF_CONTEXT')
-                              if (trainingHandoffContext) {
-                                // Keep this context for model guidance but hide from user bubble.
-                                displayContent = removeTaggedBlock(displayContent, 'TRAINING_HANDOFF_CONTEXT')
-                              }
-                              const researchJump = parseResearchJumpBlock(displayContent)
-                              if (researchJump) {
-                                displayContent = removeTaggedBlock(displayContent, 'RESEARCH_JUMP')
-                              }
+                  {/* Message Bubble */}
+                  <div
+                    className={`relative px-5 py-3.5 text-[15px] leading-7 shadow-sm w-full overflow-hidden ${message.role === 'user'
+                      ? 'bg-gradient-to-br from-primary-500 to-primary-600 text-white rounded-[20px] rounded-tr-sm selection:bg-white/30'
+                      : 'bg-white border border-gray-100 text-gray-900 rounded-[20px] rounded-tl-sm'
+                      }`}
+                  >
+                    {message.role === 'user' ? (
+                      (() => {
+                        // Parse CSV preview from user message
+                        const csvPreview = parseCSVPreview(message.content)
+                        const displayContent = csvPreview ? removeCSVPreviewBlock(message.content) : message.content
 
-                              return (
-                                <div>
-                                  {displayContent.trim() && (
-                                    <div className="whitespace-pre-wrap break-words">
-                                      {displayContent}
-                                    </div>
-                                  )}
-                                  {reportContext && (
-                                    <details className="mt-3 rounded-xl border border-white/30 bg-white/10 px-3 py-2">
-                                      <summary className="cursor-pointer select-none text-xs font-medium text-white/95">
-                                        {t('aiChat.researchHandoff.reportContextSummary')}
-                                      </summary>
-                                      <div className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words pr-1 text-xs leading-5 text-white/90">
-                                        {reportContext}
-                                      </div>
-                                    </details>
-                                  )}
-                                  {researchJump && (
-                                    <div className="mt-3 rounded-2xl border border-white/20 bg-white/12 p-3.5 backdrop-blur-sm">
-                                      <div className="flex items-start gap-3">
-                                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/16 text-white shadow-sm ring-1 ring-white/10">
-                                          <Sparkles className="h-4 w-4" />
-                                        </div>
-                                        <div className="min-w-0 flex-1">
-                                          <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/60">
-                                            {t('aiChat.researchHandoff.eyebrow')}
-                                          </div>
-                                          <div className="mt-1 text-sm font-semibold text-white">
-                                            {t('aiChat.researchHandoff.title')}
-                                          </div>
-                                          <p className="mt-1 text-xs leading-5 text-white/72">
-                                            {t('aiChat.researchHandoff.description')}
-                                          </p>
-                                        </div>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const returnToAIChatConversationId = preserveAiChatReturnContext()
-                                          navigate(`/deep-research/${researchJump.conversationId}`, {
-                                            state: {
-                                              focusResearchId: researchJump.researchId,
-                                              focusConversationId: researchJump.conversationId,
-                                              fromAIChatResearchJump: true,
-                                              ...(returnToAIChatConversationId ? { returnToAIChatConversationId } : {})
-                                            }
-                                          })
-                                        }}
-                                        className="mt-3 flex w-full items-center justify-between rounded-xl border border-white/18 bg-white/14 px-3.5 py-3 text-left transition-all hover:bg-white/20"
-                                      >
-                                        <div className="min-w-0">
-                                          <div className="truncate text-sm font-medium text-white">
-                                            {researchJump.title || t('aiChat.researchHandoff.open')}
-                                          </div>
-                                          <div className="mt-0.5 text-xs text-white/65">
-                                            {t('aiChat.researchHandoff.openHint')}
-                                          </div>
-                                        </div>
-                                        <ChevronRight className="ml-2 h-4 w-4 flex-shrink-0" />
-                                      </button>
-                                    </div>
-                                  )}
-                                  {csvPreview && (
-                                    <CSVPreviewCard {...csvPreview} />
-                                  )}
-                                </div>
-                              )
-                            })()
-                          ) : message.content === '' ? (
-                            // ChatGPT-like Thinking Indicator with staggered bouncing dots
-                            <div className="flex items-center gap-2.5 py-2" aria-busy="true">
-                              <div className="flex items-center gap-1" aria-hidden="true">
-                                <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '0ms', animationDuration: '1.2s' }} />
-                                <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '200ms', animationDuration: '1.2s' }} />
-                                <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '400ms', animationDuration: '1.2s' }} />
+                        return (
+                          <div>
+                            {displayContent.trim() && (
+                              <div className="whitespace-pre-wrap break-words">
+                                {displayContent}
                               </div>
-                              <span className="text-sm font-medium text-gray-400">{t('aiChat.thinking')}</span>
-                            </div>
-                          ) : (
-                            <AssistantMessage
-                              content={message.content}
-                              messageId={message.id}
-                              onOptionSelect={handleOptionSelect}
-                              onTaskSubmitSuccess={handleTaskSubmitSuccess}
-                              onInternalAnalysisSubmitSuccess={handleInternalAnalysisSubmitSuccess}
-                              onTaskSubmitError={handleTaskSubmitError}
-                              onTaskHistoryDataLoaded={handleTaskHistoryDataLoaded}
-                              onQuickAnalysisDataLoaded={handleQuickAnalysisDataLoaded}
-                              onHelpfulnessFeedback={handleHelpfulnessFeedback}
-                              savedHelpfulnessFeedback={helpfulnessFeedbacks.get(parseInt(message.id, 10)) || null}
-                              // "Streaming" 表示当前这条助手消息还在生成中（不管是否已经收到首个 chunk），
-                              // 用 isGenerating 而不是 isLoading，这样在 Exa 搜索阶段（只收到 SEARCH_STATUS/WEB_SEARCH_RESULT）
-                              // 也会触发搜索状态卡片和 skeleton，避免出现中间一大块空白。
-                              // isPdfWaiting: PDF 等待阶段，流仍在活跃中，需要保持 isStreaming 以显示 PDF 解析状态卡片。
-                              isStreaming={(isGenerating || isPdfWaiting) && index === messages.length - 1}
-                              isLoading={isGenerating}
-                              csvContent={csvContentMap.get(message.id)?.content}
-                              csvFileName={csvContentMap.get(message.id)?.fileName}
-                              onToast={handleToast}
-                              onRegistrationSuccess={handleRegistrationSuccess}
-                              onMetadataUploadSuccess={handleMetadataUploadSuccess}
-                              submitTaskTrigger={index === lastTaskConfigIndex ? submitTaskTrigger : undefined}
-                              cancelTaskTrigger={index === lastCancelTaskIndex ? cancelTaskTrigger : undefined}
-                              onNewChat={handleNewChat}
-                            />
-                          )}
+                            )}
+                            {csvPreview && (
+                              <CSVPreviewCard {...csvPreview} />
+                            )}
+                          </div>
+                        )
+                      })()
+                    ) : message.content === '' ? (
+                      // ChatGPT-like Thinking Indicator with staggered bouncing dots
+                      <div className="flex items-center gap-2.5 py-2" aria-busy="true">
+                        <div className="flex items-center gap-1" aria-hidden="true">
+                          <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '0ms', animationDuration: '1.2s' }} />
+                          <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '200ms', animationDuration: '1.2s' }} />
+                          <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '400ms', animationDuration: '1.2s' }} />
                         </div>
-
-                        {/* Timestamp & Actions for Assistant Messages */}
-                        {message.role === 'assistant' && message.content !== '' && (
-                          <div className="flex items-center gap-3 mt-2 text-gray-400">
-                            {/* Timestamp */}
-                            <span className="text-xs text-gray-400" title={message.timestamp.toLocaleString()}>
-                              {formatTimestamp(message.timestamp)}
-                            </span>
-
-                            <div className="w-px h-4 bg-gray-200" />
-
-                            {/* Thumbs Up/Down Buttons */}
-                            <button
-                              onClick={() => handleFeedback(message.id, 'thumbs_up')}
-                              className={`transition-colors ${feedbacks.get(parseInt(message.id, 10)) === 'thumbs_up'
-                                ? 'text-green-500'
-                                : 'hover:text-gray-600'
-                                }`}
-                              title={t('aiChat.goodResponse')}
-                            >
-                              <ThumbsUp className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => handleFeedback(message.id, 'thumbs_down')}
-                              className={`transition-colors ${feedbacks.get(parseInt(message.id, 10)) === 'thumbs_down'
-                                ? 'text-red-500'
-                                : 'hover:text-gray-600'
-                                }`}
-                              title={t('aiChat.badResponse')}
-                            >
-                              <ThumbsDown className="w-4 h-4" />
-                            </button>
-
-                            <div className="w-px h-4 bg-gray-200" />
-
-                            <button
-                              onClick={() => handleCopy(message.content)}
-                              className="hover:text-gray-600 transition-colors"
-                              title={t('aiChat.copy')}
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            </button>
-                            <button
-                              onClick={() => handleRegenerate(index)}
-                              disabled={isGenerating}
-                              className={`hover:text-gray-600 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
-                              title={t('aiChat.regenerate')}
-                            >
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
-                            </button>
-                            <button
-                              onClick={() => handleDeleteMessage(index)}
-                              disabled={isGenerating}
-                              className={`hover:text-red-500 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
-                              title={t('aiChat.deleteMessageAndContinue')}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        )}
-
-                        {/* Timestamp & Actions for User Messages */}
-                        {message.role === 'user' && (
-                          <div className="flex items-center gap-2 mt-1.5 mr-1 text-gray-400 justify-end opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                            {/* Timestamp */}
-                            <span className="text-xs text-gray-400" title={message.timestamp.toLocaleString()}>
-                              {formatTimestamp(message.timestamp)}
-                            </span>
-
-                            <div className="w-px h-4 bg-gray-200" />
-
-                            <button
-                              onClick={() => handleDeleteMessage(index)}
-                              disabled={isGenerating}
-                              className={`hover:text-red-500 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
-                              title={t('aiChat.deleteMessageAndContinue')}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        )}
+                        <span className="text-sm font-medium text-gray-400">{t('aiChat.thinking')}</span>
                       </div>
-                    </div>
-                  )
-                })
-              })()}
-
-              {/* Live Input Preview Bubble - shows text input or voice transcript in real-time */}
-              {(realtimePartialText || input.trim()) && (
-                <div className="flex gap-4 flex-row-reverse items-start animate-in fade-in slide-in-from-bottom-2 duration-200 mb-6">
-                  {/* Avatar */}
-                  <div className="flex-shrink-0">
-                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center shadow-md ring-2 ring-white">
-                      <User className="w-5 h-5 text-white" />
-                    </div>
+                    ) : (
+                      (() => {
+                        const referenceImages = (() => {
+                          for (let i = index - 1; i >= 0; i -= 1) {
+                            const candidate = messages[i]
+                            if (candidate.role === 'user' && candidate.images?.length) {
+                              return candidate.images
+                            }
+                          }
+                          return [] as string[]
+                        })()
+                        return (
+                      <AssistantMessage
+                        content={message.content}
+                        messageId={message.id}
+                        onOptionSelect={handleOptionSelect}
+                        onTaskSubmitSuccess={handleTaskSubmitSuccess}
+                        onInternalAnalysisSubmitSuccess={handleInternalAnalysisSubmitSuccess}
+                        onTaskSubmitError={handleTaskSubmitError}
+                        onTaskHistoryDataLoaded={handleTaskHistoryDataLoaded}
+                        onQuickAnalysisDataLoaded={handleQuickAnalysisDataLoaded}
+                        onHelpfulnessFeedback={handleHelpfulnessFeedback}
+                        savedHelpfulnessFeedback={helpfulnessFeedbacks.get(parseInt(message.id, 10)) || null}
+                        // "Streaming" 表示当前这条助手消息还在生成中（不管是否已经收到首个 chunk），
+                        // 用 isGenerating 而不是 isLoading，这样在 Exa 搜索阶段（只收到 SEARCH_STATUS/WEB_SEARCH_RESULT）
+                        // 也会触发搜索状态卡片和 skeleton，避免出现中间一大块空白。
+                        isStreaming={isGenerating && index === messages.length - 1}
+                        isLoading={isGenerating}
+                        csvContent={csvContentMap.get(message.id)?.content}
+                        csvFileName={csvContentMap.get(message.id)?.fileName}
+                        onToast={handleToast}
+                        onRegistrationSuccess={handleRegistrationSuccess}
+                        onMetadataUploadSuccess={handleMetadataUploadSuccess}
+                        submitTaskTrigger={index === lastTaskConfigIndex ? submitTaskTrigger : undefined}
+                        cancelTaskTrigger={index === lastCancelTaskIndex ? cancelTaskTrigger : undefined}
+                        onNewChat={handleNewChat}
+                        conversationId={currentConversationId || undefined}
+                        referenceImages={referenceImages}
+                        onMessageContentReplace={replaceMessageContent}
+                      />
+                        )
+                      })()
+                    )}
                   </div>
 
-                  {/* Message Content */}
-                  <div className="flex-1 min-w-0 max-w-[80%] flex flex-col items-end">
-                    {/* Message Bubble - slightly transparent for preview effect */}
-                    <div className="relative px-5 py-3.5 text-[15px] leading-7 shadow-sm bg-gradient-to-br from-primary-400 to-primary-500 text-white rounded-[20px] rounded-tr-sm selection:bg-white/30 opacity-80 max-h-[120px] overflow-y-auto scrollbar-hide">
-                      <div className="whitespace-pre-wrap break-words flex items-center gap-2">
-                        <span>{realtimePartialText || input}</span>
-                        {/* Show typing indicator only for voice input */}
-                        {realtimePartialText && (
-                          <span className="inline-flex gap-0.5">
-                            <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                            <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                            <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                          </span>
-                        )}
-                      </div>
+                  {/* Timestamp & Actions for Assistant Messages */}
+                  {message.role === 'assistant' && message.content !== '' && (
+                    <div className="flex items-center gap-3 mt-2 text-gray-400">
+                      {(() => {
+                        const persistedMessageId = getPersistedMessageId(message.id)
+                        const feedbackPending = persistedMessageId !== null && pendingFeedbackIds.has(persistedMessageId)
+                        return (
+                          <>
+                      {/* Timestamp */}
+                      <span className="text-xs text-gray-400" title={message.timestamp.toLocaleString()}>
+                        {formatTimestamp(message.timestamp)}
+                      </span>
+
+                      <div className="w-px h-4 bg-gray-200" />
+
+                      {/* Thumbs Up/Down Buttons */}
+                      <button
+                        onClick={() => handleFeedback(message.id, 'thumbs_up')}
+                        disabled={feedbackPending || persistedMessageId === null}
+                        className={`transition-colors ${(feedbackPending || persistedMessageId === null) ? 'opacity-50 cursor-not-allowed' : ''} ${feedbacks.get(parseInt(message.id, 10)) === 'thumbs_up'
+                          ? 'text-green-500'
+                          : 'hover:text-gray-600'
+                          }`}
+                        title={t('aiChat.goodResponse')}
+                      >
+                        <ThumbsUp className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleFeedback(message.id, 'thumbs_down')}
+                        disabled={feedbackPending || persistedMessageId === null}
+                        className={`transition-colors ${(feedbackPending || persistedMessageId === null) ? 'opacity-50 cursor-not-allowed' : ''} ${feedbacks.get(parseInt(message.id, 10)) === 'thumbs_down'
+                          ? 'text-red-500'
+                          : 'hover:text-gray-600'
+                          }`}
+                        title={t('aiChat.badResponse')}
+                      >
+                        <ThumbsDown className="w-4 h-4" />
+                      </button>
+
+                      <div className="w-px h-4 bg-gray-200" />
+
+                      <button
+                        onClick={() => handleCopy(message.content)}
+                        className="hover:text-gray-600 transition-colors"
+                        title={t('aiChat.copy')}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                      </button>
+                      <button
+                        onClick={() => handleResubmitMessage(index)}
+                        disabled={isGenerating}
+                        className={`hover:text-gray-600 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        title={t('aiChat.regenerate')}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
+                      </button>
+                      <button
+                        onClick={() => handleDeleteMessage(index)}
+                        disabled={isGenerating}
+                        className={`hover:text-red-500 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        title={t('aiChat.deleteMessageAndContinue')}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                          </>
+                        )
+                      })()}
+                    </div>
+                  )}
+
+                  {/* Timestamp & Actions for User Messages */}
+                  {message.role === 'user' && (
+                    <div className="flex items-center gap-2 mt-1.5 mr-1 text-gray-400 justify-end opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                      {/* Timestamp */}
+                      <span className="text-xs text-gray-400" title={message.timestamp.toLocaleString()}>
+                        {formatTimestamp(message.timestamp)}
+                      </span>
+
+                      <div className="w-px h-4 bg-gray-200" />
+
+                      <button
+                        onClick={() => handleCopy(message.content)}
+                        className="hover:text-gray-600 transition-colors"
+                        title={t('aiChat.copy')}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                      </button>
+                      <button
+                        onClick={() => handleResubmitMessage(index)}
+                        disabled={isGenerating}
+                        className={`hover:text-gray-600 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        title={t('aiChat.resubmit')}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
+                      </button>
+
+                      <button
+                        onClick={() => handleDeleteMessage(index)}
+                        disabled={isGenerating}
+                        className={`hover:text-red-500 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        title={t('aiChat.deleteMessageAndContinue')}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              )
+              })
+            })()}
+
+            {/* Live Input Preview Bubble - shows text input or voice transcript in real-time */}
+            {(realtimePartialText || input.trim()) && (
+              <div className="flex gap-4 flex-row-reverse items-start animate-in fade-in slide-in-from-bottom-2 duration-200 mb-6">
+                {/* Avatar */}
+                <div className="flex-shrink-0">
+                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center shadow-md ring-2 ring-white">
+                    <User className="w-5 h-5 text-white" />
+                  </div>
+                </div>
+
+                {/* Message Content */}
+                <div className="flex-1 min-w-0 max-w-[80%] flex flex-col items-end">
+                  {/* Message Bubble - slightly transparent for preview effect */}
+                  <div className="relative px-5 py-3.5 text-[15px] leading-7 shadow-sm bg-gradient-to-br from-primary-400 to-primary-500 text-white rounded-[20px] rounded-tr-sm selection:bg-white/30 opacity-80 max-h-[120px] overflow-y-auto scrollbar-hide">
+                    <div className="whitespace-pre-wrap break-words flex items-center gap-2">
+                      <span>{realtimePartialText || input}</span>
+                      {/* Show typing indicator only for voice input */}
+                      {realtimePartialText && (
+                        <span className="inline-flex gap-0.5">
+                          <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                          <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <span className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
-              )}
+              </div>
+            )}
 
-              <div ref={messagesEndRef} />
-            </div>
+            <div ref={messagesEndRef} />
           </div>
+        </div>
         </div>
 
 
         {/* Input Area - Floating Island - Fixed to viewport bottom */}
-        <div className="fixed bottom-6 left-0 right-0 px-4 z-30 pointer-events-none lg:left-[var(--sidebar-width,288px)] transition-[left] duration-300 ease-in-out">
+        <div className={`fixed bottom-6 left-0 right-0 px-4 z-30 pointer-events-none transition-[left] duration-300 ease-in-out ${showHistory ? 'lg:left-72' : 'lg:left-14'}`}>
           <div className="max-w-4xl mx-auto pointer-events-auto">
             <form ref={formRef} id="chat-form" onSubmit={handleSubmit} className="relative group">
-              <ChatInputShell
-                shellTone={voiceSessionActive ? 'voice' : 'default'}
-                attachmentsPreview={(imageAttachments.length > 0 || fileAttachments.length > 0) ? (
+              <div className={`
+                relative flex flex-col
+                bg-white/80 backdrop-blur-xl
+                rounded-[28px] shadow-[0_8px_32px_rgba(0,0,0,0.12)]
+                border transition-all duration-300
+                ${voiceSessionActive
+                  ? 'border-primary-300 shadow-[0_0_0_4px_rgba(102,126,234,0.15)] bg-white/90'
+                  : 'border-gray-200/50 hover:border-gray-300/80 hover:shadow-[0_8px_40px_rgba(0,0,0,0.15)]'
+                }
+                min-h-[56px] py-1.5
+              `}>
+                {/* Inline Attachments Preview */}
+                {(imageAttachments.length > 0 || fileAttachments.length > 0) && (
                   <div className="flex flex-wrap gap-2 px-4 pt-2.5 pb-1 animate-in fade-in slide-in-from-bottom-1 duration-200">
                     {imageAttachments.map((attachment) => (
                       <div key={attachment.id} className="relative group/thumb flex-shrink-0">
@@ -2433,63 +2857,161 @@ export default function AIChatPage() {
                       </div>
                     ))}
                   </div>
-                ) : null}
-                editor={(
-                  <textarea
-                    ref={textareaRef}
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder={t('aiChat.inputPlaceholder')}
-                    className="w-full resize-none border-none bg-transparent py-2.5 text-[15px] leading-relaxed text-gray-900 placeholder-gray-400 focus:outline-none scrollbar-hide"
-                    rows={1}
-                    style={{ maxHeight: '150px' }}
-                    disabled={isGenerating}
-                    autoFocus
-                    aria-label={t('aiChat.messageInput')}
-                  />
                 )}
-                editorHidden={voiceSessionActive}
-                hiddenInput={(
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*,.csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-                    multiple
-                    onChange={handleFileSelect}
-                    className="hidden"
-                  />
+
+                <div className="relative flex items-center min-h-[52px] pl-4 pr-[104px] sm:pr-[120px]">
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={voiceSessionActive ? t('aiChat.listening') : t('aiChat.inputPlaceholder')}
+                  className={`
+                    w-full bg-transparent border-none focus:outline-none resize-none 
+                    text-gray-900 placeholder-gray-400 transition-all 
+                    text-[15px] leading-relaxed py-2.5 scrollbar-hide
+                    ${(realtimeIsRecording || voiceSessionActive) ? 'opacity-0' : 'opacity-100'}
+                  `}
+                  rows={1}
+                  style={{ maxHeight: '150px' }}
+                  disabled={isGenerating}
+                  autoFocus
+                  aria-label={t('aiChat.messageInput')}
+                />
+
+                {/* Hidden file input */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*,.csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                  multiple
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+
+                {/* Voice Visualizer Overlay with Realtime Transcript */}
+                {(realtimeIsRecording || realtimeIsConnecting) && (
+                  <div className="absolute left-4 right-[140px] top-0 bottom-0 flex items-center pointer-events-none">
+                    {realtimePartialText ? (
+                      // Show realtime transcript when available
+                      <div className="w-full flex items-center gap-2 text-gray-700 text-[15px] leading-relaxed overflow-hidden">
+                        <span className="truncate">{realtimePartialText}</span>
+                        <span className="flex-shrink-0 inline-flex gap-0.5">
+                          <span className="w-1.5 h-1.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                          <span className="w-1.5 h-1.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <span className="w-1.5 h-1.5 bg-primary-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                        </span>
+                      </div>
+                    ) : (
+                      // Show audio visualizer when no transcript yet
+                      <AudioVisualizer stream={realtimeMediaStream} isActive={realtimeIsRecording} className="w-full h-12 opacity-80" />
+                    )}
+                  </div>
                 )}
-                overlay={(
-                  <VoiceSessionOverlay
-                    partialText={realtimePartialText}
-                    mediaStream={realtimeMediaStream}
-                    isRecording={realtimeIsRecording}
-                    isConnecting={realtimeIsConnecting}
-                    isThinking={voiceSessionActive && !realtimeIsRecording && isLoading}
-                    thinkingLabel={t('aiChat.thinking')}
-                  />
+
+                {/* Voice Session Waiting State */}
+                {voiceSessionActive && !realtimeIsRecording && isLoading && (
+                  <div className="absolute left-4 right-[140px] top-0 bottom-0 flex items-center justify-center pointer-events-none">
+                    <span className="flex items-center gap-2 text-sm text-primary-600 font-medium animate-pulse">
+                      <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <div className="w-2 h-2 rounded-full bg-primary-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+                      {t('aiChat.thinking')}
+                    </span>
+                  </div>
                 )}
-                showAttachButton={!realtimeIsRecording && !realtimeIsConnecting && !voiceSessionActive}
-                onAttachClick={() => fileInputRef.current?.click()}
-                attachLabel={t('aiChat.attachFile')}
-                attachDisabled={isGenerating}
-                voiceButtonState={realtimeIsRecording ? 'recording' : realtimeIsConnecting ? 'connecting' : voiceSessionActive ? 'active' : 'idle'}
-                onVoiceToggle={toggleVoiceSession}
-                voiceLabel={t('aiChat.voiceInput')}
-                stopVoiceLabel={t('aiChat.stopVoiceInput')}
-                voiceDisabled={isGenerating && !voiceSessionActive}
-                responding={isGenerating}
-                onStopResponding={handleStopGeneration}
-                stopRespondingLabel={t('aiChat.stopGenerating')}
-                showVoiceSendButton={realtimeIsRecording}
-                onVoiceSend={() => voiceForceSend(realtimePartialText)}
-                voiceSendDisabled={!realtimePartialText?.trim()}
-                voiceSendLabel={t('aiChat.sendVoiceMessage')}
-                sendDisabled={!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0}
-                sendLabel={t('aiChat.sendMessage')}
-                sendButtonType="submit"
-              />
+
+
+                <div className="absolute right-1.5 bottom-1.5 flex items-center gap-1 sm:gap-1.5">
+                  {/* File Upload - hidden during voice recording */}
+                  {!realtimeIsRecording && !realtimeIsConnecting && !voiceSessionActive && (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isGenerating}
+                      className="p-2 sm:p-2.5 rounded-full transition-all text-gray-400 hover:text-gray-600 hover:bg-gray-100 active:scale-95 disabled:opacity-50"
+                      aria-label={t('aiChat.attachFile')}
+                    >
+                      <Paperclip className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                  )}
+
+                  {/* Voice Button */}
+                  <button
+                    type="button"
+                    onClick={toggleVoiceSession}
+                    disabled={isGenerating && !voiceSessionActive}
+                    aria-label={voiceSessionActive || realtimeIsRecording ? t('aiChat.stopVoiceInput') : t('aiChat.voiceInput')}
+                    className={`
+                      p-2 sm:p-2.5 rounded-full transition-all duration-300 active:scale-95
+                      ${realtimeIsRecording
+                        ? 'bg-red-50 text-red-500 hover:bg-red-100'
+                        : realtimeIsConnecting
+                          ? 'bg-primary-50 text-primary-500'
+                          : voiceSessionActive
+                            ? 'bg-primary-500 text-white shadow-md'
+                            : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                      }
+                    `}
+                  >
+                    {realtimeIsConnecting ? (
+                      <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin" />
+                    ) : realtimeIsRecording ? (
+                      <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="currentColor" />
+                    ) : voiceSessionActive ? (
+                      <MicOff className="w-4 h-4 sm:w-5 sm:h-5" />
+                    ) : (
+                      <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
+                    )}
+                  </button>
+
+                  {/* Send / Stop Button */}
+                  {isGenerating ? (
+                    <button
+                      type="button"
+                      onClick={handleStopGeneration}
+                      className="p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm bg-gray-800 text-white hover:bg-gray-900 shadow-md active:scale-95"
+                      title={t('aiChat.stopGenerating')}
+                      aria-label={t('aiChat.stopGenerating')}
+                    >
+                      <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="currentColor" />
+                    </button>
+                  ) : realtimeIsRecording ? (
+                    /* Force-send partial transcript during recording */
+                    <button
+                      type="button"
+                      onClick={() => voiceForceSend(realtimePartialText)}
+                      disabled={!realtimePartialText?.trim()}
+                      aria-label={t('aiChat.sendVoiceMessage')}
+                      className={`
+                        p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm
+                        ${!realtimePartialText?.trim()
+                          ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                          : 'bg-primary-600 text-white hover:bg-primary-700 shadow-md active:scale-95'
+                        }
+                      `}
+                    >
+                      <Send className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                  ) : (
+                    <button
+                      type="submit"
+                      disabled={!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0}
+                      aria-label={t('aiChat.sendMessage')}
+                      className={`
+                          p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm
+                          ${!input.trim() && imageAttachments.length === 0 && fileAttachments.length === 0
+                          ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                          : 'bg-primary-600 text-white hover:bg-primary-700 shadow-md active:scale-95'
+                        }
+                      `}
+                    >
+                      <Send className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                  )}
+                </div>
+                </div>
+              </div>
             </form>
 
             <div className="mt-2 text-center text-xs text-gray-400/80 font-medium px-4 leading-relaxed">
@@ -2500,6 +3022,49 @@ export default function AIChatPage() {
       </div>
 
 
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmId && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-dialog-title"
+          onKeyDown={(e) => e.key === 'Escape' && cancelDelete()}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform transition-all scale-100">
+            <div className="flex items-start gap-4">
+              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+                <Trash2 className="w-6 h-6 text-red-600" />
+              </div>
+              <div className="flex-1">
+                <h3 id="delete-dialog-title" className="text-lg font-semibold text-gray-900 mb-2">
+                  {deleteConfirmId === 'all-conversations' ? t('aiChat.deleteAllHistoryTitle') : t('aiChat.deleteConversationTitle')}
+                </h3>
+                <p className="text-sm text-gray-600 mb-6">
+                  {deleteConfirmId === 'all-conversations'
+                    ? t('aiChat.deleteAllHistoryConfirm')
+                    : t('aiChat.deleteConversationConfirm')}
+                </p>
+                <div className="flex gap-3 justify-end">
+                  <button
+                    onClick={cancelDelete}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  >
+                    {t('common.cancel')}
+                  </button>
+                  <button
+                    onClick={confirmDelete}
+                    className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors shadow-sm"
+                  >
+                    {t('common.delete')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Toast notification */}
       {toastMessage && (
@@ -2523,3 +3088,5 @@ export default function AIChatPage() {
     </div>
   )
 }
+
+

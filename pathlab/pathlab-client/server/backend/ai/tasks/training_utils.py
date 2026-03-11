@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 import numpy as np
 from sklearn.metrics import (
     roc_auc_score, precision_score, recall_score, f1_score,
+    cohen_kappa_score,
     confusion_matrix as sklearn_confusion_matrix,
 )
 import anyio
@@ -38,6 +39,35 @@ async def safe_update_progress(session_maker, task_id: str, status: str, progres
     from backend.common.progress_store import set_progress
 
     await set_progress(task_id, progress)
+
+
+def calculate_progress_update_interval(
+    total_items: int,
+    target_updates: int = 20,
+    max_interval: int = 200,
+) -> int:
+    """Return a throttled update interval for smoother progress reporting."""
+    if total_items <= 0:
+        return 1
+    if target_updates <= 0:
+        target_updates = 1
+    return max(1, min((total_items + target_updates - 1) // target_updates, max_interval))
+
+
+def interpolate_progress(
+    progress_start: int,
+    progress_end: int,
+    completed_items: int,
+    total_items: int,
+) -> int:
+    """Interpolate a monotonic integer progress value within a stage."""
+    if progress_end <= progress_start:
+        return progress_end
+    if total_items <= 0:
+        return progress_end
+
+    bounded_completed = max(0, min(completed_items, total_items))
+    return progress_start + int((bounded_completed / total_items) * (progress_end - progress_start))
 
 
 # Keep backward-compatible alias
@@ -128,6 +158,7 @@ def calculate_kfold_classification_metrics(
         "specificity": [],
         "f1": [],
         "auc": [],
+        "weighted_kappa": [],
     }
     # Per-fold detailed values
     per_fold_metrics = {}
@@ -195,6 +226,17 @@ def calculate_kfold_classification_metrics(
         precision = precision_score(all_labels, all_preds, average='macro', zero_division=0)
         recall = recall_score(all_labels, all_preds, average='macro', zero_division=0)
         f1 = f1_score(all_labels, all_preds, average='macro', zero_division=0)
+        try:
+            weighted_kappa = cohen_kappa_score(
+                all_labels,
+                all_preds,
+                labels=list(range(n_classes)),
+                weights='quadratic'
+            )
+            if np.isnan(weighted_kappa):
+                weighted_kappa = None
+        except Exception:
+            weighted_kappa = None
 
         # Specificity calculation (macro average)
         cm = sklearn_confusion_matrix(all_labels, all_preds, labels=list(range(n_classes)))
@@ -228,6 +270,8 @@ def calculate_kfold_classification_metrics(
             fold_metrics["f1"].append(f1)
         if auc_val is not None and not np.isnan(auc_val):
             fold_metrics["auc"].append(auc_val)
+        if weighted_kappa is not None:
+            fold_metrics["weighted_kappa"].append(weighted_kappa)
 
         # Store per-fold values (rounded to 4 decimal places), skip nan values
         per_fold_metrics[fold_key] = {}
@@ -241,6 +285,8 @@ def calculate_kfold_classification_metrics(
             per_fold_metrics[fold_key]["f1"] = round(float(f1), 4)
         if auc_val is not None and not np.isnan(auc_val):
             per_fold_metrics[fold_key]["auc"] = round(float(auc_val), 4)
+        if weighted_kappa is not None:
+            per_fold_metrics[fold_key]["weighted_kappa"] = round(float(weighted_kappa), 4)
 
     # Calculate mean and std for each metric (rounded to 4 decimal places)
     aggregated = {}

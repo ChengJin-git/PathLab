@@ -60,6 +60,10 @@ export default function RegisterPage() {
   const [datasetName, setDatasetName] = useState('')
   // Dataset ID (UUID) - only set when using existing dataset or passed from navigation
   const [datasetId, setDatasetId] = useState<string | null>(null)
+  const [datasetSourceSelection, setDatasetSourceSelection] = useState('')
+  const [datasetSourceCustom, setDatasetSourceCustom] = useState('')
+  // Source organ of the existing dataset (for auto-fill when appending)
+  const [existingDatasetSource, setExistingDatasetSource] = useState<string | undefined>()
 
   // Steps: 1 - Dataset Name, 2 - File Upload
   const [step, setStep] = useState(1)
@@ -73,6 +77,8 @@ export default function RegisterPage() {
   const [existingDatasetDataTypes, setExistingDatasetDataTypes] = useState<Map<string, DataType>>(new Map())
   // Map from dataset_name to dataset_id for quick lookup
   const [datasetNameToId, setDatasetNameToId] = useState<Map<string, string | null>>(new Map())
+  // Map from dataset_name to source_organ for quick lookup
+  const [datasetNameToSourceOrgan, setDatasetNameToSourceOrgan] = useState<Map<string, string | null>>(new Map())
   // Toggle for Dataset Splits Configuration visibility
   const [showSplitConfig, setShowSplitConfig] = useState(false)
 
@@ -120,23 +126,42 @@ export default function RegisterPage() {
     const loadDatasets = async () => {
       try {
         const data = await fetchDatasets()
+        // Prioritize datasets without source organ for quick registration,
+        // while preserving backend default order within each group.
+        const sortedDatasetNames = data.items
+          .map((dataset, index) => ({ dataset, index }))
+          .sort((a, b) => {
+            const aMissingSourceOrgan = !a.dataset.source_organ?.trim()
+            const bMissingSourceOrgan = !b.dataset.source_organ?.trim()
+
+            if (aMissingSourceOrgan !== bMissingSourceOrgan) {
+              return aMissingSourceOrgan ? -1 : 1
+            }
+
+            return a.index - b.index
+          })
+          .map(({ dataset }) => dataset.dataset_name)
+
         // Store list of existing dataset names
-        setExistingDatasets(data.items.map(d => d.dataset_name))
+        setExistingDatasets(sortedDatasetNames)
         // Build lookup maps
         const typeMap = new Map<string, UploadMode>()
         const levelMap = new Map<string, DataLevel>()
         const dataTypeMap = new Map<string, DataType>()
         const idMap = new Map<string, string | null>()
+        const sourceOrganMap = new Map<string, string | null>()
         data.items.forEach(d => {
           typeMap.set(d.dataset_name, d.task_type as UploadMode)
           levelMap.set(d.dataset_name, d.aggregation_level as DataLevel)
           dataTypeMap.set(d.dataset_name, d.data_type as DataType)
           idMap.set(d.dataset_name, d.dataset_id)
+          sourceOrganMap.set(d.dataset_name, d.source_organ ?? null)
         })
         setExistingDatasetTypes(typeMap)
         setExistingDatasetLevels(levelMap)
         setExistingDatasetDataTypes(dataTypeMap)
         setDatasetNameToId(idMap)
+        setDatasetNameToSourceOrgan(sourceOrganMap)
       } catch (err) {
         console.error('Failed to load datasets', err)
       }
@@ -170,7 +195,13 @@ export default function RegisterPage() {
       // New dataset - clear datasetId
       setDatasetId(null)
     }
-  }, [datasetName, existingDatasetTypes, existingDatasetLevels, datasetNameToId])
+    // Set existingDatasetSource for existing datasets
+    if (datasetNameToSourceOrgan.has(trimmed)) {
+      setExistingDatasetSource(datasetNameToSourceOrgan.get(trimmed) ?? undefined)
+    } else {
+      setExistingDatasetSource(undefined)
+    }
+  }, [datasetName, existingDatasetTypes, existingDatasetLevels, datasetNameToId, datasetNameToSourceOrgan])
 
   // State
   const [localItems, setLocalItems] = useState<LocalItem[]>([])
@@ -204,6 +235,13 @@ export default function RegisterPage() {
   // Batch metadata state (temporary for the modal)
   const [batchMetadata, setBatchMetadata] = useState<FileMetadata>({ ...defaultMetadata })
 
+  const getResolvedDatasetSource = () => {
+    if (datasetSourceSelection === 'Other') {
+      return datasetSourceCustom.trim()
+    }
+    return datasetSourceSelection.trim()
+  }
+
   const tableContainerRef = useRef<HTMLDivElement>(null)
 
   const totalPages = Math.ceil(localItems.length / itemsPerPage)
@@ -233,6 +271,8 @@ export default function RegisterPage() {
   }, [localItems, segmentationJsonFiles, uploadMode])
 
   const supportsNativePicker = typeof window !== 'undefined' && !!window.api?.files?.selectFiles
+  const segmentationJsonOnlyAppend = uploadMode === 'segmentation' && !!datasetId && localItems.length === 0 && segmentationJsonFiles.size > 0
+  const readyToUploadCount = segmentationJsonOnlyAppend ? segmentationJsonFiles.size : localItems.length
 
   // --- Interaction Logic ---
 
@@ -502,11 +542,10 @@ export default function RegisterPage() {
         const current = updated.get(item.key) || { ...defaultMetadata }
         updated.set(item.key, {
           ...current,
-          label: batchMetadata.label || current.label,
+          label: uploadMode === 'classification' ? (batchMetadata.label || current.label) : current.label,
           case_id: batchMetadata.case_id || current.case_id,
           age: batchMetadata.age || current.age,
           gender: batchMetadata.gender || current.gender,
-          source: batchMetadata.source || current.source,
           event_time: batchMetadata.event_time || current.event_time,
           event_status: batchMetadata.event_status || current.event_status
         })
@@ -546,7 +585,7 @@ export default function RegisterPage() {
       }
 
       // If we only had a CSV and no files, we are done
-      if (localItems.length === 0) {
+      if (localItems.length === 0 && !segmentationJsonOnlyAppend) {
         setStep(3)
         return
       }
@@ -564,19 +603,16 @@ export default function RegisterPage() {
       }
     }
 
-    if (localItems.length === 0) return
+    if (readyToUploadCount === 0) return
 
     if (uploadMode === 'segmentation') {
       const invalidSegmentationItems = localItems.filter(item => item.type !== 'standard')
       if (invalidSegmentationItems.length > 0) {
-        setSubmitError('Segmentation upload only supports patch/image files with same-name COCO JSON annotations.')
+        setSubmitError('Segmentation upload only supports patch/image files.')
         return
       }
 
-      const { duplicateImageStems, orphanJsonStems } = summarizeSegmentationMatches(localItems, segmentationJsonFiles)
-      const missingFileAnnotations = localItems
-        .filter(item => item.file && !segmentationJsonFiles.has(getSegmentationStem(item.name)))
-        .map(item => item.name)
+      const { duplicateImageStems } = summarizeSegmentationMatches(localItems, segmentationJsonFiles)
 
       if (segmentationDuplicateJsonStems.size > 0) {
         setSubmitError(`Duplicate segmentation JSON stems detected: ${Array.from(segmentationDuplicateJsonStems).join(', ')}`)
@@ -586,15 +622,13 @@ export default function RegisterPage() {
         setSubmitError(`Duplicate segmentation image stems detected: ${duplicateImageStems.join(', ')}`)
         return
       }
-      if (orphanJsonStems.length > 0) {
-        setSubmitError(`Segmentation JSON files without matching images: ${orphanJsonStems.join(', ')}`)
-        return
-      }
-      if (missingFileAnnotations.length > 0) {
-        setSubmitError(`Missing same-name COCO JSON annotations for: ${missingFileAnnotations.join(', ')}`)
+      if (!datasetId && localItems.length === 0) {
+        setSubmitError('Segmentation upload requires at least one image file when creating a new dataset.')
         return
       }
     }
+
+    const resolvedDatasetSource = getResolvedDatasetSource()
 
     // Prepare items with resolved metadata (UI + CSV)
     const itemsWithMeta = localItems.map(item => {
@@ -616,7 +650,7 @@ export default function RegisterPage() {
           case_id: (uiMeta.case_id && uiMeta.case_id.trim()) ? uiMeta.case_id : csvMeta.case_id,
           age: (uiMeta.age && uiMeta.age.trim()) ? uiMeta.age : csvMeta.age,
           gender: (uiMeta.gender && uiMeta.gender.trim()) ? uiMeta.gender : csvMeta.gender,
-          source: (uiMeta.source && uiMeta.source.trim()) ? uiMeta.source : csvMeta.source,
+          source: resolvedDatasetSource,
           event_time: (uiMeta.event_time && uiMeta.event_time.trim()) ? uiMeta.event_time : csvMeta.event_time,
           event_status: (uiMeta.event_status && uiMeta.event_status.trim()) ? uiMeta.event_status : csvMeta.event_status
         }
@@ -651,36 +685,49 @@ export default function RegisterPage() {
     }
 
     // Prepare files for background upload task
-    const uploadFiles: UploadTaskFile[] = itemsWithMeta.map(({ item, finalMeta }) => {
-      const age = finalMeta.age ? parseInt(String(finalMeta.age)) : undefined
-      const eventTime = finalMeta.event_time ? parseFloat(String(finalMeta.event_time)) : undefined
-      const eventStatus = finalMeta.event_status ? parseInt(String(finalMeta.event_status)) : undefined
-
-      return {
-        key: item.key,
-        name: item.name,
-        file: item.file,
-        path: item.path,
+    const uploadFiles: UploadTaskFile[] = segmentationJsonOnlyAppend
+      ? Array.from(segmentationJsonFiles.values()).map(file => ({
+        key: `seg-json-${file.name}-${file.size}`,
+        name: file.name,
+        file,
         metadata: {
-          // Use dataset_id for existing datasets, dataset_name for new datasets
           dataset_id: datasetId ?? undefined,
-          dataset_name: datasetId ? undefined : datasetName.trim(),
-          // Only pass aggregation_level for new datasets (when dataset_id is not set)
-          aggregation_level: datasetId ? undefined : dataLevel,
           task_type: uploadMode,
-          label: uploadMode !== 'segmentation' && finalMeta.label ? String(finalMeta.label) : undefined,
-          case_id: finalMeta.case_id ? String(finalMeta.case_id) : undefined,
-          age,
-          gender: finalMeta.gender ? String(finalMeta.gender) : undefined,
-          source: finalMeta.source ? String(finalMeta.source) : undefined,
-          event_time: eventTime,
-          event_status: eventStatus
-        },
-        associatedFiles: uploadMode === 'segmentation' && item.file
-          ? [segmentationJsonFiles.get(getSegmentationStem(item.name))!]
-          : item.associatedFiles
-      }
-    })
+        }
+      }))
+      : itemsWithMeta.map(({ item, finalMeta }) => {
+        const age = finalMeta.age ? parseInt(String(finalMeta.age)) : undefined
+        const eventTime = finalMeta.event_time ? parseFloat(String(finalMeta.event_time)) : undefined
+        const eventStatus = finalMeta.event_status ? parseInt(String(finalMeta.event_status)) : undefined
+        const matchedSegmentationJson = uploadMode === 'segmentation'
+          ? segmentationJsonFiles.get(getSegmentationStem(item.name))
+          : undefined
+
+        return {
+          key: item.key,
+          name: item.name,
+          file: item.file,
+          path: item.path,
+          metadata: {
+            // Use dataset_id for existing datasets, dataset_name for new datasets
+            dataset_id: datasetId ?? undefined,
+            dataset_name: datasetId ? undefined : datasetName.trim(),
+            // Only pass aggregation_level for new datasets (when dataset_id is not set)
+            aggregation_level: datasetId ? undefined : dataLevel,
+            task_type: uploadMode,
+            label: uploadMode !== 'segmentation' && finalMeta.label ? String(finalMeta.label) : undefined,
+            case_id: finalMeta.case_id ? String(finalMeta.case_id) : undefined,
+            age,
+            gender: finalMeta.gender ? String(finalMeta.gender) : undefined,
+            source: finalMeta.source ? String(finalMeta.source) : undefined,
+            event_time: eventTime,
+            event_status: eventStatus
+          },
+          associatedFiles: uploadMode === 'segmentation' && matchedSegmentationJson
+            ? [matchedSegmentationJson]
+            : item.associatedFiles
+        }
+      })
 
     try {
       // Add to background task queue
@@ -884,8 +931,16 @@ export default function RegisterPage() {
           onUploadModeChange={setUploadMode}
           dataLevel={dataLevel}
           onDataLevelChange={setDataLevel}
+          datasetSourceSelection={datasetSourceSelection}
+          datasetSourceCustom={datasetSourceCustom}
+          onDatasetSourceSelectionChange={(value) => {
+            setDatasetSourceSelection(value)
+            if (value !== 'Other') setDatasetSourceCustom('')
+          }}
+          onDatasetSourceCustomChange={setDatasetSourceCustom}
           isExistingDataset={isExistingDataset}
           existingDatasets={existingDatasets}
+          existingDatasetSource={existingDatasetSource}
           showValidation={showValidation}
           fromAIChat={fromAIChat}
           onNext={() => setStep(2)}
@@ -1089,59 +1144,81 @@ export default function RegisterPage() {
             </div>
           ) : (
             <>
-              {/* Toolbar */}
-              <div className="flex-none px-3 sm:px-6 py-2 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
-                <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
-                  <label className="flex items-center gap-2 text-sm font-medium text-slate-600 cursor-pointer select-none shrink-0">
-                    <Checkbox
-                      checked={selectedItems.size === localItems.length && localItems.length > 0}
-                      onCheckedChange={() => toggleSelectAll()}
-                    />
-                    <span className="hidden sm:inline">{t('uploadPage.selectAll', { count: localItems.length })}</span>
-                    <span className="sm:hidden">{t('uploadPage.fileCount', { count: localItems.length })}</span>
-                  </label>
-                  {skippedDuplicateCount > 0 && (
-                    <span className="text-[10px] sm:text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full border border-amber-200 whitespace-nowrap">
-                      {t('uploadPage.duplicateCount', { count: skippedDuplicateCount })}
-                    </span>
-                  )}
-                  {selectedItems.size > 0 && (
-                    <div className="flex items-center gap-1.5 sm:gap-2 animate-in fade-in slide-in-from-left-4 duration-200">
-                      <div className="h-4 w-px bg-slate-300 mx-1 hidden sm:block" />
-                      <Button size="sm" variant="secondary" onClick={() => setShowBulkEdit(true)} className="h-7 sm:h-8 text-[10px] sm:text-xs font-medium px-2 sm:px-3">
-                        <Edit2 className="w-3 h-3 mr-1 sm:mr-1.5" />
-                        {t('uploadPage.edit')}
-                      </Button>
-                      <Button size="sm" variant="destructive" onClick={removeSelectedItems} className="h-7 sm:h-8 text-[10px] sm:text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-2 sm:px-3">
-                        <Trash2 className="w-3 h-3 mr-1 sm:mr-1.5" />
-                        {t('uploadPage.delete')}
-                      </Button>
+              {!segmentationJsonOnlyAppend && (
+                <>
+                  {/* Toolbar */}
+                  <div className="flex-none px-3 sm:px-6 py-2 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
+                    <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
+                      <label className="flex items-center gap-2 text-sm font-medium text-slate-600 cursor-pointer select-none shrink-0">
+                        <Checkbox
+                          checked={selectedItems.size === localItems.length && localItems.length > 0}
+                          onCheckedChange={() => toggleSelectAll()}
+                        />
+                        <span className="hidden sm:inline">{t('uploadPage.selectAll', { count: localItems.length })}</span>
+                        <span className="sm:hidden">{t('uploadPage.fileCount', { count: localItems.length })}</span>
+                      </label>
+                      {skippedDuplicateCount > 0 && (
+                        <span className="text-[10px] sm:text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full border border-amber-200 whitespace-nowrap">
+                          {t('uploadPage.duplicateCount', { count: skippedDuplicateCount })}
+                        </span>
+                      )}
+                      {selectedItems.size > 0 && (
+                        <div className="flex items-center gap-1.5 sm:gap-2 animate-in fade-in slide-in-from-left-4 duration-200">
+                          <div className="h-4 w-px bg-slate-300 mx-1 hidden sm:block" />
+                          <Button size="sm" variant="secondary" onClick={() => setShowBulkEdit(true)} className="h-7 sm:h-8 text-[10px] sm:text-xs font-medium px-2 sm:px-3">
+                            <Edit2 className="w-3 h-3 mr-1 sm:mr-1.5" />
+                            {t('uploadPage.edit')}
+                          </Button>
+                          <Button size="sm" variant="destructive" onClick={removeSelectedItems} className="h-7 sm:h-8 text-[10px] sm:text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-2 sm:px-3">
+                            <Trash2 className="w-3 h-3 mr-1 sm:mr-1.5" />
+                            {t('uploadPage.delete')}
+                          </Button>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-blue-50 text-blue-700 rounded-full text-[10px] sm:text-sm font-semibold border border-blue-100 shadow-sm justify-center sm:justify-start">
-                  <UploadCloud className="w-3 h-3 sm:w-4 sm:h-4" />
-                  {t('uploadPage.dropMoreFiles')}
-                </div>
-              </div>
+                    <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-blue-50 text-blue-700 rounded-full text-[10px] sm:text-sm font-semibold border border-blue-100 shadow-sm justify-center sm:justify-start">
+                      <UploadCloud className="w-3 h-3 sm:w-4 sm:h-4" />
+                      {t('uploadPage.dropMoreFiles')}
+                    </div>
+                  </div>
+                </>
+              )}
 
               {/* Table Area */}
               <Card className="flex-1 min-h-0 flex flex-col overflow-hidden mb-2 sm:mb-4 mx-2 sm:mx-0 max-h-[600px]">
-                <div
-                  className="flex-1 overflow-x-auto overflow-y-auto bg-white"
-                  ref={tableContainerRef}
-                  onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
-                  onDragLeave={() => setIsDragging(false)}
-                  onDrop={async e => {
-                    e.preventDefault()
-                    setIsDragging(false)
-                    const result = await collectItemsFromDataTransfer(e.dataTransfer)
-                    if (result.unsupportedFileNames && result.unsupportedFileNames.length > 0) {
-                      toastError(t('uploadPage.skippedUnsupportedFilesShort', { count: result.unsupportedFileNames.length, files: result.unsupportedFileNames.slice(0, 3).join(', '), more: result.unsupportedFileNames.length > 3 ? '...' : '' }))
-                    }
-                    await processCollectionResult(result)
-                  }}
-                >
+                {segmentationJsonOnlyAppend ? (
+                  <div className="flex-1 bg-white p-6 sm:p-8 flex items-center justify-center">
+                    <div className="max-w-2xl w-full rounded-2xl border border-amber-200 bg-amber-50 px-5 py-6 text-left">
+                      <div className="flex items-start gap-3">
+                        <FileJson className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <h3 className="text-base sm:text-lg font-semibold text-amber-900">JSON-only segmentation append ready</h3>
+                          <p className="text-sm text-amber-800 mt-2 leading-relaxed">
+                            {segmentationJsonFiles.size} COCO JSON file(s) will be matched to existing images in this dataset by filename stem.
+                          </p>
+                          <p className="text-xs text-amber-700 mt-2 leading-relaxed">
+                            Matched annotations will be appended or updated. Files without a matching existing image will fail individually.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    className="flex-1 overflow-x-auto overflow-y-auto bg-white"
+                    ref={tableContainerRef}
+                    onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
+                    onDragLeave={() => setIsDragging(false)}
+                    onDrop={async e => {
+                      e.preventDefault()
+                      setIsDragging(false)
+                      const result = await collectItemsFromDataTransfer(e.dataTransfer)
+                      if (result.unsupportedFileNames && result.unsupportedFileNames.length > 0) {
+                        toastError(t('uploadPage.skippedUnsupportedFilesShort', { count: result.unsupportedFileNames.length, files: result.unsupportedFileNames.slice(0, 3).join(', '), more: result.unsupportedFileNames.length > 3 ? '...' : '' }))
+                      }
+                      await processCollectionResult(result)
+                    }}
+                  >
                   {isDragging && (
                     <div className="absolute inset-0 z-40 bg-blue-500/10 backdrop-blur-[1px] flex items-center justify-center border-4 border-blue-500 border-dashed m-4 rounded-xl pointer-events-none">
                       <div className="bg-white px-8 py-4 rounded-full shadow-xl font-bold text-blue-600 flex items-center gap-3">
@@ -1171,7 +1248,6 @@ export default function RegisterPage() {
                         <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[100px] sm:min-w-[120px]">{t('uploadPage.caseId')}</th>
                         <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[70px] sm:min-w-[80px]">{t('uploadPage.age')}</th>
                         <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">{t('uploadPage.gender')}</th>
-                        <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[120px] sm:min-w-[140px]">{t('uploadPage.source')}</th>
                         <th className="w-10 px-3 py-2 bg-slate-50"></th>
                       </tr>
                     </thead>
@@ -1291,16 +1367,6 @@ export default function RegisterPage() {
                                 <option value="Unspecified">?</option>
                               </select>
                             </td>
-                            <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
-                              <select
-                                className="w-full px-2 py-1.5 text-sm border border-slate-100 rounded-lg bg-slate-50/50 hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
-                                value={meta.source}
-                                onChange={e => handleMetadataChange(item.key, 'source', e.target.value)}
-                              >
-                                <option value="">{t('uploadPage.sourceDefault')}</option>
-                                {organSources.map(o => <option key={o} value={o}>{o}</option>)}
-                              </select>
-                            </td>
                             <td className="px-3 sm:px-4 py-3 align-middle text-right border-b border-slate-100">
                               <button
                                 onClick={() => removeLocalItem(item.key)}
@@ -1314,7 +1380,8 @@ export default function RegisterPage() {
                       })}
                     </tbody>
                   </table>
-                </div>
+                  </div>
+                )}
               </Card>
 
               {/* Dataset Metadata Configuration - metadata update via File */}
@@ -1382,7 +1449,7 @@ export default function RegisterPage() {
                         {uploadMode === 'segmentation' && (
                           <li><code className="bg-blue-100 px-1 rounded">filename</code></li>
                         )}
-                        <li className="hidden sm:list-item">{t('uploadPage.optionalFields')} <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">source</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
+                        <li className="hidden sm:list-item">{t('uploadPage.optionalFields')} <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
                       </ul>
                     </div>
 
@@ -1445,7 +1512,7 @@ export default function RegisterPage() {
               <div className="flex-none bg-white border border-slate-200 rounded-xl px-4 sm:px-8 py-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between shadow-sm z-30 gap-4 sm:gap-0 mt-2">
                 <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-8">
                   <div className="text-xs sm:text-sm text-slate-500 whitespace-nowrap">
-                    {t('uploadPage.readyToRegister', { count: localItems.length })}
+                    {t('uploadPage.readyToRegister', { count: readyToUploadCount })}
                   </div>
                   {totalPages > 1 && (
                     <div className="flex items-center gap-3">
@@ -1489,18 +1556,18 @@ export default function RegisterPage() {
                     </Button>
                     <Button
                       onClick={handleUpload}
-                      disabled={localItems.length === 0 && !splitFile}
+                      disabled={readyToUploadCount === 0 && !splitFile}
                       className={`${isExistingDataset ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'} text-white flex-1 sm:min-w-[160px] rounded-xl h-10 shadow-sm`}
                     >
                       {isExistingDataset ? (
                         <>
                           <Plus className="w-4 h-4 mr-2 shrink-0" />
-                          <span className="truncate">{localItems.length === 0 && splitFile ? t('uploadPage.uploadCsv') : t('uploadPage.addToDataset')}</span>
+                          <span className="truncate">{readyToUploadCount === 0 && splitFile ? t('uploadPage.uploadCsv') : t('uploadPage.addToDataset')}</span>
                         </>
                       ) : (
                         <>
                           <Download className="w-4 h-4 mr-2 shrink-0" />
-                          <span className="truncate">{localItems.length === 0 && splitFile ? t('uploadPage.uploadCsv') : t('uploadPage.registerAll')}</span>
+                          <span className="truncate">{readyToUploadCount === 0 && splitFile ? t('uploadPage.uploadCsv') : t('uploadPage.registerAll')}</span>
                         </>
                       )}
                     </Button>

@@ -2,8 +2,9 @@
 Pydantic models for Gateway API requests/responses
 """
 from enum import Enum
-from pydantic import BaseModel
-from typing import Optional, Dict, List, Any
+from pydantic import BaseModel, Field, model_validator
+from typing import Optional, Dict, List, Any, Literal
+from backend.ai.segmentors.specs import is_fm_segmentation_backbone
 
 
 
@@ -21,6 +22,11 @@ class DatasetUpdateTypeRequest(BaseModel):
 class DatasetUpdateDataLevelRequest(BaseModel):
     """Request model for updating dataset aggregation level (case/file)"""
     aggregation_level: str  # "case" or "file"
+
+
+class DatasetUpdateSourceRequest(BaseModel):
+    """Request model for updating dataset source organ/tissue."""
+    source: Optional[str] = None
 
 
 class DeletionMode(str, Enum):
@@ -49,6 +55,7 @@ class SplitConfig(BaseModel):
 class TrainingTaskRequest(BaseModel):
     """Request model for creating a training task"""
     task_id: Optional[str] = None  # Client-generated task_id for fire-and-forget submission
+    rerun_from_task_id: Optional[str] = None  # Admin rerun only: preserve owner from source task
     task_name: str
     task_type: str  # "classification", "survival", or "segmentation"
     data_type: str  # "wsi" or "patch"
@@ -59,6 +66,37 @@ class TrainingTaskRequest(BaseModel):
     model: Dict  # {aggregator, learning_rate, epochs, optimizer, batch_size}
     huggingface_token: Optional[str] = None  # HuggingFace token for gated models
     split_config: Optional[SplitConfig] = None
+
+    @model_validator(mode="after")
+    def validate_segmentation_mode(self):
+        if self.task_type != "segmentation":
+            return self
+
+        if self.data_type != "patch":
+            raise ValueError("Segmentation tasks must use data_type='patch'.")
+
+        model = self.model or {}
+        architecture = str(model.get("architecture") or "").strip()
+        backbone = str(model.get("backbone") or "").strip()
+
+        if not architecture or not backbone:
+            raise ValueError("Segmentation tasks must provide model.architecture and model.backbone.")
+
+        if "encoder" in model:
+            raise ValueError("Segmentation tasks must use model.backbone instead of model.encoder.")
+
+        is_fm_backbone = is_fm_segmentation_backbone(backbone)
+        if is_fm_backbone and architecture != "conv_decoder":
+            raise ValueError(
+                f"Segmentation FM backbone '{backbone}' requires model.architecture='conv_decoder'."
+            )
+
+        if architecture == "conv_decoder" and not is_fm_backbone:
+            raise ValueError(
+                f"Segmentation architecture 'conv_decoder' requires an FM backbone, got '{backbone}'."
+            )
+
+        return self
 
 
 class TrainingTaskUpdateRequest(BaseModel):
@@ -143,6 +181,25 @@ class AddMessageRequest(BaseModel):
     content: str
 
 
+class ChatPatchInferenceRequest(BaseModel):
+    """Request model for temporary chat-only patch inference."""
+
+    conversation_id: str
+    message_id: int
+    inference_type: Literal["classification", "segmentation"]
+    model_id: str
+    image_data_url: str
+    source: Optional[str] = None
+
+
+class ChatPatchInferenceExitRequest(BaseModel):
+    """Request model for cancelling chat image inference during page exit/logout."""
+
+    conversation_id: str
+    message_id: int
+    cancel_message: str = Field(min_length=1, max_length=4000)
+
+
 class MessageFeedbackRequest(BaseModel):
     """Request model for submitting feedback on a message"""
     feedback_type: Optional[str] = None  # "thumbs_up", "thumbs_down", or None
@@ -171,6 +228,10 @@ class MigrationRequest(BaseModel):
 class ScanDirectoryRequest(BaseModel):
     """Request model for scanning a directory for WSI files"""
     directory_path: str
+    scan_id: Optional[str] = None
+    task_type: Optional[str] = None
+    page: int = 1
+    page_size: int = 100
 
 
 class BatchRegisterFileInfo(BaseModel):
@@ -178,6 +239,7 @@ class BatchRegisterFileInfo(BaseModel):
     path: str  # Main file path
     format_type: str = "standard"  # "standard", "mrxs", or "tmap"
     associated_data: Optional[Any] = None  # str for mrxs (data folder), list[str] for tmap (DT files)
+    data_type: Optional[str] = None  # Cached scan classification when available
 
 
 class BatchRegisterRequest(BaseModel):
@@ -185,9 +247,10 @@ class BatchRegisterRequest(BaseModel):
     files: List[BatchRegisterFileInfo]  # List of file info objects to register
     dataset_id: Optional[str] = None  # Existing dataset UUID
     dataset_name: Optional[str] = None  # New dataset name (if creating new)
+    scan_root: Optional[str] = None  # Directory used during external scan (for segmentation annotation matching)
     task_type: str = "classification"  # "classification", "survival", or "segmentation"
     # Classification fields
-    default_label: str = "External Import"  # Default label for all files
+    default_label: Optional[str] = None  # Default label for classification files
     # Survival analysis fields (required when task_type is "survival")
     default_event_time: Optional[float] = None  # Time to event
     default_event_status: Optional[int] = None  # 1 = event occurred, 0 = censored
@@ -205,13 +268,18 @@ class DeleteUnavailableFilesRequest(BaseModel):
 
 class StartBatchImportRequest(BaseModel):
     """Request model for starting a batch import background task"""
-    files: List[BatchRegisterFileInfo]  # List of file info objects to register
+    files: Optional[List[BatchRegisterFileInfo]] = None  # Optional explicit list of file info objects to register
     dataset_id: Optional[str] = None  # Existing dataset UUID
     dataset_name: Optional[str] = None  # New dataset name (if creating new)
+    scan_root: Optional[str] = None  # Directory used during external scan (for segmentation annotation matching)
+    scan_id: Optional[str] = None  # Cached scan session ID for paginated batch import
+    select_all_valid: bool = False  # When scan_id is provided, import all valid files except excluded_paths
+    selected_paths: List[str] = Field(default_factory=list)  # Explicit paths selected from paginated scan results
+    excluded_paths: List[str] = Field(default_factory=list)  # Paths excluded when select_all_valid=True
     aggregation_level: str = "file"  # "case" or "file" - aggregation level
     task_type: str = "classification"  # "classification", "survival", or "segmentation"
     # Classification fields
-    default_label: str = "External Import"  # Default label for all files
+    default_label: Optional[str] = None  # Default label for classification files
     # Survival analysis fields (required when task_type is "survival")
     default_event_time: Optional[float] = None  # Time to event
     default_event_status: Optional[int] = None  # 1 = event occurred, 0 = censored
@@ -220,6 +288,12 @@ class StartBatchImportRequest(BaseModel):
 class StartDeleteExternalRequest(BaseModel):
     """Request model for starting a delete external files background task"""
     wsi_ids: List[str]  # List of WSI IDs to delete
+
+
+class StartDeleteDatasetRequest(BaseModel):
+    """Request model for starting a dataset deletion background task."""
+    dataset_id: str
+    mode: DeletionMode = DeletionMode.STANDARD
 
 
 class StartBatchUpdateMetadataRequest(BaseModel):

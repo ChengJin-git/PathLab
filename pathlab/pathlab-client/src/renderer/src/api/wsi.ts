@@ -1,6 +1,6 @@
 import { API_BASE } from '../config'
 import { createKeyedCache, DEFAULT_CACHE_TTL } from '../lib/cache'
-import { apiFetch, apiFetchBlob, downloadBlobFile, getAuthToken } from './client'
+import { apiFetch, apiFetchBlob, buildSearchParams, downloadApiFile, downloadBlobFile, getAuthToken } from './client'
 import { invalidateHeatmapAvailabilityCache } from './heatmap'
 
 // ============================================================================
@@ -17,6 +17,7 @@ export interface WSISummary {
   dataset_name: string | null
   case_id: string | null
   label: string | null
+  has_segmentation_annotation?: boolean
   file_extension: string  // e.g. ".svs", ".png" - for file type determination (wsi_path no longer exposed)
   age: number | null
   gender: string | null
@@ -27,6 +28,7 @@ export interface WSISummary {
   // Split assignment (from CSV upload)
   split: string | null  // "train", "val", "test"
   file_size: number | null
+  data_type?: 'wsi' | 'patch' | null
   created_at: string | null
   // Detail-only fields (present in to_dict() but not in to_summary_dict())
   mpp?: number | null
@@ -69,6 +71,14 @@ export interface WSIListResponse {
   page: number
   page_size: number
   has_multi_slide_cases: boolean
+}
+
+/**
+ * Lightweight WSI ID list response for bulk selection.
+ */
+export interface WSIIdListResponse {
+  items: string[]
+  total: number
 }
 
 /**
@@ -132,25 +142,43 @@ export async function checkDuplicateFilenames(filenames: string[]): Promise<Chec
   )
 }
 
-// Cache for fetchWSIList (keyed by datasetId + dataLevel) — only used for non-paginated requests
+// Cache for fetchWSIList (keyed by datasetId + query params)
 const wsiListCache = createKeyedCache<WSIListResponse>(DEFAULT_CACHE_TTL)
+const datasetsListCache = createKeyedCache<DatasetsListResponse>(DEFAULT_CACHE_TTL)
 
 /**
  * Pagination options for fetchWSIList.
- * When provided, the request uses server-side case-level pagination (no caching).
+ * When provided, the request uses an explicit no-cache query.
+ * `page_size=0` means return all matching items.
  * When omitted, all items are returned with caching (page_size=0).
  */
 export interface WSIListPaginationOptions {
   page: number
   page_size: number
   search?: string
+  forceRefresh?: boolean
+}
+
+function buildWSIListCacheKey(
+  datasetId?: string,
+  dataLevel?: string,
+  options?: WSIListPaginationOptions
+): string {
+  return JSON.stringify({
+    datasetId: datasetId ?? null,
+    dataLevel: dataLevel ?? null,
+    page: options?.page ?? null,
+    page_size: options?.page_size ?? 0,
+    search: options?.search ?? null,
+  })
 }
 
 /**
  * Fetch WSI list from database via Gateway API.
  *
  * Without `options`: returns ALL items (page_size=0) with caching.
- * With `options`: returns a single page of case-grouped items (no caching).
+ * With `options`: performs a parameterized query with keyed caching.
+ * Use `page_size=0` to return all matching items while still honoring `search`.
  *
  * @param datasetId - Optional dataset UUID to filter by
  * @param dataLevel - Optional filter: "wsi" for WSI files, "patch" for image files
@@ -162,34 +190,67 @@ export async function fetchWSIList(
   dataLevel?: string,
   options?: WSIListPaginationOptions
 ): Promise<WSIListResponse> {
-  const params = new URLSearchParams()
-  if (datasetId) {
-    params.set('dataset_id', datasetId)
-  }
-  if (dataLevel) {
-    params.set('data_type', dataLevel)
-  }
+  const params = buildSearchParams({
+    dataset_id: datasetId,
+    data_type: dataLevel,
+  })
 
   if (options) {
-    // Paginated request — no caching
-    params.set('page', String(options.page))
-    params.set('page_size', String(options.page_size))
     if (options.search) {
       params.set('search', options.search)
     }
-    const url = `${API_BASE}/wsi?${params.toString()}`
-    return apiFetch<WSIListResponse>(url, undefined, 'Failed to load WSI list from database')
+
+    if (options.page_size === 0) {
+      params.set('page_size', '0')
+    } else {
+      params.set('page', String(options.page))
+      params.set('page_size', String(options.page_size))
+    }
+  } else {
+    // Non-paginated request — return all items with caching
+    params.set('page_size', '0')
   }
 
-  // Non-paginated request — return all items with caching
-  params.set('page_size', '0')
-  const cacheKey = `${datasetId || '__all__'}:${dataLevel || '__all__'}`
+  const cacheKey = buildWSIListCacheKey(datasetId, dataLevel, options)
   const queryString = params.toString()
   const url = `${API_BASE}/wsi?${queryString}`
 
-  return wsiListCache.get(cacheKey, () =>
-    apiFetch<WSIListResponse>(url, undefined, 'Failed to load WSI list from database')
+  return wsiListCache.get(
+    cacheKey,
+    () => apiFetch<WSIListResponse>(url, undefined, 'Failed to load WSI list from database'),
+    options?.forceRefresh === true
   )
+}
+
+export async function prefetchWSIList(
+  datasetId?: string,
+  dataLevel?: string,
+  options?: WSIListPaginationOptions
+): Promise<void> {
+  try {
+    await fetchWSIList(datasetId, dataLevel, options)
+  } catch {
+    // Ignore prefetch failures so they don't affect the active page.
+  }
+}
+
+/**
+ * Fetch only WSI IDs for lightweight bulk selection.
+ * Always uses an explicit no-cache query.
+ */
+export async function fetchWSIIds(
+  datasetId: string,
+  dataLevel?: string,
+  search?: string
+): Promise<WSIIdListResponse> {
+  const params = buildSearchParams({
+    dataset_id: datasetId,
+    data_type: dataLevel,
+    search,
+  })
+
+  const url = `${API_BASE}/wsi/ids?${params.toString()}`
+  return apiFetch<WSIIdListResponse>(url, undefined, 'Failed to load WSI IDs from database')
 }
 
 /**
@@ -197,6 +258,7 @@ export async function fetchWSIList(
  */
 export function invalidateWSIListCache(): void {
   wsiListCache.invalidateAll()
+  datasetsListCache.invalidateAll()
 }
 
 /**
@@ -207,6 +269,7 @@ export interface DatasetSummary {
   dataset_name: string  // Display name
   user_id: string | null  // Dataset owner
   username?: string | null  // Username of dataset owner (only for admin users)
+  source_organ?: string | null
   file_count: number
   total_size: number
   data_type: 'wsi' | 'patch'  // Data type: WSI collection or Patch collection
@@ -228,6 +291,30 @@ export interface DatasetSummary {
 export interface DatasetsListResponse {
   items: DatasetSummary[]
   total: number
+  page?: number
+  page_size?: number
+}
+
+export interface DatasetListQueryOptions {
+  page?: number
+  page_size?: number
+  search?: string
+  task_type?: 'classification' | 'survival' | 'segmentation'
+  aggregation_level?: 'file' | 'case'
+  source_organ?: string
+  forceRefresh?: boolean
+}
+
+function buildDatasetListCacheKey(dataLevel?: string, options?: DatasetListQueryOptions): string {
+  return JSON.stringify({
+    dataLevel: dataLevel ?? null,
+    search: options?.search ?? null,
+    task_type: options?.task_type ?? null,
+    aggregation_level: options?.aggregation_level ?? null,
+    source_organ: options?.source_organ ?? null,
+    page_size: options?.page_size ?? null,
+    page: options?.page_size !== undefined ? (options.page ?? 1) : null,
+  })
 }
 
 /**
@@ -235,14 +322,47 @@ export interface DatasetsListResponse {
  * @param dataLevel - Optional filter: "wsi" for WSI files, "patch" for image files
  * @throws {ApiError} If the request fails
  */
-export async function fetchDatasets(dataLevel?: string): Promise<DatasetsListResponse> {
-  const params = new URLSearchParams()
-  if (dataLevel) {
-    params.append('data_type', dataLevel)
-  }
+export async function fetchDatasets(
+  dataLevel?: string,
+  options?: DatasetListQueryOptions
+): Promise<DatasetsListResponse> {
+  const params = buildSearchParams({
+    data_type: dataLevel,
+    search: options?.search || undefined,
+    task_type: options?.task_type,
+    aggregation_level: options?.aggregation_level,
+    source_organ: options?.source_organ,
+    page_size: options?.page_size,
+    page: options?.page_size !== undefined ? (options.page ?? 1) : undefined,
+  })
   const queryString = params.toString()
   const url = queryString ? `${API_BASE}/wsi/datasets?${queryString}` : `${API_BASE}/wsi/datasets`
-  return apiFetch<DatasetsListResponse>(url, undefined, 'Failed to load datasets from database')
+  const cacheKey = buildDatasetListCacheKey(dataLevel, options)
+
+  return datasetsListCache.get(
+    cacheKey,
+    () => apiFetch<DatasetsListResponse>(url, undefined, 'Failed to load datasets from database'),
+    options?.forceRefresh === true
+  )
+}
+
+export async function prefetchDatasets(
+  dataLevel?: string,
+  options?: DatasetListQueryOptions
+): Promise<void> {
+  try {
+    await fetchDatasets(dataLevel, options)
+  } catch {
+    // Ignore prefetch failures so they don't affect the active page.
+  }
+}
+
+export async function fetchDatasetSummary(datasetId: string): Promise<DatasetSummary> {
+  return apiFetch<DatasetSummary>(
+    `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}`,
+    undefined,
+    'Failed to load dataset summary'
+  )
 }
 
 /**
@@ -255,7 +375,7 @@ export async function renameDataset(
   datasetId: string,
   newName: string
 ): Promise<{ message: string; dataset: { dataset_id: string; name: string } }> {
-  return apiFetch(
+  const result = await apiFetch(
     `${API_BASE}/wsi/datasets`,
     {
       method: 'PUT',
@@ -264,6 +384,8 @@ export async function renameDataset(
     },
     'Failed to rename dataset'
   )
+  invalidateWSIListCache()
+  return result
 }
 
 /**
@@ -286,7 +408,7 @@ export async function updateDatasetType(
   datasetId: string,
   datasetType: 'classification' | 'survival' | 'segmentation'
 ): Promise<UpdateDatasetTypeResponse> {
-  return apiFetch<UpdateDatasetTypeResponse>(
+  const result = await apiFetch<UpdateDatasetTypeResponse>(
     `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/type`,
     {
       method: 'PUT',
@@ -295,6 +417,8 @@ export async function updateDatasetType(
     },
     'Failed to update dataset type'
   )
+  invalidateWSIListCache()
+  return result
 }
 
 /**
@@ -304,6 +428,13 @@ export interface UpdateDatasetDataLevelResponse {
   message: string
   dataset_id: string
   new_aggregation_level: 'case' | 'file'
+}
+
+export interface UpdateDatasetSourceResponse {
+  message: string
+  dataset_id: string
+  source: string | null
+  updated_count: number
 }
 
 /**
@@ -316,7 +447,7 @@ export async function updateDatasetDataLevel(
   datasetId: string,
   dataLevel: 'case' | 'file'
 ): Promise<UpdateDatasetDataLevelResponse> {
-  return apiFetch<UpdateDatasetDataLevelResponse>(
+  const result = await apiFetch<UpdateDatasetDataLevelResponse>(
     `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/data-level`,
     {
       method: 'PUT',
@@ -325,6 +456,25 @@ export async function updateDatasetDataLevel(
     },
     'Failed to update dataset data level'
   )
+  invalidateWSIListCache()
+  return result
+}
+
+export async function updateDatasetSource(
+  datasetId: string,
+  source: string
+): Promise<UpdateDatasetSourceResponse> {
+  const result = await apiFetch<UpdateDatasetSourceResponse>(
+    `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/source`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source })
+    },
+    'Failed to update dataset source'
+  )
+  invalidateWSIListCache()
+  return result
 }
 
 /**
@@ -332,6 +482,8 @@ export async function updateDatasetDataLevel(
  */
 export interface ExportLabelsOptions {
   generateSplit?: boolean
+  strategy?: 'random' | 'k_fold'
+  nSplits?: number
   seed?: number
   stratified?: boolean
   trainRatio?: number
@@ -353,47 +505,30 @@ export async function exportDatasetLabels(
   datasetId: string,
   options: ExportLabelsOptions = {}
 ): Promise<void> {
-  const params = new URLSearchParams()
+  const strategy = options.strategy ?? 'random'
+  const params = buildSearchParams(
+    options.generateSplit
+      ? {
+          generate_split: 'true',
+          strategy,
+          ...(strategy === 'k_fold' ? { n_splits: options.nSplits ?? 5 } : {}),
+          seed: options.seed ?? 42,
+          stratified: options.stratified !== false,
+          ...(strategy === 'random'
+            ? {
+                train_ratio: options.trainRatio ?? 0.7,
+                val_ratio: options.valRatio ?? 0.1,
+                test_ratio: options.testRatio ?? 0.2,
+              }
+            : {}),
+        }
+      : undefined
+  )
 
-  if (options.generateSplit) {
-    params.append('generate_split', 'true')
-    params.append('seed', String(options.seed ?? 42))
-    params.append('stratified', String(options.stratified !== false))
-    params.append('train_ratio', String(options.trainRatio ?? 0.7))
-    params.append('val_ratio', String(options.valRatio ?? 0.1))
-    params.append('test_ratio', String(options.testRatio ?? 0.2))
-  }
+  const queryString = params.toString()
+  const url = `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/export-labels${queryString ? `?${queryString}` : ''}`
 
-  const url = `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/export-labels?${params.toString()}`
-
-  // Fetch with authentication
-  const token = getAuthToken()
-  const response = await fetch(url, {
-    headers: {
-      'Authorization': token ? `Bearer ${token}` : ''
-    }
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(errorText || 'Failed to export labels')
-  }
-
-  // Trigger browser download
-  const blob = await response.blob()
-  const downloadUrl = window.URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = downloadUrl
-
-  // Extract filename from Content-Disposition header
-  const contentDisposition = response.headers.get('Content-Disposition')
-  const filenameMatch = contentDisposition?.match(/filename="(.+)"/)
-  a.download = filenameMatch ? filenameMatch[1] : 'dataset_labels.csv'
-
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  window.URL.revokeObjectURL(downloadUrl)
+  await downloadApiFile(url, 'dataset_labels.csv', undefined, 'Failed to export labels')
 }
 
 /**
@@ -436,11 +571,13 @@ export async function uploadDatasetSplits(datasetId: string, file: File): Promis
   const formData = new FormData()
   formData.append('file', file)
 
-  return apiFetch<UploadSplitsResponse>(
+  const result = await apiFetch<UploadSplitsResponse>(
     `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/splits`,
     { method: 'POST', body: formData },
     'Failed to upload dataset splits'
   )
+  invalidateWSIListCache()
+  return result
 }
 
 /**
@@ -765,7 +902,7 @@ export async function updateWSIMetadata(
     event_status?: number
   }
 ): Promise<WSIMetadataUpdateResult> {
-  return apiFetch<WSIMetadataUpdateResult>(
+  const result = await apiFetch<WSIMetadataUpdateResult>(
     `${API_BASE}/wsi/${wsi_id}`,
     {
       method: 'PATCH',
@@ -774,6 +911,8 @@ export async function updateWSIMetadata(
     },
     'Failed to update WSI metadata'
   )
+  invalidateWSIListCache()
+  return result
 }
 
 /**

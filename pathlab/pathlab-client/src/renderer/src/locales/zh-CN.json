@@ -128,11 +128,6 @@
     "noRecentTasks": "暂无最近任务",
     "untitledTask": "未命名任务"
   },
-  "deepResearchPage": {
-    "backToAIChat": "返回 AI 对话",
-    "loadingDeepResearch": "正在加载 Deep Research...",
-    "restoringConversation": "正在恢复你的研究对话。"
-  },
   "loginPage": {
     "title": "",
     "titleSuffix": "数字病理学",
@@ -155,7 +150,10 @@
     "donate": "捐赠",
     "enterUsername": "请输入用户名",
     "enterPassword": "请输入密码",
-    "buildVersion": "版本 v1.1.0-stable"
+    "buildVersion": "版本 v1.0.0-stable",
+    "legalNotice": "登录前，您可先查看服务条款及隐私声明。首次进入系统前，系统仍会要求您完成同意确认。",
+    "viewTerms": "查看服务条款",
+    "viewPrivacy": "查看隐私声明"
   },
   "settings": {
     "title": "设置",
@@ -181,9 +179,7 @@
     "gatewayService": "网关服务",
     "wsiService": "WSI 服务",
     "aiService": "AI 服务",
-    "about": {
-      "title": "关于"
-    },
+    "about": "关于",
     "aboutText1Part1": "PathLab",
     "aboutText1Part2": " 是一个 AI 驱动的病理学分析平台，用于病理学图像分析。",
     "aboutText2": "该平台整合了最先进的深度学习模型与直观的 AI 助手，帮助研究人员设置和运行病理学分析任务。",
@@ -258,6 +254,108 @@
       "granting": "授权中...",
       "grantAccess": "授予访问权限 ({{count}})",
       "close": "关闭"
+    },
+    "permissionCenterModal": {
+      "title": "授权中心",
+      "description": "在一个界面里切换按用户授权和按数据授权。",
+      "byUser": "按用户授权",
+      "byDataset": "按数据授权",
+      "userBrowser": "用户列表",
+      "datasetBrowser": "数据集列表",
+      "userCount": "共 {{count}} 个用户",
+      "searchDatasets": "搜索数据集...",
+      "searchUsers": "搜索用户...",
+      "datasetCount": "共 {{count}} 个数据集",
+      "loadingUsers": "正在加载用户...",
+      "loadingDatasets": "正在加载数据集...",
+      "noUsers": "未找到用户",
+      "noDatasets": "未找到数据集",
+      "itemsPerPage": "每页",
+      "pageInfo": "第 {{current}} / {{total}} 页 · 共 {{count}} 项",
+      "previous": "上一页",
+      "next": "下一页",
+      "datasetMeta": "{{count}} 个文件",
+      "failedToLoadDatasets": "加载数据集失败",
+      "failedToLoadUsers": "加载用户失败",
+      "failedToLoadUserPermissions": "加载用户权限失败",
+      "failedToLoadDatasetPermissions": "加载数据集权限失败",
+      "selectUser": "用户",
+      "selectUserPlaceholder": "选择用户",
+      "currentPermissions": "当前权限",
+      "currentPermissionsCount": "当前有效权限 {{count}} 个",
+      "loadingUserPermissions": "正在加载用户权限...",
+      "noCurrentPermissions": "当前用户暂无数据集访问权限",
+      "selectedUserName": "当前用户：{{name}}",
+      "selectUserHint": "请先在上方选择一个用户",
+      "grantDatasets": "授予数据集",
+      "visibleDatasetsCount": "当前页可见数据集：{{count}}",
+      "selectVisibleDatasets": "全选当前页可授权数据集 ({{count}})",
+      "allPageItemsSelected": "已选中当前页全部可授权项（{{count}}）。",
+      "selectAllMatchingItems": "选择当前搜索结果下全部可授权项",
+      "allMatchingItemsSelected": "已选中当前搜索结果下全部可授权项（{{count}}）。",
+      "clearSelection": "清除选择",
+      "selectingAll": "选择中...",
+      "alreadyGranted": "已授权",
+      "granting": "提交中...",
+      "grantSelectedDatasets": "授予数据集 ({{count}})",
+      "currentAccess": "当前访问权限",
+      "currentAccessCount": "当前有 {{count}} 个用户拥有访问权限",
+      "loadingDatasetPermissions": "正在加载数据集权限...",
+      "noCurrentAccess": "当前没有用户拥有此数据集访问权限",
+      "grantUsers": "授予用户",
+      "selectedDatasetName": "当前数据集：{{name}}",
+      "selectDatasetHint": "请先在上方选择一个数据集卡片",
+      "selectVisibleUsers": "全选当前可见用户 ({{count}})",
+      "noUsersMatchingSearch": "没有匹配当前搜索条件的用户",
+      "noUsersAvailable": "所有可授权用户都已拥有访问权限",
+      "grantSelectedUsers": "授予用户 ({{count}})",
+      "partialGrantWarning": "部分授权失败（{{failed}} 个），请检查后重试。",
+      "partialRevokeWarning": "部分撤销失败（{{failed}} 个），请检查后重试。",
+      "failedToSelectAllDatasets": "选择当前搜索结果下全部数据集失败",
+      "failedToSelectAllUsers": "选择当前搜索结果下全部用户失败",
+      "failedToGrantUserPermissions": "给该用户授予数据集失败",
+      "failedToGrantDatasetPermissions": "给选中用户授予该数据集失败",
+      "revokePermission": "撤销权限",
+      "revokeUserPermissionConfirm": "确定要撤销 {{userName}} 对 \"{{datasetName}}\" 的访问权限吗？",
+      "revokeDatasetPermissionConfirm": "确定要撤销 {{userName}} 对 \"{{datasetName}}\" 的访问权限吗？",
+      "failedToRevokeUserPermission": "撤销该用户权限失败",
+      "failedToRevokeDatasetPermission": "从该数据集撤销访问失败",
+      "revokeAllPermissions": "全部撤销权限",
+      "revokeAllUserPermissionsConfirm": "确定要撤销 {{userName}} 的全部数据集访问权限吗？",
+      "revokeAllDatasetPermissionsConfirm": "确定要撤销 {{count}} 个用户对 \"{{datasetName}}\" 的访问权限吗？",
+      "failedToRevokeUserPermissions": "批量撤销该用户权限失败",
+      "failedToRevokeDatasetPermissions": "批量撤销该数据集用户权限失败",
+      "revokeAll": "全部撤销"
+    },
+    "datasetPermissionModal": {
+      "title": "按数据授权",
+      "description": "从数据集出发批量授予或撤销用户访问权限。",
+      "loadingData": "正在加载数据集和用户...",
+      "failedToLoad": "加载按数据授权中心失败",
+      "failedToLoadPermissions": "加载数据集权限失败",
+      "failedToGrantPermissions": "批量授予数据集权限失败",
+      "failedToRevokePermission": "撤销数据集权限失败",
+      "failedToRevokePermissions": "批量撤销数据集权限失败",
+      "dataset": "数据集",
+      "selectDataset": "选择数据集",
+      "noDatasets": "暂无可用数据集",
+      "currentAccess": "当前访问权限",
+      "currentAccessCount": "当前有 {{count}} 个用户拥有访问权限",
+      "loadingPermissions": "加载权限中...",
+      "noCurrentAccess": "当前没有用户拥有此数据集的访问权限",
+      "grantAccess": "授予访问权限",
+      "availableUsersCount": "有 {{count}} 个用户可授予访问权限",
+      "searchUsers": "搜索要授权的用户...",
+      "selectAllFiltered": "全选当前可见用户 ({{count}})",
+      "noUsersAvailable": "所有可授权用户都已拥有访问权限",
+      "noUsersMatchingSearch": "没有匹配当前搜索条件的用户",
+      "granting": "授权中...",
+      "grantSelected": "授予访问权限 ({{count}})",
+      "revokePermission": "撤销权限",
+      "revokePermissionConfirm": "确定要撤销 {{userName}} 对 \"{{datasetName}}\" 的访问权限吗？",
+      "revokeAllPermissions": "撤销全部权限",
+      "revokeAllPermissionsConfirm": "确定要撤销 {{count}} 个用户对 \"{{datasetName}}\" 的访问权限吗？",
+      "revokeAll": "全部撤销"
     },
     "modelsTab": {
       "failedToLoadModels": "加载模型失败",
@@ -379,6 +477,20 @@
       "saving": "保存中...",
       "save": "保存",
       "timeoutDescription": "单个任务允许的最大时间（秒）",
+      "diagnosisTitle": "当前诊断",
+      "diagnosisQueueStopped": "队列 worker 当前未运行，等待中的任务不会自动推进。",
+      "diagnosisNoPending": "当前没有等待中的任务。",
+      "diagnosisWaitingForSlot": "当前有等待中的任务，但运行中的任务数已达到并发上限（{{running}} / {{max}}），需要等待空闲槽位。",
+      "diagnosisWaitingForVram": "当前有等待中的任务，但 GPU/显存条件尚未满足：{{details}}",
+      "diagnosisAutoStart": "当前等待中的任务已经满足并发条件，系统会在拿到可用 GPU/显存后自动继续提交。",
+      "vramStatusUnknown": "暂时无法读取显存状态",
+      "whyQueuedTitle": "为什么任务会一直显示排队中？",
+      "whyQueuedIntro": "任务队列会自动补位，但“最大并发数”只是上限，不代表一定能同时启动这么多任务。",
+      "reasonConcurrency": "任务只有在并发槽位空出来后才会继续启动。",
+      "reasonGpuVram": "即使并发槽位空闲，仍然需要有可用 GPU 且满足最小显存要求。",
+      "reasonSharedQueue": "训练任务、推理任务，以及 AI Chat Page 的 PDF GPU 高质量解析都共享同一个 GPU 队列。",
+      "reasonCancellation": "取消中的任务会异步释放资源；资源真正释放后，后续任务会自动重试补位。",
+      "reasonRecovery": "系统重启/断电后，数据库里仍处于排队中的训练任务会自动重新入队恢复；AI Chat Page 的临时 PDF 解析任务不落库，需要由新的请求重新触发。",
       "running": "运行中",
       "pending": "等待中",
       "unableToLoadQueue": "无法加载队列状态"
@@ -478,6 +590,8 @@
       "publishNotice": "发布",
       "failedToSendNotice": "发送公告失败",
       "createUser": "创建用户",
+      "openPermissionCenter": "授权中心",
+      "managePermissionsByDataset": "按数据授权",
       "refresh": "刷新",
       "usersSelected": "已选择 {{count}} 个",
       "activate": "激活",
@@ -601,6 +715,12 @@
       "filesSelected": "已选择 {{count}} 个文件",
       "registering": "注册中...",
       "registerSelected": "注册选中 ({{count}})",
+      "showingRange": "显示第 {{start}}-{{end}} 项，共 {{total}} 个文件",
+      "pageIndicator": "第 {{page}} / {{totalPages}} 页",
+      "previousPage": "上一页",
+      "nextPage": "下一页",
+      "wsiType": "WSI",
+      "patchType": "Patch",
       "importTaskSubmitted": "导入任务已提交",
       "taskId": "任务 ID",
       "filesBeingRegistered": "文件正在后台注册中",
@@ -644,29 +764,20 @@
       "modelNameHint": "模型名称将以 ?model=... 附加到 URL",
       "dashscopeApiKey": "DashScope API 密钥",
       "forQwen3Asr": "用于 Qwen3-ASR 实时语音识别。",
-      "searchProvider": "搜索供应商",
-      "searchProviderHelp": "AI Chat 与 Deep Research 将统一使用这里选择的网页搜索供应商。",
-      "searchProviderOptions": {
-        "exa": "Exa",
-        "tavily": "Tavily"
-      },
       "exaApiKey": "Exa 搜索 API 密钥",
-	      "tavilyApiKey": "Tavily API 密钥",
-	      "jinaApiKey": "Jina Reader API 密钥",
-	      "jinaApiKeyHelp": "用于 Deep Research 的网页读取与正文抓取。",
       "forWebSearch": "用于 AI 网页搜索功能。",
       "searching": "搜索中...",
       "searchedPages": "已搜索 {{count}} 个网页",
       "summarizingSearch": "正在总结搜索内容...",
-	      "webSearchCard": "网页研究",
-	      "webResearchCard": "网页研究",
-      "downloadingPdf": "正在下载 PDF 论文...",
-      "parsingPdf": "正在解析 PDF 论文...",
-      "pdfParsedCount": "已解析 {{count}} 篇 PDF 论文",
-      "pdfDownloadFailed": "PDF 下载失败",
-      "pdfParseFailed": "PDF 解析失败",
-      "pdfFailedCount": "{{count}} 篇 PDF 失败",
-      "summarizingPdf": "正在生成论文解读..."
+      "webSearchCard": "网页搜索",
+      "downloadingPdf": "正在获取文档内容...",
+      "parsingPdf": "正在整理文档内容...",
+      "pdfParsedCount": "已处理 {{count}} 份文档内容",
+      "pdfDownloadFailed": "文档内容获取失败",
+      "pdfParseFailed": "文档内容解析失败",
+      "pdfParseBusy": "当前系统繁忙，暂时无法处理该文档，请稍后重试",
+      "pdfFailedCount": "{{count}} 份文档处理失败",
+      "summarizingPdf": "正在生成内容摘要..."
     }
   },
   "layout": {
@@ -789,6 +900,8 @@
     "heatmapOverlayAlt": "热图叠加",
     "showHeatmap": "显示热图",
     "hideHeatmap": "隐藏热图",
+    "showPredictionMask": "显示预测标注",
+    "hidePredictionMask": "隐藏预测标注",
     "opacity": "不透明度",
     "activation": "激活值",
     "lowToHigh": "低 → 高",
@@ -826,6 +939,7 @@
     "metric": "指标",
     "value": "值",
     "label": "标签",
+    "annotationStatus": "标注状态",
     "count": "数量",
     "truePred": "真实 \\ 预测",
     "colWsiId": "WSI ID",
@@ -988,10 +1102,19 @@
       "trainingDirs": "训练目录",
       "logs": "日志"
     },
+    "emptyDatasets": {
+      "title": "空数据集清理",
+      "description": "清理数据库中已经没有任何文件的历史数据集记录。该操作会以后台任务执行，不会阻塞页面。",
+      "button": "清理空数据集",
+      "starting": "正在启动...",
+      "started": "已在后台开始清理 {{count}} 个空数据集",
+      "noop": "未发现空数据集"
+    },
     "errors": {
       "loadStatsFailed": "加载存储统计信息失败",
       "detectOrphanedFailed": "检测孤立文件失败",
-      "cleanupFailed": "清理孤立文件失败"
+      "cleanupFailed": "清理孤立文件失败",
+      "cleanupEmptyDatasetsFailed": "启动空数据集清理失败"
     }
   },
   "newTask": {
@@ -1087,6 +1210,11 @@
       "created": "创建时间",
       "name": "名称"
     },
+    "pagination": {
+      "itemsPerPage": "每页",
+      "summary": "显示第 {{start}} - {{end}} 项，共 {{total}} 个任务",
+      "pageInfo": "第 {{current}} / {{total}} 页"
+    },
     "columns": {
       "data": "数据",
       "extractor": "特征提取器",
@@ -1141,12 +1269,14 @@
     "failedToDeleteMessage": "删除消息失败",
     "messageDeleted": "消息已删除",
     "cannotRegenerate": "无法重新生成：未找到用户消息",
+    "cannotResubmitMissingFiles": "无法重新提交这条消息：原始上传文件数据已不可用。",
     "failedToSaveTaskStatus": "保存任务状态到服务器失败",
     "failedToSaveRegistrationStatus": "保存注册状态到服务器失败",
     "registrationStarted": "注册已在后台启动",
     "failedToSaveMetadataStatus": "保存元数据上传状态到服务器失败",
     "metadataUploaded": "元数据已上传：{{count}} 个文件已更新",
     "failedToSaveAnalysisStatus": "保存分析状态到服务器失败",
+	    "failedToSavePatchInferenceStatus": "保存图像推理状态到服务器失败",
     "aiErrorFallback": "抱歉，我遇到了错误。请重试。",
     "generationCancelled": "用户取消了回答。",
     "generationTimeout": "回答超时，请重试。",
@@ -1160,13 +1290,6 @@
     "daysAgo": "{{count}}天前",
     "closeHistory": "关闭历史记录",
     "history": "历史记录",
-    "researchStages": {
-      "coordinating": "协调中...",
-      "planning": "规划中...",
-      "researching": "调研中...",
-      "coding": "编码中...",
-      "writingReport": "撰写报告中..."
-    },
     "sidebar": {
       "tools": "工具",
       "dataRepository": "数据仓库",
@@ -1182,8 +1305,8 @@
     "deleteConversation": "删除对话",
     "closeChatHistory": "关闭聊天历史",
     "openChatHistory": "打开聊天历史",
-    "newChat": "新对话",
     "chat": "聊天",
+    "back": "返回",
     "welcomeTitle": "你好，我是 PathLab 智能助手",
     "welcomeDescription": "我们今天要做什么？",
     "attachmentAlt": "附件 {{index}}",
@@ -1191,7 +1314,10 @@
     "goodResponse": "回答有帮助",
     "badResponse": "回答不佳",
     "copy": "复制",
+    "copied": "已复制",
+    "copyCodeBlockAria": "复制代码块",
     "regenerate": "重新生成",
+    "resubmit": "重新提交",
     "deleteMessageAndContinue": "删除此消息并从此处继续",
     "attachment": "附件",
     "listening": "正在聆听...",
@@ -1202,13 +1328,9 @@
       "description": "当前对话已过长，AI 无法有效处理。为确保最佳回答质量，请开始新的对话。",
       "newResearch": "新建研究"
     },
-    "researchHandoff": {
-      "reportContextSummary": "已附带研究报告上下文（默认折叠）",
-      "eyebrow": "深度研究来源",
-      "title": "附带研究卡片",
-      "description": "该回答基于一条深度研究结果生成，你可以回到原研究卡片继续查看报告与活动。",
-      "open": "打开研究卡片",
-      "openHint": "查看原报告与研究过程"
+    "responseTruncated": {
+      "title": "回答已被截断",
+      "description": "本次回答达到了模型的输出长度上限，内容可能尚未完整显示。你可以再发一条消息，例如“继续”，让我接着回答。"
     },
     "disclaimer": "PathLab 智能助手可能会出错，请注意核实重要信息。",
     "uploadedExcelWarning": "\n\n📎 **上传的 Excel：{{name}}**\n **警告：此文件有多个工作表（{{sheets}}）**\n请仅将数据工作表另存为单独的 CSV 文件并重新上传。",
@@ -1257,12 +1379,6 @@
         "title": "浏览图像",
         "description": "浏览和分析病理图像",
         "prompt": "我想浏览和分析一些病理图像，你能帮我根据需求找到合适的图像吗？"
-      },
-      "deepResearch": {
-        "title": "深度研究",
-        "description": "AI 驱动的文献综述与规划报告",
-        "welcomeTitle": "欢迎使用深度研究",
-        "welcomeDescription": "描述您的研究问题，我将协助您制定计划、开展调查并总结证据。"
       }
     },
     "taskSuccess": {
@@ -1460,11 +1576,13 @@
     "metricLabels": {
       "accuracy": "准确率",
       "iou": "IoU",
+      "miou": "mIoU",
       "dice": "Dice",
       "precision": "精确率",
       "recall": "召回率",
       "sensitivity": "敏感性",
       "specificity": "特异性",
+      "weighted_kappa": "加权 Kappa",
       "f1": "F1 分数",
       "auc": "AUC",
       "c_index": "C-Index",
@@ -1473,11 +1591,13 @@
     "metricDescriptions": {
       "accuracy": "整体预测准确率",
       "iou": "交并比（Jaccard 指数）",
+      "miou": "分割类别间平均交并比",
       "dice": "用于分割重叠度的 Dice 系数",
       "precision": "阳性预测值",
       "recall": "真阳性率",
       "sensitivity": "真阳性率",
       "specificity": "真阴性率",
+      "weighted_kappa": "二次加权 Cohen's Kappa 一致性评分",
       "f1": "精确率与召回率的调和平均数",
       "auc": "ROC 曲线下面积",
       "c_index": "生存预测的一致性指数",
@@ -1523,6 +1643,7 @@
     "noDatasetsDescription": "注册您的第一个数据集以开始 WSI 分析。",
     "editDataset": "编辑数据集",
     "deleteDataset": "删除数据集",
+    "datasetDeleteStarted": "已在后台开始删除数据集“{{name}}”",
     "exportLabels": "导出标签",
     "exportLabelsWithSplit": "导出标签并划分数据集",
     "exportSuccess": "标签导出成功",
@@ -1549,11 +1670,18 @@
       "clear": "清除筛选",
       "summary": "当前显示 {{shown}} / {{total}} 个数据集",
       "compactSummary": "{{shown}} / {{total}} 个数据集",
+      "selectSourceOrgan": "选择来源器官",
+      "unknownSourceOrgan": "unknown",
       "groups": {
         "taskType": "任务类型",
         "dataType": "数据类型",
-        "dataLevel": "数据层级"
+        "dataLevel": "数据层级",
+        "sourceOrgan": "来源器官"
       }
+    },
+    "view": {
+      "iconView": "图标视图",
+      "listView": "列表视图"
     },
     "newDataset": "新建数据集",
     "newDatasetDescription": "注册切片以创建新数据集",
@@ -1588,6 +1716,7 @@
     "timeMonths": "时间（月）",
     "status": "状态",
     "label": "标签",
+    "annotationStatus": "标注状态",
     "patientInfo": "患者信息",
     "action": "操作",
     "allPageSelected": "已选中本页全部 {{count}} 项。",
@@ -1600,6 +1729,9 @@
     "event": "事件发生",
     "censored": "数据删失",
     "noLabel": "无标签",
+    "maskMatched": "已匹配标注",
+    "maskMissing": "未匹配标注",
+    "maskMatchedCount": "已匹配 {{matched}} / {{total}}",
     "notSpecified": "未指定",
     "sourcePrefix": "来源：",
     "viewFile": "查看文件",
@@ -1607,6 +1739,7 @@
     "deleteFile": "删除文件",
     "noCaseId": "无病例 ID",
     "slidesCount": "{{count}} 张切片",
+    "slideCountSingle": "{{count}} 张切片",
     "mixed": "混合",
     "seeSlides": "查看切片",
     "eventCount": "{{count}} 事件",
@@ -1620,7 +1753,13 @@
     "cases": "个病例",
     "slidesTotal": "共 {{count}} 张切片",
     "files": "个文件",
-    "goTo": "跳转至"
+    "goTo": "跳转至",
+    "pagination": {
+      "goToPage": "跳转到页码",
+      "itemsPerPage": "每页",
+      "summary": "显示第 {{start}} - {{end}} 项，共 {{total}} 个数据集",
+      "pageInfo": "第 {{current}} / {{total}} 页"
+    }
   },
   "training": {
     "batchEdit": {
@@ -2079,6 +2218,7 @@
       "processing": "处理中...",
       "waitingForValidation": "等待验证...",
       "taskNotFound": "未找到任务",
+      "accessRevoked": "该分析的访问权限已被撤销，无法继续查看。",
       "analysisInProgress": "分析进行中",
       "noResults": "暂无结果",
       "fetchFailed": "获取分析结果失败",
@@ -2183,7 +2323,14 @@
       "modelId": "模型 ID",
       "taskId": "任务 ID",
       "classes": "类别",
-      "embeddingDim": "嵌入维度"
+    "embeddingDim": "嵌入维度",
+    "viewAnalysis": "查看分析",
+    "viewTask": "查看任务",
+    "exportModel": "导出模型",
+    "exportingModel": "正在准备导出...",
+    "exportReady": "模型导出已准备好：{{name}}",
+    "exportFailed": "导出模型失败",
+    "taskUnavailable": "该模型当前未关联可用的训练任务"
     },
     "navigationCard": {
       "task": "任务：",
@@ -2208,6 +2355,7 @@
       "loadingCharts": "加载图表中...",
       "chartsUnavailable": "图表不可用",
       "taskNotFound": "未找到任务或任务未完成",
+      "accessRevoked": "该可视化的访问权限已被撤销，无法继续查看。",
       "noAnalysisResults": "未找到分析结果",
       "fetchError": "获取图表数据失败",
       "taskLabel": "任务",
@@ -2273,6 +2421,9 @@
       "selectDatasetLabel": "选择数据集",
       "loading": "加载中...",
       "chooseDataset": "选择一个数据集...",
+      "datasetWithSource": "{{name}}（source：{{source}}）",
+      "sourceLabel": "数据来源：{{source}}",
+      "unknownSource": "未知",
       "dataGrouping": "数据分组",
       "fileLevel": "文件级别",
       "fileLevelDesc": "每个文件作为独立样本",
@@ -2316,8 +2467,8 @@
       "failedToLoad": "加载图像失败",
       "original": "原图",
       "heatmap": "热图",
-      "groundTruthMask": "人工标注区域",
-      "groundTruthMaskShort": "人工",
+      "groundTruthMask": "标注区域标签",
+      "groundTruthMaskShort": "标签",
       "modelPredictionMask": "AI 识别区域",
       "modelPredictionMaskShort": "AI",
       "noGtMask": "暂无人工标注",
@@ -2325,8 +2476,9 @@
       "noModelPredMask": "暂无 AI 识别结果",
       "maskModel": "识别模型",
       "label": "标签",
-      "event": "事件",
-      "censored": "删失",
+      "event": "事件发生",
+      "censored": "数据删失",
+      "survivalTimeMonths": "事件时间 (月)",
       "time": "时间",
       "pred": "预测",
       "dataset": "数据集",
@@ -2372,8 +2524,29 @@
       "taskCancelledSuccess": "任务 {{taskId}} 已成功取消！",
       "taskRenamedSuccess": "任务已成功重命名为\"{{newName}}\"！"
     },
+    "patchInference": {
+	      "title": "图像推理",
+	      "summaryFallback": "我找到了可能适合这张图像的模型。",
+      "source": "来源判断",
+      "classificationTitle": "分类",
+      "segmentationTitle": "分割",
+      "status": {
+        "queued": "排队中",
+        "running": "执行中",
+        "completed": "已完成",
+        "failed": "失败",
+        "cancelled": "已取消"
+      },
+      "missingImage": "我没有在附近的对话里找到这张图像，因此当前还不能启动推理。",
+	      "notReady": "这条消息暂时还不能持久化图像推理状态。",
+	      "submitting": "正在提交图像推理...",
+	      "startFailed": "启动图像推理失败",
+	      "failed": "图像推理失败。",
+	      "noModel": "当前没有可用的图像推理模型。",
+      "noSegmentationMask": "未检测到阳性分割区域。"
+    },
     "referenceCard": {
-      "references": "来源",
+      "references": "参考文献",
       "paper": "论文",
       "webpage": "网页"
     },
@@ -2409,6 +2582,7 @@
       "unspecified": "未指定",
       "sourceOrganTissue": "来源（器官/组织）",
       "sourcePlaceholder": "例如：肺、乳腺",
+      "selectSourceOrgan": "选择来源器官",
       "cancel": "取消",
       "saving": "保存中...",
       "saveChanges": "保存更改",
@@ -2431,7 +2605,12 @@
       "dataLevel": "数据级别",
       "caseLevel": "病例级别",
       "fileLevel": "文件级别",
-      "changingDataLevelWarning": "更改数据级别可能影响现有分析"
+      "changingDataLevelWarning": "更改数据级别可能影响现有分析",
+      "selectDatasetSource": "请选择数据集来源",
+      "unknownSourceOrgan": "unknown",
+      "datasetSourceDescription": "该来源会应用到数据集中的全部文件。",
+      "otherSource": "其他",
+      "otherSourcePlaceholder": "请输入自定义来源"
     },
     "fileMetadata": {
       "setMetadataForFiles": "设置文件元数据",
@@ -2449,6 +2628,7 @@
       "unspecified": "未指定",
       "sourceOrganTissue": "来源（器官/组织）",
       "sourcePlaceholder": "例如：肺、乳腺",
+      "selectSourceOrgan": "选择来源器官",
       "filesSelected": "已选择 {{count}} 个文件",
       "cancel": "取消",
       "uploadAllFiles": "上传所有文件"
@@ -2533,7 +2713,13 @@
       "fileLevel": "文件级别",
       "fileLevelDesc": "存在文件级别图像标签",
       "segmentationPatchOnly": "分割任务仅支持普通图片数据，不支持全切片图像数据。",
-      "nextChooseFiles": "下一步：选择文件"
+      "nextChooseFiles": "下一步：选择文件",
+      "sourceOrganTissue": "来源（器官/组织）",
+      "selectDatasetSource": "请选择数据集来源",
+      "unknownSourceOrgan": "unknown",
+      "otherSource": "其他",
+      "otherSourcePlaceholder": "请输入自定义来源",
+      "datasetSourceDescription": "该来源会应用到上传到此数据集的全部文件。"
     },
     "successStep": {
       "importSuccessful": "导入成功",
@@ -2606,9 +2792,12 @@
       "kFold": "K 折交叉验证",
       "folds": "折",
       "riskGroup": "风险分组",
+      "classes": "类别",
       "prediction": "预测",
+      "predictionMask": "预测标注",
       "patchHeatmap": "普通图像热力图",
       "patches": "图像块",
+      "noClasses": "暂无类别",
       "riskScore": "风险评分"
     }
   },
@@ -2637,6 +2826,10 @@
       "storage": "存储",
       "batchImport": "批量导入",
       "metadataUpdate": "元数据更新",
+      "deleteDataset": "删除数据集",
+      "cleanupEmptyDatasets": "清理空数据集",
+      "unbindDataset": "解绑数据集",
+      "resetDerivedData": "重置派生数据",
       "deleteExternal": "删除外部数据",
       "extraction": "提取区域",
       "task": "任务",
@@ -2682,8 +2875,8 @@
     }
   },
   "disclaimer": {
-    "title": "用户协议与免责声明",
-    "fullTitle": "PathLab 服务条款与用户协议",
+    "title": "服务条款与医疗免责声明",
+    "fullTitle": "PathLab 服务条款、用户协议与医疗免责声明",
     "operator": "运营方：SmartLab",
     "contact": "联系方式",
     "scopeLabel": "适用范围",
@@ -2692,15 +2885,19 @@
     "processing": "处理中...",
     "agreeAndContinue": "我同意并继续",
     "important": "重要提示",
-    "importantText": "点击我同意并继续即表示您确认已阅读并理解本服务条款，包括医疗免责声明和责任限制。",
+    "importantText": "点击“同意并继续”，即表示您同意本服务条款、医疗免责声明以及隐私声明与隐私政策，接受以电子记录作为您同意的证据，并确认您已理解其中的医疗提示与责任限制。",
+    "privacyNoticeTitle": "隐私声明",
+    "privacyNoticeText": "继续前，请先查看隐私声明与隐私政策。",
+    "viewPrivacyPolicy": "查看隐私声明与隐私政策",
     "yourIpAddress": "您的 IP 地址为",
     "sections": {
       "s1": {
         "title": "1. 接受条款",
         "items": [
-          "1.1 注册、登录、下载、安装、访问或使用本服务即表示您已阅读、理解并同意受本条款约束。",
+          "1.1 通过点击“同意并继续”，或以其他方式注册、登录、下载、安装、访问或使用本服务，即表示您确认已阅读、理解并同意受本条款约束。",
           "1.2 如您代表某组织使用本服务，即表示您有权约束该组织，且该组织对您的使用行为负责。",
-          "1.3 如您不同意本条款，请勿使用本服务。"
+          "1.3 我们可保留电子同意记录，包括可获得的账号标识、时间戳，以及您在同意时提交或被识别到的 IP 信息，以作为同意、安全与合规的证明。在香港地区，此安排亦拟与 <lawCap553>《电子交易条例》（第553章）</lawCap553> 保持一致。",
+          "1.4 如您不同意本条款，请勿使用本服务。"
         ]
       },
       "s2": {
@@ -2736,28 +2933,31 @@
       "s5": {
         "title": "5. 服务",
         "items": [
-          "5.1 本地推理和查看：工作台支持在您的本地计算机上完全进行 WSI 可视化、切片、本地推理和结果叠加显示。",
-          "5.2 训练和任务系统：工作台可能支持创建和运行本地训练任务。结果可能因数据、配置、环境和随机性而异。",
-          "5.3 AI 聊天和向导：本服务可能提供基于大语言模型的助手，用于参数提取、工作流指导和报告辅助。",
-          "5.4 报告生成：本服务可能提供自动生成的分析报告或模板；输出可能因模型和输入而异。",
-          "5.5 更新和变更：我们可能会更新、修改、暂停或停止功能、API、模型、算法、输出或依赖项。"
+          "5.1 工作台功能：本服务可支持 WSI 上传、按路径注册、阅片、标注、切块、推理及结果可视化。",
+          "5.2 训练和任务系统：本服务可支持本地或连接式训练、任务编排和结果生成，结果可能因数据、配置、环境和随机性而异。",
+          "5.3 AI 聊天与辅助：本服务可提供基于大语言模型的助手，用于参数提取、工作流指导、报告起草以及文档或 PDF 解析。",
+          "5.4 语音与联网搜索功能：在启用相关功能时，本服务可能转写音频输入并检索第三方网页内容或搜索结果。",
+          "5.5 管理功能：本服务可支持账号管理、数据集临时授权、维护通知、存储路径配置及类似运营控制。",
+          "5.6 更新与变更：我们可能会更新、修改、暂停或停止功能、API、模型、算法、输出、集成或依赖项。"
         ]
       },
       "s6": {
         "title": "6. 本地数据隐私与合规",
         "items": [
-          "6.1 责任：您对本地安全、访问控制、备份、保留和删除您的数据负全部责任，并应根据您所在机构的要求和适用法律（例如 HIPAA、GDPR）执行。",
-          "6.2 无集中存储：平台不提供全切片图像的云存储。您必须自行维护本地存储和备份。",
-          "6.3 数据导出：您选择导出或共享的任何报告或数据均由您自行负责。"
+          "6.1 责任：您应自行建立合法处理基础，履行必要告知，取得必要同意，在需要时完成去标识化，并负责数据的本地安全、访问控制、备份、保留与删除，以符合适用法律和机构政策。",
+          "6.2 默认不提供通用云存储：平台默认不为您的全切片图像提供通用云存储。但账户记录、数据集元数据、标注、任务记录、结果、权限以及同意或通知记录，可能存储于您自行部署或连接的服务组件中。",
+          "6.3 客户端缓存：Web 或桌面客户端可能使用浏览器存储、本地缓存及 PWA 缓存以提升性能。若您使用共享设备，您应自行管理登录状态、清理缓存并控制本地访问。",
+          "6.4 数据导出：您选择导出、下载或共享的任何报告或数据均由您自行负责。"
         ]
       },
       "s7": {
         "title": "7. 您的内容、数据及授权",
         "items": [
           "7.1 您的所有权：在您与平台之间，您保留对您的内容和数据的权利（以您拥有的范围为限）。",
-          "7.2 对平台的授权：您授予我们有限许可，仅在您的设备上本地处理您的数据以提供服务（例如运行推理、生成报告）。使用遥测数据可能按第 13 条所述进行收集。",
-          "7.3 合规：您声明您拥有所有必要的权利和权限，且您的内容和数据不侵犯第三方权利，并符合适用法律和机构政策。",
-          "7.4 敏感数据限制：除非经过适当授权且合规，否则您不得在 AI 聊天提示、反馈表单或其他可能离开本地环境的渠道中提交可识别患者的信息。"
+          "7.2 对平台的授权：您授予我们有限许可，仅在为您提供所选择使用的功能所必需的范围内，对您的内容和数据进行托管、处理、传输、展示、索引和使用。",
+          "7.3 外部提供方处理：若您使用被配置为调用外部提供方的功能，相关提示词、音频、文档、元数据、IP 信息或安全令牌可能会为实现该功能而传输至该等提供方。",
+          "7.4 合规：您声明您拥有所有必要的权利和权限，且您的内容和数据不侵犯第三方权利，并符合适用法律和机构政策。",
+          "7.5 敏感数据限制：除非经过适当授权且合规，否则您不得在 AI 聊天提示、反馈表单、语音功能、联网搜索功能或其他可能离开本地环境的渠道中提交可识别患者的信息。"
         ]
       },
       "s8": {
@@ -2765,7 +2965,7 @@
         "items": [
           "8.1 许可：随服务提供的模型仅供在工作台内使用，除非另有明确说明。",
           "8.2 禁止逆向工程：如果模型权重或架构受到保护，您不得对其进行逆向工程、反编译或尝试提取。",
-          "8.3 仅限研究用途：除非经过认证，模型仅供研究使用，不用于临床诊断。"
+          "8.3 仅限研究用途：除非就特定部署以书面形式另有明确说明，模型及其输出仅供研究或流程辅助使用，不得用于临床诊断或治疗决策。"
         ]
       },
       "s9": {
@@ -2785,8 +2985,9 @@
       "s10": {
         "title": "10. 第三方服务和开源",
         "items": [
-          "10.1 本服务可能集成第三方服务或依赖开源组件（例如 OpenCSG、Docker、数据库和 UI 组件）。这些组件受其各自的许可和条款约束。",
-          "10.2 我们不对第三方服务的可用性、安全性或合规性作出保证。在法律允许的范围内，我们不对第三方造成的中断或损失承担责任。"
+          "10.1 本服务可能集成第三方提供方或依赖开源组件，包括身份验证或机器人防护服务、公共 IP 查询、AI 模型 API、语音识别、联网搜索、PDF 解析、数据库、基础设施和界面库。",
+          "10.2 该等提供方和组件受其各自的许可、政策和条款约束，其可用性、安全性、数据处理方式及地域合规要求可能与平台不同。",
+          "10.3 在法律允许的范围内，我们不对第三方导致的中断或损失承担责任，并可随时替换、改道或停用相关集成。"
         ]
       },
       "s11": {
@@ -2806,33 +3007,37 @@
       "s13": {
         "title": "13. 隐私、遥测和日志",
         "items": [
-          "13.1 我们可能收集最低限度必要的遥测和日志数据，包括但不限于 IP 地址、操作系统和浏览器信息，用于安全、审计、故障排除和产品改进，例如功能使用事件、错误日志和性能指标。",
-          "13.2 我们将使用合理措施对遥测和日志数据实施访问控制和加密存储。",
-          "13.3 我们的隐私政策规定了个人数据的处理方式，并构成本条款的一部分。"
+          "13.1 为安全和服务运行之目的，我们可能收集或使用账户标识、条款同意与通知确认记录、登录或同意时提交或识别到的 IP 地址、设备、浏览器和应用信息、审计事件、错误日志、性能指标，以及与数据集、任务、权限和结果相关的记录。",
+          "13.2 我们使用该等数据以进行用户认证、权限控制、滥用检测、故障排查、服务维护及履行法定义务。",
+          "13.3 在适用法律和正当运营需要允许的范围内，我们将采取合理措施保护个人资料，并避免超出合理必要期限保留；在适用时，这也包括遵守 <lawCap486>《个人资料（私隐）条例》（第486章）</lawCap486> 的相关要求。",
+          "13.4 如我们另行提供隐私声明、个人资料收集说明、同意提示或产品内告知，则其亦适用于相关处理活动。",
+          "13.5 在适用法律要求的范围内，包括在适用时依据 <lawCap486>《个人资料（私隐）条例》（第486章）</lawCap486>，您可通过我们提供的联系渠道要求查阅和更正我们持有的您的个人资料。"
         ]
       },
       "s14": {
         "title": "14. 医疗和模型输出声明",
         "items": [
           "14.1 非医疗建议：输出仅供参考，不构成医疗建议、诊断或治疗方案。",
-          "14.2 需要人工审核：任何临床决策必须由合格的医疗专业人员独立评估和确认。",
-          "14.3 不保证准确性：模型可能存在偏差或错误，可能无法在不同人群、扫描仪、染色和工作流程之间泛化。"
+          "14.2 非医疗器械声明：除非就特定部署以书面形式另有明确说明，本服务不被表述为已注册、获批准或认证的医疗器械或临床决策系统。",
+          "14.3 需要人工审核：任何临床、诊断或患者护理相关决定，均必须由具备资质的医疗专业人员独立评估并确认。",
+          "14.4 不保证准确性：模型可能存在偏差或错误，且不一定适用于所有人群、扫描设备、染色方案、实验室或工作流程。"
         ]
       },
       "s15": {
         "title": "15. 免责声明",
         "items": [
           "15.1 在法律允许的最大范围内，本服务按原样和可用提供，不提供任何形式的保证。",
-          "15.2 我们不保证服务不间断、无错误运行或适合您的特定需求。",
-          "15.3 您承担使用本服务相关的所有风险。"
+          "15.2 我们不保证服务不间断、无错误运行、安全、兼容或适合您的特定需求，也不保证第三方集成或外部内容将持续可用。",
+          "15.3 第三方内容、搜索结果、语音转写、解析后的文档以及模型输出，可能存在不完整、不准确、延迟或不适合您用途的情况。",
+          "15.4 本条款不排除或限制任何依法不得排除或限制的责任。在香港地区，这包括 <lawCap71>《管制免责条款条例》（第71章）</lawCap71> 及其他强制性法律下不得被排除或限制的责任，包括因过失导致的人身伤亡责任、欺诈或欺诈性失实陈述责任。"
         ]
       },
       "s16": {
         "title": "16. 责任限制",
         "items": [
-          "16.1 在法律允许的最大范围内，平台及其开发者不对间接的、偶然的、特殊的、惩罚性的或后果性的损害承担责任，包括利润损失、商誉损失、业务中断或数据丢失。",
-          "16.2 因本服务引起的或与之相关的我方总责任（如有）不超过您在索赔事件发生前 12 个月内实际向我们支付的服务费用总额；如您未支付任何费用，责任不超过 1,000 港元或等值金额（以较低者为准）。",
-          "16.3 某些司法管辖区不允许某些限制，因此在被禁止的范围内，这些限制可能不适用于您。"
+          "16.1 在第 15.4 条约束下，并在法律允许的最大范围内，平台及其开发者不对任何间接、附带、特殊、惩罚性或后果性损害承担责任，包括利润损失、商誉损失、业务中断或数据丢失。",
+          "16.2 在第 15.4 条约束下，我们因本服务产生或与之相关的全部责任（如有）以您在索赔事件发生前 12 个月内就本服务实际向我们支付的费用总额为上限。",
+          "16.3 如您未曾付费，则在第 15.4 条及强制性法律规定约束下，我们的责任总额以上限 1,000 港元为限。"
         ]
       },
       "s17": {
@@ -2855,15 +3060,16 @@
       "s19": {
         "title": "19. 条款变更",
         "items": [
-          "19.1 我们可能因合规、安全或产品迭代需要而更新本条款，并将在适当时提供合理通知（例如产品内通知或电子邮件）。",
-          "19.2 变更生效日期后继续使用即表示接受更新后的条款。"
+          "19.1 我们可能因合规、安全、法律或产品原因更新本条款，并将在适当时提供合理通知（例如产品内通知或电子邮件）。",
+          "19.2 对于重大变更，我们可要求您在继续访问部分或全部服务前重新进行点击确认同意。",
+          "19.3 在变更生效后继续使用本服务，或在需要时重新确认同意，即视为您接受更新后的条款。"
         ]
       },
       "s20": {
         "title": "20. 适用法律与争议解决",
         "items": [
           "20.1 本条款受中华人民共和国香港特别行政区法律管辖。",
-          "20.2 争议将首先通过善意协商解决。如未能解决，争议将根据您选择并一致适用的机制，提交香港国际仲裁中心仲裁或在香港法院进行诉讼。",
+          "20.2 双方应先以善意方式尝试解决争议；任何未能解决的争议，均应提交香港法院专属管辖。",
           "20.3 您同意电子通信和记录可作为可采纳的证据。"
         ]
       },
@@ -2873,7 +3079,86 @@
           "21.1 可分割性：如任何条款无效，其余部分仍然有效。",
           "21.2 不弃权：未执行某项条款并不构成弃权。",
           "21.3 转让：未经我们书面同意，您不得转让本条款。我们可以在合并、重组或资产转让时进行转让。",
-          "21.4 完整协议：本条款、隐私政策和发布的规则构成关于本服务的完整协议。"
+          "21.4 完整协议：本条款、我们另行提供的隐私声明或个人资料收集说明、同意提示，以及已发布的规则或通知，共同构成双方就本服务达成的完整协议。",
+          "21.5 语言：如各语言版本存在不一致，在法律允许的范围内，以英文版为准。"
+        ]
+      }
+    }
+  },
+  "privacyPolicy": {
+    "title": "隐私声明",
+    "fullTitle": "PathLab 隐私声明与隐私政策",
+    "operator": "运营方：SmartLab",
+    "contact": "联系方式",
+    "introLabel": "阅读说明",
+    "introText": "本声明概述 PathLab 如何处理与本服务相关的个人资料。在香港地区，相关个人资料处理可能受 <lawCap486>《个人资料（私隐）条例》（第486章）</lawCap486> 规管。请与服务条款、医疗提示以及产品内针对具体功能展示的提示或告知一并阅读。",
+    "important": "重要提示",
+    "importantText": "如某项功能另行展示了更具体的隐私提示、同意弹窗或机构部署告知，则在相关处理活动范围内，以更具体的说明为准。",
+    "backToTerms": "返回服务条款",
+    "sections": {
+      "s1": {
+        "title": "1. 适用范围与角色",
+        "items": [
+          "1.1 本隐私声明与隐私政策说明 SmartLab 可能如何就您访问和使用本服务而收集、使用、保存、披露或以其他方式处理个人资料。",
+          "1.2 其适用于账户注册与登录、条款同意、维护通知、数据集、标注、权限、任务、结果、AI 功能以及支持或反馈互动等场景。",
+          "1.3 如您代表某机构使用本服务，则就该机构上传或管理的源数据、患者资料或研究数据而言，该机构也可能单独决定相关处理目的与方式。"
+        ]
+      },
+      "s2": {
+        "title": "2. 我们可能处理的数据类别",
+        "items": [
+          "2.1 账户与资料信息，例如用户名、昵称、角色、头像及相关账户标识。",
+          "2.2 认证与安全信息，例如登录时间、条款同意记录、通知确认记录、登录或同意时提交或识别到的 IP 地址，以及启用时的反滥用验证结果。",
+          "2.3 设备、浏览器、客户端及本地存储信息，例如应用版本、浏览器类型、运行环境、本地缓存状态及类似故障排查信息。",
+          "2.4 服务运行信息，例如数据集元数据、路径注册信息、标注、权限、任务记录、报告、输出以及审计或错误日志。",
+          "2.5 功能输入信息，例如您在启用的功能中主动提交的提示词、上传文档、解析后的 PDF 内容、搜索查询、语音音频、转写文本及反馈。"
+        ]
+      },
+      "s3": {
+        "title": "3. 处理目的",
+        "items": [
+          "3.1 用于提供、认证、保护、维护和支持本服务及相关账户。",
+          "3.2 用于运行您请求的功能，包括 AI 辅助、文档解析、语音转写、联网搜索、任务编排、可视化和报告。",
+          "3.3 用于执行权限控制、调查滥用、识别异常、故障排查、提升可靠性，以及履行法律、监管或机构要求。"
+        ]
+      },
+      "s4": {
+        "title": "4. 数据来源与您的责任",
+        "items": [
+          "4.1 我们可能直接从您、您的机构或管理员、您的设备或浏览器，或用于运行本服务的集成与服务提供方处获得个人资料。",
+          "4.2 您应确保您上传、连接或提交的任何患者资料、研究资料、员工资料或第三方资料，均已依法收集、依法共享，并在需要时完成去标识化。",
+          "4.3 浏览器本地存储、桌面端本地存储或 PWA 缓存，可能会在您的设备上保留部分数据副本。若为共享设备，您应自行管理本地访问。"
+        ]
+      },
+      "s5": {
+        "title": "5. 披露、处理方与跨境处理",
+        "items": [
+          "5.1 我们可能向支持身份验证、机器人防护、公共 IP 查询、AI 模型 API、语音识别、联网搜索、PDF 解析、托管、基础设施、存储、安全等运营活动的服务提供方或受托处理方披露或提供相关数据。",
+          "5.2 经授权的管理员或机构人员，可能在账户管理、安全响应、审计、权限管理或法律合规所需范围内访问相关记录。",
+          "5.3 如您使用外部提供方功能，相关数据可能会在香港以外地区，或在您所属机构环境以外，由相关提供方根据其条款和政策进行处理。您仍应自行判断该等使用是否符合您的合规义务，并在适用时符合 <lawCap486>《个人资料（私隐）条例》（第486章）</lawCap486>。"
+        ]
+      },
+      "s6": {
+        "title": "6. 保存期限与安全",
+        "items": [
+          "6.1 在符合法定义务、争议处理、安全需要及正当运营要求的前提下，我们会尽量避免将个人资料保存超过实现披露目的所合理必要的期限。",
+          "6.2 我们会在适当情况下采取合理的技术和组织措施保护个人资料，包括访问控制和安全监测。",
+          "6.3 互联网环境和本地计算环境均不可能绝对安全，我们无法保证绝对安全或持续不中断可用。"
+        ]
+      },
+      "s7": {
+        "title": "7. 查阅、更正与联系",
+        "items": [
+          "7.1 在适用法律允许的范围内，包括在适用时依据 <lawCap486>《个人资料（私隐）条例》（第486章）</lawCap486>，您可请求查阅及更正我们持有的您的个人资料。",
+          "7.2 您可通过本声明列明的联系方式提交隐私相关请求或咨询。",
+          "7.3 您也可自行管理或删除您所控制设备上的本地副本、浏览器存储及缓存数据。"
+        ]
+      },
+      "s8": {
+        "title": "8. 本声明的更新",
+        "items": [
+          "8.1 我们可能因法律、运营、安全或产品原因不时更新本隐私声明与隐私政策。",
+          "8.2 在适当情况下，我们会通过产品内通知、电子邮件，或要求您在继续使用部分或全部服务前重新确认同意等方式进行告知。"
         ]
       }
     }
@@ -2948,7 +3233,10 @@
     "metadata": "元数据",
     "downloadSummary": "下载摘要",
     "rawData": "原始数据",
-    "downloadFullResults": "下载完整结果"
+    "downloadFullResults": "下载完整结果",
+    "modelFiles": "模型文件",
+    "downloadModel": "导出模型",
+    "exportingModel": "正在准备导出..."
   },
   "analysisCharts": {
     "confusionMatrix": "混淆矩阵",

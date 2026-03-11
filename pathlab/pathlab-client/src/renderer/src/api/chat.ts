@@ -1,5 +1,5 @@
 import { API_BASE } from '../config'
-import { apiFetch, ApiError, ApiErrorCode, getAuthToken, parseErrorResponse, getErrorCodeFromStatus, PaginatedResponse } from './client'
+import { apiFetch, ApiError, ApiErrorCode, buildAuthRequestInit, buildSearchParams, parseErrorResponse, getErrorCodeFromStatus, PaginatedResponse } from './client'
 
 // ============================================================================
 // Chat with AI (Streaming)
@@ -40,10 +40,8 @@ export async function chatWithAI(
   onMessageId?: (messageId: number) => void,
   signal?: AbortSignal,
   onContextLimit?: () => void,
-  reportContext?: string,
-  requestOptions?: {
-    voiceSessionActive?: boolean
-  }
+  onResponseTruncated?: () => void,
+  onPdfContext?: (pdfContext: string) => void
 ): Promise<void> {
   // Get AI configuration from localStorage
   const apiKey = localStorage.getItem('openrouter_api_key') || ''
@@ -68,21 +66,15 @@ export async function chatWithAI(
       'X-Language': uiLang,
       'X-Timezone': userTimezone
     }
-    const token = getAuthToken()
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`
-    }
-    response = await fetch(`${API_BASE}/chat`, {
+    response = await fetch(`${API_BASE}/chat`, buildAuthRequestInit({
       method: 'POST',
       headers,
       body: JSON.stringify({
         messages,
-        conversation_id: conversationId,
-        ...(requestOptions?.voiceSessionActive ? { voice_session_active: true } : {}),
-        ...(reportContext ? { report_context: reportContext } : {})
+        conversation_id: conversationId
       }),
       signal
-    })
+    }))
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
     if (
@@ -146,9 +138,18 @@ export async function chatWithAI(
             if (parsed.message_id && onMessageId) {
               onMessageId(parsed.message_id)
             }
-            // Handle context_limit event — LLM output was truncated (finish_reason: "length")
+            // Handle true context-window overflow signaled by the backend.
             if (parsed.context_limit && onContextLimit) {
               onContextLimit()
+            }
+            // Handle generation truncated by output-length limit (finish_reason: "length").
+            if (parsed.response_truncated && onResponseTruncated) {
+              onResponseTruncated()
+            }
+            // Handle hidden pdf_context event so the frontend can keep its local
+            // message history aligned with the backend conversation state.
+            if (typeof parsed.pdf_context === 'string' && onPdfContext) {
+              onPdfContext(parsed.pdf_context)
             }
           } catch (e) {
             // Skip invalid JSON
@@ -169,8 +170,6 @@ export interface Conversation {
   conversation_id: string
   user_id: string
   title: string
-  conversation_type?: 'ai_chat' | 'deep_research'
-  report_context?: string | null
   created_at: string
   updated_at: string
 }
@@ -186,6 +185,56 @@ export interface ConversationWithMessages extends Conversation {
   }>
 }
 
+export type ChatPatchInferenceType = 'classification' | 'segmentation'
+
+export interface ChatPatchInferenceStartRequest {
+  conversation_id: string
+  message_id: number
+  inference_type: ChatPatchInferenceType
+  model_id: string
+  image_data_url: string
+  source?: string | null
+}
+
+export interface ChatPatchInferenceTaskResult {
+  predicted_label?: string
+  probabilities?: Record<string, number>
+  top_predictions?: Array<{ label: string; score: number }>
+  class_names?: string[]
+  positive_classes?: Array<{ label: string; coverage_ratio: number }>
+  coverage_by_class?: Array<{ label: string; coverage_ratio: number }>
+  has_positive_mask?: boolean
+  mask_shape?: [number, number]
+}
+
+export interface ChatPatchInferenceTask {
+  task_id: string
+  conversation_id: string
+  message_id: number
+  inference_type: ChatPatchInferenceType
+  model_id: string
+  model_name: string
+  source?: string | null
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+  progress: number
+  result?: ChatPatchInferenceTaskResult | null
+  error?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ChatPatchInferenceExitRequest {
+  conversation_id: string
+  message_id: number
+  cancel_message: string
+}
+
+export interface ChatPatchInferenceExitResponse {
+  cancelled_task_count: number
+  updated_message: boolean
+  added_cancel_message: boolean
+}
+
 /**
  * Create a new conversation
  * User ID is automatically determined from JWT token.
@@ -193,16 +242,14 @@ export interface ConversationWithMessages extends Conversation {
  * @returns Created conversation
  * @throws {ApiError} If the request fails
  */
-export async function createConversation(title?: string, conversationType?: 'ai_chat' | 'deep_research', reportContext?: string): Promise<Conversation> {
+export async function createConversation(title?: string): Promise<Conversation> {
   return apiFetch<Conversation>(
     `${API_BASE}/conversations`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        title: title || 'New Conversation',
-        conversation_type: conversationType || 'ai_chat',
-        ...(reportContext ? { report_context: reportContext } : {})
+        title: title || 'New Conversation'
       })
     },
     'Failed to create conversation'
@@ -221,9 +268,9 @@ export async function getConversations(
   skip: number = 0,
   limit: number = 50
 ): Promise<Conversation[]> {
-  const params = new URLSearchParams({
-    skip: String(skip),
-    limit: String(limit)
+  const params = buildSearchParams({
+    skip,
+    limit
   })
 
   const data = await apiFetch<PaginatedResponse<Conversation>>(
@@ -245,25 +292,6 @@ export async function getConversation(conversationId: string): Promise<Conversat
     `${API_BASE}/conversations/${conversationId}`,
     undefined,
     'Failed to get conversation'
-  )
-}
-
-/**
- * Update a conversation title
- * @param conversationId - Conversation ID
- * @param title - New conversation title
- * @returns Updated conversation
- * @throws {ApiError} If the request fails
- */
-export async function updateConversationTitle(conversationId: string, title: string): Promise<Conversation> {
-  return apiFetch<Conversation>(
-    `${API_BASE}/conversations/${conversationId}`,
-    {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title })
-    },
-    'Failed to update conversation title'
   )
 }
 
@@ -346,6 +374,44 @@ export async function addMessage(
       body: JSON.stringify({ role, content })
     },
     'Failed to add message'
+  )
+}
+
+export async function startChatPatchInference(
+  request: ChatPatchInferenceStartRequest
+): Promise<ChatPatchInferenceTask> {
+  return apiFetch<ChatPatchInferenceTask>(
+    `${API_BASE}/patch-inference`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request)
+    },
+    'Failed to start chat patch inference'
+  )
+}
+
+export async function getChatPatchInferenceTask(taskId: string): Promise<ChatPatchInferenceTask> {
+  return apiFetch<ChatPatchInferenceTask>(
+    `${API_BASE}/patch-inference/${encodeURIComponent(taskId)}`,
+    undefined,
+    'Failed to fetch chat patch inference task'
+  )
+}
+
+export async function cancelChatPatchInferenceOnExit(
+  request: ChatPatchInferenceExitRequest,
+  options?: { keepalive?: boolean }
+): Promise<ChatPatchInferenceExitResponse> {
+  return apiFetch<ChatPatchInferenceExitResponse>(
+    `${API_BASE}/patch-inference/cancel-on-exit`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+      keepalive: options?.keepalive ?? false
+    },
+    'Failed to cancel chat image inference on page exit'
   )
 }
 

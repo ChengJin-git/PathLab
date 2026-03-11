@@ -22,6 +22,7 @@ export interface WSIItem {
   split?: string | null
   file_extension?: string | null  // e.g. ".svs", ".png" - for file type determination (wsi_path no longer exposed)
   file_size?: number | null
+  data_type?: 'wsi' | 'patch' | null
   event_time?: number | null
   event_status?: number | null
 }

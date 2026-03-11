@@ -30,6 +30,8 @@ import {
   DEFAULT_SEG_ARCHITECTURE,
   DEFAULT_SEG_BACKBONE,
   DEFAULT_SEG_LOSS_NAMES,
+  FM_SEGMENTATION_ARCHITECTURE,
+  isSegFmEncoder,
   normalizeSegmentationLossConfig,
 } from '../../constants/training'
 
@@ -135,10 +137,55 @@ export function parseTaskConfig(content: string): AgentTaskConfig | null {
       config.seg_loss_weights = normalizedLossConfig.lossWeights
     }
 
-    return config
+    return normalizeAgentTaskConfig(config)
   } catch {
     return null
   }
+}
+
+function resolveSegmentationBackbone(config: AgentTaskConfig): string {
+  const segBackbone = typeof config.seg_backbone === 'string' ? config.seg_backbone.trim() : ''
+  const encoder = typeof config.encoder === 'string' ? config.encoder.trim() : ''
+  return segBackbone || encoder || DEFAULT_SEG_BACKBONE
+}
+
+function resolveSegmentationArchitecture(config: AgentTaskConfig, backbone?: string): string {
+  const resolvedBackbone = backbone || resolveSegmentationBackbone(config)
+  if (isSegFmEncoder(resolvedBackbone)) {
+    return FM_SEGMENTATION_ARCHITECTURE
+  }
+  const segArchitecture = typeof config.seg_architecture === 'string' ? config.seg_architecture.trim() : ''
+  return segArchitecture || DEFAULT_SEG_ARCHITECTURE
+}
+
+function normalizeAgentTaskConfig(config: AgentTaskConfig): AgentTaskConfig {
+  if (config.task_type !== 'segmentation' && !Array.isArray(config.seg_loss_names)) {
+    return config
+  }
+
+  const normalizedBackbone = resolveSegmentationBackbone(config)
+  return {
+    ...config,
+    data_type: 'patch',
+    seg_backbone: normalizedBackbone,
+    seg_architecture: resolveSegmentationArchitecture(config, normalizedBackbone),
+  }
+}
+
+function normalizeSplitStrategy(
+  taskType: AgentTaskConfig['task_type'],
+  splitStrategy: AgentTaskConfig['split_strategy'] | undefined,
+  hasPreDefinedSplits = false,
+): 'random' | 'k_fold' | 'manual' {
+  if (splitStrategy === 'manual') {
+    return hasPreDefinedSplits ? 'manual' : 'random'
+  }
+
+  if (taskType === 'segmentation' && splitStrategy === 'k_fold') {
+    return hasPreDefinedSplits ? 'manual' : 'random'
+  }
+
+  return splitStrategy ?? 'random'
 }
 
 /**
@@ -151,7 +198,7 @@ export function removeTaskConfigBlock(content: string): string {
 export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange, messageId, onHelpfulnessFeedback, savedHelpfulnessFeedback, submitTrigger }: TaskConfigCardProps) {
   const { t } = useTranslation()
   const { hasUploadingTasks } = useBackgroundTask()
-  const [config, setConfig] = useState<AgentTaskConfig>(initialConfig)
+  const [config, setConfig] = useState<AgentTaskConfig>(normalizeAgentTaskConfig(initialConfig))
   const [isSubmitting, setIsSubmitting] = useState(false)
   // Initialize submitStatus based on whether task was already submitted (persisted in config)
   // 'pending' = optimistic update, form disabled with positive visual, background work in progress
@@ -175,7 +222,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   useEffect(() => {
     if (initialConfig.submitted_task_id) {
       setSubmitStatus('success')
-      setConfig(initialConfig)
+      setConfig(normalizeAgentTaskConfig(initialConfig))
     }
   }, [initialConfig.submitted_task_id])
 
@@ -193,7 +240,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
 
   // Split strategy state - use agent's recommendation if provided
   const [splitStrategy, setSplitStrategy] = useState<'random' | 'k_fold' | 'manual'>(
-    initialConfig.split_strategy || 'random'
+    normalizeSplitStrategy(initialConfig.task_type, initialConfig.split_strategy)
   )
   const [kFoldSplits, setKFoldSplits] = useState(initialConfig.k_fold_splits || 5)
   const [randomSeed, setRandomSeed] = useState(initialConfig.seed ?? 42)
@@ -222,6 +269,21 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     return compatibleDatasets.find(d => d.dataset_id === selectedDatasetId) || null
   }, [compatibleDatasets, selectedDatasetId])
 
+  const resolvedSegBackbone = useMemo(() => resolveSegmentationBackbone(config), [config])
+  const isFmSegmentation = useMemo(
+    () => config.task_type === 'segmentation' && isSegFmEncoder(resolvedSegBackbone),
+    [config.task_type, resolvedSegBackbone]
+  )
+  const resolvedSegArchitecture = useMemo(
+    () => resolveSegmentationArchitecture(config, resolvedSegBackbone),
+    [config, resolvedSegBackbone]
+  )
+  const supportsKFold = config.task_type !== 'segmentation'
+  const segmentationFmOptions = useMemo(
+    () => ENCODER_OPTIONS.filter(option => isSegFmEncoder(option.value)),
+    []
+  )
+
   // Load available datasets on mount
   useEffect(() => {
     loadDatasets()
@@ -238,6 +300,13 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       onConfigChange?.(nextConfig)
     }
   }, [config, onConfigChange])
+
+  useEffect(() => {
+    const normalizedStrategy = normalizeSplitStrategy(config.task_type, splitStrategy, hasPreDefinedSplits)
+    if (normalizedStrategy !== splitStrategy) {
+      setSplitStrategy(normalizedStrategy)
+    }
+  }, [config.task_type, splitStrategy, hasPreDefinedSplits])
 
   useEffect(() => {
     if (selectedDatasetId && !compatibleDatasets.some(d => d.dataset_id === selectedDatasetId)) {
@@ -323,12 +392,11 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           const counts = found.predefined_split_counts ?? { train: 0, val: 0, test: 0 }
           setHasPreDefinedSplits(hasSplits)
           setPredefinedSplitCounts(counts)
-          if (hasSplits && !initialConfig.split_strategy) {
-            setSplitStrategy('manual')
-          } else if (!hasSplits && initialConfig.split_strategy === 'manual') {
-            // Agent recommended manual split but dataset has no predefined splits — fall back
-            setSplitStrategy('random')
-          }
+          setSplitStrategy(
+            initialConfig.split_strategy
+              ? normalizeSplitStrategy(initialConfig.task_type, initialConfig.split_strategy, hasSplits)
+              : (hasSplits ? 'manual' : 'random')
+          )
         }
       }
     } catch (error) {
@@ -426,7 +494,9 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           // Note: tile_size removed - auto-determined by PrePATH-style tiling
           level: config.pyramid_level ?? DEFAULT_PYRAMID_LEVEL,
           // Feature extraction
-          feature_extractor: config.encoder ?? DEFAULT_EXTRACTOR,
+          feature_extractor: config.task_type === 'segmentation'
+            ? resolvedSegBackbone
+            : (config.encoder ?? DEFAULT_EXTRACTOR),
           feature_batch_size: config.feature_batch_size ?? DEFAULT_FEATURE_BATCH_SIZE,
           use_gpu: true,
           // Tissue segmentation parameters (WSI only)
@@ -437,8 +507,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         },
         model: config.task_type === 'segmentation' ? {
           aggregator: '',  // Not used for segmentation
-          architecture: config.seg_architecture ?? DEFAULT_SEG_ARCHITECTURE,
-          backbone: config.seg_backbone ?? DEFAULT_SEG_BACKBONE,
+          architecture: resolvedSegArchitecture,
+          backbone: resolvedSegBackbone,
           loss_names: normalizedSegLossConfig.lossNames,
           loss_weights: normalizedSegLossConfig.lossWeights,
           learning_rate: config.learning_rate ?? SEG_TRAINING_DEFAULTS.learningRate,
@@ -642,7 +712,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
               <span className="text-sm font-medium text-gray-700">{t('chatComponents.taskConfig.splitStrategy')}</span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className={`grid grid-cols-1 gap-2 ${supportsKFold ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
               {/* Random Split */}
               <button
                 type="button"
@@ -663,25 +733,26 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                 <p className="text-[10px] text-gray-500 ml-4.5">{t('chatComponents.taskConfig.splitRandomDesc')}</p>
               </button>
 
-              {/* K-Fold */}
-              <button
-                type="button"
-                onClick={() => !isFormDisabled && setSplitStrategy('k_fold')}
-                disabled={isFormDisabled}
-                className={`p-3 rounded-lg border text-left transition-all ${splitStrategy === 'k_fold'
-                  ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
-                  : 'bg-white border-gray-200 hover:border-primary-300'
-                  } ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
-              >
-                <div className="flex items-center gap-1.5 mb-1">
-                  <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${splitStrategy === 'k_fold' ? 'border-primary-600' : 'border-gray-400'
-                    }`}>
-                    {splitStrategy === 'k_fold' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
+              {supportsKFold && (
+                <button
+                  type="button"
+                  onClick={() => !isFormDisabled && setSplitStrategy('k_fold')}
+                  disabled={isFormDisabled}
+                  className={`p-3 rounded-lg border text-left transition-all ${splitStrategy === 'k_fold'
+                    ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
+                    : 'bg-white border-gray-200 hover:border-primary-300'
+                    } ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
+                >
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${splitStrategy === 'k_fold' ? 'border-primary-600' : 'border-gray-400'
+                      }`}>
+                      {splitStrategy === 'k_fold' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
+                    </div>
+                    <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>{t('chatComponents.taskConfig.splitKFold')}</span>
                   </div>
-                  <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>{t('chatComponents.taskConfig.splitKFold')}</span>
-                </div>
-                <p className="text-[10px] text-gray-500 ml-4.5">{t('chatComponents.taskConfig.splitKFoldDesc')}</p>
-              </button>
+                  <p className="text-[10px] text-gray-500 ml-4.5">{t('chatComponents.taskConfig.splitKFoldDesc')}</p>
+                </button>
+              )}
 
               {/* Manual Split (CSV) */}
               <button
@@ -770,32 +841,42 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.segArchitecture')}</label>
-                <select
-                  value={config.seg_architecture || DEFAULT_SEG_ARCHITECTURE}
-                  onChange={(e) => updateConfig('seg_architecture', e.target.value)}
-                  disabled={isFormDisabled}
-                  className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${disabledSelectClass}`}
-                >
-                  {SEGMENTATION_ARCHITECTURES.map(arch => (
-                    <option key={arch.id} value={arch.id}>{arch.name}</option>
-                  ))}
-                </select>
+                {isFmSegmentation ? (
+                  <div className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-gray-700">
+                    Conv Decoder (FM)
+                  </div>
+                ) : (
+                  <select
+                    value={resolvedSegArchitecture}
+                    onChange={(e) => updateConfig('seg_architecture', e.target.value)}
+                    disabled={isFormDisabled}
+                    className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${disabledSelectClass}`}
+                  >
+                    {SEGMENTATION_ARCHITECTURES.map(arch => (
+                      <option key={arch.id} value={arch.id}>{arch.name}</option>
+                    ))}
+                  </select>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.segBackbone')}</label>
                 <select
-                  value={config.seg_backbone || DEFAULT_SEG_BACKBONE}
+                  value={resolvedSegBackbone}
                   onChange={(e) => updateConfig('seg_backbone', e.target.value)}
                   disabled={isFormDisabled}
                   className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${disabledSelectClass}`}
                 >
-                  {BACKBONE_GROUPS.map(group => (
-                    <optgroup key={group} label={group}>
-                      {SEGMENTATION_BACKBONES.filter(bb => bb.group === group).map(bb => (
-                        <option key={bb.id} value={bb.id}>{bb.name}</option>
-                      ))}
-                    </optgroup>
-                  ))}
+                  {isFmSegmentation
+                    ? segmentationFmOptions.map(option => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))
+                    : BACKBONE_GROUPS.map(group => (
+                      <optgroup key={group} label={group}>
+                        {SEGMENTATION_BACKBONES.filter(bb => bb.group === group).map(bb => (
+                          <option key={bb.id} value={bb.id}>{bb.name}</option>
+                        ))}
+                      </optgroup>
+                    ))}
                 </select>
               </div>
             </div>

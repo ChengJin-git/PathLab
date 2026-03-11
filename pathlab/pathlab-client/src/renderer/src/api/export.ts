@@ -1,5 +1,5 @@
 import { API_BASE } from '../config'
-import { apiFetch, apiFetchBlob } from './client'
+import { apiFetch, apiFetchBlob, buildSearchParams } from './client'
 
 // ============================================================================
 // Async Export APIs (for large datasets)
@@ -46,12 +46,13 @@ export async function startAsyncExport(
   feedbackType?: string | null,
   helpfulness?: string | null
 ): Promise<{ task_id: string; status: string }> {
-  const params = new URLSearchParams()
-  params.set('format', format)
-  if (dateFrom) params.set('date_from', dateFrom)
-  if (dateTo) params.set('date_to', dateTo)
-  if (feedbackType) params.set('feedback_type', feedbackType)
-  if (helpfulness) params.set('helpfulness', helpfulness)
+  const params = buildSearchParams({
+    format,
+    date_from: dateFrom || undefined,
+    date_to: dateTo || undefined,
+    feedback_type: feedbackType || undefined,
+    helpfulness: helpfulness || undefined,
+  })
 
   return apiFetch(
     `${API_BASE}/admin/feedbacks/export-async?${params.toString()}`,

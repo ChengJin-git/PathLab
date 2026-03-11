@@ -8,7 +8,7 @@
 #   ./hot-reload.sh ai                # 仅重启 AI 服务
 #   ./hot-reload.sh all               # 更新前端 + 滚动重启后端
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -48,14 +48,27 @@ mkdir -p "$LOG_DIR"
 reload_frontend() {
     echo -e "${CYAN}[Frontend]${NC} 开始构建..."
     cd "$PROJECT_DIR"
-    [ ! -d "node_modules" ] && { echo "  安装 Node 依赖..."; npm install --silent; }
+
+    local vite_bin="$PROJECT_DIR/node_modules/vite/bin/vite.js"
+    if [ ! -d "node_modules" ] || [ ! -f "$vite_bin" ]; then
+        echo "  Node 依赖缺失或不完整，执行 npm install..."
+        npm install --silent
+    fi
 
     local dist_dir="$RENDERER_DIR/dist"
     local tmp_dir="$RENDERER_DIR/dist_new_$$"
 
     cd "$RENDERER_DIR"
-    node "$PROJECT_DIR/node_modules/vite/bin/vite.js" \
-        build --config vite.config.ts --outDir "$tmp_dir" 2>&1 | tail -5
+    if ! node "$vite_bin" build --config vite.config.ts --outDir "$tmp_dir" 2>&1 | tail -5; then
+        echo -e "${RED}[Frontend]${NC} 构建失败，未替换线上 dist 目录"
+        rm -rf "$tmp_dir"
+        exit 1
+    fi
+
+    if [ ! -d "$tmp_dir" ]; then
+        echo -e "${RED}[Frontend]${NC} 构建未生成输出目录: $tmp_dir"
+        exit 1
+    fi
 
     cp -r public/assets "$tmp_dir/" 2>/dev/null || true
     cp -r public/images "$tmp_dir/" 2>/dev/null || true

@@ -11,6 +11,7 @@ import json
 import asyncio
 import logging
 import random
+import time
 from typing import Dict, List, Any, Optional, Tuple
 
 import numpy as np
@@ -39,10 +40,17 @@ from backend.ai.tasks.training_utils import (
     is_kfold_splits,
     get_num_folds,
     calculate_kfold_classification_metrics,
+    calculate_progress_update_interval,
+    interpolate_progress,
 )
 
 
 logger = logging.getLogger("patch_classification_trainer")
+
+
+# Throttle patch-classification result persistence to reduce end-of-training I/O spikes.
+SAVE_FILE_IO_MAX_WORKERS = 4
+SAVE_FILE_IO_BATCH_SIZE = 32
 
 
 class PatchClassificationTrainer(BaseTrainer):
@@ -387,6 +395,8 @@ class PatchClassificationTrainer(BaseTrainer):
                     del class_weights
                 raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
 
+            epoch_start_time = time.time()
+
             # Run training epoch in thread pool to avoid blocking the event loop.
             # GPU operations (forward/backward pass) and DataLoader iteration are blocking.
             running_loss, num_batches, stop_reason = await asyncio.to_thread(
@@ -423,30 +433,55 @@ class PatchClassificationTrainer(BaseTrainer):
                 val_acc = val_metrics["accuracy"]
                 history["val_loss"].append(val_loss)
 
+            # Update learning rate before logging so live LR matches the next-epoch optimizer state.
+            scheduler.step()
+            current_lr = optimizer.param_groups[0]["lr"]
+            epoch_time = time.time() - epoch_start_time
+
             # Prepare metadata with train_ prefix for training loss and val_ prefix for validation metrics
-            metadata = {"epoch": epoch, "train_loss": epoch_loss}
+            metadata = {
+                "epoch": epoch,
+                "train_loss": epoch_loss,
+                "lr": current_lr,
+                "epoch_time_sec": epoch_time,
+            }
+            log_parts = [
+                f"Epoch {epoch}/{epochs}",
+                f"Train Loss: {epoch_loss:.4f}",
+            ]
             if val_loader:
                 metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
+                log_parts.append(f"Val Loss: {val_loss:.4f}")
+                log_parts.append(f"Val Acc: {val_acc:.4f}")
+                if val_metrics.get("auc") is not None:
+                    log_parts.append(f"Val AUC: {val_metrics['auc']:.4f}")
+            log_parts.append(f"LR: {current_lr:.2e}")
+            log_parts.append(f"Time: {epoch_time:.1f}s")
 
-            await logger.info(
-                f"Epoch {epoch}/{epochs} - loss: {epoch_loss:.4f}" +
-                (f", val_loss: {val_loss:.4f}, val_acc: {val_acc:.4f}" if val_loader else ""),
-                metadata
-            )
+            await logger.info(" | ".join(log_parts), metadata)
 
-            # Update progress: training from 66% to 90%, saving from 90% to 100%
-            # Use epoch (not epoch-1) to ensure progress updates immediately from first epoch
-            progress = 66 + int(epoch / epochs * 24)
+            # Update progress: training from 0% to 90%, saving from 90% to 100%
+            # Use epoch (not epoch-1) and enforce a minimum increment for immediate feedback.
+            progress = min(90, max(1, int(epoch / epochs * 90)))
             await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
-
-            # Update learning rate
-            scheduler.step()
 
             # Save best model based on accuracy/AUC (higher is better)
             # Fallback to loss (lower is better) if Acc/AUC are unavailable
             is_improvement = False
             # Prefer AUC if available, else Accuracy
             check_metric = val_metrics.get("auc") if val_metrics.get("auc") is not None else val_metrics.get("accuracy")
+            if val_metrics.get("auc") is not None:
+                selection_metric_key = "val_auc"
+                selection_metric_label = "Val AUC"
+                selection_metric_value = val_metrics["auc"]
+            elif val_metrics.get("accuracy") is not None:
+                selection_metric_key = "val_accuracy"
+                selection_metric_label = "Val Acc"
+                selection_metric_value = val_metrics["accuracy"]
+            else:
+                selection_metric_key = "val_loss"
+                selection_metric_label = "Val Loss"
+                selection_metric_value = val_loss
 
             if check_metric is not None:
                  if best_val_metric is None or check_metric > best_val_metric:
@@ -465,11 +500,36 @@ class PatchClassificationTrainer(BaseTrainer):
                 best_val_metrics = val_metrics if val_loader else None
                 epochs_without_improvement = 0  # Reset counter
 
+                best_metadata = {
+                    "epoch": epoch,
+                    selection_metric_key: selection_metric_value,
+                    "val_loss": val_loss,
+                    "val_accuracy": val_acc,
+                }
+                if val_metrics.get("auc") is not None:
+                    best_metadata["val_auc"] = val_metrics["auc"]
+                await logger.info(
+                    f"Best validation model saved at epoch {epoch} | "
+                    f"{selection_metric_label}: {selection_metric_value:.4f}",
+                    best_metadata,
+                )
+
                 if test_loader is not None:
                     best_test_metrics = await asyncio.to_thread(self._evaluate, model, test_loader, criterion)
+                    test_snapshot_metadata = {
+                        "epoch": epoch,
+                        **{f"test_{k}": v for k, v in best_test_metrics.items()},
+                    }
+                    test_log_parts = [
+                        f"Best-model test snapshot at epoch {epoch}",
+                        f"Test Loss: {best_test_metrics.get('loss', 0):.4f}",
+                        f"Test Acc: {best_test_metrics.get('accuracy', 0):.4f}",
+                    ]
+                    if best_test_metrics.get("auc") is not None:
+                        test_log_parts.append(f"Test AUC: {best_test_metrics['auc']:.4f}")
                     await logger.info(
-                        f"New best model at epoch {epoch} - val_loss: {val_loss:.4f}, test_acc: {best_test_metrics['accuracy']:.4f}",
-                        {"epoch": epoch, **best_test_metrics}
+                        " | ".join(test_log_parts),
+                        test_snapshot_metadata,
                     )
 
                 self._save_checkpoint(
@@ -629,6 +689,16 @@ class PatchClassificationTrainer(BaseTrainer):
             best_state_dict = None
             epochs_without_improvement = 0
 
+            # Allocate each fold a contiguous slice of the full 0-100% range.
+            fold_progress_start = round(fold_idx * 100 / num_folds)
+            fold_progress_end = round((fold_idx + 1) * 100 / num_folds)
+            fold_total_range = max(1, fold_progress_end - fold_progress_start)
+            fold_training_range = max(1, round(fold_total_range * 0.7))
+            if fold_training_range > fold_total_range:
+                fold_training_range = fold_total_range
+            fold_saving_base = fold_progress_start + fold_training_range
+            fold_saving_range = max(0, fold_total_range - fold_training_range)
+
             for epoch in range(1, epochs + 1):
                 # Check for cancellation or permission revocation at each epoch start
                 if is_task_cancelled(self.task_id):
@@ -663,6 +733,8 @@ class PatchClassificationTrainer(BaseTrainer):
                         del class_weights
                     raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
 
+                epoch_start_time = time.time()
+
                 epoch_loss = running_loss / max(1, num_batches)
                 history["loss"].append(epoch_loss)
 
@@ -677,6 +749,18 @@ class PatchClassificationTrainer(BaseTrainer):
                 # Select best model based on accuracy/AUC (higher is better)
                 is_improvement = False
                 check_metric = val_metrics.get("auc") if val_metrics.get("auc") is not None else val_metrics.get("accuracy")
+                if val_metrics.get("auc") is not None:
+                    selection_metric_key = "val_auc"
+                    selection_metric_label = "Val AUC"
+                    selection_metric_value = val_metrics["auc"]
+                elif val_metrics.get("accuracy") is not None:
+                    selection_metric_key = "val_accuracy"
+                    selection_metric_label = "Val Acc"
+                    selection_metric_value = val_metrics["accuracy"]
+                else:
+                    selection_metric_key = "val_loss"
+                    selection_metric_label = "Val Loss"
+                    selection_metric_value = val_loss
 
                 if check_metric is not None:
                      if best_val_metric is None or check_metric > best_val_metric:
@@ -691,29 +775,57 @@ class PatchClassificationTrainer(BaseTrainer):
                     best_val_loss = val_loss # Update for logging
                     best_state_dict = {k: v.cpu().clone() for k, v in classifier_head.state_dict().items()}
                     epochs_without_improvement = 0
+                    best_metadata = {
+                        "fold": fold_idx + 1,
+                        "epoch": epoch,
+                        selection_metric_key: selection_metric_value,
+                        "val_loss": val_loss,
+                        "val_accuracy": val_acc,
+                    }
+                    if val_metrics.get("auc") is not None:
+                        best_metadata["val_auc"] = val_metrics["auc"]
+                    await logger.info(
+                        f"[Fold {fold_idx + 1}] Best validation model updated at epoch {epoch} | "
+                        f"{selection_metric_label}: {selection_metric_value:.4f}",
+                        best_metadata,
+                    )
                 else:
                     epochs_without_improvement += 1
 
-                # Log epoch progress - format consistent with non-kfold training
-                # Prepare metadata with train_ prefix for training loss and val_ prefix for validation metrics
-                metadata = {"fold": fold_idx + 1, "epoch": epoch, "train_loss": epoch_loss}
-                metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
-
-                await logger.info(
-                    f"[Fold {fold_idx + 1}] Epoch {epoch}/{epochs} - loss: {epoch_loss:.4f}, val_loss: {val_loss:.4f}, val_acc: {val_acc:.4f}",
-                    metadata
-                )
-
-                # Progress update: training uses 66-90% (24% total), saving uses 90-100%
-                # Each fold gets equal share of the 24% training range
-                # Use epoch (not epoch-1) to ensure progress updates immediately from first epoch
-                fold_training_range = 24 / num_folds
-                fold_progress_base = 66 + fold_idx * fold_training_range
-                progress = int(fold_progress_base + epoch / epochs * fold_training_range)
-                await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
-
-                # Update learning rate
+                # Update learning rate before logging so live LR matches the next-epoch optimizer state.
                 scheduler.step()
+                current_lr = optimizer.param_groups[0]["lr"]
+                epoch_time = time.time() - epoch_start_time
+
+                # Log epoch progress - format consistent with segmentation training logs
+                metadata = {
+                    "fold": fold_idx + 1,
+                    "epoch": epoch,
+                    "train_loss": epoch_loss,
+                    "lr": current_lr,
+                    "epoch_time_sec": epoch_time,
+                }
+                metadata.update({f"val_{k}": v for k, v in val_metrics.items()})
+                log_parts = [
+                    f"[Fold {fold_idx + 1}] Epoch {epoch}/{epochs}",
+                    f"Train Loss: {epoch_loss:.4f}",
+                    f"Val Loss: {val_loss:.4f}",
+                    f"Val Acc: {val_acc:.4f}",
+                ]
+                if val_metrics.get("auc") is not None:
+                    log_parts.append(f"Val AUC: {val_metrics['auc']:.4f}")
+                log_parts.append(f"LR: {current_lr:.2e}")
+                log_parts.append(f"Time: {epoch_time:.1f}s")
+
+                await logger.info(" | ".join(log_parts), metadata)
+
+                # Progress update: each fold uses its own slice of the full 0-100% range.
+                # Within each fold, 70% is reserved for training and the remainder for saving.
+                progress = min(
+                    fold_saving_base,
+                    fold_progress_start + max(1, int(epoch / epochs * fold_training_range))
+                )
+                await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
 
                 # Early stopping check
                 if epochs_without_improvement >= early_stopping_patience:
@@ -748,12 +860,7 @@ class PatchClassificationTrainer(BaseTrainer):
                 "num_classes": num_classes,
             }, fold_dir / "classifier_head.pth")
 
-            # Calculate saving progress range for this fold
-            fold_total_range = 34 / num_folds
-            fold_progress_base = 66 + int(fold_idx * fold_total_range)
-            fold_training_range = int(fold_total_range * 0.7)
-            fold_saving_base = fold_progress_base + fold_training_range
-            fold_saving_range = max(1, int(fold_total_range * 0.3))
+            # Continue the same fold-local 0-100% allocation for result saving.
 
             # Save per-image inference results for this fold's VALIDATION set only
             # In K-Fold, each sample should be predicted by the model that didn't see it during training
@@ -773,10 +880,18 @@ class PatchClassificationTrainer(BaseTrainer):
                 progress_range=fold_saving_range,
             )
 
-            await logger.info(
-                f"Fold {fold_idx + 1} complete: acc={final_val_metrics['accuracy']:.4f}",
-                metadata={"fold": fold_idx + 1, **final_val_metrics}
-            )
+            fold_summary_metadata = {
+                "fold": fold_idx + 1,
+                **{f"val_{k}": v for k, v in final_val_metrics.items()},
+            }
+            fold_summary_parts = [
+                f"Fold {fold_idx + 1} validation summary",
+                f"Val Loss: {final_val_metrics.get('loss', 0):.4f}",
+                f"Val Acc: {final_val_metrics['accuracy']:.4f}",
+            ]
+            if final_val_metrics.get("auc") is not None:
+                fold_summary_parts.append(f"Val AUC: {final_val_metrics['auc']:.4f}")
+            await logger.info(" | ".join(fold_summary_parts), metadata=fold_summary_metadata)
 
         # Calculate aggregated statistics (basic metrics from training, rounded to 4 decimal places)
         aggregated = {
@@ -1093,10 +1208,10 @@ class PatchClassificationTrainer(BaseTrainer):
         - Batch database inserts for performance
 
         Progress allocation within the given range:
-        - 0-20%: Inference
-        - 20-80%: File I/O (per-file progress)
-        - 80-90%: Database insert
-        - 90-100%: Metrics calculation
+        - 0-60%: Inference + CAM/result preparation
+        - 60-85%: File I/O (per-file progress)
+        - 85-90%: Database insert
+        - 90-100%: Final metrics / completion handoff
 
         For each image, saves:
         - Prediction (pred): predicted class label
@@ -1120,13 +1235,26 @@ class PatchClassificationTrainer(BaseTrainer):
         fold_desc = f" ({fold_key})" if fold_key else ""
         total_images = len(wsi_ids)
 
-        # Calculate progress points based on progress_base and progress_range
-        # Allocation: 20% inference, 60% file I/O, 10% DB, 10% metrics
+        # Calculate progress points based on progress_base and progress_range.
+        # Keep the last integer slot for the final completed=100 handoff.
+        max_saving_progress = progress_base + max(progress_range - 1, 0)
         progress_inference = progress_base
-        progress_file_io_start = progress_base + int(progress_range * 0.2)
-        progress_file_io_end = progress_base + int(progress_range * 0.8)
-        progress_db = progress_base + int(progress_range * 0.8)
-        progress_metrics = progress_base + int(progress_range * 0.9)
+        progress_file_io_start = max(
+            progress_inference,
+            min(max_saving_progress, progress_base + int(progress_range * 0.6)),
+        )
+        progress_file_io_end = max(
+            progress_file_io_start,
+            min(max_saving_progress, progress_base + int(progress_range * 0.85)),
+        )
+        progress_db = max(
+            progress_file_io_end,
+            min(max_saving_progress, progress_base + int(progress_range * 0.9)),
+        )
+        progress_metrics = max(
+            progress_db,
+            min(max_saving_progress, progress_base + int(progress_range * 0.95)),
+        )
         file_io_progress_range = progress_file_io_end - progress_file_io_start
 
         await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_inference)
@@ -1161,6 +1289,13 @@ class PatchClassificationTrainer(BaseTrainer):
         # GPU inference and image loading are blocking - run in thread to avoid blocking event loop.
         from PIL import Image
 
+        running_loop = asyncio.get_running_loop()
+        inference_update_interval = calculate_progress_update_interval(
+            total_images,
+            target_updates=25,
+            max_interval=200,
+        )
+
         def _run_inference():
             """Synchronous inference loop - runs in thread pool to avoid blocking event loop."""
             _all_probs = []
@@ -1168,6 +1303,7 @@ class PatchClassificationTrainer(BaseTrainer):
             _all_labels_list = []
             _file_save_items = []
             _db_records = []
+            processed_images = 0
 
             with torch.set_grad_enabled(use_gradients):
                 for idx, wsi_id in enumerate(wsi_ids):
@@ -1243,6 +1379,19 @@ class PatchClassificationTrainer(BaseTrainer):
                         }
                     })
 
+                    processed_images += 1
+                    if processed_images % inference_update_interval == 0 or processed_images >= total_images:
+                        inference_progress = interpolate_progress(
+                            progress_inference,
+                            progress_file_io_start,
+                            processed_images,
+                            total_images,
+                        )
+                        asyncio.run_coroutine_threadsafe(
+                            _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, inference_progress),
+                            running_loop,
+                        )
+
             return _all_probs, _all_preds, _all_labels_list, _file_save_items, _db_records
 
         all_probs, all_preds, all_labels_list, file_save_items, db_records = await asyncio.to_thread(_run_inference)
@@ -1253,10 +1402,23 @@ class PatchClassificationTrainer(BaseTrainer):
             f"[Saving] Writing {total_images} result files to disk...",
             {"phase": "writing_files", "num_files": total_images}
         )
+        await logger.info(
+            "[Saving] Using throttled file I/O to reduce disk pressure",
+            {
+                "phase": "writing_files",
+                "max_workers": SAVE_FILE_IO_MAX_WORKERS,
+                "batch_size": SAVE_FILE_IO_BATCH_SIZE,
+            }
+        )
 
         # Track completed files for progress updates
         completed_count = [0]
         progress_lock = asyncio.Lock()
+        file_update_interval = calculate_progress_update_interval(
+            total_images,
+            target_updates=20,
+            max_interval=200,
+        )
 
         def save_single_image_files(item):
             """Synchronous function to save files for a single image."""
@@ -1285,20 +1447,26 @@ class PatchClassificationTrainer(BaseTrainer):
             result = await loop.run_in_executor(executor, save_single_image_files, item)
             async with progress_lock:
                 completed_count[0] += 1
-                # Update progress every 10% of files or at least every 500 files (reduced frequency for performance)
-                update_interval = max(1, min(total // 10, 500))
-                if completed_count[0] % update_interval == 0 or completed_count[0] == total:
-                    file_progress = file_io_start + int(completed_count[0] / total * file_io_range)
+                if completed_count[0] % file_update_interval == 0 or completed_count[0] == total:
+                    file_progress = interpolate_progress(
+                        file_io_start,
+                        file_io_start + file_io_range,
+                        completed_count[0],
+                        total,
+                    )
                     await _safe_update_progress(session_maker_ref, task_id_for_update, TaskStatus.TRAINING, file_progress)
             return result
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
-            tasks = [
-                save_with_progress(executor, item, total_images,
-                                   progress_file_io_start, file_io_progress_range)
-                for item in file_save_items
-            ]
-            await asyncio.gather(*tasks)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=SAVE_FILE_IO_MAX_WORKERS) as executor:
+            for batch_start in range(0, total_images, SAVE_FILE_IO_BATCH_SIZE):
+                batch_items = file_save_items[batch_start:batch_start + SAVE_FILE_IO_BATCH_SIZE]
+                tasks = [
+                    save_with_progress(executor, item, total_images,
+                                       progress_file_io_start, file_io_progress_range)
+                    for item in batch_items
+                ]
+                await asyncio.gather(*tasks)
+                await asyncio.sleep(0)
 
         # Phase 3: Batch database insert
         await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_db)

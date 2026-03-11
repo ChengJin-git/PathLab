@@ -13,6 +13,8 @@ export interface SelectProps {
     options: SelectOption[]
     placeholder?: string
     className?: string
+    triggerClassName?: string
+    dropdownClassName?: string
     disabled?: boolean
 }
 
@@ -22,6 +24,8 @@ export function Select({
     options,
     placeholder = "Select...",
     className,
+    triggerClassName,
+    dropdownClassName,
     disabled = false,
 }: SelectProps) {
     const [isOpen, setIsOpen] = React.useState(false)
@@ -59,7 +63,7 @@ export function Select({
                 className={cn(
                     "flex h-9 w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-gray-50",
                     isOpen && "ring-1 ring-gray-950 border-gray-400",
-                    className
+                    triggerClassName
                 )}
             >
                 <span className={cn("block truncate", !selectedOption && "text-gray-400")}>
@@ -69,7 +73,10 @@ export function Select({
             </button>
 
             {isOpen && (
-                <div className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-gray-200 bg-white p-1 shadow-lg animate-in fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2">
+                <div className={cn(
+                    "absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-gray-200 bg-white p-1 shadow-lg animate-in fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2",
+                    dropdownClassName
+                )}>
                     {options.length === 0 ? (
                         <div className="py-2 px-2 text-sm text-gray-500 text-center">
                             No options

@@ -1,5 +1,5 @@
 """
-PDF Parsing utilities for AI chat - uses MinerU for academic paper processing
+PDF parsing utilities for AI chat.
 
 When Exa search returns PDF links (e.g., arXiv papers),
 this module downloads, parses, and summarizes the content for the AI agent.
@@ -17,52 +17,116 @@ import shutil
 import tempfile
 import asyncio
 import hashlib
-from concurrent.futures import ProcessPoolExecutor
-from concurrent.futures.process import BrokenProcessPool
+import traceback
+import time
+import uuid
+import gc
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Literal
 from datetime import datetime, timedelta
+from urllib.parse import unquote, urlparse
 import httpx
 
 from ..dependencies import logger
 from backend.common.config import Config
-from backend.common.gpu_utils import select_optimal_gpu_for_task
-
-# Process pool for MinerU heavy parsing — runs in a separate process with its own
-# GIL so CPU-intensive PyTorch / vLLM operations do NOT block the asyncio event loop.
-# Created lazily and shut down after each task to release GPU memory (CUDA context).
-_mineru_process_executor: ProcessPoolExecutor | None = None
-
-
-def _get_mineru_executor() -> ProcessPoolExecutor:
-    """Return the MinerU ProcessPoolExecutor, creating it if needed."""
-    global _mineru_process_executor
-    if _mineru_process_executor is None:
-        _mineru_process_executor = ProcessPoolExecutor(
-            max_workers=1,
-            mp_context=multiprocessing.get_context('spawn'),
-        )
-    return _mineru_process_executor
-
-
-def _shutdown_mineru_executor() -> None:
-    """Shut down the MinerU ProcessPoolExecutor to kill the subprocess and
-    release all GPU memory (including CUDA context).  Safe to call repeatedly."""
-    global _mineru_process_executor
-    if _mineru_process_executor is not None:
-        try:
-            _mineru_process_executor.shutdown(wait=False)
-            logger.info("[MinerU] ProcessPoolExecutor shut down — subprocess GPU memory released")
-        except Exception as e:
-            logger.warning(f"[MinerU] Error shutting down executor: {e}")
-        _mineru_process_executor = None
-
-# Minimum free VRAM (MB) required to run MinerU hybrid_auto with VLM backend
-MIN_VRAM_MB_FOR_MINERU = 14000
+from .transformers_runtime import ensure_transformers_runtime_ready
 
 
 _pdf_cache_dir: Path | None = None
 PDF_CACHE_TTL_DAYS = 7
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _should_skip_marker_gpu_queue() -> tuple[bool, str]:
+    return False, "Using GPU queue first for Marker best-effort parse"
+
+
+PDF_PARSE_MAX_CONCURRENT = max(1, int(os.getenv("PDF_PARSE_MAX_CONCURRENT", "1")))
+PDF_PARSE_MAX_QUEUE = max(0, int(os.getenv("PDF_PARSE_MAX_QUEUE", "2")))
+PDF_BACKGROUND_UPGRADE_IDLE_GRACE_SECONDS = max(
+    0.0,
+    float(os.getenv("PDF_BACKGROUND_UPGRADE_IDLE_GRACE_SECONDS", "0.5")),
+)
+PDF_VECTOR_INDEX_MAX_CONCURRENT = max(1, int(os.getenv("PDF_VECTOR_INDEX_MAX_CONCURRENT", "1")))
+PDF_ENABLE_BACKGROUND_MARKER_UPGRADE = _env_flag("PDF_ENABLE_BACKGROUND_MARKER_UPGRADE", True)
+PDF_PARSE_METHOD_MARKER = "marker"
+PDF_PARSE_METHOD_PYMUPDF = "pymupdf"
+PDF_PARSE_METHOD_FAILED = "parse_failed"
+PDF_PARSE_METHOD_WEB = "web"
+PDF_UPGRADE_STATUS_SCHEDULED = "scheduled"
+PDF_UPGRADE_STATUS_DISABLED = "disabled"
+PDF_UPGRADE_STATUS_RUNNING = "running"
+PDF_UPGRADE_STATUS_QUEUED_GPU = "queued_gpu"
+PDF_UPGRADE_STATUS_RUNNING_GPU = "running_gpu"
+PDF_UPGRADE_STATUS_DIRECT_CPU = "direct_cpu"
+PDF_UPGRADE_STATUS_FALLBACK_CPU = "fallback_cpu"
+PDF_UPGRADE_STATUS_SKIPPED = "skipped"
+PDF_UPGRADE_STATUS_COMPLETED = "completed"
+PDF_UPGRADE_STATUS_FAILED = "failed"
+MARKER_CACHE_SUFFIX = ".marker.md"
+PYMUPDF_CACHE_SUFFIX = ".md"
+STRUCTURED_CACHE_SUFFIX = ".structured.json"
+STRUCTURED_SCHEMA_VERSION = 2
+PdfParseMethod = Literal["marker", "pymupdf", "parse_failed", "web"]
+
+_MAX_WEB_DOWNLOAD_BYTES = 5 * 1024 * 1024
+_MAX_WEB_TEXT_CHARS = 120_000
+_REPOSITORY_SOURCE_TYPES = frozenset({"github", "gitlab", "gitee"})
+_LIGHTWEIGHT_WEB_SOURCE_TYPES = frozenset({
+    "github",
+    "gitlab",
+    "gitee",
+    "zenodo",
+    "documentation",
+    "blog",
+    "wikipedia",
+    "huggingface",
+})
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedPdfResult:
+    markdown: str
+    parse_method: PdfParseMethod
+    page_count: int
+    structured_content: dict[str, Any]
+
+
+HIGH_QUALITY_CACHE_SUFFIXES: tuple[tuple[str, str], ...] = (
+    (MARKER_CACHE_SUFFIX, PDF_PARSE_METHOD_MARKER),
+)
+CACHED_MARKDOWN_CANDIDATES: tuple[tuple[str, str], ...] = (
+    *HIGH_QUALITY_CACHE_SUFFIXES,
+    (PYMUPDF_CACHE_SUFFIX, PDF_PARSE_METHOD_PYMUPDF),
+)
+CACHE_ARTEFACT_SUFFIXES: tuple[str, ...] = (
+    '.pdf',
+    '.pdf.partial',
+    '.json',
+    STRUCTURED_CACHE_SUFFIX,
+    *(suffix for suffix, _ in CACHED_MARKDOWN_CANDIDATES),
+)
+MARKER_SUBPROCESS_JOIN_TIMEOUT_SECONDS = 5.0
+_marker_upgrade_tasks: dict[str, asyncio.Task[None]] = {}
+_vector_index_tasks: dict[str, asyncio.Task[None]] = {}
+_vector_index_pending: dict[str, dict[str, Any]] = {}
+_pdf_parse_semaphore: asyncio.Semaphore | None = None
+_vector_index_semaphore: asyncio.Semaphore | None = None
+
+
+class MarkerGpuQueueTimeout(RuntimeError):
+    """Raised when a Marker GPU task stays pending in the shared queue for too long."""
+
+
+class PdfParseBusyError(RuntimeError):
+    """Raised when the foreground PDF parse queue is saturated."""
 
 
 def _get_pdf_cache_dir() -> Path:
@@ -75,7 +139,7 @@ def _get_pdf_cache_dir() -> Path:
 
 
 def get_pdf_image_path(url_hash: str, filename: str) -> Path:
-    """Return the persistent storage path for a MinerU-extracted PDF image.
+    """Return the persistent storage path for an extracted PDF image.
 
     Used by the /pdf-images/{url_hash}/{filename} HTTP endpoint to locate files.
     Images are stored at: pdf_cache/images/{url_hash}/{filename}
@@ -108,11 +172,98 @@ def get_pdf_image_path(url_hash: str, filename: str) -> Path:
     return images_dir / filename
 
 
+def _get_pdf_parse_semaphore() -> asyncio.Semaphore:
+    global _pdf_parse_semaphore
+    if _pdf_parse_semaphore is None:
+        _pdf_parse_semaphore = asyncio.Semaphore(PDF_PARSE_MAX_CONCURRENT)
+    return _pdf_parse_semaphore
+
+
+def _get_vector_index_semaphore() -> asyncio.Semaphore:
+    global _vector_index_semaphore
+    if _vector_index_semaphore is None:
+        _vector_index_semaphore = asyncio.Semaphore(PDF_VECTOR_INDEX_MAX_CONCURRENT)
+    return _vector_index_semaphore
+
+
+def _get_pdf_parse_waiter_count(semaphore: asyncio.Semaphore) -> int:
+    waiters = getattr(semaphore, "_waiters", None)
+    if not waiters:
+        return 0
+    try:
+        return sum(1 for waiter in waiters if waiter is not None and not waiter.done())
+    except TypeError:
+        return len(waiters)
+
+
+def _get_pdf_parse_running_count(semaphore: asyncio.Semaphore) -> int:
+    available_slots = max(0, int(getattr(semaphore, "_value", 0)))
+    return max(0, PDF_PARSE_MAX_CONCURRENT - available_slots)
+
+
+def _get_pdf_parse_load_snapshot(semaphore: asyncio.Semaphore | None = None) -> tuple[int, int]:
+    active_semaphore = semaphore or _get_pdf_parse_semaphore()
+    return (
+        _get_pdf_parse_running_count(active_semaphore),
+        _get_pdf_parse_waiter_count(active_semaphore),
+    )
+
+
+def _is_pdf_parse_idle(semaphore: asyncio.Semaphore | None = None) -> tuple[bool, str]:
+    active_semaphore = semaphore or _get_pdf_parse_semaphore()
+    running_count, waiter_count = _get_pdf_parse_load_snapshot(active_semaphore)
+    if running_count > 0 or waiter_count > 0:
+        return (
+            False,
+            f"foreground PDF parse activity detected (running={running_count}, waiting={waiter_count})",
+        )
+    return True, "foreground PDF parse capacity is idle"
+
+
+def _raise_if_pdf_parse_queue_full(semaphore: asyncio.Semaphore, slot_label: str) -> None:
+    waiter_count = _get_pdf_parse_waiter_count(semaphore)
+    if waiter_count < PDF_PARSE_MAX_QUEUE:
+        return
+
+    running_count = _get_pdf_parse_running_count(semaphore)
+    logger.warning(
+        f"[PDFParse] Rejecting slot '{slot_label}' because queue is full "
+        f"(running={running_count}, waiting={waiter_count}, "
+        f"max_concurrent={PDF_PARSE_MAX_CONCURRENT}, max_queue={PDF_PARSE_MAX_QUEUE})"
+    )
+    raise PdfParseBusyError(
+        "The system is currently busy and cannot parse this PDF right now. Please try again later."
+    )
+
+
+async def _run_with_pdf_parse_slot(
+    slot_label: str,
+    work: Callable[[], Any],
+    *,
+    reject_when_queue_full: bool = False,
+) -> Any:
+    semaphore = _get_pdf_parse_semaphore()
+    if semaphore.locked():
+        if reject_when_queue_full:
+            _raise_if_pdf_parse_queue_full(semaphore, slot_label)
+        logger.info(
+            f"[PDFParse] Waiting for parse slot '{slot_label}' "
+            f"(max_concurrent={PDF_PARSE_MAX_CONCURRENT}, waiting={_get_pdf_parse_waiter_count(semaphore)})"
+        )
+    async with semaphore:
+        logger.info(
+            f"[PDFParse] Acquired parse slot '{slot_label}' "
+            f"(max_concurrent={PDF_PARSE_MAX_CONCURRENT})"
+        )
+        return await work()
+
+
 PDF_URL_PATTERNS = [
     r'\.pdf$',
     
     r'arxiv\.org/(pdf|abs)/',
     r'arxiv\.org/pdf/',
+    r'openreview\.net/(pdf|forum|note)\?id=',
     
     r'ncbi\.nlm\.nih\.gov/pmc/articles/',
     r'pubmed\.ncbi\.nlm\.nih\.gov/',
@@ -193,8 +344,28 @@ def _get_url_hash(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()[:16]
 
 
-def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any], str | None] | None:
-    """Returns (pdf_bytes, meta, cached_markdown_or_None) or None if not cached/expired."""
+def _remove_cached_pdf_artifacts(url_hash: str, *, remove_vectorstore: bool = False) -> None:
+    """Delete all persisted cache artifacts for a cached PDF hash."""
+    cache_dir = _get_pdf_cache_dir()
+    for suffix in CACHE_ARTEFACT_SUFFIXES:
+        file_path = cache_dir / f"{url_hash}{suffix}"
+        if file_path.exists():
+            file_path.unlink()
+
+    images_dir = cache_dir / "images" / url_hash
+    if images_dir.exists() and images_dir.is_dir():
+        shutil.rmtree(images_dir, ignore_errors=True)
+
+    if remove_vectorstore:
+        try:
+            from .chat_pdf_vectorstore import delete_pdf_from_vectorstore
+            delete_pdf_from_vectorstore(url_hash)
+        except Exception as e:
+            logger.error(f"Error cleaning vector store for {url_hash}: {e}")
+
+
+def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any], str | None, str | None] | None:
+    """Returns (pdf_bytes, meta, cached_markdown_or_None, parse_method_or_None)."""
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
@@ -211,32 +382,29 @@ def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any], str | None] | None
         if datetime.now() - cached_time > timedelta(days=PDF_CACHE_TTL_DAYS):
             logger.info(f"PDF cache expired for {url}")
             try:
-                pdf_file.unlink()
-                meta_file.unlink()
-                md_file = cache_dir / f"{url_hash}.md"
-                if md_file.exists():
-                    md_file.unlink()
-            except:
+                _remove_cached_pdf_artifacts(url_hash, remove_vectorstore=True)
+            except Exception:
                 pass
             return None
 
         pdf_bytes = pdf_file.read_bytes()
 
-        # Prefer MinerU high-precision cache; fall back to pymupdf cache.
+        # Prefer the highest-quality cached markdown; fall back to PyMuPDF.
         cached_md = None
-        mineru_file = cache_dir / f"{url_hash}.mineru.md"
-        pymupdf_file = cache_dir / f"{url_hash}.md"
-        for md_candidate in (mineru_file, pymupdf_file):
+        cached_md_method = None
+        for suffix, method in CACHED_MARKDOWN_CANDIDATES:
+            md_candidate = cache_dir / f"{url_hash}{suffix}"
             if md_candidate.exists():
                 try:
                     cached_md = md_candidate.read_text(encoding='utf-8')
-                    if md_candidate == mineru_file:
-                        logger.info(f"PDF cache: using high-precision MinerU result for {url}")
+                    cached_md_method = method
+                    if method == PDF_PARSE_METHOD_MARKER:
+                        logger.info(f"PDF cache: using high-quality parsed result for {url}")
                     break
                 except Exception:
                     pass
 
-        return pdf_bytes, meta, cached_md
+        return pdf_bytes, meta, cached_md, cached_md_method
     except Exception as e:
         logger.error(f"Error reading PDF cache: {e}")
         return None
@@ -258,6 +426,15 @@ def _save_pdf_to_cache(url: str, pdf_bytes: bytes, title: str = "", markdown: st
             'title': title,
             'cached_at': datetime.now().isoformat(),
             'size_bytes': len(pdf_bytes),
+            'parse_method': None,
+            'structured_parse_method': None,
+            'structured_parse_ready': False,
+            'high_quality_parse_pending': False,
+            'high_quality_parse_ready': False,
+            'high_quality_upgrade_status': None,
+            'high_quality_upgrade_detail': None,
+            'high_quality_upgrade_updated_at': None,
+            **_build_cached_article_meta_fields(url, title),
         }
         with open(meta_file, 'w') as f:
             json.dump(meta, f, indent=2)
@@ -272,6 +449,588 @@ def _save_pdf_to_cache(url: str, pdf_bytes: bytes, title: str = "", markdown: st
         logger.error(f"Error saving PDF to cache: {e}")
 
 
+def _save_lightweight_markdown_to_cache(
+    url: str,
+    markdown: str,
+    title: str,
+    source_type: str,
+    *,
+    is_academic: bool,
+) -> None:
+    """Persist lightweight webpage / repository extraction using the existing markdown cache."""
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        meta_file = cache_dir / f"{url_hash}.json"
+        md_file = cache_dir / f"{url_hash}{PYMUPDF_CACHE_SUFFIX}"
+        now_iso = datetime.now().isoformat()
+        page_count = max(1, _extract_page_count(markdown) or 1)
+
+        md_file.write_text(markdown, encoding='utf-8')
+        _save_structured_to_cache(url, _build_document_graph_from_markdown(markdown, PDF_PARSE_METHOD_WEB))
+
+        meta = {
+            'url': url,
+            'title': title,
+            'cached_at': now_iso,
+            'size_bytes': len(markdown.encode('utf-8')),
+            'page_count': page_count,
+            'parse_method': PDF_PARSE_METHOD_WEB,
+            'structured_parse_method': PDF_PARSE_METHOD_WEB,
+            'structured_parse_ready': True,
+            'high_quality_parse_pending': False,
+            'high_quality_parse_ready': False,
+            'high_quality_upgrade_status': PDF_UPGRADE_STATUS_SKIPPED,
+            'high_quality_upgrade_detail': "Lightweight webpage extraction does not use PDF upgrade",
+            'high_quality_upgrade_updated_at': now_iso,
+            'is_academic': is_academic,
+            'content_kind': 'webpage',
+            **_build_cached_article_meta_fields(url, title),
+        }
+        meta['source_type'] = source_type or meta.get('source_type') or detect_source_type(url)
+        with open(meta_file, 'w') as f:
+            json.dump(meta, f, indent=2)
+
+        logger.info(f"Cached lightweight page: {url} ({page_count} pseudo-pages)")
+    except Exception as e:
+        logger.error(f"Error saving lightweight page cache for {url}: {e}")
+
+
+def _get_cached_lightweight_document(url: str) -> tuple[dict[str, Any], str] | None:
+    meta = get_cached_pdf_meta(url)
+    markdown = get_cached_markdown(url)
+    if not meta or not markdown:
+        return None
+
+    parse_method = str(meta.get('parse_method') or '')
+    content_kind = str(meta.get('content_kind') or '')
+    if parse_method == PDF_PARSE_METHOD_WEB or content_kind == 'webpage':
+        return meta, markdown
+    return None
+
+
+def _source_label_for_display(source_type: str) -> str:
+    return {
+        'github': 'GitHub',
+        'gitlab': 'GitLab',
+        'gitee': 'Gitee',
+        'zenodo': 'Zenodo',
+        'documentation': 'Docs',
+        'blog': 'Blog',
+        'wikipedia': 'Wikipedia',
+        'huggingface': 'Hugging Face',
+        'web': 'Web',
+        'pdf': 'PDF',
+    }.get(source_type, source_type.upper() if source_type else 'Web')
+
+
+def _derive_title_from_url(url: str, fallback: str = "") -> str:
+    if fallback:
+        return fallback
+    try:
+        parsed = urlparse(url)
+        segments = [unquote(part) for part in parsed.path.split('/') if part]
+        if segments:
+            return segments[-1].replace('-', ' ').replace('_', ' ')
+    except Exception:
+        pass
+    return url
+
+
+def _normalize_lightweight_web_text(text: str) -> str:
+    normalized_lines: list[str] = []
+    previous_blank = True
+    for raw_line in str(text or '').splitlines():
+        line = re.sub(r'\s+', ' ', raw_line).strip()
+        if not line:
+            if not previous_blank and normalized_lines:
+                normalized_lines.append('')
+            previous_blank = True
+            continue
+        normalized_lines.append(line)
+        previous_blank = False
+    return "\n".join(normalized_lines).strip()
+
+
+def _clean_lightweight_metadata_value(text: str, max_len: int = 280) -> str:
+    normalized = _normalize_lightweight_web_text(text).replace("\n", " ").strip(" -:|\t")
+    if len(normalized) <= max_len:
+        return normalized
+    return normalized[: max_len - 3].rstrip() + "..."
+
+
+def _collect_selector_texts(
+    soup: Any,
+    selectors: tuple[str, ...] | list[str],
+    *,
+    max_items: int = 4,
+    max_len: int = 280,
+    min_len: int = 3,
+) -> list[str]:
+    collected: list[str] = []
+    seen: set[str] = set()
+    for selector in selectors:
+        try:
+            nodes = soup.select(selector)
+        except Exception:
+            continue
+        for node in nodes:
+            value = _clean_lightweight_metadata_value(node.get_text(" ", strip=True), max_len=max_len)
+            if len(value) < min_len:
+                continue
+            dedupe_key = value.lower()
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            collected.append(value)
+            if len(collected) >= max_items:
+                return collected
+    return collected
+
+
+def _extract_definition_list_metadata(
+    soup: Any,
+    selectors: tuple[str, ...] | list[str],
+    *,
+    max_items: int = 8,
+) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for selector in selectors:
+        try:
+            roots = soup.select(selector)
+        except Exception:
+            roots = []
+        for root in roots:
+            for dt in root.select('dt'):
+                dd = dt.find_next_sibling('dd')
+                if dd is None:
+                    continue
+                key = _clean_lightweight_metadata_value(dt.get_text(" ", strip=True), max_len=64)
+                value = _clean_lightweight_metadata_value(dd.get_text(" ", strip=True), max_len=320)
+                if not key or not value:
+                    continue
+                dedupe_key = (key.lower(), value.lower())
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                pairs.append((key, value))
+                if len(pairs) >= max_items:
+                    return pairs
+    return pairs
+
+
+def _extract_lightweight_metadata_items(soup: Any, source_type: str) -> list[tuple[str, str]]:
+    items: list[tuple[str, str]] = []
+
+    if source_type in _REPOSITORY_SOURCE_TYPES:
+        overview_selectors = {
+            'github': (
+                'p.f4.my-3',
+                'div.BorderGrid-cell p.f4',
+                'div[data-testid="repository-description"]',
+            ),
+            'gitlab': (
+                'div.project-page-layout p.gl-text-subtle',
+                'div.project-description',
+                'div.home-panel-title + p',
+            ),
+            'gitee': (
+                'div.project-desc',
+                'div.project-intro',
+                'div.repository-description',
+            ),
+        }
+        topic_selectors = {
+            'github': ('a[href*="/topics/"]',),
+            'gitlab': ('a.topic-badge', 'span.gl-badge'),
+            'gitee': ('a.topic-tag', 'span.ui-label'),
+        }
+        overviews = _collect_selector_texts(soup, overview_selectors.get(source_type, ()), max_items=1, max_len=320)
+        topics = _collect_selector_texts(soup, topic_selectors.get(source_type, ()), max_items=8, max_len=40, min_len=2)
+        if overviews:
+            items.append(("Repository overview", overviews[0]))
+        if topics:
+            items.append(("Topics", ", ".join(topics[:8])))
+        return items
+
+    if source_type == 'zenodo':
+        metadata = _extract_definition_list_metadata(
+            soup,
+            (
+                'section#record-detail',
+                'div.record-main',
+                'div#record-page',
+                'body',
+            ),
+            max_items=8,
+        )
+        preferred_order = ['doi', 'publication date', 'published', 'type', 'version', 'license', 'keywords', 'communities']
+        ranked = sorted(
+            metadata,
+            key=lambda pair: next(
+                (idx for idx, marker in enumerate(preferred_order) if marker in pair[0].lower()),
+                len(preferred_order),
+            ),
+        )
+        return ranked[:8]
+
+    return items
+
+
+def _build_lightweight_platform_note(source_type: str) -> str:
+    if source_type in _REPOSITORY_SOURCE_TYPES:
+        return (
+            'This is a lightweight repository-page extraction focused on the landing page / README. '
+            'For file trees, source code, or deeper implementation details, open the repository link directly and use page navigation.'
+        )
+    if source_type == 'zenodo':
+        return (
+            'This is a lightweight Zenodo record extraction. '
+            'For full metadata, attached files, or downloads, open the record page directly.'
+        )
+    return (
+        'This is a lightweight page extraction. '
+        'If you need interactive elements or more detail, open the page directly.'
+    )
+
+
+def _select_primary_html_container(soup: Any, source_type: str) -> Any:
+    selector_map = {
+        'github': ('div#readme', 'div[data-testid="readme-content"]', 'article.markdown-body', 'main'),
+        'gitlab': ('div.readme-holder', 'section.md', 'div.file-content', 'div.blob-content', 'main'),
+        'gitee': ('div#readme', 'div.repository-readme', 'div.file_content', 'div.markdown-body', 'main'),
+        'zenodo': ('div#collapse-description', 'div.record-main', 'section#record-detail', 'main'),
+        'documentation': ('article', 'main', '[role="main"]'),
+        'blog': ('article', 'main', '[role="main"]'),
+        'huggingface': ('main', 'article'),
+    }
+    selectors = [*selector_map.get(source_type, ()), 'article', 'main', '[role="main"]', 'body']
+    seen: set[str] = set()
+    for selector in selectors:
+        if selector in seen:
+            continue
+        seen.add(selector)
+        try:
+            node = soup.select_one(selector)
+        except Exception:
+            node = None
+        if node is not None:
+            return node
+    return soup.body or soup
+
+
+def _build_lightweight_page_markdown(
+    title: str,
+    *,
+    url: str,
+    source_type: str,
+    extracted_text: str,
+    description: str = "",
+    metadata_items: list[tuple[str, str]] | None = None,
+) -> str:
+    body = extracted_text[:_MAX_WEB_TEXT_CHARS].strip()
+    lines = [
+        '--- Page 1 ---',
+        f'# {title}',
+        '',
+        f'- **URL**: {url}',
+        f'- **Source**: {_source_label_for_display(source_type)}',
+    ]
+    if description:
+        lines.extend(['', '## Overview', description.strip()])
+    if metadata_items:
+        lines.append('')
+        lines.append('## Metadata')
+        for key, value in metadata_items:
+            lines.append(f'- **{key}**: {value}')
+    lines.extend([
+        '',
+        '## Note',
+        _build_lightweight_platform_note(source_type),
+    ])
+    lines.extend(['', '## Extracted Content', body])
+    return "\n".join(lines).strip()
+
+
+def _extract_lightweight_markdown_from_html(
+    html_content: str,
+    *,
+    url: str,
+    title: str,
+    source_type: str,
+) -> tuple[str, str] | None:
+    if not html_content.strip():
+        return None
+
+    try:
+        from bs4 import BeautifulSoup
+    except Exception:
+        BeautifulSoup = None  # type: ignore[assignment]
+
+    if BeautifulSoup is None:
+        extracted_text = _normalize_lightweight_web_text(_extract_marker_text_from_html(html_content))
+        final_title = _derive_title_from_url(url, fallback=title)
+        if len(extracted_text) < 160:
+            return None
+        return final_title, _build_lightweight_page_markdown(
+            final_title,
+            url=url,
+            source_type=source_type,
+            extracted_text=extracted_text,
+        )
+
+    soup = BeautifulSoup(html_content, 'html.parser')
+    for tag in soup(["script", "style", "noscript", "svg"]):
+        tag.decompose()
+
+    def _meta_content(**attrs: str) -> str:
+        node = soup.find('meta', attrs=attrs)
+        if node is None:
+            return ''
+        return str(node.get('content') or '').strip()
+
+    extracted_title = (
+        _meta_content(property='og:title')
+        or _meta_content(name='twitter:title')
+        or (soup.title.get_text(' ', strip=True) if soup.title else '')
+    )
+    content_root = _select_primary_html_container(soup, source_type)
+    extracted_text = _normalize_lightweight_web_text(_extract_marker_text_from_html(str(content_root)))
+    if len(extracted_text) < 240 and content_root is not (soup.body or soup):
+        extracted_text = _normalize_lightweight_web_text(_extract_marker_text_from_html(str(soup.body or soup)))
+
+    if len(extracted_text) < 160:
+        return None
+
+    description = (
+        _meta_content(name='description')
+        or _meta_content(property='og:description')
+        or _meta_content(name='twitter:description')
+    )
+    metadata_items = _extract_lightweight_metadata_items(soup, source_type)
+    final_title = _derive_title_from_url(url, fallback=extracted_title or title)
+    markdown = _build_lightweight_page_markdown(
+        final_title,
+        url=url,
+        source_type=source_type,
+        extracted_text=extracted_text,
+        description=description,
+        metadata_items=metadata_items,
+    )
+    return final_title, markdown
+
+
+def _should_try_lightweight_web_first(source_type: str) -> bool:
+    return source_type in _LIGHTWEIGHT_WEB_SOURCE_TYPES
+
+
+def _should_try_lightweight_web_fallback(url: str, source_type: str) -> bool:
+    return source_type in _LIGHTWEIGHT_WEB_SOURCE_TYPES or (source_type == 'web' and not is_pdf_url(url))
+
+
+async def _fetch_lightweight_web_markdown(
+    url: str,
+    title: str,
+    source_type: str,
+    timeout: float = 30.0,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        'success': False,
+        'title': title,
+        'markdown': None,
+        'error': 'download_failed',
+        'error_code': None,
+        'error_detail': None,
+    }
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                          '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,text/plain,text/markdown;q=0.9,*/*;q=0.8',
+        }
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            response = await client.get(url, headers=headers)
+
+        if response.status_code != 200:
+            result['error_code'] = 'http_status'
+            result['error_detail'] = (
+                f"This page returned HTTP {response.status_code}, so automatic reading is unavailable right now. "
+                "It may require login, anti-bot checks, or interactive navigation. Please open the page directly."
+            )
+            return result
+
+        content = response.content
+        if len(content) > _MAX_WEB_DOWNLOAD_BYTES:
+            result['error'] = 'parse_failed'
+            result['error_code'] = 'page_too_large'
+            result['error_detail'] = (
+                "This page is too large for lightweight extraction. Please open it directly for the full content."
+            )
+            return result
+
+        content_type = (response.headers.get('content-type') or '').lower()
+        if content[:4] == b'%PDF' or 'application/pdf' in content_type:
+            result['error_code'] = 'points_to_pdf'
+            result['error_detail'] = (
+                "This link points to a PDF document. Please use the PDF read flow or open the PDF directly."
+            )
+            return result
+
+        final_title = title
+        markdown: str | None = None
+        if any(kind in content_type for kind in ('text/plain', 'text/markdown')):
+            plain_text = _normalize_lightweight_web_text(response.text)
+            if len(plain_text) >= 160:
+                final_title = _derive_title_from_url(str(response.url), fallback=title)
+                markdown = _build_lightweight_page_markdown(
+                    final_title,
+                    url=str(response.url),
+                    source_type=source_type,
+                    extracted_text=plain_text,
+                )
+        else:
+            extracted = _extract_lightweight_markdown_from_html(
+                response.text,
+                url=str(response.url),
+                title=title,
+                source_type=source_type,
+            )
+            if extracted is not None:
+                final_title, markdown = extracted
+
+        if not markdown:
+            result['error'] = 'parse_failed'
+            result['error_code'] = 'unreadable_page'
+            result['error_detail'] = (
+                "I could not extract enough readable content from this page. "
+                "It may rely on heavy client-side rendering or interactive browsing. Please open the link directly for details."
+            )
+            return result
+
+        result.update({
+            'success': True,
+            'title': final_title,
+            'markdown': markdown,
+            'error': None,
+            'error_detail': None,
+        })
+        return result
+    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        result['error_code'] = 'network_unreachable'
+        result['error_detail'] = "The page could not be reached because of a network connection problem. Please try again later or open it directly."
+        return result
+    except httpx.TimeoutException as e:
+        result['error_code'] = 'request_timeout'
+        result['error_detail'] = "The page took too long to respond. Please try again later or open it directly."
+        return result
+    except Exception as e:
+        result['error'] = 'parse_failed'
+        result['error_code'] = 'unexpected_error'
+        result['error_detail'] = "An unexpected error occurred while preparing this page. Please open the link directly for more detail."
+        return result
+
+
+async def _process_lightweight_web_url(
+    url: str,
+    title: str,
+    base_url: str,
+    api_key: str,
+    model: str,
+    use_cache: bool = True,
+) -> dict[str, Any]:
+    source_type = detect_source_type(url)
+    result: dict[str, Any] = {
+        'url': url,
+        'title': title,
+        'source_type': source_type,
+        'is_academic': False,
+        'success': False,
+        'summary': None,
+        'pdf_content': None,
+        'error': None,
+        'error_code': None,
+        'error_detail': None,
+        'from_cache': False,
+        'reference_card': None,
+        'page_count': 1,
+        'parse_method': PDF_PARSE_METHOD_WEB,
+        'structured_parse_method': PDF_PARSE_METHOD_WEB,
+        'high_quality_pending': False,
+        'image_count': 0,
+        'images_ready': False,
+    }
+
+    try:
+        markdown: str | None = None
+        cache_meta: dict[str, Any] | None = None
+        cached = _get_cached_lightweight_document(url) if use_cache else None
+        if cached is not None:
+            cache_meta, markdown = cached
+            result['from_cache'] = True
+            result['title'] = str(cache_meta.get('title') or title)
+            result['page_count'] = int(cache_meta.get('page_count') or 1)
+            result['parse_method'] = str(cache_meta.get('parse_method') or PDF_PARSE_METHOD_WEB)
+            result['structured_parse_method'] = str(cache_meta.get('structured_parse_method') or PDF_PARSE_METHOD_WEB)
+
+        if not markdown:
+            fetch_result = await _fetch_lightweight_web_markdown(url, title, source_type)
+            if not fetch_result.get('success'):
+                result['error'] = str(fetch_result.get('error') or 'download_failed')
+                result['error_code'] = fetch_result.get('error_code')
+                result['error_detail'] = str(fetch_result.get('error_detail') or 'Unable to fetch page content.')
+                return result
+            markdown = str(fetch_result.get('markdown') or '')
+            result['title'] = str(fetch_result.get('title') or title)
+
+        if not markdown.strip():
+            result['error'] = 'parse_failed'
+            result['error_code'] = 'empty_content'
+            result['error_detail'] = (
+                "Lightweight extraction returned no readable content. Please open the page directly for more detail."
+            )
+            return result
+
+        academic = bool(cache_meta.get('is_academic')) if cache_meta else is_academic_content(markdown, source_type)
+        result['is_academic'] = academic
+        result['pdf_content'] = markdown
+        result['page_count'] = max(1, _extract_page_count(markdown) or int(result.get('page_count') or 1))
+
+        if use_cache and not result['from_cache']:
+            await asyncio.to_thread(
+                _save_lightweight_markdown_to_cache,
+                url,
+                markdown,
+                str(result['title'] or title),
+                source_type,
+                is_academic=academic,
+            )
+
+        summary = await summarize_pdf_content(
+            markdown,
+            str(result['title']) if result['title'] is not None else title,
+            base_url,
+            api_key,
+            model,
+            is_academic=academic,
+        )
+        result['success'] = True
+        result['summary'] = summary
+        result['reference_card'] = format_reference_card(
+            str(result['title']) if result['title'] is not None else title,
+            url,
+            source_type,
+            is_academic=academic,
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error processing lightweight page {url}: {e}")
+        result['error'] = 'parse_failed'
+        result['error_code'] = 'unexpected_error'
+        result['error_detail'] = "An unexpected error occurred while processing this page. Please open the link directly for more detail."
+        return result
+
+
 def _extract_page_count(markdown: str) -> int:
     """Return the total page count from markdown with '--- Page X ---' markers.
 
@@ -282,12 +1041,22 @@ def _extract_page_count(markdown: str) -> int:
     return max(page_nums) if page_nums else 0
 
 
-def _update_meta_with_parse_info(url: str, page_count: int, parse_method: str) -> None:
-    """Update the cached JSON metadata with page_count and parse_method.
+def _extract_arxiv_id(url: str) -> str | None:
+    match = re.search(r'arxiv\.org/(?:abs|pdf|html)/([\w\.\-]+)', url, re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(1).replace('.pdf', '')
 
-    This is a best-effort update: failures are logged but never raised so that
-    the caller (cache-save path) is never disrupted.
-    """
+
+def _extract_openreview_id(url: str) -> str | None:
+    match = re.search(r'openreview\.net/(?:forum|note|pdf)\?id=([^&#]+)', url, re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _update_meta_fields(url: str, **fields: Any) -> None:
+    """Best-effort update for cached PDF metadata fields."""
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
@@ -296,12 +1065,41 @@ def _update_meta_with_parse_info(url: str, page_count: int, parse_method: str) -
             return
         with open(meta_file, 'r') as f:
             meta = json.load(f)
-        meta['page_count'] = page_count
-        meta['parse_method'] = parse_method
+        for key, value in fields.items():
+            if value is not None:
+                meta[key] = value
+        title_for_lookup = str(meta.get('title') or '')
+        source_type = str(meta.get('source_type') or detect_source_type(url))
+        meta['source_type'] = source_type
+        meta['source_priority'] = _cached_article_source_priority_for_source(source_type)
+        meta['normalized_title'] = _normalize_cached_article_lookup_text(title_for_lookup)
+        meta['doi'] = _extract_doi(url)
+        meta['arxiv_id'] = _extract_arxiv_id(url)
+        meta['openreview_id'] = _extract_openreview_id(url)
         with open(meta_file, 'w') as f:
             json.dump(meta, f, indent=2)
     except Exception as e:
         logger.error(f"Error updating meta for {url}: {e}")
+
+
+def _record_high_quality_upgrade_state(
+    url: str,
+    status: str,
+    detail: str,
+    *,
+    level: str = "info",
+    **extra_fields: Any,
+) -> None:
+    """Record internal high-quality upgrade state to backend logs and cache meta."""
+    _update_meta_fields(
+        url,
+        high_quality_upgrade_status=status,
+        high_quality_upgrade_detail=detail,
+        high_quality_upgrade_updated_at=datetime.now().isoformat(),
+        **extra_fields,
+    )
+    log_fn = getattr(logger, level, logger.info)
+    log_fn(f"[PDFUpgrade] {status} | {url} | {detail}")
 
 
 def _update_meta_academic_flag(url: str, is_academic: bool) -> None:
@@ -326,59 +1124,240 @@ def _update_meta_academic_flag(url: str, is_academic: bool) -> None:
         logger.error(f"Error updating academic flag for {url}: {e}")
 
 
-def _save_markdown_to_cache(url: str, markdown: str, paper_title: str = "") -> None:
-    """Save pymupdf-parsed markdown to cache (fast tier)."""
+def _save_structured_to_cache(url: str, structured_content: dict[str, Any]) -> None:
+    """Persist the normalized Document Graph / Block Graph sidecar."""
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
-        md_file = cache_dir / f"{url_hash}.md"
+        structured_file = cache_dir / f"{url_hash}{STRUCTURED_CACHE_SUFFIX}"
+        structured_file.write_text(
+            json.dumps(structured_content, ensure_ascii=False, indent=2),
+            encoding='utf-8',
+        )
+    except Exception as e:
+        logger.error(f"Error saving structured cache for {url}: {e}")
+
+
+def get_cached_structured_content(url: str) -> dict[str, Any] | None:
+    """Return the cached normalized Document Graph / Block Graph for *url*."""
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        structured_file = cache_dir / f"{url_hash}{STRUCTURED_CACHE_SUFFIX}"
+        if not structured_file.exists():
+            return None
+        structured_content = json.loads(structured_file.read_text(encoding='utf-8'))
+        if not isinstance(structured_content, dict):
+            return None
+        schema_version = _safe_int(structured_content.get("schema_version"), 0)
+        if schema_version < STRUCTURED_SCHEMA_VERSION:
+            logger.info(
+                f"Ignoring stale structured cache for {url}: "
+                f"schema_version={schema_version}, expected>={STRUCTURED_SCHEMA_VERSION}"
+            )
+            return None
+        if not isinstance(structured_content.get("blocks"), list):
+            return None
+        return structured_content
+    except Exception:
+        return None
+
+
+def _save_markdown_to_cache(
+    url: str,
+    markdown: str,
+    _paper_title: str = "",
+    structured_content: dict[str, Any] | None = None,
+    *,
+    high_quality_pending: bool = False,
+) -> None:
+    """Save pymupdf-parsed markdown to cache (fast tier)."""
+    del _paper_title
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        md_file = cache_dir / f"{url_hash}{PYMUPDF_CACHE_SUFFIX}"
         md_file.write_text(markdown, encoding='utf-8')
-        # Update JSON metadata with page count from this parse
         page_count = _extract_page_count(markdown)
-        _update_meta_with_parse_info(url, page_count, 'pymupdf')
-        logger.info(f"Cached pymupdf markdown for {url} ({page_count} pages)")
-        # Build vector index for semantic search
-        _trigger_vector_index(url_hash, markdown, paper_title)
+        _save_structured_to_cache(
+            url,
+            structured_content or _build_document_graph_from_markdown(markdown, PDF_PARSE_METHOD_PYMUPDF),
+        )
+        _update_meta_fields(
+            url,
+            page_count=page_count,
+            parse_method=PDF_PARSE_METHOD_PYMUPDF,
+            structured_parse_method=PDF_PARSE_METHOD_PYMUPDF,
+            structured_parse_ready=True,
+            high_quality_parse_pending=high_quality_pending,
+            high_quality_parse_ready=False,
+        )
+        logger.info(f"Cached PyMuPDF markdown for {url} ({page_count} pages)")
     except Exception as e:
         logger.error(f"Error saving markdown to cache: {e}")
 
 
-def _has_mineru_cache(url: str) -> bool:
-    """Return True if a high-precision MinerU result is already cached for this URL."""
+def _get_high_quality_cache_method(url: str) -> str | None:
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
-        return (cache_dir / f"{url_hash}.mineru.md").exists()
+        for suffix, method in HIGH_QUALITY_CACHE_SUFFIXES:
+            if (cache_dir / f"{url_hash}{suffix}").exists():
+                return method
+        return None
     except Exception:
-        return False
+        return None
 
 
-def _save_mineru_to_cache(url: str, markdown: str, paper_title: str = "") -> None:
-    """Save MinerU high-precision parse result to cache (slow/high-quality tier)."""
+def _has_high_quality_cache(url: str) -> bool:
+    return _get_high_quality_cache_method(url) is not None
+
+
+def _save_marker_to_cache(
+    url: str,
+    markdown: str,
+    _paper_title: str = "",
+    structured_content: dict[str, Any] | None = None,
+) -> None:
+    """Save Marker high-quality parse result to cache."""
+    del _paper_title
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
-        mineru_file = cache_dir / f"{url_hash}.mineru.md"
-        mineru_file.write_text(markdown, encoding='utf-8')
-        # MinerU supersedes pymupdf: update JSON meta with final page count
+        marker_file = cache_dir / f"{url_hash}{MARKER_CACHE_SUFFIX}"
+        marker_file.write_text(markdown, encoding='utf-8')
         page_count = _extract_page_count(markdown)
-        _update_meta_with_parse_info(url, page_count, 'mineru')
-        logger.info(f"Cached MinerU high-precision markdown for {url} ({page_count} pages)")
-        # Rebuild vector index with higher-quality MinerU content
-        _trigger_vector_index(url_hash, markdown, paper_title)
+        _save_structured_to_cache(
+            url,
+            structured_content or _build_document_graph_from_markdown(markdown, PDF_PARSE_METHOD_MARKER),
+        )
+        _update_meta_fields(
+            url,
+            page_count=page_count,
+            parse_method=PDF_PARSE_METHOD_MARKER,
+            structured_parse_method=PDF_PARSE_METHOD_MARKER,
+            structured_parse_ready=True,
+            high_quality_parse_pending=False,
+            high_quality_parse_ready=True,
+            high_quality_upgrade_status=PDF_UPGRADE_STATUS_COMPLETED,
+            high_quality_upgrade_detail="High-quality Marker cache is ready",
+            high_quality_upgrade_updated_at=datetime.now().isoformat(),
+        )
+        logger.info(f"Cached Marker markdown for {url} ({page_count} pages)")
     except Exception as e:
-        logger.error(f"Error saving MinerU markdown to cache: {e}")
+        logger.error(f"Error saving Marker markdown to cache: {e}")
 
 
 # ── Vector Index Helper ─────────────────────────────────────────────────────
 
-def _trigger_vector_index(url_hash: str, markdown: str, paper_title: str) -> None:
-    """Index PDF content into the vector store (best-effort, non-blocking)."""
+def _run_vector_index_sync(
+    url_hash: str,
+    markdown: str,
+    paper_title: str,
+    structured_content: dict[str, Any] | None = None,
+) -> int:
+    """Index PDF content into the vector store in a worker thread."""
+    from .chat_pdf_vectorstore import index_pdf_to_vectorstore
+    return index_pdf_to_vectorstore(
+        url_hash,
+        markdown,
+        paper_title or "Unknown",
+        structured_content=structured_content,
+    )
+
+
+def _register_vector_index_task(url_hash: str, task: asyncio.Task[None]) -> None:
+    _vector_index_tasks[url_hash] = task
+
+    def _cleanup(completed_task: asyncio.Task[None]) -> None:
+        current_task = _vector_index_tasks.get(url_hash)
+        if current_task is completed_task:
+            _vector_index_tasks.pop(url_hash, None)
+        try:
+            completed_task.result()
+        except asyncio.CancelledError:
+            logger.info(f"[VectorIndex] Background indexing cancelled for {url_hash}")
+        except Exception as e:
+            logger.error(f"[VectorIndex] Background indexing failed for {url_hash}: {e}")
+
+        if url_hash in _vector_index_pending and url_hash not in _vector_index_tasks:
+            logger.info(f"[VectorIndex] Rescheduling pending background index for {url_hash}")
+            next_task = asyncio.create_task(_run_vector_index_worker(url_hash))
+            _register_vector_index_task(url_hash, next_task)
+
+    task.add_done_callback(_cleanup)
+
+
+async def _run_vector_index_worker(url_hash: str) -> None:
+    semaphore = _get_vector_index_semaphore()
+    while True:
+        async with semaphore:
+            payload = _vector_index_pending.pop(url_hash, None)
+            if payload is None:
+                logger.info(f"[VectorIndex] No pending job found for {url_hash}; worker exiting")
+                return
+
+            parse_method = str(payload.get("parse_method") or "unknown")
+            logger.info(
+                f"[VectorIndex] Starting background index for {url_hash} "
+                f"(parse_method={parse_method}, max_concurrent={PDF_VECTOR_INDEX_MAX_CONCURRENT})"
+            )
+            try:
+                indexed = await asyncio.to_thread(
+                    _run_vector_index_sync,
+                    url_hash,
+                    str(payload.get("markdown") or ""),
+                    str(payload.get("paper_title") or "Unknown"),
+                    payload.get("structured_content") if isinstance(payload, dict) else None,
+                )
+                logger.info(
+                    f"[VectorIndex] Finished background index for {url_hash}: "
+                    f"{indexed} chunks (parse_method={parse_method})"
+                )
+            except Exception as e:
+                logger.error(f"[VectorIndex] Failed background index for {url_hash}: {e}")
+
+        if url_hash not in _vector_index_pending:
+            return
+
+
+def _trigger_vector_index(
+    url_hash: str,
+    markdown: str,
+    paper_title: str,
+    structured_content: dict[str, Any] | None = None,
+) -> None:
+    """Schedule PDF vector indexing in the background, coalescing repeated requests per URL."""
     try:
-        from .chat_pdf_vectorstore import index_pdf_to_vectorstore
-        index_pdf_to_vectorstore(url_hash, markdown, paper_title or "Unknown")
+        parse_method = "unknown"
+        if isinstance(structured_content, dict):
+            parse_method = str(structured_content.get("parse_method") or parse_method)
+
+        _vector_index_pending[url_hash] = {
+            "markdown": markdown,
+            "paper_title": paper_title or "Unknown",
+            "structured_content": structured_content,
+            "parse_method": parse_method,
+        }
+
+        existing_task = _vector_index_tasks.get(url_hash)
+        if existing_task is not None and not existing_task.done():
+            logger.info(
+                f"[VectorIndex] Updated pending background index for {url_hash} "
+                f"(parse_method={parse_method})"
+            )
+            return
+
+        task = asyncio.create_task(_run_vector_index_worker(url_hash))
+        _register_vector_index_task(url_hash, task)
+        logger.info(
+            f"[VectorIndex] Scheduled background index for {url_hash} "
+            f"(parse_method={parse_method})"
+        )
+    except RuntimeError as e:
+        logger.warning(f"[VectorIndex] No running event loop for {url_hash}: {e}")
     except Exception as e:
-        logger.error(f"[VectorIndex] Failed to index {url_hash}: {e}")
+        logger.error(f"[VectorIndex] Failed to schedule index for {url_hash}: {e}")
 
 
 # ── BM25 Page-Level Search ──────────────────────────────────────────────────
@@ -412,6 +1391,730 @@ def _split_md_into_pages(markdown: str) -> list[tuple[int, str]]:
         if content.strip():
             pages.append((page_num, content.strip()))
     return pages
+
+
+def _parse_markdown_table_rows(table_lines: list[str]) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for line in table_lines:
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if cells and any(cell and set(cell) != {"-", ":"} for cell in cells):
+            rows.append(cells)
+    return rows
+
+
+def _coerce_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value).strip()
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_bbox(raw_bbox: Any) -> dict[str, Any] | None:
+    if raw_bbox is None:
+        return None
+
+    coord_origin = None
+    values: tuple[Any, Any, Any, Any] | None = None
+
+    if isinstance(raw_bbox, dict):
+        if all(key in raw_bbox for key in ("l", "t", "r", "b")):
+            values = (raw_bbox.get("l"), raw_bbox.get("t"), raw_bbox.get("r"), raw_bbox.get("b"))
+        elif all(key in raw_bbox for key in ("x0", "y0", "x1", "y1")):
+            values = (raw_bbox.get("x0"), raw_bbox.get("y0"), raw_bbox.get("x1"), raw_bbox.get("y1"))
+        coord_origin = raw_bbox.get("coord_origin")
+    elif isinstance(raw_bbox, (list, tuple)) and len(raw_bbox) >= 4:
+        values = (raw_bbox[0], raw_bbox[1], raw_bbox[2], raw_bbox[3])
+    else:
+        if hasattr(raw_bbox, "as_tuple"):
+            try:
+                values = tuple(raw_bbox.as_tuple())[:4]  # type: ignore[assignment]
+            except Exception:
+                values = None
+        if values is None:
+            l = getattr(raw_bbox, "l", getattr(raw_bbox, "x0", None))
+            t = getattr(raw_bbox, "t", getattr(raw_bbox, "y0", None))
+            r = getattr(raw_bbox, "r", getattr(raw_bbox, "x1", None))
+            b = getattr(raw_bbox, "b", getattr(raw_bbox, "y1", None))
+            if None not in (l, t, r, b):
+                values = (l, t, r, b)
+        coord_origin = getattr(raw_bbox, "coord_origin", coord_origin)
+
+    if values is None:
+        return None
+
+    try:
+        left, top, right, bottom = (float(v) for v in values)
+    except (TypeError, ValueError):
+        return None
+
+    coord_value = getattr(coord_origin, "value", coord_origin)
+    return {
+        "l": left,
+        "t": top,
+        "r": right,
+        "b": bottom,
+        "coord_origin": _coerce_text(coord_value) or "TOPLEFT",
+    }
+
+
+def _build_markdown_table_from_rows(rows: list[list[str]]) -> str:
+    normalized_rows = [
+        [str(cell).strip() for cell in row]
+        for row in rows
+        if isinstance(row, list) and any(str(cell).strip() for cell in row)
+    ]
+    if not normalized_rows:
+        return ""
+
+    header = normalized_rows[0]
+    separator = ["---"] * len(header)
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join(separator) + " |",
+    ]
+    for row in normalized_rows[1:]:
+        padded = row + [""] * max(0, len(header) - len(row))
+        lines.append("| " + " | ".join(padded[:len(header)]) + " |")
+    return "\n".join(lines)
+
+
+def _extract_markdown_image(markdown_text: str) -> tuple[str, str]:
+    match = re.search(r'!\[([^\]]*)\]\(([^)]+)\)', markdown_text)
+    if not match:
+        return "", ""
+    return match.group(1).strip(), match.group(2).strip()
+
+
+def _make_page_node(page_num: int) -> dict[str, Any]:
+    return {
+        "id": f"page-{page_num}",
+        "type": "section",
+        "title": f"Page {page_num}",
+        "page_start": page_num,
+        "page_end": page_num,
+        "children": [],
+    }
+
+
+def _append_blocks_from_markdown_text(
+    *,
+    page_num: int,
+    page_text: str,
+    page_node: dict[str, Any],
+    blocks: list[dict[str, Any]],
+    next_block_id: Callable[[str, int], str],
+    current_path: list[str] | None = None,
+    base_payload: dict[str, Any] | None = None,
+) -> list[str]:
+    if not page_text.strip():
+        return list(current_path or [])
+
+    working_path = list(current_path or [])
+    common_payload = dict(base_payload or {})
+    paragraph_buffer: list[str] = []
+    table_buffer: list[str] = []
+    equation_buffer: list[str] = []
+    in_equation = False
+
+    def _append_block(block_type: str, **payload: Any) -> None:
+        block_id = next_block_id(block_type, page_num)
+        merged_payload = {
+            **common_payload,
+            **payload,
+        }
+        merged_payload.setdefault("section_path", working_path.copy())
+        block = {
+            "id": block_id,
+            "type": block_type,
+            "page": page_num,
+            "parent_id": page_node["id"],
+            **merged_payload,
+        }
+        blocks.append(block)
+        page_node["children"].append(block_id)
+
+    def _flush_paragraph() -> None:
+        if not paragraph_buffer:
+            return
+        text = "\n".join(paragraph_buffer).strip()
+        paragraph_buffer.clear()
+        if text:
+            _append_block("paragraph", text=text, section_path=working_path.copy())
+
+    def _flush_table() -> None:
+        if not table_buffer:
+            return
+        table_markdown = "\n".join(table_buffer).strip()
+        rows = _parse_markdown_table_rows(table_buffer)
+        table_buffer.clear()
+        if table_markdown:
+            _append_block(
+                "table",
+                markdown=table_markdown,
+                cells=rows,
+                caption="",
+                section_path=working_path.copy(),
+            )
+
+    def _flush_equation() -> None:
+        if not equation_buffer:
+            return
+        latex = "\n".join(equation_buffer).strip()
+        equation_buffer.clear()
+        if latex:
+            _append_block(
+                "equation",
+                latex=latex,
+                surrounding_text="",
+                section_path=working_path.copy(),
+            )
+
+    for raw_line in page_text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+
+        if stripped.startswith("$$"):
+            _flush_paragraph()
+            _flush_table()
+            if in_equation and stripped != "$$":
+                equation_buffer.append(stripped)
+            in_equation = not in_equation
+            if not in_equation:
+                _flush_equation()
+            continue
+
+        if in_equation:
+            equation_buffer.append(line)
+            continue
+
+        heading_match = re.match(r'^(#{1,6})\s+(.*)$', stripped)
+        image_match = re.match(r'^!\[([^\]]*)\]\(([^)]+)\)$', stripped)
+
+        if not stripped:
+            _flush_paragraph()
+            _flush_table()
+            continue
+
+        if heading_match:
+            _flush_paragraph()
+            _flush_table()
+            level = len(heading_match.group(1))
+            title = heading_match.group(2).strip()
+            working_path = working_path[: max(level - 1, 0)]
+            working_path.append(title)
+            _append_block(
+                "section",
+                text=title,
+                level=level,
+                section_path=working_path.copy(),
+            )
+            continue
+
+        if image_match:
+            _flush_paragraph()
+            _flush_table()
+            _append_block(
+                "figure",
+                image=image_match.group(2).strip(),
+                caption=image_match.group(1).strip(),
+                vision_summary="",
+                section_path=working_path.copy(),
+            )
+            continue
+
+        if stripped.startswith("|") and stripped.endswith("|"):
+            _flush_paragraph()
+            table_buffer.append(stripped)
+            continue
+
+        if table_buffer:
+            _flush_table()
+
+        paragraph_buffer.append(stripped)
+
+    _flush_paragraph()
+    _flush_table()
+    _flush_equation()
+    return working_path
+
+
+def _build_document_graph_from_markdown(markdown: str, parse_method: PdfParseMethod) -> dict[str, Any]:
+    """Normalize markdown into a lightweight Document Graph / Block Graph sidecar."""
+    page_entries = _split_md_into_pages(markdown)
+    blocks: list[dict[str, Any]] = []
+    section_nodes: list[dict[str, Any]] = []
+    block_counter = 0
+    current_path: list[str] = []
+
+    def _next_block_id(prefix: str, page_num: int) -> str:
+        nonlocal block_counter
+        block_counter += 1
+        return f"{prefix}-p{page_num}-{block_counter}"
+
+    for page_num, page_text in page_entries:
+        page_node = _make_page_node(page_num)
+        section_nodes.append(page_node)
+        current_path = _append_blocks_from_markdown_text(
+            page_num=page_num,
+            page_text=page_text,
+            page_node=page_node,
+            blocks=blocks,
+            next_block_id=_next_block_id,
+            current_path=current_path,
+            base_payload={
+                "source_backend": parse_method,
+                "native_label": "markdown",
+                "native_ref": f"markdown-page-{page_num}",
+            },
+        )
+
+    return {
+        "schema_version": STRUCTURED_SCHEMA_VERSION,
+        "type": "document",
+        "parse_method": parse_method,
+        "page_count": _extract_page_count(markdown),
+        "children": section_nodes,
+        "blocks": blocks,
+    }
+
+
+def _marker_image_block_id_from_name(image_name: str) -> str:
+    stem = Path(image_name).stem
+    if not stem:
+        return ""
+    return stem.replace("_", "/")
+
+
+def _normalize_marker_markdown(markdown: str, first_page_id: int | None) -> str:
+    page_offset = 1 if first_page_id == 0 else 0
+
+    def _replace_page_marker(match: re.Match[str]) -> str:
+        page_num = int(match.group(1)) + page_offset
+        return f"--- Page {page_num} ---"
+
+    return re.sub(r"\{(\d+)\}<<<PATHLAB_MARKER_PAGE_BREAK>>>", _replace_page_marker, markdown).strip()
+
+
+def _extract_marker_text_from_html(html_content: str) -> str:
+    if not html_content:
+        return ""
+    try:
+        from bs4 import BeautifulSoup
+
+        text = BeautifulSoup(html_content, "html.parser").get_text("\n", strip=True)
+    except Exception:
+        text = re.sub(r"<[^>]+>", " ", html_content)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    return text.strip()
+
+
+def _extract_marker_table_rows(html_content: str) -> list[list[str]]:
+    if not html_content:
+        return []
+    try:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html_content, "html.parser")
+        table = soup.find("table")
+        if table is None:
+            return []
+        rows: list[list[str]] = []
+        for tr in table.find_all("tr"):
+            cells = [cell.get_text(" ", strip=True) for cell in tr.find_all(["th", "td"])]
+            if cells:
+                rows.append(cells)
+        return rows
+    except Exception:
+        return []
+
+
+def _collect_marker_section_titles(node: dict[str, Any], title_map: dict[str, str]) -> None:
+    block_type = _coerce_text(node.get("block_type")).lower()
+    node_id = _coerce_text(node.get("id"))
+    if block_type == "sectionheader" and node_id:
+        title_text = _extract_marker_text_from_html(_coerce_text(node.get("html")))
+        if title_text:
+            title_map[node_id] = title_text
+    for child in node.get("children") or []:
+        if isinstance(child, dict):
+            _collect_marker_section_titles(child, title_map)
+
+
+def _resolve_marker_section_path(section_hierarchy: Any, title_map: dict[str, str]) -> list[str]:
+    if not isinstance(section_hierarchy, dict):
+        return []
+    resolved: list[str] = []
+    def _sort_key(item: tuple[Any, Any]) -> tuple[int, str]:
+        key_text = _coerce_text(item[0])
+        try:
+            return (0, f"{int(key_text):06d}")
+        except Exception:
+            return (1, key_text)
+
+    for value in (item[1] for item in sorted(section_hierarchy.items(), key=_sort_key)):
+        title = title_map.get(_coerce_text(value), _coerce_text(value))
+        if title and title not in resolved:
+            resolved.append(title)
+    return resolved
+
+
+def _find_marker_image_url(node: dict[str, Any], image_url_map: dict[str, str]) -> str:
+    node_id = _coerce_text(node.get("id"))
+    if node_id and image_url_map.get(node_id):
+        return image_url_map[node_id]
+    for child in node.get("children") or []:
+        if isinstance(child, dict):
+            image_url = _find_marker_image_url(child, image_url_map)
+            if image_url:
+                return image_url
+    return ""
+
+
+def _collect_marker_caption_text(node: dict[str, Any]) -> str:
+    parts: list[str] = []
+    self_text = _extract_marker_text_from_html(_coerce_text(node.get("html")))
+    if self_text:
+        parts.append(self_text)
+    for child in node.get("children") or []:
+        if not isinstance(child, dict):
+            continue
+        child_type = _coerce_text(child.get("block_type")).lower()
+        if child_type == "caption":
+            caption_text = _extract_marker_text_from_html(_coerce_text(child.get("html")))
+            if caption_text:
+                parts.append(caption_text)
+    deduped: list[str] = []
+    for part in parts:
+        if part not in deduped:
+            deduped.append(part)
+    return "\n".join(deduped).strip()
+
+
+def _build_document_graph_from_marker_document(
+    rendered_json: dict[str, Any],
+    parse_method: PdfParseMethod,
+    *,
+    max_pages: int = 0,
+    page_count_hint: int = 0,
+    image_url_map: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    blocks: list[dict[str, Any]] = []
+    section_nodes: list[dict[str, Any]] = []
+    page_node_map: dict[int, dict[str, Any]] = {}
+    block_counter = 0
+    image_url_map = image_url_map or {}
+    section_title_map: dict[str, str] = {}
+
+    for child in rendered_json.get("children") or []:
+        if isinstance(child, dict):
+            _collect_marker_section_titles(child, section_title_map)
+
+    initial_page_count = page_count_hint if page_count_hint > 0 else max_pages
+    for page_num in range(1, max(initial_page_count, 0) + 1):
+        page_node = _make_page_node(page_num)
+        section_nodes.append(page_node)
+        page_node_map[page_num] = page_node
+
+    def _next_block_id(prefix: str, page_num: int) -> str:
+        nonlocal block_counter
+        block_counter += 1
+        return f"{prefix}-p{page_num}-{block_counter}"
+
+    def _get_page_node(page_num: int) -> dict[str, Any]:
+        if page_num not in page_node_map:
+            page_node = _make_page_node(page_num)
+            page_node_map[page_num] = page_node
+            section_nodes.append(page_node)
+        return page_node_map[page_num]
+
+    def _append_block(page_num: int, block_type: str, **payload: Any) -> None:
+        page_node = _get_page_node(page_num)
+        block_id = _next_block_id(block_type, page_num)
+        block = {
+            "id": block_id,
+            "type": block_type,
+            "page": page_num,
+            "parent_id": page_node["id"],
+            **payload,
+        }
+        blocks.append(block)
+        page_node["children"].append(block_id)
+
+    def _walk(node: dict[str, Any], page_num: int, current_path: list[str], parent_type: str = "") -> None:
+        raw_type = _coerce_text(node.get("block_type"))
+        normalized_type = raw_type.lower()
+        if not normalized_type or normalized_type == "page":
+            for child in node.get("children") or []:
+                if isinstance(child, dict):
+                    _walk(child, page_num, current_path, normalized_type)
+            return
+
+        if normalized_type in {"pageheader", "pagefooter", "footnote", "reference"}:
+            return
+
+        node_id = _coerce_text(node.get("id"))
+        html_content = _coerce_text(node.get("html"))
+        text = _extract_marker_text_from_html(html_content)
+        bbox = _normalize_bbox(node.get("bbox"))
+        resolved_path = _resolve_marker_section_path(node.get("section_hierarchy"), section_title_map) or current_path.copy()
+        base_payload = {
+            "bbox": bbox,
+            "section_path": resolved_path.copy(),
+            "source_backend": PDF_PARSE_METHOD_MARKER,
+            "native_label": raw_type,
+            "native_ref": node_id,
+        }
+
+        next_path = resolved_path.copy()
+        if normalized_type == "sectionheader":
+            title_text = text
+            if title_text:
+                next_path = resolved_path or [title_text]
+                if next_path[-1] != title_text:
+                    next_path = [*next_path, title_text]
+                _append_block(
+                    page_num,
+                    "section",
+                    text=title_text,
+                    level=max(1, len(next_path)),
+                    **{**base_payload, "section_path": next_path.copy()},
+                )
+            for child in node.get("children") or []:
+                if isinstance(child, dict):
+                    _walk(child, page_num, next_path, normalized_type)
+            return
+
+        if normalized_type == "table":
+            cells = _extract_marker_table_rows(html_content)
+            table_markdown = _build_markdown_table_from_rows(cells)
+            _append_block(
+                page_num,
+                "table",
+                caption=_collect_marker_caption_text(node),
+                markdown=table_markdown,
+                cells=cells,
+                image=_find_marker_image_url(node, image_url_map),
+                **base_payload,
+            )
+            for child in node.get("children") or []:
+                if isinstance(child, dict) and _coerce_text(child.get("block_type")).lower() not in {"caption", "picture", "table"}:
+                    _walk(child, page_num, next_path, normalized_type)
+            return
+
+        if normalized_type in {"picture", "figure"}:
+            image_url = _find_marker_image_url(node, image_url_map)
+            caption = _collect_marker_caption_text(node)
+            if image_url or caption:
+                _append_block(
+                    page_num,
+                    "figure",
+                    image=image_url,
+                    caption=caption,
+                    vision_summary="",
+                    **base_payload,
+                )
+            for child in node.get("children") or []:
+                if isinstance(child, dict) and _coerce_text(child.get("block_type")).lower() not in {"caption", "picture", "figure"}:
+                    _walk(child, page_num, next_path, normalized_type)
+            return
+
+        if normalized_type in {"equation", "formula"} and text:
+            _append_block(
+                page_num,
+                "equation",
+                latex=text,
+                surrounding_text="",
+                **base_payload,
+            )
+        elif normalized_type == "code" and text:
+            _append_block(page_num, "code", text=text, **base_payload)
+        elif normalized_type.startswith("list") and text:
+            _append_block(page_num, "list", text=text, **base_payload)
+        elif normalized_type == "caption" and parent_type in {"picture", "figure", "table"}:
+            return
+        elif text:
+            _append_block(page_num, "paragraph", text=text, **base_payload)
+
+        for child in node.get("children") or []:
+            if isinstance(child, dict):
+                _walk(child, page_num, next_path, normalized_type)
+
+    pages = [child for child in rendered_json.get("children") or [] if isinstance(child, dict)]
+    for page_index, page in enumerate(pages, start=1):
+        if max_pages > 0 and page_index > max_pages:
+            break
+        _get_page_node(page_index)
+        for child in page.get("children") or []:
+            if isinstance(child, dict):
+                _walk(child, page_index, [], "page")
+
+    section_nodes.sort(key=lambda node: int(node.get("page_start") or 0))
+    total_pages = page_count_hint or len(pages)
+    page_count = min(total_pages, max_pages) if max_pages > 0 else total_pages
+    return {
+        "schema_version": STRUCTURED_SCHEMA_VERSION,
+        "type": "document",
+        "parse_method": parse_method,
+        "page_count": page_count,
+        "children": section_nodes,
+        "blocks": blocks,
+    }
+
+
+def _build_document_graph_from_pymupdf_chunks(
+    page_chunks: list[dict[str, Any]],
+    parse_method: PdfParseMethod,
+) -> dict[str, Any]:
+    blocks: list[dict[str, Any]] = []
+    section_nodes: list[dict[str, Any]] = []
+    block_counter = 0
+    current_path: list[str] = []
+
+    def _next_block_id(prefix: str, page_num: int) -> str:
+        nonlocal block_counter
+        block_counter += 1
+        return f"{prefix}-p{page_num}-{block_counter}"
+
+    for chunk in page_chunks:
+        metadata = chunk.get("metadata", {}) if isinstance(chunk, dict) else {}
+        page_num = _safe_int(metadata.get("page", metadata.get("page_number", 0)), 0)
+        if page_num <= 0:
+            continue
+        page_text = str(chunk.get("text") or "")
+        page_node = _make_page_node(page_num)
+        section_nodes.append(page_node)
+
+        page_boxes = chunk.get("page_boxes")
+        if not isinstance(page_boxes, list) or not page_boxes:
+            current_path = _append_blocks_from_markdown_text(
+                page_num=page_num,
+                page_text=page_text,
+                page_node=page_node,
+                blocks=blocks,
+                next_block_id=_next_block_id,
+                current_path=current_path,
+                base_payload={
+                    "source_backend": PDF_PARSE_METHOD_PYMUPDF,
+                    "native_label": "text",
+                    "native_ref": f"pymupdf-page-{page_num}",
+                },
+            )
+            continue
+
+        block_count_before = len(blocks)
+        for page_box in page_boxes:
+            if not isinstance(page_box, dict):
+                continue
+            position = page_box.get("pos")
+            box_text = ""
+            if isinstance(position, (list, tuple)) and len(position) >= 2:
+                start = _safe_int(position[0], 0)
+                stop = _safe_int(position[1], 0)
+                box_text = page_text[start:stop].strip()
+
+            native_label = (_coerce_text(page_box.get("class")) or "text").lower()
+            bbox = _normalize_bbox(page_box.get("bbox"))
+            native_ref = f"page-box-{page_num}-{_safe_int(page_box.get('index'), len(blocks))}"
+            base_payload = {
+                "bbox": bbox,
+                "source_backend": PDF_PARSE_METHOD_PYMUPDF,
+                "native_label": native_label,
+                "native_ref": native_ref,
+            }
+
+            if native_label == "table":
+                rows = _parse_markdown_table_rows(box_text.splitlines())
+                blocks.append({
+                    "id": _next_block_id("table", page_num),
+                    "type": "table",
+                    "page": page_num,
+                    "parent_id": page_node["id"],
+                    "caption": "",
+                    "markdown": box_text,
+                    "cells": rows,
+                    "section_path": current_path.copy(),
+                    **base_payload,
+                })
+                page_node["children"].append(blocks[-1]["id"])
+                continue
+
+            if native_label in {"picture", "image"}:
+                caption, image = _extract_markdown_image(box_text)
+                if image or caption or box_text:
+                    blocks.append({
+                        "id": _next_block_id("figure", page_num),
+                        "type": "figure",
+                        "page": page_num,
+                        "parent_id": page_node["id"],
+                        "image": image,
+                        "caption": caption or box_text,
+                        "vision_summary": "",
+                        "section_path": current_path.copy(),
+                        **base_payload,
+                    })
+                    page_node["children"].append(blocks[-1]["id"])
+                continue
+
+            current_path = _append_blocks_from_markdown_text(
+                page_num=page_num,
+                page_text=box_text,
+                page_node=page_node,
+                blocks=blocks,
+                next_block_id=_next_block_id,
+                current_path=current_path,
+                base_payload=base_payload,
+            )
+
+        if len(blocks) == block_count_before and page_text:
+            current_path = _append_blocks_from_markdown_text(
+                page_num=page_num,
+                page_text=page_text,
+                page_node=page_node,
+                blocks=blocks,
+                next_block_id=_next_block_id,
+                current_path=current_path,
+                base_payload={
+                    "source_backend": PDF_PARSE_METHOD_PYMUPDF,
+                    "native_label": "text",
+                    "native_ref": f"pymupdf-page-{page_num}",
+                },
+            )
+
+    section_nodes.sort(key=lambda node: int(node.get("page_start") or 0))
+    return {
+        "schema_version": STRUCTURED_SCHEMA_VERSION,
+        "type": "document",
+        "parse_method": parse_method,
+        "page_count": max((int(node.get("page_start") or 0) for node in section_nodes), default=0),
+        "children": section_nodes,
+        "blocks": blocks,
+    }
+
+
+def _to_parsed_pdf_result(
+    markdown: str,
+    parse_method: PdfParseMethod,
+    structured_content: dict[str, Any] | None = None,
+) -> ParsedPdfResult:
+    structured_content = structured_content or _build_document_graph_from_markdown(markdown, parse_method)
+    return ParsedPdfResult(
+        markdown=markdown,
+        parse_method=parse_method,
+        page_count=int(structured_content.get("page_count") or 0),
+        structured_content=structured_content,
+    )
 
 
 def search_pdf_pages(
@@ -473,12 +2176,12 @@ def search_pdf_pages(
 def get_cached_markdown(url: str) -> str | None:
     """Return the best available cached markdown for *url*, or ``None``.
 
-    Prefers MinerU high-precision (``.mineru.md``) over PyMuPDF (``.md``).
+    Prefers high-quality structured parses over PyMuPDF.
     """
     try:
         cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
-        for suffix in ('.mineru.md', '.md'):
+        for suffix, _ in CACHED_MARKDOWN_CANDIDATES:
             md_file = cache_dir / f"{url_hash}{suffix}"
             if md_file.exists():
                 return md_file.read_text(encoding='utf-8')
@@ -495,18 +2198,9 @@ def invalidate_pdf_cache(url: str) -> None:
     served on the next request.
     """
     try:
-        import shutil
-        cache_dir = _get_pdf_cache_dir()
         url_hash = _get_url_hash(url)
-        for suffix in ('.pdf', '.pdf.partial', '.json', '.md', '.mineru.md'):
-            f = cache_dir / f"{url_hash}{suffix}"
-            if f.exists():
-                f.unlink()
-                logger.info(f"Invalidated PDF cache file: {f.name}")
-        img_dir = cache_dir / "images" / url_hash
-        if img_dir.exists():
-            shutil.rmtree(img_dir, ignore_errors=True)
-            logger.info(f"Invalidated PDF image dir: images/{url_hash}")
+        _remove_cached_pdf_artifacts(url_hash, remove_vectorstore=True)
+        logger.info(f"Invalidated PDF cache artefacts for {url}")
     except Exception as e:
         logger.error(f"Error invalidating PDF cache for {url}: {e}")
 
@@ -525,85 +2219,230 @@ def get_cached_pdf_meta(url: str) -> dict[str, Any] | None:
         return None
 
 
-async def _background_mineru_upgrade(url: str, pdf_bytes: bytes, max_pages: int = 0) -> None:
-    """Background task: run MinerU on a PDF that was already served via pymupdf.
+async def _parse_pdf_with_marker_best_effort(
+    pdf_bytes: bytes,
+    max_pages: int,
+    images_output_dir: Path | None,
+    images_url_prefix: str | None,
+    upgrade_url: str | None = None,
+) -> ParsedPdfResult | None:
+    """Run Marker via GPU queue when possible.
 
-    Saves the high-precision result to {url_hash}.mineru.md so the *next* cache hit
-    will automatically return the better parse.  Silently no-ops if a MinerU cache
-    already exists for this URL.
-
-    GPU selection happens inside the subprocess at execution time (not submission
-    time) so VRAM readings are accurate even when tasks are queued.  The
-    ProcessPoolExecutor(max_workers=1) serializes execution automatically.
-
-    max_pages=0 means unlimited: this task runs in the background so there is no
-    UX penalty for parsing all pages.
+    Foreground parses may fall back to CPU. Background upgrades skip CPU fallback
+    so they do not consume the only foreground PDF parse slot under load.
     """
-    if _has_mineru_cache(url):
-        return  # already upgraded
+    skip_gpu_queue, routing_detail = _should_skip_marker_gpu_queue()
+    fallback_detail = "GPU Marker path unavailable or failed; retrying high-quality upgrade on CPU"
+    logger.info(f"[Marker] Best-effort routing decision: {routing_detail}")
+    marker_result: ParsedPdfResult | None = None
+    if not skip_gpu_queue:
+        try:
+            marker_result = await _parse_pdf_with_marker_via_gpu_queue(
+                pdf_bytes,
+                max_pages,
+                images_output_dir,
+                images_url_prefix,
+                upgrade_url=upgrade_url,
+            )
+        except MarkerGpuQueueTimeout as e:
+            fallback_detail = str(e)
+            marker_result = None
+    else:
+        fallback_detail = routing_detail
+        marker_result = None
 
-    # Prepare persistent image directory so MinerU images survive temp-dir cleanup.
+    if marker_result is None:
+        if upgrade_url:
+            _record_high_quality_upgrade_state(
+                upgrade_url,
+                PDF_UPGRADE_STATUS_SKIPPED,
+                f"{fallback_detail}; skipping CPU fallback for background upgrade to protect foreground PDF parsing capacity",
+                high_quality_parse_pending=False,
+                high_quality_parse_ready=False,
+            )
+            return None
+        marker_result = await _parse_pdf_with_marker_on_cpu(
+            pdf_bytes,
+            max_pages,
+            images_output_dir,
+            images_url_prefix,
+        )
+    if marker_result is None:
+        return None
+    return marker_result
+
+
+def _register_marker_upgrade_task(url_hash: str, task: asyncio.Task[None]) -> None:
+    _marker_upgrade_tasks[url_hash] = task
+
+    def _cleanup(completed_task: asyncio.Task[None]) -> None:
+        current_task = _marker_upgrade_tasks.get(url_hash)
+        if current_task is completed_task:
+            _marker_upgrade_tasks.pop(url_hash, None)
+        try:
+            completed_task.result()
+        except asyncio.CancelledError:
+            logger.info(f"Background Marker upgrade cancelled for {url_hash}")
+        except Exception as e:
+            logger.error(f"Background Marker upgrade failed for {url_hash}: {e}")
+
+    task.add_done_callback(_cleanup)
+
+
+async def _run_marker_background_upgrade(url: str, title: str, pdf_bytes: bytes) -> None:
+    """Upgrade a fast PyMuPDF parse opportunistically in the background.
+
+    Background upgrades must never queue behind foreground parses. They only run
+    when the shared PDF parse capacity is fully idle.
+    """
+    if _has_high_quality_cache(url):
+        _record_high_quality_upgrade_state(
+            url,
+            PDF_UPGRADE_STATUS_COMPLETED,
+            "High-quality cache already exists; skipping background upgrade",
+            high_quality_parse_pending=False,
+            high_quality_parse_ready=True,
+        )
+        return
+
     url_hash = _get_url_hash(url)
     images_output_dir = _get_pdf_cache_dir() / "images" / url_hash
     images_url_prefix = f"{Config.GATEWAY_SERVICE_URL}/pdf-images/{url_hash}"
-
     try:
-        logger.info(f"[BG MinerU] Queuing upgrade for {url}")
-        loop = asyncio.get_event_loop()
-        executor = _get_mineru_executor()
-        markdown = await loop.run_in_executor(
-            executor,
-            _run_mineru_in_process,
-            pdf_bytes, max_pages,
-            str(images_output_dir), images_url_prefix,
-            MIN_VRAM_MB_FOR_MINERU,
+        if PDF_BACKGROUND_UPGRADE_IDLE_GRACE_SECONDS > 0:
+            logger.info(
+                f"[PDFUpgrade] Waiting {PDF_BACKGROUND_UPGRADE_IDLE_GRACE_SECONDS:.3f}s idle grace window "
+                f"before background Marker upgrade for {url_hash}"
+            )
+            await asyncio.sleep(PDF_BACKGROUND_UPGRADE_IDLE_GRACE_SECONDS)
+
+        if _has_high_quality_cache(url):
+            _record_high_quality_upgrade_state(
+                url,
+                PDF_UPGRADE_STATUS_COMPLETED,
+                "High-quality cache became available during the idle grace window; skipping background upgrade",
+                high_quality_parse_pending=False,
+                high_quality_parse_ready=True,
+            )
+            return
+
+        is_idle, idle_detail = _is_pdf_parse_idle()
+        if not is_idle:
+            _record_high_quality_upgrade_state(
+                url,
+                PDF_UPGRADE_STATUS_SKIPPED,
+                f"Background Marker upgrade skipped to preserve foreground priority: {idle_detail}",
+                level="warning",
+                high_quality_parse_pending=False,
+                high_quality_parse_ready=False,
+            )
+            return
+
+        _record_high_quality_upgrade_state(
+            url,
+            PDF_UPGRADE_STATUS_RUNNING,
+            "Background Marker upgrade started after confirming foreground PDF parse capacity is idle; it will not queue on the foreground parse semaphore",
+            high_quality_parse_pending=True,
+            high_quality_parse_ready=False,
         )
-        if markdown and not markdown.startswith("[Error"):
-            # Recover paper title from cached meta for vector re-indexing
-            meta = get_cached_pdf_meta(url)
-            title = (meta or {}).get("title", "")
-            _save_mineru_to_cache(url, markdown, paper_title=title)
-            logger.info(f"[BG MinerU] Upgrade complete for {url} ({len(markdown)} chars)")
-        else:
-            logger.warning(f"[BG MinerU] Upgrade failed for {url}: {markdown[:80]}")
+
+        async def _run_upgrade_parse() -> ParsedPdfResult | None:
+            return await _parse_pdf_with_marker_best_effort(
+                pdf_bytes,
+                0,
+                images_output_dir,
+                images_url_prefix,
+                upgrade_url=url,
+            )
+
+        result = await _run_upgrade_parse()
+
+        if result is None:
+            logger.info(f"Background Marker upgrade skipped for {url_hash} due to current system load")
+            return
+        if not result.markdown or result.markdown.startswith("[Error"):
+            _record_high_quality_upgrade_state(
+                url,
+                PDF_UPGRADE_STATUS_FAILED,
+                "Background Marker upgrade produced no usable result",
+                level="warning",
+                high_quality_parse_pending=False,
+                high_quality_parse_ready=False,
+            )
+            return
+
+        await _save_marker_to_cache_async(
+            url,
+            result.markdown,
+            paper_title=title,
+            structured_content=result.structured_content,
+        )
+        _record_high_quality_upgrade_state(
+            url,
+            PDF_UPGRADE_STATUS_COMPLETED,
+            "Background Marker upgrade completed; high-quality Marker cache is ready",
+            high_quality_parse_pending=False,
+            high_quality_parse_ready=True,
+        )
     except Exception as e:
-        logger.error(f"[BG MinerU] Upgrade error for {url}: {e}")
-    finally:
-        # Kill the subprocess to release GPU memory (CUDA context holds ~GBs).
-        _shutdown_mineru_executor()
+        _record_high_quality_upgrade_state(
+            url,
+            PDF_UPGRADE_STATUS_FAILED,
+            f"Background Marker upgrade error: {e}",
+            level="error",
+            high_quality_parse_pending=False,
+            high_quality_parse_ready=False,
+        )
 
 
-async def trigger_mineru_upgrade_by_hash(url_hash: str) -> bool:
-    """Look up a cached PDF by its url_hash and schedule a MinerU background upgrade.
-
-    Returns True if an upgrade was scheduled, False otherwise (already upgraded,
-    no cached PDF found, or GPU unavailable).  Safe to call repeatedly — the
-    underlying ``_background_mineru_upgrade`` is idempotent.
-    """
-    try:
-        cache_dir = _get_pdf_cache_dir()
-        # Already have MinerU result — nothing to do
-        if (cache_dir / f"{url_hash}.mineru.md").exists():
-            return False
-
-        meta_file = cache_dir / f"{url_hash}.json"
-        pdf_file = cache_dir / f"{url_hash}.pdf"
-        if not meta_file.exists() or not pdf_file.exists():
-            return False
-
-        with open(meta_file, 'r') as f:
-            meta = json.load(f)
-        url = meta.get("url")
-        if not url:
-            return False
-
-        pdf_bytes = pdf_file.read_bytes()
-        asyncio.create_task(_background_mineru_upgrade(url, pdf_bytes))
-        logger.info(f"[BG MinerU] Triggered upgrade from 404 image request for url_hash={url_hash}")
-        return True
-    except Exception as e:
-        logger.error(f"[BG MinerU] trigger_mineru_upgrade_by_hash error: {e}")
+def schedule_marker_upgrade(url: str, title: str, pdf_bytes: bytes) -> bool:
+    """Schedule a background Marker upgrade unless one is already cached or running."""
+    url_hash = _get_url_hash(url)
+    if not PDF_ENABLE_BACKGROUND_MARKER_UPGRADE:
+        _record_high_quality_upgrade_state(
+            url,
+            PDF_UPGRADE_STATUS_DISABLED,
+            "Background Marker upgrade disabled by config (PDF_ENABLE_BACKGROUND_MARKER_UPGRADE=false)",
+            high_quality_parse_pending=False,
+            high_quality_parse_ready=False,
+        )
+        logger.info(
+            f"[PDFUpgrade] disabled by config for {url_hash}; "
+            "skip scheduling background Marker upgrade"
+        )
         return False
+
+    if _has_high_quality_cache(url):
+        _record_high_quality_upgrade_state(
+            url,
+            PDF_UPGRADE_STATUS_COMPLETED,
+            "High-quality cache already exists; no background upgrade needed",
+            high_quality_parse_pending=False,
+            high_quality_parse_ready=True,
+        )
+        return False
+
+    existing_task = _marker_upgrade_tasks.get(url_hash)
+    if existing_task is not None and not existing_task.done():
+        _record_high_quality_upgrade_state(
+            url,
+            PDF_UPGRADE_STATUS_SCHEDULED,
+            "Background Marker upgrade already scheduled or running",
+            high_quality_parse_pending=True,
+            high_quality_parse_ready=False,
+        )
+        return False
+
+    _record_high_quality_upgrade_state(
+        url,
+        PDF_UPGRADE_STATUS_SCHEDULED,
+        f"Scheduled background Marker upgrade for '{title}' after fast parse",
+        high_quality_parse_pending=True,
+        high_quality_parse_ready=False,
+    )
+    task = asyncio.create_task(_run_marker_background_upgrade(url, title, pdf_bytes))
+    _register_marker_upgrade_task(url_hash, task)
+    return True
 
 
 def cleanup_expired_pdf_cache() -> int:
@@ -622,26 +2461,7 @@ def cleanup_expired_pdf_cache() -> int:
                 cached_time = datetime.fromisoformat(meta.get('cached_at', '2000-01-01'))
                 if now - cached_time > timedelta(days=PDF_CACHE_TTL_DAYS):
                     url_hash = meta_file.stem
-                    pdf_file = cache_dir / f"{url_hash}.pdf"
-                    
-                    if pdf_file.exists():
-                        pdf_file.unlink()
-                    # Remove pymupdf and MinerU cached markdown
-                    for suffix in (".md", ".mineru.md"):
-                        cached_file = cache_dir / f"{url_hash}{suffix}"
-                        if cached_file.exists():
-                            cached_file.unlink()
-                    # Remove MinerU-extracted images directory
-                    images_dir = cache_dir / "images" / url_hash
-                    if images_dir.exists() and images_dir.is_dir():
-                        shutil.rmtree(images_dir)
-                    # Remove vector store entries
-                    try:
-                        from .chat_pdf_vectorstore import delete_pdf_from_vectorstore
-                        delete_pdf_from_vectorstore(url_hash)
-                    except Exception as ve:
-                        logger.error(f"Error cleaning vector store for {url_hash}: {ve}")
-                    meta_file.unlink()
+                    _remove_cached_pdf_artifacts(url_hash, remove_vectorstore=True)
                     cleaned += 1
                     logger.info(f"Cleaned expired PDF cache: {meta.get('url', url_hash)}")
             except Exception as e:
@@ -661,6 +2481,16 @@ def get_arxiv_pdf_url(url: str) -> str:
         paper_id = match.group(2)
         paper_id = paper_id.replace('.pdf', '')
         return f"https://arxiv.org/pdf/{paper_id}.pdf"
+    return url
+
+
+def get_openreview_pdf_url(url: str) -> str:
+    """Convert OpenReview forum/note URLs to direct PDF download URLs."""
+    if 'openreview.net/pdf?' in url:
+        return url
+    match = re.search(r'openreview\.net/(?:forum|note|pdf)\?id=([^&#]+)', url, re.IGNORECASE)
+    if match:
+        return f"https://openreview.net/pdf?id={match.group(1)}"
     return url
 
 
@@ -1154,6 +2984,8 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
         # Step 1: Convert article page URLs to direct PDF download URLs.
         if 'arxiv.org' in url:
             url = get_arxiv_pdf_url(url)
+        elif 'openreview.net' in url:
+            url = get_openreview_pdf_url(url)
         elif 'nature.com' in url:
             url = get_nature_pdf_url(url)
         elif 'sciencedirect.com' in url or 'elsevier.com' in url:
@@ -1268,7 +3100,7 @@ def _parse_pdf_with_pymupdf(
     max_pages: int = 10,
     images_output_dir: Path | None = None,
     images_url_prefix: str | None = None,
-) -> str | None:
+) -> tuple[str, list[dict[str, Any]]] | None:
     """Fast PDF extraction using pymupdf4llm. No GPU required, typically <5 seconds.
 
     Uses pymupdf4llm.to_markdown() for high-quality Markdown output including:
@@ -1301,20 +3133,30 @@ def _parse_pdf_with_pymupdf(
     import tempfile as _tempfile
     tmp_file = _tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
     try:
+        logger.info(
+            f"[PyMuPDF] Starting fast parse: bytes={len(pdf_bytes)}, max_pages={max_pages}, "
+            f"image_export={images_output_dir is not None}"
+        )
         tmp_file.write(pdf_bytes)
         tmp_file.close()
 
+        logger.info(f"[PyMuPDF] Opening temporary PDF file: {tmp_file.name}")
         doc = pymupdf.open(tmp_file.name)
         total_pages = len(doc)
         pages_to_process = min(total_pages, max_pages) if max_pages > 0 else total_pages
         page_list = list(range(pages_to_process))
+        logger.info(
+            f"[PyMuPDF] Document opened: total_pages={total_pages}, pages_to_process={pages_to_process}"
+        )
 
         # Determine whether to extract images
         write_images = images_output_dir is not None
         image_path = str(images_output_dir) if write_images else ""
         if write_images:
             images_output_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"[PyMuPDF] Image export enabled: {image_path}")
 
+        logger.info("[PyMuPDF] Calling pymupdf4llm.to_markdown(page_chunks=True)")
         md_text = pymupdf4llm.to_markdown(
             doc,
             pages=page_list,
@@ -1327,6 +3169,7 @@ def _parse_pdf_with_pymupdf(
         )
 
         doc.close()
+        logger.info(f"[PyMuPDF] to_markdown completed: page_chunks={len(md_text)}")
 
         # md_text is a list of dicts when page_chunks=True
         # Each dict has "text", "metadata", "images", "tables", etc.
@@ -1345,12 +3188,12 @@ def _parse_pdf_with_pymupdf(
 
         # Quality checks
         if total_chars < 200:
-            logger.info(f"PyMuPDF: too short ({total_chars} chars), need MinerU fallback")
+            logger.info(f"PyMuPDF: too short ({total_chars} chars), need structured-parser fallback")
             return None
 
         garbage_ratio = garbage_chars / total_chars if total_chars > 0 else 0
         if garbage_ratio > 0.1:
-            logger.info(f"PyMuPDF: too much garbage ({garbage_ratio:.1%}), need MinerU fallback")
+            logger.info(f"PyMuPDF: too much garbage ({garbage_ratio:.1%}), need structured-parser fallback")
             return None
 
         # Per-page density check: catch scanned PDFs with sparse headers/footers
@@ -1361,7 +3204,7 @@ def _parse_pdf_with_pymupdf(
             if avg_chars_per_page < 50 and num_pages >= 3:
                 logger.info(
                     f"PyMuPDF: low per-page density ({avg_chars_per_page:.0f} chars/page "
-                    f"across {num_pages} pages), likely scanned PDF — need MinerU fallback"
+                    f"across {num_pages} pages), likely scanned PDF — need structured-parser fallback"
                 )
                 return None
 
@@ -1379,14 +3222,17 @@ def _parse_pdf_with_pymupdf(
             )
 
         img_count = md_content.count("![")
+        logger.info("[PyMuPDF] Building structured content from page chunks")
+        structured_content = _build_document_graph_from_pymupdf_chunks(md_text, PDF_PARSE_METHOD_PYMUPDF)
         logger.info(
             f"PyMuPDF fast extraction OK: {total_chars} chars, "
-            f"{len(page_sections)} pages, {img_count} images"
+            f"{len(page_sections)} pages, {img_count} images, "
+            f"{len(structured_content.get('blocks', []))} structured blocks"
         )
-        return md_content
+        return md_content, md_text
 
     except Exception as e:
-        logger.warning(f"PyMuPDF extraction failed: {e}")
+        logger.error(f"PyMuPDF extraction failed: {e}\n{traceback.format_exc()}")
         return None
     finally:
         # Clean up temp file
@@ -1396,296 +3242,520 @@ def _parse_pdf_with_pymupdf(
             pass
 
 
-
-def _cleanup_vllm_processes() -> None:
-    """Force-kill any orphaned vLLM EngineCore subprocesses spawned by this process.
-
-    This is a safety-net fallback called after the normal ModelSingleton
-    shutdown path.  It uses the OS process tree to find and kill children
-    whose command-line contains ``vllm`` or ``EngineCore``.
-    """
-    import signal
-    import subprocess as _sp
-
-    my_pid = os.getpid()
-    try:
-        # Find all child processes of the current process
-        result = _sp.run(
-            ["pgrep", "-P", str(my_pid), "-a"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode != 0:
-            return  # no children or pgrep not available
-
-        for line in result.stdout.strip().splitlines():
-            parts = line.split(None, 1)
-            if len(parts) < 2:
-                continue
-            child_pid_str, cmdline = parts
-            # Match vLLM EngineCore worker processes
-            if "vllm" in cmdline.lower() or "enginecore" in cmdline.lower():
-                child_pid = int(child_pid_str)
-                try:
-                    os.kill(child_pid, signal.SIGKILL)
-                    logger.info(
-                        f"[MinerU] Force-killed orphaned vLLM process "
-                        f"PID={child_pid}: {cmdline[:80]}"
-                    )
-                except ProcessLookupError:
-                    pass  # already dead
-                except Exception as _e:
-                    logger.warning(
-                        f"[MinerU] Failed to kill PID={child_pid}: {_e}"
-                    )
-    except Exception as e:
-        logger.debug(f"[MinerU] _cleanup_vllm_processes fallback error: {e}")
+def _parse_pdf_with_pymupdf_result(
+    pdf_bytes: bytes,
+    max_pages: int = 10,
+    images_output_dir: Path | None = None,
+    images_url_prefix: str | None = None,
+) -> ParsedPdfResult | None:
+    """Run PyMuPDF extraction and normalization in one worker-thread job."""
+    parsed = _parse_pdf_with_pymupdf(
+        pdf_bytes,
+        max_pages,
+        images_output_dir=images_output_dir,
+        images_url_prefix=images_url_prefix,
+    )
+    if parsed is None:
+        return None
+    markdown, page_chunks = parsed
+    structured_content = _build_document_graph_from_pymupdf_chunks(page_chunks, PDF_PARSE_METHOD_PYMUPDF)
+    return _to_parsed_pdf_result(markdown, PDF_PARSE_METHOD_PYMUPDF, structured_content)
 
 
-def _shutdown_mineru_vlm_singleton() -> None:
-    """Shutdown all vLLM engines tracked by MinerU's ModelSingleton and
-    release GPU memory.  Always safe to call (no-ops if nothing to clean)."""
-    try:
-        from mineru.backend.vlm.vlm_analyze import ModelSingleton
-        from mineru.utils.model_utils import clean_memory
-        import gc
-
-        if not ModelSingleton._models:
-            return
-
-        # 1) Explicitly shutdown each vLLM engine so EngineCore
-        #    subprocesses are terminated (terminate → join → kill).
-        for _key, _client in list(ModelSingleton._models.items()):
-            # Sync vLLM engine (backend == "vllm-engine")
-            _llm = getattr(_client, 'vllm_llm', None)
-            if _llm is not None:
-                try:
-                    _llm.llm_engine.engine_core.shutdown()
-                    logger.info(f"[MinerU] vLLM sync engine shutdown OK (key={_key})")
-                except Exception as _e:
-                    logger.warning(f"[MinerU] vLLM sync engine shutdown warning: {_e}")
-            # Async vLLM engine (backend == "vllm-async-engine")
-            _allm = getattr(_client, 'vllm_async_llm', None)
-            if _allm is not None:
-                try:
-                    _allm.engine_core.shutdown()
-                    logger.info(f"[MinerU] vLLM async engine shutdown OK (key={_key})")
-                except Exception as _e:
-                    logger.warning(f"[MinerU] vLLM async engine shutdown warning: {_e}")
-
-        # 2) Clear singleton dict & free CUDA memory.
-        ModelSingleton._models.clear()
-        clean_memory('cuda')
-        gc.collect()
-        logger.info("[MinerU] VLM singleton cleared — EngineCore processes terminated")
-    except Exception as _cleanup_err:
-        logger.warning(f"[MinerU] VLM singleton cleanup warning: {_cleanup_err}")
-
-    # 3) Fallback: kill any remaining vLLM child processes by PID.
-    _cleanup_vllm_processes()
-
-
-def _run_mineru_in_process(
+async def _parse_pdf_with_pymupdf_in_worker_thread(
     pdf_bytes: bytes,
     max_pages: int,
-    images_output_dir_str: str | None = None,
-    images_url_prefix: str | None = None,
-    min_vram_mb: float = 0,
-) -> str:
-    """Run MinerU parsing in a subprocess (called via ProcessPoolExecutor).
-
-    This function is the subprocess entry-point.  It selects the best GPU at
-    execution time (not submission time — the queue may delay execution), sets
-    CUDA_VISIBLE_DEVICES, runs MinerU, cleans up VLM resources, and returns
-    markdown.  All arguments must be picklable (no Path, no Lock).
-    """
-    import os as _os
-    import logging as _logging
-    _logger = _logging.getLogger(__name__)
-
-    # Ensure all GPUs are visible before selection.  An empty
-    # CUDA_VISIBLE_DEVICES string (inherited from the parent env) makes
-    # PyTorch report zero devices, so remove it if empty/whitespace-only.
-    _cvd = _os.environ.get("CUDA_VISIBLE_DEVICES")
-    if _cvd is not None and _cvd.strip() == "":
-        del _os.environ["CUDA_VISIBLE_DEVICES"]
-
-    # Select GPU at execution time for accurate VRAM readings
-    from backend.common.gpu_utils import select_optimal_gpu_for_task as _select_gpu
-    gpu_idx, free_mb = _select_gpu(min_vram_mb=min_vram_mb)
-    if gpu_idx == -1:
-        return (
-            "[Error: GPU unavailable — no GPU with sufficient free memory "
-            "for PDF parsing. Please try again later.]"
+    images_output_dir: Path | None,
+    images_url_prefix: str | None,
+) -> ParsedPdfResult | None:
+    """Run PyMuPDF parsing off the event loop so SSE heartbeats keep flowing."""
+    try:
+        return await asyncio.to_thread(
+            _parse_pdf_with_pymupdf_result,
+            pdf_bytes,
+            max_pages,
+            images_output_dir,
+            images_url_prefix,
         )
+    except Exception as e:
+        logger.warning(f"PyMuPDF worker-thread parse failed: {e}")
+        return None
 
-    _os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
-    _logger.info(f"[MinerU subprocess] Using cuda:{gpu_idx} ({free_mb:.0f} MB free)")
 
-    # ── Monkey-patch vLLM memory profiling assertion ────────────────────
-    # On shared-GPU machines, other processes may release VRAM while vLLM
-    # is profiling, causing free memory to *increase* — which triggers a
-    # hard AssertionError in vllm.v1.worker.gpu_worker.Worker.
-    # We replace the assertion with a warning so the engine can still start
-    # using a conservative memory estimate.
+
+def _extract_gpu_index_from_device(assigned_device: str | None) -> int | None:
+    """Extract the physical GPU index from strings like ``cuda:1``."""
+    if not assigned_device:
+        return None
+    match = re.fullmatch(r'cuda:(\d+)', assigned_device.strip().lower())
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _save_marker_rendered_images(
+    rendered_markdown: Any,
+    images_output_dir: Path | None,
+    images_url_prefix: str | None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    raw_image_url_map: dict[str, str] = {}
+    block_image_url_map: dict[str, str] = {}
+    if images_output_dir is None:
+        return raw_image_url_map, block_image_url_map
+
+    images_output_dir.mkdir(parents=True, exist_ok=True)
+    for image_index, (raw_name, image_obj) in enumerate((rendered_markdown.images or {}).items(), start=1):
+        suffix = Path(raw_name).suffix or ".png"
+        filename = f"figure-{image_index:03d}{suffix}"
+        image_path = images_output_dir / filename
+        image_obj.save(image_path)
+        image_url = f"{images_url_prefix}/{filename}" if images_url_prefix is not None else str(image_path)
+        raw_image_url_map[raw_name] = image_url
+        block_id = _marker_image_block_id_from_name(raw_name)
+        if block_id:
+            block_image_url_map[block_id] = image_url
+    return raw_image_url_map, block_image_url_map
+
+
+def _rewrite_marker_markdown_image_refs(markdown: str, raw_image_url_map: dict[str, str]) -> str:
+    normalized_markdown = markdown
+    for raw_name, image_url in raw_image_url_map.items():
+        normalized_markdown = normalized_markdown.replace(f"]({raw_name})", f"]({image_url})")
+    return normalized_markdown
+
+
+def _trim_paginated_markdown(markdown: str, max_pages: int) -> str:
+    if max_pages <= 0:
+        return markdown.strip()
+    page_sections: list[str] = []
+    for match in re.finditer(
+        r'--- Page (\d+) ---\n\n([\s\S]*?)(?=\n\n--- Page \d+ ---|\Z)',
+        markdown,
+    ):
+        if int(match.group(1)) > max_pages:
+            break
+        page_sections.append(f"--- Page {match.group(1)} ---\n\n{match.group(2).strip()}")
+    return "\n\n".join(section for section in page_sections if section.strip()).strip()
+
+
+def _marker_subprocess_entry(
+    result_conn,
+    pdf_bytes: bytes,
+    max_pages: int,
+    images_output_dir_str: str | None,
+    images_url_prefix: str | None,
+    accelerator_device: str,
+    physical_gpu_index: int | None,
+) -> None:
+    """Child-process entrypoint for isolated Marker parsing."""
     try:
-        import vllm.v1.worker.gpu_worker as _vllm_gw
-        import torch as _torch
+        if accelerator_device == "cuda":
+            if physical_gpu_index is not None:
+                os.environ["CUDA_VISIBLE_DEVICES"] = str(physical_gpu_index)
+                device_detail = f"physical_gpu_index={physical_gpu_index}"
+            else:
+                device_detail = "cuda(default-visible-device)"
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = ""
+            device_detail = "cpu"
+        logger.info(
+            f"[MarkerSubprocess] Starting child parse on {device_detail}, "
+            f"max_pages={max_pages}, image_export={bool(images_output_dir_str)}"
+        )
+        result = _parse_pdf_with_marker(
+            pdf_bytes,
+            max_pages,
+            images_output_dir=Path(images_output_dir_str) if images_output_dir_str else None,
+            images_url_prefix=images_url_prefix,
+            accelerator_device=accelerator_device,
+        )
+        logger.info(
+            f"[MarkerSubprocess] Child parse finished on {device_detail}, "
+            f"success={result is not None}"
+        )
+        result_conn.send(
+            {
+                "ok": True,
+                "result": {
+                    "markdown": result.markdown if result is not None else None,
+                    "parse_method": result.parse_method if result is not None else None,
+                    "page_count": result.page_count if result is not None else 0,
+                    "structured_content": result.structured_content if result is not None else None,
+                },
+            }
+        )
+    except Exception as e:
+        logger.error(
+            f"[MarkerSubprocess] Child parse crashed on {accelerator_device}"
+            f"{f':{physical_gpu_index}' if physical_gpu_index is not None else ''}: {e}\n"
+            f"{traceback.format_exc()}"
+        )
+        try:
+            result_conn.send({"ok": False, "error": str(e)})
+        except Exception:
+            pass
+    finally:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        gc.collect()
+        try:
+            result_conn.close()
+        except Exception:
+            pass
 
-        _orig_determine = _vllm_gw.Worker.determine_available_memory
 
-        @_torch.inference_mode()
-        def _patched_determine_available_memory(self):
-            """Wrapper that converts the memory-profiling assertion into a
-            warning + retry instead of a hard crash."""
-            import time as _time
-            _MAX_RETRIES = 3
-            for _attempt in range(1, _MAX_RETRIES + 1):
-                try:
-                    return _orig_determine(self)
-                except AssertionError as _ae:
-                    if "memory profiling" not in str(_ae):
-                        raise  # unrelated assertion — propagate
-                    if _attempt < _MAX_RETRIES:
-                        _logger.warning(
-                            f"[MinerU] vLLM memory profiling assertion "
-                            f"(attempt {_attempt}/{_MAX_RETRIES}), "
-                            f"retrying in 2s: {_ae}"
-                        )
-                        _time.sleep(2)
-                        # Re-take the init snapshot so the next attempt
-                        # starts from a fresh baseline.
-                        _torch.cuda.empty_cache()
-                        from vllm.utils import MemorySnapshot as _MemSnap
-                        self.init_snapshot = _MemSnap()
-                    else:
-                        _logger.warning(
-                            f"[MinerU] vLLM memory profiling assertion "
-                            f"persisted after {_MAX_RETRIES} retries: {_ae}"
-                        )
-                        raise
+def _run_marker_in_isolated_process(
+    pdf_bytes: bytes,
+    max_pages: int,
+    images_output_dir_str: str | None,
+    images_url_prefix: str | None,
+    accelerator_device: str,
+) -> ParsedPdfResult | None:
+    """Run Marker in a short-lived isolated subprocess."""
+    normalized_device = accelerator_device.strip().lower()
+    physical_gpu_index: int | None = None
+    if normalized_device.startswith("cuda"):
+        if normalized_device != "cuda":
+            physical_gpu_index = _extract_gpu_index_from_device(accelerator_device)
+            if physical_gpu_index is None:
+                raise RuntimeError(f"Invalid assigned GPU device for Marker parse: {accelerator_device}")
+        normalized_device = "cuda"
+    elif normalized_device != "cpu":
+        raise RuntimeError(f"Unsupported Marker accelerator device: {accelerator_device}")
 
-        _vllm_gw.Worker.determine_available_memory = _patched_determine_available_memory
-        _logger.info("[MinerU] Patched vLLM memory profiling for shared-GPU tolerance")
-    except Exception as _patch_err:
-        _logger.debug(f"[MinerU] Could not patch vLLM memory profiling: {_patch_err}")
+    ctx = multiprocessing.get_context('spawn')
+    parent_conn, child_conn = ctx.Pipe(duplex=False)
+    process = ctx.Process(
+        target=_marker_subprocess_entry,
+        args=(
+            child_conn,
+            pdf_bytes,
+            max_pages,
+            images_output_dir_str,
+            images_url_prefix,
+            normalized_device,
+            physical_gpu_index,
+        ),
+    )
 
-    images_output_dir = Path(images_output_dir_str) if images_output_dir_str else None
+    payload = None
     try:
-        return _parse_pdf_sync_inner(
-            pdf_bytes, max_pages, images_output_dir, images_url_prefix,
+        process.start()
+        child_conn.close()
+
+        while True:
+            if parent_conn.poll(0.5):
+                payload = parent_conn.recv()
+                break
+            if not process.is_alive():
+                break
+
+        process.join(timeout=MARKER_SUBPROCESS_JOIN_TIMEOUT_SECONDS)
+
+        if payload is None:
+            raise RuntimeError(
+                f"Marker subprocess exited without returning a result "
+                f"(exitcode={process.exitcode})"
+            )
+        if not payload.get("ok"):
+            raise RuntimeError(payload.get("error") or "Unknown Marker subprocess error")
+        result_payload = payload.get("result") or {}
+        markdown = result_payload.get("markdown")
+        if markdown is None:
+            return None
+        return ParsedPdfResult(
+            markdown=markdown,
+            parse_method=result_payload.get("parse_method") or PDF_PARSE_METHOD_MARKER,
+            page_count=_safe_int(result_payload.get("page_count"), 0),
+            structured_content=result_payload.get("structured_content") or {},
         )
     finally:
-        _shutdown_mineru_vlm_singleton()
+        try:
+            parent_conn.close()
+        except Exception:
+            pass
+        try:
+            child_conn.close()
+        except Exception:
+            pass
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=MARKER_SUBPROCESS_JOIN_TIMEOUT_SECONDS)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=MARKER_SUBPROCESS_JOIN_TIMEOUT_SECONDS)
 
 
-def _parse_pdf_sync_inner(
+async def _parse_pdf_with_marker_on_assigned_gpu(
+    pdf_bytes: bytes,
+    max_pages: int,
+    images_output_dir: Path | None,
+    images_url_prefix: str | None,
+    assigned_device: str,
+) -> ParsedPdfResult | None:
+    """Run Marker in an isolated subprocess on the queue-assigned GPU."""
+    loop = asyncio.get_running_loop()
+    try:
+        logger.info(
+            f"[Marker] Starting GPU parse on assigned_device={assigned_device}, "
+            f"max_pages={max_pages}, image_export={images_output_dir is not None}"
+        )
+        result = await loop.run_in_executor(
+            None,
+            _run_marker_in_isolated_process,
+            pdf_bytes,
+            max_pages,
+            str(images_output_dir) if images_output_dir else None,
+            images_url_prefix,
+            assigned_device,
+        )
+        if result is not None:
+            logger.info(
+                f"Marker GPU parse completed on {assigned_device}: "
+                f"{len(result.structured_content.get('blocks', []))} native blocks"
+            )
+        return result
+    except Exception as e:
+        logger.warning(
+            f"Marker GPU parse failed on {assigned_device}: {type(e).__name__}: {e!r}"
+        )
+        return None
+
+
+async def _parse_pdf_with_marker_via_gpu_queue(
+    pdf_bytes: bytes,
+    max_pages: int,
+    images_output_dir: Path | None,
+    images_url_prefix: str | None,
+    upgrade_url: str | None = None,
+) -> ParsedPdfResult | None:
+    """Submit Marker parsing to the shared GPU queue and await the result."""
+    from ..task_queue import TaskType, get_task_queue
+
+    logger.info(
+        f"[Marker] Preparing GPU queue parse: max_pages={max_pages}, "
+        f"image_export={images_output_dir is not None}, upgrade_url={bool(upgrade_url)}"
+    )
+    queue = get_task_queue()
+    worker_task = getattr(queue, "_worker_task", None)
+    if worker_task is None or worker_task.done():
+        logger.warning("Task queue is not running; skipping Marker GPU parse")
+        return None
+
+    loop = asyncio.get_running_loop()
+    result_future: asyncio.Future[ParsedPdfResult | None] = loop.create_future()
+    task_id = f"pdf-parse-{uuid.uuid4().hex}"
+
+    if upgrade_url:
+        _record_high_quality_upgrade_state(
+            upgrade_url,
+            PDF_UPGRADE_STATUS_QUEUED_GPU,
+            f"Waiting in GPU queue for Marker upgrade task {task_id}",
+            high_quality_parse_pending=True,
+            high_quality_parse_ready=False,
+        )
+
+    async def _queued_marker_job(
+        *,
+        assigned_device: str,
+        task_id: str | None = None,
+        **_: Any,
+    ) -> None:
+        try:
+            if result_future.cancelled():
+                if task_id:
+                    logger.info(f"Skipping cancelled Marker queued job {task_id} before GPU parse starts")
+                return
+            if upgrade_url:
+                _record_high_quality_upgrade_state(
+                    upgrade_url,
+                    PDF_UPGRADE_STATUS_RUNNING_GPU,
+                    f"Marker upgrade started on {assigned_device} via GPU queue task {task_id or 'unknown'}",
+                    high_quality_parse_pending=True,
+                    high_quality_parse_ready=False,
+                )
+            result = await _parse_pdf_with_marker_on_assigned_gpu(
+                pdf_bytes,
+                max_pages,
+                images_output_dir,
+                images_url_prefix,
+                assigned_device,
+            )
+            if not result_future.done():
+                result_future.set_result(result)
+        except Exception as e:
+            if task_id:
+                logger.warning(f"Marker queued job {task_id} failed on {assigned_device}: {e}")
+            if not result_future.done():
+                result_future.set_exception(e)
+            raise
+
+    await queue.submit(task_id, TaskType.INFERENCE, _queued_marker_job)
+    try:
+        wait_timeout_seconds = max(0.0, float(Config.MARKER_GPU_QUEUE_WAIT_TIMEOUT_SECONDS))
+        if wait_timeout_seconds > 0:
+            try:
+                return await asyncio.wait_for(
+                    asyncio.shield(result_future),
+                    timeout=wait_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                removed = await queue.cancel_pending_task(task_id)
+                if removed:
+                    detail = (
+                        f"Marker GPU result not ready after {wait_timeout_seconds:.1f}s and task {task_id} "
+                        f"had not started on GPU; "
+                        (
+                            "skipping CPU fallback for background upgrade"
+                            if upgrade_url
+                            else "falling back to CPU"
+                        )
+                    )
+                    logger.warning(detail)
+                    if not result_future.done():
+                        result_future.cancel()
+                    raise MarkerGpuQueueTimeout(detail)
+
+                logger.info(
+                    f"Marker GPU result not ready after {wait_timeout_seconds:.1f}s; "
+                    f"task {task_id} already started on GPU, continue waiting without CPU fallback"
+                )
+        return await result_future
+    except asyncio.CancelledError:
+        removed = await queue.cancel_pending_task(task_id)
+        if removed:
+            logger.info(f"Cancelled pending Marker GPU queue task {task_id}")
+        if not result_future.done():
+            result_future.cancel()
+        raise
+
+
+async def _parse_pdf_with_marker_on_cpu(
+    pdf_bytes: bytes,
+    max_pages: int,
+    images_output_dir: Path | None,
+    images_url_prefix: str | None,
+) -> ParsedPdfResult | None:
+    """Run Marker on CPU in an isolated subprocess when GPU parsing is unavailable."""
+    loop = asyncio.get_running_loop()
+    try:
+        logger.info(
+            f"[Marker] Starting CPU parse: max_pages={max_pages}, "
+            f"image_export={images_output_dir is not None}"
+        )
+        result = await loop.run_in_executor(
+            None,
+            _run_marker_in_isolated_process,
+            pdf_bytes,
+            max_pages,
+            str(images_output_dir) if images_output_dir else None,
+            images_url_prefix,
+            "cpu",
+        )
+        if result is not None:
+            logger.info(
+                "Marker CPU parse completed: "
+                f"{len(result.structured_content.get('blocks', []))} native blocks"
+            )
+        return result
+    except Exception as e:
+        logger.warning(f"Marker CPU parse failed: {type(e).__name__}: {e!r}")
+        return None
+
+
+def _parse_pdf_with_marker(
     pdf_bytes: bytes,
     max_pages: int,
     images_output_dir: Path | None = None,
     images_url_prefix: str | None = None,
-) -> str:
-    """Inner parsing logic, called with GPU lock held and CUDA_VISIBLE_DEVICES set.
-
-    Args:
-        pdf_bytes: Raw PDF bytes to parse.
-        max_pages: Maximum pages to parse (0 = unlimited).
-        images_output_dir: If provided, MinerU-extracted images are copied here
-            (persistent storage) before the temporary directory is cleaned up.
-        images_url_prefix: If provided, relative image references in the markdown
-            (e.g. ``images/fig1.jpg``) are rewritten to absolute HTTP URLs using
-            this prefix (e.g. ``http://127.0.0.1:6100/pdf-images/{hash}``).
-    """
+    accelerator_device: str = "cpu",
+) -> ParsedPdfResult | None:
+    """High-quality PDF extraction using Marker."""
     try:
-        from mineru.cli.common import convert_pdf_bytes_to_bytes_by_pypdfium2, prepare_env
-        from mineru.data.data_reader_writer import FileBasedDataWriter
-        from mineru.backend.hybrid.hybrid_analyze import doc_analyze as hybrid_doc_analyze
-        from mineru.backend.vlm.vlm_middle_json_mkcontent import union_make
-        from mineru.utils.enum_class import MakeMode
-        from mineru.utils.engine_utils import get_vlm_engine
-
-        md_content = ""
-        try:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                temp_path = Path(temp_dir)
-                pdf_path = temp_path / "input.pdf"
-                pdf_path.write_bytes(pdf_bytes)
-
-                output_dir = temp_path / "output"
-                local_image_dir, local_md_dir = prepare_env(output_dir, "input", "hybrid_auto")
-
-                # Use 'transformers' instead of 'auto' to avoid vLLM's
-                # memory-profiling assertion that crashes on shared-GPU
-                # machines when other processes release VRAM during init.
-                # transformers is stable and sufficient for one-PDF-at-a-time.
-                backend = get_vlm_engine(inference_engine='transformers', is_async=False)
-
-                start_page_id = 0
-                end_page_id = max_pages - 1 if max_pages > 0 else None
-
-                pdf_bytes_limited = convert_pdf_bytes_to_bytes_by_pypdfium2(
-                    pdf_bytes, start_page_id, end_page_id
-                )
-
-                middle_json, _, _ = hybrid_doc_analyze(
-                    pdf_bytes_limited,
-                    image_writer=FileBasedDataWriter(local_image_dir),
-                    backend=backend,
-                    parse_method="hybrid_auto",
-                    language="en",
-                    inline_formula_enable=True,
-                    server_url=None,
-                )
-
-                pdf_info = middle_json["pdf_info"]
-                image_dir = str(os.path.basename(local_image_dir))
-                pdf_info_list = pdf_info if isinstance(pdf_info, list) else []
-
-                # Build page-aware markdown: iterate per page and add page markers
-                if not pdf_info_list:
-                    return ""
-
-                page_sections = []
-                for page_info in pdf_info_list:
-                    page_idx = page_info.get('page_idx', len(page_sections))
-                    page_num = page_idx + 1
-
-                    page_md = str(union_make([page_info], MakeMode.MM_MD, image_dir) or "").strip()
-                    if page_md:
-                        page_sections.append(f"--- Page {page_num} ---\n\n{page_md}")
-
-                md_content = "\n\n".join(page_sections)
-
-                # ── Image persistence ────────────────────────────────────────
-                local_image_path = Path(local_image_dir)
-                if images_output_dir is not None and local_image_path.is_dir():
-                    images_output_dir.mkdir(parents=True, exist_ok=True)
-                    copied = 0
-                    for img_file in local_image_path.iterdir():
-                        if img_file.is_file():
-                            shutil.copy2(img_file, images_output_dir / img_file.name)
-                            copied += 1
-                    logger.info(f"[MinerU] Copied {copied} images to {images_output_dir}")
-
-                if images_url_prefix is not None and image_dir:
-                    md_content = re.sub(
-                        r'\(' + re.escape(image_dir) + r'/([^)\s]+)\)',
-                        f'({images_url_prefix}/\\1)',
-                        md_content,
-                    )
-        finally:
-            # ── VLM singleton cleanup (ALWAYS runs) ──────────────────────
-            # Must run even if parsing raised an exception, otherwise the
-            # vLLM EngineCore subprocess leaks GPU VRAM permanently.
-            _shutdown_mineru_vlm_singleton()
-
-        return md_content
-
+        ensure_transformers_runtime_ready("Marker PDF parse")
+        from marker.converters.pdf import PdfConverter
+        from marker.models import create_model_dict
+        from marker.renderers.json import JSONRenderer
+        from marker.renderers.markdown import MarkdownRenderer
     except ImportError as e:
-        logger.error(f"MinerU not available: {e}")
-        return "[Error: MinerU not installed or import failed]"
+        logger.info(f"Marker not available for structured fallback parse: {e}")
+        return None
+
+    tmp_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    try:
+        parse_started_at = time.perf_counter()
+        logger.info(
+            f"[Marker] Starting native parse: accelerator={accelerator_device}, "
+            f"bytes={len(pdf_bytes)}, max_pages={max_pages}, image_export={images_output_dir is not None}"
+        )
+        tmp_file.write(pdf_bytes)
+        tmp_file.close()
+        logger.info(f"[Marker] Temporary PDF created at {tmp_file.name}")
+
+        converter_started_at = time.perf_counter()
+        converter = PdfConverter(artifact_dict=create_model_dict(device=accelerator_device))
+        logger.info(
+            f"[Marker] PdfConverter created in {time.perf_counter() - converter_started_at:.2f}s"
+        )
+
+        convert_started_at = time.perf_counter()
+        document = converter.build_document(tmp_file.name)
+        logger.info(
+            f"[Marker] build_document completed in {time.perf_counter() - convert_started_at:.2f}s; exporting markdown/json"
+        )
+
+        markdown_renderer = MarkdownRenderer(
+            {
+                "paginate_output": True,
+                "page_separator": "<<<PATHLAB_MARKER_PAGE_BREAK>>>",
+            }
+        )
+        markdown_output = markdown_renderer(document)
+        raw_image_url_map, block_image_url_map = _save_marker_rendered_images(
+            markdown_output,
+            images_output_dir,
+            images_url_prefix,
+        )
+        first_page_id = _safe_int(getattr(document.pages[0], "page_id", 0), 0) if getattr(document, "pages", None) else 0
+        markdown = _normalize_marker_markdown(markdown_output.markdown, first_page_id)
+        markdown = _rewrite_marker_markdown_image_refs(markdown, raw_image_url_map)
+        markdown = _trim_paginated_markdown(markdown, max_pages)
+
+        rendered_json = JSONRenderer()(document).model_dump(mode="json")
+        page_count_hint = len(rendered_json.get("children") or [])
+        logger.info(
+            f"[Marker] Building structured content from rendered JSON: page_count_hint={page_count_hint}"
+        )
+        structured_content = _build_document_graph_from_marker_document(
+            rendered_json,
+            PDF_PARSE_METHOD_MARKER,
+            max_pages=max_pages,
+            page_count_hint=page_count_hint,
+            image_url_map=block_image_url_map,
+        )
+        logger.info(
+            f"Marker extraction OK ({accelerator_device}): {len(markdown)} chars, "
+            f"{len(raw_image_url_map)} extracted images, "
+            f"{len(structured_content.get('blocks', []))} native blocks, "
+            f"elapsed={time.perf_counter() - parse_started_at:.2f}s"
+        )
+        return _to_parsed_pdf_result(markdown, PDF_PARSE_METHOD_MARKER, structured_content)
     except Exception as e:
-        logger.error(f"Error parsing PDF with MinerU: {e}")
-        return f"[Error parsing PDF: {str(e)}]"
+        elapsed = time.perf_counter() - parse_started_at if 'parse_started_at' in locals() else -1.0
+        logger.error(
+            f"Marker extraction failed ({accelerator_device}) after {elapsed:.2f}s: "
+            f"{type(e).__name__}: {e!r}\n{traceback.format_exc()}"
+        )
+        return None
+    finally:
+        try:
+            os.unlink(tmp_file.name)
+        except OSError:
+            pass
 
 
 async def parse_pdf(
@@ -1693,48 +3763,52 @@ async def parse_pdf(
     max_pages: int = 10,
     images_output_dir: Path | None = None,
     images_url_prefix: str | None = None,
-) -> str:
-    """Async two-tier PDF parsing: fast PyMuPDF first, MinerU GPU fallback.
+) -> ParsedPdfResult:
+    """Parse PDF with PyMuPDF first; fall back to Marker only if fast parse fails.
 
-    Tier 1 (PyMuPDF) is fast enough to run synchronously on the event loop.
-    Tier 2 (MinerU) runs in a dedicated subprocess via ProcessPoolExecutor
-    so heavy PyTorch / vLLM operations never hold the main-process GIL.
-    The executor has max_workers=1, so multiple requests queue automatically.
-    GPU selection happens inside the subprocess at execution time.
+    Normal flow returns quickly with a PyMuPDF parse. Callers can schedule a
+    background Marker upgrade separately to improve fidelity and structure.
     """
-    # --- Tier 1: Fast PyMuPDF extraction (no GPU, <5s) ---
-    pymupdf_result = _parse_pdf_with_pymupdf(
-        pdf_bytes, max_pages,
-        images_output_dir=images_output_dir,
-        images_url_prefix=images_url_prefix,
-    )
-    if pymupdf_result is not None:
-        return pymupdf_result
-
-    # --- Tier 2: MinerU GPU-based parsing in subprocess ---
-    logger.info("PyMuPDF extraction insufficient, falling back to MinerU GPU parsing (queued)")
-    loop = asyncio.get_event_loop()
-    try:
-        executor = _get_mineru_executor()
-        result = await loop.run_in_executor(
-            executor,
-            _run_mineru_in_process,
-            pdf_bytes, max_pages,
-            str(images_output_dir) if images_output_dir else None,
+    async def _run_parse() -> ParsedPdfResult:
+        pymupdf_result = await _parse_pdf_with_pymupdf_in_worker_thread(
+            pdf_bytes,
+            max_pages,
+            images_output_dir,
             images_url_prefix,
-            MIN_VRAM_MB_FOR_MINERU,
         )
-        return result
-    except BrokenProcessPool:
-        logger.error(
-            "[MinerU] ProcessPoolExecutor is broken (subprocess crash). "
-            "Rebuilding executor for future requests."
+        if pymupdf_result is not None:
+            logger.info(
+                "parse_pdf returning PyMuPDF fast-path result: "
+                f"{pymupdf_result.page_count} pages, "
+                f"{len(pymupdf_result.structured_content.get('blocks', []))} structured blocks"
+            )
+            return pymupdf_result
+
+        logger.info("parse_pdf falling back to Marker native parse after PyMuPDF fast path miss")
+        marker_result = await _parse_pdf_with_marker_best_effort(
+            pdf_bytes,
+            max_pages,
+            images_output_dir,
+            images_url_prefix,
         )
-        _shutdown_mineru_executor()
-        return "[Error: MinerU subprocess crashed. Please retry.]"
-    finally:
-        # Kill the subprocess to release GPU memory (CUDA context holds ~GBs).
-        _shutdown_mineru_executor()
+        if marker_result is not None:
+            logger.info(
+                "parse_pdf returning Marker native result: "
+                f"{marker_result.page_count} pages, "
+                f"{len(marker_result.structured_content.get('blocks', []))} structured blocks"
+            )
+            return marker_result
+
+        return _to_parsed_pdf_result(
+            "[Error parsing PDF: PyMuPDF and Marker both failed]",
+            PDF_PARSE_METHOD_FAILED,
+        )
+
+    return await _run_with_pdf_parse_slot(
+        "foreground-parse",
+        _run_parse,
+        reject_when_queue_full=True,
+    )
 
 
 async def summarize_pdf_content(
@@ -1834,6 +3908,9 @@ def format_reference_card(
         "taylor_francis": "📚",
         "huggingface": "🤗",
         "github": "💻",
+        "gitlab": "🦊",
+        "gitee": "🧭",
+        "zenodo": "🗂️",
         "blog": "📝",
         "documentation": "📖",
         "wikipedia": "🌐",
@@ -1864,9 +3941,13 @@ type: paper
         # Friendly source label for display
         source_labels = {
             "github": "GitHub",
+            "gitlab": "GitLab",
+            "gitee": "Gitee",
+            "zenodo": "Zenodo",
             "blog": "Blog",
             "documentation": "Docs",
             "wikipedia": "Wikipedia",
+            "openreview": "OpenReview",
         }
         source_label = source_labels.get(source_type, source_type.upper())
         card = f"""[REFERENCE]
@@ -1887,6 +3968,8 @@ def detect_source_type(url: str) -> str:
     # ── Academic sources ──────────────────────────────────────────────────────
     if 'arxiv.org' in url_lower:
         return "arxiv"
+    elif 'openreview.net' in url_lower:
+        return "openreview"
     elif 'ncbi.nlm.nih.gov' in url_lower or 'pubmed' in url_lower:
         return "pubmed"
     elif 'nature.com' in url_lower:
@@ -1932,6 +4015,12 @@ def detect_source_type(url: str) -> str:
         return "huggingface"
     elif 'github.com' in url_lower or 'github.io' in url_lower:
         return "github"
+    elif 'gitlab.com' in url_lower:
+        return "gitlab"
+    elif 'gitee.com' in url_lower:
+        return "gitee"
+    elif 'zenodo.org' in url_lower:
+        return "zenodo"
     elif any(d in url_lower for d in (
         'medium.com', 'substack.com', 'dev.to', 'hashnode.dev',
         'wordpress.com', 'blogger.com', 'blogspot.com',
@@ -1956,7 +4045,7 @@ def detect_source_type(url: str) -> str:
 
 # Known academic source types — used to determine if a source is inherently academic.
 _ACADEMIC_SOURCE_TYPES = frozenset({
-    "arxiv", "pubmed", "nature", "science", "cell", "lancet",
+    "arxiv", "openreview", "pubmed", "nature", "science", "cell", "lancet",
     "nejm", "jama", "bmj", "modernpathology", "springer", "ieee", "acm",
     "biorxiv", "elsevier", "wiley", "frontiers", "mdpi", "oup", "plos",
     "taylor_francis",
@@ -1980,8 +4069,8 @@ def is_academic_content(content: str, source_type: str) -> bool:
     if source_type in _ACADEMIC_SOURCE_TYPES:
         return True
 
-    # Non-PDF, non-web sources (github, blog, docs, wikipedia) are never academic
-    if source_type not in ("pdf", "web"):
+    # Clearly non-academic sources are never academic.
+    if source_type in {"github", "gitlab", "gitee", "blog", "documentation", "wikipedia", "huggingface"}:
         return False
 
     # Tier 2: heuristic analysis for generic PDFs / unknown web sources
@@ -2020,6 +4109,218 @@ def is_academic_content(content: str, source_type: str) -> bool:
     return is_academic
 
 
+def _normalize_cached_article_lookup_text(text: str) -> str:
+    """Normalize a paper/article lookup string for conservative cache matching."""
+    normalized = str(text or "").strip().lower()
+    if not normalized:
+        return ""
+
+    normalized = normalized.strip('"\'`“”‘’《》〈〉「」『』[]()')
+    normalized = re.sub(r'^(?:please\s+)?(?:read|open|view|show\s+me|look(?:\s+at)?)\s+', '', normalized)
+    normalized = re.sub(r'\s+(?:paper|article|pdf)\s*$', '', normalized)
+    normalized = re.sub(r'https?://\S+', ' ', normalized)
+    tokens = _tokenize_for_search(normalized)
+    return " ".join(tokens)
+
+
+def _cached_article_source_priority_for_source(source_type: str) -> int:
+    if source_type in _ACADEMIC_SOURCE_TYPES:
+        return 50
+    if source_type == "pdf":
+        return 40
+    if source_type == "web":
+        return 20
+    if source_type in {"documentation", "github", "gitlab", "gitee", "huggingface", "wikipedia", "zenodo"}:
+        return 10
+    if source_type == "blog":
+        return 0
+    return 5
+
+
+def _cached_article_source_priority(url: str) -> int:
+    return _cached_article_source_priority_for_source(detect_source_type(url))
+
+
+def _cached_article_variant_kind(source_type: str) -> str:
+    if source_type in {"arxiv", "biorxiv"}:
+        return "preprint"
+    if source_type == "openreview":
+        return "openreview"
+    if source_type in _ACADEMIC_SOURCE_TYPES:
+        return "formal"
+    return "generic"
+
+
+def _detect_cached_article_query_preference(query: str) -> str | None:
+    query_lower = str(query or "").lower()
+    if not query_lower:
+        return None
+
+    if any(keyword in query_lower for keyword in (
+        "arxiv", "preprint", "预印本", "預印本", "bioarxiv", "biorxiv", "medrxiv",
+    )):
+        return "preprint"
+    if "openreview" in query_lower:
+        return "openreview"
+    if any(keyword in query_lower for keyword in (
+        "journal", "publisher", "published", "official version",
+        "正式版", "期刊版", "出版版", "正式发表", "正式發表",
+    )):
+        return "formal"
+    return None
+
+
+def _build_cached_article_meta_fields(url: str, title: str) -> dict[str, Any]:
+    source_type = detect_source_type(url)
+    return {
+        "source_type": source_type,
+        "source_priority": _cached_article_source_priority_for_source(source_type),
+        "normalized_title": _normalize_cached_article_lookup_text(title),
+        "doi": _extract_doi(url),
+        "arxiv_id": _extract_arxiv_id(url),
+        "openreview_id": _extract_openreview_id(url),
+    }
+
+
+def find_cached_articles_by_title(query: str, max_results: int = 5) -> list[dict[str, Any]]:
+    """Return strong local cache matches for a paper/article title query.
+
+    This is intentionally conservative: only exact matches on normalized title are
+    returned, so callers can safely skip external web search when a local hit is
+    found.
+    """
+    normalized_query = _normalize_cached_article_lookup_text(query)
+    if not normalized_query:
+        return []
+
+    query_tokens = _tokenize_for_search(normalized_query)
+    if len(query_tokens) < 2 and len(normalized_query) < 8:
+        return []
+
+    cache_dir = _get_pdf_cache_dir()
+    matches: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    now = datetime.now()
+    query_preference = _detect_cached_article_query_preference(query)
+
+    for meta_file in cache_dir.glob("*.json"):
+        if meta_file.name.endswith(STRUCTURED_CACHE_SUFFIX):
+            continue
+
+        try:
+            meta = json.loads(meta_file.read_text(encoding='utf-8'))
+        except Exception:
+            continue
+        if not isinstance(meta, dict):
+            continue
+
+        url = str(meta.get("url") or "").strip()
+        title = str(meta.get("title") or "").strip()
+        if not url or not title or url in seen_urls:
+            continue
+
+        normalized_title = str(meta.get("normalized_title") or "").strip()
+        if not normalized_title:
+            normalized_title = _normalize_cached_article_lookup_text(title)
+        if not normalized_title or normalized_title != normalized_query:
+            continue
+
+        cached_at_raw = str(meta.get("cached_at") or "").strip()
+        cached_at_dt: datetime | None = None
+        if cached_at_raw:
+            try:
+                cached_at_dt = datetime.fromisoformat(cached_at_raw)
+            except Exception:
+                cached_at_dt = None
+        if cached_at_dt is not None and now - cached_at_dt > timedelta(days=PDF_CACHE_TTL_DAYS):
+            continue
+
+        url_hash = meta_file.stem
+        has_markdown_cache = any((cache_dir / f"{url_hash}{suffix}").exists() for suffix, _ in CACHED_MARKDOWN_CANDIDATES)
+        if not has_markdown_cache:
+            continue
+
+        source_type = str(meta.get("source_type") or detect_source_type(url))
+        variant_kind = _cached_article_variant_kind(source_type)
+        matches.append({
+            "title": title,
+            "url": url,
+            "snippet": f"Local cache hit — {variant_kind} version already downloaded and parsed.",
+            "source_type": source_type,
+            "is_academic": bool(meta.get("is_academic", source_type in _ACADEMIC_SOURCE_TYPES)),
+            "cached_at": cached_at_raw,
+            "match_type": "exact_normalized_title",
+            "variant_kind": variant_kind,
+            "normalized_title": normalized_title,
+            "doi": meta.get("doi"),
+            "arxiv_id": meta.get("arxiv_id"),
+            "openreview_id": meta.get("openreview_id"),
+            "source_priority": int(meta.get("source_priority", _cached_article_source_priority_for_source(source_type))),
+        })
+        seen_urls.add(url)
+
+    if query_preference:
+        preferred_matches = [match for match in matches if match.get("variant_kind") == query_preference]
+        if preferred_matches:
+            matches = preferred_matches
+
+    matches.sort(
+        key=lambda item: (
+            int(item.get("source_priority", 0)),
+            str(item.get("cached_at") or ""),
+        ),
+        reverse=True,
+    )
+    return matches[:max(1, max_results)]
+
+
+async def _save_markdown_to_cache_async(
+    url: str,
+    markdown: str,
+    paper_title: str,
+    structured_content: dict[str, Any] | None,
+    *,
+    high_quality_pending: bool,
+) -> None:
+    """Persist PyMuPDF cache artifacts off the event loop."""
+    await asyncio.to_thread(
+        _save_markdown_to_cache,
+        url,
+        markdown,
+        paper_title,
+        structured_content,
+        high_quality_pending=high_quality_pending,
+    )
+    _trigger_vector_index(
+        _get_url_hash(url),
+        markdown,
+        paper_title,
+        structured_content,
+    )
+
+
+async def _save_marker_to_cache_async(
+    url: str,
+    markdown: str,
+    paper_title: str,
+    structured_content: dict[str, Any] | None,
+) -> None:
+    """Persist Marker cache artifacts off the event loop."""
+    await asyncio.to_thread(
+        _save_marker_to_cache,
+        url,
+        markdown,
+        paper_title,
+        structured_content,
+    )
+    _trigger_vector_index(
+        _get_url_hash(url),
+        markdown,
+        paper_title,
+        structured_content,
+    )
+
+
 async def process_pdf_url(
     url: str,
     title: str,
@@ -2028,11 +4329,12 @@ async def process_pdf_url(
     model: str,
     use_cache: bool = True
 ) -> dict[str, Any]:
-    """Process a PDF URL: download, parse with MinerU, summarize, and format reference card.
+    """Process a PDF URL: download, parse, summarize, and format a reference card.
 
     Returns a dict with keys:
         url, title, source_type, success, summary, pdf_content (full markdown with page markers),
-        error, error_detail, from_cache, reference_card, page_count, parse_method
+        error, error_detail, from_cache, reference_card, page_count, parse_method,
+        structured_parse_method, high_quality_pending
     """
     result: dict[str, Any] = {
         "url": url,
@@ -2047,26 +4349,32 @@ async def process_pdf_url(
         "from_cache": False,
         "reference_card": None,
         "page_count": None,    # Total pages parsed (int), filled after parsing
-        "parse_method": None,  # "pymupdf" or "mineru" — indicates quality tier
+        "parse_method": None,  # "marker" or "pymupdf"
+        "structured_parse_method": None,
+        "high_quality_pending": False,
         "image_count": 0,      # Number of extracted images on disk
-        "images_ready": False, # Whether images are available for the AI to reference
+        "images_ready": False, # Whether extracted images are available to reference
     }
 
     try:
+        if _should_try_lightweight_web_first(str(result["source_type"])):
+            return await _process_lightweight_web_url(url, title, base_url, api_key, model, use_cache=use_cache)
+
         pdf_bytes = None
         cached_markdown = None
 
         if use_cache:
             cached = _get_cached_pdf(url)
             if cached:
-                pdf_bytes, cache_meta, cached_markdown = cached
+                pdf_bytes, cache_meta, cached_markdown, cached_markdown_method = cached
                 result["from_cache"] = True
                 result["title"] = cache_meta.get('title', title)
                 # Restore persisted metadata so callers always have it on cache hits
                 if cache_meta.get('page_count'):
                     result["page_count"] = cache_meta['page_count']
-                if cache_meta.get('parse_method'):
-                    result["parse_method"] = cache_meta['parse_method']
+                result["parse_method"] = cached_markdown_method or cache_meta.get('parse_method')
+                result["structured_parse_method"] = cache_meta.get('structured_parse_method')
+                result["high_quality_pending"] = bool(cache_meta.get('high_quality_parse_pending'))
                 logger.info(f"Using cached PDF for {url}" + (" (with cached markdown)" if cached_markdown else ""))
 
         if not pdf_bytes:
@@ -2075,6 +4383,21 @@ async def process_pdf_url(
                 _save_pdf_to_cache(url, pdf_bytes, title)
 
         if not pdf_bytes:
+            if _should_try_lightweight_web_fallback(url, str(result["source_type"])):
+                lightweight_result = await _process_lightweight_web_url(
+                    url,
+                    title,
+                    base_url,
+                    api_key,
+                    model,
+                    use_cache=use_cache,
+                )
+                if lightweight_result.get("success"):
+                    return lightweight_result
+                result["error"] = lightweight_result.get("error")
+                result["error_detail"] = lightweight_result.get("error_detail")
+                return result
+
             result["error"] = "download_failed"
             result["error_detail"] = (
                 f"Failed to download PDF from {url}. "
@@ -2087,54 +4410,47 @@ async def process_pdf_url(
         if cached_markdown:
             pdf_content = cached_markdown
             logger.info(f"Using cached parsed markdown for {url}")
-            # Re-schedule MinerU background upgrade on cache hit if only pymupdf
-            # cache exists.  The initial upgrade attempt may have been skipped
-            # (GPU busy / lock contention) and is never retried otherwise.
-            if use_cache and pdf_bytes and not _has_mineru_cache(url):
-                asyncio.create_task(
-                    _background_mineru_upgrade(url, pdf_bytes)
+            if result["parse_method"] == PDF_PARSE_METHOD_PYMUPDF and use_cache and pdf_bytes:
+                schedule_marker_upgrade(url, str(result["title"] or title), pdf_bytes)
+                result["high_quality_pending"] = bool(
+                    (get_cached_pdf_meta(url) or {}).get("high_quality_parse_pending")
                 )
-                logger.info(f"[BG MinerU] Re-scheduled upgrade on cache hit for {url}")
         else:
-            # ── Two-tier parsing ──────────────────────────────────────────────
-            # Pre-compute image storage paths (shared by both tiers).
             url_hash = _get_url_hash(url)
             sync_images_output_dir = _get_pdf_cache_dir() / "images" / url_hash
             sync_images_url_prefix = f"{Config.GATEWAY_SERVICE_URL}/pdf-images/{url_hash}"
 
-            # Tier 1: Fast pymupdf4llm (CPU, <5 s).  Extracts text + images.
-            # max_pages=0 means unlimited.
-            pymupdf_result = _parse_pdf_with_pymupdf(
+            parse_result = await parse_pdf(
                 pdf_bytes, max_pages=0,
                 images_output_dir=sync_images_output_dir,
                 images_url_prefix=sync_images_url_prefix,
             )
-
-            if pymupdf_result is not None:
-                pdf_content = pymupdf_result
-                if use_cache:
-                    _save_markdown_to_cache(url, pdf_content, paper_title=title)
-                # Tier 2 (background): Schedule MinerU upgrade for the *next*
-                # request if no high-precision cache exists yet and GPU is free.
-                if use_cache and not _has_mineru_cache(url):
-                    asyncio.create_task(
-                        _background_mineru_upgrade(url, pdf_bytes)  # max_pages=0: unlimited in background
+            pdf_content = parse_result.markdown
+            parse_method = parse_result.parse_method
+            result["parse_method"] = parse_method
+            result["page_count"] = parse_result.page_count
+            result["structured_parse_method"] = parse_method
+            if use_cache and not pdf_content.startswith("[Error"):
+                if parse_method == PDF_PARSE_METHOD_MARKER:
+                    await _save_marker_to_cache_async(
+                        url,
+                        pdf_content,
+                        paper_title=title,
+                        structured_content=parse_result.structured_content,
                     )
-                    logger.info(f"[BG MinerU] Background upgrade scheduled for {url}")
-            else:
-                # pymupdf insufficient — fall back to MinerU synchronously now.
-                # Pass image params so extracted figures are persisted immediately.
-                # Use max_pages=0 (unlimited) since MinerU is the high-precision tier
-                # and can extract tables, formulas, and images from all pages.
-                pdf_content = await parse_pdf(
-                    pdf_bytes,
-                    max_pages=0,
-                    images_output_dir=sync_images_output_dir,
-                    images_url_prefix=sync_images_url_prefix,
-                )
-                # Successful MinerU result goes to the high-precision cache slot
-                if not pdf_content.startswith("[Error") and use_cache:
-                    _save_mineru_to_cache(url, pdf_content, paper_title=title)
+                else:
+                    await _save_markdown_to_cache_async(
+                        url,
+                        pdf_content,
+                        paper_title=title,
+                        structured_content=parse_result.structured_content,
+                        high_quality_pending=True,
+                    )
+                    if pdf_bytes:
+                        schedule_marker_upgrade(url, title, pdf_bytes)
+                        result["high_quality_pending"] = bool(
+                            (get_cached_pdf_meta(url) or {}).get("high_quality_parse_pending")
+                        )
 
         # Guard: empty result (not an [Error prefix but no content extracted)
         if not pdf_content or not pdf_content.strip():
@@ -2146,25 +4462,25 @@ async def process_pdf_url(
             return result
 
         if pdf_content.startswith("[Error"):
-            # Distinguish GPU unavailable from other parse errors
-            if "GPU unavailable" in pdf_content:
-                result["error"] = "gpu_unavailable"
-                result["error_detail"] = (
-                    f"No GPU resources available to parse '{title}'. "
-                    "All GPUs are currently busy or lack sufficient free memory. "
-                    "Please try again later when GPU resources are freed."
-                )
-            else:
-                result["error"] = "parse_failed"
-                result["error_detail"] = f"PDF parsing failed for '{title}'. The file may be corrupted, scanned-only, or in an unsupported format."
+            result["error"] = "parse_failed"
+            result["error_detail"] = (
+                f"PDF parsing failed for '{title}'. The file may be corrupted, "
+                "scanned-only, or in an unsupported format."
+            )
             return result
 
         # Extract page count from the raw content (before any appended status markers).
         # _extract_page_count scans '--- Page X ---' markers; 0 means no markers found.
         result["page_count"] = result["page_count"] or _extract_page_count(pdf_content)
-        # parse_method may already be set from cache_meta; set it from current parse if not.
+        # parse_method may already be set from cache metadata or current parse.
         if not result["parse_method"]:
-            result["parse_method"] = "mineru" if _has_mineru_cache(url) else "pymupdf"
+            result["parse_method"] = _get_high_quality_cache_method(url) or PDF_PARSE_METHOD_PYMUPDF
+        if not result["structured_parse_method"]:
+            structured_cached = get_cached_structured_content(url)
+            if structured_cached:
+                result["structured_parse_method"] = structured_cached.get("parse_method")
+        if result["parse_method"] == PDF_PARSE_METHOD_MARKER:
+            result["high_quality_pending"] = False
 
         # ── Academic content detection ────────────────────────────────────────
         # Determines whether this PDF is an academic paper or a general document
@@ -2180,9 +4496,7 @@ async def process_pdf_url(
             _update_meta_academic_flag(url, academic)
 
         # Determine whether extracted images are already available.
-        # Images can come from either pymupdf4llm (Tier 1) or MinerU (Tier 2).
-        # Both tiers write images to the same directory: pdf_cache/images/{url_hash}/
-        # MinerU upgrade overwrites pymupdf images with higher-quality versions.
+        # Both Marker and PyMuPDF write into the same per-document images dir.
         url_hash_for_images = _get_url_hash(url)
         images_dir_for_check = _get_pdf_cache_dir() / "images" / url_hash_for_images
         image_count_on_disk = 0
@@ -2192,20 +4506,8 @@ async def process_pdf_url(
         result["image_count"] = image_count_on_disk
         result["images_ready"] = images_ready
 
-        # Build the content blob for the AI.
-        if images_ready:
-            ai_pdf_content = pdf_content
-        else:
-            ai_pdf_content = (
-                pdf_content
-                + "\n\n[PDF_IMAGES_STATUS: pending — Figure/image extraction "
-                "is running in the background. If the user asks about specific "
-                "figures, tables, or images in this paper, inform them that image extraction is "
-                "not yet complete and they can ask again after refreshing the page.]"
-            )
-
-        # Store full content with page markers so AI can cite specific pages
-        result["pdf_content"] = ai_pdf_content
+        # Store full content with page markers so AI can cite specific pages.
+        result["pdf_content"] = pdf_content
 
         summary = await summarize_pdf_content(
             pdf_content,
@@ -2225,6 +4527,10 @@ async def process_pdf_url(
             is_academic=academic,
         )
 
+    except PdfParseBusyError as e:
+        logger.warning(f"PDF processing rejected due to load for {url}: {e}")
+        result["error"] = "parse_busy"
+        result["error_detail"] = str(e)
     except Exception as e:
         logger.error(f"Error processing PDF {url}: {e}")
         result["error"] = str(e)

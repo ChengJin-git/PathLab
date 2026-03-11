@@ -3,19 +3,27 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Database, RefreshCw, Layers, Calendar, Star, ToggleRight, ToggleLeft, Trash2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckCircle, XCircle, BarChart3, FlaskConical } from 'lucide-react'
 import { Card } from '../ui/card'
-import { TrainedModel, getTrainedModels, updateTrainedModel, deleteTrainedModel, getAuthToken } from '../../api'
+import { TrainedModel, getTrainedModels, updateTrainedModel, deleteTrainedModel, buildAuthRequestInit } from '../../api'
 import { API_BASE } from '../../config'
 import { ShowConfirmDialog } from './ConfirmDialog'
+import { isSegmentationTask } from '../../lib/externalValidationUtils'
 
 interface TaskItem {
   task_id: string
   task_name?: string
   name?: string
+  task_type?: string
+  classes?: string[] | null
 }
 
 export interface ModelsTabProps {
   showConfirmDialog: ShowConfirmDialog
   closeConfirmDialog: () => void
+}
+
+interface MetricDisplay {
+  label: string
+  value: unknown
 }
 
 export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabProps) {
@@ -33,10 +41,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
 
   const loadTasks = useCallback(async () => {
     try {
-      const token = getAuthToken()
-      const response = await fetch(`${API_BASE}/results/tasks`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      })
+      const response = await fetch(`${API_BASE}/results/tasks`, buildAuthRequestInit())
       if (response.ok) {
         const data = await response.json()
         setTasks(data.items || [])
@@ -127,6 +132,53 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
     return '—'
   }
 
+  const getDisplayClasses = (model: TrainedModel, task?: TaskItem) => {
+    const taskClasses = Array.isArray(task?.classes)
+      ? task.classes.filter((cls): cls is string => typeof cls === 'string' && cls.trim().length > 0)
+      : []
+    const modelClasses = Array.isArray(model.classes)
+      ? model.classes.filter((cls): cls is string => typeof cls === 'string' && cls.trim().length > 0)
+      : []
+
+    if (task?.task_type === 'segmentation' && taskClasses.length > 0) {
+      return taskClasses
+    }
+
+    return modelClasses
+  }
+
+  const getMetricDisplay = (task: TaskItem | undefined, model: TrainedModel, displayClasses: string[]) => {
+    const metrics = (model.val_metrics || {}) as Record<string, unknown>
+    const isSurvival = metrics.c_index !== undefined
+    const isSegmentation = isSegmentationTask(task?.task_type)
+
+    let primaryMetric: MetricDisplay = { label: 'Loss', value: metrics.loss }
+    let secondaryMetric: MetricDisplay = { label: 'Accuracy', value: metrics.accuracy }
+
+    if (isSurvival) {
+      primaryMetric = { label: 'C-Index', value: metrics.c_index }
+      secondaryMetric = { label: 'Loss', value: metrics.loss }
+    } else if (isSegmentation) {
+      const isMulticlassSegmentation =
+        displayClasses.length > 1 ||
+        metrics.miou !== undefined ||
+        (Array.isArray(metrics.iou_per_class) && metrics.iou_per_class.length > 1)
+
+      primaryMetric = {
+        label: isMulticlassSegmentation ? 'mIoU' : 'IoU',
+        value: isMulticlassSegmentation
+          ? (metrics.miou ?? metrics.iou ?? metrics.dice)
+          : (metrics.iou ?? metrics.miou ?? metrics.dice)
+      }
+      secondaryMetric = { label: 'Loss', value: metrics.loss }
+    } else if (metrics.auc !== undefined || metrics.macro_auc !== undefined) {
+      primaryMetric = { label: 'AUC', value: metrics.auc ?? metrics.macro_auc }
+      secondaryMetric = { label: 'Accuracy', value: metrics.accuracy }
+    }
+
+    return { metrics, isSurvival, primaryMetric, secondaryMetric }
+  }
+
   const totalPages = Math.ceil(modelsTotal / pageSize)
 
   return (
@@ -180,20 +232,8 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
             {trainedModels.map((model) => {
               const task = tasks.find(item => item.task_id === model.task_id)
               const taskName = task?.name || task?.task_name || t('settings.modelsTab.unknownTask')
-
-              const metrics = model.val_metrics || {}
-              const isSurvival = (metrics as Record<string, unknown>).c_index !== undefined
-
-              let primaryMetric = { label: 'Loss', value: (metrics as Record<string, unknown>).loss }
-              let secondaryMetric = { label: 'Accuracy', value: (metrics as Record<string, unknown>).accuracy }
-
-              if (isSurvival) {
-                primaryMetric = { label: 'C-Index', value: (metrics as Record<string, unknown>).c_index }
-                secondaryMetric = { label: 'Loss', value: (metrics as Record<string, unknown>).loss }
-              } else if ((metrics as Record<string, unknown>).auc !== undefined || (metrics as Record<string, unknown>).macro_auc !== undefined) {
-                primaryMetric = { label: 'AUC', value: (metrics as Record<string, unknown>).auc || (metrics as Record<string, unknown>).macro_auc }
-                secondaryMetric = { label: 'Accuracy', value: (metrics as Record<string, unknown>).accuracy }
-              }
+              const displayClasses = getDisplayClasses(model, task)
+              const { metrics, isSurvival, primaryMetric, secondaryMetric } = getMetricDisplay(task, model, displayClasses)
 
               return (
                 <div key={model.model_id} className="bg-white border rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow">
@@ -236,6 +276,19 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                         <span className="font-mono bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100 text-xs text-gray-500">+{model.aggregator}</span>
                       )}
                    </div>
+
+                   {!isSurvival && displayClasses.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mb-3">
+                        {displayClasses.slice(0, 4).map((cls, idx) => (
+                          <span key={idx} className="inline-flex items-center bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium border border-indigo-100">
+                            {cls}
+                          </span>
+                        ))}
+                        {displayClasses.length > 4 && (
+                          <span className="text-gray-400 font-medium text-xs flex items-center px-1">+{displayClasses.length - 4}</span>
+                        )}
+                      </div>
+                   )}
 
                    {/* Metrics for Mobile */}
                    {Object.keys(metrics).length > 0 && (
@@ -317,20 +370,8 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                 {trainedModels.map((model) => {
                   const task = tasks.find(item => item.task_id === model.task_id)
                   const taskName = task?.name || task?.task_name || t('settings.modelsTab.unknownTask')
-
-                  const metrics = model.val_metrics || {}
-                  const isSurvival = (metrics as Record<string, unknown>).c_index !== undefined
-
-                  let primaryMetric = { label: 'Loss', value: (metrics as Record<string, unknown>).loss }
-                  let secondaryMetric = { label: 'Accuracy', value: (metrics as Record<string, unknown>).accuracy }
-
-                  if (isSurvival) {
-                    primaryMetric = { label: 'C-Index', value: (metrics as Record<string, unknown>).c_index }
-                    secondaryMetric = { label: 'Loss', value: (metrics as Record<string, unknown>).loss }
-                  } else if ((metrics as Record<string, unknown>).auc !== undefined || (metrics as Record<string, unknown>).macro_auc !== undefined) {
-                    primaryMetric = { label: 'AUC', value: (metrics as Record<string, unknown>).auc || (metrics as Record<string, unknown>).macro_auc }
-                    secondaryMetric = { label: 'Accuracy', value: (metrics as Record<string, unknown>).accuracy }
-                  }
+                  const displayClasses = getDisplayClasses(model, task)
+                  const { metrics, isSurvival, primaryMetric, secondaryMetric } = getMetricDisplay(task, model, displayClasses)
 
                   return (
                     <tr key={model.model_id} className="hover:bg-gray-50 transition-colors group border-b last:border-0 border-gray-100">
@@ -370,17 +411,17 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                         <div className="flex flex-wrap gap-1.5 max-w-[240px]">
                           {isSurvival ? (
                             <span className="inline-flex items-center bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded text-xs font-medium border border-emerald-100">
-                              {t('settings.modelsTab.timeIntervals', { count: model.classes?.length || 4 })}
+                              {t('settings.modelsTab.timeIntervals', { count: displayClasses.length || 4 })}
                             </span>
                           ) : (
                             <>
-                              {model.classes?.slice(0, 4).map((cls, idx) => (
+                              {displayClasses.slice(0, 4).map((cls, idx) => (
                                 <span key={idx} className="inline-flex items-center bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium border border-indigo-100">
                                   {cls}
                                 </span>
                               ))}
-                              {model.classes && model.classes.length > 4 && (
-                                <span className="text-gray-400 font-medium text-xs flex items-center px-1">+{model.classes.length - 4}</span>
+                              {displayClasses.length > 4 && (
+                                <span className="text-gray-400 font-medium text-xs flex items-center px-1">+{displayClasses.length - 4}</span>
                               )}
                             </>
                           )}

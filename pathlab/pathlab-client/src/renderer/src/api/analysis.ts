@@ -1,5 +1,5 @@
 import { API_BASE } from '../config'
-import { apiFetch } from './client'
+import { apiFetch, buildSearchParams } from './client'
 
 // ============================================================================
 // INFERENCE API
@@ -259,20 +259,14 @@ export async function getTaskQuickAnalysis(
     bootstrapCIMetrics?: string[]  // List of metrics to compute 95% CI for (e.g., ['accuracy', 'auc'])
   }
 ): Promise<QuickAnalysisResponse> {
-  const params = new URLSearchParams()
-
-  if (options?.metrics && options.metrics.length > 0) {
-    params.set('metrics', options.metrics.join(','))
-  }
-  if (options?.charts && options.charts.length > 0) {
-    params.set('charts', options.charts.join(','))
-  }
-  if (options?.runIfMissing !== undefined) {
-    params.set('run_if_missing', String(options.runIfMissing))
-  }
-  if (options?.bootstrapCIMetrics && options.bootstrapCIMetrics.length > 0) {
-    params.set('bootstrap_ci_metrics', options.bootstrapCIMetrics.join(','))
-  }
+  const params = buildSearchParams({
+    metrics: options?.metrics?.length ? options.metrics.join(',') : undefined,
+    charts: options?.charts?.length ? options.charts.join(',') : undefined,
+    run_if_missing: options?.runIfMissing,
+    bootstrap_ci_metrics: options?.bootstrapCIMetrics?.length
+      ? options.bootstrapCIMetrics.join(',')
+      : undefined,
+  })
 
   const queryString = params.toString()
   const url = `${API_BASE}/results/tasks/${taskId}/quick-analysis${queryString ? `?${queryString}` : ''}`

@@ -21,7 +21,9 @@ class FeedbackRepository:
     async def _update_feedback_fields(
         existing: MessageFeedback,
         feedback_type: Optional[str],
+        feedback_type_provided: bool,
         task_helpfulness: Optional[str],
+        task_helpfulness_provided: bool,
         related_task_id: Optional[str],
         time_to_action_seconds: Optional[float],
         message_content: Optional[str],
@@ -29,10 +31,10 @@ class FeedbackRepository:
         task_type: Optional[str],
         task_title: Optional[str],
     ) -> None:
-        """Apply non-None fields to an existing feedback record."""
-        if feedback_type is not None:
+        """Apply provided fields to an existing feedback record."""
+        if feedback_type_provided:
             existing.feedback_type = feedback_type
-        if task_helpfulness is not None:
+        if task_helpfulness_provided:
             existing.task_helpfulness = task_helpfulness
         if related_task_id is not None:
             existing.related_task_id = related_task_id
@@ -53,7 +55,9 @@ class FeedbackRepository:
         message_id: int,
         user_id: str,
         feedback_type: Optional[str] = None,
+        feedback_type_provided: bool = False,
         task_helpfulness: Optional[str] = None,
+        task_helpfulness_provided: bool = False,
         related_task_id: Optional[str] = None,
         time_to_action_seconds: Optional[float] = None,
         message_content: Optional[str] = None,
@@ -81,7 +85,8 @@ class FeedbackRepository:
         if existing:
             # Update existing feedback
             await FeedbackRepository._update_feedback_fields(
-                existing, feedback_type, task_helpfulness, related_task_id,
+                existing, feedback_type, feedback_type_provided,
+                task_helpfulness, task_helpfulness_provided, related_task_id,
                 time_to_action_seconds, message_content, context_messages,
                 task_type, task_title,
             )
@@ -119,7 +124,8 @@ class FeedbackRepository:
                 existing = result.scalar_one_or_none()
                 if existing:
                     await FeedbackRepository._update_feedback_fields(
-                        existing, feedback_type, task_helpfulness, related_task_id,
+                        existing, feedback_type, feedback_type_provided,
+                        task_helpfulness, task_helpfulness_provided, related_task_id,
                         time_to_action_seconds, message_content, context_messages,
                         task_type, task_title,
                     )

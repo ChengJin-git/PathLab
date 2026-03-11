@@ -63,8 +63,18 @@ def _calculate_all_metrics(
     """Calculate all requested metrics using sklearn."""
     from sklearn.metrics import (
         accuracy_score, precision_score, recall_score, f1_score,
+        cohen_kappa_score,
         confusion_matrix as sklearn_confusion_matrix, roc_curve, auc
     )
+    import numpy as np
+
+    def safe_weighted_kappa(y_true: List[str], y_pred: List[str]) -> float:
+        try:
+            score = cohen_kappa_score(y_true, y_pred, labels=all_classes, weights="quadratic")
+            return 0.0 if np.isnan(score) else float(score)
+        except Exception as exc:
+            logger.debug(f"Failed to compute weighted kappa: {exc}")
+            return 0.0
 
     n_classes = len(all_classes)
 
@@ -112,6 +122,9 @@ def _calculate_all_metrics(
         "macro_specificity": round(float(macro_specificity), 4),
         "macro_f1": round(float(macro_f1), 4)
     }
+
+    if "weighted_kappa" in requested_metrics:
+        metrics["weighted_kappa"] = round(safe_weighted_kappa(labels, predictions), 4)
 
     # ROC/AUC if requested - use sklearn
     roc_data = {}
@@ -172,8 +185,17 @@ def _calculate_bootstrap_ci(
     import numpy as np
     from sklearn.metrics import (
         accuracy_score, precision_score, recall_score, f1_score,
+        cohen_kappa_score,
         confusion_matrix as sklearn_confusion_matrix, roc_curve, auc
     )
+
+    def safe_weighted_kappa(y_true: List[str], y_pred: List[str]) -> Optional[float]:
+        try:
+            score = cohen_kappa_score(y_true, y_pred, labels=all_classes, weights="quadratic")
+            return None if np.isnan(score) else float(score)
+        except Exception as exc:
+            logger.debug(f"Bootstrap weighted kappa failed: {exc}")
+            return None
 
     n_samples = len(labels)
     if n_samples < 2:
@@ -187,6 +209,7 @@ def _calculate_bootstrap_ci(
     boot_macro_f1 = []
     boot_macro_specificity = []
     boot_macro_auc = []
+    boot_weighted_kappa = []
 
     # Per-class bootstrap results
     boot_class_metrics = {cls: {
@@ -227,6 +250,11 @@ def _calculate_bootstrap_ci(
             boot_macro_precision.append(precision_score(boot_labels, boot_preds, average='macro', zero_division=0))
             boot_macro_recall.append(recall_score(boot_labels, boot_preds, average='macro', zero_division=0))
             boot_macro_f1.append(f1_score(boot_labels, boot_preds, average='macro', zero_division=0))
+
+            if "weighted_kappa" in requested_metrics:
+                weighted_kappa = safe_weighted_kappa(boot_labels, boot_preds)
+                if weighted_kappa is not None:
+                    boot_weighted_kappa.append(weighted_kappa)
 
             # Per-class metrics
             precision_per_class = precision_score(boot_labels, boot_preds, labels=all_classes, average=None, zero_division=0)
@@ -311,6 +339,8 @@ def _calculate_bootstrap_ci(
         metrics_ci["macro_f1"] = calc_ci(boot_macro_f1)
     if boot_macro_auc:
         metrics_ci["macro_auc"] = calc_ci(boot_macro_auc)
+    if boot_weighted_kappa:
+        metrics_ci["weighted_kappa"] = calc_ci(boot_weighted_kappa)
 
     # Per-class CIs
     class_metrics_ci = {}

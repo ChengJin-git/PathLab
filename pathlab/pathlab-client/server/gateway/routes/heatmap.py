@@ -116,6 +116,12 @@ async def get_patch_cam(
     task_id: Optional[str] = Query(None, description="Specific task ID"),
     fold_key: Optional[str] = Query(None, description="Fold key for k-fold results (e.g., 'fold_0')"),
     format: str = Query("image", description="Output format: 'image' or 'json'"),
+    preset: Optional[str] = Query(None, description="Optional rendering preset for lightweight previews"),
+    size: Optional[int] = Query(None, description="Optional max thumbnail size for preview rendering"),
+    opacity: Optional[float] = Query(None, description="Optional overlay opacity for preview rendering"),
+    blur_scale: Optional[float] = Query(None, description="Optional blur scale multiplier for preview rendering"),
+    contrast_boost: Optional[float] = Query(None, description="Optional contrast boost for preview rendering"),
+    saturation_boost: Optional[float] = Query(None, description="Optional saturation boost for preview rendering"),
     user: User = Depends(get_user_from_header_or_param),
     db: AsyncSession = Depends(get_db)
 ):
@@ -135,6 +141,18 @@ async def get_patch_cam(
         params["task_id"] = task_id
     if fold_key:
         params["fold_key"] = fold_key
+    if preset:
+        params["preset"] = preset
+        if size is not None:
+            params["size"] = size
+        if opacity is not None:
+            params["opacity"] = opacity
+        if blur_scale is not None:
+            params["blur_scale"] = blur_scale
+        if contrast_boost is not None:
+            params["contrast_boost"] = contrast_boost
+        if saturation_boost is not None:
+            params["saturation_boost"] = saturation_boost
 
     if format == "json":
         return await proxy_preprocessing_json(
@@ -158,6 +176,7 @@ async def get_seg_mask(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID"),
     fold_key: Optional[str] = Query(None, description="Fold key for k-fold results"),
+    size: Optional[int] = Query(None, description="Optional max thumbnail size for previews"),
     user: User = Depends(get_user_from_header_or_param),
     db: AsyncSession = Depends(get_db)
 ):
@@ -171,6 +190,8 @@ async def get_seg_mask(
         params["task_id"] = task_id
     if fold_key:
         params["fold_key"] = fold_key
+    if size is not None:
+        params["size"] = size
 
     return await proxy_preprocessing_binary(
         "GET",
@@ -238,6 +259,11 @@ async def get_heatmap_thumbnail(
     patch_size: int = Query(512, description="Patch size used during inference"),
     size: int = Query(256, description="Max thumbnail size (width or height)"),
     class_idx: Optional[int] = Query(None, description="Class index for multi-class attention"),
+    preset: Optional[str] = Query(None, description="Optional rendering preset for lightweight previews"),
+    opacity: Optional[float] = Query(None, description="Optional overlay opacity for preview rendering"),
+    blur_scale: Optional[float] = Query(None, description="Optional blur scale multiplier for preview rendering"),
+    contrast_boost: Optional[float] = Query(None, description="Optional contrast boost for preview rendering"),
+    saturation_boost: Optional[float] = Query(None, description="Optional saturation boost for preview rendering"),
     user: User = Depends(get_user_from_header_or_param),
     db: AsyncSession = Depends(get_db)
 ):
@@ -259,6 +285,16 @@ async def get_heatmap_thumbnail(
         params["fold_key"] = fold_key
     if class_idx is not None:
         params["class_idx"] = class_idx
+    if preset:
+        params["preset"] = preset
+        if opacity is not None:
+            params["opacity"] = opacity
+        if blur_scale is not None:
+            params["blur_scale"] = blur_scale
+        if contrast_boost is not None:
+            params["contrast_boost"] = contrast_boost
+        if saturation_boost is not None:
+            params["saturation_boost"] = saturation_boost
 
     return await proxy_preprocessing_binary(
         "GET",

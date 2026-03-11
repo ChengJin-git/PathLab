@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName } from '../api'
-import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles, User, Edit2 } from 'lucide-react'
+import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName, getTrainingTasks, prefetchTrainingTasks, TrainingTaskListStats } from '../api'
+import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES, CancellableStatus } from '../constants/status'
 import { isSegFmEncoder } from '../constants/training'
 import { PageHeader } from '../components/PageHeader'
@@ -47,6 +47,10 @@ export default function TaskListPage() {
   const [filter, setFilter] = useState<'all' | 'running' | 'completed' | 'failed' | 'cancelled'>('all')
   const [sortBy, setSortBy] = useState<'created' | 'updated' | 'name'>('updated')
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(5)
+  const [totalCount, setTotalCount] = useState(0)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null)
   const [deleteMode, setDeleteMode] = useState<'standard' | 'complete'>('standard')
@@ -58,7 +62,7 @@ export default function TaskListPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null)
-  const [deletedTaskIds, setDeletedTaskIds] = useState<Set<string>>(new Set())
+  const [stats, setStats] = useState<TrainingTaskListStats>({ total: 0, running: 0, completed: 0, failed: 0, cancelled: 0 })
 
   // Edit task name modal states
   const [showEditModal, setShowEditModal] = useState(false)
@@ -66,6 +70,7 @@ export default function TaskListPage() {
   const [editedTaskName, setEditedTaskName] = useState('')
   const [isEditingSaving, setIsEditingSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
+  const refreshRequestIdRef = React.useRef(0)
 
   const { rawTrainingTasks, subscribeTrainingSSE } = useBackgroundTask()
 
@@ -74,6 +79,14 @@ export default function TaskListPage() {
     const unsubscribe = subscribeTrainingSSE()
     return () => unsubscribe()
   }, [subscribeTrainingSSE])
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim())
+    }, 300)
+
+    return () => clearTimeout(timer)
+  }, [searchQuery])
 
   // Handle cancel task
   const handleCancelTask = async (taskId: string, e: React.MouseEvent) => {
@@ -88,15 +101,66 @@ export default function TaskListPage() {
     }
   }
 
-  // Sync training tasks from BackgroundTaskContext SSE (avoids duplicate SSE connection)
-  // Filter out tasks that have been deleted locally
-  useEffect(() => {
-    if (rawTrainingTasks !== null) {
-      const filteredTasks = rawTrainingTasks.filter(t => !deletedTaskIds.has(t.task_id))
-      setTasks(filteredTasks)
-      setLoading(false)
+  const refreshTasks = React.useCallback(async ({
+    showLoadingSpinner = true,
+    forceRefresh = false,
+  }: {
+    showLoadingSpinner?: boolean
+    forceRefresh?: boolean
+  } = {}) => {
+    const requestId = ++refreshRequestIdRef.current
+
+    if (showLoadingSpinner) {
+      setLoading(true)
     }
-  }, [rawTrainingTasks, deletedTaskIds])
+
+    try {
+      const query = {
+        page: currentPage,
+        page_size: itemsPerPage,
+        search: debouncedSearchQuery || undefined,
+        status_filter: filter,
+        sort_by: sortBy,
+        forceRefresh,
+      } as const
+
+      const response = await getTrainingTasks(query)
+      if (requestId !== refreshRequestIdRef.current) return
+
+      setTasks(response.items || [])
+      setTotalCount(response.total || 0)
+      setStats(response.stats || { total: 0, running: 0, completed: 0, failed: 0, cancelled: 0 })
+
+      const totalPages = Math.max(1, Math.ceil((response.total || 0) / itemsPerPage))
+      if (currentPage > 1) {
+        void prefetchTrainingTasks({ ...query, page: currentPage - 1, forceRefresh: false })
+      }
+      if (currentPage < totalPages) {
+        void prefetchTrainingTasks({ ...query, page: currentPage + 1, forceRefresh: false })
+      }
+    } catch (error) {
+      if (requestId !== refreshRequestIdRef.current) return
+      console.error('Failed to load training tasks:', error)
+    } finally {
+      if (requestId !== refreshRequestIdRef.current) return
+      if (showLoadingSpinner) {
+        setLoading(false)
+      }
+    }
+  }, [currentPage, itemsPerPage, debouncedSearchQuery, filter, sortBy])
+
+  useEffect(() => {
+    void refreshTasks({ showLoadingSpinner: true })
+  }, [refreshTasks])
+
+  useEffect(() => {
+    if (rawTrainingTasks === null) return
+    void refreshTasks({ showLoadingSpinner: false, forceRefresh: true })
+  }, [rawTrainingTasks, refreshTasks])
+
+  useEffect(() => {
+    setSelectedTasks([])
+  }, [currentPage, itemsPerPage, debouncedSearchQuery, filter, sortBy])
 
   const handleDeleteTask = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation() // Prevent card click
@@ -162,7 +226,7 @@ export default function TaskListPage() {
 
   const toggleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedTasks(filteredTasks.map(t => t.task_id))
+      setSelectedTasks(tasks.map(t => t.task_id))
     } else {
       setSelectedTasks([])
     }
@@ -210,19 +274,11 @@ export default function TaskListPage() {
         await deleteTrainingTask(taskId, deleteMode)
       }
 
-      // All deletions successful - update local state immediately
-      setTasks(prev => prev.filter(t => !taskIdsToDelete.includes(t.task_id)))
-
-      // Mark these tasks as deleted so they won't reappear from SSE updates
-      setDeletedTaskIds(prev => {
-        const newSet = new Set(prev)
-        taskIdsToDelete.forEach(id => newSet.add(id))
-        return newSet
-      })
+      await refreshTasks({ showLoadingSpinner: false, forceRefresh: true })
+      setSelectedTasks([])
 
       // Clean up state
       if (isBatchDelete) {
-        setSelectedTasks([])
         setIsBatchDelete(false)
       } else {
         setTaskToDelete(null)
@@ -293,26 +349,6 @@ export default function TaskListPage() {
     })
   }
 
-  const filteredTasks = tasks.filter(task => {
-    // Filter by status
-    let statusMatch = true
-    if (filter === 'running') statusMatch = isActiveStatus(task.status)
-    else if (filter === 'completed') statusMatch = task.status === 'completed'
-    else if (filter === 'failed') statusMatch = task.status === 'failed'
-    else if (filter === 'cancelled') statusMatch = task.status === 'cancelled'
-
-    // Filter by search query (task name or task ID)
-    let searchMatch = true
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase().trim()
-      searchMatch =
-        task.task_name.toLowerCase().includes(query) ||
-        task.task_id.toLowerCase().includes(query)
-    }
-
-    return statusMatch && searchMatch
-  })
-
   const calculateDuration = (start: string | null, end: string | null, status: Task['status']) => {
     if (!start || !end) return t('taskList.na')
     if (isActiveStatus(status) || status === 'pending') return t('taskList.inProgress')
@@ -323,20 +359,14 @@ export default function TaskListPage() {
     return `${minutes}m ${Math.floor((duration % (1000 * 60)) / 1000)}s`
   }
 
-  const sortedTasks = [...filteredTasks].sort((a, b) => {
-    if (sortBy === 'created') return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
-    if (sortBy === 'updated') return new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime()
-    if (sortBy === 'name') return a.task_name.localeCompare(b.task_name)
-    return 0
-  })
+  const totalPages = Math.max(1, Math.ceil(totalCount / itemsPerPage))
+  const paginationStart = totalCount === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1
+  const paginationEnd = Math.min(currentPage * itemsPerPage, totalCount)
+  const allFilteredSelected = tasks.length > 0 && tasks.every(task => selectedTasks.includes(task.task_id))
 
-  const stats = {
-    total: tasks.length,
-    running: tasks.filter(t => isActiveStatus(t.status)).length,
-    completed: tasks.filter(t => t.status === 'completed').length,
-    failed: tasks.filter(t => t.status === 'failed').length,
-    cancelled: tasks.filter(t => t.status === 'cancelled').length
-  }
+  useEffect(() => {
+    setCurrentPage(prev => Math.min(prev, totalPages))
+  }, [totalPages])
 
   return (
     <div className="w-full">
@@ -393,13 +423,19 @@ export default function TaskListPage() {
           <input
             type="text"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value)
+              setCurrentPage(1)
+            }}
             placeholder={t('taskList.searchPlaceholder')}
             className="w-full pl-9 sm:pl-12 pr-4 py-2 sm:py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 text-sm sm:text-base transition-all"
           />
           {searchQuery && (
             <button
-              onClick={() => setSearchQuery('')}
+              onClick={() => {
+                setSearchQuery('')
+                setCurrentPage(1)
+              }}
               className="absolute right-3 sm:right-4 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
               title={t('taskList.clearSearch')}
             >
@@ -415,7 +451,10 @@ export default function TaskListPage() {
           {(['all', 'running', 'completed', 'failed', 'cancelled'] as const).map(f => (
             <button
               key={f}
-              onClick={() => setFilter(f)}
+              onClick={() => {
+                setFilter(f)
+                setCurrentPage(1)
+              }}
               className={`px-3 sm:px-4 py-1 sm:py-1.5 text-[11px] sm:text-sm font-semibold rounded-lg transition-all whitespace-nowrap ${filter === f
                 ? 'bg-gray-900 text-white shadow-md'
                 : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
@@ -427,9 +466,9 @@ export default function TaskListPage() {
         </div>
 
         <div className="flex items-center justify-between sm:justify-end gap-3 sm:gap-6 bg-white sm:bg-transparent px-3 py-2 sm:p-0 rounded-xl border border-gray-100 sm:border-transparent">
-          <div className="flex items-center gap-2 group cursor-pointer" onClick={() => toggleSelectAll(!(filteredTasks.length > 0 && selectedTasks.length === filteredTasks.length))}>
+          <div className="flex items-center gap-2 group cursor-pointer" onClick={() => toggleSelectAll(!allFilteredSelected)}>
             <Checkbox
-              checked={filteredTasks.length > 0 && selectedTasks.length === filteredTasks.length}
+              checked={allFilteredSelected}
               onCheckedChange={toggleSelectAll}
               id="select-all"
               className="h-4 w-4 data-[state=checked]:bg-gray-900 data-[state=checked]:border-gray-900"
@@ -442,10 +481,32 @@ export default function TaskListPage() {
           <div className="h-4 w-px bg-gray-200"></div>
 
           <div className="flex items-center space-x-1 sm:space-x-2">
+            <span className="text-[11px] sm:text-sm font-medium text-gray-400">{t('taskList.pagination.itemsPerPage')}:</span>
+            <select
+              value={itemsPerPage}
+              onChange={(e) => {
+                setItemsPerPage(Number(e.target.value))
+                setCurrentPage(1)
+              }}
+              className="pl-1 pr-6 py-1 text-[11px] sm:text-sm font-bold border-none bg-transparent focus:ring-0 text-gray-700 cursor-pointer hover:bg-gray-100 rounded-md transition-colors"
+              style={{ backgroundImage: 'none' }}
+            >
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+            </select>
+          </div>
+
+          <div className="h-4 w-px bg-gray-200"></div>
+
+          <div className="flex items-center space-x-1 sm:space-x-2">
             <span className="text-[11px] sm:text-sm font-medium text-gray-400">{t('taskList.sort')}:</span>
             <select
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+              onChange={(e) => {
+                setSortBy(e.target.value as typeof sortBy)
+                setCurrentPage(1)
+              }}
               className="pl-1 pr-6 py-1 text-[11px] sm:text-sm font-bold border-none bg-transparent focus:ring-0 text-gray-700 cursor-pointer hover:bg-gray-100 rounded-md transition-colors"
               style={{ backgroundImage: 'none' }}
             >
@@ -473,12 +534,12 @@ export default function TaskListPage() {
       </div>
 
       {/* Task List */}
-      {loading ? (
+      {loading && tasks.length === 0 && totalCount === 0 ? (
         <Card className="p-12 text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
           <p className="text-gray-600">{t('taskList.loadingTasks')}</p>
         </Card>
-      ) : sortedTasks.length === 0 ? (
+      ) : tasks.length === 0 ? (
         <Card className="p-12 text-center">
           <ClipboardList className="w-16 h-16 mx-auto mb-4 text-gray-400" />
           <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('taskList.noTasksFound')}</h3>
@@ -496,7 +557,7 @@ export default function TaskListPage() {
         </Card>
       ) : (
         <div className="space-y-3 pb-8">
-          {sortedTasks.map(task => (
+          {tasks.map(task => (
             <Card
               key={task.task_id}
               className={`group p-4 sm:p-6 hover:shadow-lg transition-all cursor-pointer overflow-visible border-gray-100 ${selectedTasks.includes(task.task_id) ? 'ring-2 ring-gray-900 bg-gray-50' : 'bg-white'
@@ -648,16 +709,12 @@ export default function TaskListPage() {
                             <div
                               className="bg-gray-900 h-full rounded-full transition-all duration-300"
                               style={{
-                                width: `${task.data_type === 'patch' && task.task_type !== 'external_validation' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
-                                  ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
-                                  : task.progress}%`
+                                width: `${Math.max(0, Math.min(task.progress, 100))}%`
                               }}
                             />
                           </div>
                           <span className="text-[11px] sm:text-sm font-bold text-gray-900 w-8 sm:w-10 text-right">
-                            {task.data_type === 'patch' && task.task_type !== 'external_validation' && task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled'
-                              ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
-                              : task.progress}%
+                            {Math.max(0, Math.min(task.progress, 100))}%
                           </span>
                         </div>
                       </div>
@@ -713,6 +770,49 @@ export default function TaskListPage() {
               </div>
             </Card>
           ))}
+
+          <Card className="border-gray-100 bg-white/80 shadow-sm">
+            <div className="px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="text-xs sm:text-sm text-gray-500 font-medium text-center sm:text-left flex items-center gap-2">
+                <span>{t('taskList.pagination.summary', {
+                  start: paginationStart,
+                  end: paginationEnd,
+                  total: totalCount,
+                })}</span>
+                {loading && totalCount > 0 && (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 sm:gap-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                  disabled={currentPage === 1}
+                  className="h-8 px-2 sm:px-3"
+                >
+                  <ChevronLeft className="w-4 h-4 sm:mr-1" />
+                  <span className="hidden sm:inline">{t('common.previous')}</span>
+                </Button>
+
+                <span className="text-xs sm:text-sm font-semibold text-gray-600 min-w-[88px] text-center">
+                  {t('taskList.pagination.pageInfo', { current: currentPage, total: totalPages })}
+                </span>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                  disabled={currentPage === totalPages}
+                  className="h-8 px-2 sm:px-3"
+                >
+                  <span className="hidden sm:inline">{t('common.next')}</span>
+                  <ChevronRight className="w-4 h-4 sm:ml-1" />
+                </Button>
+              </div>
+            </div>
+          </Card>
         </div>
       )}
 

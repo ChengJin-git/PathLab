@@ -385,11 +385,25 @@ export interface ScannedWSIFile {
 }
 
 export interface ScanDirectoryResponse {
+  scan_id: string
   directory: string
   files: ScannedWSIFile[]
   total_count: number
   valid_count: number
   total_size: number
+  wsi_count: number
+  patch_count: number
+  annotation_scan_enabled?: boolean
+  page: number
+  page_size: number
+  total_pages: number
+}
+
+export interface ScanDirectoryOptions {
+  scanId?: string
+  taskType?: 'classification' | 'survival' | 'segmentation'
+  page?: number
+  pageSize?: number
 }
 
 /**
@@ -398,13 +412,19 @@ export interface ScanDirectoryResponse {
  * @returns Scanned files with validation info
  * @throws {ApiError} If the request fails
  */
-export async function scanDirectory(directoryPath: string): Promise<ScanDirectoryResponse> {
+export async function scanDirectory(directoryPath: string, options: ScanDirectoryOptions = {}): Promise<ScanDirectoryResponse> {
   return apiFetch<ScanDirectoryResponse>(
     `${API_BASE}/storage/scan-directory`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ directory_path: directoryPath })
+      body: JSON.stringify({
+        directory_path: directoryPath,
+        scan_id: options.scanId,
+        task_type: options.taskType,
+        page: options.page ?? 1,
+        page_size: options.pageSize ?? 100,
+      })
     },
     'Failed to scan directory'
   )
@@ -414,15 +434,21 @@ export interface BatchRegisterFileInfo {
   path: string
   format_type: 'standard' | 'mrxs' | 'tmap'
   associated_data?: string | string[] | null  // string for mrxs (data folder), string[] for tmap (DT files)
+  data_type?: 'wsi' | 'patch'
 }
 
 export interface BatchRegisterRequest {
-  files: BatchRegisterFileInfo[]
+  files?: BatchRegisterFileInfo[]
   dataset_id?: string
   dataset_name?: string
+  scan_root?: string
+  scan_id?: string
+  select_all_valid?: boolean
+  selected_paths?: string[]
+  excluded_paths?: string[]
   aggregation_level?: 'case' | 'file'  // Default: 'file' - how to organize data
   task_type?: 'classification' | 'survival' | 'segmentation'  // Default: 'classification'
-  default_label?: string  // For classification (default: 'External Import')
+  default_label?: string  // Optional default label for classification
   default_event_time?: number  // For survival
   default_event_status?: number  // For survival (1 = event occurred, 0 = censored)
 }
@@ -538,7 +564,7 @@ export function getExternalDatasetsCachedSync(): ExternalDatasetsResponse | null
 export interface StorageTaskStatus {
   task_id: string
   user_id: string
-  task_type: 'batch_import' | 'delete_external'
+  task_type: 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'unbind_dataset' | 'reset_derived_data' | 'delete_dataset' | 'cleanup_empty_datasets'
   status: 'pending' | 'processing' | 'completed' | 'failed'
   progress: number
   error_message: string | null
@@ -574,6 +600,25 @@ export interface StartDeleteExternalResponse {
   task_id: string
   message: string
   total_files: number
+}
+
+export interface StartDeleteDatasetRequest {
+  dataset_id: string
+  mode: 'standard' | 'complete'
+}
+
+export interface StartDeleteDatasetResponse {
+  task_id: string
+  message: string
+  dataset_id: string
+  dataset_name: string
+  total_items: number
+}
+
+export interface StartCleanupEmptyDatasetsResponse {
+  task_id: string
+  message: string
+  total_items: number
 }
 
 /**
@@ -615,6 +660,38 @@ export async function startDeleteExternalTask(wsiIds: string[]): Promise<StartDe
 }
 
 /**
+ * Start an asynchronous dataset deletion task.
+ * The heavy work runs on the server so the UI does not block on per-file requests.
+ */
+export async function startDeleteDatasetTask(
+  request: StartDeleteDatasetRequest
+): Promise<StartDeleteDatasetResponse> {
+  return apiFetch<StartDeleteDatasetResponse>(
+    `${API_BASE}/storage/tasks/delete-dataset`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request)
+    },
+    'Failed to start delete dataset task'
+  )
+}
+
+/**
+ * Start an asynchronous cleanup task that removes historical empty datasets.
+ */
+export async function startCleanupEmptyDatasetsTask(): Promise<StartCleanupEmptyDatasetsResponse> {
+  return apiFetch<StartCleanupEmptyDatasetsResponse>(
+    `${API_BASE}/storage/tasks/cleanup-empty-datasets`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    },
+    'Failed to start cleanup empty datasets task'
+  )
+}
+
+/**
  * Response from starting an unbind dataset task
  */
 export interface StartUnbindDatasetResponse {
@@ -645,7 +722,7 @@ export async function startUnbindDatasetTask(datasetId: string): Promise<StartUn
 }
 
 /**
- * Get storage task status by ID (Admin only)
+ * Get storage task status by ID
  * @param taskId - Storage task ID
  * @returns Task status with progress
  * @throws {ApiError} If the request fails
@@ -667,7 +744,7 @@ export interface CancelStorageTaskResponse {
 }
 
 /**
- * Cancel a storage task (batch_import or delete_external) (Admin only)
+ * Cancel a storage task owned by the current user
  * @param taskId - Storage task ID to cancel
  * @returns Cancel result
  * @throws {ApiError} If the request fails

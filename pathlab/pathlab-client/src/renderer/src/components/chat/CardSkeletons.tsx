@@ -27,27 +27,52 @@ function SkeletonContainer({ children, className }: { children: React.ReactNode;
 
 export function ModelListSkeleton() {
     return (
-        <div className="w-full max-w-2xl space-y-3">
-            <div className="flex items-center gap-2 px-1">
-                <div className="w-4 h-4 rounded-full bg-gray-200 animate-pulse" />
-                <div className="w-24 h-4 rounded bg-gray-200 animate-pulse" />
+        <div className="mt-3 w-full max-w-full space-y-2">
+            {/* Section header */}
+            <div className="flex items-center gap-1.5 px-0.5 animate-pulse">
+                <div className="w-3.5 h-3.5 rounded-full bg-gray-200" />
+                <div className="w-28 h-3.5 rounded bg-gray-200" />
             </div>
 
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
                 {[1, 2].map((i) => (
-                    <div key={i} className="bg-white border-l-4 border-gray-100 rounded-lg p-4 shadow-sm">
-                        <div className="flex items-start justify-between gap-3">
-                            <div className="flex-1 space-y-2">
-                                <div className="flex items-center gap-2">
-                                    <div className="w-32 h-5 rounded bg-gray-200 animate-pulse" />
-                                    <div className="w-16 h-5 rounded-full bg-gray-100 animate-pulse" />
-                                </div>
-                                <div className="flex items-center gap-3">
-                                    <div className="w-12 h-3 rounded bg-gray-100 animate-pulse" />
-                                    <div className="w-16 h-3 rounded bg-gray-100 animate-pulse" />
-                                </div>
+                    <div key={i} className="rounded-xl border border-gray-100 border-l-[3px] border-l-gray-200 bg-white shadow-sm overflow-hidden animate-pulse">
+                        {/* Header */}
+                        <div className="px-3 pt-3 pb-2">
+                            <div className="flex items-center gap-2">
+                                <div className="h-4 w-36 rounded bg-gray-200" />
+                                <div className="h-4 w-16 rounded-full bg-gray-100" />
                             </div>
-                            <div className="w-8 h-8 rounded bg-gray-50 animate-pulse" />
+                            <div className="flex items-center gap-1.5 mt-1.5">
+                                <div className="h-[22px] w-12 rounded bg-gray-100" />
+                                <div className="h-[22px] w-20 rounded bg-gray-100" />
+                            </div>
+                        </div>
+
+                        {/* IDs */}
+                        <div className="px-3 pb-2 grid grid-cols-2 gap-x-3">
+                            <div>
+                                <div className="h-2.5 w-14 rounded bg-gray-100 mb-1" />
+                                <div className="h-5 rounded bg-gray-100" />
+                            </div>
+                            <div>
+                                <div className="h-2.5 w-14 rounded bg-gray-100 mb-1" />
+                                <div className="h-5 rounded bg-gray-100" />
+                            </div>
+                        </div>
+
+                        {/* Classes */}
+                        <div className="px-3 pb-2.5 flex gap-1.5">
+                            <div className="h-4 w-3 rounded bg-gray-100" />
+                            <div className="h-4 w-16 rounded-full bg-gray-100" />
+                            <div className="h-4 w-14 rounded-full bg-gray-100" />
+                        </div>
+
+                        {/* Action bar */}
+                        <div className="border-t border-gray-100 grid grid-cols-3 divide-x divide-gray-100">
+                            <div className="h-8 bg-gray-50/80" />
+                            <div className="h-8 bg-gray-50/80" />
+                            <div className="h-8 bg-gray-50/80" />
                         </div>
                     </div>
                 ))}

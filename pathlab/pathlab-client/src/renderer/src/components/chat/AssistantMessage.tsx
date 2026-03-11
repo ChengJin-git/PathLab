@@ -3,16 +3,17 @@
  *
  * Extracted from AIChatPage.tsx to reduce file size.
  */
-import React, { useMemo } from 'react'
+import React, { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
-import { AlertTriangle, Plus } from 'lucide-react'
+import { AlertTriangle, Plus, Copy, Check } from 'lucide-react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
+import rehypeHighlight from 'rehype-highlight'
 import 'katex/dist/katex.min.css'
-import { getAuthToken } from '../../api/client'
+import { withAuthTokenQuery } from '../../api/client'
 
 import { OptionButtons, parseOptions, removeOptionsBlock } from './OptionButtons'
 import { TaskConfigCard, parseTaskConfig, removeTaskConfigBlock } from './TaskConfigCard'
@@ -31,6 +32,7 @@ import { CancelTaskCard, parseCancelTaskConfig, removeCancelTaskBlock } from './
 import { DatasetRegistrationCard, parseDatasetRegistrationConfig, removeDatasetRegistrationBlock } from './DatasetRegistrationCard'
 import { MetadataUploadCard, parseMetadataUploadConfig, removeMetadataUploadBlock } from './MetadataUploadCard'
 import { ModelListCard, parseModelListConfig, removeModelListBlock } from './ModelListCard'
+import PatchInferenceCard, { parsePatchInferenceConfig, removePatchInferenceBlock } from './PatchInferenceCard'
 import { RenameTaskCard, parseRenameTaskConfig, removeRenameTaskBlock } from './RenameTaskCard'
 import { removeVoiceControlBlock } from './VoiceControlBlock'
 import SearchingStatus, {
@@ -89,6 +91,9 @@ export interface AssistantMessageProps {
   submitTaskTrigger?: number  // When this changes, trigger submit on TaskConfigCard
   cancelTaskTrigger?: number  // When this changes, trigger cancel on CancelTaskCard
   onNewChat?: () => void  // Callback to start a new conversation (context limit card)
+  conversationId?: string
+  referenceImages?: string[]
+  onMessageContentReplace?: (messageId: string, updatedContent: string, errorToastKey?: string) => void | Promise<void>
 }
 
 // All special block tag names used in the chat
@@ -112,13 +117,13 @@ const SPECIAL_BLOCK_TAGS = [
   'DATASET_UPLOAD',
   'METADATA_UPLOAD',
   'MODEL_LIST',
+  'PATCH_INFERENCE',
   'REFERENCE',
   'PDF_PARSE_STATUS',
   'SEARCH_STATUS',
   'WEB_SEARCH_RESULT',
   'WEB_SEARCH',
-  'CITATION_CONTEXTS',
-  'CONVERSATION_TITLE'
+  'CITATION_CONTEXTS'
 ]
 
 /**
@@ -204,7 +209,7 @@ export function removeCancelTaskNowBlock(content: string): string {
   return content.replace(/\[CANCEL_TASK_NOW\][\s\S]*?\[\/CANCEL_TASK_NOW\]/g, '').trim()
 }
 
-// Parse [CONTEXT_LIMIT] block — signals that the LLM output was truncated
+// Parse [CONTEXT_LIMIT] block — signals a true upstream context-window overflow
 export function parseContextLimit(content: string): boolean {
   return /\[CONTEXT_LIMIT\][\s\S]*?\[\/CONTEXT_LIMIT\]/i.test(content)
 }
@@ -214,17 +219,14 @@ export function removeContextLimitBlock(content: string): string {
   return content.replace(/\[CONTEXT_LIMIT\][\s\S]*?\[\/CONTEXT_LIMIT\]/gi, '').trim()
 }
 
-// Parse [CONVERSATION_TITLE] block - hidden conversation title suggestion
-export function parseConversationTitle(content: string): string | null {
-  const match = content.match(/\[CONVERSATION_TITLE\]([\s\S]*?)\[\/CONVERSATION_TITLE\]/i)
-  if (!match) return null
-  const value = (match[1] ?? '').trim()
-  return value.length > 0 ? value : null
+// Parse [RESPONSE_TRUNCATED] block — signals the answer hit an output-length limit
+export function parseResponseTruncated(content: string): boolean {
+  return /\[RESPONSE_TRUNCATED\][\s\S]*?\[\/RESPONSE_TRUNCATED\]/i.test(content)
 }
 
-// Remove [CONVERSATION_TITLE] block from content
-export function removeConversationTitleBlock(content: string): string {
-  return content.replace(/\[CONVERSATION_TITLE\][\s\S]*?\[\/CONVERSATION_TITLE\]/gi, '').trim()
+// Remove [RESPONSE_TRUNCATED] block from content
+export function removeResponseTruncatedBlock(content: string): string {
+  return content.replace(/\[RESPONSE_TRUNCATED\][\s\S]*?\[\/RESPONSE_TRUNCATED\]/gi, '').trim()
 }
 
 // ── Citation Contexts (article reading) ─────────────────────────────────────
@@ -289,7 +291,6 @@ export function isInternalOnlyMessage(content: string): boolean {
   stripped = removeVoiceControlBlock(stripped)
   stripped = removeSubmitTaskBlock(stripped)
   stripped = removeCancelTaskNowBlock(stripped)
-  stripped = removeConversationTitleBlock(stripped)
   return stripped.trim() === ''
 }
 
@@ -317,6 +318,83 @@ function findReferenceCardForCitation(
   return referenceCards[paperIdx - 1] ?? referenceCards[0]
 }
 
+function normalizeCodeLanguage(className?: string): string {
+  const raw = className?.match(/language-([\w-]+)/)?.[1]?.toLowerCase() || ''
+  if (!raw) return 'text'
+  if (raw === 'plaintext' || raw === 'plain') return 'text'
+  if (raw === 'shell' || raw === 'bash' || raw === 'zsh') return 'bash'
+  if (raw === 'bib' || raw === 'bibtex') return 'bibtex'
+  if (raw === 'tsx' || raw === 'jsx' || raw === 'typescript' || raw === 'javascript') return raw
+  if (raw === 'monofont') return 'text'
+  return raw
+}
+
+const CODE_FONT_STACK = 'JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace'
+
+function extractNodeText(node: React.ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') {
+    return String(node)
+  }
+  if (Array.isArray(node)) {
+    return node.map(extractNodeText).join('')
+  }
+  if (React.isValidElement(node)) {
+    const props = node.props as { children?: React.ReactNode }
+    return extractNodeText(props.children)
+  }
+  return ''
+}
+
+function MarkdownCodeBlock({
+  language,
+  codeText,
+  children,
+  copyLabel,
+  copiedLabel,
+  copyAriaLabel,
+}: {
+  language: string
+  codeText: string
+  children: React.ReactNode
+  copyLabel: string
+  copiedLabel: string
+  copyAriaLabel: string
+}) {
+  const [copied, setCopied] = useState(false)
+
+  const copyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(codeText)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1200)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <div className="my-4 overflow-hidden rounded-xl border border-slate-200 bg-slate-950 shadow-sm">
+      <div className="flex items-center justify-between border-b border-slate-700/80 bg-slate-900/85 px-3 py-2">
+        <span className="rounded-md bg-slate-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-300">
+          {language}
+        </span>
+        <button
+          type="button"
+          onClick={copyCode}
+          className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] font-medium text-slate-200 transition-colors hover:bg-slate-700"
+          aria-label={copyAriaLabel}
+        >
+          {copied ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? copiedLabel : copyLabel}
+        </button>
+      </div>
+      <pre className="max-h-[420px] overflow-x-auto overflow-y-auto px-4 py-3 text-[12px] leading-6 text-slate-100">
+        <code style={{ fontFamily: CODE_FONT_STACK }}>{children}</code>
+      </pre>
+    </div>
+  )
+}
+
 
 // Assistant message component with special markup parsing
 // Defined outside of AIChatPage to prevent re-creation on every render
@@ -340,12 +418,19 @@ const AssistantMessage = React.memo(function AssistantMessage({
   onMetadataUploadSuccess,
   submitTaskTrigger,
   cancelTaskTrigger,
-  onNewChat
+  onNewChat,
+  conversationId,
+  referenceImages,
+  onMessageContentReplace
 }: AssistantMessageProps) {
   const { t } = useTranslation()
+  const codeCopyLabel = t('aiChat.copy')
+  const codeCopiedLabel = t('aiChat.copied')
+  const codeCopyAriaLabel = t('aiChat.copyCodeBlockAria')
 
   // Parse special blocks
   const contextLimitReached = parseContextLimit(content)
+  const responseTruncated = parseResponseTruncated(content)
   const searchStatus = parseSearchStatus(content)
   const webSearchResult = parseWebSearchResult(content)
   const options = parseOptions(content)
@@ -363,6 +448,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const datasetRegistrationConfig = parseDatasetRegistrationConfig(content)
   const metadataUploadConfig = parseMetadataUploadConfig(content)
   const modelListConfig = parseModelListConfig(content)
+  const patchInferenceConfig = parsePatchInferenceConfig(content)
   const referenceCards = parseAllReferenceCards(content)
   const pdfParseStatusItems = parseAllPdfParseStatus(content)
   const citationContexts = parseCitationContexts(content)
@@ -495,15 +581,10 @@ const AssistantMessage = React.memo(function AssistantMessage({
     img: ({ src, alt, ...rest }) => {
       let finalSrc = src || ''
       if (finalSrc.includes('/pdf-images/')) {
-        const token = getAuthToken()
-        if (token) {
-          const sep = finalSrc.includes('?') ? '&' : '?'
-          finalSrc = `${finalSrc}${sep}token=${encodeURIComponent(token)}`
-        }
+        finalSrc = withAuthTokenQuery(finalSrc)
       }
       // Safety net: prevent 404 flood from hallucinated image URLs.
-      // On error, clear src to stop browser retries and show a placeholder
-      // for pdf-images (which may load after MinerU upgrade).
+      // On error, clear src so the browser stops retrying broken PDF images.
       const isPdfImage = (src || '').includes('/pdf-images/')
       return (
         <img
@@ -536,6 +617,42 @@ const AssistantMessage = React.memo(function AssistantMessage({
         <table className="min-w-full">{children}</table>
       </div>
     ),
+    pre: ({ children }) => {
+      const codeElement = React.isValidElement(children)
+        ? children as React.ReactElement<{ className?: string; children?: React.ReactNode }>
+        : null
+
+      const className = codeElement?.props?.className || ''
+      const language = normalizeCodeLanguage(className)
+      const codeText = extractNodeText(codeElement?.props?.children).replace(/\n$/, '')
+
+      return (
+        <MarkdownCodeBlock
+          language={language}
+          codeText={codeText}
+          copyLabel={codeCopyLabel}
+          copiedLabel={codeCopiedLabel}
+          copyAriaLabel={codeCopyAriaLabel}
+        >
+          {children}
+        </MarkdownCodeBlock>
+      )
+    },
+    code: ({ className, children, ...props }) => {
+      const isInline = !className || (!className.includes('language-') && !className.includes('hljs'))
+      if (isInline) {
+        return (
+          <code
+            className="rounded-md border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-[0.82em] text-slate-800"
+            style={{ fontFamily: CODE_FONT_STACK }}
+            {...props}
+          >
+            {children}
+          </code>
+        )
+      }
+      return <code className={className} style={{ fontFamily: CODE_FONT_STACK }} {...props}>{children}</code>
+    },
     a: ({ href, children, ...rest }) => {
       // Detect #cite-N hash links and render InlineCitation component
       const citationMatch = href?.match(/^#cite-(\d+)$/)
@@ -558,12 +675,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
       // The AI sometimes uses [text](url) link syntax instead of ![text](url) image syntax
       // for PDF figure references, causing them to appear as clickable links instead of images.
       if (href && href.includes('/pdf-images/')) {
-        let finalSrc = href
-        const token = getAuthToken()
-        if (token) {
-          const sep = finalSrc.includes('?') ? '&' : '?'
-          finalSrc = `${finalSrc}${sep}token=${encodeURIComponent(token)}`
-        }
+        const finalSrc = withAuthTokenQuery(href)
         const altText = typeof children === 'string' ? children
           : Array.isArray(children) ? children.map(c => typeof c === 'string' ? c : '').join('')
           : ''
@@ -589,7 +701,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
         </a>
       )
     },
-  }), [citationMap])
+  }), [citationMap, codeCopyAriaLabel, codeCopiedLabel, codeCopyLabel])
 
   // Remove special blocks from display content
   // Keep the text content but strip out the special markup blocks
@@ -609,6 +721,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (datasetRegistrationConfig) displayContent = removeDatasetRegistrationBlock(displayContent)
   if (metadataUploadConfig) displayContent = removeMetadataUploadBlock(displayContent)
   if (modelListConfig) displayContent = removeModelListBlock(displayContent)
+  if (patchInferenceConfig) displayContent = removePatchInferenceBlock(displayContent)
   // Remove SEARCH_STATUS block - it handled separately
   if (searchStatus) displayContent = removeSearchStatusBlock(displayContent)
   // Remove WEB_SEARCH_RESULT block - it handled separately
@@ -621,8 +734,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
   displayContent = displayContent.replace(/\[READ_ARTICLE\][\s\S]*?\[\/READ_ARTICLE\]/g, '').trim()
   // Remove CONTEXT_LIMIT block - rendered as a card
   if (contextLimitReached) displayContent = removeContextLimitBlock(displayContent)
-  // Remove CONVERSATION_TITLE block - internal title recommendation only
-  displayContent = removeConversationTitleBlock(displayContent)
+  // Remove RESPONSE_TRUNCATED block - rendered as a card
+  if (responseTruncated) displayContent = removeResponseTruncatedBlock(displayContent)
   // Remove VOICE_CONTROL block - it's for internal use only
   displayContent = removeVoiceControlBlock(displayContent)
   // Remove SUBMIT_TASK block - it's for internal use only (voice command to trigger submit)
@@ -736,38 +849,38 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent, isStreaming)
   displayContent = cleanedContent
 
-	  // Show searching indicator only while streaming and before results arrive
-	  const showSearchingStatus = !!searchStatus && !webSearchResult && isStreaming
+  // Show searching indicator only while streaming and before results arrive
+  const showSearchingStatus = !!searchStatus && !webSearchResult && isStreaming
 
-    // PDF parsing status: show animated indicator while any PDF is still "parsing" or "downloading".
-    // Hide entirely during web-search streaming — the AI may autonomously trigger
-    // [READ_ARTICLE] and cached PDFs finish before the summary text appears, which
-    // looks confusing alongside "Summarizing search results…".
-    const hasPdfParsingInProgress = pdfParseStatusItems?.some(i => i.status === 'parsing' || i.status === 'downloading') ?? false
-    const isWebSearchStreaming = isStreaming && !!webSearchResult
-    const showPdfParsingStatus = !!pdfParseStatusItems && hasPdfParsingInProgress && isStreaming && !isWebSearchStreaming
+  // PDF parsing status: show animated indicator while any PDF is still "parsing" or "downloading".
+  // Hide entirely during web-search streaming — the AI may autonomously trigger
+  // [READ_ARTICLE] and cached PDFs finish before the summary text appears, which
+  // looks confusing alongside "Summarizing search results…".
+  const hasPdfParsingInProgress = pdfParseStatusItems?.some(i => i.status === 'parsing' || i.status === 'downloading') ?? false
+  const isWebSearchStreaming = isStreaming && !!webSearchResult
+  const showPdfParsingStatus = !!pdfParseStatusItems && hasPdfParsingInProgress && isStreaming && !isWebSearchStreaming
 
-    // Show "summarizing search results" indicator after search completes but before
-    // the AI starts streaming actual summary text. This fills the visual gap between
-    // the search-completed card and the streamed markdown content.
-    const showSummarizingSearch = !!webSearchResult && isStreaming && !displayContent.trim()
+  // Show "summarizing search results" indicator after search completes but before
+  // the AI starts streaming actual summary text. This fills the visual gap between
+  // the search-completed card and the streamed markdown content.
+  const showSummarizingSearch = !!webSearchResult && isStreaming && !displayContent.trim()
 
-    // Show completed card when all PDFs are done (not streaming OR all statuses are final).
-    // Hide during web-search streaming to avoid "Parsed N PDFs" card appearing before
-    // or alongside "Summarizing search results…" (jarring when PDF is cached).
-    const showPdfParsingCompleted = !!pdfParseStatusItems && !hasPdfParsingInProgress && !isWebSearchStreaming
+  // Show completed card when all PDFs are done (not streaming OR all statuses are final).
+  // Hide during web-search streaming to avoid "Parsed N PDFs" card appearing before
+  // or alongside "Summarizing search results…" (jarring when PDF is cached).
+  const showPdfParsingCompleted = !!pdfParseStatusItems && !hasPdfParsingInProgress && !isWebSearchStreaming
 
-    // Show "summarizing PDF" indicator after PDF parsing completes but before
-    // the AI starts streaming the actual summary. Fills the visual gap between
-    // the "已解析 N 篇 PDF 论文" card and the streamed markdown content.
-    const hasCompletedPdf = pdfParseStatusItems?.some(i => i.status === 'completed') ?? false
-    const showSummarizingPdf = showPdfParsingCompleted && hasCompletedPdf && isStreaming && !displayContent.trim()
+  // Show "summarizing PDF" indicator after PDF parsing completes but before
+  // the AI starts streaming the actual summary. Fills the visual gap between
+  // the "已解析 N 篇 PDF 论文" card and the streamed markdown content.
+  const hasCompletedPdf = pdfParseStatusItems?.some(i => i.status === 'completed') ?? false
+  const showSummarizingPdf = showPdfParsingCompleted && hasCompletedPdf && isStreaming && !displayContent.trim()
 
-	  return (
+  return (
     <div className="w-full min-w-0">
       {/* Searching Status indicator */}
-	      {showSearchingStatus && (
-	        <SearchingStatus query={searchStatus?.query} reason={searchStatus?.reason} />
+      {showSearchingStatus && (
+        <SearchingStatus query={searchStatus?.query} reason={searchStatus?.reason} />
       )}
 
       {/* Search Completed Card */}
@@ -780,9 +893,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
       )}
 
       {/* Summarizing Search Results indicator */}
-      {showSummarizingSearch && (
-        <SummarizingSearchStatus />
-      )}
+      {showSummarizingSearch && <SummarizingSearchStatus />}
 
       {/* PDF Parsing Status indicator */}
       {showPdfParsingStatus && pdfParseStatusItems && (
@@ -795,30 +906,35 @@ const AssistantMessage = React.memo(function AssistantMessage({
       )}
 
       {/* Summarizing PDF indicator */}
-      {showSummarizingPdf && (
-        <SummarizingPdfStatus />
-      )}
+      {showSummarizingPdf && <SummarizingPdfStatus />}
 
-	      {/* Markdown content — no skeleton; stream starts directly */}
-	      {displayContent.trim() && (
-	        <div className="prose prose-slate max-w-none prose-sm
-	          prose-p:my-2 prose-p:leading-relaxed
-	          prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-headings:text-gray-900
-	          prose-ul:my-3 prose-ul:list-disc prose-ul:pl-6
-	          prose-ol:my-3 prose-ol:list-decimal prose-ol:pl-6
-	          prose-li:my-1.5 prose-li:leading-relaxed
-	          prose-code:bg-gray-100 prose-code:text-gray-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
-	          prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:p-4 prose-pre:my-3
-	          prose-strong:text-gray-900 prose-strong:font-semibold
-	          prose-a:text-blue-600 prose-a:underline prose-a:decoration-blue-300 prose-a:underline-offset-2 hover:prose-a:text-blue-700 hover:prose-a:decoration-blue-500
-	          prose-hr:border-gray-200 prose-hr:my-4
-	          prose-table:text-sm
+      {/* Markdown content — no skeleton; stream starts directly */}
+      {displayContent.trim() && (
+        <div className="prose prose-slate max-w-none prose-sm
+          prose-p:my-2 prose-p:leading-relaxed
+          prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-headings:text-gray-900
+          prose-ul:my-3 prose-ul:list-disc prose-ul:pl-6
+          prose-ol:my-3 prose-ol:list-decimal prose-ol:pl-6
+          prose-li:my-1.5 prose-li:leading-relaxed
+          prose-code:before:content-none prose-code:after:content-none
+          prose-pre:bg-transparent prose-pre:p-0 prose-pre:my-0
+          prose-strong:text-gray-900 prose-strong:font-semibold
+          prose-a:text-blue-600 prose-a:underline prose-a:decoration-blue-300 prose-a:underline-offset-2 hover:prose-a:text-blue-700 hover:prose-a:decoration-blue-500
+          prose-hr:border-gray-200 prose-hr:my-4
+          prose-table:text-sm
           prose-img:rounded-lg prose-img:shadow-md prose-img:my-3 prose-img:max-w-full prose-img:h-auto prose-img:border prose-img:border-gray-200">
-	          <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={markdownComponents}>
-	            {displayContent}
-	          </ReactMarkdown>
-	        </div>
-	      )}
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm, remarkMath]}
+            rehypePlugins={[
+              rehypeKatex,
+              [rehypeHighlight, { ignoreMissing: true, detect: true }],
+            ]}
+            components={markdownComponents}
+          >
+            {displayContent}
+          </ReactMarkdown>
+        </div>
+      )}
 
       {/* Animated Components Section */}
       <AnimatePresence mode="wait">
@@ -995,6 +1111,27 @@ const AssistantMessage = React.memo(function AssistantMessage({
           </motion.div>
         )}
 
+        {/* Response truncated warning card */}
+        {responseTruncated && !isStreaming && (
+          <motion.div key="response-truncated" {...cardTransition}>
+            <div className="my-4 p-4 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-xl shadow-sm">
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0 w-8 h-8 bg-amber-100 rounded-full flex items-center justify-center">
+                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-amber-800">
+                    {t('aiChat.responseTruncated.title')}
+                  </p>
+                  <p className="text-xs text-amber-600 mt-1">
+                    {t('aiChat.responseTruncated.description')}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
         {/* Task History card */}
         {taskHistoryConfig ? (
           <motion.div key="task-history-real" {...cardTransition}>
@@ -1031,7 +1168,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
           <motion.div key="rename-task-real" {...cardTransition}>
             <RenameTaskCard
               config={renameTaskConfig}
-              onSuccess={(taskId, newName) => onToast({ type: 'success', message: t('chatComponents.assistantMessage.taskRenamedSuccess', { newName }) })}
+              onSuccess={(_taskId, newName) => onToast({ type: 'success', message: t('chatComponents.assistantMessage.taskRenamedSuccess', { newName }) })}
               onError={(error) => onToast({ type: 'error', message: error })}
             />
           </motion.div>
@@ -1062,11 +1199,34 @@ const AssistantMessage = React.memo(function AssistantMessage({
         {/* Model List Card */}
         {modelListConfig ? (
           <motion.div key="model-list-real" {...cardTransition}>
-            <ModelListCard config={modelListConfig} />
+            <ModelListCard config={modelListConfig} onToast={onToast} />
           </motion.div>
         ) : incompleteTag === 'MODEL_LIST' && (
           <motion.div key="model-list-skeleton" {...cardTransition}>
             <ModelListSkeleton />
+          </motion.div>
+        )}
+
+        {/* Patch inference card */}
+        {patchInferenceConfig ? (
+          <motion.div key="patch-inference-real" {...cardTransition}>
+            <PatchInferenceCard
+              config={patchInferenceConfig}
+              conversationId={conversationId}
+              messageId={messageId}
+              referenceImages={referenceImages}
+              onToast={onToast}
+              onPersistConfig={(nextConfig) => {
+                if (!onMessageContentReplace) return
+                const nextBlock = `[PATCH_INFERENCE]\n${JSON.stringify(nextConfig, null, 2)}\n[/PATCH_INFERENCE]`
+                const updatedContent = content.replace(/\[PATCH_INFERENCE\][\s\S]*?\[\/PATCH_INFERENCE\]/, nextBlock)
+                return onMessageContentReplace(messageId, updatedContent, 'aiChat.failedToSavePatchInferenceStatus')
+              }}
+            />
+          </motion.div>
+        ) : incompleteTag === 'PATCH_INFERENCE' && (
+          <motion.div key="patch-inference-skeleton" {...cardTransition}>
+            <GenericCardSkeleton />
           </motion.div>
         )}
 
@@ -1110,6 +1270,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
           'DATASET_REGISTRATION',
           'METADATA_UPLOAD',
           'MODEL_LIST',
+          'PATCH_INFERENCE',
           'CITATION_CONTEXTS',
           'REFERENCE',
           'WEB_SEARCH_RESULT',
@@ -1117,7 +1278,6 @@ const AssistantMessage = React.memo(function AssistantMessage({
           'PDF_PARSE_STATUS',
           'WEB_SEARCH',
           'READ_ARTICLE',
-          'CONVERSATION_TITLE',
           'VOICE_CONTROL',
           'SUBMIT_TASK',
           'CANCEL_TASK_NOW'

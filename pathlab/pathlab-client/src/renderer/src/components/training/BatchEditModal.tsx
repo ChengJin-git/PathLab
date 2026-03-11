@@ -40,6 +40,7 @@ export function BatchEditModal({ taskType, selectedCount, updating, onConfirm, o
   }
 
   const isSurvival = taskType === 'survival'
+  const isSegmentation = taskType === 'segmentation'
   const labelHint = t('training.batchEdit.labelHint')
 
   return (
@@ -87,7 +88,7 @@ export function BatchEditModal({ taskType, selectedCount, updating, onConfirm, o
               />
             </div>
           </div>
-        ) : (
+        ) : !isSegmentation ? (
           /* Label Input (Classification) */
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">{labelHint}</label>
@@ -99,7 +100,7 @@ export function BatchEditModal({ taskType, selectedCount, updating, onConfirm, o
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
-        )}
+        ) : null}
 
         {/* Case ID Input */}
         <div className="mb-4">

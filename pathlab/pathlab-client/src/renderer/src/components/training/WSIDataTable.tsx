@@ -47,7 +47,7 @@ export interface WSIDataTableProps {
   handleDeleteClick: (wsiId: string, label?: string, filename?: string) => void
 
   // Helpers
-  getFileType: (fileExtension: string, size: number) => 'WSI' | 'Patch'
+  getFileType: (fileExtension: string | null, size: number | null, authoritativeDataType?: 'wsi' | 'patch' | null) => 'WSI' | 'Patch'
 }
 
 export function WSIDataTable({
@@ -289,7 +289,7 @@ function TableContent({
   isPatchDataset: boolean
   handleEditClick: (item: WSIItem) => void
   handleDeleteClick: (wsiId: string, label?: string, filename?: string) => void
-  getFileType: (fileExtension: string, size: number) => 'WSI' | 'Patch'
+  getFileType: (fileExtension: string | null, size: number | null, authoritativeDataType?: 'wsi' | 'patch' | null) => 'WSI' | 'Patch'
   setSelectedIds: (ids: Set<string>) => void
 }) {
   if (hasMultiSlideCases && paginatedCases) {
@@ -358,7 +358,7 @@ function SlideRow({
   nested?: boolean
 }) {
   const { t } = useTranslation()
-  const fileType = getFileType(item.file_extension || '', item.file_size || 0)
+  const fileType = getFileType(item.file_extension || '', item.file_size || 0, item.data_type)
 
   return (
     <tr
@@ -530,7 +530,7 @@ function CaseRow({
   toggleExpansion: () => void
   handleEditClick: (item: WSIItem) => void
   handleDeleteClick: (wsiId: string, label?: string, filename?: string) => void
-  getFileType: (fileExtension: string, size: number) => 'WSI' | 'Patch'
+  getFileType: (fileExtension: string | null, size: number | null, authoritativeDataType?: 'wsi' | 'patch' | null) => 'WSI' | 'Patch'
 }) {
   const { t } = useTranslation()
   const isNoCase = caseId === '__no_case__'
@@ -567,7 +567,7 @@ function CaseRow({
   }
 
   // Get file types for the case
-  const types = new Set(slides.map((s) => getFileType(s.file_extension || '', s.file_size || 0)))
+  const types = new Set(slides.map((s) => getFileType(s.file_extension || '', s.file_size || 0, s.data_type)))
   const typeLabel = types.has('WSI') && types.has('Patch') ? t('training.wsiTable.mixed') : types.values().next().value || 'WSI'
 
   return (

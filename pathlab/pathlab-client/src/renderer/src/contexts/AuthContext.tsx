@@ -46,6 +46,7 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
+export const BEFORE_LOGOUT_EVENT = 'pathlab:before-logout'
 
 interface AuthProviderProps {
   children: ReactNode
@@ -226,6 +227,8 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     try {
       setIsLoading(true)
       setError(null)
+
+      window.dispatchEvent(new CustomEvent(BEFORE_LOGOUT_EVENT))
 
       await apiLogout()
       setUser(null)

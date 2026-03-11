@@ -9,7 +9,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "esModuleInterop": true,
-    "types": ["electron-vite/node"],
+    "types": ["node"],
     "lib": ["ESNext", "DOM"],
     "skipLibCheck": true,
     "outDir": "out",

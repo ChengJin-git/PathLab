@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next'
 import { X, Settings2 } from 'lucide-react'
 import { Button } from '../ui/button'
 import type { UploadMode, FileMetadata } from './types'
-import { organSources } from './types'
 
 export interface BulkEditModalProps {
   uploadMode: UploadMode
@@ -35,7 +34,7 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
         </div>
 
         <div className="space-y-4 sm:space-y-6">
-          {(uploadMode === 'classification' || uploadMode === 'segmentation') ? (
+          {uploadMode === 'classification' ? (
             <div className="space-y-1.5">
               <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('uploadComponents.bulkEdit.label')}</label>
               <input
@@ -45,7 +44,7 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
                 onChange={e => onBatchMetadataChange(p => ({ ...p, label: e.target.value }))}
               />
             </div>
-          ) : (
+          ) : uploadMode === 'survival' ? (
             <div className="grid grid-cols-2 gap-3 sm:gap-4">
               <div className="space-y-1.5">
                 <label className="text-[10px] sm:text-xs font-semibold text-emerald-600 uppercase tracking-wider">{t('uploadComponents.bulkEdit.eventTime')}</label>
@@ -71,7 +70,7 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
                 </select>
               </div>
             </div>
-          )}
+          ) : null}
           <div className="grid grid-cols-2 gap-3 sm:gap-4">
             <div className="space-y-1.5">
               <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('uploadComponents.bulkEdit.caseId')}</label>
@@ -95,17 +94,6 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
           </div>
           <div className="grid grid-cols-2 gap-3 sm:gap-4">
             <div className="space-y-1.5">
-              <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('uploadComponents.bulkEdit.source')}</label>
-              <select
-                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none"
-                value={batchMetadata.source}
-                onChange={e => onBatchMetadataChange(p => ({ ...p, source: e.target.value }))}
-              >
-                <option value="">{t('uploadComponents.bulkEdit.noChange')}</option>
-                {organSources.map(o => <option key={o} value={o}>{o}</option>)}
-              </select>
-            </div>
-            <div className="space-y-1.5">
               <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('uploadComponents.bulkEdit.gender')}</label>
               <select
                 className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none"
@@ -118,6 +106,7 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
                 <option value="Unspecified">{t('uploadComponents.bulkEdit.any')}</option>
               </select>
             </div>
+            <div />
           </div>
         </div>
 

@@ -127,6 +127,39 @@ def _convert_gt_record_for_wsi(record, wsi):
     return {wsi.wsi_id: roi_map.get(wsi.wsi_id, [])} if roi_map.get(wsi.wsi_id) else {}
 
 
+def _get_gt_image_dimensions_for_wsi(record, wsi):
+    """Get the matched COCO image dimensions for a target WSI if available."""
+    exact_lookup, stem_lookup = _build_single_wsi_gt_lookups(wsi, record.annotations)
+    images = record.annotations.get("images") if isinstance(record.annotations, dict) else None
+
+    if not isinstance(images, list):
+        return None, None
+
+    for image in images:
+        if not isinstance(image, dict):
+            continue
+
+        image_name = Path(str(image.get("file_name") or "")).name.strip().lower()
+        if not image_name:
+            continue
+
+        matched_wsi_id = exact_lookup.get(image_name)
+        if not matched_wsi_id:
+            stem = Path(image_name).stem
+            if stem:
+                matched_wsi_id = stem_lookup.get(stem)
+
+        if matched_wsi_id != wsi.wsi_id:
+            continue
+
+        width = image.get("width")
+        height = image.get("height")
+        if isinstance(width, (int, float)) and isinstance(height, (int, float)) and width > 0 and height > 0:
+            return int(width), int(height)
+
+    return None, None
+
+
 async def _get_dataset_with_access(dataset_id: str, user: User, db: AsyncSession):
     return await get_dataset_with_access(
         dataset_id,
@@ -451,11 +484,14 @@ async def get_wsi_ground_truth_annotations(
     for record in record_candidates:
         roi_map = _convert_gt_record_for_wsi(record, wsi)
         if roi_map:
+            gt_width, gt_height = _get_gt_image_dimensions_for_wsi(record, wsi)
             return {
                 "dataset_id": wsi.dataset_id,
                 "annotations": roi_map,
                 "record_count": 1,
                 "source": "ground_truth",
+                "width": gt_width or wsi.width,
+                "height": gt_height or wsi.height,
             }
 
     return {
@@ -463,6 +499,8 @@ async def get_wsi_ground_truth_annotations(
         "annotations": {},
         "record_count": 0,
         "source": "ground_truth",
+        "width": wsi.width,
+        "height": wsi.height,
     }
 
 

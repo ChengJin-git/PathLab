@@ -17,7 +17,7 @@ interface BatchRegisterCardProps {
   batchScanResult: ScanDirectoryResponse | null
   batchScanning: boolean
   batchScanError: string | null
-  batchSelectedFiles: Set<string>
+  batchSelectedCount: number
   batchDatasetMode: 'existing' | 'new'
   setBatchDatasetMode: (mode: 'existing' | 'new') => void
   batchSelectedDatasetId: string
@@ -32,7 +32,9 @@ interface BatchRegisterCardProps {
   setBatchDataLevel: (level: 'case' | 'file') => void
   handleSelectBatchScanDir: () => Promise<void>
   handleBatchScan: () => Promise<void>
-  handleBatchFileToggle: (path: string) => void
+  handleBatchScanPageChange: (page: number) => Promise<void>
+  isBatchFileSelected: (path: string, valid: boolean) => boolean
+  handleBatchFileToggle: (path: string, valid: boolean) => void
   handleBatchSelectAll: () => void
   handleBatchDeselectAll: () => void
   handleBatchRegister: () => Promise<void>
@@ -58,7 +60,7 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
   batchScanResult,
   batchScanning,
   batchScanError,
-  batchSelectedFiles,
+  batchSelectedCount,
   batchDatasetMode,
   setBatchDatasetMode,
   batchSelectedDatasetId,
@@ -73,6 +75,8 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
   setBatchDataLevel,
   handleSelectBatchScanDir,
   handleBatchScan,
+  handleBatchScanPageChange,
+  isBatchFileSelected,
   handleBatchFileToggle,
   handleBatchSelectAll,
   handleBatchDeselectAll,
@@ -149,7 +153,7 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
       {batchScanResult && (
         <BatchScanResults
           batchScanResult={batchScanResult}
-          batchSelectedFiles={batchSelectedFiles}
+          batchSelectedCount={batchSelectedCount}
           batchDatasetMode={batchDatasetMode}
           setBatchDatasetMode={setBatchDatasetMode}
           batchSelectedDatasetId={batchSelectedDatasetId}
@@ -162,6 +166,8 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
           setBatchTaskType={setBatchTaskType}
           batchDataLevel={batchDataLevel}
           setBatchDataLevel={setBatchDataLevel}
+          handleBatchScanPageChange={handleBatchScanPageChange}
+          isBatchFileSelected={isBatchFileSelected}
           handleBatchFileToggle={handleBatchFileToggle}
           handleBatchSelectAll={handleBatchSelectAll}
           handleBatchDeselectAll={handleBatchDeselectAll}

@@ -5,7 +5,7 @@ import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCirc
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
-import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask, ApiError } from '../api'
+import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask, ApiError, withAuthTokenQuery } from '../api'
 import { TASK_DETAIL_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES, ANALYSIS_CANCELLABLE_STATUSES, CancellableStatus } from '../constants/status'
 import { useAuth } from '../contexts/AuthContext'
 import { TaskDetail, LogEntry } from '../components/taskDetail/types'
@@ -76,7 +76,7 @@ export default function TaskDetailPage() {
       return
     }
 
-    const sseUrl = `${API_BASE}/tasks/training/${task_id}/logs/stream?token=${encodeURIComponent(token)}`
+    const sseUrl = withAuthTokenQuery(`${API_BASE}/tasks/training/${task_id}/logs/stream`)
 
     // Create EventSource for SSE
     const eventSource = new EventSource(sseUrl)
@@ -296,6 +296,7 @@ export default function TaskDetailPage() {
       markTrainingSubmissionPending(taskId, `${task.task_name} (rerun)`)
       void createTrainingTask({
         task_id: taskId,
+        rerun_from_task_id: isAdmin ? task.task_id : undefined,
         task_name: `${task.task_name} (rerun)`,
         task_type: task.task_type,
         data_type: task.data_type,
@@ -446,14 +447,10 @@ export default function TaskDetailPage() {
   const isPatchLevel = task.data_type === 'patch'
   const isExternalValidation = task.task_type === 'external_validation'
 
-  // Calculate display progress for patch-level tasks
-  // (map 66% - 100% backend progress to 0% - 100% UI progress)
-  // For completed tasks, always show 100%
-  // For cancelled/failed tasks, show the mapped progress at the time of cancellation/failure
-  // External validation tasks use 0-100 directly regardless of data_type
-  const displayProgress = isPatchLevel && !isExternalValidation && task.status !== 'completed'
-    ? Math.max(0, Math.min(100, Math.round(((task.progress - 66) / (100 - 66)) * 100)))
-    : Math.min(task.progress, 100)  // Cap at 100% for safety
+  // Display task progress directly in the standard 0-100 range.
+  const displayProgress = task.status === 'completed'
+    ? 100
+    : Math.max(0, Math.min(task.progress, 100))
 
   return (
     <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6 pb-12">

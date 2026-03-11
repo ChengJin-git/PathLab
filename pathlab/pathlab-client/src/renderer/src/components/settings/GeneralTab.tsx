@@ -1,23 +1,24 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Cloud, Server, Key, Info, CheckCircle, Mic, Search, Power, Globe } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
-import { getGlobalSettings, updateGlobalSettings, getAuthToken } from '../../api'
+import { getGlobalSettings, updateGlobalSettings, buildAuthRequestInit } from '../../api'
 import { API_BASE } from '../../config'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { useTranslation } from 'react-i18next'
 
 // Status Badge Component
 function StatusBadge({ status }: { status: 'online' | 'offline' | 'checking' }) {
+  const { t } = useTranslation()
   const statusConfig = {
     online: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', dot: 'bg-emerald-500' },
     checking: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', dot: 'bg-amber-500' },
     offline: { bg: 'bg-slate-100', text: 'text-slate-600', border: 'border-slate-200', dot: 'bg-slate-400' }
   }
   const config = statusConfig[status]
-  const statusText = status === 'online' ? '在线' : status === 'checking' ? '检测中...' : '离线'
+  const statusText = status === 'online' ? t('common.online') : status === 'checking' ? t('common.checking') : t('common.offline')
   return (
     <div className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border ${config.bg} ${config.text} ${config.border}`}>
       <div className={`w-2 h-2 rounded-full ${config.dot} animate-pulse`} />
@@ -76,8 +77,6 @@ export interface GeneralTabProps {
   closeConfirmDialog: () => void
 }
 
-type SearchProvider = 'exa' | 'tavily'
-
 export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTabProps) {
   const { t } = useTranslation()
   // Remote LLM state
@@ -86,13 +85,8 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [model, setModel] = useState('qwen/qwen3.5-plus-02-15')
   const [huggingfaceToken, setHuggingfaceToken] = useState('')
   const [dashscopeApiKey, setDashscopeApiKey] = useState('')
-  const [searchProvider, setSearchProvider] = useState<SearchProvider>('exa')
   // Exa Search API key for web search
   const [exaApiKey, setExaApiKey] = useState('')
-  // Tavily API Key for deep research web search
-  const [tavilyApiKey, setTavilyApiKey] = useState('')
-  // Jina Reader API key for deep research web reading/crawling
-  const [jinaApiKey, setJinaApiKey] = useState('')
   const [aiSaved, setAiSaved] = useState(false)
   const [aiSaving, setAiSaving] = useState(false)
 
@@ -118,13 +112,11 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
     setLocalVllmStatus('checking')
     setLocalVllmDetectedModel(null)
     try {
-      const token = getAuthToken()
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (token) headers['Authorization'] = `Bearer ${token}`
-      const res = await fetch(`${API_BASE}/settings/check-vllm`, {
+      const res = await fetch(`${API_BASE}/settings/check-vllm`, buildAuthRequestInit({
         method: 'POST', headers,
         body: JSON.stringify({ base_url: bUrl, api_key: aKey || null })
-      })
+      }))
       if (res.ok) {
         const data = await res.json()
         setLocalVllmStatus(data.online ? 'online' : 'offline')
@@ -139,13 +131,11 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
     setLocalAsrStatus('checking')
     setLocalAsrDetectedModel(null)
     try {
-      const token = getAuthToken()
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (token) headers['Authorization'] = `Bearer ${token}`
-      const res = await fetch(`${API_BASE}/settings/check-asr`, {
+      const res = await fetch(`${API_BASE}/settings/check-asr`, buildAuthRequestInit({
         method: 'POST', headers,
         body: JSON.stringify({ base_url: bUrl, model: m || null, api_key: aKey || null })
-      })
+      }))
       if (res.ok) {
         const data = await res.json()
         setLocalAsrStatus(data.online ? 'online' : 'offline')
@@ -160,10 +150,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       const s = await getGlobalSettings()
       setApiKey(s.openrouter_api_key); setBaseUrl(s.openrouter_base_url); setModel(s.openrouter_model)
       setHuggingfaceToken(s.huggingface_token); setDashscopeApiKey(s.dashscope_api_key)
-      setSearchProvider((s.search_provider || 'exa') as SearchProvider)
       setExaApiKey(s.exa_api_key || '')
-      setTavilyApiKey(s.tavily_api_key || '')
-      setJinaApiKey(s.jina_api_key || '')
       setLocalVllmEnabled(s.local_vllm_enabled); setLocalVllmBaseUrl(s.local_vllm_base_url)
       setLocalVllmModel(s.local_vllm_model); setLocalVllmApiKey(s.local_vllm_api_key)
       setLocalAsrEnabled(s.local_asr_enabled); setLocalAsrBaseUrl(s.local_asr_base_url)
@@ -193,10 +180,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       await updateGlobalSettings({
         openrouter_api_key: apiKey, openrouter_base_url: baseUrl, openrouter_model: model,
         huggingface_token: huggingfaceToken, dashscope_api_key: dashscopeApiKey,
-        search_provider: searchProvider,
         exa_api_key: exaApiKey,
-        tavily_api_key: tavilyApiKey,
-        jina_api_key: jinaApiKey,
         local_vllm_enabled: localVllmEnabled, local_vllm_base_url: localVllmBaseUrl,
         local_vllm_model: localVllmModel, local_vllm_api_key: localVllmApiKey,
         local_asr_enabled: localAsrEnabled, local_asr_base_url: localAsrBaseUrl,
@@ -226,208 +210,171 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
             <h2 className="text-lg font-bold text-slate-900">{t('settings.remoteServices')}</h2>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {/* OpenRouter LLM Card */}
-            <Card className="border border-slate-200 shadow-sm transition-shadow hover:shadow-md md:col-span-2">
-              <CardHeader className="px-4 pb-2 pt-4 sm:px-5 sm:pb-2.5 sm:pt-5">
-                <CardTitle className="flex items-center gap-2 text-sm font-semibold text-slate-900 sm:text-base">
-                  <div className="p-1 bg-blue-100 rounded">
-                    <Server className="w-3.5 h-3.5 text-blue-600" />
+          <Card className="border border-slate-200 shadow-sm overflow-hidden">
+            <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
+              {/* Left Column: LLM Settings (Primary) + Web Search */}
+              <div className="flex flex-col divide-y divide-slate-100">
+                <div className="p-5 space-y-4 bg-slate-50/30">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="p-1.5 bg-blue-100 rounded-md">
+                      <Server className="w-4 h-4 text-blue-600" />
+                    </div>
+                    <h3 className="font-semibold text-slate-900">{t('settings.general.llmOpenRouter')}</h3>
                   </div>
-                  {t('settings.general.llmOpenRouter')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 px-4 pb-4 pt-0 sm:px-5 sm:pb-5">
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-12 xl:gap-4">
-                  <div className="space-y-1.5 lg:col-span-2 xl:col-span-5">
-                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.apiKey')}</Label>
-                    <Input
-                      type="password"
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      placeholder="sk-..."
-                      className="h-8 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
-                    />
-                    <p className="text-xs text-slate-500">
-                      <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-700 font-medium">
-                        {t('common.getKey')}
-                      </a>
-                    </p>
-                  </div>
-                  <div className="space-y-1.5 xl:col-span-4">
-                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.baseUrl')}</Label>
-                    <Input
-                      value={baseUrl}
-                      onChange={(e) => setBaseUrl(e.target.value)}
-                      placeholder="https://openrouter.ai/api/v1"
-                      className="h-8 font-mono text-xs border-slate-300 focus:border-blue-500 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div className="space-y-1.5 xl:col-span-3">
-                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.model')}</Label>
-                    <select
-                      value={model}
-                      onChange={(e) => setModel(e.target.value)}
-                      className="h-8 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-900 transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                    >
-                      <optgroup label={t('settings.general.multimodalModels')}>
-                        {MODEL_OPTIONS.filter(m => m.multimodal).map(m => (
-                          <option key={m.id} value={m.id}>{m.label}</option>
-                        ))}
-                      </optgroup>
-                      <optgroup label={t('settings.general.textModels')}>
-                        {MODEL_OPTIONS.filter(m => !m.multimodal).map(m => (
-                          <option key={m.id} value={m.id}>{m.label}</option>
-                        ))}
-                      </optgroup>
-                    </select>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                  
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.apiKey')}</Label>
+                      <div className="relative">
+                        <Input
+                          type="password"
+                          value={apiKey}
+                          onChange={(e) => setApiKey(e.target.value)}
+                          placeholder="sk-..."
+                          className="h-9 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500 pr-20"
+                        />
+                        <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                          <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:text-blue-700 font-medium hover:underline">
+                            {t('common.getKey')}
+                          </a>
+                        </div>
+                      </div>
+                    </div>
 
-            {/* DashScope ASR Card */}
-            <Card className="border border-slate-200 shadow-sm transition-shadow hover:shadow-md">
-              <CardHeader className="px-4 pb-2 pt-4 sm:px-5 sm:pb-2.5 sm:pt-5">
-                <CardTitle className="flex items-center gap-2 text-sm font-semibold text-slate-900 sm:text-base">
-                  <div className="p-1 bg-orange-100 rounded">
-                    <Mic className="w-3.5 h-3.5 text-orange-600" />
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.baseUrl')}</Label>
+                        <Input
+                          value={baseUrl}
+                          onChange={(e) => setBaseUrl(e.target.value)}
+                          placeholder="https://openrouter.ai/api/v1"
+                          className="h-9 font-mono text-xs border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.model')}</Label>
+                        <select
+                          value={model}
+                          onChange={(e) => setModel(e.target.value)}
+                          className="h-9 w-full px-2.5 border border-slate-300 rounded-md bg-white text-xs text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                        >
+                          <optgroup label={t('settings.general.multimodalModels')}>
+                            {MODEL_OPTIONS.filter(m => m.multimodal).map(m => (
+                              <option key={m.id} value={m.id}>{m.label}</option>
+                            ))}
+                          </optgroup>
+                          <optgroup label={t('settings.general.textModels')}>
+                            {MODEL_OPTIONS.filter(m => !m.multimodal).map(m => (
+                              <option key={m.id} value={m.id}>{m.label}</option>
+                            ))}
+                          </optgroup>
+                        </select>
+                      </div>
+                    </div>
                   </div>
-                  {t('settings.general.asrDashScope')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 px-4 pb-4 pt-0 sm:px-5 sm:pb-5">
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.dashscopeApiKey')}</Label>
-                  <Input
-                    type="password"
-                    value={dashscopeApiKey}
-                    onChange={(e) => setDashscopeApiKey(e.target.value)}
-                    placeholder="sk-..."
-                    className="h-8 text-sm border-slate-300 focus:border-orange-500 focus:ring-orange-500"
-                  />
-                  <p className="text-xs text-slate-500">
-                    {t('settings.general.forQwen3Asr')}{' '}
-                    <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-orange-600 hover:text-orange-700 font-medium">
-                      {t('common.getKey')}
-                    </a>
-                  </p>
                 </div>
-              </CardContent>
-            </Card>
 
-            {/* Shared Credentials Card */}
-            <Card className="border border-slate-200 shadow-sm transition-shadow hover:shadow-md">
-              <CardHeader className="px-4 pb-2 pt-4 sm:px-5 sm:pb-2.5 sm:pt-5">
-                <CardTitle className="flex items-center gap-2 text-sm font-semibold text-slate-900 sm:text-base">
-                  <div className="p-1 bg-amber-100 rounded">
-                    <Key className="w-3.5 h-3.5 text-amber-600" />
+                {/* Web Search (Exa) - Moved to Left Column */}
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="p-1.5 bg-indigo-100 rounded-md">
+                      <Globe className="w-4 h-4 text-indigo-600" />
+                    </div>
+                    <div className="flex flex-col">
+                      <h3 className="font-semibold text-slate-900">{t('settings.general.webSearchCard')}</h3>
+                      <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wide">Exa AI Search</span>
+                    </div>
                   </div>
-                  {t('settings.general.sharedCredentials')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 px-4 pb-4 pt-0 sm:px-5 sm:pb-5">
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">HF TOKEN</Label>
-                  <Input
-                    type="password"
-                    value={huggingfaceToken}
-                    onChange={(e) => setHuggingfaceToken(e.target.value)}
-                    placeholder="hf_..."
-                    className="h-8 text-sm border-slate-300 focus:border-amber-500 focus:ring-amber-500"
-                  />
-                  <p className="text-xs text-slate-500">
-                    <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-amber-600 hover:text-amber-700 font-medium">
-                      {t('common.getToken')}
-                    </a>
-                  </p>
+
+                  <div className="space-y-2">
+                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.exaApiKey')}</Label>
+                    <div className="relative">
+                      <Input
+                        type="password"
+                        value={exaApiKey}
+                        onChange={(e) => setExaApiKey(e.target.value)}
+                        placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                        className="h-9 text-sm border-slate-300 focus:border-indigo-500 focus:ring-indigo-500 pr-20"
+                      />
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                        <a href="https://exa.ai" target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-600 hover:text-indigo-700 font-medium hover:underline">
+                          {t('common.getKey')}
+                        </a>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </CardContent>
-            </Card>
-          </div>
+              </div>
+
+              {/* Right Column: Other Services (Stacked) */}
+              <div className="flex flex-col divide-y divide-slate-100">
+                {/* DashScope ASR */}
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="p-1.5 bg-orange-100 rounded-md">
+                      <Mic className="w-4 h-4 text-orange-600" />
+                    </div>
+                    <h3 className="font-semibold text-slate-900">{t('settings.general.asrDashScope')}</h3>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.dashscopeApiKey')}</Label>
+                      <span className="text-xs text-slate-500">
+                        {t('settings.general.forQwen3Asr')}
+                      </span>
+                    </div>
+                    <div className="relative">
+                      <Input
+
+                        type="password"
+                        value={dashscopeApiKey}
+                        onChange={(e) => setDashscopeApiKey(e.target.value)}
+                        placeholder="sk-..."
+                        className="h-9 text-sm border-slate-300 focus:border-orange-500 focus:ring-orange-500 pr-20"
+                      />
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                        <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-xs text-orange-600 hover:text-orange-700 font-medium hover:underline">
+                          {t('common.getKey')}
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Shared Credentials */}
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="p-1.5 bg-amber-100 rounded-md">
+                      <Key className="w-4 h-4 text-amber-600" />
+                    </div>
+                    <h3 className="font-semibold text-slate-900">{t('settings.general.sharedCredentials')}</h3>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">HF TOKEN</Label>
+                    <div className="relative">
+                      <Input
+                        type="password"
+                        value={huggingfaceToken}
+                        onChange={(e) => setHuggingfaceToken(e.target.value)}
+                        placeholder="hf_..."
+                        className="h-9 text-sm border-slate-300 focus:border-amber-500 focus:ring-amber-500 pr-20"
+                      />
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                        <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-xs text-amber-600 hover:text-amber-700 font-medium hover:underline">
+                          {t('common.getToken')}
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
         </section>
 
-	        {/* Web Research Section */}
-	        <section className="space-y-3">
-	          <div className="flex items-center gap-3">
-	            <div className="p-2 bg-slate-100 rounded-lg">
-	              <Globe className="w-5 h-5 text-slate-700" />
-	            </div>
-	            <h2 className="text-lg font-bold text-slate-900">{t('settings.general.webResearchCard')}</h2>
-	          </div>
-		          <div className="grid gap-3 items-start">
-	            <Card className="border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-		              <CardContent className="space-y-2.5 p-3">
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">
-                    {t('settings.general.searchProvider')}
-                  </Label>
-                  <select
-                    value={searchProvider}
-                    onChange={(e) => setSearchProvider(e.target.value as SearchProvider)}
-                    className="flex h-8 w-full rounded-md border border-slate-300 bg-background px-3 py-1 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    <option value="exa">{t('settings.general.searchProviderOptions.exa')}</option>
-                    <option value="tavily">{t('settings.general.searchProviderOptions.tavily')}</option>
-                  </select>
-                  <p className="text-xs text-slate-500">{t('settings.general.searchProviderHelp')}</p>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">
-                    {t('settings.general.exaApiKey')}
-                  </Label>
-                  <Input
-	                    type="password"
-	                    value={exaApiKey}
-	                    onChange={(e) => setExaApiKey(e.target.value)}
-	                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-	                    className="h-8 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
-	                  />
-	                  <p className="text-xs text-slate-500">
-	                    <a href="https://exa.ai" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-700 font-medium">
-	                      {t('common.getKey')}
-	                    </a>
-	                  </p>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">
-	                    {t('settings.general.tavilyApiKey')}
-                  </Label>
-                  <Input
-                    type="password"
-                    value={tavilyApiKey}
-                    onChange={(e) => setTavilyApiKey(e.target.value)}
-                    placeholder="tvly-..."
-                    className="h-8 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
-                  />
-                  <p className="text-xs text-slate-500">
-                    <a href="https://app.tavily.com/home" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-700 font-medium">
-                      {t('common.getKey')}
-                    </a>
-                  </p>
-                </div>
-	                <div className="space-y-1">
-	                  <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">
-	                    {t('settings.general.jinaApiKey')}
-	                  </Label>
-	                  <Input
-	                    type="password"
-	                    value={jinaApiKey}
-	                    onChange={(e) => setJinaApiKey(e.target.value)}
-	                    placeholder="jina_..."
-	                    className="h-8 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
-	                  />
-	                  <p className="text-xs text-slate-500">
-	                    {t('settings.general.jinaApiKeyHelp')}{' '}
-	                    <a href="https://jina.ai/reader/" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-700 font-medium">
-	                      {t('common.getKey')}
-	                    </a>
-	                  </p>
-	                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </section>
+        {/* Removed Separate Web Search Section, now integrated above */}
 
         {/* Local Services Section */}
         <section className="space-y-3">

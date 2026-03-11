@@ -356,6 +356,17 @@ class TaskQueueManager:
             async with self._vram_condition:
                 self._vram_condition.notify_all()
 
+    async def _notify_concurrency_changed(self):
+        """Notify tasks waiting on concurrency limits or queue-head cancellation."""
+        if self._condition:
+            async with self._condition:
+                self._condition.notify_all()
+
+    async def _notify_queue_state_changed(self):
+        """Wake queue waiters after task completion, cancellation, or config changes."""
+        await self._notify_concurrency_changed()
+        await self._notify_vram_released()
+
     async def _worker_loop(self):
         """Main worker loop that processes tasks from the queue"""
         logger.info("Worker loop started")
@@ -433,12 +444,8 @@ class TaskQueueManager:
             self._running_tasks.pop(queued_task.task_id, None)
             self._gpu_assignments.pop(queued_task.task_id, None)
 
-            # Notify concurrency waiters
-            async with self._condition:
-                self._condition.notify()  # Wake up one waiting task
-
-            # Notify VRAM waiters - GPU memory should be released soon
-            await self._notify_vram_released()
+            # Notify waiters - a slot may have opened and GPU memory may be freeing up
+            await self._notify_queue_state_changed()
 
             self._queue.task_done()
 
@@ -564,9 +571,23 @@ class TaskQueueManager:
         """Check if a task is in the queue (pending or running)"""
         return task_id in self._running_tasks or task_id in self._pending_tasks
 
+    async def cancel_pending_task(self, task_id: str) -> bool:
+        """Remove a task only if it is still pending and has not started running."""
+        if task_id not in self._pending_tasks:
+            return False
+
+        self._pending_tasks.pop(task_id, None)
+        logger.info(f"Task {task_id} removed from pending queue")
+        await self._notify_queue_state_changed()
+        return True
+
     async def cancel_task(self, task_id: str) -> bool:
         """
-        Cancel a task if it's running.
+        Cancel a task if it's running or queued.
+
+        Also wakes any worker currently blocked on the cancelled queue head so the
+        next pending task can be considered immediately instead of waiting for the
+        next timeout/notification cycle.
 
         Returns:
             True if task was cancelled, False if not found or not running
@@ -575,13 +596,10 @@ class TaskQueueManager:
             task = self._running_tasks[task_id]
             task.cancel()
             logger.info(f"Task {task_id} cancelled")
+            await self._notify_queue_state_changed()
             return True
 
-        if task_id in self._pending_tasks:
-            # Remove from pending (it's still in the asyncio.Queue,
-            # but will be skipped when dequeued)
-            self._pending_tasks.pop(task_id, None)
-            logger.info(f"Task {task_id} removed from pending queue")
+        if await self.cancel_pending_task(task_id):
             return True
 
         return False

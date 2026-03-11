@@ -1,6 +1,6 @@
 import { API_BASE } from '../config'
 import { createKeyedCache, LONG_CACHE_TTL } from '../lib/cache'
-import { apiFetch, getAuthToken } from './client'
+import { apiFetch, buildSearchParams, withAuthTokenQuery } from './client'
 
 // ============================================================================
 // Heatmap and Attention APIs
@@ -32,6 +32,7 @@ export interface AvailableHeatmap {
   aggregator?: string | null  // MIL aggregator type (e.g., abmil, clam_sb, transmil)
   created_at: number
   attention_file: string
+  patch_size?: number | null
   data_type?: 'wsi' | 'patch' | 'patch_segmentation'  // WSI-level attention, patch-level CAM, or patch segmentation mask
   cam_size?: [number, number]   // CAM size for patch-level
   is_best_fold?: boolean | null  // Whether this is the best fold (for k-fold training)
@@ -76,6 +77,19 @@ export interface HeatmapData {
   risk_group?: 'High Risk' | 'Low Risk' | null  // Risk group based on median cutoff
 }
 
+export const SEGMENTATION_MASK_COLORS = [
+  '#ff0000',
+  '#00ff00',
+  '#0000ff',
+  '#ffff00',
+  '#ff00ff',
+  '#00ffff',
+  '#ff8000',
+  '#8000ff',
+  '#0080ff',
+  '#ff0080',
+]
+
 // Cache for fetchAvailableHeatmaps (keyed by wsi_id, 60s TTL)
 const heatmapAvailabilityCache = createKeyedCache<AvailableHeatmap[]>(LONG_CACHE_TTL)
 
@@ -83,23 +97,9 @@ function buildAuthedHeatmapUrl(
   path: string,
   params?: Record<string, string | number | undefined | null>
 ): string {
-  const search = new URLSearchParams()
-
-  if (params) {
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined && value !== null) {
-        search.set(key, String(value))
-      }
-    })
-  }
-
-  const token = getAuthToken()
-  if (token) {
-    search.set('token', token)
-  }
-
+  const search = buildSearchParams(params)
   const query = search.toString()
-  return `${API_BASE}${path}${query ? `?${query}` : ''}`
+  return withAuthTokenQuery(`${API_BASE}${path}${query ? `?${query}` : ''}`)
 }
 
 /**
@@ -145,14 +145,11 @@ export async function fetchHeatmapData(
   patch_size: number = 512,
   fold_key?: string
 ): Promise<HeatmapData> {
-  const params = new URLSearchParams()
-  params.set('patch_size', String(patch_size))
-  if (task_id) {
-    params.set('task_id', task_id)
-  }
-  if (fold_key) {
-    params.set('fold_key', fold_key)
-  }
+  const params = buildSearchParams({
+    patch_size,
+    task_id,
+    fold_key,
+  })
   const url = `${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/data?${params.toString()}`
   return apiFetch<HeatmapData>(url, undefined, 'Failed to fetch heatmap data')
 }
@@ -191,11 +188,34 @@ export interface PatchCAMData {
  * @param fold_key - Optional fold key for k-fold results (e.g., 'fold_0')
  * @returns URL for the CAM overlay PNG image (with auth token for <img> tags)
  */
-export function getPatchCAMImageUrl(wsi_id: string, task_id?: string, fold_key?: string): string {
+export function getPatchCAMImageUrl(wsi_id: string, task_id?: string, fold_key?: string, size?: number): string {
   return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam`, {
     format: 'image',
     task_id,
     fold_key,
+    size,
+  })
+}
+
+/**
+ * Get patch CAM overlay image URL optimized for recommendation card previews.
+ */
+export function getRecommendationPatchCAMImageUrl(
+  wsi_id: string,
+  task_id?: string,
+  fold_key?: string,
+  size: number = 160,
+): string {
+  return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/patch_cam`, {
+    format: 'image',
+    task_id,
+    fold_key,
+    preset: 'recommendation',
+    size,
+    opacity: 0.68,
+    blur_scale: 0.6,
+    contrast_boost: 1.18,
+    saturation_boost: 1.25,
   })
 }
 
@@ -204,12 +224,14 @@ export function getPatchCAMImageUrl(wsi_id: string, task_id?: string, fold_key?:
  * @param wsi_id - The WSI/patch ID
  * @param task_id - Optional task ID for specific mask
  * @param fold_key - Optional fold key for k-fold results
+ * @param size - Optional max thumbnail size for faster preview rendering
  * @returns URL for the seg mask overlay PNG image (with auth token for <img> tags)
  */
-export function getSegMaskImageUrl(wsi_id: string, task_id?: string, fold_key?: string): string {
+export function getSegMaskImageUrl(wsi_id: string, task_id?: string, fold_key?: string, size?: number): string {
   return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/seg_mask`, {
     task_id,
     fold_key,
+    size,
   })
 }
 
@@ -225,12 +247,39 @@ export function getHeatmapThumbnailUrl(
   wsi_id: string,
   task_id?: string,
   size: number = 256,
-  class_idx?: number
+  class_idx?: number,
+  fold_key?: string
 ): string {
   return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/heatmap_thumbnail`, {
     size,
     task_id,
     class_idx,
+    fold_key,
+  })
+}
+
+/**
+ * Get WSI heatmap thumbnail URL optimized for recommendation card previews.
+ */
+export function getRecommendationHeatmapThumbnailUrl(
+  wsi_id: string,
+  task_id?: string,
+  size: number = 160,
+  class_idx?: number,
+  fold_key?: string,
+  patch_size?: number | null,
+): string {
+  return buildAuthedHeatmapUrl(`/heatmap/wsi/${encodeURIComponent(wsi_id)}/heatmap_thumbnail`, {
+    size,
+    task_id,
+    class_idx,
+    fold_key,
+    patch_size,
+    preset: 'recommendation',
+    opacity: 0.68,
+    blur_scale: 0.6,
+    contrast_boost: 1.18,
+    saturation_boost: 1.25,
   })
 }
 

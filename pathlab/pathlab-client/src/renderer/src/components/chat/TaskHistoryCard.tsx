@@ -93,12 +93,13 @@ export function TaskHistoryCard({
   deepResearchConversationId
 }: TaskHistoryCardProps) {
   const { t } = useTranslation()
-  const hasCachedData = config.cached_tasks && config.cached_tasks.length > 0
+  const cachedTasks = Array.isArray(config.cached_tasks) ? config.cached_tasks : []
+  const hasCachedData = cachedTasks.length > 0
 
   const [isLoading, setIsLoading] = useState(!hasCachedData)
   const [error, setError] = useState<string>('')
   const [tasks, setTasks] = useState<TrainingTask[]>(
-    hasCachedData ? (config.cached_tasks as unknown as TrainingTask[]) : []
+    hasCachedData ? (cachedTasks as unknown as TrainingTask[]) : []
   )
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -154,6 +155,38 @@ export function TaskHistoryCard({
     return 0
   }
 
+  const loadFilteredTasks = async (): Promise<TrainingTask[]> => {
+    const response = await getTrainingTasks()
+    const allTasks = Array.isArray(response)
+      ? response
+      : Array.isArray(response?.items)
+        ? response.items
+        : []
+
+    const inProgressStatuses = ['patching', 'training', 'pending', 'queued', 'extracting']
+
+    return allTasks
+      .filter(task => {
+        let statusMatch = false
+        if (task.status === 'completed' && showCompleted) statusMatch = true
+        if (inProgressStatuses.includes(task.status) && showRunning) statusMatch = true
+        if (task.status === 'failed' && showFailed) statusMatch = true
+        if (!statusMatch) return false
+
+        if (splitStrategyFilter && getTaskSplitStrategy(task) !== splitStrategyFilter) return false
+
+        if (taskTypeFilter && task.task_type !== taskTypeFilter) return false
+
+        return true
+      })
+      .sort((a, b) => {
+        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0
+        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0
+        return dateB - dateA
+      })
+      .slice(0, limit)
+  }
+
   useEffect(() => {
     if (hasCachedData) {
       return
@@ -164,31 +197,7 @@ export function TaskHistoryCard({
       setError('')
 
       try {
-        const allTasks = await getTrainingTasks()
-
-        const inProgressStatuses = ['patching', 'training', 'pending', 'queued', 'extracting']
-
-        const filteredTasks = allTasks.filter(task => {
-          let statusMatch = false
-          if (task.status === 'completed' && showCompleted) statusMatch = true
-          if (inProgressStatuses.includes(task.status) && showRunning) statusMatch = true
-          if (task.status === 'failed' && showFailed) statusMatch = true
-          if (!statusMatch) return false
-
-          if (splitStrategyFilter && getTaskSplitStrategy(task) !== splitStrategyFilter) return false
-
-          if (taskTypeFilter && task.task_type !== taskTypeFilter) return false
-
-          return true
-        })
-
-        const sortedTasks = filteredTasks
-          .sort((a, b) => {
-            const dateA = a.created_at ? new Date(a.created_at).getTime() : 0
-            const dateB = b.created_at ? new Date(b.created_at).getTime() : 0
-            return dateB - dateA
-          })
-          .slice(0, limit)
+        const sortedTasks = await loadFilteredTasks()
 
         setTasks(sortedTasks)
 
@@ -211,28 +220,8 @@ export function TaskHistoryCard({
     setIsLoading(true)
     setError('')
     try {
-      const allTasks = await getTrainingTasks()
-      const inProgressStatuses = ['patching', 'training', 'pending', 'queued', 'extracting']
-      const filteredTasks = allTasks.filter(task => {
-        let statusMatch = false
-        if (task.status === 'completed' && showCompleted) statusMatch = true
-        if (inProgressStatuses.includes(task.status) && showRunning) statusMatch = true
-        if (task.status === 'failed' && showFailed) statusMatch = true
-        if (!statusMatch) return false
+      const sortedTasks = await loadFilteredTasks()
 
-        if (splitStrategyFilter && getTaskSplitStrategy(task) !== splitStrategyFilter) return false
-
-        if (taskTypeFilter && task.task_type !== taskTypeFilter) return false
-
-        return true
-      })
-      const sortedTasks = filteredTasks
-        .sort((a, b) => {
-          const dateA = a.created_at ? new Date(a.created_at).getTime() : 0
-          const dateB = b.created_at ? new Date(b.created_at).getTime() : 0
-          return dateB - dateA
-        })
-        .slice(0, limit)
       setTasks(sortedTasks)
 
       if (onDataLoadedRef.current) {

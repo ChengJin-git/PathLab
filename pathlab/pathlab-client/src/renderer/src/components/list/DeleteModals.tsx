@@ -169,6 +169,7 @@ export function DeleteConfirmModal({
 
 export interface BatchDeleteModalProps {
   selectedIds: Set<string>
+  selectedCount?: number
   datasetToDeleteId: string | null
   datasetToDeleteName: string
   deleteMode: 'standard' | 'complete'
@@ -179,10 +180,11 @@ export interface BatchDeleteModalProps {
 }
 
 export function BatchDeleteModal({
-  selectedIds, datasetToDeleteId, datasetToDeleteName, deleteMode,
+  selectedIds, selectedCount, datasetToDeleteId, datasetToDeleteName, deleteMode,
   onDeleteModeChange, deleting, onCancel, onConfirm,
 }: BatchDeleteModalProps) {
   const { t } = useTranslation()
+  const effectiveCount = selectedCount ?? selectedIds.size
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
       <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
@@ -201,9 +203,9 @@ export function BatchDeleteModal({
         <div className="bg-gray-50 rounded-xl p-3 sm:p-4 mb-4 sm:mb-6 border border-gray-100 text-center">
           <p className="text-xs sm:text-sm text-gray-700 leading-relaxed">
             {datasetToDeleteId ? (
-              <>{t('listComponents.aboutToDeleteDataset')} <span className="font-bold text-red-600">{datasetToDeleteName}</span> {t('listComponents.andAllIts')} <span className="font-bold">{selectedIds.size}</span> {t('listComponents.filesLower')}</>
+              <>{t('listComponents.aboutToDeleteDataset')} <span className="font-bold text-red-600">{datasetToDeleteName}</span> {t('listComponents.andAllIts')} <span className="font-bold">{effectiveCount}</span> {t('listComponents.filesLower')}</>
             ) : (
-              <>{t('listComponents.aboutToDelete')} <span className="font-bold text-red-600">{selectedIds.size}</span> {t('listComponents.fileCount', { count: selectedIds.size })}</>
+              <>{t('listComponents.aboutToDelete')} <span className="font-bold text-red-600">{effectiveCount}</span> {t('listComponents.fileCount', { count: effectiveCount })}</>
             )}
           </p>
         </div>
@@ -273,7 +275,7 @@ export function BatchDeleteModal({
             className="flex-1 px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-base bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-bold disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
           >
             {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
-            {deleting ? t('listComponents.deleting') : (datasetToDeleteId ? t('common.delete') : t('listComponents.deleteCount', { count: selectedIds.size }))}
+            {deleting ? t('listComponents.deleting') : (datasetToDeleteId ? t('common.delete') : t('listComponents.deleteCount', { count: effectiveCount }))}
           </button>
         </div>
       </div>

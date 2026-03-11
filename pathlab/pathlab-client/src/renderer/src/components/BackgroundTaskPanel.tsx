@@ -114,6 +114,14 @@ const getTypeLabel = (task: BackgroundTask, t: TFunction): string => {
       return t('backgroundTask.typeLabels.batchImport')
     case 'batch_update_metadata':
       return t('backgroundTask.typeLabels.metadataUpdate')
+    case 'delete_dataset':
+      return t('backgroundTask.typeLabels.deleteDataset')
+    case 'cleanup_empty_datasets':
+      return t('backgroundTask.typeLabels.cleanupEmptyDatasets')
+    case 'unbind_dataset':
+      return t('backgroundTask.typeLabels.unbindDataset')
+    case 'reset_derived_data':
+      return t('backgroundTask.typeLabels.resetDerivedData')
     case 'delete_external':
       return t('backgroundTask.typeLabels.deleteExternal')
     case 'extraction':
@@ -139,6 +147,7 @@ const TaskCard: React.FC<{
     const isTrainingTask = task.type === 'training'
     const isExternalValidationTask = task.type === 'external_validation'
     const isAnalysisTask = task.type === 'analysis'
+    const isActiveTask = task.status === 'running' || task.status === 'pending'
 
     const typeLabel = getTypeLabel(task, t)
 
@@ -269,21 +278,15 @@ const TaskCard: React.FC<{
             )}
           </div>
           <div className={cn("flex flex-row items-center gap-1 h-5", expanded ? "self-start mt-0.5 h-auto" : "")}>
-            {(task.status === 'running' || task.status === 'pending') && !showCancelConfirm && (
+            {isActiveTask && !showCancelConfirm && (
               <button
                 onClick={async (e) => {
                   e.stopPropagation()
-                  if (isTrainingTask) {
+                  if (isServerTask) {
                     setShowCancelConfirm(true)
                     return
                   }
-                  if (isServerTask) {
-                    setIsCancelling(true)
-                    await onCancelServer()
-                    setIsCancelling(false)
-                  } else {
-                    onCancel()
-                  }
+                  onCancel()
                 }}
                 disabled={isCancelling}
                 className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-red-600 disabled:opacity-50"
@@ -334,7 +337,7 @@ const TaskCard: React.FC<{
               </div>
             )}
             
-            {!isServerTask && task.status !== 'running' && task.status !== 'pending' && (
+            {!isActiveTask && (
               <button
                 onClick={(e) => { e.stopPropagation(); onRemove() }}
                 className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-gray-700"
@@ -483,7 +486,7 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
                   task={task}
                   onCancel={() => cancelTask(task.id)}
                   onCancelServer={() => cancelServerTask(task)}
-                  onRemove={() => removeTask(task.id)}
+                  onRemove={() => removeTask(task)}
                 />
               ))}
             </div>

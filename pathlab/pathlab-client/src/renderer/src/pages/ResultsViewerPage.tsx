@@ -8,7 +8,7 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
 
-import { getTrainedModels, TrainedModel, getAuthToken, startExternalValidation as apiStartExternalValidation, fetchDatasetsForValidation, ValidationDataset } from '../api'
+import { getTrainedModels, TrainedModel, buildAuthRequestInit, startExternalValidation as apiStartExternalValidation, fetchDatasetsForValidation, ValidationDataset } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { AnalysisDetails, type AnalysisSummary, type BootstrapCI, type ChartData } from '../components/results/AnalysisDetails'
@@ -17,7 +17,7 @@ import {
   CLASSIFICATION_CHARTS,
   SURVIVAL_METRICS,
   SURVIVAL_CHARTS,
-  SEGMENTATION_METRICS,
+  getSegmentationMetrics,
   SEGMENTATION_CHARTS,
   EXTERNAL_VALIDATION_CLASSIFICATION_CHARTS,
   EXTERNAL_VALIDATION_SURVIVAL_CHARTS,
@@ -25,7 +25,7 @@ import {
   DEFAULT_CLASSIFICATION_METRICS,
   DEFAULT_CLASSIFICATION_CHARTS,
   DEFAULT_SURVIVAL_METRICS,
-  DEFAULT_SEGMENTATION_METRICS,
+  getDefaultSegmentationMetrics,
   DEFAULT_SEGMENTATION_CHARTS,
   DEFAULT_EXTERNAL_CLASSIFICATION_CHARTS,
   DEFAULT_EXTERNAL_SURVIVAL_CHARTS,
@@ -33,21 +33,12 @@ import {
 } from '../constants/metrics'
 import { filterCompatibleDatasets, isSurvivalTask as utilIsSurvivalTask, isSegmentationTask as utilIsSegmentationTask } from '../lib/externalValidationUtils'
 
-/**
- * Helper to create fetch options with authentication header
- */
-function authFetchOptions(options: RequestInit = {}): RequestInit {
-  const token = getAuthToken()
-  return {
-    ...options,
-    headers: {
-      ...options.headers,
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    }
-  }
-}
-
 type PageMode = 'internal-analysis' | 'external-validation'
+
+const getSegmentationClassCount = (task?: Pick<TrainingTask, 'classes'> | null): number => {
+  const classCount = task?.classes?.filter(Boolean).length ?? 0
+  return Math.max(1, classCount)
+}
 
 interface ValidationProgress {
   validation_id: string
@@ -78,6 +69,9 @@ interface TrainingTask {
   ai_results_count: number
   total_wsi_count: number  // Total WSI count (file-level)
   total_case_count: number  // Total case count (case-level)
+  test_wsi_count?: number
+  test_case_count?: number
+  test_display_count?: number
   display_count: number  // Count based on aggregation level
   wsi_ids: string[]  // WSI IDs for overlap detection
   classes?: string[] | null
@@ -101,6 +95,21 @@ interface AnalysisResult {
 // Use imported helpers from shared utils
 const isSurvivalTask = utilIsSurvivalTask
 const isSegmentationTask = utilIsSegmentationTask
+
+const getTaskModelDisplayLabel = (task?: TrainingTask | null): string | null => {
+  if (!task) return null
+  if (isSegmentationTask(task.task_type)) {
+    const backbone = typeof task.model_config?.backbone === 'string' ? task.model_config.backbone : null
+    return backbone || task.feature_extractor || null
+  }
+  return task.feature_extractor || null
+}
+
+const getTaskResultsDisplayCount = (task?: TrainingTask | null): number => {
+  if (!task) return 0
+  const testCount = task.test_display_count ?? 0
+  return testCount > 0 ? testCount : task.ai_results_count
+}
 
 export default function ResultsViewerPage() {
   const navigate = useNavigate()
@@ -241,7 +250,7 @@ export default function ResultsViewerPage() {
         setSelectedMetrics(['c_index', 'integrated_brier_score'])
         setSelectedCharts(['km_curve', 'loss_curve'])
       } else if (isSegmentationTask(task.task_type)) {
-        setSelectedMetrics([...DEFAULT_SEGMENTATION_METRICS])
+        setSelectedMetrics(getDefaultSegmentationMetrics(getSegmentationClassCount(task)))
         setSelectedCharts([...DEFAULT_SEGMENTATION_CHARTS])
       } else {
         setSelectedMetrics(['accuracy', 'precision', 'sensitivity', 'f1', 'auc', 'specificity'])
@@ -260,7 +269,7 @@ export default function ResultsViewerPage() {
         setSelectedMetrics([...DEFAULT_SURVIVAL_METRICS])
         setSelectedCharts([...DEFAULT_EXTERNAL_SURVIVAL_CHARTS])
       } else if (isSegmentationTask(task.task_type)) {
-        setSelectedMetrics([...DEFAULT_SEGMENTATION_METRICS])
+        setSelectedMetrics(getDefaultSegmentationMetrics(getSegmentationClassCount(task)))
         setSelectedCharts([...DEFAULT_EXTERNAL_SEGMENTATION_CHARTS])
       } else {
         setSelectedMetrics([...DEFAULT_CLASSIFICATION_METRICS])
@@ -358,7 +367,7 @@ export default function ResultsViewerPage() {
   const loadTasks = async () => {
     setLoading(true)
     try {
-      const response = await fetch(`${API_BASE}/results/tasks`, authFetchOptions())
+      const response = await fetch(`${API_BASE}/results/tasks`, buildAuthRequestInit())
       if (response.ok) {
         const data = await response.json()
         const taskList = data.items || []
@@ -402,7 +411,7 @@ export default function ResultsViewerPage() {
 
   const loadCompletedExtValTasks = async () => {
     try {
-      const response = await fetch(`${API_BASE}/results/external-validation/completed`, authFetchOptions())
+      const response = await fetch(`${API_BASE}/results/external-validation/completed`, buildAuthRequestInit())
       if (response.ok) {
         const data = await response.json()
         setCompletedExtValTasks(data.items || [])
@@ -414,7 +423,7 @@ export default function ResultsViewerPage() {
 
   const loadAnalyses = async (taskId: string) => {
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`, authFetchOptions())
+      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`, buildAuthRequestInit())
       if (response.ok) {
         const data = await response.json()
         setAnalyses(data.analyses || [])
@@ -426,7 +435,7 @@ export default function ResultsViewerPage() {
 
   const loadExtAnalyses = async (taskId: string) => {
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`, authFetchOptions())
+      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`, buildAuthRequestInit())
       if (response.ok) {
         const data = await response.json()
         setExtAnalyses(data.analyses || [])
@@ -522,7 +531,7 @@ export default function ResultsViewerPage() {
 
     const poll = async () => {
       try {
-        const response = await fetch(`${API_BASE}/results/external-validation/${taskId}`, authFetchOptions())
+        const response = await fetch(`${API_BASE}/results/external-validation/${taskId}`, buildAuthRequestInit())
         if (response.ok) {
           const progress = await response.json()
           setValidationProgress({
@@ -577,7 +586,7 @@ export default function ResultsViewerPage() {
     setRunning(true)
     setAnalysisError(null)
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/analysis`, authFetchOptions({
+      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/analysis`, buildAuthRequestInit({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -676,7 +685,7 @@ export default function ResultsViewerPage() {
 
     setDeleting(true)
     try {
-      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis/${deleteConfirmId}`, authFetchOptions({
+      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis/${deleteConfirmId}`, buildAuthRequestInit({
         method: 'DELETE'
       }))
 
@@ -827,9 +836,13 @@ export default function ResultsViewerPage() {
                         const metricValue = isSurvival
                           ? metrics?.c_index
                           : isSegmentation
-                            ? (metrics?.iou || metrics?.dice)
+                            ? (metrics?.miou ?? metrics?.iou ?? metrics?.dice)
                             : (metrics?.macro_auc || metrics?.auc)
-                        const metricLabel = isSurvival ? t('resultsPage.cIndex') : isSegmentation ? 'IoU' : t('resultsPage.auc')
+                        const metricLabel = isSurvival
+                          ? t('resultsPage.cIndex')
+                          : isSegmentation
+                            ? (metrics?.miou != null ? 'mIoU' : 'IoU')
+                            : t('resultsPage.auc')
 
                         return (
                           <button
@@ -942,7 +955,7 @@ export default function ResultsViewerPage() {
               <Card className="p-4 sm:p-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.metrics')}</h3>
                 <div className="space-y-3">
-                  {(isSurvivalTask(modelTask?.task_type) ? SURVIVAL_METRICS : isSegmentationTask(modelTask?.task_type) ? SEGMENTATION_METRICS : CLASSIFICATION_METRICS).map(metric => (
+                  {(isSurvivalTask(modelTask?.task_type) ? SURVIVAL_METRICS : isSegmentationTask(modelTask?.task_type) ? getSegmentationMetrics(getSegmentationClassCount(modelTask)) : CLASSIFICATION_METRICS).map(metric => (
                     <div key={metric.id} className="flex items-start gap-3 group">
                       <input
                         type="checkbox"
@@ -1186,7 +1199,7 @@ export default function ResultsViewerPage() {
 
                         {expandedExtAnalysis === analysis.analysis_id && (
                           <div className="border-t border-gray-100 p-4 bg-gray-50">
-                            <AnalysisDetails analysis={analysis} taskId={validationProgress?.validation_id} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
+                            <AnalysisDetails analysis={analysis} taskId={validationProgress?.validation_id} modelId={selectedModelId ?? validationProgress?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
                           </div>
                         )}
                       </Card>
@@ -1207,7 +1220,7 @@ export default function ResultsViewerPage() {
                       <CheckCircle2 className="w-6 h-6 text-green-500" />
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
-                      <AnalysisDetails analysis={currentResult.summary} taskId={validationProgress?.validation_id} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
+                      <AnalysisDetails analysis={currentResult.summary} taskId={validationProgress?.validation_id} modelId={selectedModelId ?? validationProgress?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
                     </div>
                   </Card>
                 ) : extAnalyses.length > 0 ? (
@@ -1221,7 +1234,7 @@ export default function ResultsViewerPage() {
                       </div>
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
-                      <AnalysisDetails analysis={extAnalyses[0]} taskId={validationProgress?.validation_id} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
+                      <AnalysisDetails analysis={extAnalyses[0]} taskId={validationProgress?.validation_id} modelId={selectedModelId ?? validationProgress?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
                     </div>
                   </Card>
                 ) : (
@@ -1268,9 +1281,9 @@ export default function ResultsViewerPage() {
                         <Badge variant="secondary" className="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-[10px] uppercase tracking-wider font-bold px-2">
                           {selectedTask.task_type}
                         </Badge>
-                        {selectedTask.feature_extractor && (
-                          <Badge variant="secondary" className="bg-purple-50 text-purple-700 hover:bg-purple-100 text-[10px] uppercase tracking-wider font-bold px-2">
-                            {selectedTask.feature_extractor}
+                        {getTaskModelDisplayLabel(selectedTask) && (
+                          <Badge variant="secondary" className="bg-purple-50 text-purple-700 hover:bg-purple-100 text-[10px] tracking-wider font-bold px-2">
+                            {getTaskModelDisplayLabel(selectedTask)}
                           </Badge>
                         )}
                         <span className="text-xs text-gray-400 font-medium">
@@ -1324,13 +1337,13 @@ export default function ResultsViewerPage() {
                                   }`}>
                                     {task.task_type}
                                   </span>
-                                  {task.feature_extractor && (
-                                    <span className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full transition-colors duration-200 ${
+                                  {getTaskModelDisplayLabel(task) && (
+                                    <span className={`text-[10px] tracking-wider font-bold px-2 py-0.5 rounded-full transition-colors duration-200 ${
                                       selectedTaskId === task.task_id
                                         ? 'bg-white/20 text-white'
                                         : 'bg-purple-50 text-purple-700'
                                     }`}>
-                                      {task.feature_extractor}
+                                      {getTaskModelDisplayLabel(task)}
                                     </span>
                                   )}
                                   {task.created_at && (
@@ -1351,7 +1364,7 @@ export default function ResultsViewerPage() {
                                           : 'bg-amber-50 text-amber-700'
                                   }`}>
                                     {task.ai_results_count > 0
-                                      ? t('resultsPage.resultsCount', { count: task.ai_results_count })
+                                      ? t('resultsPage.resultsCount', { count: getTaskResultsDisplayCount(task) })
                                       : task.has_analysis
                                         ? t('resultsPage.analysisAvailable')
                                         : t('resultsPage.noResults')}
@@ -1391,7 +1404,7 @@ export default function ResultsViewerPage() {
                 )}
               </h3>
               <div className="space-y-3">
-                {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_METRICS : isSegmentationTask(selectedTask?.task_type) ? SEGMENTATION_METRICS : CLASSIFICATION_METRICS).map(metric => (
+                {(isSurvivalTask(selectedTask?.task_type) ? SURVIVAL_METRICS : isSegmentationTask(selectedTask?.task_type) ? getSegmentationMetrics(getSegmentationClassCount(selectedTask)) : CLASSIFICATION_METRICS).map(metric => (
                   <div key={metric.id} className="flex items-start gap-3 group">
                     <input
                       type="checkbox"
@@ -1612,7 +1625,7 @@ export default function ResultsViewerPage() {
 
                         {expandedAnalysis === analysis.analysis_id && (
                           <div className="border-t border-gray-100 p-4 bg-gray-50">
-                            <AnalysisDetails analysis={analysis} taskId={selectedTaskId!} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
+                            <AnalysisDetails analysis={analysis} taskId={selectedTaskId!} modelId={selectedTask?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
                           </div>
                         )}
                       </Card>
@@ -1633,7 +1646,7 @@ export default function ResultsViewerPage() {
                       <CheckCircle2 className="w-6 h-6 text-green-500" />
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
-                      <AnalysisDetails analysis={currentResult.summary} taskId={selectedTaskId!} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
+                      <AnalysisDetails analysis={currentResult.summary} taskId={selectedTaskId!} modelId={selectedTask?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
                     </div>
                   </Card>
                 ) : analyses.length > 0 ? (
@@ -1647,7 +1660,7 @@ export default function ResultsViewerPage() {
                       </div>
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
-                      <AnalysisDetails analysis={analyses[0]} taskId={selectedTaskId!} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
+                      <AnalysisDetails analysis={analyses[0]} taskId={selectedTaskId!} modelId={selectedTask?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
                     </div>
                   </Card>
                 ) : (

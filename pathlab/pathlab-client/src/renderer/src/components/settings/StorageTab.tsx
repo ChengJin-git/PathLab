@@ -66,6 +66,7 @@ export interface StorageTabProps {
 }
 
 export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, closeConfirmDialog }) => {
+  const BATCH_SCAN_PAGE_SIZE = 100
   const navigate = useNavigate()
   const { t } = useTranslation()
   const { addMigrationTask } = useBackgroundTask()
@@ -97,6 +98,8 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const [batchScanning, setBatchScanning] = useState(false)
   const [batchScanError, setBatchScanError] = useState<string | null>(null)
   const [batchSelectedFiles, setBatchSelectedFiles] = useState<Set<string>>(new Set())
+  const [batchExcludedFiles, setBatchExcludedFiles] = useState<Set<string>>(new Set())
+  const [batchSelectAllValid, setBatchSelectAllValid] = useState(false)
   const [batchDatasetMode, setBatchDatasetMode] = useState<'existing' | 'new'>('new')
   const [batchSelectedDatasetId, setBatchSelectedDatasetId] = useState<string>('')
   const batchNewDatasetNameRef = useRef<HTMLInputElement>(null)
@@ -187,6 +190,8 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       setBatchScanResult(null)
       setBatchScanError(null)
       setBatchSelectedFiles(new Set())
+      setBatchExcludedFiles(new Set())
+      setBatchSelectAllValid(false)
       setBatchImportTaskId(null)
     }
   }
@@ -197,12 +202,17 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     setBatchScanError(null)
     setBatchScanResult(null)
     setBatchSelectedFiles(new Set())
+    setBatchExcludedFiles(new Set())
+    setBatchSelectAllValid(false)
     setBatchImportTaskId(null)
     try {
-      const result = await scanDirectory(batchScanPath.trim())
+      const result = await scanDirectory(batchScanPath.trim(), {
+        taskType: batchTaskType,
+        page: 1,
+        pageSize: BATCH_SCAN_PAGE_SIZE,
+      })
       setBatchScanResult(result)
-      const validFiles = new Set(result.files.filter(f => f.valid).map(f => f.path))
-      setBatchSelectedFiles(validFiles)
+      setBatchSelectAllValid(true)
     } catch (err) {
       console.error('Failed to scan directory:', err)
       setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir'))
@@ -211,7 +221,83 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     }
   }
 
-  const handleBatchFileToggle = (path: string) => {
+  const handleBatchScanPageChange = async (page: number) => {
+    if (!batchScanResult) return
+    setBatchScanning(true)
+    setBatchScanError(null)
+    try {
+      const result = await scanDirectory(batchScanResult.directory, {
+        scanId: batchScanResult.scan_id,
+        taskType: batchTaskType,
+        page,
+        pageSize: batchScanResult.page_size || BATCH_SCAN_PAGE_SIZE,
+      })
+      setBatchScanResult(result)
+    } catch (err) {
+      console.error('Failed to load scan page:', err)
+      setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir'))
+    } finally {
+      setBatchScanning(false)
+    }
+  }
+
+  useEffect(() => {
+    if (batchTaskType !== 'segmentation' || !batchScanResult?.directory || batchScanResult.annotation_scan_enabled) {
+      return
+    }
+
+    let cancelled = false
+
+    const reloadSegmentationScan = async () => {
+      setBatchScanning(true)
+      setBatchScanError(null)
+      try {
+        const result = await scanDirectory(batchScanResult.directory, {
+          taskType: 'segmentation',
+          page: batchScanResult.page,
+          pageSize: batchScanResult.page_size || BATCH_SCAN_PAGE_SIZE,
+        })
+        if (!cancelled) {
+          setBatchScanResult(result)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error('Failed to reload segmentation scan:', err)
+          setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir'))
+        }
+      } finally {
+        if (!cancelled) {
+          setBatchScanning(false)
+        }
+      }
+    }
+
+    void reloadSegmentationScan()
+
+    return () => {
+      cancelled = true
+    }
+  }, [batchScanResult, batchTaskType, t])
+
+  const isBatchFileSelected = (path: string, valid: boolean) => {
+    if (!valid) return false
+    return batchSelectAllValid ? !batchExcludedFiles.has(path) : batchSelectedFiles.has(path)
+  }
+
+  const batchSelectedCount = batchSelectAllValid
+    ? Math.max(0, (batchScanResult?.valid_count || 0) - batchExcludedFiles.size)
+    : batchSelectedFiles.size
+
+  const handleBatchFileToggle = (path: string, valid: boolean) => {
+    if (!valid) return
+    if (batchSelectAllValid) {
+      setBatchExcludedFiles(prev => {
+        const next = new Set(prev)
+        if (next.has(path)) { next.delete(path) } else { next.add(path) }
+        return next
+      })
+      return
+    }
     setBatchSelectedFiles(prev => {
       const next = new Set(prev)
       if (next.has(path)) { next.delete(path) } else { next.add(path) }
@@ -220,16 +306,19 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   }
 
   const handleBatchSelectAll = () => {
-    if (!batchScanResult) return
-    setBatchSelectedFiles(new Set(batchScanResult.files.filter(f => f.valid).map(f => f.path)))
+    setBatchSelectAllValid(true)
+    setBatchSelectedFiles(new Set())
+    setBatchExcludedFiles(new Set())
   }
 
   const handleBatchDeselectAll = () => {
+    setBatchSelectAllValid(false)
     setBatchSelectedFiles(new Set())
+    setBatchExcludedFiles(new Set())
   }
 
   const handleBatchRegister = async () => {
-    if (batchSelectedFiles.size === 0) return
+    if (batchSelectedCount === 0) return
     if (batchDatasetMode === 'existing' && !batchSelectedDatasetId) {
       setBatchScanError(t('settings.storageTab.pleaseSelectDataset'))
       return
@@ -243,19 +332,21 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     setBatchScanError(null)
     setBatchImportTaskId(null)
     try {
-      const selectedFilesInfo = batchScanResult?.files
-        .filter(f => batchSelectedFiles.has(f.path))
-        .map(f => ({ path: f.path, format_type: f.format_type, associated_data: f.associated_data })) || []
       const result = await startBatchImportTask({
-        files: selectedFilesInfo,
+        scan_id: batchScanResult?.scan_id,
+        select_all_valid: batchSelectAllValid,
+        selected_paths: Array.from(batchSelectedFiles),
+        excluded_paths: Array.from(batchExcludedFiles),
         dataset_id: batchDatasetMode === 'existing' ? batchSelectedDatasetId : undefined,
         dataset_name: batchDatasetMode === 'new' ? datasetNameToUse : undefined,
+        scan_root: batchScanResult?.directory,
         aggregation_level: batchDataLevel,
-        task_type: batchTaskType,
-        default_label: batchTaskType === 'classification' ? 'External Import' : undefined
+        task_type: batchTaskType
       })
       setBatchImportTaskId(result.task_id)
       setBatchSelectedFiles(new Set())
+      setBatchExcludedFiles(new Set())
+      setBatchSelectAllValid(false)
       if (batchNewDatasetNameRef.current) { batchNewDatasetNameRef.current.value = '' }
       setTimeout(() => { loadBatchDatasets(); refreshExternalDatasets() }, 2000)
     } catch (err) {
@@ -683,7 +774,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         batchScanResult={batchScanResult}
         batchScanning={batchScanning}
         batchScanError={batchScanError}
-        batchSelectedFiles={batchSelectedFiles}
+          batchSelectedCount={batchSelectedCount}
         batchDatasetMode={batchDatasetMode}
         setBatchDatasetMode={setBatchDatasetMode}
         batchSelectedDatasetId={batchSelectedDatasetId}
@@ -698,7 +789,9 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         setBatchDataLevel={setBatchDataLevel}
         handleSelectBatchScanDir={handleSelectBatchScanDir}
         handleBatchScan={handleBatchScan}
-        handleBatchFileToggle={handleBatchFileToggle}
+          handleBatchScanPageChange={handleBatchScanPageChange}
+          isBatchFileSelected={isBatchFileSelected}
+          handleBatchFileToggle={handleBatchFileToggle}
         handleBatchSelectAll={handleBatchSelectAll}
         handleBatchDeselectAll={handleBatchDeselectAll}
         handleBatchRegister={handleBatchRegister}
