@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal
 from datetime import datetime, timedelta
+from urllib.parse import unquote, urlparse
 import httpx
 
 from ..dependencies import logger
@@ -58,6 +59,7 @@ PDF_ENABLE_BACKGROUND_MARKER_UPGRADE = _env_flag("PDF_ENABLE_BACKGROUND_MARKER_U
 PDF_PARSE_METHOD_MARKER = "marker"
 PDF_PARSE_METHOD_PYMUPDF = "pymupdf"
 PDF_PARSE_METHOD_FAILED = "parse_failed"
+PDF_PARSE_METHOD_WEB = "web"
 PDF_UPGRADE_STATUS_SCHEDULED = "scheduled"
 PDF_UPGRADE_STATUS_DISABLED = "disabled"
 PDF_UPGRADE_STATUS_RUNNING = "running"
@@ -72,7 +74,21 @@ MARKER_CACHE_SUFFIX = ".marker.md"
 PYMUPDF_CACHE_SUFFIX = ".md"
 STRUCTURED_CACHE_SUFFIX = ".structured.json"
 STRUCTURED_SCHEMA_VERSION = 2
-PdfParseMethod = Literal["marker", "pymupdf", "parse_failed"]
+PdfParseMethod = Literal["marker", "pymupdf", "parse_failed", "web"]
+
+_MAX_WEB_DOWNLOAD_BYTES = 5 * 1024 * 1024
+_MAX_WEB_TEXT_CHARS = 120_000
+_REPOSITORY_SOURCE_TYPES = frozenset({"github", "gitlab", "gitee"})
+_LIGHTWEIGHT_WEB_SOURCE_TYPES = frozenset({
+    "github",
+    "gitlab",
+    "gitee",
+    "zenodo",
+    "documentation",
+    "blog",
+    "wikipedia",
+    "huggingface",
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -431,6 +447,588 @@ def _save_pdf_to_cache(url: str, pdf_bytes: bytes, title: str = "", markdown: st
         logger.info(f"Cached PDF: {url} ({len(pdf_bytes)} bytes)" + (" + markdown" if markdown else ""))
     except Exception as e:
         logger.error(f"Error saving PDF to cache: {e}")
+
+
+def _save_lightweight_markdown_to_cache(
+    url: str,
+    markdown: str,
+    title: str,
+    source_type: str,
+    *,
+    is_academic: bool,
+) -> None:
+    """Persist lightweight webpage / repository extraction using the existing markdown cache."""
+    try:
+        cache_dir = _get_pdf_cache_dir()
+        url_hash = _get_url_hash(url)
+        meta_file = cache_dir / f"{url_hash}.json"
+        md_file = cache_dir / f"{url_hash}{PYMUPDF_CACHE_SUFFIX}"
+        now_iso = datetime.now().isoformat()
+        page_count = max(1, _extract_page_count(markdown) or 1)
+
+        md_file.write_text(markdown, encoding='utf-8')
+        _save_structured_to_cache(url, _build_document_graph_from_markdown(markdown, PDF_PARSE_METHOD_WEB))
+
+        meta = {
+            'url': url,
+            'title': title,
+            'cached_at': now_iso,
+            'size_bytes': len(markdown.encode('utf-8')),
+            'page_count': page_count,
+            'parse_method': PDF_PARSE_METHOD_WEB,
+            'structured_parse_method': PDF_PARSE_METHOD_WEB,
+            'structured_parse_ready': True,
+            'high_quality_parse_pending': False,
+            'high_quality_parse_ready': False,
+            'high_quality_upgrade_status': PDF_UPGRADE_STATUS_SKIPPED,
+            'high_quality_upgrade_detail': "Lightweight webpage extraction does not use PDF upgrade",
+            'high_quality_upgrade_updated_at': now_iso,
+            'is_academic': is_academic,
+            'content_kind': 'webpage',
+            **_build_cached_article_meta_fields(url, title),
+        }
+        meta['source_type'] = source_type or meta.get('source_type') or detect_source_type(url)
+        with open(meta_file, 'w') as f:
+            json.dump(meta, f, indent=2)
+
+        logger.info(f"Cached lightweight page: {url} ({page_count} pseudo-pages)")
+    except Exception as e:
+        logger.error(f"Error saving lightweight page cache for {url}: {e}")
+
+
+def _get_cached_lightweight_document(url: str) -> tuple[dict[str, Any], str] | None:
+    meta = get_cached_pdf_meta(url)
+    markdown = get_cached_markdown(url)
+    if not meta or not markdown:
+        return None
+
+    parse_method = str(meta.get('parse_method') or '')
+    content_kind = str(meta.get('content_kind') or '')
+    if parse_method == PDF_PARSE_METHOD_WEB or content_kind == 'webpage':
+        return meta, markdown
+    return None
+
+
+def _source_label_for_display(source_type: str) -> str:
+    return {
+        'github': 'GitHub',
+        'gitlab': 'GitLab',
+        'gitee': 'Gitee',
+        'zenodo': 'Zenodo',
+        'documentation': 'Docs',
+        'blog': 'Blog',
+        'wikipedia': 'Wikipedia',
+        'huggingface': 'Hugging Face',
+        'web': 'Web',
+        'pdf': 'PDF',
+    }.get(source_type, source_type.upper() if source_type else 'Web')
+
+
+def _derive_title_from_url(url: str, fallback: str = "") -> str:
+    if fallback:
+        return fallback
+    try:
+        parsed = urlparse(url)
+        segments = [unquote(part) for part in parsed.path.split('/') if part]
+        if segments:
+            return segments[-1].replace('-', ' ').replace('_', ' ')
+    except Exception:
+        pass
+    return url
+
+
+def _normalize_lightweight_web_text(text: str) -> str:
+    normalized_lines: list[str] = []
+    previous_blank = True
+    for raw_line in str(text or '').splitlines():
+        line = re.sub(r'\s+', ' ', raw_line).strip()
+        if not line:
+            if not previous_blank and normalized_lines:
+                normalized_lines.append('')
+            previous_blank = True
+            continue
+        normalized_lines.append(line)
+        previous_blank = False
+    return "\n".join(normalized_lines).strip()
+
+
+def _clean_lightweight_metadata_value(text: str, max_len: int = 280) -> str:
+    normalized = _normalize_lightweight_web_text(text).replace("\n", " ").strip(" -:|\t")
+    if len(normalized) <= max_len:
+        return normalized
+    return normalized[: max_len - 3].rstrip() + "..."
+
+
+def _collect_selector_texts(
+    soup: Any,
+    selectors: tuple[str, ...] | list[str],
+    *,
+    max_items: int = 4,
+    max_len: int = 280,
+    min_len: int = 3,
+) -> list[str]:
+    collected: list[str] = []
+    seen: set[str] = set()
+    for selector in selectors:
+        try:
+            nodes = soup.select(selector)
+        except Exception:
+            continue
+        for node in nodes:
+            value = _clean_lightweight_metadata_value(node.get_text(" ", strip=True), max_len=max_len)
+            if len(value) < min_len:
+                continue
+            dedupe_key = value.lower()
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            collected.append(value)
+            if len(collected) >= max_items:
+                return collected
+    return collected
+
+
+def _extract_definition_list_metadata(
+    soup: Any,
+    selectors: tuple[str, ...] | list[str],
+    *,
+    max_items: int = 8,
+) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for selector in selectors:
+        try:
+            roots = soup.select(selector)
+        except Exception:
+            roots = []
+        for root in roots:
+            for dt in root.select('dt'):
+                dd = dt.find_next_sibling('dd')
+                if dd is None:
+                    continue
+                key = _clean_lightweight_metadata_value(dt.get_text(" ", strip=True), max_len=64)
+                value = _clean_lightweight_metadata_value(dd.get_text(" ", strip=True), max_len=320)
+                if not key or not value:
+                    continue
+                dedupe_key = (key.lower(), value.lower())
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                pairs.append((key, value))
+                if len(pairs) >= max_items:
+                    return pairs
+    return pairs
+
+
+def _extract_lightweight_metadata_items(soup: Any, source_type: str) -> list[tuple[str, str]]:
+    items: list[tuple[str, str]] = []
+
+    if source_type in _REPOSITORY_SOURCE_TYPES:
+        overview_selectors = {
+            'github': (
+                'p.f4.my-3',
+                'div.BorderGrid-cell p.f4',
+                'div[data-testid="repository-description"]',
+            ),
+            'gitlab': (
+                'div.project-page-layout p.gl-text-subtle',
+                'div.project-description',
+                'div.home-panel-title + p',
+            ),
+            'gitee': (
+                'div.project-desc',
+                'div.project-intro',
+                'div.repository-description',
+            ),
+        }
+        topic_selectors = {
+            'github': ('a[href*="/topics/"]',),
+            'gitlab': ('a.topic-badge', 'span.gl-badge'),
+            'gitee': ('a.topic-tag', 'span.ui-label'),
+        }
+        overviews = _collect_selector_texts(soup, overview_selectors.get(source_type, ()), max_items=1, max_len=320)
+        topics = _collect_selector_texts(soup, topic_selectors.get(source_type, ()), max_items=8, max_len=40, min_len=2)
+        if overviews:
+            items.append(("Repository overview", overviews[0]))
+        if topics:
+            items.append(("Topics", ", ".join(topics[:8])))
+        return items
+
+    if source_type == 'zenodo':
+        metadata = _extract_definition_list_metadata(
+            soup,
+            (
+                'section#record-detail',
+                'div.record-main',
+                'div#record-page',
+                'body',
+            ),
+            max_items=8,
+        )
+        preferred_order = ['doi', 'publication date', 'published', 'type', 'version', 'license', 'keywords', 'communities']
+        ranked = sorted(
+            metadata,
+            key=lambda pair: next(
+                (idx for idx, marker in enumerate(preferred_order) if marker in pair[0].lower()),
+                len(preferred_order),
+            ),
+        )
+        return ranked[:8]
+
+    return items
+
+
+def _build_lightweight_platform_note(source_type: str) -> str:
+    if source_type in _REPOSITORY_SOURCE_TYPES:
+        return (
+            'This is a lightweight repository-page extraction focused on the landing page / README. '
+            'For file trees, source code, or deeper implementation details, open the repository link directly and use page navigation.'
+        )
+    if source_type == 'zenodo':
+        return (
+            'This is a lightweight Zenodo record extraction. '
+            'For full metadata, attached files, or downloads, open the record page directly.'
+        )
+    return (
+        'This is a lightweight page extraction. '
+        'If you need interactive elements or more detail, open the page directly.'
+    )
+
+
+def _select_primary_html_container(soup: Any, source_type: str) -> Any:
+    selector_map = {
+        'github': ('div#readme', 'div[data-testid="readme-content"]', 'article.markdown-body', 'main'),
+        'gitlab': ('div.readme-holder', 'section.md', 'div.file-content', 'div.blob-content', 'main'),
+        'gitee': ('div#readme', 'div.repository-readme', 'div.file_content', 'div.markdown-body', 'main'),
+        'zenodo': ('div#collapse-description', 'div.record-main', 'section#record-detail', 'main'),
+        'documentation': ('article', 'main', '[role="main"]'),
+        'blog': ('article', 'main', '[role="main"]'),
+        'huggingface': ('main', 'article'),
+    }
+    selectors = [*selector_map.get(source_type, ()), 'article', 'main', '[role="main"]', 'body']
+    seen: set[str] = set()
+    for selector in selectors:
+        if selector in seen:
+            continue
+        seen.add(selector)
+        try:
+            node = soup.select_one(selector)
+        except Exception:
+            node = None
+        if node is not None:
+            return node
+    return soup.body or soup
+
+
+def _build_lightweight_page_markdown(
+    title: str,
+    *,
+    url: str,
+    source_type: str,
+    extracted_text: str,
+    description: str = "",
+    metadata_items: list[tuple[str, str]] | None = None,
+) -> str:
+    body = extracted_text[:_MAX_WEB_TEXT_CHARS].strip()
+    lines = [
+        '--- Page 1 ---',
+        f'# {title}',
+        '',
+        f'- **URL**: {url}',
+        f'- **Source**: {_source_label_for_display(source_type)}',
+    ]
+    if description:
+        lines.extend(['', '## Overview', description.strip()])
+    if metadata_items:
+        lines.append('')
+        lines.append('## Metadata')
+        for key, value in metadata_items:
+            lines.append(f'- **{key}**: {value}')
+    lines.extend([
+        '',
+        '## Note',
+        _build_lightweight_platform_note(source_type),
+    ])
+    lines.extend(['', '## Extracted Content', body])
+    return "\n".join(lines).strip()
+
+
+def _extract_lightweight_markdown_from_html(
+    html_content: str,
+    *,
+    url: str,
+    title: str,
+    source_type: str,
+) -> tuple[str, str] | None:
+    if not html_content.strip():
+        return None
+
+    try:
+        from bs4 import BeautifulSoup
+    except Exception:
+        BeautifulSoup = None  # type: ignore[assignment]
+
+    if BeautifulSoup is None:
+        extracted_text = _normalize_lightweight_web_text(_extract_marker_text_from_html(html_content))
+        final_title = _derive_title_from_url(url, fallback=title)
+        if len(extracted_text) < 160:
+            return None
+        return final_title, _build_lightweight_page_markdown(
+            final_title,
+            url=url,
+            source_type=source_type,
+            extracted_text=extracted_text,
+        )
+
+    soup = BeautifulSoup(html_content, 'html.parser')
+    for tag in soup(["script", "style", "noscript", "svg"]):
+        tag.decompose()
+
+    def _meta_content(**attrs: str) -> str:
+        node = soup.find('meta', attrs=attrs)
+        if node is None:
+            return ''
+        return str(node.get('content') or '').strip()
+
+    extracted_title = (
+        _meta_content(property='og:title')
+        or _meta_content(name='twitter:title')
+        or (soup.title.get_text(' ', strip=True) if soup.title else '')
+    )
+    content_root = _select_primary_html_container(soup, source_type)
+    extracted_text = _normalize_lightweight_web_text(_extract_marker_text_from_html(str(content_root)))
+    if len(extracted_text) < 240 and content_root is not (soup.body or soup):
+        extracted_text = _normalize_lightweight_web_text(_extract_marker_text_from_html(str(soup.body or soup)))
+
+    if len(extracted_text) < 160:
+        return None
+
+    description = (
+        _meta_content(name='description')
+        or _meta_content(property='og:description')
+        or _meta_content(name='twitter:description')
+    )
+    metadata_items = _extract_lightweight_metadata_items(soup, source_type)
+    final_title = _derive_title_from_url(url, fallback=extracted_title or title)
+    markdown = _build_lightweight_page_markdown(
+        final_title,
+        url=url,
+        source_type=source_type,
+        extracted_text=extracted_text,
+        description=description,
+        metadata_items=metadata_items,
+    )
+    return final_title, markdown
+
+
+def _should_try_lightweight_web_first(source_type: str) -> bool:
+    return source_type in _LIGHTWEIGHT_WEB_SOURCE_TYPES
+
+
+def _should_try_lightweight_web_fallback(url: str, source_type: str) -> bool:
+    return source_type in _LIGHTWEIGHT_WEB_SOURCE_TYPES or (source_type == 'web' and not is_pdf_url(url))
+
+
+async def _fetch_lightweight_web_markdown(
+    url: str,
+    title: str,
+    source_type: str,
+    timeout: float = 30.0,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        'success': False,
+        'title': title,
+        'markdown': None,
+        'error': 'download_failed',
+        'error_code': None,
+        'error_detail': None,
+    }
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                          '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,text/plain,text/markdown;q=0.9,*/*;q=0.8',
+        }
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            response = await client.get(url, headers=headers)
+
+        if response.status_code != 200:
+            result['error_code'] = 'http_status'
+            result['error_detail'] = (
+                f"This page returned HTTP {response.status_code}, so automatic reading is unavailable right now. "
+                "It may require login, anti-bot checks, or interactive navigation. Please open the page directly."
+            )
+            return result
+
+        content = response.content
+        if len(content) > _MAX_WEB_DOWNLOAD_BYTES:
+            result['error'] = 'parse_failed'
+            result['error_code'] = 'page_too_large'
+            result['error_detail'] = (
+                "This page is too large for lightweight extraction. Please open it directly for the full content."
+            )
+            return result
+
+        content_type = (response.headers.get('content-type') or '').lower()
+        if content[:4] == b'%PDF' or 'application/pdf' in content_type:
+            result['error_code'] = 'points_to_pdf'
+            result['error_detail'] = (
+                "This link points to a PDF document. Please use the PDF read flow or open the PDF directly."
+            )
+            return result
+
+        final_title = title
+        markdown: str | None = None
+        if any(kind in content_type for kind in ('text/plain', 'text/markdown')):
+            plain_text = _normalize_lightweight_web_text(response.text)
+            if len(plain_text) >= 160:
+                final_title = _derive_title_from_url(str(response.url), fallback=title)
+                markdown = _build_lightweight_page_markdown(
+                    final_title,
+                    url=str(response.url),
+                    source_type=source_type,
+                    extracted_text=plain_text,
+                )
+        else:
+            extracted = _extract_lightweight_markdown_from_html(
+                response.text,
+                url=str(response.url),
+                title=title,
+                source_type=source_type,
+            )
+            if extracted is not None:
+                final_title, markdown = extracted
+
+        if not markdown:
+            result['error'] = 'parse_failed'
+            result['error_code'] = 'unreadable_page'
+            result['error_detail'] = (
+                "I could not extract enough readable content from this page. "
+                "It may rely on heavy client-side rendering or interactive browsing. Please open the link directly for details."
+            )
+            return result
+
+        result.update({
+            'success': True,
+            'title': final_title,
+            'markdown': markdown,
+            'error': None,
+            'error_detail': None,
+        })
+        return result
+    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        result['error_code'] = 'network_unreachable'
+        result['error_detail'] = "The page could not be reached because of a network connection problem. Please try again later or open it directly."
+        return result
+    except httpx.TimeoutException as e:
+        result['error_code'] = 'request_timeout'
+        result['error_detail'] = "The page took too long to respond. Please try again later or open it directly."
+        return result
+    except Exception as e:
+        result['error'] = 'parse_failed'
+        result['error_code'] = 'unexpected_error'
+        result['error_detail'] = "An unexpected error occurred while preparing this page. Please open the link directly for more detail."
+        return result
+
+
+async def _process_lightweight_web_url(
+    url: str,
+    title: str,
+    base_url: str,
+    api_key: str,
+    model: str,
+    use_cache: bool = True,
+) -> dict[str, Any]:
+    source_type = detect_source_type(url)
+    result: dict[str, Any] = {
+        'url': url,
+        'title': title,
+        'source_type': source_type,
+        'is_academic': False,
+        'success': False,
+        'summary': None,
+        'pdf_content': None,
+        'error': None,
+        'error_code': None,
+        'error_detail': None,
+        'from_cache': False,
+        'reference_card': None,
+        'page_count': 1,
+        'parse_method': PDF_PARSE_METHOD_WEB,
+        'structured_parse_method': PDF_PARSE_METHOD_WEB,
+        'high_quality_pending': False,
+        'image_count': 0,
+        'images_ready': False,
+    }
+
+    try:
+        markdown: str | None = None
+        cache_meta: dict[str, Any] | None = None
+        cached = _get_cached_lightweight_document(url) if use_cache else None
+        if cached is not None:
+            cache_meta, markdown = cached
+            result['from_cache'] = True
+            result['title'] = str(cache_meta.get('title') or title)
+            result['page_count'] = int(cache_meta.get('page_count') or 1)
+            result['parse_method'] = str(cache_meta.get('parse_method') or PDF_PARSE_METHOD_WEB)
+            result['structured_parse_method'] = str(cache_meta.get('structured_parse_method') or PDF_PARSE_METHOD_WEB)
+
+        if not markdown:
+            fetch_result = await _fetch_lightweight_web_markdown(url, title, source_type)
+            if not fetch_result.get('success'):
+                result['error'] = str(fetch_result.get('error') or 'download_failed')
+                result['error_code'] = fetch_result.get('error_code')
+                result['error_detail'] = str(fetch_result.get('error_detail') or 'Unable to fetch page content.')
+                return result
+            markdown = str(fetch_result.get('markdown') or '')
+            result['title'] = str(fetch_result.get('title') or title)
+
+        if not markdown.strip():
+            result['error'] = 'parse_failed'
+            result['error_code'] = 'empty_content'
+            result['error_detail'] = (
+                "Lightweight extraction returned no readable content. Please open the page directly for more detail."
+            )
+            return result
+
+        academic = bool(cache_meta.get('is_academic')) if cache_meta else is_academic_content(markdown, source_type)
+        result['is_academic'] = academic
+        result['pdf_content'] = markdown
+        result['page_count'] = max(1, _extract_page_count(markdown) or int(result.get('page_count') or 1))
+
+        if use_cache and not result['from_cache']:
+            await asyncio.to_thread(
+                _save_lightweight_markdown_to_cache,
+                url,
+                markdown,
+                str(result['title'] or title),
+                source_type,
+                is_academic=academic,
+            )
+
+        summary = await summarize_pdf_content(
+            markdown,
+            str(result['title']) if result['title'] is not None else title,
+            base_url,
+            api_key,
+            model,
+            is_academic=academic,
+        )
+        result['success'] = True
+        result['summary'] = summary
+        result['reference_card'] = format_reference_card(
+            str(result['title']) if result['title'] is not None else title,
+            url,
+            source_type,
+            is_academic=academic,
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error processing lightweight page {url}: {e}")
+        result['error'] = 'parse_failed'
+        result['error_code'] = 'unexpected_error'
+        result['error_detail'] = "An unexpected error occurred while processing this page. Please open the link directly for more detail."
+        return result
 
 
 def _extract_page_count(markdown: str) -> int:
@@ -3310,6 +3908,9 @@ def format_reference_card(
         "taylor_francis": "📚",
         "huggingface": "🤗",
         "github": "💻",
+        "gitlab": "🦊",
+        "gitee": "🧭",
+        "zenodo": "🗂️",
         "blog": "📝",
         "documentation": "📖",
         "wikipedia": "🌐",
@@ -3340,6 +3941,9 @@ type: paper
         # Friendly source label for display
         source_labels = {
             "github": "GitHub",
+            "gitlab": "GitLab",
+            "gitee": "Gitee",
+            "zenodo": "Zenodo",
             "blog": "Blog",
             "documentation": "Docs",
             "wikipedia": "Wikipedia",
@@ -3411,6 +4015,12 @@ def detect_source_type(url: str) -> str:
         return "huggingface"
     elif 'github.com' in url_lower or 'github.io' in url_lower:
         return "github"
+    elif 'gitlab.com' in url_lower:
+        return "gitlab"
+    elif 'gitee.com' in url_lower:
+        return "gitee"
+    elif 'zenodo.org' in url_lower:
+        return "zenodo"
     elif any(d in url_lower for d in (
         'medium.com', 'substack.com', 'dev.to', 'hashnode.dev',
         'wordpress.com', 'blogger.com', 'blogspot.com',
@@ -3459,8 +4069,8 @@ def is_academic_content(content: str, source_type: str) -> bool:
     if source_type in _ACADEMIC_SOURCE_TYPES:
         return True
 
-    # Non-PDF, non-web sources (github, blog, docs, wikipedia) are never academic
-    if source_type not in ("pdf", "web"):
+    # Clearly non-academic sources are never academic.
+    if source_type in {"github", "gitlab", "gitee", "blog", "documentation", "wikipedia", "huggingface"}:
         return False
 
     # Tier 2: heuristic analysis for generic PDFs / unknown web sources
@@ -3520,7 +4130,7 @@ def _cached_article_source_priority_for_source(source_type: str) -> int:
         return 40
     if source_type == "web":
         return 20
-    if source_type in {"documentation", "github", "huggingface", "wikipedia"}:
+    if source_type in {"documentation", "github", "gitlab", "gitee", "huggingface", "wikipedia", "zenodo"}:
         return 10
     if source_type == "blog":
         return 0
@@ -3747,6 +4357,9 @@ async def process_pdf_url(
     }
 
     try:
+        if _should_try_lightweight_web_first(str(result["source_type"])):
+            return await _process_lightweight_web_url(url, title, base_url, api_key, model, use_cache=use_cache)
+
         pdf_bytes = None
         cached_markdown = None
 
@@ -3770,6 +4383,21 @@ async def process_pdf_url(
                 _save_pdf_to_cache(url, pdf_bytes, title)
 
         if not pdf_bytes:
+            if _should_try_lightweight_web_fallback(url, str(result["source_type"])):
+                lightweight_result = await _process_lightweight_web_url(
+                    url,
+                    title,
+                    base_url,
+                    api_key,
+                    model,
+                    use_cache=use_cache,
+                )
+                if lightweight_result.get("success"):
+                    return lightweight_result
+                result["error"] = lightweight_result.get("error")
+                result["error_detail"] = lightweight_result.get("error_detail")
+                return result
+
             result["error"] = "download_failed"
             result["error_detail"] = (
                 f"Failed to download PDF from {url}. "

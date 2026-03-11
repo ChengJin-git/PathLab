@@ -14,7 +14,13 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database.repositories import DataGroupRepository, DatasetRepository, StorageTaskRepository
-from backend.common.file_types import TIF_EXTENSIONS, is_patch_file, is_patch_file_for_scan
+from backend.common.file_types import (
+    PATCH_EXTENSIONS,
+    TIF_EXTENSIONS,
+    WSI_EXTENSIONS,
+    is_patch_file,
+    is_patch_file_for_scan,
+)
 from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 
 
@@ -33,6 +39,76 @@ def get_file_data_type(file_path: str | Path, file_size: int = 0) -> str:
 
 def get_scan_file_data_type(file_path: str | Path, file_size: int = 0) -> str:
     return "patch" if is_patch_file_for_scan(str(file_path), file_size) else "wsi"
+
+
+def get_file_size_safe(file_path: str | Path) -> int:
+    try:
+        return os.path.getsize(file_path)
+    except Exception:
+        return 0
+
+
+def build_default_wsi_properties(file_path: str | Path, file_size: Optional[int] = None) -> dict:
+    if file_size is None:
+        file_size = get_file_size_safe(file_path)
+    return {
+        "mpp": 0.25,
+        "vendor": "Unknown",
+        "width": 0,
+        "height": 0,
+        "magnification": 40,
+        "file_size": file_size,
+    }
+
+
+def resolve_file_data_type(file_path: str | Path, *, cached_file_data_type: Optional[str] = None, file_size: Optional[int] = None) -> str:
+    suffix = Path(file_path).suffix.lower()
+
+    if suffix in PATCH_EXTENSIONS:
+        return "patch"
+    if suffix in WSI_EXTENSIONS:
+        return "wsi"
+
+    if cached_file_data_type in {"wsi", "patch"} and suffix not in TIF_EXTENSIONS:
+        return cached_file_data_type
+
+    if file_size is None:
+        file_size = get_file_size_safe(file_path)
+    return get_file_data_type(file_path, file_size)
+
+
+def should_extract_wsi_properties(file_path: str | Path, *, file_data_type: Optional[str] = None) -> bool:
+    suffix = Path(file_path).suffix.lower()
+
+    if suffix in PATCH_EXTENSIONS:
+        return False
+    if suffix in WSI_EXTENSIONS or suffix in TIF_EXTENSIONS:
+        return True
+    return file_data_type != "patch"
+
+
+def resolve_file_data_type_and_properties(
+    file_path: str | Path,
+    *,
+    cached_file_data_type: Optional[str] = None,
+    file_size: Optional[int] = None,
+) -> tuple[str, dict]:
+    if file_size is None:
+        file_size = get_file_size_safe(file_path)
+
+    file_data_type = resolve_file_data_type(
+        file_path,
+        cached_file_data_type=cached_file_data_type,
+        file_size=file_size,
+    )
+
+    if should_extract_wsi_properties(file_path, file_data_type=file_data_type):
+        props = extract_wsi_properties(str(file_path))
+        if props.get("file_size", 0) <= 0:
+            props["file_size"] = file_size
+        return file_data_type, props
+
+    return file_data_type, build_default_wsi_properties(file_path, file_size)
 
 
 def infer_dataset_data_type_from_paths(file_paths: Iterable[str | Path]) -> str:
@@ -391,14 +467,7 @@ def extract_wsi_properties(wsi_path: str) -> dict:
     Returns a dict with mpp, vendor, width, height, magnification, file_size.
     Falls back to placeholder values if ASlide is unavailable or reading fails.
     """
-    default_props = {
-        "mpp": 0.25,
-        "vendor": "Unknown",
-        "width": 0,
-        "height": 0,
-        "magnification": 40,
-        "file_size": 0,
-    }
+    default_props = build_default_wsi_properties(wsi_path, 0)
 
     if not wsi_path or not os.path.exists(wsi_path):
         logger.warning(f"WSI file not found: {wsi_path}")

@@ -3,10 +3,10 @@
  *
  * Extracted from AIChatPage.tsx to reduce file size.
  */
-import React, { useMemo } from 'react'
+import React, { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
-import { AlertTriangle, Plus } from 'lucide-react'
+import { AlertTriangle, Plus, Copy, Check } from 'lucide-react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -317,6 +317,190 @@ function findReferenceCardForCitation(
   return referenceCards[paperIdx - 1] ?? referenceCards[0]
 }
 
+function normalizeCodeLanguage(className?: string): string {
+  const raw = className?.match(/language-([\w-]+)/)?.[1]?.toLowerCase() || ''
+  if (!raw) return 'text'
+  if (raw === 'plaintext' || raw === 'plain') return 'text'
+  if (raw === 'shell' || raw === 'bash' || raw === 'zsh') return 'bash'
+  if (raw === 'tsx' || raw === 'jsx' || raw === 'typescript' || raw === 'javascript') return raw
+  if (raw === 'monofont') return 'text'
+  return raw
+}
+
+const CODE_FONT_STACK = 'JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace'
+
+type CodeTokenType = 'plain' | 'keyword' | 'string' | 'number' | 'comment' | 'operator' | 'constant' | 'function'
+
+interface CodeToken {
+  text: string
+  type: CodeTokenType
+}
+
+const KEYWORDS_BY_LANGUAGE: Record<string, Set<string>> = {
+  js: new Set(['const', 'let', 'var', 'function', 'return', 'if', 'else', 'for', 'while', 'switch', 'case', 'break', 'continue', 'try', 'catch', 'finally', 'throw', 'new', 'class', 'extends', 'import', 'from', 'export', 'default', 'async', 'await', 'typeof', 'instanceof', 'in', 'of']),
+  jsx: new Set(['const', 'let', 'var', 'function', 'return', 'if', 'else', 'for', 'while', 'switch', 'case', 'break', 'continue', 'try', 'catch', 'finally', 'throw', 'new', 'class', 'extends', 'import', 'from', 'export', 'default', 'async', 'await']),
+  ts: new Set(['const', 'let', 'var', 'function', 'return', 'if', 'else', 'for', 'while', 'switch', 'case', 'break', 'continue', 'try', 'catch', 'finally', 'throw', 'new', 'class', 'extends', 'import', 'from', 'export', 'default', 'async', 'await', 'interface', 'type', 'enum', 'implements', 'public', 'private', 'protected', 'readonly']),
+  tsx: new Set(['const', 'let', 'var', 'function', 'return', 'if', 'else', 'for', 'while', 'switch', 'case', 'break', 'continue', 'try', 'catch', 'finally', 'throw', 'new', 'class', 'extends', 'import', 'from', 'export', 'default', 'async', 'await', 'interface', 'type', 'enum', 'implements']),
+  python: new Set(['def', 'class', 'return', 'if', 'elif', 'else', 'for', 'while', 'in', 'is', 'not', 'and', 'or', 'try', 'except', 'finally', 'raise', 'import', 'from', 'as', 'with', 'lambda', 'pass', 'break', 'continue', 'global', 'nonlocal', 'yield', 'async', 'await']),
+  bash: new Set(['if', 'then', 'else', 'fi', 'for', 'in', 'do', 'done', 'while', 'case', 'esac', 'function', 'return', 'local', 'export']),
+  sql: new Set(['select', 'from', 'where', 'group', 'by', 'order', 'having', 'join', 'left', 'right', 'inner', 'outer', 'on', 'insert', 'into', 'values', 'update', 'set', 'delete', 'create', 'table', 'alter', 'drop', 'limit', 'offset', 'as', 'and', 'or', 'not', 'null']),
+  json: new Set([]),
+}
+
+const OPERATOR_PATTERN = /^(===|!==|==|!=|<=|>=|=>|\+\+|--|&&|\|\||[=+\-*/%<>!&|^~?:.,;{}()[\]])$/
+const TOKEN_PATTERN = /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b\d+(?:\.\d+)?\b|\b(?:true|false|null|undefined|None|True|False)\b|[A-Za-z_][A-Za-z0-9_]*|===|!==|==|!=|<=|>=|=>|\+\+|--|&&|\|\||[=+\-*/%<>!&|^~?:.,;{}()[\]])/g
+
+function getLanguageKeywordSet(language: string): Set<string> | null {
+  if (language === 'javascript') return KEYWORDS_BY_LANGUAGE.js
+  if (language === 'typescript') return KEYWORDS_BY_LANGUAGE.ts
+  return KEYWORDS_BY_LANGUAGE[language] || null
+}
+
+function tokenizeCodeLine(line: string, language: string): CodeToken[] {
+  if (!line) return [{ text: '', type: 'plain' }]
+
+  if (language === 'python' || language === 'bash') {
+    const commentIndex = line.indexOf('#')
+    if (commentIndex !== -1) {
+      const before = line.slice(0, commentIndex)
+      const comment = line.slice(commentIndex)
+      return [...tokenizeCodeLine(before, language).filter(t => t.text.length > 0), { text: comment, type: 'comment' }]
+    }
+  }
+
+  if (language === 'sql') {
+    const commentIndex = line.indexOf('--')
+    if (commentIndex !== -1) {
+      const before = line.slice(0, commentIndex)
+      const comment = line.slice(commentIndex)
+      return [...tokenizeCodeLine(before, language).filter(t => t.text.length > 0), { text: comment, type: 'comment' }]
+    }
+  }
+
+  const keywordSet = getLanguageKeywordSet(language)
+  const tokens: CodeToken[] = []
+  let cursor = 0
+
+  for (const match of line.matchAll(TOKEN_PATTERN)) {
+    const token = match[0]
+    const index = match.index ?? 0
+
+    if (index > cursor) {
+      tokens.push({ text: line.slice(cursor, index), type: 'plain' })
+    }
+
+    let type: CodeTokenType = 'plain'
+    const lower = token.toLowerCase()
+
+    if (token.startsWith('"') || token.startsWith("'") || token.startsWith('`')) {
+      type = 'string'
+    } else if (/^\d+(?:\.\d+)?$/.test(token)) {
+      type = 'number'
+    } else if (['true', 'false', 'null', 'undefined', 'none'].includes(lower)) {
+      type = 'constant'
+    } else if (keywordSet && keywordSet.has(lower)) {
+      type = 'keyword'
+    } else if (OPERATOR_PATTERN.test(token)) {
+      type = 'operator'
+    } else if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(token)) {
+      const rest = line.slice(index + token.length)
+      if (/^\s*\(/.test(rest)) {
+        type = 'function'
+      }
+    }
+
+    tokens.push({ text: token, type })
+    cursor = index + token.length
+  }
+
+  if (cursor < line.length) {
+    tokens.push({ text: line.slice(cursor), type: 'plain' })
+  }
+
+  return tokens
+}
+
+function tokenClassName(type: CodeTokenType): string {
+  switch (type) {
+    case 'keyword':
+      return 'text-sky-300'
+    case 'string':
+      return 'text-emerald-300'
+    case 'number':
+      return 'text-amber-300'
+    case 'comment':
+      return 'text-slate-400 italic'
+    case 'operator':
+      return 'text-fuchsia-300'
+    case 'constant':
+      return 'text-orange-300'
+    case 'function':
+      return 'text-cyan-300'
+    default:
+      return 'text-slate-100'
+  }
+}
+
+function renderHighlightedCode(codeText: string, language: string): React.ReactNode {
+  const lines = codeText.split('\n')
+  return lines.map((line, lineIdx) => {
+    const tokens = tokenizeCodeLine(line, language)
+    return (
+      <div key={`line-${lineIdx}`} className="group grid grid-cols-[auto_1fr] gap-3">
+        <span className="select-none text-right text-[11px] text-slate-500 pr-1 min-w-[2ch]">
+          {lineIdx + 1}
+        </span>
+        <span className="whitespace-pre">
+          {tokens.map((token, tokenIdx) => (
+            <span key={`line-${lineIdx}-token-${tokenIdx}`} className={tokenClassName(token.type)}>{token.text}</span>
+          ))}
+        </span>
+      </div>
+    )
+  })
+}
+
+function MarkdownCodeBlock({ className, children }: { className?: string; children: React.ReactNode }) {
+  const [copied, setCopied] = useState(false)
+  const language = normalizeCodeLanguage(className)
+  const codeText = String(children ?? '').replace(/\n$/, '')
+  const shouldHighlight = ['js', 'jsx', 'ts', 'tsx', 'javascript', 'typescript', 'python', 'bash', 'sql', 'json'].includes(language)
+
+  const copyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(codeText)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1200)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <div className="my-4 overflow-hidden rounded-xl border border-slate-200 bg-slate-950 shadow-sm">
+      <div className="flex items-center justify-between border-b border-slate-700/80 bg-slate-900/85 px-3 py-2">
+        <span className="rounded-md bg-slate-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-300">
+          {language}
+        </span>
+        <button
+          type="button"
+          onClick={copyCode}
+          className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] font-medium text-slate-200 transition-colors hover:bg-slate-700"
+          aria-label="Copy code block"
+        >
+          {copied ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <pre className="max-h-[420px] overflow-x-auto overflow-y-auto px-4 py-3 text-[12px] leading-6">
+        <code style={{ fontFamily: CODE_FONT_STACK }}>
+          {shouldHighlight ? renderHighlightedCode(codeText, language) : codeText}
+        </code>
+      </pre>
+    </div>
+  )
+}
+
 
 // Assistant message component with special markup parsing
 // Defined outside of AIChatPage to prevent re-creation on every render
@@ -536,6 +720,21 @@ const AssistantMessage = React.memo(function AssistantMessage({
         <table className="min-w-full">{children}</table>
       </div>
     ),
+    code: ({ className, children, ...props }) => {
+      const isInline = !className?.includes('language-')
+      if (isInline) {
+        return (
+          <code
+            className="rounded-md border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-[0.82em] text-slate-800"
+            style={{ fontFamily: CODE_FONT_STACK }}
+            {...props}
+          >
+            {children}
+          </code>
+        )
+      }
+      return <MarkdownCodeBlock className={className}>{children}</MarkdownCodeBlock>
+    },
     a: ({ href, children, ...rest }) => {
       // Detect #cite-N hash links and render InlineCitation component
       const citationMatch = href?.match(/^#cite-(\d+)$/)
@@ -796,15 +995,15 @@ const AssistantMessage = React.memo(function AssistantMessage({
       )}
 
 	      {/* Markdown content — no skeleton; stream starts directly */}
-	      {displayContent.trim() && (
-	        <div className="prose prose-slate max-w-none prose-sm
+        {displayContent.trim() && (
+          <div className="prose prose-slate max-w-none prose-sm
 	          prose-p:my-2 prose-p:leading-relaxed
 	          prose-headings:mt-4 prose-headings:mb-2 prose-headings:font-semibold prose-headings:text-gray-900
 	          prose-ul:my-3 prose-ul:list-disc prose-ul:pl-6
 	          prose-ol:my-3 prose-ol:list-decimal prose-ol:pl-6
 	          prose-li:my-1.5 prose-li:leading-relaxed
-	          prose-code:bg-gray-100 prose-code:text-gray-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:font-mono prose-code:before:content-none prose-code:after:content-none
-	          prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:p-4 prose-pre:my-3
+            prose-code:before:content-none prose-code:after:content-none
+            prose-pre:bg-transparent prose-pre:p-0 prose-pre:my-0
 	          prose-strong:text-gray-900 prose-strong:font-semibold
 	          prose-a:text-blue-600 prose-a:underline prose-a:decoration-blue-300 prose-a:underline-offset-2 hover:prose-a:text-blue-700 hover:prose-a:decoration-blue-500
 	          prose-hr:border-gray-200 prose-hr:my-4

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName, getTrainingTasks, TrainingTaskListStats } from '../api'
+import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName, getTrainingTasks, prefetchTrainingTasks, TrainingTaskListStats } from '../api'
 import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES, CancellableStatus } from '../constants/status'
 import { isSegFmEncoder } from '../constants/training'
@@ -70,6 +70,7 @@ export default function TaskListPage() {
   const [editedTaskName, setEditedTaskName] = useState('')
   const [isEditingSaving, setIsEditingSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
+  const refreshRequestIdRef = React.useRef(0)
 
   const { rawTrainingTasks, subscribeTrainingSSE } = useBackgroundTask()
 
@@ -100,30 +101,48 @@ export default function TaskListPage() {
     }
   }
 
-  const refreshTasks = React.useCallback(async (showLoadingSpinner: boolean = true) => {
+  const refreshTasks = React.useCallback(async ({
+    showLoadingSpinner = true,
+    forceRefresh = false,
+  }: {
+    showLoadingSpinner?: boolean
+    forceRefresh?: boolean
+  } = {}) => {
+    const requestId = ++refreshRequestIdRef.current
+
     if (showLoadingSpinner) {
       setLoading(true)
     }
 
     try {
-      const response = await getTrainingTasks({
+      const query = {
         page: currentPage,
         page_size: itemsPerPage,
         search: debouncedSearchQuery || undefined,
         status_filter: filter,
         sort_by: sortBy,
-      })
+        forceRefresh,
+      } as const
+
+      const response = await getTrainingTasks(query)
+      if (requestId !== refreshRequestIdRef.current) return
 
       setTasks(response.items || [])
       setTotalCount(response.total || 0)
       setStats(response.stats || { total: 0, running: 0, completed: 0, failed: 0, cancelled: 0 })
-    } catch (error) {
-      console.error('Failed to load training tasks:', error)
-      if (showLoadingSpinner) {
-        setTasks([])
-        setTotalCount(0)
+
+      const totalPages = Math.max(1, Math.ceil((response.total || 0) / itemsPerPage))
+      if (currentPage > 1) {
+        void prefetchTrainingTasks({ ...query, page: currentPage - 1, forceRefresh: false })
       }
+      if (currentPage < totalPages) {
+        void prefetchTrainingTasks({ ...query, page: currentPage + 1, forceRefresh: false })
+      }
+    } catch (error) {
+      if (requestId !== refreshRequestIdRef.current) return
+      console.error('Failed to load training tasks:', error)
     } finally {
+      if (requestId !== refreshRequestIdRef.current) return
       if (showLoadingSpinner) {
         setLoading(false)
       }
@@ -131,12 +150,12 @@ export default function TaskListPage() {
   }, [currentPage, itemsPerPage, debouncedSearchQuery, filter, sortBy])
 
   useEffect(() => {
-    void refreshTasks(true)
+    void refreshTasks({ showLoadingSpinner: true })
   }, [refreshTasks])
 
   useEffect(() => {
     if (rawTrainingTasks === null) return
-    void refreshTasks(false)
+    void refreshTasks({ showLoadingSpinner: false, forceRefresh: true })
   }, [rawTrainingTasks, refreshTasks])
 
   useEffect(() => {
@@ -255,17 +274,7 @@ export default function TaskListPage() {
         await deleteTrainingTask(taskId, deleteMode)
       }
 
-      const response = await getTrainingTasks({
-        page: currentPage,
-        page_size: itemsPerPage,
-        search: debouncedSearchQuery || undefined,
-        status_filter: filter,
-        sort_by: sortBy,
-      })
-
-      setTasks(response.items || [])
-      setTotalCount(response.total || 0)
-      setStats(response.stats || { total: 0, running: 0, completed: 0, failed: 0, cancelled: 0 })
+      await refreshTasks({ showLoadingSpinner: false, forceRefresh: true })
       setSelectedTasks([])
 
       // Clean up state
@@ -525,7 +534,7 @@ export default function TaskListPage() {
       </div>
 
       {/* Task List */}
-      {loading ? (
+      {loading && tasks.length === 0 && totalCount === 0 ? (
         <Card className="p-12 text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
           <p className="text-gray-600">{t('taskList.loadingTasks')}</p>
@@ -764,12 +773,15 @@ export default function TaskListPage() {
 
           <Card className="border-gray-100 bg-white/80 shadow-sm">
             <div className="px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
-              <div className="text-xs sm:text-sm text-gray-500 font-medium text-center sm:text-left">
-                {t('taskList.pagination.summary', {
+              <div className="text-xs sm:text-sm text-gray-500 font-medium text-center sm:text-left flex items-center gap-2">
+                <span>{t('taskList.pagination.summary', {
                   start: paginationStart,
                   end: paginationEnd,
                   total: totalCount,
-                })}
+                })}</span>
+                {loading && totalCount > 0 && (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />
+                )}
               </div>
 
               <div className="flex items-center gap-2 sm:gap-3">

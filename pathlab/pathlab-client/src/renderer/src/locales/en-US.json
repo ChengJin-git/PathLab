@@ -770,14 +770,14 @@
       "searchedPages": "Searched {{count}} pages",
       "summarizingSearch": "Summarizing search results...",
       "webSearchCard": "Web Search",
-      "downloadingPdf": "Downloading PDF document...",
-      "parsingPdf": "Parsing PDF document...",
-      "pdfParsedCount": "Parsed {{count}} PDF documents",
-      "pdfDownloadFailed": "PDF download failed",
-      "pdfParseFailed": "PDF parsing failed",
-      "pdfParseBusy": "The system is currently busy and cannot parse the PDF right now. Please try again later.",
-      "pdfFailedCount": "{{count}} PDFs failed",
-      "summarizingPdf": "Generating PDF summary..."
+      "downloadingPdf": "Fetching document content...",
+      "parsingPdf": "Processing document content...",
+      "pdfParsedCount": "Processed {{count}} documents",
+      "pdfDownloadFailed": "Document fetch failed",
+      "pdfParseFailed": "Document parsing failed",
+      "pdfParseBusy": "The system is currently busy and cannot process this document right now. Please try again later.",
+      "pdfFailedCount": "{{count}} documents failed",
+      "summarizingPdf": "Generating content summary..."
     }
   },
   "layout": {
@@ -1269,6 +1269,7 @@
     "failedToDeleteMessage": "Failed to delete message",
     "messageDeleted": "Message deleted",
     "cannotRegenerate": "Cannot regenerate: no user message found",
+    "cannotResubmitMissingFiles": "This message can't be resubmitted because its original uploaded file data is no longer available.",
     "failedToSaveTaskStatus": "Failed to save task status to server",
     "failedToSaveRegistrationStatus": "Failed to save registration status to server",
     "registrationStarted": "Registration started in background",
@@ -1314,6 +1315,7 @@
     "badResponse": "Bad response",
     "copy": "Copy",
     "regenerate": "Regenerate",
+    "resubmit": "Resubmit",
     "deleteMessageAndContinue": "Delete this message and continue from here",
     "attachment": "Attachment",
     "listening": "Listening...",

@@ -770,14 +770,14 @@
       "searchedPages": "已搜索 {{count}} 个网页",
       "summarizingSearch": "正在总结搜索内容...",
       "webSearchCard": "网页搜索",
-      "downloadingPdf": "正在下载 PDF 文档...",
-      "parsingPdf": "正在解析 PDF 文档...",
-      "pdfParsedCount": "已解析 {{count}} 份 PDF 文档",
-      "pdfDownloadFailed": "PDF 下载失败",
-      "pdfParseFailed": "PDF 解析失败",
-      "pdfParseBusy": "当前系统繁忙，暂时无法解析 PDF，请稍后重试",
-      "pdfFailedCount": "{{count}} 篇 PDF 失败",
-      "summarizingPdf": "正在生成 PDF 摘要..."
+      "downloadingPdf": "正在获取文档内容...",
+      "parsingPdf": "正在整理文档内容...",
+      "pdfParsedCount": "已处理 {{count}} 份文档内容",
+      "pdfDownloadFailed": "文档内容获取失败",
+      "pdfParseFailed": "文档内容解析失败",
+      "pdfParseBusy": "当前系统繁忙，暂时无法处理该文档，请稍后重试",
+      "pdfFailedCount": "{{count}} 份文档处理失败",
+      "summarizingPdf": "正在生成内容摘要..."
     }
   },
   "layout": {
@@ -1269,6 +1269,7 @@
     "failedToDeleteMessage": "删除消息失败",
     "messageDeleted": "消息已删除",
     "cannotRegenerate": "无法重新生成：未找到用户消息",
+    "cannotResubmitMissingFiles": "无法重新提交这条消息：原始上传文件数据已不可用。",
     "failedToSaveTaskStatus": "保存任务状态到服务器失败",
     "failedToSaveRegistrationStatus": "保存注册状态到服务器失败",
     "registrationStarted": "注册已在后台启动",
@@ -1314,6 +1315,7 @@
     "badResponse": "回答不佳",
     "copy": "复制",
     "regenerate": "重新生成",
+    "resubmit": "重新提交",
     "deleteMessageAndContinue": "删除此消息并从此处继续",
     "attachment": "附件",
     "listening": "正在聆听...",

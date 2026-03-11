@@ -1,4 +1,5 @@
 import { API_BASE } from '../config'
+import { createKeyedCache, DEFAULT_CACHE_TTL } from '../lib/cache'
 import { apiFetch, buildSearchParams, downloadApiFile, PaginatedResponse } from './client'
 
 // ============================================================================
@@ -115,7 +116,7 @@ export async function updateTrainingTaskName(
   taskId: string,
   taskName: string
 ): Promise<TrainingTask> {
-  return apiFetch<TrainingTask>(
+  const result = await apiFetch<TrainingTask>(
     `${API_BASE}/tasks/training/${encodeURIComponent(taskId)}`,
     {
       method: 'PATCH',
@@ -124,6 +125,8 @@ export async function updateTrainingTaskName(
     },
     'Failed to update task name'
   )
+  invalidateTrainingTasksCache()
+  return result
 }
 
 /**
@@ -213,6 +216,7 @@ export interface TrainingTaskListQuery {
   search?: string
   status_filter?: 'all' | 'running' | 'completed' | 'failed' | 'cancelled'
   sort_by?: 'updated' | 'created' | 'name'
+  forceRefresh?: boolean
 }
 
 export interface TrainingTaskListResponse extends PaginatedResponse<TrainingTask> {
@@ -221,12 +225,9 @@ export interface TrainingTaskListResponse extends PaginatedResponse<TrainingTask
   stats: TrainingTaskListStats
 }
 
-/**
- * Get all training tasks
- * @returns List of training tasks
- * @throws {ApiError} If the request fails
- */
-export async function getTrainingTasks(options?: TrainingTaskListQuery): Promise<TrainingTaskListResponse> {
+const trainingTaskListCache = createKeyedCache<TrainingTaskListResponse>(DEFAULT_CACHE_TTL)
+
+function buildTrainingTaskListUrl(options?: TrainingTaskListQuery): string {
   const params = buildSearchParams({
     page: options?.page,
     page_size: options?.page_size,
@@ -236,10 +237,44 @@ export async function getTrainingTasks(options?: TrainingTaskListQuery): Promise
   })
 
   const queryString = params.toString()
-  return apiFetch<TrainingTaskListResponse>(
-    queryString ? `${API_BASE}/tasks/training?${queryString}` : `${API_BASE}/tasks/training`,
-    undefined,
-    'Failed to get training tasks'
+  return queryString ? `${API_BASE}/tasks/training?${queryString}` : `${API_BASE}/tasks/training`
+}
+
+function buildTrainingTaskListCacheKey(options?: TrainingTaskListQuery): string {
+  return JSON.stringify({
+    page: options?.page ?? 1,
+    page_size: options?.page_size ?? null,
+    search: options?.search ?? null,
+    status_filter: options?.status_filter ?? null,
+    sort_by: options?.sort_by ?? null,
+  })
+}
+
+export function invalidateTrainingTasksCache(): void {
+  trainingTaskListCache.invalidateAll()
+}
+
+export async function prefetchTrainingTasks(options?: TrainingTaskListQuery): Promise<void> {
+  try {
+    await getTrainingTasks(options)
+  } catch {
+    // Ignore prefetch failures so they don't affect the active page.
+  }
+}
+
+/**
+ * Get all training tasks
+ * @returns List of training tasks
+ * @throws {ApiError} If the request fails
+ */
+export async function getTrainingTasks(options?: TrainingTaskListQuery): Promise<TrainingTaskListResponse> {
+  const url = buildTrainingTaskListUrl(options)
+  const cacheKey = buildTrainingTaskListCacheKey(options)
+
+  return trainingTaskListCache.get(
+    cacheKey,
+    () => apiFetch<TrainingTaskListResponse>(url, undefined, 'Failed to get training tasks'),
+    options?.forceRefresh === true
   )
 }
 
@@ -267,11 +302,13 @@ export async function deleteTrainingTask(
   taskId: string,
   mode: string = 'standard'
 ): Promise<TrainingTaskDeleteResult> {
-  return apiFetch<TrainingTaskDeleteResult>(
+  const result = await apiFetch<TrainingTaskDeleteResult>(
     `${API_BASE}/tasks/training/${taskId}?mode=${mode}`,
     { method: 'DELETE' },
     'Failed to delete training task'
   )
+  invalidateTrainingTasksCache()
+  return result
 }
 
 /**
@@ -340,7 +377,7 @@ export async function createTrainingTask(taskConfig: TrainingTaskConfig): Promis
   // Get HuggingFace token from localStorage for gated models
   const huggingfaceToken = localStorage.getItem('huggingface_token') || ''
 
-  return apiFetch<TrainingTaskCreateResult>(
+  const result = await apiFetch<TrainingTaskCreateResult>(
     `${API_BASE}/tasks/training`,
     {
       method: 'POST',
@@ -352,6 +389,8 @@ export async function createTrainingTask(taskConfig: TrainingTaskConfig): Promis
     },
     'Failed to create training task'
   )
+  invalidateTrainingTasksCache()
+  return result
 }
 
 /**

@@ -63,13 +63,17 @@ async def submit_feedback(
 
     await _require_message_access(message_id, user, db)
 
+    provided_fields = getattr(req, 'model_fields_set', set())
+
     # Upsert feedback (convert UUID to string for storage)
     feedback = await FeedbackRepository.upsert_feedback(
         db=db,
         message_id=message_id,
         user_id=str(user.id),
         feedback_type=req.feedback_type,
+        feedback_type_provided='feedback_type' in provided_fields,
         task_helpfulness=req.task_helpfulness,
+        task_helpfulness_provided='task_helpfulness' in provided_fields,
         related_task_id=req.related_task_id,
         time_to_action_seconds=req.time_to_action_seconds,
         message_content=req.message_content,

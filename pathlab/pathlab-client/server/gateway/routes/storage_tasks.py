@@ -44,8 +44,8 @@ from ..utils import (
     ensure_segmentation_contract,
     ensure_dataset_segmentation_contract,
     find_matching_segmentation_annotation_path,
-    get_file_data_type,
     infer_dataset_data_type_from_paths,
+    resolve_file_data_type_and_properties,
     resolve_segmentation_annotation_match,
     load_coco_annotation_file,
     SEGMENTATION_TASK_TYPE,
@@ -162,7 +162,6 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
     Background task for batch importing WSI files.
     Updates progress in database as it processes files.
     """
-    from ..utils import extract_wsi_properties
     import uuid as uuid_module
 
     async with async_session() as db:
@@ -355,13 +354,10 @@ async def _run_batch_import_task(task_id: str, user_id: str, request_params: dic
 
                     cached_file_data_type = file_info.get('data_type') if isinstance(file_info, dict) else getattr(file_info, 'data_type', None)
 
-                    # Extract properties first to get file_size for type detection
-                    props = extract_wsi_properties(file_path)
-                    file_size = props.get("file_size", 0)
-                    if cached_file_data_type in {'wsi', 'patch'}:
-                        file_data_type = cached_file_data_type
-                    else:
-                        file_data_type = get_file_data_type(file_path, file_size)
+                    file_data_type, props = resolve_file_data_type_and_properties(
+                        file_path,
+                        cached_file_data_type=cached_file_data_type,
+                    )
 
                     if target_dataset is not None:
                         target_dataset = await align_dataset_data_type_for_file(

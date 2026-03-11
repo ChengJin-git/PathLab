@@ -27,13 +27,12 @@ from ..dependencies import logger, storage_manager, UPLOADS_DIR
 from ..models import UploadByPathRequest
 from ..utils import (
     align_dataset_data_type_for_file,
-    extract_wsi_properties,
     ensure_segmentation_contract,
     ensure_dataset_segmentation_contract,
     find_matching_segmentation_annotation_path,
-    get_file_data_type,
     load_coco_annotation_bytes,
     load_coco_annotation_file,
+    resolve_file_data_type_and_properties,
 )
 from backend.common.annotation_summary_cache import rebuild_dataset_annotation_summary_cache
 
@@ -229,11 +228,12 @@ async def upload_wsi_by_csv(
                     failed_count += 1
                     continue
 
-                # Get file size
                 file_size = os.path.getsize(wsi_path)
-
-                # Extract WSI properties
-                wsi_props = extract_wsi_properties(wsi_path)
+                _file_data_type, wsi_props = resolve_file_data_type_and_properties(
+                    wsi_path,
+                    file_size=file_size,
+                )
+                file_size = wsi_props.get("file_size", file_size)
 
                 # Generate case_id if not provided
                 if not case_id:
@@ -370,6 +370,7 @@ async def upload_wsi_file(
         wsi_path: Optional[Path] = None
         file_size = 0
         file_data_type: Optional[str] = None
+        props: dict = {}
 
         if is_json_annotation_upload:
             segmentation_annotation = load_coco_annotation_bytes(
@@ -400,7 +401,12 @@ async def upload_wsi_file(
             logger.info(f"Saved WSI file: {wsi_path} ({file_size / (1024**2):.2f} MB)")
             logger.info(f"Original filename: {original_filename} -> UUID: {wsi_id}")
 
-            file_data_type = get_file_data_type(wsi_path, file_size)
+            file_data_type, props = resolve_file_data_type_and_properties(
+                wsi_path,
+                cached_file_data_type=file_data_type,
+                file_size=file_size,
+            )
+            file_size = props.get("file_size", file_size)
 
         # Handle associated files for special formats (MRXS, TMAP)
         associated_count = 0
@@ -432,8 +438,6 @@ async def upload_wsi_file(
                         associated_count += 1
 
                 logger.info(f"Saved {associated_count} TMAP DT files for: {wsi_id}")
-
-        props = extract_wsi_properties(str(wsi_path)) if wsi_path is not None else {}
 
         # Resolve dataset_id: use provided dataset_id, or create new dataset from dataset_name
         resolved_dataset_id = None
@@ -752,9 +756,8 @@ async def upload_wsi_by_path(
             if existing:
                 raise HTTPException(status_code=400, detail=f"WSI already exists: {wsi_id}")
 
-            wsi_props = extract_wsi_properties(req.wsi_path)
+            file_data_type, wsi_props = resolve_file_data_type_and_properties(req.wsi_path)
             file_size = wsi_props.get("file_size", 0)
-            file_data_type = get_file_data_type(req.wsi_path, file_size)
             case_id = req.case_id or f"case_{wsi_id[:8]}"
 
             logger.info(f"Registering WSI: {original_filename} -> UUID: {wsi_id}")

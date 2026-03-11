@@ -2,16 +2,9 @@ import React, { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X, AlertCircle } from 'lucide-react'
 import { Button } from '../ui/button'
-import type { DatasetSummary } from '../../api'
+import type { DatasetSummary, ExportLabelsOptions } from '../../api'
 
-export interface ExportLabelsOptions {
-  generateSplit?: boolean
-  seed?: number
-  stratified?: boolean
-  trainRatio?: number
-  valRatio?: number
-  testRatio?: number
-}
+export type { ExportLabelsOptions } from '../../api'
 
 interface ExportLabelsModalProps {
   dataset: DatasetSummary
@@ -21,25 +14,36 @@ interface ExportLabelsModalProps {
 
 export function ExportLabelsModal({ dataset, onConfirm, onCancel }: ExportLabelsModalProps) {
   const { t } = useTranslation()
+  const supportsKFold = dataset.task_type !== 'segmentation'
+  const [strategy, setStrategy] = useState<'random' | 'k_fold'>('random')
+  const [nSplits, setNSplits] = useState(5)
   const [seed, setSeed] = useState(42)
   const [stratified, setStratified] = useState(true)
   const [trainRatio, setTrainRatio] = useState(0.7)
   const [valRatio, setValRatio] = useState(0.1)
   const [testRatio, setTestRatio] = useState(0.2)
+  const isKFold = strategy === 'k_fold'
 
   const handleExport = () => {
     onConfirm({
       generateSplit: true,
+      strategy,
+      ...(isKFold
+        ? { nSplits }
+        : {
+            trainRatio,
+            valRatio,
+            testRatio
+          }),
       seed,
       stratified,
-      trainRatio,
-      valRatio,
-      testRatio
     })
   }
 
   const totalRatio = trainRatio + valRatio + testRatio
   const ratioValid = Math.abs(totalRatio - 1.0) < 0.01
+  const kFoldValid = nSplits >= 2
+  const exportDisabled = isKFold ? !kFoldValid : !ratioValid
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -77,62 +81,93 @@ export function ExportLabelsModal({ dataset, onConfirm, onCancel }: ExportLabels
             </p>
           </div>
 
-          {/* Split Ratios */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2 sm:mb-3">
-              {t('listPage.splitRatios')}
-            </label>
-            <div className="grid grid-cols-3 gap-2 sm:gap-3">
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">
-                  {t('listPage.train')}
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="1"
-                  value={trainRatio}
-                  onChange={(e) => setTrainRatio(parseFloat(e.target.value) || 0)}
-                  className="w-full px-2 sm:px-3 py-1.5 sm:py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">
-                  {t('listPage.val')}
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="1"
-                  value={valRatio}
-                  onChange={(e) => setValRatio(parseFloat(e.target.value) || 0)}
-                  className="w-full px-2 sm:px-3 py-1.5 sm:py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">
-                  {t('listPage.test')}
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="1"
-                  value={testRatio}
-                  onChange={(e) => setTestRatio(parseFloat(e.target.value) || 0)}
-                  className="w-full px-2 sm:px-3 py-1.5 sm:py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
+          {supportsKFold && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                {t('chatComponents.taskConfig.splitStrategy')}
+              </label>
+              <select
+                value={strategy}
+                onChange={(e) => setStrategy(e.target.value as 'random' | 'k_fold')}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="random">{t('chatComponents.taskConfig.splitRandom')}</option>
+                <option value="k_fold">{t('chatComponents.taskConfig.splitKFold')}</option>
+              </select>
             </div>
-            {!ratioValid && (
-              <div className="flex items-center gap-1 sm:gap-2 mt-2 text-xs sm:text-sm text-red-600">
-                <AlertCircle className="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0" />
-                <span>{t('listPage.ratiosMustSumToOne')} ({totalRatio.toFixed(2)})</span>
+          )}
+
+          {isKFold ? (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                {t('chatComponents.taskConfig.foldsK')}
+              </label>
+              <input
+                type="number"
+                min="2"
+                max="50"
+                value={nSplits}
+                onChange={(e) => setNSplits(parseInt(e.target.value) || 2)}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2 sm:mb-3">
+                {t('listPage.splitRatios')}
+              </label>
+              <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">
+                    {t('listPage.train')}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="1"
+                    value={trainRatio}
+                    onChange={(e) => setTrainRatio(parseFloat(e.target.value) || 0)}
+                    className="w-full px-2 sm:px-3 py-1.5 sm:py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">
+                    {t('listPage.val')}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="1"
+                    value={valRatio}
+                    onChange={(e) => setValRatio(parseFloat(e.target.value) || 0)}
+                    className="w-full px-2 sm:px-3 py-1.5 sm:py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">
+                    {t('listPage.test')}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="1"
+                    value={testRatio}
+                    onChange={(e) => setTestRatio(parseFloat(e.target.value) || 0)}
+                    className="w-full px-2 sm:px-3 py-1.5 sm:py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
               </div>
-            )}
-          </div>
+              {!ratioValid && (
+                <div className="flex items-center gap-1 sm:gap-2 mt-2 text-xs sm:text-sm text-red-600">
+                  <AlertCircle className="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0" />
+                  <span>{t('listPage.ratiosMustSumToOne')} ({totalRatio.toFixed(2)})</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Random Seed */}
           <div>
@@ -147,19 +182,20 @@ export function ExportLabelsModal({ dataset, onConfirm, onCancel }: ExportLabels
             />
           </div>
 
-          {/* Stratified Split */}
-          <div className="flex items-start gap-2 sm:gap-3">
-            <input
-              type="checkbox"
-              id="stratified"
-              checked={stratified}
-              onChange={(e) => setStratified(e.target.checked)}
-              className="mt-0.5 w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-            />
-            <label htmlFor="stratified" className="text-xs sm:text-sm text-gray-700 cursor-pointer">
-              {t('listPage.stratifiedSplit')}
-            </label>
-          </div>
+          {dataset.task_type !== 'segmentation' && (
+            <div className="flex items-start gap-2 sm:gap-3">
+              <input
+                type="checkbox"
+                id="stratified"
+                checked={stratified}
+                onChange={(e) => setStratified(e.target.checked)}
+                className="mt-0.5 w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+              />
+              <label htmlFor="stratified" className="text-xs sm:text-sm text-gray-700 cursor-pointer">
+                {t('listPage.stratifiedSplit')}
+              </label>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -173,7 +209,7 @@ export function ExportLabelsModal({ dataset, onConfirm, onCancel }: ExportLabels
           </Button>
           <Button
             onClick={handleExport}
-            disabled={!ratioValid}
+            disabled={exportDisabled}
             className="w-full sm:w-auto"
           >
             {t('listPage.exportWithSplit')}

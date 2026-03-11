@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchWSIIds, fetchDatasets, fetchDatasetSummary, renameDataset, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels } from '../api'
+import { fetchWSIList, fetchWSIIds, fetchDatasets, fetchDatasetSummary, renameDataset, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels, prefetchDatasets, prefetchWSIList } from '../api'
 import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -99,6 +99,8 @@ export default function ListPage() {
   const [uploading, setUploading] = useState(false)
   const [uploadingFiles, setUploadingFiles] = useState<Map<string, { progress: number; status: 'uploading' | 'success' | 'error'; error?: string }>>(new Map())
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const datasetRequestIdRef = useRef(0)
+  const fileRequestIdRef = useRef(0)
 
 
 
@@ -272,6 +274,13 @@ export default function ListPage() {
   const paginatedDatasets = visibleDatasets
   const datasetPaginationStart = datasetTotalCount === 0 ? 0 : datasetStartIndex + 1
   const datasetPaginationEnd = Math.min(datasetEndIndex, datasetTotalCount)
+  const hasDatasetContent = visibleDatasets.length > 0 || datasetTotalCount > 0
+  const showInitialDatasetLoading = datasetsLoading && !hasDatasetContent
+  const isDatasetRefreshing = datasetsLoading && hasDatasetContent
+
+  const hasFileContent = items.length > 0 || totalCount > 0 || totalCases > 0
+  const showInitialFilesLoading = loading && !hasFileContent
+  const isFilesRefreshing = loading && hasFileContent
 
   const hasActiveDatasetFilters =
     datasetTaskFilter !== 'all' || datasetTypeFilter !== 'all' || datasetLevelFilter !== 'all' || datasetSourceFilter !== 'all'
@@ -336,7 +345,8 @@ export default function ListPage() {
     }
   }, [selectedDatasetId, currentPage, debouncedSearch])
 
-  const loadDatasets = async () => {
+  const loadDatasets = async (forceRefresh = false) => {
+    const requestId = ++datasetRequestIdRef.current
     setDatasetsLoading(true)
     setDatasetsError(undefined)
     try {
@@ -350,12 +360,43 @@ export default function ListPage() {
             ? 'case'
             : 'file',
         source_organ: datasetSourceFilter === 'all' ? undefined : datasetSourceFilter,
+        forceRefresh,
       })
+
+      if (requestId !== datasetRequestIdRef.current) return
+
       setDatasets(d.items || [])
       setDatasetTotalCount(d.total || 0)
+
+      const totalPages = Math.max(1, Math.ceil((d.total || 0) / datasetItemsPerPage))
+      const prefetchBase = {
+        page_size: datasetItemsPerPage,
+        task_type: datasetTaskFilter === 'all' ? undefined : datasetTaskFilter,
+        aggregation_level: datasetLevelFilter === 'all'
+          ? undefined
+          : datasetLevelFilter === 'patient'
+            ? 'case' as const
+            : 'file' as const,
+        source_organ: datasetSourceFilter === 'all' ? undefined : datasetSourceFilter,
+      }
+
+      if (datasetCurrentPage > 1) {
+        void prefetchDatasets(datasetTypeFilter === 'all' ? undefined : datasetTypeFilter, {
+          ...prefetchBase,
+          page: datasetCurrentPage - 1,
+        })
+      }
+      if (datasetCurrentPage < totalPages) {
+        void prefetchDatasets(datasetTypeFilter === 'all' ? undefined : datasetTypeFilter, {
+          ...prefetchBase,
+          page: datasetCurrentPage + 1,
+        })
+      }
     } catch (e) {
+      if (requestId !== datasetRequestIdRef.current) return
       setDatasetsError(String(e))
     } finally {
+      if (requestId !== datasetRequestIdRef.current) return
       setDatasetsLoading(false)
     }
   }
@@ -400,7 +441,8 @@ export default function ListPage() {
     setDatasetPageInput(String(nextPage))
   }
 
-  const loadWSIList = async (datasetId: string, page: number = 1, search: string = '') => {
+  const loadWSIList = async (datasetId: string, page: number = 1, search: string = '', forceRefresh = false) => {
+    const requestId = ++fileRequestIdRef.current
     setLoading(true)
     setError(undefined)
     try {
@@ -408,14 +450,38 @@ export default function ListPage() {
         page,
         page_size: itemsPerPage,
         search: search || undefined,
+        forceRefresh,
       })
+
+      if (requestId !== fileRequestIdRef.current) return
+
       setItems(d.items || [])
       setTotalCount(d.total ?? d.items?.length ?? 0)
       setTotalCases(d.total_cases ?? 0)
       setHasMultiSlideCases(d.has_multi_slide_cases ?? false)
+
+      const totalUnits = (d.total_cases ?? 0) > 0 ? (d.total_cases ?? 0) : (d.total ?? d.items?.length ?? 0)
+      const totalPages = Math.max(1, Math.ceil(totalUnits / itemsPerPage))
+
+      if (page > 1) {
+        void prefetchWSIList(datasetId, undefined, {
+          page: page - 1,
+          page_size: itemsPerPage,
+          search: search || undefined,
+        })
+      }
+      if (page < totalPages) {
+        void prefetchWSIList(datasetId, undefined, {
+          page: page + 1,
+          page_size: itemsPerPage,
+          search: search || undefined,
+        })
+      }
     } catch (e) {
+      if (requestId !== fileRequestIdRef.current) return
       setError(String(e))
     } finally {
+      if (requestId !== fileRequestIdRef.current) return
       setLoading(false)
     }
   }
@@ -457,7 +523,7 @@ export default function ListPage() {
   const reloadCurrentDataset = async () => {
     if (selectedDatasetId) {
       invalidateWSIListCache()
-      await loadWSIList(selectedDatasetId, currentPage, debouncedSearch)
+      await loadWSIList(selectedDatasetId, currentPage, debouncedSearch, true)
     }
   }
   const clearDatasetFilters = () => {
@@ -1099,11 +1165,12 @@ export default function ListPage() {
           description={
             <>
               {selectedDatasetId ? (
-                loading ? t('listPage.loadingFiles') :
-                  error ? t('listPage.errorLoadingFiles') :
+                showInitialFilesLoading ? t('listPage.loadingFiles') :
+                  error && !hasFileContent ? t('listPage.errorLoadingFiles') :
                     <span className="flex items-center gap-2">
                       <FolderOpen className="w-4 h-4" />
                       {t('listPage.filesInDataset', { count: totalCount })}
+                      {isFilesRefreshing && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
                     </span>
               ) : (
                 t('listPage.description')
@@ -1207,14 +1274,14 @@ export default function ListPage() {
       {!selectedDatasetId && (
         <>
           {/* Datasets Loading State */}
-          {datasetsLoading && (
+          {showInitialDatasetLoading && (
             <div className="flex items-center justify-center py-12">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
             </div>
           )}
 
           {/* Datasets Error State */}
-          {datasetsError && !datasetsLoading && (
+          {datasetsError && !showInitialDatasetLoading && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
               <p className="font-medium">{t('listPage.errorLoadingDatasets')}</p>
               <p className="text-sm">{datasetsError}</p>
@@ -1235,7 +1302,7 @@ export default function ListPage() {
           )}
 
           {/* Dataset Filters */}
-          {!datasetsLoading && !datasetsError && datasetTotalCount > 0 && (
+          {datasetTotalCount > 0 && (
             <Card className="relative z-20 border-gray-100 shadow-sm bg-white/80 backdrop-blur-sm">
               <div className="px-4 py-3 sm:px-5 sm:py-3.5">
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -1356,7 +1423,7 @@ export default function ListPage() {
           )}
 
           {/* Datasets Grid */}
-          {!datasetsLoading && !datasetsError && visibleDatasets.length > 0 && datasetViewMode === 'grid' && (
+          {visibleDatasets.length > 0 && datasetViewMode === 'grid' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6 p-1">
               {paginatedDatasets.map((dataset) => {
                 const itemType = getDatasetVisualType(dataset)
@@ -1549,7 +1616,7 @@ export default function ListPage() {
           )}
 
           {/* Datasets List */}
-          {!datasetsLoading && !datasetsError && visibleDatasets.length > 0 && datasetViewMode === 'list' && (
+          {visibleDatasets.length > 0 && datasetViewMode === 'list' && (
             <div className="space-y-3 p-1">
               {paginatedDatasets.map((dataset) => {
                 const itemType = getDatasetVisualType(dataset)
@@ -1747,15 +1814,18 @@ export default function ListPage() {
             </div>
           )}
 
-          {!datasetsLoading && !datasetsError && datasetTotalCount > 0 && (
+          {datasetTotalCount > 0 && (
             <Card className="border-gray-100 bg-white/80 shadow-sm">
               <div className="px-4 sm:px-5 py-4 flex flex-col lg:flex-row items-center justify-between gap-4">
-                <div className="text-xs sm:text-sm text-gray-500 font-medium text-center lg:text-left">
-                  {t('listPage.pagination.summary', {
+                <div className="text-xs sm:text-sm text-gray-500 font-medium text-center lg:text-left flex items-center gap-2">
+                  <span>{t('listPage.pagination.summary', {
                     start: datasetPaginationStart,
                     end: datasetPaginationEnd,
                     total: datasetTotalCount,
-                  })}
+                  })}</span>
+                  {isDatasetRefreshing && (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />
+                  )}
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-4">
@@ -1845,14 +1915,14 @@ export default function ListPage() {
       {selectedDatasetId && (
         <>
           {/* Loading State */}
-          {loading && (
+          {showInitialFilesLoading && (
             <div className="flex items-center justify-center py-12">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
             </div>
           )}
 
           {/* Error State */}
-          {error && !loading && (
+          {error && !showInitialFilesLoading && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
               <p className="font-medium">{t('listPage.errorLoadingFiles')}</p>
               <p className="text-sm">{error}</p>
@@ -1875,7 +1945,7 @@ export default function ListPage() {
       )}
 
       {/* Search and Batch Actions */}
-      {selectedDatasetId && !loading && !error && items.length > 0 && (
+      {selectedDatasetId && items.length > 0 && (
         <div className="flex flex-col sm:flex-row gap-3 mb-3 items-stretch sm:items-center justify-between">
           <div className="relative flex-1 max-w-md w-full">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -1915,7 +1985,7 @@ export default function ListPage() {
       )}
 
       {/* Table - only show when a dataset is selected */}
-      {selectedDatasetId && !loading && !error && items.length > 0 && (
+      {selectedDatasetId && items.length > 0 && (
         <>
           {items.length === 0 ? (
             <Card className="p-12 flex flex-col items-center justify-center bg-gray-50/50 border-dashed border-2 border-gray-200 rounded-2xl">
@@ -2534,7 +2604,7 @@ export default function ListPage() {
 
               {/* Pagination Controls */}
               <div className="px-3 sm:px-6 py-4 border-t border-gray-100 flex flex-col lg:flex-row items-center justify-between gap-6 lg:gap-4 bg-gray-50/30 backdrop-blur-sm rounded-b-xl">
-                <div className="text-[11px] sm:text-sm text-gray-500 font-medium order-3 lg:order-1 text-center lg:text-left">
+                <div className="text-[11px] sm:text-sm text-gray-500 font-medium order-3 lg:order-1 text-center lg:text-left flex items-center justify-center lg:justify-start gap-2">
                   {useCaseGroupedView ? (
                     <>
                        {t('listPage.showing')} <span className="text-gray-900">{totalCases === 0 ? 0 : startIndex + 1}</span> {t('listPage.to')}{' '}
@@ -2548,6 +2618,9 @@ export default function ListPage() {
                        <span className="text-gray-900">{Math.min(startIndex + itemsPerPage, totalCount)}</span>{' '}
                        {t('listPage.of')} <span className="text-gray-900">{totalCount}</span> {t('listPage.files')}
                     </>
+                  )}
+                  {isFilesRefreshing && (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />
                   )}
                 </div>
 

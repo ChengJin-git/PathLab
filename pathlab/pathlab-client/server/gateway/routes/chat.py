@@ -139,6 +139,163 @@ def _get_ai_service_error_text(detected_lang: str) -> str:
     return error_messages.get(normalized, error_messages.get(normalized.split("_")[0], error_messages["en"]))
 
 
+def _normalize_lang_key(detected_lang: str) -> str:
+    normalized = (detected_lang or "en").replace("-", "_")
+    if normalized in {"zh_CN", "zh_HK", "en", "en_US"}:
+        return normalized
+    base = normalized.split("_")[0]
+    return {"zh": "zh_CN", "en": "en"}.get(base, "en")
+
+
+def _get_read_source_label(source_type: str, detected_lang: str) -> str:
+    lang = _normalize_lang_key(detected_lang)
+    labels = {
+        "zh_CN": {
+            "github": "GitHub 仓库页",
+            "gitlab": "GitLab 仓库页",
+            "gitee": "Gitee 仓库页",
+            "zenodo": "Zenodo 记录页",
+            "documentation": "文档页面",
+            "blog": "网页",
+            "web": "网页",
+            "pdf": "PDF 文档",
+        },
+        "zh_HK": {
+            "github": "GitHub 倉庫頁",
+            "gitlab": "GitLab 倉庫頁",
+            "gitee": "Gitee 倉庫頁",
+            "zenodo": "Zenodo 記錄頁",
+            "documentation": "文件頁面",
+            "blog": "網頁",
+            "web": "網頁",
+            "pdf": "PDF 文件",
+        },
+        "en": {
+            "github": "GitHub repository page",
+            "gitlab": "GitLab repository page",
+            "gitee": "Gitee repository page",
+            "zenodo": "Zenodo record page",
+            "documentation": "documentation page",
+            "blog": "web page",
+            "web": "web page",
+            "pdf": "PDF document",
+        },
+    }
+    base = labels.get(lang, labels["en"])
+    return base.get(source_type, base.get("web", "web page"))
+
+
+def _get_read_failure_reason_text(detected_lang: str, error_code: str | None) -> str:
+    lang = _normalize_lang_key(detected_lang)
+    messages = {
+        "zh_CN": {
+            "http_status": "目标页面当前拒绝自动访问，可能需要登录、验证码或交互式浏览。",
+            "page_too_large": "目标页面内容过大，超出了轻量读取范围。",
+            "points_to_pdf": "这个链接实际指向 PDF 文档，更适合按 PDF 方式打开。",
+            "unreadable_page": "目标页面可提取的静态正文不足，可能主要依赖前端动态渲染。",
+            "network_unreachable": "当前无法连接到目标页面。",
+            "request_timeout": "目标页面响应超时。",
+            "empty_content": "已访问页面，但没有提取到足够可读的正文。",
+            "unexpected_error": "读取过程中出现了未预期的问题。",
+        },
+        "zh_HK": {
+            "http_status": "目標頁面目前拒絕自動訪問，可能需要登入、驗證碼或互動式瀏覽。",
+            "page_too_large": "目標頁面內容過大，超出了輕量讀取範圍。",
+            "points_to_pdf": "這個連結實際指向 PDF 文件，更適合按 PDF 方式打開。",
+            "unreadable_page": "目標頁面可提取的靜態正文不足，可能主要依賴前端動態渲染。",
+            "network_unreachable": "目前無法連接到目標頁面。",
+            "request_timeout": "目標頁面回應逾時。",
+            "empty_content": "已訪問頁面，但沒有提取到足夠可讀的正文。",
+            "unexpected_error": "讀取過程中出現了未預期的問題。",
+        },
+        "en": {
+            "http_status": "The target page is currently blocking automatic access and may require login, anti-bot checks, or interactive browsing.",
+            "page_too_large": "The target page is too large for lightweight extraction.",
+            "points_to_pdf": "This link actually points to a PDF and is better handled through the PDF flow.",
+            "unreadable_page": "The page does not expose enough readable static text and may rely on client-side rendering.",
+            "network_unreachable": "The target page could not be reached over the network.",
+            "request_timeout": "The target page timed out before responding.",
+            "empty_content": "The page was reached, but not enough readable content could be extracted.",
+            "unexpected_error": "An unexpected issue occurred while preparing this content.",
+        },
+    }
+    base = messages.get(lang, messages["en"])
+    return base.get(error_code or "", base.get("unexpected_error", "An unexpected issue occurred."))
+
+
+def _build_read_failure_instruction(
+    detected_lang: str,
+    *,
+    article_title: str,
+    article_url: str,
+    source_type: str,
+    error_code: str | None = None,
+    error_detail: str | None = None,
+    exception_text: str | None = None,
+) -> str:
+    lang = _normalize_lang_key(detected_lang)
+    source_label = _get_read_source_label(source_type, detected_lang)
+    reason = _get_read_failure_reason_text(detected_lang, error_code)
+    detail = (error_detail or "").strip()
+    exception_detail = (exception_text or "").strip()
+
+    if lang == "zh_CN":
+        navigation_hint = (
+            "请建议用户直接打开链接，通过页面导航继续查看文件、README、附件或更多细节。"
+            if source_type in {"github", "gitlab", "gitee", "zenodo"}
+            else "请建议用户直接打开原链接查看更多细节。"
+        )
+        depth_guard = (
+            "如果这是仓库页，请明确说明当前只完成了轻量页面读取，不要假装已经深入分析整个代码仓库。"
+            if source_type in {"github", "gitlab", "gitee"}
+            else "不要假装已经读取到当前页面未提供的内容。"
+        )
+        detail_line = f"\n补充信息：{detail}" if detail else (f"\n补充信息：{exception_detail}" if exception_detail else "")
+        return (
+            f"未能成功读取《{article_title}》对应的{source_label}（{article_url}）。"
+            f"原因：{reason}{detail_line}\n\n"
+            "请直接告诉用户本次自动读取失败，并给出简短替代建议。"
+            f"{navigation_hint}{depth_guard}"
+        )
+
+    if lang == "zh_HK":
+        navigation_hint = (
+            "請建議用戶直接打開連結，透過頁面導覽繼續查看檔案、README、附件或更多細節。"
+            if source_type in {"github", "gitlab", "gitee", "zenodo"}
+            else "請建議用戶直接打開原連結查看更多細節。"
+        )
+        depth_guard = (
+            "如果這是倉庫頁，請明確說明目前只完成了輕量頁面讀取，不要假裝已經深入分析整個代碼倉庫。"
+            if source_type in {"github", "gitlab", "gitee"}
+            else "不要假裝已經讀取到當前頁面未提供的內容。"
+        )
+        detail_line = f"\n補充資訊：{detail}" if detail else (f"\n補充資訊：{exception_detail}" if exception_detail else "")
+        return (
+            f"未能成功讀取《{article_title}》對應的{source_label}（{article_url}）。"
+            f"原因：{reason}{detail_line}\n\n"
+            "請直接告訴用戶本次自動讀取失敗，並給出簡短替代建議。"
+            f"{navigation_hint}{depth_guard}"
+        )
+
+    navigation_hint = (
+        "Please suggest that the user open the link directly and use page navigation to inspect files, the README, attachments, or more detail."
+        if source_type in {"github", "gitlab", "gitee", "zenodo"}
+        else "Please suggest that the user open the original link directly for more detail."
+    )
+    depth_guard = (
+        "If this is a repository page, explicitly say that only a lightweight landing-page read was attempted; do not pretend that the full codebase was deeply analyzed."
+        if source_type in {"github", "gitlab", "gitee"}
+        else "Do not pretend to have read content that was not actually retrieved."
+    )
+    detail_line = f"\nAdditional detail: {detail}" if detail else (f"\nAdditional detail: {exception_detail}" if exception_detail else "")
+    return (
+        f"The {source_label} for '{article_title}' ({article_url}) could not be retrieved automatically. "
+        f"Reason: {reason}{detail_line}\n\n"
+        "Please tell the user clearly that the automatic read failed and offer a short alternative. "
+        f"{navigation_hint} {depth_guard}"
+    )
+
+
 def _truncate_error_detail(text: str, limit: int = 1200) -> str:
     """Trim upstream error payloads so logs stay readable."""
     normalized = " ".join((text or "").split())
@@ -653,6 +810,45 @@ _READ_ARTICLE_PROMPTS = {
         "長文章僅展示了開頭和結尾部分。如果用戶問到未展示的章節，請告知用戶提出更具體的問題。\n"
         "不要提及內部解析器名稱、升級流程或 GPU/CPU 執行細節。\n"
         "如果用戶詢問處理狀態，只能說明 PDF 處於處理中、可用或失敗。\n"
+        "重要：[REFERENCE] 區塊格式已正確，請原樣複製到回答中。"
+    ),
+}
+
+_READ_DOCUMENT_PROMPTS = {
+    "en": (
+        "Here is the retrieved content of the webpage, documentation page, or repository landing page the user asked to read. "
+        "The content may be a lightweight extraction rather than a full deep crawl. It includes `--- Page X ---` markers.\n\n"
+        "## STRICT GROUNDING RULES (MANDATORY)\n"
+        "1. Your answer MUST be based ENTIRELY on the retrieved content below. Do NOT invent details that are not shown.\n"
+        "2. Every factual claim MUST include a citation: [N, p.Y] when a `--- Page Y ---` marker is visible, or [N] when only a single lightweight page is available.\n"
+        "3. If the user asks for deeper code details, hidden tabs, attached files, or content not shown here, say so explicitly and suggest opening the link directly.\n"
+        "4. If this is a repository page, do NOT pretend you deeply analyzed the whole repo; describe only what is visible in the retrieved landing-page / README content.\n"
+        "5. If the content failed to download or parse, tell the user explicitly.\n\n"
+        "Do NOT mention internal parser names, upgrade steps, or GPU/CPU execution details.\n"
+        "CRITICAL: The [REFERENCE] blocks are already correctly formatted. Copy them verbatim into your response."
+    ),
+    "zh_CN": (
+        "以下是用户要求阅读的网页、文档页或仓库落地页内容。"
+        "这些内容可能只是轻量提取结果，而不是完整深度抓取；其中包含 `--- Page X ---` 标记。\n\n"
+        "## 严格 Grounding 规则（必须遵守）\n"
+        "1. 你的回答**必须完全基于**下方已检索内容，**禁止**补充未展示的细节。\n"
+        "2. 每个事实性陈述**必须**标注来源：当能看到 `--- Page Y ---` 时使用 [N, p.Y]；如果只有单页轻量内容，可使用 [N]。\n"
+        "3. 如果用户追问更深的代码细节、隐藏标签、附件或当前内容未展示的信息，必须明确说明当前内容里没有，并建议用户直接打开链接。\n"
+        "4. 如果这是仓库页，不要假装已经深入分析整个仓库；只描述当前提取到的落地页 / README 内容。\n"
+        "5. 如果内容下载或解析失败，必须明确告知用户。\n\n"
+        "不要提及内部解析器名称、升级流程或 GPU/CPU 执行细节。\n"
+        "重要：[REFERENCE] 块格式已正确，请原样复制到回答中。"
+    ),
+    "zh_HK": (
+        "以下是用戶要求閱讀的網頁、文件頁或倉庫落地頁內容。"
+        "這些內容可能只是輕量提取結果，而不是完整深度抓取；其中包含 `--- Page X ---` 標記。\n\n"
+        "## 嚴格 Grounding 規則（必須遵守）\n"
+        "1. 你的回答**必須完全基於**下方已檢索內容，**禁止**補充未展示的細節。\n"
+        "2. 每個事實性陳述**必須**標註來源：當能看到 `--- Page Y ---` 時使用 [N, p.Y]；如果只有單頁輕量內容，可使用 [N]。\n"
+        "3. 如果用戶追問更深的代碼細節、隱藏標籤、附件或當前內容未展示的資訊，必須明確說明目前內容裡沒有，並建議用戶直接打開連結。\n"
+        "4. 如果這是倉庫頁，不要假裝已經深入分析整個倉庫；只描述當前提取到的落地頁 / README 內容。\n"
+        "5. 如果內容下載或解析失敗，必須明確告知用戶。\n\n"
+        "不要提及內部解析器名稱、升級流程或 GPU/CPU 執行細節。\n"
         "重要：[REFERENCE] 區塊格式已正確，請原樣複製到回答中。"
     ),
 }
@@ -2361,7 +2557,8 @@ After saving, return here and start chatting!"""
                     yield f"data: {json.dumps({'pdf_context': article_text})}\n\n"
 
                     # Inject article content into conversation
-                    read_prompt = _READ_ARTICLE_PROMPTS.get(detected_lang, _READ_ARTICLE_PROMPTS["en"])
+                    prompt_map = _READ_ARTICLE_PROMPTS if bool(pdf_result.get("is_academic", False)) else _READ_DOCUMENT_PROMPTS
+                    read_prompt = prompt_map.get(detected_lang, prompt_map["en"])
                     current_messages = current_messages + [
                         {"role": "assistant", "content": full_response},
                         {"role": "user", "content": f"{read_prompt}\n\n{article_text}"}
@@ -2372,13 +2569,18 @@ After saving, return here and start chatting!"""
                     # PDF failed — let AI know; use smart-streaming (NOT the
                     # dumb streaming path) so tool blocks like [WEB_SEARCH]
                     # can still be detected if the AI wants to retry.
-                    error_detail = pdf_result.get("error_detail") or pdf_result.get("error") or "unknown error"
+                    source_type = str(pdf_result.get("source_type") or detect_source_type(article_url))
+                    error_detail = str(pdf_result.get("error_detail") or "").strip() or None
+                    error_code = str(pdf_result.get("error_code") or "").strip() or None
                     current_messages = current_messages + [
                         {"role": "assistant", "content": full_response},
-                        {"role": "user", "content": (
-                            f"The article '{article_title}' ({article_url}) could not be retrieved. "
-                            f"Error: {error_detail}\n\n"
-                            "Please inform the user about this issue and suggest alternatives."
+                        {"role": "user", "content": _build_read_failure_instruction(
+                            detected_lang,
+                            article_title=article_title,
+                            article_url=article_url,
+                            source_type=source_type,
+                            error_code=error_code,
+                            error_detail=error_detail,
                         )}
                     ]
                     # Keep _stream_next_iteration = False so smart-streaming
@@ -2397,11 +2599,13 @@ After saving, return here and start chatting!"""
                 # Add error context so the next AI call can inform the user
                 current_messages = current_messages + [
                     {"role": "assistant", "content": full_response},
-                    {"role": "user", "content": (
-                        f"The article '{article_title}' ({article_url}) could not be downloaded. "
-                        f"Error: {e}\n\n"
-                        "Please inform the user that the article download failed and suggest alternatives "
-                        "(e.g. trying another article, or accessing the URL directly)."
+                    {"role": "user", "content": _build_read_failure_instruction(
+                        detected_lang,
+                        article_title=article_title,
+                        article_url=article_url,
+                        source_type=detect_source_type(article_url),
+                        error_code='unexpected_error',
+                        exception_text=str(e),
                     )}
                 ]
                 # Keep _stream_next_iteration = False so smart-streaming

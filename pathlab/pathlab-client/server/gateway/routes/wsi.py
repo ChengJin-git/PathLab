@@ -8,10 +8,11 @@ Authentication & Authorization:
 - Admin users can see all data
 - Upload operations require pathologist or admin role
 """
+import asyncio
 import csv
 import io
 from pathlib import Path
-from typing import Optional, List, Dict, Set
+from typing import Optional, List, Dict, Set, Literal
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -40,6 +41,7 @@ from backend.common.annotation_summary_cache import (
     load_dataset_annotation_summary_cache,
     is_dataset_annotation_summary_cache_valid,
 )
+from backend.common.coco_utils import merge_coco_datasets, extract_coco_wsi_label_sets
 from ..dependencies import logger, storage_manager
 from ..models import DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest, DatasetUpdateSourceRequest
 from ..utils import (
@@ -160,6 +162,37 @@ async def _get_segmentation_annotation_presence_map(
         )
 
     return presence_map
+
+
+async def _load_segmentation_multilabels(
+    db: AsyncSession,
+    dataset_id: str,
+    wsis,
+) -> Dict[str, Set[str]]:
+    records = await SegmentationAnnotationRepository.get_all_by_dataset(
+        db,
+        dataset_id,
+        include_drafts=False,
+    )
+    if not records:
+        return {}
+
+    dataset_level_record = next(
+        (record for record in records if record.annotation_id == f"annot_{dataset_id}"),
+        None,
+    )
+    payloads = [dataset_level_record.annotations] if dataset_level_record else [
+        record.annotations for record in records if isinstance(record.annotations, dict)
+    ]
+    if not payloads:
+        return {}
+
+    def _build_multilabels() -> Dict[str, Set[str]]:
+        merged_coco = merge_coco_datasets(payloads)
+        exact_lookup, stem_lookup = _build_segmentation_wsi_lookups(wsis)
+        return extract_coco_wsi_label_sets(merged_coco, exact_lookup, stem_lookup)
+
+    return await asyncio.to_thread(_build_multilabels)
 
 
 async def _serialize_dataset_wsi_items(
@@ -1350,6 +1383,8 @@ async def upload_dataset_splits(
 async def export_dataset_labels(
     dataset_id: str,
     generate_split: bool = Query(False, description="Generate new split if no predefined split exists"),
+    strategy: Literal["random", "k_fold"] = Query("random", description="Split strategy for generated splits"),
+    n_splits: int = Query(5, ge=2, description="Number of folds when strategy=k_fold"),
     seed: int = Query(42, description="Random seed for split generation"),
     stratified: bool = Query(True, description="Use stratified split (by label or event_status)"),
     train_ratio: float = Query(0.7, ge=0.0, le=1.0, description="Training set ratio"),
@@ -1377,14 +1412,6 @@ async def export_dataset_labels(
     if not user.is_admin():
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    # Validate ratios sum to 1.0
-    total_ratio = train_ratio + val_ratio + test_ratio
-    if abs(total_ratio - 1.0) > 0.01:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Ratios must sum to 1.0, got {total_ratio:.2f}"
-        )
-
     # Get dataset
     dataset = await DatasetRepository.get_by_id(db, dataset_id)
     if not dataset:
@@ -1410,8 +1437,41 @@ async def export_dataset_labels(
         splits = {wsi.wsi_id: wsi.split or "unknown" for wsi in wsis}
         logger.info(f"Exporting dataset {dataset_id} with predefined splits")
     elif generate_split:
+        if strategy == "k_fold" and task_type == SEGMENTATION_TASK_TYPE:
+            raise HTTPException(
+                status_code=400,
+                detail="Segmentation export does not support k-fold splits"
+            )
+
+        if strategy == "random":
+            total_ratio = train_ratio + val_ratio + test_ratio
+            if abs(total_ratio - 1.0) > 0.01:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Ratios must sum to 1.0, got {total_ratio:.2f}"
+                )
+
         # Generate new splits using training logic
-        logger.info(f"Generating splits for dataset {dataset_id}: aggregation_level={aggregation_level}, task_type={task_type}")
+        logger.info(
+            "Generating splits for dataset %s: aggregation_level=%s, task_type=%s, strategy=%s",
+            dataset_id,
+            aggregation_level,
+            task_type,
+            strategy,
+        )
+
+        split_kwargs: Dict[str, object] = {
+            "strategy": strategy,
+            "seed": seed,
+        }
+        if strategy == "k_fold":
+            split_kwargs["n_splits"] = n_splits
+        else:
+            split_kwargs["ratios"] = {"train": train_ratio, "val": val_ratio, "test": test_ratio}
+
+        segmentation_multilabels: Dict[str, Set[str]] = {}
+        if task_type == SEGMENTATION_TASK_TYPE:
+            segmentation_multilabels = await _load_segmentation_multilabels(db, dataset_id, wsis)
 
         # Build labels dict for stratification
         if task_type == "survival":
@@ -1444,19 +1504,17 @@ async def export_dataset_labels(
             splits = split_case_dataset(
                 wsi_ids=wsi_ids,
                 case_id_map=case_id_map,
-                strategy="random",
+                multilabels=segmentation_multilabels if task_type == SEGMENTATION_TASK_TYPE else None,
                 labels=case_labels if stratified and task_type != SEGMENTATION_TASK_TYPE else None,
-                ratios={"train": train_ratio, "val": val_ratio, "test": test_ratio},
-                seed=seed
+                **split_kwargs,
             )
         else:
             # File-level: split at slide level
             splits = split_wsi_dataset(
                 wsi_ids=wsi_ids,
-                strategy="random",
+                multilabels=segmentation_multilabels if task_type == SEGMENTATION_TASK_TYPE else None,
                 labels=labels if stratified and task_type != SEGMENTATION_TASK_TYPE else None,
-                ratios={"train": train_ratio, "val": val_ratio, "test": test_ratio},
-                seed=seed
+                **split_kwargs,
             )
 
         logger.info(f"Generated splits for {len(splits)} items")

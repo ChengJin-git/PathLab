@@ -83,6 +83,20 @@ interface FileAttachment {
   preview: string[] // first few rows for preview
 }
 
+const BACKEND_MESSAGE_ID_THRESHOLD = 1000000000
+
+const getPersistedMessageId = (messageId: string): number | null => {
+  const numericId = parseInt(messageId, 10)
+  if (Number.isNaN(numericId) || numericId >= BACKEND_MESSAGE_ID_THRESHOLD) {
+    return null
+  }
+  return numericId
+}
+
+const hasReplayableAttachmentData = (message: Message): boolean => (
+  !parseCSVPreview(message.content) || Boolean(message.csvAttachments?.length)
+)
+
 const PENDING_CANCELLED_RESPONSE_KEY_PREFIX = 'ai-chat-pending-cancelled-response:'
 const PENDING_CANCELLED_RESPONSE_RETRY_DELAY_MS = 1200
 const PENDING_CANCELLED_RESPONSE_MAX_RETRIES = 5
@@ -209,6 +223,7 @@ export default function AIChatPage() {
 
   // Feedback state: messageId -> feedback type
   const [feedbacks, setFeedbacks] = useState<Map<number, 'thumbs_up' | 'thumbs_down'>>(new Map())
+  const [pendingFeedbackIds, setPendingFeedbackIds] = useState<Set<number>>(new Set())
   // Helpfulness feedback state: messageId -> helpfulness type (for task submission feedback)
   const [helpfulnessFeedbacks, setHelpfulnessFeedbacks] = useState<Map<number, 'helpful' | 'not_helpful'>>(new Map())
 
@@ -725,6 +740,7 @@ export default function AIChatPage() {
     setShowHistory(false)
     setShowWelcomeHero(true)
     setFeedbacks(new Map())
+    setPendingFeedbackIds(new Set())
     setHelpfulnessFeedbacks(new Map())
     // Update URL to base path (remove conversationId from URL)
     if (urlConversationId) {
@@ -784,6 +800,7 @@ export default function AIChatPage() {
       setCurrentConversationId(conversationId)
       setShowHistory(false)
       setShowWelcomeHero(false)
+      setPendingFeedbackIds(new Set())
 
       // Update URL to reflect the current conversation (for page refresh support)
       if (urlConversationId !== conversationId) {
@@ -1669,11 +1686,59 @@ export default function AIChatPage() {
     }
   }, [cleanMessageContent, showToast, t])
 
+  const deleteConversationBranchFromMessage = useCallback(async (messageId: string): Promise<boolean> => {
+    if (!currentConversationId) return true
+
+    const persistedMessageId = getPersistedMessageId(messageId)
+    if (persistedMessageId === null) {
+      return true
+    }
+
+    try {
+      await deleteMessagesFrom(currentConversationId, persistedMessageId)
+      return true
+    } catch (error) {
+      console.error('Failed to delete messages from backend:', error)
+      showToast('error', t('aiChat.failedToDeleteMessage'))
+      return false
+    }
+  }, [currentConversationId, showToast, t])
+
+  const resolveReplayContext = useCallback((messageIndex: number) => {
+    const currentMessages = messagesRef.current
+    const targetMessage = currentMessages[messageIndex]
+    if (!targetMessage) return null
+
+    const userMessageIndex = targetMessage.role === 'user' ? messageIndex : messageIndex - 1
+    const userMessage = currentMessages[userMessageIndex]
+
+    if (userMessageIndex < 0 || userMessage?.role !== 'user') {
+      showToast('error', t('aiChat.cannotRegenerate'))
+      return null
+    }
+
+    if (!hasReplayableAttachmentData(userMessage)) {
+      showToast('error', t('aiChat.cannotResubmitMissingFiles'))
+      return null
+    }
+
+    return {
+      currentMessages,
+      targetMessage,
+      userMessage,
+      userMessageIndex,
+    }
+  }, [showToast, t])
+
   // Handle thumbs up/down feedback for a message
   const handleFeedback = useCallback(async (messageId: string, feedbackType: 'thumbs_up' | 'thumbs_down') => {
-    const numericId = parseInt(messageId, 10)
-    if (isNaN(numericId)) {
+    const numericId = getPersistedMessageId(messageId)
+    if (numericId === null) {
       showToast('error', t('aiChat.invalidMessageId'))
+      return
+    }
+
+    if (pendingFeedbackIds.has(numericId)) {
       return
     }
 
@@ -1717,6 +1782,12 @@ export default function AIChatPage() {
     }
 
     // Then submit to backend in background
+    setPendingFeedbackIds(prev => {
+      const next = new Set(prev)
+      next.add(numericId)
+      return next
+    })
+
     try {
       if (currentFeedback === feedbackType) {
         await submitMessageFeedback(numericId, null)
@@ -1724,9 +1795,9 @@ export default function AIChatPage() {
         await submitMessageFeedback(
           numericId,
           feedbackType,
-          null, // taskHelpfulness
-          null, // relatedTaskId
-          null, // timeToActionSeconds
+          undefined, // taskHelpfulness
+          undefined, // relatedTaskId
+          undefined, // timeToActionSeconds
           messageContent,
           contextMessages
         )
@@ -1754,8 +1825,14 @@ export default function AIChatPage() {
         })
       }
       showToast('error', t('aiChat.failedToSubmitFeedback'))
+    } finally {
+      setPendingFeedbackIds(prev => {
+        const next = new Set(prev)
+        next.delete(numericId)
+        return next
+      })
     }
-  }, [feedbacks, showToast, t])
+  }, [feedbacks, pendingFeedbackIds, showToast, t])
 
   // Format timestamp for display
   const formatTimestamp = (date: Date): string => {
@@ -1812,14 +1889,14 @@ export default function AIChatPage() {
     try {
       await submitMessageFeedback(
         numericId,
-        null, // feedbackType
+        undefined, // feedbackType
         helpfulness,
         relatedTaskId,
         timeToActionSeconds,
-        null, // messageContent (not needed for task feedback)
-        null, // contextMessages (not needed for task feedback)
-        taskType || null,
-        taskTitle || null
+        undefined, // messageContent (not needed for task feedback)
+        undefined, // contextMessages (not needed for task feedback)
+        taskType ?? undefined,
+        taskTitle ?? undefined
       )
     } catch (error) {
       console.error('Failed to submit helpfulness feedback:', error)
@@ -1841,48 +1918,46 @@ export default function AIChatPage() {
     const targetMessage = currentMessages[messageIndex]
     if (!targetMessage) return
 
-    // If we have a conversation and a valid message ID, delete from backend
-    if (currentConversationId) {
-      const messageId = parseInt(targetMessage.id, 10)
-      // Only call API if messageId is a valid number (from database)
-      // New messages created during streaming have timestamp-based IDs that are not persisted yet
-      if (!isNaN(messageId)) {
-        try {
-          await deleteMessagesFrom(currentConversationId, messageId)
-        } catch (error) {
-          console.error('Failed to delete messages from backend:', error)
-          showToast('error', t('aiChat.failedToDeleteMessage'))
-          return
-        }
-      }
+    if (!(await deleteConversationBranchFromMessage(targetMessage.id))) {
+      return
     }
 
     // Update local state
     const newMessages = currentMessages.slice(0, messageIndex)
     setMessages(newMessages)
     showToast('info', t('aiChat.messageDeleted'))
-  }, [isGenerating, currentConversationId, showToast, t])
+  }, [deleteConversationBranchFromMessage, isGenerating, showToast, t])
 
-  // Regenerate AI response for a specific message
-  const handleRegenerate = useCallback(async (messageIndex: number) => {
+  const handleResubmitMessage = useCallback(async (messageIndex: number) => {
     if (isGenerating) return
 
-    // Find the user message that prompted this response
-    const currentMessages = messagesRef.current
-    const userMessageIndex = messageIndex - 1
-    if (userMessageIndex < 0 || currentMessages[userMessageIndex].role !== 'user') {
-      showToast('error', t('aiChat.cannotRegenerate'))
+    const replayContext = resolveReplayContext(messageIndex)
+    if (!replayContext) {
       return
     }
 
-    // Remove the current assistant message and keep messages up to (not including) it
-    const newMessages = currentMessages.slice(0, messageIndex)
-    setMessages(newMessages)
+    if (!(await deleteConversationBranchFromMessage(replayContext.userMessage.id))) {
+      return
+    }
 
-    // Build chat messages and execute generation with shared helper
-    const chatMessages = buildChatMessages(newMessages)
+    const resentUserMessage: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: replayContext.userMessage.content,
+      images: replayContext.userMessage.images ? [...replayContext.userMessage.images] : undefined,
+      csvAttachments: replayContext.userMessage.csvAttachments?.map(attachment => ({ ...attachment })),
+      timestamp: new Date()
+    }
+
+    const newMessages = replayContext.currentMessages.slice(0, replayContext.userMessageIndex)
+    const messagesToSend = [...newMessages, resentUserMessage]
+    setShowWelcomeHero(false)
+    userScrolledAwayRef.current = false
+    setMessages(messagesToSend)
+
+    const chatMessages = buildChatMessages(messagesToSend)
     await executeChatGeneration(chatMessages, currentConversationId || undefined)
-  }, [isGenerating, currentConversationId, showToast, t, buildChatMessages, executeChatGeneration])
+  }, [buildChatMessages, currentConversationId, deleteConversationBranchFromMessage, executeChatGeneration, isGenerating, resolveReplayContext])
 
   // Stop AI generation and voice recording
   const handleStopGeneration = useCallback(() => {
@@ -2560,6 +2635,11 @@ export default function AIChatPage() {
                   {/* Timestamp & Actions for Assistant Messages */}
                   {message.role === 'assistant' && message.content !== '' && (
                     <div className="flex items-center gap-3 mt-2 text-gray-400">
+                      {(() => {
+                        const persistedMessageId = getPersistedMessageId(message.id)
+                        const feedbackPending = persistedMessageId !== null && pendingFeedbackIds.has(persistedMessageId)
+                        return (
+                          <>
                       {/* Timestamp */}
                       <span className="text-xs text-gray-400" title={message.timestamp.toLocaleString()}>
                         {formatTimestamp(message.timestamp)}
@@ -2570,7 +2650,8 @@ export default function AIChatPage() {
                       {/* Thumbs Up/Down Buttons */}
                       <button
                         onClick={() => handleFeedback(message.id, 'thumbs_up')}
-                        className={`transition-colors ${feedbacks.get(parseInt(message.id, 10)) === 'thumbs_up'
+                        disabled={feedbackPending || persistedMessageId === null}
+                        className={`transition-colors ${(feedbackPending || persistedMessageId === null) ? 'opacity-50 cursor-not-allowed' : ''} ${feedbacks.get(parseInt(message.id, 10)) === 'thumbs_up'
                           ? 'text-green-500'
                           : 'hover:text-gray-600'
                           }`}
@@ -2580,7 +2661,8 @@ export default function AIChatPage() {
                       </button>
                       <button
                         onClick={() => handleFeedback(message.id, 'thumbs_down')}
-                        className={`transition-colors ${feedbacks.get(parseInt(message.id, 10)) === 'thumbs_down'
+                        disabled={feedbackPending || persistedMessageId === null}
+                        className={`transition-colors ${(feedbackPending || persistedMessageId === null) ? 'opacity-50 cursor-not-allowed' : ''} ${feedbacks.get(parseInt(message.id, 10)) === 'thumbs_down'
                           ? 'text-red-500'
                           : 'hover:text-gray-600'
                           }`}
@@ -2599,7 +2681,7 @@ export default function AIChatPage() {
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
                       <button
-                        onClick={() => handleRegenerate(index)}
+                        onClick={() => handleResubmitMessage(index)}
                         disabled={isGenerating}
                         className={`hover:text-gray-600 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
                         title={t('aiChat.regenerate')}
@@ -2614,6 +2696,9 @@ export default function AIChatPage() {
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
+                          </>
+                        )
+                      })()}
                     </div>
                   )}
 
@@ -2626,6 +2711,22 @@ export default function AIChatPage() {
                       </span>
 
                       <div className="w-px h-4 bg-gray-200" />
+
+                      <button
+                        onClick={() => handleCopy(message.content)}
+                        className="hover:text-gray-600 transition-colors"
+                        title={t('aiChat.copy')}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                      </button>
+                      <button
+                        onClick={() => handleResubmitMessage(index)}
+                        disabled={isGenerating}
+                        className={`hover:text-gray-600 transition-colors ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        title={t('aiChat.resubmit')}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
+                      </button>
 
                       <button
                         onClick={() => handleDeleteMessage(index)}
