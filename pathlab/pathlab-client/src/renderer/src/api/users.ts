@@ -232,6 +232,7 @@ export async function getMaintenanceMode(): Promise<{ enabled: boolean }> {
 /**
  * Set maintenance mode (admin only)
  * When enabled, all non-admin users are deactivated and cannot log in.
+ * When disabled, users deactivated by maintenance mode are restored automatically.
  * @param enabled - Whether to enable maintenance mode
  * @throws {ApiError} If request fails or not authorized
  */

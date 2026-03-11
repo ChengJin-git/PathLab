@@ -329,6 +329,13 @@ function normalizeCodeLanguage(className?: string): string {
   return raw
 }
 
+function removeEmptyFencedCodeBlocks(content: string): string {
+  return content.replace(
+    /(^|\n)```[^\n`]*\r?\n(?:[ \t]*\r?\n)*```[ \t]*(?=\n|$)/g,
+    '$1'
+  )
+}
+
 const CODE_FONT_STACK = 'JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace'
 
 function extractNodeText(node: React.ReactNode): string {
@@ -626,6 +633,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
       const language = normalizeCodeLanguage(className)
       const codeText = extractNodeText(codeElement?.props?.children).replace(/\n$/, '')
 
+      if (!codeText.trim()) return null
+
       return (
         <MarkdownCodeBlock
           language={language}
@@ -747,6 +756,9 @@ const AssistantMessage = React.memo(function AssistantMessage({
   // Remove CITATION_CONTEXTS block - data consumed by citationMap, not for display
   // Always strip (even if parsing failed) to prevent raw JSON from showing
   displayContent = removeCitationContextsBlock(displayContent)
+  // Some internal control blocks may be wrapped in ```text fences by the model.
+  // After stripping the inner blocks above, that can leave behind an empty code block.
+  displayContent = removeEmptyFencedCodeBlocks(displayContent)
 
   // Convert pdf-image links to images: [text](…/pdf-images/…) → ![text](…/pdf-images/…)
   // The AI sometimes uses markdown link syntax instead of image syntax for figure references,

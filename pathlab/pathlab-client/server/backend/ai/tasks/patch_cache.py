@@ -16,14 +16,38 @@ This module reuses compute_params_hash from feature_cache to ensure
 that coordinates and features use the same cache key.
 """
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Dict, Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple, List
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 # Re-export compute_params_hash from feature_cache for consistency
-from backend.ai.tasks.feature_cache import compute_params_hash
+from backend.ai.tasks.feature_cache import (
+    FeatureLockTimeoutError,
+    compute_params_hash,
+    file_lock,
+)
+from backend.common.config import Config
+from backend.preprocessing.coords_utils import (
+    _check_coords_params_match,
+    safe_load_h5_coords_attrs,
+)
+
+
+class CoordsLockTimeoutError(TimeoutError):
+    """Raised when a coordinates cache lock cannot be acquired in time."""
+
+    def __init__(self, lock_path: Path, timeout: float, params_hash: str, wsi_id: str):
+        self.lock_path = lock_path
+        self.timeout = timeout
+        self.params_hash = params_hash
+        self.wsi_id = wsi_id
+        super().__init__(
+            f"Coordinates extraction lock timeout for WSI {wsi_id} "
+            f"(hash={params_hash}) on {lock_path} after {timeout} seconds"
+        )
 
 
 def get_cached_coords_path(
@@ -90,6 +114,140 @@ def get_coords_cache_save_path(
 
     logger.info(f"Coords cache save path: {coords_path}")
     return coords_path
+
+
+def get_coords_lock_path(
+    uploads_root: Path,
+    params_hash: str,
+    wsi_id: str,
+) -> Path:
+    """Get the lock path for a specific coordinates cache entry."""
+    lock_dir = uploads_root / "coordinates" / ".locks" / params_hash
+    return lock_dir / f"{wsi_id}.lock"
+
+
+@asynccontextmanager
+async def acquire_coords_lock(
+    uploads_root: Path,
+    params_hash: str,
+    wsi_id: str,
+    timeout: float = None,
+    cancellation_check: callable = None,
+    wait_callback: callable = None,
+):
+    """Acquire a per-(params_hash, wsi_id) file lock for coordinates extraction."""
+    lock_timeout = Config.COORDS_LOCK_TIMEOUT if timeout is None else timeout
+    lock_path = get_coords_lock_path(uploads_root, params_hash, wsi_id)
+    try:
+        async with file_lock(
+            lock_path,
+            timeout=lock_timeout,
+            cancellation_check=cancellation_check,
+            wait_callback=wait_callback,
+            wsi_id=wsi_id,
+        ):
+            yield lock_path
+    except FeatureLockTimeoutError as exc:
+        raise CoordsLockTimeoutError(lock_path, lock_timeout, params_hash, wsi_id) from exc
+
+
+def _delete_coords_file_if_present(coords_path: Path) -> None:
+    try:
+        coords_path.unlink(missing_ok=True)
+    except Exception as exc:
+        logger.warning(f"Failed to delete corrupted coordinates file {coords_path}: {exc}")
+
+
+def load_cached_coords_summary(
+    coords_path: Path,
+    delete_if_corrupted: bool = True,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Load lightweight coordinates metadata without reading the full coords array."""
+    import h5py
+
+    attrs, attrs_error = safe_load_h5_coords_attrs(
+        coords_path,
+        delete_if_corrupted=delete_if_corrupted,
+    )
+    if attrs is None:
+        return None, attrs_error
+
+    try:
+        with h5py.File(coords_path, 'r') as handle:
+            if 'coords' not in handle:
+                error_msg = f"No 'coords' dataset in {coords_path}"
+                logger.warning(error_msg)
+                if delete_if_corrupted:
+                    _delete_coords_file_if_present(coords_path)
+                return None, error_msg
+
+            coords_dataset = handle['coords']
+            shape = coords_dataset.shape or ()
+            num_patches = int(shape[0]) if len(shape) >= 1 else 0
+            return {
+                "attrs": attrs,
+                "num_patches": num_patches,
+            }, None
+    except OSError as exc:
+        error_msg = str(exc)
+        logger.warning(
+            f"Detected corrupted H5 file during summary load: {coords_path}. Error: {error_msg}"
+        )
+        if delete_if_corrupted:
+            _delete_coords_file_if_present(coords_path)
+        return None, f"Corrupted file (will recompute): {error_msg}"
+    except Exception as exc:
+        error_msg = str(exc)
+        logger.error(f"Failed to load coordinates summary {coords_path}: {error_msg}")
+        return None, error_msg
+
+
+def find_valid_cached_coords_summary(
+    uploads_root: Path,
+    params_hash: str,
+    wsi_id: str,
+    *,
+    level: int,
+    seg_params: Optional[Dict] = None,
+    filter_params: Optional[Dict] = None,
+    contour_fn: str = 'four_pt',
+    use_padding: bool = True,
+    seg_level: int = -1,
+) -> Optional[Dict[str, Any]]:
+    """Return lightweight metadata for a valid cached coords file, or None on miss."""
+    coords_path = find_cached_coords(uploads_root, params_hash, wsi_id)
+    if coords_path is None:
+        return None
+
+    summary, load_error = load_cached_coords_summary(coords_path, delete_if_corrupted=True)
+    if summary is None:
+        logger.warning(f"Failed to load cached coordinates summary for {coords_path}: {load_error}")
+        return None
+
+    attrs = summary["attrs"]
+    if not _check_coords_params_match(
+        attrs,
+        level,
+        seg_params,
+        filter_params,
+        contour_fn,
+        use_padding,
+        seg_level=seg_level,
+    ):
+        return None
+
+    num_patches = int(summary["num_patches"])
+    if num_patches <= 0:
+        logger.warning(
+            f"Cached coordinates file {coords_path} contains {num_patches} patches; treating as cache miss"
+        )
+        return None
+
+    return {
+        "coords_file": coords_path,
+        "num_patches": num_patches,
+        "attrs": attrs,
+    }
 
 
 def safe_load_cached_coords(

@@ -1,18 +1,23 @@
 """
 Utility functions for Gateway service
 """
+import asyncio
 from collections import defaultdict
+import inspect
 import json
 import os
 from pathlib import Path
 import httpx
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Callable, Iterable, Mapping, Optional
 
 from Aslide import Slide
 from fastapi import HTTPException
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.ai.tasks.feature_cache import compute_params_hash
+from backend.ai.tasks.patch_cache import acquire_coords_lock, find_valid_cached_coords_summary
+from backend.common.config import Config
 from backend.database.repositories import DataGroupRepository, DatasetRepository, StorageTaskRepository
 from backend.common.file_types import (
     PATCH_EXTENSIONS,
@@ -27,6 +32,29 @@ from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 SEGMENTATION_TASK_TYPE = "segmentation"
 SEGMENTATION_DATA_TYPE = "patch"
 SEGMENTATION_AGGREGATION_LEVEL = "file"
+PREPROCESSING_COMPUTE_PATCHES_DEFAULTS = {
+    "level": 0,
+    "force_recompute": False,
+    "seg_level": -1,
+    "sthresh": 8,
+    "mthresh": 7,
+    "close": 4,
+    "use_otsu": False,
+    "contour_fn": "four_pt",
+    "use_padding": True,
+    "a_t": 100,
+    "a_h": 16,
+    "max_n_holes": 8,
+    "save_mask": True,
+}
+PREPROCESSING_RETRYABLE_REQUEST_ERRORS = (
+    httpx.RemoteProtocolError,
+    httpx.ConnectError,
+    httpx.ReadError,
+)
+_PREPROCESSING_COMPUTE_PATCHES_SEMAPHORE = asyncio.Semaphore(
+    max(1, Config.PREPROCESSING_MAX_CONCURRENT_COMPUTE_PATCHES)
+)
 
 
 def is_tiff_family(file_path: str | Path) -> bool:
@@ -387,6 +415,7 @@ async def request_preprocessing_service(
     params: Optional[Mapping[str, Any]] = None,
     json_body: Optional[Any] = None,
     timeout: float = 30.0,
+    passthrough_request_errors: tuple[type[Exception], ...] = (),
 ) -> httpx.Response:
     """Send a request to the preprocessing service with shared error handling."""
     try:
@@ -410,6 +439,8 @@ async def request_preprocessing_service(
     except HTTPException:
         raise
     except httpx.RequestError as e:
+        if passthrough_request_errors and isinstance(e, passthrough_request_errors):
+            raise
         logger.error(
             f"Failed to connect to preprocessing service for {method.upper()} {path}: {e}"
         )
@@ -459,6 +490,151 @@ async def proxy_preprocessing_binary(
         content=response.content,
         media_type=response.headers.get("content-type", default_media_type),
     )
+
+
+def normalize_compute_patches_params(params: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
+    """Normalize compute_patches params to preprocessing-service defaults."""
+    normalized = dict(PREPROCESSING_COMPUTE_PATCHES_DEFAULTS)
+    if params:
+        normalized.update({key: value for key, value in params.items() if value is not None})
+    return normalized
+
+
+def build_cached_compute_patches_response(
+    wsi_id: str,
+    *,
+    level: int,
+    coords_file: Path,
+    num_patches: int,
+    uploads_root: Path,
+) -> dict[str, Any]:
+    """Build a response payload matching preprocessing-service cache-hit semantics."""
+    response_data: dict[str, Any] = {
+        "wsi_id": wsi_id,
+        "num_patches": num_patches,
+        "num_contours": -1,
+        "level": level,
+        "coords_file": str(coords_file),
+        "cached": True,
+    }
+    mask_path = uploads_root / "masks" / f"{wsi_id}_mask.png"
+    if mask_path.exists():
+        response_data["mask_file"] = str(mask_path)
+    return response_data
+
+
+async def _maybe_call(callback: Optional[Callable[..., Any]], *args: Any) -> None:
+    if callback is None:
+        return
+    result = callback(*args)
+    if inspect.isawaitable(result):
+        await result
+
+
+async def ensure_coords_ready(
+    wsi_id: str,
+    *,
+    params: Optional[Mapping[str, Any]] = None,
+    timeout: float = 600.0,
+    uploads_root: Optional[Path] = None,
+    max_retries: int = 3,
+    retry_backoff_seconds: int = 3,
+    on_retry: Optional[Callable[[int, int, Exception, int], Any]] = None,
+    on_lock_wait: Optional[Callable[[float], Any]] = None,
+) -> Any:
+    """Ensure coords are ready while avoiding redundant preprocessing requests."""
+    normalized_params = normalize_compute_patches_params(params)
+    uploads_root = uploads_root or Config.get_uploads_dir()
+
+    seg_params = {
+        "sthresh": normalized_params["sthresh"],
+        "mthresh": normalized_params["mthresh"],
+        "close": normalized_params["close"],
+        "use_otsu": normalized_params["use_otsu"],
+    }
+    filter_params = {
+        "a_t": normalized_params["a_t"],
+        "a_h": normalized_params["a_h"],
+        "max_n_holes": normalized_params["max_n_holes"],
+    }
+    params_hash = compute_params_hash(
+        level=normalized_params["level"],
+        seg_params=seg_params,
+        filter_params=filter_params,
+        contour_fn=normalized_params["contour_fn"],
+        use_padding=normalized_params["use_padding"],
+        seg_level=normalized_params["seg_level"],
+    )
+
+    def _lookup_cached_summary() -> Optional[dict[str, Any]]:
+        return find_valid_cached_coords_summary(
+            uploads_root,
+            params_hash,
+            wsi_id,
+            level=normalized_params["level"],
+            seg_params=seg_params,
+            filter_params=filter_params,
+            contour_fn=normalized_params["contour_fn"],
+            use_padding=normalized_params["use_padding"],
+            seg_level=normalized_params["seg_level"],
+        )
+
+    async def _cached_response_if_available() -> Optional[dict[str, Any]]:
+        if normalized_params["force_recompute"]:
+            return None
+        cached_summary = await asyncio.to_thread(_lookup_cached_summary)
+        if cached_summary is None:
+            return None
+        return build_cached_compute_patches_response(
+            wsi_id,
+            level=normalized_params["level"],
+            coords_file=cached_summary["coords_file"],
+            num_patches=int(cached_summary["num_patches"]),
+            uploads_root=uploads_root,
+        )
+
+    cached_response = await _cached_response_if_available()
+    if cached_response is not None:
+        return cached_response
+
+    def _lock_wait_callback(wait_seconds: float) -> None:
+        if on_lock_wait is None:
+            return
+        try:
+            asyncio.get_running_loop().create_task(_maybe_call(on_lock_wait, wait_seconds))
+        except RuntimeError:
+            logger.warning(
+                "Unable to schedule preprocessing lock-wait callback for WSI %s",
+                wsi_id,
+            )
+
+    async with acquire_coords_lock(
+        uploads_root,
+        params_hash,
+        wsi_id,
+        wait_callback=_lock_wait_callback,
+    ):
+        cached_response = await _cached_response_if_available()
+        if cached_response is not None:
+            return cached_response
+
+        async with _PREPROCESSING_COMPUTE_PATCHES_SEMAPHORE:
+            for attempt in range(1, max_retries + 1):
+                try:
+                    response = await request_preprocessing_service(
+                        "POST",
+                        f"/wsi/{wsi_id}/compute_patches",
+                        params=normalized_params,
+                        timeout=timeout,
+                        passthrough_request_errors=PREPROCESSING_RETRYABLE_REQUEST_ERRORS,
+                    )
+                    return response.json()
+                except PREPROCESSING_RETRYABLE_REQUEST_ERRORS as retry_err:
+                    if attempt >= max_retries:
+                        raise
+                    wait_secs = attempt * retry_backoff_seconds
+                    await _maybe_call(on_retry, attempt, max_retries, retry_err, wait_secs)
+                    await asyncio.sleep(wait_secs)
 
 
 def extract_wsi_properties(wsi_path: str) -> dict:

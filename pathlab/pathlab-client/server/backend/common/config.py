@@ -62,6 +62,10 @@ class Config:
 
     # Feature cache
     FEATURE_LOCK_TIMEOUT = 1800  # 30 minutes - large WSI feature extraction can take a while
+    COORDS_LOCK_TIMEOUT = int(os.getenv("COORDS_LOCK_TIMEOUT", str(FEATURE_LOCK_TIMEOUT)))
+    PREPROCESSING_MAX_CONCURRENT_COMPUTE_PATCHES = int(
+        os.getenv("PREPROCESSING_MAX_CONCURRENT_COMPUTE_PATCHES", "2")
+    )
 
     # Storage cache TTL
     STORAGE_STATS_CACHE_TTL = 3600  # 1 hour for fresh data
@@ -317,6 +321,33 @@ class Config:
     def set_maintenance_mode(cls, enabled: bool) -> None:
         """Set maintenance mode status."""
         cls._write_config({"maintenance_mode": enabled})
+
+    @classmethod
+    def set_maintenance_mode_state(cls, enabled: bool, restore_user_ids: list[str] | None = None) -> None:
+        """Persist maintenance mode status together with its restoration snapshot."""
+        data = {"maintenance_mode": enabled}
+        if restore_user_ids is not None:
+            data["maintenance_mode_restore_user_ids"] = [str(user_id) for user_id in restore_user_ids]
+        cls._write_config(data)
+
+    @classmethod
+    def get_maintenance_mode_restore_user_ids(cls) -> list[str]:
+        """Get non-admin user IDs that should be restored when maintenance ends."""
+        config_data = cls._read_config()
+        user_ids = config_data.get("maintenance_mode_restore_user_ids", [])
+        if isinstance(user_ids, list):
+            return [str(user_id) for user_id in user_ids if user_id]
+        return []
+
+    @classmethod
+    def set_maintenance_mode_restore_user_ids(cls, user_ids: list[str]) -> None:
+        """Persist non-admin user IDs that were active before maintenance mode."""
+        cls._write_config({"maintenance_mode_restore_user_ids": [str(user_id) for user_id in user_ids]})
+
+    @classmethod
+    def clear_maintenance_mode_restore_user_ids(cls) -> None:
+        """Clear the stored maintenance-mode restoration snapshot."""
+        cls._write_config({"maintenance_mode_restore_user_ids": []})
 
     # ========== Maintenance Notice (Announcement) ==========
     @classmethod

@@ -7,6 +7,7 @@ Replaces BM25 page-level search with paragraph-level vector search.
 - Chunking: LlamaIndex MarkdownNodeParser + SentenceSplitter for structure-
   and sentence-aware chunking (with character-based fallback).
 """
+import os
 import re
 import threading
 from pathlib import Path
@@ -33,13 +34,27 @@ CHUNK_OVERLAP_TOKENS = 64
 CHUNK_SIZE_CHARS = 500
 CHUNK_OVERLAP_CHARS = 100
 TABLE_NAME = "pdf_chunks"
+EMBEDDING_WARMUP_TEXT = "PathLab bundled training recommendation warmup"
 
 
-def _get_vectorstore_dir() -> Path:
+def _get_vectorstore_dir(base_dir: Path | None = None) -> Path:
     """Return (and create) the LanceDB storage directory."""
-    d = Config.get_uploads_dir() / "pdf_cache" / "vector_store"
+    d = base_dir or (Config.get_uploads_dir() / "pdf_cache" / "vector_store")
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _resolve_embedding_device() -> str:
+    requested = str(os.getenv("PDF_VECTOR_EMBEDDING_DEVICE", "")).strip()
+    if requested:
+        return requested
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+    except Exception:
+        pass
+    return "cpu"
 
 
 def _get_embedding_model():
@@ -50,9 +65,24 @@ def _get_embedding_model():
             if _embedding_model is None:
                 ensure_transformers_runtime_ready("PDF vector embedding model")
                 from sentence_transformers import SentenceTransformer
-                logger.info(f"[VectorStore] Loading embedding model: {EMBEDDING_MODEL_NAME}")
-                _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-                logger.info("[VectorStore] Embedding model loaded")
+                requested_device = _resolve_embedding_device()
+                logger.info(
+                    f"[VectorStore] Loading embedding model: {EMBEDDING_MODEL_NAME} "
+                    f"(requested_device={requested_device})"
+                )
+                try:
+                    _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME, device=requested_device)
+                except Exception as e:
+                    if str(requested_device).lower().startswith("cuda"):
+                        logger.warning(
+                            f"[VectorStore] Failed to load embedding model on {requested_device}: {e}; "
+                            "falling back to CPU"
+                        )
+                        _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME, device="cpu")
+                    else:
+                        raise
+                actual_device = str(getattr(_embedding_model, "device", requested_device))
+                logger.info(f"[VectorStore] Embedding model loaded on device={actual_device}")
     return _embedding_model
 
 
@@ -60,6 +90,19 @@ def _embed_texts(texts: list[str]) -> np.ndarray:
     """Encode a list of texts into embedding vectors."""
     model = _get_embedding_model()
     return model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+
+
+def prewarm_embedding_model() -> dict[str, Any]:
+    """Load the embedding model and run a tiny encode so startup pays the cold-start once."""
+    _embed_texts([EMBEDDING_WARMUP_TEXT])
+    model = _get_embedding_model()
+    device = str(getattr(model, "device", _resolve_embedding_device()))
+    logger.info(f"[VectorStore] Embedding warmup complete on device={device}")
+    return {
+        "model_name": EMBEDDING_MODEL_NAME,
+        "device": device,
+        "loaded": True,
+    }
 
 
 # ── Page marker extraction ─────────────────────────────────────────────────
@@ -312,10 +355,10 @@ def _create_or_replace_table(db: Any, records: list[dict]) -> None:
 
 # ── LanceDB operations ──────────────────────────────────────────────────────
 
-def _get_db():
+def _get_db(base_dir: Path | None = None):
     """Connect to (or create) the LanceDB database."""
     import lancedb
-    return lancedb.connect(str(_get_vectorstore_dir()))
+    return lancedb.connect(str(_get_vectorstore_dir(base_dir)))
 
 
 def _table_exists(db, name: str) -> bool:
@@ -331,6 +374,8 @@ def index_pdf_to_vectorstore(
     markdown: str,
     paper_title: str,
     structured_content: Optional[dict] = None,
+    *,
+    vectorstore_dir: Path | None = None,
 ) -> int:
     """Chunk + embed + upsert a PDF into the vector store.
 
@@ -364,7 +409,7 @@ def index_pdf_to_vectorstore(
                 "vector": vec.tolist(),
             })
 
-        db = _get_db()
+        db = _get_db(vectorstore_dir)
 
         # Delete old data for this url_hash, then insert new
         if _table_exists(db, TABLE_NAME):
@@ -395,6 +440,8 @@ def search_pdf_chunks(
     query: str,
     url_hashes: list[str] | None = None,
     top_k: int = 15,
+    *,
+    vectorstore_dir: Path | None = None,
 ) -> list[dict]:
     """Search indexed PDF chunks by semantic similarity.
 
@@ -414,7 +461,7 @@ def search_pdf_chunks(
         block_type, block_id, section_path, display_text, chunk_text, _distance.
     """
     try:
-        db = _get_db()
+        db = _get_db(vectorstore_dir)
         if not _table_exists(db, TABLE_NAME):
             return []
 
@@ -454,10 +501,10 @@ def search_pdf_chunks(
         return []
 
 
-def delete_pdf_from_vectorstore(url_hash: str) -> None:
+def delete_pdf_from_vectorstore(url_hash: str, *, vectorstore_dir: Path | None = None) -> None:
     """Remove all chunks for a given url_hash from the vector store."""
     try:
-        db = _get_db()
+        db = _get_db(vectorstore_dir)
         if not _table_exists(db, TABLE_NAME):
             return
         table = db.open_table(TABLE_NAME)
@@ -467,10 +514,10 @@ def delete_pdf_from_vectorstore(url_hash: str) -> None:
         logger.error(f"[VectorStore] Delete failed for {url_hash}: {e}")
 
 
-def is_pdf_indexed(url_hash: str) -> bool:
+def is_pdf_indexed(url_hash: str, *, vectorstore_dir: Path | None = None) -> bool:
     """Check whether a PDF is already indexed in the vector store."""
     try:
-        db = _get_db()
+        db = _get_db(vectorstore_dir)
         if not _table_exists(db, TABLE_NAME):
             return False
         table = db.open_table(TABLE_NAME)

@@ -32,7 +32,7 @@ import { AudioVisualizer } from '../components/common/AudioVisualizer'
 
 // Extracted modules
 import AssistantMessage, { parseSubmitTask, parseCancelTaskNow, isInternalOnlyMessage, removeContextLimitBlock, removeResponseTruncatedBlock } from '../components/chat/AssistantMessage'
-import { sanitizeConfigBlocksForAI, isPdfContextMessage } from '../lib/chatMessageParser'
+import { preserveContentOnClearMarker, sanitizeConfigBlocksForAI, isPdfContextMessage } from '../lib/chatMessageParser'
 import { SCENARIO_CARDS } from '../constants/scenarios'
 
 // Chat component imports still needed by AIChatPage main body
@@ -1273,11 +1273,14 @@ export default function AIChatPage() {
             cancelAnimationFrame(rafId)
             rafId = null
           }
+          const buffered = chunkBuffer
           chunkBuffer = ''
           const currentId = trackingId
           setMessages(prev =>
             prev.map(m =>
-              m.id === currentId ? { ...m, content: '' } : m
+              m.id === currentId
+                ? { ...m, content: preserveContentOnClearMarker(m.content + buffered) }
+                : m
             )
           )
           return

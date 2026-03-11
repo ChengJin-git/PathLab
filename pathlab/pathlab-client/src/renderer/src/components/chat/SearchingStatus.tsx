@@ -19,7 +19,8 @@ export interface SearchingStatusProps {
  * Returns the parsed JSON config or null if not found
  */
 export function parseSearchStatus(content: string): { query?: string; reason?: string } | null {
-  const match = content.match(/\[SEARCH_STATUS\]([\s\S]*?)\[\/SEARCH_STATUS\]/)
+  const matches = Array.from(content.matchAll(/\[SEARCH_STATUS\]([\s\S]*?)\[\/SEARCH_STATUS\]/g))
+  const match = matches.at(-1)
   if (!match) return null
   
   try {
@@ -57,7 +58,8 @@ export interface WebSearchResult {
 }
  
 export function parseWebSearchResult(content: string): WebSearchResult | null {
-  const match = content.match(/\[WEB_SEARCH_RESULT\]([\s\S]*?)\[\/WEB_SEARCH_RESULT\]/)
+  const matches = Array.from(content.matchAll(/\[WEB_SEARCH_RESULT\]([\s\S]*?)\[\/WEB_SEARCH_RESULT\]/g))
+  const match = matches.at(-1)
   if (!match) return null
   
   try {
