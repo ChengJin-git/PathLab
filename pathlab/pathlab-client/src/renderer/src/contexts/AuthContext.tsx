@@ -9,6 +9,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react'
 import {
   AuthUser,
+  ApiError,
   logout as apiLogout,
   getCurrentUser,
   loginWithCredentials,
@@ -16,10 +17,12 @@ import {
   acceptAgreement as apiAcceptAgreement,
   getMyDatasetPermissions,
   getClientIP,
+  getMaintenanceNotice,
+  acknowledgeNotice as apiAcknowledgeNotice,
   SESSION_EXPIRED_EVENT
 } from '../api'
 import { useToast } from './ToastContext'
-import { initializeApiConfig, getApiBase } from '../config'
+import { useTranslation } from 'react-i18next'
 
 interface AuthContextType {
   // State
@@ -29,13 +32,16 @@ interface AuthContextType {
   error: string | null
   needsAgreement: boolean  // User needs to accept terms of service
   elevatedDatasetIds: string[]  // Dataset IDs where user has temporary elevated access
+  maintenanceNoticeMessage: string | null  // Current maintenance notice message
+  needsMaintenanceAcknowledgment: boolean  // User needs to acknowledge maintenance notice
 
   // Actions
-  login: (username: string, password: string, recaptchaToken?: string) => Promise<boolean>
+  login: (username: string, password: string, turnstileToken?: string) => Promise<boolean>
   logout: () => Promise<void>
   refreshUser: () => Promise<void>
   refreshDatasetPermissions: () => Promise<void>  // Refresh elevated dataset permissions
   acceptAgreement: () => Promise<boolean>  // Accept terms of service
+  acknowledgeMaintenanceNotice: () => Promise<boolean>  // Acknowledge maintenance notice
   clearError: () => void
 
   // Role checks
@@ -57,7 +63,10 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [elevatedDatasetIds, setElevatedDatasetIds] = useState<string[]>([])
+  const [maintenanceNoticeMessage, setMaintenanceNoticeMessage] = useState<string | null>(null)
+  const [needsMaintenanceAcknowledgment, setNeedsMaintenanceAcknowledgment] = useState(false)
   const toast = useToast()
+  const { i18n } = useTranslation()
 
   // Track whether user was logged in, to show toast only on forced logout (not initial load)
   const userRef = useRef<AuthUser | null>(null)
@@ -73,7 +82,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       if (userRef.current && !sessionExpiredHandled.current) {
         sessionExpiredHandled.current = true
         toast.warning(
-          'Your account has been logged in on another device. Current session has ended.',
+          i18n.t('auth.sessionExpired'),
           5000
         )
         setUser(null)
@@ -85,7 +94,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
 
     window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
     return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
-  }, [toast])
+  }, [i18n, toast])
 
   // Refresh dataset permissions (for temporary elevated access)
   const refreshDatasetPermissions = useCallback(async () => {
@@ -103,79 +112,30 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     try {
       setIsLoading(true)
       setError(null)
-      console.log('[Auth] Checking current user, API_BASE:', getApiBase())
       const response = await getCurrentUser()
-      console.log('[Auth] getCurrentUser response:', response)
 
       if (response.is_logged_in && response.user) {
         setUser(response.user)
-        console.log('[Auth] User logged in:', response.user.email)
         // Also refresh dataset permissions when refreshing user
         await refreshDatasetPermissions()
       } else {
-        console.log('[Auth] User not logged in')
         setUser(null)
         setElevatedDatasetIds([])
       }
     } catch (err) {
-      console.error('[Auth] Failed to get current user:', err)
-      const errorMessage = err instanceof Error ? err.message : String(err)
-      setError(errorMessage)
+      console.error('Failed to get current user:', err)
+      setError(err instanceof Error ? err.message : 'Failed to get user info')
       setUser(null)
       setElevatedDatasetIds([])
-      // Don't block rendering on error - let user see login page
     } finally {
       setIsLoading(false)
-      console.log('[Auth] refreshUser completed, isLoading=false')
     }
   }, [refreshDatasetPermissions])
 
   // Initialize - check current user on mount
   useEffect(() => {
-    // Ensure API config is initialized before attempting login
-    const initAndLogin = async () => {
-      // Wait for API config to be initialized
-      await initializeApiConfig()
-      console.log('[Auth] API config initialized, API_BASE:', getApiBase())
-      
-      // In test/development environment, try auto-login
-      const isDev = import.meta.env.DEV || import.meta.env.MODE === 'development'
-      const autoLoginEnabled = import.meta.env.VITE_AUTO_LOGIN === 'true' || 
-                              localStorage.getItem('auto_login') === 'true' ||
-                              (isDev && localStorage.getItem('auto_login') !== 'false')
-      
-      if (autoLoginEnabled) {
-        // Try auto-login with default test credentials
-        const testUsername = import.meta.env.VITE_TEST_USERNAME || 'admin'
-        const testPassword = import.meta.env.VITE_TEST_PASSWORD || 'Smartlab2022'
-        
-        console.log('[Auth] Auto-login enabled, attempting login...')
-        // Use loginWithCredentials directly to avoid dependency issues
-        try {
-          await loginWithCredentials(testUsername, testPassword)
-          // Refresh user info after successful login
-          await refreshUser()
-        } catch (err) {
-          console.warn('[Auth] Auto-login failed, falling back to normal login:', err)
-          // Retry once after a short delay (in case backend is still starting)
-          setTimeout(async () => {
-            try {
-              await loginWithCredentials(testUsername, testPassword)
-              await refreshUser()
-            } catch (retryErr) {
-              console.warn('[Auth] Auto-login retry also failed:', retryErr)
-              refreshUser()
-            }
-          }, 2000) // Wait 2 seconds before retry
-        }
-      } else {
-        refreshUser()
-      }
-    }
-    
-    initAndLogin()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // Only run once on mount
+    refreshUser()
+  }, [refreshUser])
 
   // Clear error
   const clearError = useCallback(() => {
@@ -183,12 +143,12 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
   }, [])
 
   // Login with username and password
-  const login = useCallback(async (username: string, password: string, recaptchaToken?: string): Promise<boolean> => {
+  const login = useCallback(async (username: string, password: string, turnstileToken?: string): Promise<boolean> => {
     try {
       setIsLoading(true)
       setError(null)
 
-      await loginWithCredentials(username, password, recaptchaToken)
+      await loginWithCredentials(username, password, turnstileToken)
 
       // Refresh user info after successful login
       await refreshUser()
@@ -199,8 +159,10 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       let errorMessage = err instanceof Error ? err.message : 'Login failed'
       const errorLower = errorMessage.toLowerCase()
 
-      // Handle specific error codes from secure login endpoint
-      if (errorLower.includes('maintenance_mode')) {
+      // Handle network error or server error (backend unreachable / nginx 502) - treat as maintenance
+      if (err instanceof ApiError && (err.isNetworkError() || err.isServerError())) {
+        errorMessage = 'System is under maintenance. Please try again later.'
+      } else if (errorLower.includes('maintenance_mode')) {
         // System is in maintenance mode - non-admin users cannot log in
         errorMessage = 'System is under maintenance. Please try again later or contact administrator.'
       } else if (errorLower.includes('login_user_not_active') ||
@@ -263,6 +225,45 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     }
   }, [])
 
+  // Fetch maintenance notice after user logs in
+  const checkMaintenanceNotice = useCallback(async () => {
+    try {
+      const notice = await getMaintenanceNotice()
+      if (notice.active && notice.message) {
+        setMaintenanceNoticeMessage(notice.message)
+        setNeedsMaintenanceAcknowledgment(notice.needs_acknowledgment)
+      } else {
+        setMaintenanceNoticeMessage(null)
+        setNeedsMaintenanceAcknowledgment(false)
+      }
+    } catch (err) {
+      console.error('Failed to check maintenance notice:', err)
+    }
+  }, [])
+
+  // Check maintenance notice when user changes
+  useEffect(() => {
+    if (user) {
+      checkMaintenanceNotice()
+    } else {
+      setMaintenanceNoticeMessage(null)
+      setNeedsMaintenanceAcknowledgment(false)
+    }
+  }, [user, checkMaintenanceNotice])
+
+  // Acknowledge maintenance notice
+  const acknowledgeMaintenanceNotice = useCallback(async (): Promise<boolean> => {
+    try {
+      const updatedUser = await apiAcknowledgeNotice()
+      setUser(updatedUser)
+      setNeedsMaintenanceAcknowledgment(false)
+      return true
+    } catch (err) {
+      console.error('Acknowledge notice error:', err)
+      return false
+    }
+  }, [])
+
   // Role checks
   const isAdmin = user?.role === 'admin'
   const isPathologist = user?.role === 'pathologist'
@@ -286,11 +287,14 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     error,
     needsAgreement,
     elevatedDatasetIds,
+    maintenanceNoticeMessage,
+    needsMaintenanceAcknowledgment,
     login,
     logout,
     refreshUser,
     refreshDatasetPermissions,
     acceptAgreement,
+    acknowledgeMaintenanceNotice,
     clearError,
     isAdmin,
     isPathologist,
@@ -312,3 +316,4 @@ export function useAuth(): AuthContextType {
   }
   return context
 }
+

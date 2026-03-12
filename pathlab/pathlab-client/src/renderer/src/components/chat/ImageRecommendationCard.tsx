@@ -1,22 +1,24 @@
-import { useState, useEffect, useMemo, type ReactNode } from 'react'
+import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Image as ImageIcon, ExternalLink, AlertCircle, ImageOff, Layers } from 'lucide-react'
 import {
   fetchWSIList,
-  fetchWSIDetail,
+  fetchWSIIds,
   fetchAllResults,
-  getThumbnailUrl,
+  getRecommendationThumbnailUrl as getThumbnailUrl,
   fetchAvailableHeatmaps,
   getRecommendationPatchCAMImageUrl as getPatchCAMImageUrl,
   getRecommendationHeatmapThumbnailUrl as getHeatmapThumbnailUrl,
-  getSegMaskImageUrl,
+  getRecommendationSegMaskImageUrl as getSegMaskImageUrl,
+  getGroundTruthThumbnailUrl,
   getWSIGroundTruth,
   type WSISummary,
-  type AvailableHeatmap,
-  type AnnotationRegion
+  type ResultWithWSI,
+  type AvailableHeatmap
 } from '../../api'
 import { getFileType } from '../../constants/fileTypes'
+import { parseLastChatBlockJson, stripChatBlocks } from './chatBlockParsing'
 
 type SegmentationMaskSource = 'gt' | 'model_pred' | 'both'
 
@@ -68,64 +70,134 @@ interface ImageRecommendationCardProps {
  * Parse [IMAGE_RECOMMENDATION] block from message content
  */
 export function parseImageRecommendation(content: string): ImageRecommendation | null {
-  const match = content.match(/\[IMAGE_RECOMMENDATION\]([\s\S]*?)\[\/IMAGE_RECOMMENDATION\]/)
-  if (!match) return null
-
-  try {
-    const jsonStr = match[1].trim()
-    return JSON.parse(jsonStr)
-  } catch {
-    return null
-  }
+  return parseLastChatBlockJson<ImageRecommendation>(content, 'IMAGE_RECOMMENDATION', { allowIncompleteLast: true })
 }
 
 /**
  * Remove [IMAGE_RECOMMENDATION] block from content for display
  */
 export function removeImageRecommendationBlock(content: string): string {
-  return content.replace(/\[IMAGE_RECOMMENDATION\][\s\S]*?\[\/IMAGE_RECOMMENDATION\]/g, '').trim()
+  return stripChatBlocks(content, 'IMAGE_RECOMMENDATION').trim()
 }
 
 // Global cache for loaded images with heatmap info (persists across component remounts)
 const imageCache = new Map<string, { images: ImageWithOverlays[]; error: string | null }>()
-const groundTruthMaskCache = new Map<string, AnnotationRegion[]>()
-const wsiDimensionCache = new Map<string, { width: number; height: number }>()
 const CARD_THUMBNAIL_SIZE = 160
+const OVERLAY_FETCH_CONCURRENCY = 2
+const DETAIL_FETCH_CONCURRENCY = 2
+const OVERLAY_THUMBNAIL_LOAD_CONCURRENCY = 2
 
-function hexToRgba(color: string, alpha: number): string {
-  const normalized = color.replace('#', '')
-  const expanded = normalized.length === 3
-    ? normalized.split('').map(ch => ch + ch).join('')
-    : normalized
-
-  if (expanded.length !== 6) return `rgba(59, 130, 246, ${alpha})`
-
-  const r = Number.parseInt(expanded.slice(0, 2), 16)
-  const g = Number.parseInt(expanded.slice(2, 4), 16)
-  const b = Number.parseInt(expanded.slice(4, 6), 16)
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+interface QueueWaiter {
+  cancelled: boolean
+  resolve: (release: () => void) => void
 }
 
-function inferDimensionsFromRegions(regions: AnnotationRegion[]): { width: number; height: number } | null {
-  if (regions.length === 0) return null
+function createImageLoadQueue(limit: number) {
+  let active = 0
+  const waiters: QueueWaiter[] = []
 
-  let maxX = 0
-  let maxY = 0
+  const pump = () => {
+    while (active < limit && waiters.length > 0) {
+      const waiter = waiters.shift()
+      if (!waiter || waiter.cancelled) continue
 
-  for (const region of regions) {
-    maxX = Math.max(maxX, region.x + region.width)
-    maxY = Math.max(maxY, region.y + region.height)
-
-    if (region.type === 'polygon' && region.points) {
-      for (const [x, y] of region.points) {
-        maxX = Math.max(maxX, x)
-        maxY = Math.max(maxY, y)
-      }
+      active += 1
+      let released = false
+      waiter.resolve(() => {
+        if (released) return
+        released = true
+        active = Math.max(0, active - 1)
+        pump()
+      })
     }
   }
 
-  if (maxX <= 0 || maxY <= 0) return null
-  return { width: Math.ceil(maxX), height: Math.ceil(maxY) }
+  return {
+    acquire() {
+      let waiterRef: QueueWaiter | null = null
+      const promise = new Promise<() => void>((resolve) => {
+        waiterRef = { cancelled: false, resolve }
+        waiters.push(waiterRef)
+        pump()
+      })
+
+      return {
+        promise,
+        cancel: () => {
+          if (waiterRef) waiterRef.cancelled = true
+        }
+      }
+    }
+  }
+}
+
+const overlayThumbnailLoadQueue = createImageLoadQueue(OVERLAY_THUMBNAIL_LOAD_CONCURRENCY)
+
+async function mapWithConcurrencyLimit<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return []
+
+  const workerCount = Math.max(1, Math.min(limit, items.length))
+  const results = new Array<R>(items.length)
+  let nextIndex = 0
+
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex
+      nextIndex += 1
+      results[currentIndex] = await mapper(items[currentIndex], currentIndex)
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => worker()))
+  return results
+}
+
+function getFileExtensionFromName(filename: string): string {
+  const lastDot = filename.lastIndexOf('.')
+  return lastDot >= 0 ? filename.slice(lastDot).toLowerCase() : ''
+}
+
+function inferResultDataType(result: ResultWithWSI, recommendation: ImageRecommendation): 'wsi' | 'patch' | null {
+  if (recommendation.filters?.data_type === 'wsi' || recommendation.filters?.data_type === 'patch') {
+    return recommendation.filters.data_type
+  }
+  return getFileType(getFileExtensionFromName(result.original_filename), 0) === 'Patch' ? 'patch' : 'wsi'
+}
+
+function buildPreviewSummaryFromResult(result: ResultWithWSI, recommendation: ImageRecommendation): WSISummary {
+  return {
+    wsi_id: result.wsi_id,
+    original_filename: result.original_filename,
+    dataset_id: recommendation.filters?.dataset_id ?? null,
+    dataset_name: null,
+    case_id: result.case_id,
+    label: result.label,
+    file_extension: getFileExtensionFromName(result.original_filename),
+    age: null,
+    gender: null,
+    source: null,
+    event_time: null,
+    event_status: null,
+    split: null,
+    file_size: null,
+    data_type: inferResultDataType(result, recommendation),
+    created_at: result.created_at,
+  }
+}
+
+function dedupeLatestResultsByWsi(items: ResultWithWSI[]): ResultWithWSI[] {
+  const seen = new Set<string>()
+  const deduped: ResultWithWSI[] = []
+  for (const item of items) {
+    if (seen.has(item.wsi_id)) continue
+    seen.add(item.wsi_id)
+    deduped.push(item)
+  }
+  return deduped
 }
 
 function getLatestSegmentationMaskOverlay(overlays: AvailableHeatmap[], taskId?: string): AvailableHeatmap | undefined {
@@ -153,6 +225,7 @@ function OverlayThumbnailButton({
   badgeClassName,
   fallback,
   loadingColorClass,
+  className = 'relative flex-1 min-w-[60px] aspect-square md:flex-none md:flex-shrink-0 md:snap-start md:aspect-auto md:w-32 md:h-32 group/img',
 }: {
   src: string
   alt: string
@@ -162,29 +235,62 @@ function OverlayThumbnailButton({
   badgeClassName: string
   fallback: ReactNode
   loadingColorClass: string
+  className?: string
 }) {
-  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [loadState, setLoadState] = useState<'queued' | 'loading' | 'ready' | 'error'>('queued')
+  const releaseLoadSlotRef = useRef<(() => void) | null>(null)
+
+  const releaseLoadSlot = () => {
+    releaseLoadSlotRef.current?.()
+    releaseLoadSlotRef.current = null
+  }
 
   useEffect(() => {
-    setLoadState('loading')
+    releaseLoadSlot()
+    setLoadState('queued')
+
+    let active = true
+    const ticket = overlayThumbnailLoadQueue.acquire()
+
+    void ticket.promise.then((releaseSlot) => {
+      if (!active) {
+        releaseSlot()
+        return
+      }
+
+      releaseLoadSlotRef.current = releaseSlot
+      setLoadState('loading')
+    })
+
+    return () => {
+      active = false
+      ticket.cancel()
+      releaseLoadSlot()
+    }
   }, [src])
 
   return (
     <button
       onClick={onClick}
-      className="relative flex-shrink-0 snap-start group/img w-32 h-32"
+      className={className}
       title={title}
     >
       <div className="relative w-full h-full bg-gray-100 rounded-lg overflow-hidden border border-gray-200 group-hover/img:border-orange-300 shadow-sm transition-colors">
-        {loadState !== 'error' && (
+        {loadState !== 'error' && loadState !== 'queued' && (
           <img
             src={src}
             alt={alt}
             className={`w-full h-full object-cover ${loadState === 'ready' ? 'opacity-100' : 'opacity-0'}`}
             loading="lazy"
             decoding="async"
-            onLoad={() => setLoadState('ready')}
-            onError={() => setLoadState('error')}
+            onLoad={() => {
+              releaseLoadSlot()
+              setLoadState('ready')
+            }}
+            onError={() => {
+              releaseLoadSlot()
+              setLoadState('error')
+            }}
           />
         )}
 
@@ -213,15 +319,17 @@ function PendingThumbnailSlot({
   badgeLabel,
   badgeClassName,
   loadingColorClass,
+  className = 'relative flex-1 min-w-[60px] aspect-square md:flex-none md:flex-shrink-0 md:snap-start md:aspect-auto md:w-32 md:h-32',
 }: {
   title: string
   badgeLabel: string
   badgeClassName: string
   loadingColorClass: string
+  className?: string
 }) {
   return (
     <div
-      className="relative flex-shrink-0 snap-start w-32 h-32"
+      className={className}
       title={title}
       aria-label={title}
     >
@@ -246,90 +354,58 @@ function GroundTruthMaskThumbnail({
   onClick: () => void
 }) {
   const { t } = useTranslation()
-  const [regions, setRegions] = useState<AnnotationRegion[]>([])
-  const [status, setStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading')
-  const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(() => {
-    if (image.width && image.height && image.width > 0 && image.height > 0) {
-      return { width: image.width, height: image.height }
-    }
-    return wsiDimensionCache.get(image.wsi_id) || null
-  })
-  const renderDimensions = useMemo(
-    () => imageDimensions ?? inferDimensionsFromRegions(regions),
-    [imageDimensions, regions]
+  const [status, setStatus] = useState<'queued' | 'loading' | 'ready' | 'empty' | 'error'>('queued')
+  const isActiveRef = useRef(true)
+  const releaseLoadSlotRef = useRef<(() => void) | null>(null)
+  const gtThumbnailUrl = useMemo(
+    () => getGroundTruthThumbnailUrl(image.wsi_id, CARD_THUMBNAIL_SIZE),
+    [image.wsi_id]
   )
-  const isWaitingForDimensions = status === 'ready' && regions.length > 0 && !renderDimensions
+
+  const releaseLoadSlot = () => {
+    releaseLoadSlotRef.current?.()
+    releaseLoadSlotRef.current = null
+  }
 
   useEffect(() => {
     let active = true
-    const loadGroundTruth = async () => {
-      const cached = groundTruthMaskCache.get(image.wsi_id)
-      if (cached) {
-        if (!active) return
-        setRegions(cached)
-        setStatus(cached.length > 0 ? 'ready' : 'empty')
+    isActiveRef.current = true
+
+    releaseLoadSlot()
+    setStatus('queued')
+    const ticket = overlayThumbnailLoadQueue.acquire()
+
+    void ticket.promise.then((releaseSlot) => {
+      if (!active) {
+        releaseSlot()
         return
       }
 
-      try {
-        const gtResult = await getWSIGroundTruth(image.wsi_id)
+      releaseLoadSlotRef.current = releaseSlot
+      setStatus('loading')
+    })
 
-        if (!active) return
+    return () => {
+      active = false
+      isActiveRef.current = false
+      ticket.cancel()
+      releaseLoadSlot()
+    }
+  }, [gtThumbnailUrl])
 
+  const handleLoadError = () => {
+    releaseLoadSlot()
+    void getWSIGroundTruth(image.wsi_id)
+      .then((gtResult) => {
+        if (!isActiveRef.current) return
         const nextRegions = gtResult.annotations?.[image.wsi_id] || []
-        const width = gtResult.width
-        const height = gtResult.height
-
-        if (typeof width === 'number' && typeof height === 'number' && width > 0 && height > 0) {
-          const nextDimensions = { width, height }
-          wsiDimensionCache.set(image.wsi_id, nextDimensions)
-          setImageDimensions(nextDimensions)
-        }
-
-        groundTruthMaskCache.set(image.wsi_id, nextRegions)
-        setRegions(nextRegions)
-        setStatus(nextRegions.length > 0 ? 'ready' : 'empty')
-      } catch {
-        if (!active) return
+        setStatus(nextRegions.length > 0 ? 'error' : 'empty')
+      })
+      .catch(() => {
+        if (!isActiveRef.current) return
         setStatus('error')
-      }
-    }
-
-    loadGroundTruth()
-
-    return () => {
-      active = false
-    }
-  }, [image.wsi_id])
-
-  useEffect(() => {
-    let active = true
-
-    if (imageDimensions) return
-
-    const loadDimensions = async () => {
-      try {
-        const detail = await fetchWSIDetail(image.wsi_id)
-        if (!active) return
-
-        const width = detail.meta?.width
-        const height = detail.meta?.height
-        if (typeof width === 'number' && typeof height === 'number' && width > 0 && height > 0) {
-          const nextDimensions = { width, height }
-          wsiDimensionCache.set(image.wsi_id, nextDimensions)
-          setImageDimensions(nextDimensions)
-        }
-      } catch {
-        // Fallback to annotation bounds if metadata request fails.
-      }
-    }
-
-    loadDimensions()
-
-    return () => {
-      active = false
-    }
-  }, [image.wsi_id, imageDimensions])
+      })
+  }
 
   return (
     <button
@@ -338,66 +414,25 @@ function GroundTruthMaskThumbnail({
       title={t('chatComponents.imageRecommendation.groundTruthMask')}
     >
       <div className="relative w-full h-full bg-gray-100 rounded-lg overflow-hidden border border-gray-200 group-hover/img:border-orange-300 shadow-sm transition-colors">
-        <img
-          src={getThumbnailUrl(image.wsi_id, CARD_THUMBNAIL_SIZE)}
-          alt={`${t('chatComponents.imageRecommendation.groundTruthMask')}: ${image.original_filename}`}
-          className="w-full h-full object-cover"
-          loading="lazy"
-          decoding="async"
-          onError={(e) => {
-            e.currentTarget.style.display = 'none'
-            const placeholder = e.currentTarget.nextElementSibling as HTMLElement | null
-            if (placeholder) placeholder.style.display = 'flex'
-          }}
-        />
-        <div className="hidden absolute inset-0 items-center justify-center bg-gray-100">
-          <ImageOff className="w-8 h-8 text-gray-300" />
-        </div>
+        {status !== 'queued' && status !== 'empty' && status !== 'error' && (
+          <img
+            src={gtThumbnailUrl}
+            alt={`${t('chatComponents.imageRecommendation.groundTruthMask')}: ${image.original_filename}`}
+            className={`w-full h-full object-cover ${status === 'ready' ? 'opacity-100' : 'opacity-0'}`}
+            loading="lazy"
+            decoding="async"
+            onLoad={() => {
+              releaseLoadSlot()
+              setStatus('ready')
+            }}
+            onError={handleLoadError}
+          />
+        )}
 
-        {(status === 'loading' || isWaitingForDimensions) && (
+        {(status === 'queued' || status === 'loading') && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/70">
             <Loader2 className="w-5 h-5 text-violet-500 animate-spin" />
           </div>
-        )}
-
-        {status === 'ready' && regions.length > 0 && renderDimensions && (
-          <svg
-            className="absolute inset-0 w-full h-full pointer-events-none"
-            viewBox={`0 0 ${renderDimensions.width} ${renderDimensions.height}`}
-            preserveAspectRatio="xMidYMid slice"
-          >
-            {regions.map((region) => {
-              const stroke = region.color || '#8b5cf6'
-              const fill = hexToRgba(stroke, 0.18)
-
-              if (region.type === 'polygon' && region.points && region.points.length >= 3) {
-                return (
-                  <polygon
-                    key={region.id}
-                    points={region.points.map(([x, y]) => `${x},${y}`).join(' ')}
-                    fill={fill}
-                    stroke={stroke}
-                    strokeWidth={3}
-                    vectorEffect="non-scaling-stroke"
-                  />
-                )
-              }
-
-              return (
-                <rect
-                  key={region.id}
-                  x={region.x}
-                  y={region.y}
-                  width={region.width}
-                  height={region.height}
-                  fill={fill}
-                  stroke={stroke}
-                  strokeWidth={3}
-                  vectorEffect="non-scaling-stroke"
-                />
-              )
-            })}
-          </svg>
         )}
 
         {status === 'empty' && (
@@ -413,6 +448,12 @@ function GroundTruthMaskThumbnail({
             <span className="px-2 py-1 text-[10px] font-medium rounded bg-black/60 text-white">
               {t('chatComponents.imageRecommendation.gtMaskUnavailable')}
             </span>
+          </div>
+        )}
+
+        {status === 'error' && (
+          <div className="absolute inset-0 hidden items-center justify-center bg-gray-100">
+            <ImageOff className="w-8 h-8 text-gray-300" />
           </div>
         )}
       </div>
@@ -462,6 +503,8 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
   )
 
   useEffect(() => {
+    let active = true
+
     // Check cache first
     const cached = imageCache.get(filterKey)
     if (cached) {
@@ -469,10 +512,16 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
       setError(cached.error)
       setIsOverlayInfoLoading(false)
       setIsLoading(false)
-      return
+      return () => {
+        active = false
+      }
     }
 
-    loadImages()
+    void loadImages(() => active)
+
+    return () => {
+      active = false
+    }
   }, [filterKey])
 
   /**
@@ -508,19 +557,20 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
     return filtered
   }
 
-  const loadImages = async () => {
+  const loadImages = async (isActive: () => boolean = () => true) => {
+    if (!isActive()) return
     setIsLoading(true)
     setIsOverlayInfoLoading(false)
     setError(null)
     try {
       let displayImages: WSISummary[] = []
       let predictionByWsiId = new Map<string, string | null>()
+      let shouldHydrateLimitedImages = false
 
       // If has_predictions is true, fetch from results endpoint
       if (recommendation.filters?.has_predictions) {
         const resultsData = await fetchAllResults()
-        // Convert ResultWithWSI to WSISummary-like objects
-        let resultsWithWsi = resultsData.items
+        let resultsWithWsi = dedupeLatestResultsByWsi(resultsData.items)
 
         // Apply pred filter (filter by AI prediction result) - use exact match to avoid substring issues
         // e.g., "MSIH" should NOT match "nonMSIH"
@@ -539,31 +589,44 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
           )
         }
 
+        if (recommendation.filters?.dataset_id) {
+          const matchingWsiIds = await fetchWSIIds(
+            recommendation.filters.dataset_id,
+            recommendation.filters.data_type && recommendation.filters.data_type !== 'all'
+              ? recommendation.filters.data_type
+              : undefined,
+          )
+          const allowedIds = new Set(matchingWsiIds.items)
+          resultsWithWsi = resultsWithWsi.filter(r => allowedIds.has(r.wsi_id))
+        }
+
+        if (recommendation.filters?.data_type && recommendation.filters.data_type !== 'all') {
+          resultsWithWsi = resultsWithWsi.filter(r => inferResultDataType(r, recommendation) === recommendation.filters!.data_type)
+        }
+
         predictionByWsiId = new Map(resultsWithWsi.map(r => [r.wsi_id, r.pred ?? null]))
 
-        // We need to get full WSI info, so fetch WSI list and merge
-        const wsiResult = await fetchWSIList(recommendation.filters?.dataset_id)
-
-        // Filter to only WSIs that have predictions (and match both pred and label filters if specified)
-        const wsiIdsWithPredictions = new Set(resultsWithWsi.map(r => r.wsi_id))
-        let filtered = wsiResult.items.filter(w => wsiIdsWithPredictions.has(w.wsi_id))
-
-        // Apply event_status filter (for survival datasets: 0=censored, 1=event)
-        if (recommendation.filters?.event_status !== undefined && recommendation.filters?.event_status !== null) {
+        const requiresFullWsiScan = recommendation.filters?.event_status !== undefined && recommendation.filters?.event_status !== null
+        if (requiresFullWsiScan) {
+          const wsiResult = await fetchWSIList(recommendation.filters?.dataset_id)
+          const wsiIdsWithPredictions = new Set(resultsWithWsi.map(r => r.wsi_id))
+          let filtered = wsiResult.items.filter(w => wsiIdsWithPredictions.has(w.wsi_id))
           filtered = filtered.filter(s => s.event_status === recommendation.filters!.event_status)
-        }
 
-        // Apply data_type filter
-        if (recommendation.filters?.data_type && recommendation.filters.data_type !== 'all') {
-          filtered = filtered.filter(s => {
-            const fileType = getFileType(s.file_extension, s.file_size, s.data_type)
-            return recommendation.filters!.data_type === 'wsi'
-              ? fileType === 'WSI'
-              : fileType === 'Patch'
-          })
-        }
+          if (recommendation.filters?.data_type && recommendation.filters.data_type !== 'all') {
+            filtered = filtered.filter(s => {
+              const fileType = getFileType(s.file_extension, s.file_size, s.data_type)
+              return recommendation.filters!.data_type === 'wsi'
+                ? fileType === 'WSI'
+                : fileType === 'Patch'
+            })
+          }
 
-        displayImages = filtered
+          displayImages = filtered
+        } else {
+          displayImages = resultsWithWsi.map(result => buildPreviewSummaryFromResult(result, recommendation))
+          shouldHydrateLimitedImages = true
+        }
       } else {
         // Normal fetch without predictions filter
         displayImages = await fetchAndFilterWSIList(recommendation)
@@ -589,15 +652,44 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         resultPrediction: predictionByWsiId.get(img.wsi_id) ?? null,
       }))
 
+      if (!isActive()) return
       setImagesWithOverlays(baseImageInfo)
       setIsLoading(false)
 
+      const hydratedImagesPromise = shouldHydrateLimitedImages
+        ? mapWithConcurrencyLimit(limitedImages, DETAIL_FETCH_CONCURRENCY, async (img) => {
+          if (!isActive()) return null
+          try {
+            const detail = await fetchWSIDetail(img.wsi_id)
+            return isActive() ? detail.meta : null
+          } catch {
+            return null
+          }
+        })
+        : Promise.resolve<WSISummary[]>([])
+
       let imageOverlayInfo: ImageWithOverlays[]
       if (needsOverlayLookup) {
+        if (!isActive()) return
         setIsOverlayInfoLoading(true)
-        const overlayPromises = limitedImages.map(async (img) => {
+        imageOverlayInfo = await mapWithConcurrencyLimit(limitedImages, OVERLAY_FETCH_CONCURRENCY, async (img) => {
+          if (!isActive()) {
+            return {
+              image: img,
+              overlays: [],
+              resultPrediction: predictionByWsiId.get(img.wsi_id) ?? null,
+            }
+          }
+
           try {
             let overlays = await fetchAvailableHeatmaps(img.wsi_id)
+            if (!isActive()) {
+              return {
+                image: img,
+                overlays: [],
+                resultPrediction: predictionByWsiId.get(img.wsi_id) ?? null,
+              }
+            }
 
             // Apply heatmap_filter if specified
             if (recommendation.heatmap_filter) {
@@ -643,21 +735,35 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
             }
           }
         })
-        imageOverlayInfo = await Promise.all(overlayPromises)
       } else {
         imageOverlayInfo = baseImageInfo
       }
 
+      const hydratedImages = await hydratedImagesPromise
+      if (!isActive()) return
+      if (hydratedImages.length > 0) {
+        const hydratedById = new Map(hydratedImages.filter((img): img is WSISummary => !!img).map(img => [img.wsi_id, img]))
+        imageOverlayInfo = imageOverlayInfo.map(item => ({
+          ...item,
+          image: hydratedById.get(item.image.wsi_id)
+            ? { ...item.image, ...hydratedById.get(item.image.wsi_id)! }
+            : item.image,
+        }))
+      }
+
+      if (!isActive()) return
       setImagesWithOverlays(imageOverlayInfo)
       // Cache the result
       imageCache.set(filterKey, { images: imageOverlayInfo, error: null })
     } catch (err) {
+      if (!isActive()) return
       setImagesWithOverlays([])
       setError(t('chatComponents.imageRecommendation.failedToLoad'))
       console.error('Failed to load images:', err)
       // Cache the error state too
       imageCache.set(filterKey, { images: [], error: t('chatComponents.imageRecommendation.failedToLoad') })
     } finally {
+      if (!isActive()) return
       setIsOverlayInfoLoading(false)
       setIsLoading(false)
     }
@@ -704,7 +810,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
   return (
     <div className="mt-4 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="px-5 py-4 bg-gradient-to-r from-orange-50 to-amber-50 border-b border-gray-100">
+      <div className="px-3 py-3 sm:px-5 sm:py-4 bg-gradient-to-r from-orange-50 to-amber-50 border-b border-gray-100">
         <h3 className="font-semibold text-gray-900 flex items-center gap-2">
           <ImageIcon className="w-4 h-4 text-orange-600" />
           {t(isSegmentationCard
@@ -750,7 +856,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
       </div>
 
       {/* Content */}
-      <div className="p-4">
+      <div className="p-3 sm:p-4">
         {isLoading ? (
           <div className="flex items-center justify-center py-8 text-gray-500">
             <Loader2 className="w-5 h-5 animate-spin mr-2" />
@@ -777,25 +883,41 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
               const hasHeatmap = !!latestHeatmap
               const displayPrediction = resultPrediction ?? latestHeatmap?.prediction ?? null
               const showOverlayLoadingPlaceholder = needsOverlayLookup && isOverlayInfoLoading
+              // Count thumbnails to decide mobile layout: ≤2 → flex row, >2 → 2×2 grid
+              const thumbnailCount = 1
+                + (recommendation.show_heatmap && (hasHeatmap || showOverlayLoadingPlaceholder) ? 1 : 0)
+                + (wantsPredictionMask && fileType === 'Patch' ? 1 : 0)
+                + (wantsGroundTruthMask && fileType === 'Patch' ? 1 : 0)
+              const useDesktopSegmentationGridLayout = isSegmentationCard && fileType === 'Patch' && thumbnailCount === 4
+              const thumbnailClassName = useDesktopSegmentationGridLayout
+                ? 'relative flex-1 min-w-[60px] aspect-square md:w-full md:aspect-square group/img'
+                : 'relative flex-1 min-w-[60px] aspect-square md:flex-none md:flex-shrink-0 md:snap-start md:aspect-auto md:w-32 md:h-32 group/img'
+              const thumbnailSlotClassName = useDesktopSegmentationGridLayout
+                ? 'relative flex-1 min-w-[60px] aspect-square md:w-full md:aspect-square'
+                : 'relative flex-1 min-w-[60px] aspect-square md:flex-none md:flex-shrink-0 md:snap-start md:aspect-auto md:w-32 md:h-32'
+              const thumbnailsContainerClassName = useDesktopSegmentationGridLayout
+                ? `${thumbnailCount > 2 ? 'grid grid-cols-2' : 'flex'} gap-2 w-full md:grid md:grid-cols-4`
+                : `${thumbnailCount > 2 ? 'grid grid-cols-2' : 'flex'} gap-2 w-full md:flex md:w-auto md:overflow-x-auto md:snap-x md:[&::-webkit-scrollbar]:hidden md:[-ms-overflow-style:none] md:[scrollbar-width:none] md:shrink-0`
               return (
                 <div
                   key={image.wsi_id}
-                  className="group p-4 bg-gray-50 hover:bg-orange-50 rounded-xl border border-gray-200
-                             hover:border-orange-300 transition-all"
+                  className="group p-3 sm:p-4 bg-gray-50 hover:bg-orange-50 rounded-xl border border-gray-200 hover:border-orange-300 transition-all"
                 >
-                  <div className="flex flex-wrap items-center gap-4">
-                    {/* Images Container - Scrollable horizontal list */}
-                    <div className="flex gap-2 overflow-x-auto pb-0 snap-x [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] shrink-0 max-w-full">
+                  <div className={useDesktopSegmentationGridLayout ? 'flex flex-col gap-3' : 'flex flex-col md:flex-row md:flex-wrap md:items-start gap-3'}>
+                    {/* Images Container - keep 2×2 grid for >2 thumbnails on mobile/small screens; switch to horizontal strip on desktop */}
+                    <div className={thumbnailsContainerClassName}>
                       {/* Original image */}
                       <button
                         onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
-                        className="relative flex-shrink-0 snap-start group/img w-32 h-32"
+                        className={thumbnailClassName}
                       >
                         <div className="w-full h-full bg-gray-100 rounded-lg overflow-hidden border border-gray-200 group-hover/img:border-orange-300 shadow-sm transition-colors">
                           <img
-                            src={getThumbnailUrl(image.wsi_id, 256)}
+                            src={getThumbnailUrl(image.wsi_id, CARD_THUMBNAIL_SIZE)}
                             alt={image.original_filename}
                             className="w-full h-full object-cover"
+                            loading="lazy"
+                            decoding="async"
                             onError={(e) => {
                               e.currentTarget.style.display = 'none'
                               const placeholder = e.currentTarget.nextElementSibling as HTMLElement
@@ -845,6 +967,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                             badgeClassName="bg-green-100/90 text-green-700"
                             loadingColorClass="text-green-500"
                             fallback={<Layers className="w-8 h-8 text-gray-300" />}
+                            className={thumbnailClassName}
                           />
                         ) : showOverlayLoadingPlaceholder ? (
                           <PendingThumbnailSlot
@@ -852,39 +975,40 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                             badgeLabel={t('chatComponents.imageRecommendation.heatmap')}
                             badgeClassName="bg-green-100/90 text-green-700"
                             loadingColorClass="text-green-500"
+                            className={thumbnailSlotClassName}
                           />
                         ) : null
                       )}
 
                       {wantsPredictionMask && fileType === 'Patch' && (
                         latestSegmentationMask ? (
-                          <div className="shadow-sm rounded-lg">
-                            <OverlayThumbnailButton
-                              src={getSegMaskImageUrl(
-                                image.wsi_id,
-                                latestSegmentationMask.task_id || segmentationMaskConfig?.task_id,
-                                latestSegmentationMask.fold_key || undefined,
-                                CARD_THUMBNAIL_SIZE,
-                              )}
-                              alt={`${t('chatComponents.imageRecommendation.modelPredictionMask')}: ${image.original_filename}`}
-                              onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
-                              title={t('chatComponents.imageRecommendation.modelPredictionMask')}
-                              badgeLabel={t('chatComponents.imageRecommendation.modelPredictionMaskShort')}
-                              badgeClassName="bg-indigo-100/90 text-indigo-700"
-                              loadingColorClass="text-indigo-500"
-                              fallback={<Layers className="w-8 h-8 text-gray-300" />}
-                            />
-                          </div>
+                          <OverlayThumbnailButton
+                            src={getSegMaskImageUrl(
+                              image.wsi_id,
+                              latestSegmentationMask.task_id || segmentationMaskConfig?.task_id,
+                              latestSegmentationMask.fold_key || undefined,
+                              CARD_THUMBNAIL_SIZE,
+                            )}
+                            alt={`${t('chatComponents.imageRecommendation.modelPredictionMask')}: ${image.original_filename}`}
+                            onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
+                            title={t('chatComponents.imageRecommendation.modelPredictionMask')}
+                            badgeLabel={t('chatComponents.imageRecommendation.modelPredictionMaskShort')}
+                            badgeClassName="bg-indigo-100/90 text-indigo-700"
+                            loadingColorClass="text-indigo-500"
+                            fallback={<Layers className="w-8 h-8 text-gray-300" />}
+                            className={thumbnailClassName}
+                          />
                         ) : showOverlayLoadingPlaceholder ? (
                           <PendingThumbnailSlot
                             title={t('chatComponents.imageRecommendation.modelPredictionMask')}
                             badgeLabel={t('chatComponents.imageRecommendation.modelPredictionMaskShort')}
                             badgeClassName="bg-indigo-100/90 text-indigo-700"
                             loadingColorClass="text-indigo-500"
+                            className={thumbnailSlotClassName}
                           />
                         ) : (
-                          <div className="relative flex-shrink-0 snap-start w-32 h-32">
-                            <div className="w-full h-full bg-gray-100 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center p-3 text-center">
+                          <div className={thumbnailSlotClassName}>
+                            <div className="w-full h-full bg-gray-100 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center p-3 text-center">        
                               <div className="flex flex-col items-center gap-2 text-gray-500">
                                 <Layers className="w-6 h-6 opacity-50" />
                                 <span className="text-[10px] font-medium leading-tight">
@@ -902,7 +1026,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                       )}
 
                       {wantsGroundTruthMask && fileType === 'Patch' && (
-                        <div className="w-32 h-32 flex-shrink-0 snap-start shadow-sm rounded-lg">
+                        <div className={`${thumbnailSlotClassName} shadow-sm rounded-lg`}>
                           <GroundTruthMaskThumbnail
                             image={image}
                             onClick={() => handleImageClick(image.wsi_id, latestHeatmap)}
@@ -912,9 +1036,9 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                     </div>
 
                     {/* Image info */}
-                    <div className="flex-1 min-w-[240px] flex flex-col pt-1">
-                      <div className="flex justify-between items-start gap-2">
-                        <p className="text-base font-semibold text-gray-900 break-all leading-tight">
+                    <div className={`w-full md:min-w-0 flex flex-col pt-2 ${useDesktopSegmentationGridLayout ? 'md:pt-0' : 'md:flex-1 md:pt-1'}`}>
+                      <div className={useDesktopSegmentationGridLayout ? 'flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2' : 'flex justify-between items-start gap-2'}>
+                        <p className="text-sm sm:text-base font-semibold text-gray-900 break-all leading-tight">
                           {image.original_filename}
                         </p>
                         <button
@@ -943,9 +1067,9 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                           </div>
                         )}
                         {wantsPredictionMask && latestSegmentationMask?.task_name && (
-                          <div className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-md font-medium border border-indigo-100">
-                            <span className="font-bold text-indigo-500 uppercase tracking-wider text-[10px]">{t('chatComponents.imageRecommendation.maskModel')}</span>
-                            <span className="text-indigo-900">{latestSegmentationMask.task_name}</span>
+                          <div className="inline-flex max-w-full flex-wrap items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-md font-medium border border-indigo-100">
+                            <span className="shrink-0 font-bold text-indigo-500 uppercase tracking-wider text-[10px]">{t('chatComponents.imageRecommendation.maskModel')}</span>
+                            <span className="min-w-0 whitespace-normal break-words text-indigo-900">{latestSegmentationMask.task_name}</span>
                           </div>
                         )}
                         {image.event_status !== null && (
@@ -973,7 +1097,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
 
       {/* Footer */}
       {imagesWithOverlays.length > 0 && (
-        <div className="px-5 py-3 bg-gray-50 border-t border-gray-100">
+        <div className="px-3 py-2 sm:px-5 sm:py-3 bg-gray-50 border-t border-gray-100">
           <button
             onClick={() => {
               // Save scroll position and conversation ID before navigating

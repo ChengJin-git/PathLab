@@ -10,6 +10,11 @@ from pathlib import Path
 class Config:
     """Configuration for PathLab services"""
 
+    # ========== Default Ports (for debug mode) ==========
+    DEFAULT_GATEWAY_PORT = 6100
+    DEFAULT_PREPROCESSING_PORT = 6101
+    DEFAULT_AI_PORT = 6102
+
     # ========== Default URLs ==========
     DATABASE_URL_DEFAULT = "postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab"
     REDIS_URL_DEFAULT = "redis://localhost:6379/0"
@@ -22,9 +27,9 @@ class Config:
 
     # Service URLs (internal communication)
     # These will be dynamically set when services start with auto-discovered ports
-    AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://127.0.0.1:5102")
-    PREPROCESSING_SERVICE_URL = os.getenv("PREPROCESSING_SERVICE_URL", "http://127.0.0.1:5101")
-    GATEWAY_SERVICE_URL = os.getenv("GATEWAY_SERVICE_URL", "http://127.0.0.1:5100")
+    AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", f"http://127.0.0.1:{DEFAULT_AI_PORT}")
+    PREPROCESSING_SERVICE_URL = os.getenv("PREPROCESSING_SERVICE_URL", f"http://127.0.0.1:{DEFAULT_PREPROCESSING_PORT}")
+    GATEWAY_SERVICE_URL = os.getenv("GATEWAY_SERVICE_URL", f"http://127.0.0.1:{DEFAULT_GATEWAY_PORT}")
 
     # Cache settings
     SLIDE_CACHE_SIZE = int(os.getenv("SLIDE_CACHE_SIZE", "8"))
@@ -57,6 +62,10 @@ class Config:
 
     # Feature cache
     FEATURE_LOCK_TIMEOUT = 1800  # 30 minutes - large WSI feature extraction can take a while
+    COORDS_LOCK_TIMEOUT = int(os.getenv("COORDS_LOCK_TIMEOUT", str(FEATURE_LOCK_TIMEOUT)))
+    PREPROCESSING_MAX_CONCURRENT_COMPUTE_PATCHES = int(
+        os.getenv("PREPROCESSING_MAX_CONCURRENT_COMPUTE_PATCHES", "2")
+    )
 
     # Storage cache TTL
     STORAGE_STATS_CACHE_TTL = 3600  # 1 hour for fresh data
@@ -207,32 +216,6 @@ class Config:
     # These settings are shared across all users
 
     @classmethod
-    def resolve_search_provider(cls, settings: dict | None = None) -> str:
-        """Resolve the effective global search provider.
-
-        Priority:
-        1. Explicit ``search_provider`` setting when present and valid
-        2. Infer from which API key is configured
-        3. Fall back to ``exa`` to preserve existing AI Chat behavior
-        """
-        source = settings if settings is not None else cls._read_config()
-        configured = str(source.get("search_provider", "") or "").strip().lower()
-        if configured in {"exa", "tavily"}:
-            return configured
-
-        has_exa = bool(str(source.get("exa_api_key", "") or "").strip())
-        has_tavily = bool(str(source.get("tavily_api_key", "") or "").strip())
-        if has_exa and not has_tavily:
-            return "exa"
-        if has_tavily and not has_exa:
-            return "tavily"
-        if has_exa:
-            return "exa"
-        if has_tavily:
-            return "tavily"
-        return "exa"
-
-    @classmethod
     def get_global_settings(cls) -> dict:
         """Get all global settings."""
         data = cls._read_config()
@@ -243,37 +226,25 @@ class Config:
                 return value
             return value.lower() in ("true", "1", "yes")
 
-        # Turnstile settings (with reCAPTCHA key fallback for backward compatibility)
+        # Cloudflare Turnstile settings: prioritize environment variables over config file
+        # This allows deployment-time configuration via .env file
         turnstile_enabled_env = os.getenv("TURNSTILE_ENABLED")
-        if turnstile_enabled_env is None:
-            turnstile_enabled_env = os.getenv("RECAPTCHA_ENABLED")
         turnstile_enabled = (
-            str_to_bool(turnstile_enabled_env)
-            if turnstile_enabled_env is not None
-            else data.get("turnstile_enabled", data.get("recaptcha_enabled", False))
+            str_to_bool(turnstile_enabled_env) if turnstile_enabled_env is not None
+            else data.get("turnstile_enabled", False)
         )
 
-        turnstile_site_key = (
-            os.getenv("TURNSTILE_SITE_KEY")
-            or os.getenv("RECAPTCHA_SITE_KEY")
-            or data.get("turnstile_site_key", data.get("recaptcha_site_key", ""))
-        )
-        turnstile_secret_key = (
-            os.getenv("TURNSTILE_SECRET_KEY")
-            or os.getenv("RECAPTCHA_SECRET_KEY")
-            or data.get("turnstile_secret_key", data.get("recaptcha_secret_key", ""))
-        )
+        turnstile_site_key = os.getenv("TURNSTILE_SITE_KEY") or data.get("turnstile_site_key", "")
+        turnstile_secret_key = os.getenv("TURNSTILE_SECRET_KEY") or data.get("turnstile_secret_key", "")
 
         return {
             "openrouter_api_key": data.get("openrouter_api_key", ""),
             "openrouter_base_url": data.get("openrouter_base_url", "https://openrouter.ai/api/v1"),
-            "openrouter_model": data.get("openrouter_model", "qwen/qwen3-vl-235b-a22b-instruct"),
+            "openrouter_model": data.get("openrouter_model", "qwen/qwen3.5-plus-02-15"),
             "huggingface_token": data.get("huggingface_token", ""),
             "dashscope_api_key": data.get("dashscope_api_key", ""),
-            "search_provider": cls.resolve_search_provider(data),
+            # Exa Search API key for web search functionality
             "exa_api_key": data.get("exa_api_key", ""),
-            "tavily_api_key": data.get("tavily_api_key", ""),
-            "jina_api_key": data.get("jina_api_key", ""),
             # Local vLLM settings (OpenAI-compatible server for LLM)
             "local_vllm_enabled": data.get("local_vllm_enabled", False),
             "local_vllm_base_url": data.get("local_vllm_base_url", "http://127.0.0.1:8000/v1"),
@@ -284,14 +255,10 @@ class Config:
             "local_asr_base_url": data.get("local_asr_base_url", "ws://127.0.0.1:8001/api-ws/v1/realtime"),
             "local_asr_model": data.get("local_asr_model", ""),
             "local_asr_api_key": data.get("local_asr_api_key", ""),
-            # Cloudflare Turnstile settings
+            # Cloudflare Turnstile settings (from environment variables or config file)
             "turnstile_enabled": turnstile_enabled,
             "turnstile_site_key": turnstile_site_key,
             "turnstile_secret_key": turnstile_secret_key,
-            # Keep legacy keys for backward compatibility with older callers
-            "recaptcha_enabled": turnstile_enabled,
-            "recaptcha_site_key": turnstile_site_key,
-            "recaptcha_secret_key": turnstile_secret_key,
         }
 
     @classmethod
@@ -303,10 +270,8 @@ class Config:
             "openrouter_model",
             "huggingface_token",
             "dashscope_api_key",
-            "search_provider",
+            # Exa Search API key
             "exa_api_key",
-            "tavily_api_key",
-            "jina_api_key",
             # Local vLLM settings
             "local_vllm_enabled",
             "local_vllm_base_url",
@@ -321,10 +286,6 @@ class Config:
             "turnstile_enabled",
             "turnstile_site_key",
             "turnstile_secret_key",
-            # Legacy reCAPTCHA settings (still accepted)
-            "recaptcha_enabled",
-            "recaptcha_site_key",
-            "recaptcha_secret_key",
         }
         # Filter to only allowed keys
         filtered = {k: v for k, v in settings.items() if k in allowed_keys}
@@ -361,6 +322,56 @@ class Config:
         """Set maintenance mode status."""
         cls._write_config({"maintenance_mode": enabled})
 
+    @classmethod
+    def set_maintenance_mode_state(cls, enabled: bool, restore_user_ids: list[str] | None = None) -> None:
+        """Persist maintenance mode status together with its restoration snapshot."""
+        data = {"maintenance_mode": enabled}
+        if restore_user_ids is not None:
+            data["maintenance_mode_restore_user_ids"] = [str(user_id) for user_id in restore_user_ids]
+        cls._write_config(data)
+
+    @classmethod
+    def get_maintenance_mode_restore_user_ids(cls) -> list[str]:
+        """Get non-admin user IDs that should be restored when maintenance ends."""
+        config_data = cls._read_config()
+        user_ids = config_data.get("maintenance_mode_restore_user_ids", [])
+        if isinstance(user_ids, list):
+            return [str(user_id) for user_id in user_ids if user_id]
+        return []
+
+    @classmethod
+    def set_maintenance_mode_restore_user_ids(cls, user_ids: list[str]) -> None:
+        """Persist non-admin user IDs that were active before maintenance mode."""
+        cls._write_config({"maintenance_mode_restore_user_ids": [str(user_id) for user_id in user_ids]})
+
+    @classmethod
+    def clear_maintenance_mode_restore_user_ids(cls) -> None:
+        """Clear the stored maintenance-mode restoration snapshot."""
+        cls._write_config({"maintenance_mode_restore_user_ids": []})
+
+    # ========== Maintenance Notice (Announcement) ==========
+    @classmethod
+    def get_maintenance_notice(cls) -> dict | None:
+        """Get current maintenance notice. Returns {message, updated_at} or None."""
+        config_data = cls._read_config()
+        return config_data.get("maintenance_notice", None)
+
+    @classmethod
+    def set_maintenance_notice(cls, message: str | None) -> dict | None:
+        """Set or clear maintenance notice. Returns the saved notice or None."""
+        from datetime import datetime, timezone
+        if message and message.strip():
+            notice = {
+                "message": message.strip(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+            cls._write_config({"maintenance_notice": notice})
+            return notice
+        else:
+            cls._write_config({"maintenance_notice": None})
+            return None
+
 
 # Create singleton instance
 config = Config()
+

@@ -32,7 +32,7 @@ import { AudioVisualizer } from '../components/common/AudioVisualizer'
 
 // Extracted modules
 import AssistantMessage, { parseSubmitTask, parseCancelTaskNow, isInternalOnlyMessage, removeContextLimitBlock, removeResponseTruncatedBlock } from '../components/chat/AssistantMessage'
-import { sanitizeConfigBlocksForAI, isPdfContextMessage } from '../lib/chatMessageParser'
+import { preserveContentOnClearMarker, sanitizeConfigBlocksForAI, isPdfContextMessage } from '../lib/chatMessageParser'
 import { SCENARIO_CARDS } from '../constants/scenarios'
 
 // Chat component imports still needed by AIChatPage main body
@@ -1273,11 +1273,14 @@ export default function AIChatPage() {
             cancelAnimationFrame(rafId)
             rafId = null
           }
+          const buffered = chunkBuffer
           chunkBuffer = ''
           const currentId = trackingId
           setMessages(prev =>
             prev.map(m =>
-              m.id === currentId ? { ...m, content: '' } : m
+              m.id === currentId
+                ? { ...m, content: preserveContentOnClearMarker(m.content + buffered) }
+                : m
             )
           )
           return
@@ -2598,15 +2601,19 @@ export default function AIChatPage() {
                         )
                       })()
                     ) : message.content === '' ? (
-                      // ChatGPT-like Thinking Indicator with staggered bouncing dots
-                      <div className="flex items-center gap-2.5 py-2" aria-busy="true">
-                        <div className="flex items-center gap-1" aria-hidden="true">
-                          <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '0ms', animationDuration: '1.2s' }} />
-                          <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '200ms', animationDuration: '1.2s' }} />
-                          <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '400ms', animationDuration: '1.2s' }} />
+                      isGenerating && index === messages.length - 1 ? (
+                        // ChatGPT-like Thinking Indicator with staggered bouncing dots
+                        <div className="flex items-center gap-2.5 py-2" aria-busy="true">
+                          <div className="flex items-center gap-1" aria-hidden="true">
+                            <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '0ms', animationDuration: '1.2s' }} />
+                            <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '200ms', animationDuration: '1.2s' }} />
+                            <div className="w-2 h-2 bg-primary-400 rounded-full animate-bounce" style={{ animationDelay: '400ms', animationDuration: '1.2s' }} />
+                          </div>
+                          <span className="text-sm font-medium text-gray-400">{t('aiChat.thinking')}</span>
                         </div>
-                        <span className="text-sm font-medium text-gray-400">{t('aiChat.thinking')}</span>
-                      </div>
+                      ) : (
+                        <div className="py-2 text-sm text-gray-400">{t('aiChat.aiErrorFallback')}</div>
+                      )
                     ) : (
                       (() => {
                         const referenceImages = (() => {

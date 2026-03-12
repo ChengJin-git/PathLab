@@ -1,5 +1,7 @@
 # OpenSeadragon Assets
 
+> 随 `PathLab v1.0.0` 一起发布的本地静态资源说明。
+
 This directory stores the static image assets bundled with PathLab's local OpenSeadragon distribution.
 
 ## What is here

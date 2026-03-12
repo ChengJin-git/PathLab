@@ -21,7 +21,9 @@ import traceback
 import time
 import uuid
 import gc
+import contextvars
 from dataclasses import dataclass
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Literal
 from datetime import datetime, timedelta
@@ -35,6 +37,20 @@ from .transformers_runtime import ensure_transformers_runtime_ready
 
 _pdf_cache_dir: Path | None = None
 PDF_CACHE_TTL_DAYS = 7
+_marker_gpu_queue_override: contextvars.ContextVar[bool | None] = contextvars.ContextVar(
+    "marker_gpu_queue_override",
+    default=None,
+)
+
+
+@contextmanager
+def override_marker_gpu_queue(skip: bool):
+    """Temporarily override whether Marker should bypass the shared GPU queue."""
+    token = _marker_gpu_queue_override.set(bool(skip))
+    try:
+        yield
+    finally:
+        _marker_gpu_queue_override.reset(token)
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -45,6 +61,13 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 def _should_skip_marker_gpu_queue() -> tuple[bool, str]:
+    override = _marker_gpu_queue_override.get()
+    if override is not None:
+        if override:
+            return True, "Skipping Marker GPU queue because a call-scoped override is enabled"
+        return False, "Using Marker GPU queue because a call-scoped override is disabled"
+    if _env_flag("PDF_SKIP_MARKER_GPU_QUEUE", False):
+        return True, "Skipping Marker GPU queue because PDF_SKIP_MARKER_GPU_QUEUE is enabled"
     return False, "Using GPU queue first for Marker best-effort parse"
 
 
@@ -2249,7 +2272,12 @@ async def _parse_pdf_with_marker_best_effort(
             marker_result = None
     else:
         fallback_detail = routing_detail
-        marker_result = None
+        marker_result = await _parse_pdf_with_marker_direct_gpu_if_available(
+            pdf_bytes,
+            max_pages,
+            images_output_dir,
+            images_url_prefix,
+        )
 
     if marker_result is None:
         if upgrade_url:
@@ -3526,6 +3554,42 @@ async def _parse_pdf_with_marker_on_assigned_gpu(
         return None
 
 
+async def _parse_pdf_with_marker_direct_gpu_if_available(
+    pdf_bytes: bytes,
+    max_pages: int,
+    images_output_dir: Path | None,
+    images_url_prefix: str | None,
+) -> ParsedPdfResult | None:
+    """Run Marker directly on the best currently-available GPU without using the shared queue."""
+    try:
+        from backend.common.gpu_utils import select_optimal_gpu_for_task
+    except ImportError as e:
+        logger.warning(f"[Marker] GPU utilities unavailable for direct GPU parse: {e}")
+        return None
+
+    min_vram_mb = max(0.0, float(Config.DEFAULT_MIN_VRAM_MB))
+    gpu_index, free_mb = select_optimal_gpu_for_task(min_vram_mb)
+    if gpu_index < 0:
+        logger.info(
+            f"[Marker] No GPU currently satisfies direct Marker parse requirement "
+            f"({min_vram_mb:.0f} MB free VRAM minimum); falling back from standalone direct-GPU path"
+        )
+        return None
+
+    assigned_device = f"cuda:{gpu_index}"
+    logger.info(
+        f"[Marker] Skipping queue and using direct GPU parse on {assigned_device} "
+        f"with ~{free_mb:.0f} MB free VRAM"
+    )
+    return await _parse_pdf_with_marker_on_assigned_gpu(
+        pdf_bytes,
+        max_pages,
+        images_output_dir,
+        images_url_prefix,
+        assigned_device,
+    )
+
+
 async def _parse_pdf_with_marker_via_gpu_queue(
     pdf_bytes: bytes,
     max_pages: int,
@@ -3609,7 +3673,7 @@ async def _parse_pdf_with_marker_via_gpu_queue(
                     detail = (
                         f"Marker GPU result not ready after {wait_timeout_seconds:.1f}s and task {task_id} "
                         f"had not started on GPU; "
-                        (
+                        + (
                             "skipping CPU fallback for background upgrade"
                             if upgrade_url
                             else "falling back to CPU"

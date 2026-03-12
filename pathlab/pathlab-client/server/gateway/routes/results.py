@@ -3790,8 +3790,9 @@ async def _run_external_validation(
     from backend.database.database import safe_session
     from backend.common.progress_store import set_progress, clear_progress
     from gateway.pipeline import ScopedLogger
-    from gateway.dependencies import PREPROCESSING_SERVICE_URL, AI_SERVICE_URL
+    from gateway.dependencies import AI_SERVICE_URL
     from backend.ai.tasks.feature_cache import compute_params_hash, find_cached_features, create_symlink_to_cache
+    from gateway.utils import ensure_coords_ready
 
     wsi_ids = wsi_ids or []
 
@@ -4027,6 +4028,20 @@ async def _run_external_validation(
         level = preprocessing_config.get("level", 0)
         contour_fn = preprocessing_config.get("contour_fn", "four_pt")
         use_padding = preprocessing_config.get("use_padding", True)
+        coords_request_params = {
+            "level": level,
+            "force_recompute": False,
+            "sthresh": seg_params["sthresh"],
+            "mthresh": seg_params["mthresh"],
+            "close": seg_params["close"],
+            "use_otsu": seg_params["use_otsu"],
+            "contour_fn": contour_fn,
+            "use_padding": use_padding,
+            "a_t": filter_params["a_t"],
+            "a_h": filter_params["a_h"],
+            "max_n_holes": filter_params["max_n_holes"],
+            "save_mask": True,
+        }
 
         params_hash = compute_params_hash(
             level=level,
@@ -4075,67 +4090,48 @@ async def _run_external_validation(
             for idx, wsi_id in enumerate(missing_wsi_ids, 1):
                 await asyncio.sleep(0)  # Yield to event loop
 
-                # Retry logic: If preprocessing worker crashes, retry with backoff
-                max_retries = 3
                 coords_result = None
                 coords_error = None
 
-                for attempt in range(1, max_retries + 1):
+                async def _log_retry(attempt: int, max_retries: int, retry_err: Exception, wait_secs: int):
+                    async with logger_manager.session() as (tl, _db):
+                        await tl.warning(
+                            f"[{idx}/{total_missing}] compute_patches attempt {attempt}/{max_retries} "
+                            f"failed for {wsi_id}: {type(retry_err).__name__}. "
+                            f"Retrying in {wait_secs}s (cached coords will be used on retry)...",
+                            metadata={"wsi_id": wsi_id, "attempt": attempt, "error": str(retry_err)}
+                        )
+
+                async def _log_lock_wait(wait_seconds: float):
+                    async with logger_manager.session() as (tl, _db):
+                        await tl.info(
+                            f"[{idx}/{total_missing}] Waiting {wait_seconds:.0f}s for shared coords extraction lock on {wsi_id}",
+                            metadata={"wsi_id": wsi_id, "wait_seconds": wait_seconds}
+                        )
+
+                try:
+                    coords_result = await ensure_coords_ready(
+                        wsi_id,
+                        params=coords_request_params,
+                        timeout=600.0,
+                        uploads_root=uploads_dir,
+                        on_retry=_log_retry,
+                        on_lock_wait=_log_lock_wait,
+                    )
+                except httpx.HTTPStatusError as http_err:
+                    coords_error = http_err
                     try:
-                        async with httpx.AsyncClient(timeout=600.0) as client:
-                            response = await client.post(
-                                f"{PREPROCESSING_SERVICE_URL}/wsi/{wsi_id}/compute_patches",
-                                params={
-                                    "level": level,
-                                    "force_recompute": False,  # Allow cache reuse
-                                    "sthresh": seg_params["sthresh"],
-                                    "mthresh": seg_params["mthresh"],
-                                    "close": seg_params["close"],
-                                    "use_otsu": seg_params["use_otsu"],
-                                    "contour_fn": contour_fn,
-                                    "use_padding": use_padding,
-                                    "a_t": filter_params["a_t"],
-                                    "a_h": filter_params["a_h"],
-                                    "max_n_holes": filter_params["max_n_holes"],
-                                    "save_mask": True,
-                                },
-                            )
-                            response.raise_for_status()
-                            coords_result = response.json()
-                            break  # Success, exit retry loop
-                    except (httpx.RemoteProtocolError, httpx.ConnectError) as retry_err:
-                        # Worker crash (segfault) or connection refused (worker restarting)
-                        coords_error = retry_err
-                        if attempt < max_retries:
-                            wait_secs = attempt * 3  # 3s, 6s, 9s backoff
-                            async with logger_manager.session() as (tl, _db):
-                                await tl.warning(
-                                    f"[{idx}/{total_missing}] compute_patches attempt {attempt}/{max_retries} "
-                                    f"failed for {wsi_id}: {type(retry_err).__name__}. "
-                                    f"Retrying in {wait_secs}s (cached coords will be used on retry)...",
-                                    metadata={"wsi_id": wsi_id, "attempt": attempt, "error": str(retry_err)}
-                                )
-                            await asyncio.sleep(wait_secs)
-                        else:
-                            # Final attempt failed
-                            pass
-                    except httpx.HTTPStatusError as http_err:
-                        # HTTP error (4xx, 5xx) - likely not recoverable with retry
-                        coords_error = http_err
-                        try:
-                            resp_body = http_err.response.text[:500] if http_err.response else ""
-                        except Exception:
-                            resp_body = "(unable to read response body)"
-                        async with logger_manager.session() as (tl, _db):
-                            await tl.warning(
-                                f"[{idx}/{total_missing}] Patch extraction failed for {wsi_id}: "
-                                f"HTTP {http_err.response.status_code if http_err.response else 'N/A'} - {resp_body}",
-                                metadata={"wsi_id": wsi_id, "error": str(http_err), "response_body": resp_body}
-                            )
-                        break  # Don't retry HTTP errors
-                    except Exception as e:
-                        coords_error = e
-                        break  # Unknown error, don't retry
+                        resp_body = http_err.response.text[:500] if http_err.response else ""
+                    except Exception:
+                        resp_body = "(unable to read response body)"
+                    async with logger_manager.session() as (tl, _db):
+                        await tl.warning(
+                            f"[{idx}/{total_missing}] Patch extraction failed for {wsi_id}: "
+                            f"HTTP {http_err.response.status_code if http_err.response else 'N/A'} - {resp_body}",
+                            metadata={"wsi_id": wsi_id, "error": str(http_err), "response_body": resp_body}
+                        )
+                except Exception as e:
+                    coords_error = e
 
                 # Handle result
                 if coords_result is not None:

@@ -704,25 +704,64 @@ async def set_maintenance_mode(
     """
     Set maintenance mode (admin only).
     When enabled, all non-admin users are deactivated and cannot log in.
-    When disabled, users remain in their current state (manual reactivation needed).
+    When disabled, users that were active before maintenance are restored.
     """
-    # Save maintenance mode state
-    Config.set_maintenance_mode(request.enabled)
+    previous_enabled = Config.get_maintenance_mode()
 
     affected_users = 0
 
     if request.enabled:
+        if previous_enabled:
+            logger.info(f"Admin {admin.email} requested maintenance mode enable, but it is already enabled")
+            return {"enabled": True, "affected_users": 0}
+
         # Deactivate all non-admin users
         result = await db.execute(select(User).where(User.role != "admin"))
         users = result.scalars().all()
+        restore_user_ids: list[str] = []
+
         for user in users:
             if user.is_active:
+                restore_user_ids.append(str(user.id))
                 user.is_active = False
                 affected_users += 1
+
+        Config.set_maintenance_mode_state(True, restore_user_ids)
         await db.commit()
         logger.info(f"Admin {admin.email} enabled maintenance mode, deactivated {affected_users} users")
     else:
-        logger.info(f"Admin {admin.email} disabled maintenance mode")
+        if not previous_enabled:
+            Config.set_maintenance_mode_state(False, [])
+            logger.info(f"Admin {admin.email} requested maintenance mode disable, but it is already disabled")
+            return {"enabled": False, "affected_users": 0}
+
+        import uuid
+
+        restore_user_ids = Config.get_maintenance_mode_restore_user_ids()
+        restore_user_uuids = []
+
+        for user_id in restore_user_ids:
+            try:
+                restore_user_uuids.append(uuid.UUID(user_id))
+            except (TypeError, ValueError):
+                logger.warning(f"Skipping invalid maintenance restore user id: {user_id}")
+
+        if restore_user_uuids:
+            result = await db.execute(
+                select(User).where(
+                    User.role != "admin",
+                    User.id.in_(restore_user_uuids),
+                )
+            )
+            users = result.scalars().all()
+            for user in users:
+                if not user.is_active:
+                    user.is_active = True
+                    affected_users += 1
+
+        await db.commit()
+        Config.set_maintenance_mode_state(False, [])
+        logger.info(f"Admin {admin.email} disabled maintenance mode, restored {affected_users} users")
 
     return {"enabled": request.enabled, "affected_users": affected_users}
 

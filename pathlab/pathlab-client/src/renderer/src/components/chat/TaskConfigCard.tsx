@@ -34,6 +34,7 @@ import {
   isSegFmEncoder,
   normalizeSegmentationLossConfig,
 } from '../../constants/training'
+import { parseLastChatBlockJson, stripChatBlocks } from './chatBlockParsing'
 
 // Simplified config from Agent (doesn't include wsi_ids, etc.)
 // Note: tile_size removed - PrePATH-style tiling auto-determines patch_size based on WSI magnification
@@ -124,13 +125,10 @@ const FIELD_OPTIONS = {
  * Parse [TASK_CONFIG] block from message content
  */
 export function parseTaskConfig(content: string): AgentTaskConfig | null {
-  const match = content.match(/\[TASK_CONFIG\]([\s\S]*?)\[\/TASK_CONFIG\]/)
-  if (!match) return null
+  const config = parseLastChatBlockJson<AgentTaskConfig>(content, 'TASK_CONFIG', { allowIncompleteLast: true })
+  if (!config) return null
 
   try {
-    const jsonStr = match[1].trim()
-    const config = JSON.parse(jsonStr)
-
     if (config && (config.task_type === 'segmentation' || Array.isArray(config.seg_loss_names))) {
       const normalizedLossConfig = normalizeSegmentationLossConfig(config.seg_loss_names, config.seg_loss_weights)
       config.seg_loss_names = normalizedLossConfig.lossNames
@@ -192,7 +190,7 @@ function normalizeSplitStrategy(
  * Remove [TASK_CONFIG] block from content for display
  */
 export function removeTaskConfigBlock(content: string): string {
-  return content.replace(/\[TASK_CONFIG\][\s\S]*?\[\/TASK_CONFIG\]/g, '').trim()
+  return stripChatBlocks(content, 'TASK_CONFIG').trim()
 }
 
 export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange, messageId, onHelpfulnessFeedback, savedHelpfulnessFeedback, submitTrigger }: TaskConfigCardProps) {

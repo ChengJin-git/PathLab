@@ -11,6 +11,10 @@ import re
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
+from ..knowledge.chat import (
+    FEATURE_EXTRACTOR_META_PATH,
+)
+
 PROMPTS_DIR = Path(__file__).parent
 
 # Cache loaded templates to avoid repeated file I/O
@@ -111,7 +115,7 @@ def _load_feature_extractor_meta() -> Dict[str, Any]:
     if _feature_extractor_meta_cache is not None:
         return _feature_extractor_meta_cache
 
-    meta_path = PROMPTS_DIR / "feature_extractors_meta.json"
+    meta_path = FEATURE_EXTRACTOR_META_PATH
     if not meta_path.exists():
         _feature_extractor_meta_cache = {"metadata_version": 1, "extractors": {}}
         return _feature_extractor_meta_cache
@@ -142,9 +146,11 @@ def _build_feature_extractor_reference(lang: str) -> str:
     - For names like "GPFM", always use the provided expansion and
       description (Generalizable Pathology Foundation Model), and NEVER
       reinterpret it as "General Purpose Foundation Model".
-    - Only ask for web search (via [WEB_SEARCH]) when the *user
-      explicitly* asks for papers, external benchmarks, or latest
-      research beyond PathLab's own integration.
+    - Ask for web search (via [WEB_SEARCH]) when the user explicitly
+      asks for papers, external benchmarks, or latest research beyond
+      PathLab's own integration, OR when a current evidence-based
+      training recommendation depends on external benchmark/literature
+      evidence.
     """
 
     if lang not in SUPPORTED_LANGS:
@@ -159,34 +165,37 @@ def _build_feature_extractor_reference(lang: str) -> str:
     if lang == "zh_CN":
         header = (
             "\n\n## 特征提取器参考（严格遵守）\n\n"
-            "下面是 PathLab 当前内置的特征提取器列表。回答相关问题时：\n"
+            "下面是可引用的特征提取器参考。回答相关问题时：\n"
             "- **只使用这里列出的名称和简介**，不要编造新的特征提取器；\n"
+            "- **不要告诉用户总共有多少个特征提取器**，也不要自己数数后输出总数；如需回答范围，只说有多个受支持选项，并根据任务给出相关候选；\n"
             "- **不要改变或推测含义**，尤其是 GPFM，只能理解为 Generalizable Pathology Foundation Model；\n"
-            "- **只有当用户明确要求“帮我查论文 / 更多背景 / 最新进展”时，才使用 [WEB_SEARCH] 查找外部资料。**\n\n"
-            "可用特征提取器（按 id 排序）：\n"
+            "- **当用户明确要求“帮我查论文 / 更多背景 / 最新进展”时，或当训练推荐明显需要外部 benchmark / 文献证据时，才使用 [WEB_SEARCH] 查找外部资料。**\n\n"
+            "支持的特征提取器参考（按 id 排序）：\n"
         )
         desc_key = "desc_zh_CN"
         line_template = "- {display_name}（id: {id}，backbone: {backbone}，dim: {dim}）：{desc}\n"
     elif lang == "zh_HK":
         header = (
             "\n\n## 特徵提取器參考（必須遵守）\n\n"
-            "以下是 PathLab 目前內置的特徵提取器。回應相關問題時：\n"
+            "以下是可引用的特徵提取器參考。回應相關問題時：\n"
             "- **只使用這裡列出的名稱和簡介**，不要編造新的特徵提取器；\n"
+            "- **不要告訴使用者總共有多少個特徵提取器**，也不要自己數數後輸出總數；如需回答範圍，只說有多個受支援選項，並按任務給出相關候選；\n"
             "- **不要改變或猜測含義**，特別是 GPFM，只能理解為 Generalizable Pathology Foundation Model；\n"
-            "- **只有當使用者明確要求「幫我查論文 / 更多背景 / 最新進展」時，才使用 [WEB_SEARCH] 查找外部資料。**\n\n"
-            "可用特徵提取器（按 id 排序）：\n"
+            "- **當使用者明確要求「幫我查論文 / 更多背景 / 最新進展」時，或當訓練推薦明顯需要外部 benchmark / 文獻證據時，才使用 [WEB_SEARCH] 查找外部資料。**\n\n"
+            "支援的特徵提取器參考（按 id 排序）：\n"
         )
         desc_key = "desc_zh_HK"
         line_template = "- {display_name}（id: {id}，backbone: {backbone}，dim: {dim}）：{desc}\n"
     else:  # "en"
         header = (
             "\n\n## Feature Extractor Reference (authoritative)\n\n"
-            "The following feature extractors are **officially supported** in PathLab. When answering questions about them:\n"
+            "The following is the feature extractor reference to cite from. When answering questions about them:\n"
             "- **Only use the names and descriptions listed here**; never invent new extractors;\n"
+            "- **Do not tell the user the total number of feature extractors** and do not count them yourself for the reply; if scope matters, just say there are multiple supported options and narrow to task-relevant candidates;\n"
             "- **Do not change or guess meanings** – in particular, GPFM **must** be understood as Generalizable Pathology Foundation Model,\n"
             "  not \"General Purpose Foundation Model\";\n"
-            "- **Only request web search ([WEB_SEARCH]) when the user explicitly asks** for papers, external benchmarks, or latest research beyond PathLab.\n\n"
-            "Supported feature extractors (sorted by id):\n"
+            "- **Request web search ([WEB_SEARCH]) when the user explicitly asks** for papers, external benchmarks, or latest research beyond PathLab, **or when an evidence-based training recommendation clearly depends on current external benchmark/literature evidence.**\n\n"
+            "Supported feature extractor reference (sorted by id):\n"
         )
         desc_key = "desc_en"
         line_template = "- {display_name} (id: {id}, backbone: {backbone}, dim: {dim}): {desc}\n"
@@ -219,7 +228,7 @@ def get_chat_system_prompt(lang: Optional[str] = None) -> str:
 
     This concatenates the language-specific base prompt with an
     auto-generated **Feature Extractor Reference** section built from
-    ``feature_extractors_meta.json``.
+    ``knowledge/chat/feature_extractors_meta.json``.
 
     If anything goes wrong when building the reference (missing file,
     JSON parse error, etc.), the function gracefully falls back to the

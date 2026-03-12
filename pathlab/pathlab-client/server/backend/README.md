@@ -1,5 +1,7 @@
 # PathLab Backend Services
 
+> 适用版本：`PathLab v1.0.0`
+
 `server/backend/` 存放 Gateway 共享的核心后端模块、两个内部 FastAPI 服务（Preprocessing / AI）的具体实现，以及一个当前未纳入默认 sidecar 启动链的 `deep-research/` 代码树。
 
 ## 当前模块划分
@@ -68,6 +70,7 @@ backend/
 - 统一配置：`common/config.py`
 - Redis 客户端 / 连接管理位于 `common/` 下
 - 端口与服务发现工具：`common/port_utils.py` 等
+- 持久化全局设置当前覆盖 `openrouter`、`huggingface`、`dashscope`、`exa`、`local_vllm`、`local_asr`、`turnstile` 等键
 
 ### 存储
 

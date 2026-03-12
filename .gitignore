@@ -1,6 +1,7 @@
 # checkpoints of feature extractors
 pathlab/pathlab-client/server/backend/ai/extractors/checkpoints
 pathlab/pathlab-client/server/backend/ai/segmentors/checkpoints
+pathlab/pathlab-client/server/gateway/knowledge/chat/training_rag/
 # Python
 __pycache__/
 *.py[cod]

@@ -1,5 +1,7 @@
 # PathLab Frontend
 
+> 适用版本：`PathLab v1.0.0`
+
 `src/renderer/` 是当前前端打包与浏览器构建目录，既服务 Electron 渲染进程，也支持独立 Web 构建。
 
 ## 当前实现概览

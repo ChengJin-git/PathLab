@@ -1,5 +1,7 @@
 # PathLab Deployment
 
+> 适用版本：`PathLab v1.0.0`
+
 `deploy/` 目录保存的是当前**固定端口 Web / 运维部署**所需脚本与配置，不是 Electron 桌面打包流程。
 
 ## 当前文件用途
@@ -50,6 +52,7 @@
 当前实现里：
 
 - `frontend` 会先构建到临时目录，补拷 `public/assets` / `public/images`，再原子替换 `dist/`
+- `frontend` 在 `node_modules/` 缺失或 `vite` 可执行文件不完整时，会先执行一次 `npm install --silent`
 - `backend` 会按 `AI → Preprocessing → Gateway` 顺序滚动重启
 - `preprocessing` 会读取 `PREPROCESSING_WORKERS` 与 `PREPROCESSING_MAX_REQUESTS`
 

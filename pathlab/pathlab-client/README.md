@@ -1,5 +1,7 @@
 # PathLab Client
 
+> 适用版本：`PathLab v1.0.0`
+
 `pathlab-client/` 是当前主应用目录，包含 Electron 宿主、React 渲染层、Python sidecar，以及固定端口部署所需的运维脚本。
 
 ## 当前入口文件
@@ -72,7 +74,7 @@ pathlab-client/
 
 ## 当前已确认的实现事实
 
-- Gateway 当前直接注册 16 个顶层 router，并组合若干分析 / 聊天 / 存储辅助模块
+- Gateway 当前直接注册 16 个顶层 router；`server/gateway/routes/` 目录里实际共有 32 个路由模块文件，其中一部分作为分析 / 聊天 / 存储辅助模块被复用
 - 数据库当前可见 ORM 表为 17 个，其中标注表为 `segmentation_annotations`
 - 前端构建更应以 `vite.config.ts`、`electron.vite.config.ts` 与 `deploy/` 脚本为准，而不是沿用旧版 README 的脚本描述
 - 仓库中虽有 `server/backend/deep-research/` 目录，但当前 README 不再把它当作独立运行模块或单独文档入口

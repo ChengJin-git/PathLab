@@ -189,6 +189,15 @@ export async function getWSIGroundTruth(wsiId: string): Promise<DatasetGroundTru
 }
 
 /**
+ * Get a cached GT thumbnail image URL for recommendation card previews.
+ */
+export function getGroundTruthThumbnailUrl(wsiId: string, size: number = 160): string {
+  return withAuthTokenQuery(
+    `${API_BASE}/annotation/wsi/${encodeURIComponent(wsiId)}/ground-truth-thumbnail?size=${encodeURIComponent(String(size))}`
+  )
+}
+
+/**
  * Get a lightweight whole-dataset annotation summary.
  */
 export async function getDatasetAnnotationSummary(datasetId: string): Promise<DatasetAnnotationSummaryResponse> {

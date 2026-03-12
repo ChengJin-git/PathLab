@@ -11,8 +11,9 @@ import uuid
 import asyncio
 from copy import deepcopy
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Depends
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.responses import FileResponse, StreamingResponse
+from PIL import Image, ImageColor, ImageDraw
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -26,6 +27,7 @@ from backend.auth.dependencies import (
     get_user_from_token_param,
     get_wsi_with_access,
 )
+from backend.common.config import Config
 from backend.common.coco_utils import coco_to_roi_annotations
 from backend.common.file_types import is_patch_file
 from backend.common.annotation_summary_cache import (
@@ -49,6 +51,10 @@ from ..models import (
 from ..utils import request_preprocessing_service
 
 router = APIRouter(prefix="/annotation", tags=["Annotation"])
+
+GROUND_TRUTH_PREVIEW_CACHE_VERSION = 1
+GROUND_TRUTH_PREVIEW_CACHE_HEADERS = {"Cache-Control": "private, max-age=600"}
+GROUND_TRUTH_PREVIEW_CACHE_DIR = Config.get_uploads_dir() / "metadata" / "ground_truth_previews"
 
 
 def _normalize_polygon_points(points):
@@ -158,6 +164,240 @@ def _get_gt_image_dimensions_for_wsi(record, wsi):
             return int(width), int(height)
 
     return None, None
+
+
+def _ground_truth_preview_path(wsi_id: str, size: int) -> Path:
+    GROUND_TRUTH_PREVIEW_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return GROUND_TRUTH_PREVIEW_CACHE_DIR / f"{wsi_id}_s{int(size)}.png"
+
+
+def _ground_truth_preview_metadata_path(preview_path: Path) -> Path:
+    return preview_path.with_suffix(".json")
+
+
+def _delete_preview_file_if_possible(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        logger.warning("Failed to delete GT preview cache file %s: %s", path, exc)
+
+
+def _write_ground_truth_preview_metadata(metadata_path: Path, cache_key: dict) -> None:
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_metadata_path = metadata_path.with_name(f"{metadata_path.name}.tmp")
+    _delete_preview_file_if_possible(temp_metadata_path)
+    try:
+        temp_metadata_path.write_text(
+            json.dumps({"cache_key": cache_key}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temp_metadata_path.replace(metadata_path)
+    except Exception:
+        _delete_preview_file_if_possible(temp_metadata_path)
+        raise
+
+
+def _save_ground_truth_preview_image(preview_image, preview_path: Path) -> None:
+    preview_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_preview_path = preview_path.with_name(f"{preview_path.name}.tmp")
+    _delete_preview_file_if_possible(temp_preview_path)
+
+    image_to_save = preview_image.copy()
+    image_to_save.info.pop("icc_profile", None)
+
+    try:
+        image_to_save.save(temp_preview_path, format="PNG")
+        temp_preview_path.replace(preview_path)
+    except Exception:
+        _delete_preview_file_if_possible(temp_preview_path)
+        raise
+
+
+def _is_ground_truth_preview_cache_valid(preview_path: Path, cache_key: dict) -> bool:
+    metadata_path = _ground_truth_preview_metadata_path(preview_path)
+    if not preview_path.exists() or not metadata_path.exists():
+        return False
+
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if metadata.get("cache_key") != cache_key:
+            return False
+        with Image.open(preview_path) as preview:
+            preview.load()
+        return True
+    except Exception as exc:
+        logger.warning("Unreadable GT preview cache %s, will regenerate: %s", preview_path, exc)
+        _delete_preview_file_if_possible(preview_path)
+        _delete_preview_file_if_possible(metadata_path)
+        return False
+
+
+def _load_patch_thumbnail(file_path: Path, size: int):
+    with Image.open(file_path) as img:
+        try:
+            img.draft("RGB", (size, size))
+        except Exception:
+            pass
+
+        img.thumbnail((size, size), Image.Resampling.LANCZOS)
+        return img.convert("RGB")
+
+
+def _color_to_rgba(color: str | None, alpha: int) -> tuple[int, int, int, int]:
+    if not color:
+        return (139, 92, 246, alpha)
+
+    normalized = str(color).strip() or "#8b5cf6"
+    if not normalized.startswith("#"):
+        normalized = f"#{normalized}"
+
+    try:
+        rgb = ImageColor.getrgb(normalized)
+    except Exception:
+        rgb = (139, 92, 246)
+    return (*rgb, alpha)
+
+
+def _render_ground_truth_preview(file_path: Path, size: int, regions: list[dict], render_width: int, render_height: int):
+    thumbnail = _load_patch_thumbnail(file_path, size).convert("RGBA")
+    overlay = Image.new("RGBA", thumbnail.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay, "RGBA")
+
+    scale_x = thumbnail.width / max(int(render_width), 1)
+    scale_y = thumbnail.height / max(int(render_height), 1)
+    stroke_width = max(1, int(round(min(thumbnail.width, thumbnail.height) / 80)))
+
+    for region in regions:
+        stroke = _color_to_rgba(region.get("color"), 255)
+        fill = _color_to_rgba(region.get("color"), 46)
+
+        if region.get("type") == "polygon":
+            raw_points = region.get("points") or []
+            points = []
+            for point in raw_points:
+                if not isinstance(point, (list, tuple)) or len(point) < 2:
+                    continue
+                points.append((float(point[0]) * scale_x, float(point[1]) * scale_y))
+
+            if len(points) >= 3:
+                draw.polygon(points, fill=fill, outline=stroke, width=stroke_width)
+                continue
+
+        x = float(region.get("x") or 0) * scale_x
+        y = float(region.get("y") or 0) * scale_y
+        width = float(region.get("width") or 0) * scale_x
+        height = float(region.get("height") or 0) * scale_y
+        draw.rectangle((x, y, x + width, y + height), fill=fill, outline=stroke, width=stroke_width)
+
+    return Image.alpha_composite(thumbnail, overlay).convert("RGB")
+
+
+def _build_ground_truth_preview_cache_key(wsi, record, file_path: Path, file_size: int, render_width: int, render_height: int, size: int) -> dict:
+    return {
+        "version": GROUND_TRUTH_PREVIEW_CACHE_VERSION,
+        "annotation_id": record.annotation_id,
+        "annotation_updated_at": record.updated_at.isoformat() if getattr(record, "updated_at", None) else None,
+        "wsi_path": str(file_path),
+        "file_size": int(file_size),
+        "file_mtime_ns": file_path.stat().st_mtime_ns,
+        "wsi_id": wsi.wsi_id,
+        "size": int(size),
+        "width": int(render_width),
+        "height": int(render_height),
+    }
+
+
+def _ensure_ground_truth_preview_cache(wsi, record, regions: list[dict], render_width: int, render_height: int, size: int) -> Path:
+    file_path = Path(wsi.wsi_path)
+    file_size = int(wsi.file_size or file_path.stat().st_size)
+    preview_path = _ground_truth_preview_path(wsi.wsi_id, size)
+    metadata_path = _ground_truth_preview_metadata_path(preview_path)
+    cache_key = _build_ground_truth_preview_cache_key(
+        wsi,
+        record,
+        file_path,
+        file_size,
+        render_width,
+        render_height,
+        size,
+    )
+
+    if _is_ground_truth_preview_cache_valid(preview_path, cache_key):
+        return preview_path
+
+    preview_image = _render_ground_truth_preview(
+        file_path,
+        size,
+        regions,
+        render_width,
+        render_height,
+    )
+    _save_ground_truth_preview_image(preview_image, preview_path)
+    _write_ground_truth_preview_metadata(metadata_path, cache_key)
+    return preview_path
+
+
+async def _resolve_wsi_ground_truth_payload(wsi_id: str, user: User, db: AsyncSession):
+    wsi = await get_wsi_with_access(
+        wsi_id,
+        user,
+        db,
+        with_dataset=True,
+        forbidden_detail="You don't have permission to access this WSI",
+    )
+
+    elevated_dataset_ids = {wsi.dataset_id} if wsi.dataset_id else None
+    record_candidates = []
+
+    direct_record = await SegmentationAnnotationRepository.get_with_permission(
+        db,
+        f"annot_{wsi_id}",
+        str(user.id),
+        is_admin=user.is_admin(),
+        elevated_dataset_ids=elevated_dataset_ids,
+    )
+    if direct_record and direct_record.status != "draft":
+        record_candidates.append(direct_record)
+
+    if wsi.dataset_id:
+        dataset_record = await SegmentationAnnotationRepository.get_with_permission(
+            db,
+            f"annot_{wsi.dataset_id}",
+            str(user.id),
+            is_admin=user.is_admin(),
+            elevated_dataset_ids=elevated_dataset_ids,
+        )
+        if (
+            dataset_record
+            and dataset_record.status != "draft"
+            and dataset_record.annotation_id not in {record.annotation_id for record in record_candidates}
+        ):
+            record_candidates.append(dataset_record)
+
+    for record in record_candidates:
+        roi_map = _convert_gt_record_for_wsi(record, wsi)
+        if roi_map:
+            gt_width, gt_height = _get_gt_image_dimensions_for_wsi(record, wsi)
+            payload = {
+                "dataset_id": wsi.dataset_id,
+                "annotations": roi_map,
+                "record_count": 1,
+                "source": "ground_truth",
+                "width": gt_width or wsi.width,
+                "height": gt_height or wsi.height,
+            }
+            return wsi, record, payload
+
+    return wsi, None, {
+        "dataset_id": wsi.dataset_id,
+        "annotations": {},
+        "record_count": 0,
+        "source": "ground_truth",
+        "width": wsi.width,
+        "height": wsi.height,
+    }
 
 
 async def _get_dataset_with_access(dataset_id: str, user: User, db: AsyncSession):
@@ -445,63 +685,55 @@ async def get_wsi_ground_truth_annotations(
     db: AsyncSession = Depends(get_db),
 ):
     """Return GT for a single WSI/patch, avoiding whole-dataset conversion."""
-    wsi = await get_wsi_with_access(
-        wsi_id,
-        user,
-        db,
-        with_dataset=True,
-        forbidden_detail="You don't have permission to access this WSI",
-    )
+    _, _, payload = await _resolve_wsi_ground_truth_payload(wsi_id, user, db)
+    return payload
 
-    elevated_dataset_ids = {wsi.dataset_id} if wsi.dataset_id else None
-    record_candidates = []
 
-    direct_record = await SegmentationAnnotationRepository.get_with_permission(
-        db,
-        f"annot_{wsi_id}",
-        str(user.id),
-        is_admin=user.is_admin(),
-        elevated_dataset_ids=elevated_dataset_ids,
-    )
-    if direct_record and direct_record.status != "draft":
-        record_candidates.append(direct_record)
+@router.get("/wsi/{wsi_id}/ground-truth-thumbnail")
+async def get_wsi_ground_truth_thumbnail(
+    wsi_id: str,
+    size: int = Query(160, description="Max thumbnail size for GT recommendation previews"),
+    user: User = Depends(get_user_from_token_param),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a cached GT thumbnail PNG for a patch recommendation card."""
+    wsi, record, payload = await _resolve_wsi_ground_truth_payload(wsi_id, user, db)
+    file_path = Path(wsi.wsi_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {wsi.wsi_path}")
 
-    if wsi.dataset_id:
-        dataset_record = await SegmentationAnnotationRepository.get_with_permission(
-            db,
-            f"annot_{wsi.dataset_id}",
-            str(user.id),
-            is_admin=user.is_admin(),
-            elevated_dataset_ids=elevated_dataset_ids,
+    file_size = int(wsi.file_size or file_path.stat().st_size)
+    if not is_patch_file(str(file_path), file_size):
+        raise HTTPException(status_code=400, detail="GT thumbnail preview is currently only supported for patch files")
+
+    regions = payload.get("annotations", {}).get(wsi.wsi_id) or []
+    if record is None or not regions:
+        raise HTTPException(status_code=404, detail=f"Ground truth annotations not found for {wsi_id}")
+
+    render_width = int(payload.get("width") or 0)
+    render_height = int(payload.get("height") or 0)
+    if render_width <= 0 or render_height <= 0:
+        with Image.open(file_path) as img:
+            render_width, render_height = img.size
+
+    try:
+        preview_path = _ensure_ground_truth_preview_cache(
+            wsi,
+            record,
+            regions,
+            render_width,
+            render_height,
+            max(1, int(size)),
         )
-        if (
-            dataset_record
-            and dataset_record.status != "draft"
-            and dataset_record.annotation_id not in {record.annotation_id for record in record_candidates}
-        ):
-            record_candidates.append(dataset_record)
+    except Exception as exc:
+        logger.warning("Failed to build GT preview cache for %s: %s", wsi_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to render ground truth thumbnail") from exc
 
-    for record in record_candidates:
-        roi_map = _convert_gt_record_for_wsi(record, wsi)
-        if roi_map:
-            gt_width, gt_height = _get_gt_image_dimensions_for_wsi(record, wsi)
-            return {
-                "dataset_id": wsi.dataset_id,
-                "annotations": roi_map,
-                "record_count": 1,
-                "source": "ground_truth",
-                "width": gt_width or wsi.width,
-                "height": gt_height or wsi.height,
-            }
-
-    return {
-        "dataset_id": wsi.dataset_id,
-        "annotations": {},
-        "record_count": 0,
-        "source": "ground_truth",
-        "width": wsi.width,
-        "height": wsi.height,
-    }
+    return FileResponse(
+        preview_path,
+        media_type="image/png",
+        headers=GROUND_TRUTH_PREVIEW_CACHE_HEADERS,
+    )
 
 
 @router.get("/drafts/{annotation_id}")

@@ -11,7 +11,6 @@ from typing import Optional
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 
-from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 from backend.common.file_types import is_patch_file
 from backend.common.slide_utils import load_slide as _load_slide
 
@@ -20,17 +19,111 @@ from .heatmap_utils import handle_multi_class_attention, load_result_meta, norma
 
 logger = logging.getLogger(__name__)
 
-RECOMMENDATION_PREVIEW_MAX_SIZE = 512
+RECOMMENDATION_PREVIEW_MAX_SIZE = 256
 RECOMMENDATION_OPACITY = 0.68
 RECOMMENDATION_BLUR_SCALE = 0.6
 RECOMMENDATION_CONTRAST_BOOST = 1.18
 RECOMMENDATION_SATURATION_BOOST = 1.25
 
 
+def _delete_preview_if_possible(preview_path: Path) -> None:
+    try:
+        preview_path.unlink()
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        logger.warning("Failed to delete recommendation preview cache %s: %s", preview_path, exc)
+
+
+def _is_preview_cache_readable(preview_path: Path) -> bool:
+    try:
+        with Image.open(preview_path) as preview:
+            preview.load()
+        return True
+    except Exception as exc:
+        logger.warning("Unreadable recommendation preview cache %s, will regenerate: %s", preview_path, exc)
+        _delete_preview_if_possible(preview_path)
+        return False
+
+
+def _save_preview_image(preview_image: Image.Image, preview_path: Path) -> None:
+    preview_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_preview_path = preview_path.with_name(f"{preview_path.name}.tmp")
+    _delete_preview_if_possible(temp_preview_path)
+
+    image_to_save = preview_image.copy()
+    image_to_save.info.pop("icc_profile", None)
+
+    try:
+        image_to_save.save(temp_preview_path, format="PNG")
+        temp_preview_path.replace(preview_path)
+    except Exception:
+        _delete_preview_if_possible(temp_preview_path)
+        raise
+
+
 def build_recommendation_preview_path(attention_file: Path, class_idx: Optional[int] = None) -> Path:
     class_suffix = f"_class_{class_idx}" if class_idx is not None else ""
     base_name = attention_file.stem.replace("_attention", "")
     return attention_file.with_name(f"{base_name}{class_suffix}_recommendation_preview.png")
+
+
+def build_segmentation_recommendation_preview_path(mask_file: Path) -> Path:
+    base_name = mask_file.stem.replace("_pred_mask", "")
+    return mask_file.with_name(f"{base_name}_seg_recommendation_preview.png")
+
+
+def build_patch_cam_recommendation_preview_path(cam_file: Path) -> Path:
+    base_name = cam_file.stem.replace("_cam", "")
+    return cam_file.with_name(f"{base_name}_cam_recommendation_preview.png")
+
+
+def build_resized_recommendation_preview_path(preview_path: Path, size: int) -> Path:
+    return preview_path.with_name(f"{preview_path.stem}_s{size}.png")
+
+
+def ensure_resized_recommendation_preview_cache(
+    preview_path: Path,
+    size: Optional[int],
+    *,
+    overwrite: bool = False,
+) -> Optional[Path]:
+    if not preview_path.exists() or not _is_preview_cache_readable(preview_path):
+        return None
+
+    if size is None or size <= 0:
+        return preview_path
+
+    with Image.open(preview_path) as preview:
+        source_width, source_height = preview.size
+
+    if max(source_width, source_height) <= size:
+        return preview_path
+
+    resized_preview_path = build_resized_recommendation_preview_path(preview_path, size)
+    if (
+        resized_preview_path.exists()
+        and not overwrite
+        and resized_preview_path.stat().st_mtime >= preview_path.stat().st_mtime
+    ):
+        if _is_preview_cache_readable(resized_preview_path):
+            return resized_preview_path
+
+    try:
+        with Image.open(preview_path) as preview:
+            resized_preview = preview.copy()
+
+        resized_preview.thumbnail((size, size), Image.Resampling.LANCZOS)
+        _save_preview_image(resized_preview, resized_preview_path)
+        return resized_preview_path
+    except Exception as exc:
+        logger.warning(
+            "Failed to cache resized recommendation preview %s at size %s: %s",
+            preview_path,
+            size,
+            exc,
+        )
+        return preview_path if preview_path.exists() else None
 
 
 def _persist_wsi_metadata(metadata_file: Path, metadata: dict) -> None:
@@ -87,6 +180,8 @@ def _load_wsi_metadata(
 
 
 def _resolve_patch_size(uploads_dir: Path, wsi_id: str, preferred_patch_size: Optional[int]) -> int:
+    from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
+
     if preferred_patch_size is not None:
         try:
             return max(1, int(preferred_patch_size))
@@ -110,13 +205,21 @@ def _resolve_patch_size(uploads_dir: Path, wsi_id: str, preferred_patch_size: Op
         return 512
 
 
+def _load_patch_thumbnail(wsi_path: Path, size: int) -> tuple[Image.Image, int, int]:
+    with Image.open(wsi_path) as img:
+        slide_width, slide_height = img.size
+        try:
+            img.draft("RGB", (size, size))
+        except Exception:
+            pass
+
+        img.thumbnail((size, size), Image.Resampling.LANCZOS)
+        return img.convert("RGB"), slide_width, slide_height
+
+
 def _load_thumbnail_and_dims(wsi_path: Path, file_size: Optional[int], size: int) -> tuple[Image.Image, int, int]:
     if is_patch_file(str(wsi_path), file_size or wsi_path.stat().st_size):
-        with Image.open(wsi_path) as img:
-            slide_width, slide_height = img.size
-            thumbnail = img.convert("RGB")
-            thumbnail.thumbnail((size, size), Image.Resampling.LANCZOS)
-            return thumbnail, slide_width, slide_height
+        return _load_patch_thumbnail(wsi_path, size)
 
     slide = _load_slide(str(wsi_path))
     try:
@@ -176,6 +279,8 @@ def render_recommendation_preview(
     wsi_path: Optional[str | Path] = None,
     file_size: Optional[int] = None,
 ) -> Image.Image:
+    from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
+
     metadata = _load_wsi_metadata(uploads_dir, wsi_id, wsi_path=wsi_path, file_size=file_size)
     wsi_path = Path(metadata["wsi_path"])
     thumbnail, slide_width, slide_height = _load_thumbnail_and_dims(
@@ -236,6 +341,93 @@ def render_recommendation_preview(
     return Image.alpha_composite(thumbnail.convert("RGBA"), overlay).convert("RGB")
 
 
+def render_segmentation_recommendation_preview(
+    wsi_id: str,
+    mask_file: Path,
+    uploads_dir: Path,
+    seg_colors: list[tuple[int, int, int, int]],
+    size: int = RECOMMENDATION_PREVIEW_MAX_SIZE,
+    wsi_path: Optional[str | Path] = None,
+    file_size: Optional[int] = None,
+) -> Image.Image:
+    metadata = _load_wsi_metadata(uploads_dir, wsi_id, wsi_path=wsi_path, file_size=file_size)
+    resolved_wsi_path = Path(metadata["wsi_path"])
+    thumbnail, _, _ = _load_thumbnail_and_dims(
+        resolved_wsi_path,
+        metadata.get("file_size"),
+        size,
+    )
+
+    mask = np.load(str(mask_file), allow_pickle=True)
+    mask = (mask > 0).astype(np.uint8, copy=False)
+
+    target_w, target_h = thumbnail.size
+    overlay = np.zeros((target_h, target_w, 4), dtype=np.uint8)
+
+    if mask.ndim == 3:
+        for class_idx in range(mask.shape[0]):
+            color = seg_colors[class_idx % len(seg_colors)]
+            class_mask = Image.fromarray((mask[class_idx] * 255).astype(np.uint8), mode="L")
+            class_mask = class_mask.resize((target_w, target_h), Image.Resampling.NEAREST)
+            class_arr = np.array(class_mask) > 127
+            for channel_idx in range(4):
+                overlay[:, :, channel_idx][class_arr] = color[channel_idx]
+    elif mask.ndim == 2:
+        color = seg_colors[0]
+        class_mask = Image.fromarray((mask * 255).astype(np.uint8), mode="L")
+        class_mask = class_mask.resize((target_w, target_h), Image.Resampling.NEAREST)
+        class_arr = np.array(class_mask) > 127
+        for channel_idx in range(4):
+            overlay[:, :, channel_idx][class_arr] = color[channel_idx]
+    else:
+        raise ValueError(f"Unexpected segmentation mask ndim: {mask.ndim}")
+
+    overlay_img = Image.fromarray(overlay, mode="RGBA")
+    return Image.alpha_composite(thumbnail.convert("RGBA"), overlay_img).convert("RGB")
+
+
+def render_patch_cam_recommendation_preview(
+    wsi_id: str,
+    cam_file: Path,
+    uploads_dir: Path,
+    size: int = RECOMMENDATION_PREVIEW_MAX_SIZE,
+    wsi_path: Optional[str | Path] = None,
+    file_size: Optional[int] = None,
+) -> Image.Image:
+    import matplotlib
+    matplotlib.use("Agg")
+    from matplotlib import cm
+
+    metadata = _load_wsi_metadata(uploads_dir, wsi_id, wsi_path=wsi_path, file_size=file_size)
+    resolved_wsi_path = Path(metadata["wsi_path"])
+    thumbnail, _, _ = _load_thumbnail_and_dims(
+        resolved_wsi_path,
+        metadata.get("file_size"),
+        size,
+    )
+
+    cam = np.load(str(cam_file), allow_pickle=True)
+    if cam.max() > cam.min():
+        cam_normalized = (cam - cam.min()) / (cam.max() - cam.min())
+    else:
+        cam_normalized = np.zeros_like(cam)
+
+    colormap = cm.get_cmap("jet")
+    colored_cam = colormap(cam_normalized)
+    colored_cam_uint8 = (colored_cam * 255).astype(np.uint8)
+    colored_cam_uint8[:, :, 3] = int(round(255 * RECOMMENDATION_OPACITY))
+
+    target_w, target_h = thumbnail.size
+    cam_image = Image.fromarray(colored_cam_uint8, mode="RGBA")
+    cam_image = cam_image.resize((target_w, target_h), Image.Resampling.BILINEAR)
+
+    blur_radius = max(1.0, (target_w / 50.0) * RECOMMENDATION_BLUR_SCALE)
+    cam_image = cam_image.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+    cam_image = _enhance_overlay(cam_image)
+
+    return Image.alpha_composite(thumbnail.convert("RGBA"), cam_image).convert("RGB")
+
+
 def ensure_recommendation_preview_cache(
     wsi_id: str,
     attention_file: Path,
@@ -252,7 +444,8 @@ def ensure_recommendation_preview_cache(
         and not overwrite
         and preview_path.stat().st_mtime >= attention_file.stat().st_mtime
     ):
-        return preview_path
+        if _is_preview_cache_readable(preview_path):
+            return preview_path
 
     try:
         preview_image = render_recommendation_preview(
@@ -264,9 +457,84 @@ def ensure_recommendation_preview_cache(
             wsi_path=wsi_path,
             file_size=file_size,
         )
-        preview_path.parent.mkdir(parents=True, exist_ok=True)
-        preview_image.save(preview_path, format="PNG")
+        _save_preview_image(preview_image, preview_path)
         return preview_path
     except Exception as exc:
         logger.warning("Failed to cache recommendation preview for %s from %s: %s", wsi_id, attention_file, exc)
+        return None
+
+
+def ensure_segmentation_recommendation_preview_cache(
+    wsi_id: str,
+    mask_file: Path,
+    uploads_dir: Path,
+    seg_colors: list[tuple[int, int, int, int]],
+    overwrite: bool = False,
+    wsi_path: Optional[str | Path] = None,
+    file_size: Optional[int] = None,
+) -> Optional[Path]:
+    preview_path = build_segmentation_recommendation_preview_path(mask_file)
+    if (
+        preview_path.exists()
+        and not overwrite
+        and preview_path.stat().st_mtime >= mask_file.stat().st_mtime
+    ):
+        if _is_preview_cache_readable(preview_path):
+            return preview_path
+
+    try:
+        preview_image = render_segmentation_recommendation_preview(
+            wsi_id,
+            mask_file,
+            uploads_dir,
+            seg_colors=seg_colors,
+            wsi_path=wsi_path,
+            file_size=file_size,
+        )
+        _save_preview_image(preview_image, preview_path)
+        return preview_path
+    except Exception as exc:
+        logger.warning(
+            "Failed to cache segmentation recommendation preview for %s from %s: %s",
+            wsi_id,
+            mask_file,
+            exc,
+        )
+        return None
+
+
+def ensure_patch_cam_recommendation_preview_cache(
+    wsi_id: str,
+    cam_file: Path,
+    uploads_dir: Path,
+    overwrite: bool = False,
+    wsi_path: Optional[str | Path] = None,
+    file_size: Optional[int] = None,
+) -> Optional[Path]:
+    preview_path = build_patch_cam_recommendation_preview_path(cam_file)
+    if (
+        preview_path.exists()
+        and not overwrite
+        and preview_path.stat().st_mtime >= cam_file.stat().st_mtime
+    ):
+        if _is_preview_cache_readable(preview_path):
+            return preview_path
+
+    try:
+        preview_image = render_patch_cam_recommendation_preview(
+            wsi_id,
+            cam_file,
+            uploads_dir,
+            wsi_path=wsi_path,
+            file_size=file_size,
+        )
+        _save_preview_image(preview_image, preview_path)
+        return preview_path
+    except Exception as exc:
+        logger.warning(
+            "Failed to cache patch CAM recommendation preview for %s from %s: %s",
+            wsi_id,
+            cam_file,
+            exc,
+        )
         return None

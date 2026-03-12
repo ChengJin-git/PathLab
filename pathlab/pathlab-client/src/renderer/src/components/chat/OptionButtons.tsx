@@ -1,5 +1,7 @@
 import React from 'react'
 
+import { extractLastChatBlock, stripChatBlocks } from './chatBlockParsing'
+
 interface Option {
   text: string  // The full option text to display and send
 }
@@ -32,29 +34,43 @@ function isDisallowedModelOverflowOption(optionText: string): boolean {
  * The entire text after "- " is used as the option.
  */
 export function parseOptions(content: string): Option[] | null {
-  const match = content.match(/\[OPTIONS\]([\s\S]*?)\[\/OPTIONS\]/)
+  const match = extractLastChatBlock(content, 'OPTIONS', { allowIncompleteLast: true })
   if (!match) return null
 
-  const optionsText = match[1]
+  const optionsText = match.body
   const options: Option[] = []
 
   const lines = optionsText.split('\n')
+  const plainFallbackLines: string[] = []
   for (const line of lines) {
     const trimmed = line.trim()
+    if (!trimmed) continue
+
     // Support multiple list formats: "- text", "* text", "1. text", "1) text"
     let optionText: string | null = null
-    if (trimmed.startsWith('-') || trimmed.startsWith('*')) {
-      optionText = trimmed.slice(1).trim()
+    const bulletMatch = trimmed.match(/^(?:[-*•·▪◦]|\[[ xX]?\])\s*(.+)$/)
+    if (bulletMatch) {
+      optionText = bulletMatch[1].trim()
     } else {
-      // Match numbered list: "1. text" or "1) text"
-      const numberedMatch = trimmed.match(/^[0-9]+[.)]\s+(.+)/)
+      // Match numbered list: "1. text", "1) text", "1、text", "A. text", "一、text"
+      const numberedMatch = trimmed.match(/^(?:[0-9]+|[A-Za-z]|[一二三四五六七八九十]+)[.)、]\s*(.+)$/)
       if (numberedMatch) {
         optionText = numberedMatch[1].trim()
       }
     }
+
     if (optionText && optionText.length > 0) {
       options.push({ text: optionText })
+      continue
     }
+
+    if (!/^[\[{]/.test(trimmed) && !trimmed.endsWith(':')) {
+      plainFallbackLines.push(trimmed)
+    }
+  }
+
+  if (options.length === 0 && plainFallbackLines.length > 0) {
+    plainFallbackLines.forEach(text => options.push({ text }))
   }
 
   const filteredOptions = options.filter(option => !isDisallowedModelOverflowOption(option.text))
@@ -66,7 +82,7 @@ export function parseOptions(content: string): Option[] | null {
  * Remove [OPTIONS] block from content for display
  */
 export function removeOptionsBlock(content: string): string {
-  return content.replace(/\[OPTIONS\][\s\S]*?\[\/OPTIONS\]/g, '').trim()
+  return stripChatBlocks(content, 'OPTIONS').trim()
 }
 
 /**

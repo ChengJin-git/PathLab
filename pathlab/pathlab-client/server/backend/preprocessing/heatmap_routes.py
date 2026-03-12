@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Depends
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -32,7 +32,12 @@ from .heatmap_utils import (
     normalize_attention,
     find_best_fold,
 )
-from .heatmap_preview_cache import ensure_recommendation_preview_cache
+from .heatmap_preview_cache import (
+    ensure_resized_recommendation_preview_cache,
+    ensure_patch_cam_recommendation_preview_cache,
+    ensure_recommendation_preview_cache,
+    ensure_segmentation_recommendation_preview_cache,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -395,14 +400,13 @@ async def get_heatmap_thumbnail(
                 file_size=wsi.file_size,
             )
             if cached_preview_path and cached_preview_path.exists():
-                with Image.open(cached_preview_path) as cached_preview:
-                    preview = cached_preview.convert('RGB')
-                    preview.thumbnail((size, size), Image.Resampling.LANCZOS)
-                    buf = io.BytesIO()
-                    preview.save(buf, format='PNG')
-                    buf.seek(0)
-                    return Response(
-                        content=buf.getvalue(),
+                response_preview_path = ensure_resized_recommendation_preview_cache(
+                    cached_preview_path,
+                    size,
+                )
+                if response_preview_path is not None:
+                    return FileResponse(
+                        response_preview_path,
                         media_type="image/png",
                         headers=render_settings["cache_headers"],
                     )
@@ -464,8 +468,13 @@ async def get_heatmap_thumbnail(
         if is_patch_file(str(file_path), file_size):
             # Patch file
             with Image.open(file_path) as img:
+                try:
+                    img.draft('RGB', (thumb_width, thumb_height))
+                except Exception:
+                    pass
+
+                img.thumbnail((thumb_width, thumb_height), Image.Resampling.LANCZOS)
                 thumbnail = img.convert('RGB')
-                thumbnail.thumbnail((thumb_width, thumb_height), Image.Resampling.LANCZOS)
         else:
             # WSI file
             aslide = _load_slide(str(file_path))
@@ -1047,6 +1056,30 @@ async def get_patch_cam(
         else:
             cam_file = sorted(cam_files, key=lambda f: f.stat().st_mtime, reverse=True)[0]
 
+        if format != "json" and preset == RECOMMENDATION_PRESET:
+            wsi = await WSIRepository.get_by_id(db, wsi_id)
+            if not wsi:
+                raise HTTPException(status_code=404, detail=f"Patch not found: {wsi_id}")
+
+            preview_path = ensure_patch_cam_recommendation_preview_cache(
+                wsi_id,
+                cam_file,
+                UPLOADS_DIR,
+                wsi_path=wsi.wsi_path,
+                file_size=getattr(wsi, "file_size", None),
+            )
+            if preview_path is not None:
+                response_preview_path = ensure_resized_recommendation_preview_cache(
+                    preview_path,
+                    size,
+                )
+                if response_preview_path is not None:
+                    return FileResponse(
+                        response_preview_path,
+                        media_type="image/png",
+                        headers=render_settings["cache_headers"],
+                    )
+
         # Load CAM data
         cam = np.load(str(cam_file), allow_pickle=True)
         logger.info(f"Loaded CAM: shape={cam.shape}, min={cam.min():.4f}, max={cam.max():.4f}")
@@ -1169,6 +1202,7 @@ async def get_seg_mask(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID"),
     fold_key: Optional[str] = Query(None, description="Fold key for k-fold results"),
+    preset: Optional[str] = Query(None, description="Optional rendering preset for lightweight previews"),
     size: Optional[int] = Query(None, description="Optional max thumbnail size for previews"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1184,6 +1218,7 @@ async def get_seg_mask(
     import io
 
     try:
+        render_settings = _get_render_settings(preset, None, None, None, None)
         result_dir = AI_RESULTS_DIR / wsi_id
         if not result_dir.exists():
             raise HTTPException(status_code=404, detail="No results for this WSI")
@@ -1217,18 +1252,37 @@ async def get_seg_mask(
         else:
             mask_file = sorted(mask_files, key=lambda f: f.stat().st_mtime, reverse=True)[0]
 
+        wsi = await WSIRepository.get_by_id(db, wsi_id)
+        if not wsi:
+            raise HTTPException(status_code=404, detail=f"Patch not found: {wsi_id}")
+
+        if preset == RECOMMENDATION_PRESET:
+            preview_path = ensure_segmentation_recommendation_preview_cache(
+                wsi_id,
+                mask_file,
+                UPLOADS_DIR,
+                seg_colors=_SEG_COLORS,
+                wsi_path=wsi.wsi_path,
+                file_size=getattr(wsi, "file_size", None),
+            )
+            if preview_path is not None:
+                response_preview_path = ensure_resized_recommendation_preview_cache(
+                    preview_path,
+                    size,
+                )
+                if response_preview_path is not None:
+                    return FileResponse(
+                        response_preview_path,
+                        media_type="image/png",
+                        headers=render_settings["cache_headers"],
+                    )
+
         # Load mask: shape (num_classes, H, W), values 0/1
         mask = np.load(str(mask_file), allow_pickle=True)
         # Normalize persisted masks across historical dtypes (bool/float/uint8)
         # so viewer/chat overlay rendering always consumes a binary uint8 array.
         mask = (mask > 0).astype(np.uint8, copy=False)
         logger.info(f"Loaded seg mask: shape={mask.shape}")
-
-        # Load original image
-        from backend.database.repositories import WSIRepository
-        wsi = await WSIRepository.get_by_id(db, wsi_id)
-        if not wsi:
-            raise HTTPException(status_code=404, detail=f"Patch not found: {wsi_id}")
 
         file_path = Path(wsi.wsi_path)
         with Image.open(file_path) as img:
@@ -1277,7 +1331,11 @@ async def get_seg_mask(
         blended_rgb.save(buf, format='PNG')
         buf.seek(0)
 
-        return Response(content=buf.getvalue(), media_type="image/png")
+        return Response(
+            content=buf.getvalue(),
+            media_type="image/png",
+            headers=render_settings["cache_headers"],
+        )
 
     except HTTPException:
         raise

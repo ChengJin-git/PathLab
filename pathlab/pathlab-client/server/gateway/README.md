@@ -1,5 +1,7 @@
 # PathLab Gateway
 
+> 适用版本：`PathLab v1.0.0`
+
 Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚合、静态资源挂载以及与 Preprocessing / AI 内部服务的协作。
 
 ## 当前应用行为
@@ -15,6 +17,7 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
   - 恢复中断的训练任务
   - 清理过期完成任务
   - 清理过期 PDF 缓存
+  - 异步预热训练推荐所需的 embedding 模型与 bundled knowledge 源
   - 注册所有顶层 router
   - 在存在前端构建产物时挂载静态资源
   - 始终挂载 `/avatars`
@@ -52,13 +55,13 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 
 ## 路由目录现状
 
-`server/gateway/routes/` 当前包含 **31 个路由模块文件**（不含 `__init__.py`）。
+`server/gateway/routes/` 当前包含 **32 个路由模块文件**（不含 `__init__.py`）。
 
 除了上面 16 个顶层 router 外，目录里还有若干**被其他 router 复用的支持模块**，例如：
 
 - 分析相关：`classification_analysis.py`、`segmentation_analysis.py`、`survival_analysis.py`、`external_validation_analysis.py`
 - 分析辅助：`analysis_helpers.py`、`analysis_metrics.py`、`analysis_state.py`
-- 聊天辅助：`chat_pdf.py`、`chat_pdf_vectorstore.py`、`chat_feedback.py`、`chat_patch_inference.py`
+- 聊天辅助：`chat_pdf.py`、`chat_pdf_vectorstore.py`、`chat_feedback.py`、`chat_patch_inference.py`、`chat_training_recommendation.py`
 - 运行时辅助：`transformers_runtime.py`
 - 存储辅助：`storage_scan.py`、`storage_tasks.py`
 - WSI 权限辅助：`wsi_permissions.py`
@@ -70,14 +73,16 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 认证相关代码集中在 `routes/auth.py` 与 `backend/auth/`：
 
 - 使用 FastAPI Users + JWT strategy
+- `/auth/jwt/login` 当前被禁用，实际登录入口为 `/auth/secure-login`
 - 维护用户 `nonce`，用于单设备会话控制
 - 支持 `secure-login`、登出、资料更新、头像上传
+- 支持维护模式、维护公告确认、分页用户列表与批量用户启停删
 - 包含管理员批量启用 / 禁用 / 删除用户接口
 - 当前代码里没有单独暴露的 `AccessToken` ORM 模型 README 记录，认证主要依赖 JWT
 
 ## 存储路由补充说明
 
-`routes/storage.py` 自身提供 `/storage/stats`、`/storage/config`、`/storage/migrate`、`/storage/orphaned` 等入口，并进一步组合：
+`routes/storage.py` 自身提供 `/storage/stats`、`/storage/disk-space`、`/storage/check-upload-space`、`/storage/config`、`/storage/migrate`、`/storage/migration/status`、`/storage/orphaned` 等入口，并进一步组合：
 
 - `storage_tasks.py`
 - `storage_scan.py`

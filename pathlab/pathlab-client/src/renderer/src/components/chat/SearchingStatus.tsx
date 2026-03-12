@@ -9,6 +9,8 @@ import { useTranslation } from 'react-i18next'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Search, Globe, FileText, Download, ChevronDown, ExternalLink, AlertCircle } from 'lucide-react'
 
+import { parseAllChatBlockJson, parseLastChatBlockJson, stripChatBlocks } from './chatBlockParsing'
+
 export interface SearchingStatusProps {
   query?: string
   reason?: string
@@ -19,28 +21,28 @@ export interface SearchingStatusProps {
  * Returns the parsed JSON config or null if not found
  */
 export function parseSearchStatus(content: string): { query?: string; reason?: string } | null {
-  const match = content.match(/\[SEARCH_STATUS\]([\s\S]*?)\[\/SEARCH_STATUS\]/)
-  if (!match) return null
-  
-  try {
-    const jsonStr = match[1].trim()
-    return JSON.parse(jsonStr)
-  } catch {
-    // If parsing fails, try to extract query from the content
-    const queryMatch = content.match(/"query"\s*:\s*"([^"]+)"/)
-    const reasonMatch = content.match(/"reason"\s*:\s*"([^"]+)"/)
-    return {
-      query: queryMatch?.[1],
-      reason: reasonMatch?.[1]
-    }
+  const parsed = parseLastChatBlockJson<{ query?: string; reason?: string }>(content, 'SEARCH_STATUS', { allowIncompleteLast: true })
+  if (parsed) return parsed
+
+  const queryMatch = content.match(/"query"\s*:\s*"([^"]+)"/)
+  const reasonMatch = content.match(/"reason"\s*:\s*"([^"]+)"/)
+  if (!queryMatch && !reasonMatch) return null
+
+  return {
+    query: queryMatch?.[1],
+    reason: reasonMatch?.[1]
   }
+}
+
+export function parseAllSearchStatus(content: string): Array<{ query?: string; reason?: string }> | null {
+  return parseAllChatBlockJson<{ query?: string; reason?: string }>(content, 'SEARCH_STATUS', { allowIncompleteLast: true })
 }
 
 /**
  * Remove [SEARCH_STATUS] block from content
  */
 export function removeSearchStatusBlock(content: string): string {
-  return content.replace(/\[SEARCH_STATUS\][\s\S]*?\[\/SEARCH_STATUS\]/g, '').trim()
+  return stripChatBlocks(content, 'SEARCH_STATUS').trim()
 }
 
 /**
@@ -57,22 +59,18 @@ export interface WebSearchResult {
 }
  
 export function parseWebSearchResult(content: string): WebSearchResult | null {
-  const match = content.match(/\[WEB_SEARCH_RESULT\]([\s\S]*?)\[\/WEB_SEARCH_RESULT\]/)
-  if (!match) return null
-  
-  try {
-    const jsonStr = match[1].trim()
-    return JSON.parse(jsonStr)
-  } catch {
-    return null
-  }
+  return parseLastChatBlockJson<WebSearchResult>(content, 'WEB_SEARCH_RESULT', { allowIncompleteLast: true })
+}
+
+export function parseAllWebSearchResults(content: string): WebSearchResult[] | null {
+  return parseAllChatBlockJson<WebSearchResult>(content, 'WEB_SEARCH_RESULT', { allowIncompleteLast: true })
 }
 
 /**
  * Remove [WEB_SEARCH_RESULT] block from content
  */
 export function removeWebSearchResultBlock(content: string): string {
-  return content.replace(/\[WEB_SEARCH_RESULT\][\s\S]*?\[\/WEB_SEARCH_RESULT\]/g, '').trim()
+  return stripChatBlocks(content, 'WEB_SEARCH_RESULT').trim()
 }
 
 // Animated searching indicator component

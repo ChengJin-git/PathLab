@@ -118,7 +118,13 @@ export function AnalysisConfigCard({
       setIsLoadingTask(true)
       setValidationError('')
       try {
-        const tasks = await getTrainingTasks()
+        const response = await getTrainingTasks()
+        const tasks = Array.isArray(response)
+          ? response
+          : Array.isArray(response?.items)
+            ? response.items
+            : []
+
         if (isExternal) {
           // For external: validate model and dataset compatibility using same logic as ResultsViewerPage
           if (!config.model_id || !config.data_task_id) {

@@ -45,8 +45,8 @@ from backend.common.coco_utils import merge_coco_datasets, extract_coco_wsi_labe
 from ..dependencies import logger, storage_manager
 from ..models import DeletionMode, WSIMetadataUpdateRequest, DatasetRenameRequest, DatasetUpdateTypeRequest, DatasetUpdateDataLevelRequest, DatasetUpdateSourceRequest
 from ..utils import (
+    ensure_coords_ready,
     get_effective_wsi_data_type,
-    proxy_preprocessing_json,
     ensure_segmentation_contract,
     ensure_dataset_segmentation_contract,
     SEGMENTATION_TASK_TYPE,
@@ -1101,9 +1101,8 @@ async def compute_patches(
         "contour_fn": contour_fn
     }
 
-    result = await proxy_preprocessing_json(
-        "POST",
-        f"/wsi/{wsi_id}/compute_patches",
+    result = await ensure_coords_ready(
+        wsi_id,
         params=params,
         timeout=600.0,
     )

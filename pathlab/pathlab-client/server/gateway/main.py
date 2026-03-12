@@ -7,7 +7,7 @@ Most route logic has been moved to separate files in routes/ directory.
 import asyncio
 import httpx
 from pathlib import Path
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -22,6 +22,11 @@ from backend.database.repositories import (
 from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 from .pipeline import run_training_pipeline
 from .task_queue import init_task_queue, shutdown_task_queue, get_task_queue, TaskType
+from .routes.chat_training_recommendation import (
+    get_bundled_training_knowledge_status,
+    prewarm_training_recommendation_sources,
+)
+from .routes.chat_pdf_vectorstore import prewarm_embedding_model
 from .routes import (
     auth_router,
     stats_router,
@@ -52,6 +57,8 @@ async def lifespan(app: FastAPI):
     Shutdown: Shutdown task queue and close database connections.
     """
     # === Startup ===
+    training_rag_prewarm_task: asyncio.Task[None] | None = None
+
     logger.info("Initializing database...")
     await init_db()
     logger.info("✓ Database initialized")
@@ -105,23 +112,72 @@ async def lifespan(app: FastAPI):
     # Cleanup expired PDF cache files
     from .routes.chat_pdf import cleanup_expired_pdf_cache
     # Run synchronous cleanup in thread pool
-    import asyncio
     await asyncio.get_event_loop().run_in_executor(None, cleanup_expired_pdf_cache)
 
-    yield  # Application runs here
+    # Log current readiness, then kick off bundled training-RAG warmup in the
+    # background so the first training recommendation request does not pay the
+    # entire cold-start cost.
+    try:
+        bundled_status = get_bundled_training_knowledge_status()
+        ready_count = sum(1 for ok in bundled_status.values() if ok)
+        logger.info(
+            f"Bundled training recommendation knowledge status: "
+            f"{ready_count}/{len(bundled_status)} source(s) ready"
+        )
+    except Exception as e:
+        logger.error(f"Failed to inspect bundled training recommendation knowledge: {e}")
 
-    # === Shutdown ===
-    logger.info("Shutting down task queue manager...")
-    await shutdown_task_queue()
-    logger.info("✓ Task queue manager stopped")
+    try:
+        import torch
+        has_cuda = bool(torch.cuda.is_available())
+    except Exception:
+        has_cuda = False
 
-    logger.info("Closing database connections...")
-    await close_db()
-    logger.info("✓ Database connections closed")
+    async def _startup_prewarm_training_rag() -> None:
+        try:
+            embedding_status = await asyncio.to_thread(prewarm_embedding_model)
+            logger.info(
+                "Training recommendation embedding warmup ready: "
+                f"{embedding_status.get('model_name')} on {embedding_status.get('device')}"
+            )
+            results = await prewarm_training_recommendation_sources(
+                force_upgrade=False,
+                skip_marker_gpu_queue=has_cuda,
+                prewarm_embedding=False,
+            )
+            success = sum(1 for ok in results.values() if ok)
+            logger.info(
+                f"Bundled training recommendation startup prewarm finished: "
+                f"{success}/{len(results)} source(s) ready"
+            )
+        except asyncio.CancelledError:
+            logger.info("Bundled training recommendation startup prewarm cancelled")
+            raise
+        except Exception as e:
+            logger.error(f"Bundled training recommendation startup prewarm failed: {e}")
 
-    logger.info("Closing Redis connections...")
-    await close_redis()
-    logger.info("✓ Redis connections closed")
+    training_rag_prewarm_task = asyncio.create_task(_startup_prewarm_training_rag())
+
+    try:
+        yield  # Application runs here
+    finally:
+        # === Shutdown ===
+        if training_rag_prewarm_task is not None and not training_rag_prewarm_task.done():
+            training_rag_prewarm_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await training_rag_prewarm_task
+
+        logger.info("Shutting down task queue manager...")
+        await shutdown_task_queue()
+        logger.info("✓ Task queue manager stopped")
+
+        logger.info("Closing database connections...")
+        await close_db()
+        logger.info("✓ Database connections closed")
+
+        logger.info("Closing Redis connections...")
+        await close_redis()
+        logger.info("✓ Redis connections closed")
 
 
 # Create FastAPI app with lifespan
