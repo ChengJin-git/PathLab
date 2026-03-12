@@ -86,7 +86,8 @@ export async function chatWithAI(
   onPdfStatus?: (event: PdfStatusEvent) => void,
   onSearchPhase?: (phase: 'summarizing') => void,
   onWebSearchResult?: (event: WebSearchResultEvent) => void,
-  onPdfParseResult?: (event: PdfParseResultEvent) => void
+  onPdfParseResult?: (event: PdfParseResultEvent) => void,
+  onSearchClear?: () => void
 ): Promise<void> {
   // Get AI configuration from localStorage
   const apiKey = localStorage.getItem('openrouter_api_key') || ''
@@ -202,6 +203,9 @@ export async function chatWithAI(
       }
       if (parsed.type === 'pdf_parse_result' && onPdfParseResult) {
         onPdfParseResult(parsed.result as PdfParseResultEvent)
+      }
+      if (parsed.type === 'search_clear' && onSearchClear) {
+        onSearchClear()
       }
     } catch {
       // Skip invalid JSON

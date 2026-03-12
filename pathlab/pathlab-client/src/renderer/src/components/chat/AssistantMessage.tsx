@@ -914,8 +914,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const showSearchingStatus = searchArt?.phase === 'searching' && isStreaming
 
   const hasPdfParsingInProgress = effectivePdfStatuses?.some(i => i.status === 'parsing' || i.status === 'downloading') ?? false
-  const isWebSearchStreaming = isStreaming && webSearchResultCount > 0
-  const showPdfParsingStatus = !!effectivePdfStatuses && hasPdfParsingInProgress && isStreaming && !isWebSearchStreaming
+  const showPdfParsingStatus = !!effectivePdfStatuses && hasPdfParsingInProgress && isStreaming
 
   const hasFunctionalCard = !!(
     taskConfig || analysisConfig || imageRecommendation || patchInferenceConfig ||
@@ -926,7 +925,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
     ? searchArt.phase === 'summarizing' && isStreaming && !displayContent.trim() && !incompleteTag && !hasFunctionalCard
     : false
 
-  const showPdfParsingCompleted = !!effectivePdfParseResults?.length && !hasPdfParsingInProgress && !isWebSearchStreaming
+  const showPdfParsingCompleted = !!effectivePdfParseResults?.length && !hasPdfParsingInProgress
 
   const hasCompletedPdf = (effectivePdfParseResults ?? effectivePdfStatuses)?.some(i => i.status === 'completed') ?? false
   const showSummarizingPdf = !hasPdfParsingInProgress && hasCompletedPdf

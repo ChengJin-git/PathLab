@@ -797,7 +797,7 @@ export default function AIChatPage() {
         : loadedMessages
 
       const hasPersistedPatchInferenceCancel = Boolean(pendingPatchInferenceCancel)
-        && hasPersistedPatchInferenceCancellation(sortedApiMessages, pendingPatchInferenceCancel)
+        && hasPersistedPatchInferenceCancellation(sortedApiMessages, pendingPatchInferenceCancel!)
 
       if (pendingPatchInferenceCancel) {
         if (hasPersistedPatchInferenceCancel) {
@@ -1269,10 +1269,9 @@ export default function AIChatPage() {
           hasReceivedContent = true
           setGenerationPhase('streaming')
         }
-        // Handle __CLEAR_CONTENT__ marker: the backend emits this when text
-        // was already streamed but a tool block ([WEB_SEARCH] / [READ_ARTICLE])
-        // was found afterwards.  Clear the message so the follow-up AI response
-        // (with search results) appears cleanly instead of being concatenated.
+        // Handle __CLEAR_CONTENT__ marker: the backend emits this when a
+        // normalize/sanitize transform rewrites the response. Clear the
+        // message so the corrected response appears cleanly.
         if (chunk === '__CLEAR_CONTENT__') {
           if (rafId !== null) {
             cancelAnimationFrame(rafId)
@@ -1470,6 +1469,24 @@ export default function AIChatPage() {
             }
           }
         }))
+      }, () => {
+        // search_clear: backend signals that a search/read_article tool was
+        // invoked after text was already streamed. Preserve the pre-search text
+        // (flush any buffered chunks into it) so it isn't lost.
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId)
+          rafId = null
+        }
+        const buffered = chunkBuffer
+        chunkBuffer = ''
+        const currentId = trackingId
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === currentId
+              ? { ...m, content: m.content + buffered }
+              : m
+          )
+        )
       })
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {

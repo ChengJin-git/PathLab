@@ -2,6 +2,7 @@
 Chat and conversation management routes
 Handles AI chat, conversation persistence, and task parsing
 """
+
 import asyncio
 import json
 import math
@@ -20,10 +21,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.database import get_db
-from backend.database.repositories import ChatRepository, WSIRepository, TrainedModelRepository, DatasetPermissionRepository, DatasetRepository, TrainingTaskRepository, TrainingLogRepository, AITaskRepository
+from backend.database.repositories import (
+    ChatRepository,
+    WSIRepository,
+    TrainedModelRepository,
+    DatasetPermissionRepository,
+    DatasetRepository,
+    TrainingTaskRepository,
+    TrainingLogRepository,
+    AITaskRepository,
+)
 from backend.database.models import TrainingTask, DataGroup, WSISlide, TrainingTaskWSI
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import check_data_ownership, get_user_id_filter, get_user_from_header_or_param
+from backend.auth.dependencies import (
+    check_data_ownership,
+    get_user_id_filter,
+    get_user_from_header_or_param,
+)
 from backend.common.config import Config
 from backend.common.gpu_utils import get_gpu_summary_for_prompt
 from backend.ai.segmentors.specs import is_fm_segmentation_backbone
@@ -45,10 +59,20 @@ from .chat_patch_inference import (
     get_chat_patch_task,
 )
 from .chat_pdf import (
-    is_pdf_url, process_pdf_url, get_pdf_image_path,
-    search_pdf_pages, get_cached_markdown, get_cached_pdf_meta, _split_md_into_pages,
-    _get_url_hash, _get_pdf_cache_dir, _tokenize_for_search,
-    detect_source_type, is_academic_content, format_reference_card, _ACADEMIC_SOURCE_TYPES,
+    is_pdf_url,
+    process_pdf_url,
+    get_pdf_image_path,
+    search_pdf_pages,
+    get_cached_markdown,
+    get_cached_pdf_meta,
+    _split_md_into_pages,
+    _get_url_hash,
+    _get_pdf_cache_dir,
+    _tokenize_for_search,
+    detect_source_type,
+    is_academic_content,
+    format_reference_card,
+    _ACADEMIC_SOURCE_TYPES,
     find_cached_articles_by_title,
 )
 from .chat_pdf_vectorstore import search_pdf_chunks
@@ -67,11 +91,22 @@ from .chat_intent_policy import (
 router = APIRouter(tags=["Chat & Conversations"])
 
 SEGMENTATION_TASK_TYPES = {"segmentation", "patch_segmentation"}
-ACTIVE_TRAINING_STATUSES = {"pending", "queued", "patching", "resuming", "extracting", "training"}
+ACTIVE_TRAINING_STATUSES = {
+    "pending",
+    "queued",
+    "patching",
+    "resuming",
+    "extracting",
+    "training",
+}
 _EPOCH_PROGRESS_RE = re.compile(r"epoch\s+(\d+)\s*/\s*(\d+)", re.IGNORECASE)
 MAX_MODELS_IN_CHAT_CONTEXT = 5
-_PATCH_INFERENCE_BLOCK_RE = re.compile(r"\[PATCH_INFERENCE\]([\s\S]*?)\[/PATCH_INFERENCE\]")
-_TOOL_BLOCK_RE = re.compile(r'\[(?:READ_ARTICLE|WEB_SEARCH)\].*?\[/(?:READ_ARTICLE|WEB_SEARCH)\]', re.DOTALL)
+_PATCH_INFERENCE_BLOCK_RE = re.compile(
+    r"\[PATCH_INFERENCE\]([\s\S]*?)\[/PATCH_INFERENCE\]"
+)
+_TOOL_BLOCK_RE = re.compile(
+    r"\[(?:READ_ARTICLE|WEB_SEARCH)\].*?\[/(?:READ_ARTICLE|WEB_SEARCH)\]", re.DOTALL
+)
 
 
 def _get_generation_cancelled_text(detected_lang: str) -> str:
@@ -83,7 +118,9 @@ def _get_generation_cancelled_text(detected_lang: str) -> str:
         "en": "*Response cancelled by user.*",
         "en_US": "*Response cancelled by user.*",
     }
-    return cancel_messages.get(normalized, cancel_messages.get(normalized.split("_")[0], cancel_messages["en"]))
+    return cancel_messages.get(
+        normalized, cancel_messages.get(normalized.split("_")[0], cancel_messages["en"])
+    )
 
 
 def _has_training_recommendation_context(messages: list[dict]) -> bool:
@@ -98,13 +135,13 @@ def _has_training_recommendation_context(messages: list[dict]) -> bool:
 
 def _build_no_web_search_instruction(detected_lang: str, mode: ConversationMode) -> str:
     if mode == ConversationMode.IMAGE_VISUALIZATION:
-        if detected_lang == "zh-CN":
+        if detected_lang == "zh_CN":
             return (
                 "当前这轮是站内图像/热力图浏览回合，不是训练推荐，也不是文献检索。"
                 "绝对不要使用 `[WEB_SEARCH]`。请直接继续帮助用户查看该数据集的图像/热力图，"
                 "优先输出 `[IMAGE_RECOMMENDATION]`，如果还有必要，只追问剩余的可视化细节。"
             )
-        if detected_lang == "zh-HK":
+        if detected_lang == "zh_HK":
             return (
                 "當前這輪是站內影像/熱力圖瀏覽回合，不是訓練推薦，也不是文獻檢索。"
                 "絕對不要使用 `[WEB_SEARCH]`。請直接繼續幫助使用者查看該資料集的影像/熱力圖，"
@@ -117,12 +154,12 @@ def _build_no_web_search_instruction(detected_lang: str, mode: ConversationMode)
         )
 
     if mode == ConversationMode.PATCH_INFERENCE:
-        if detected_lang == "zh-CN":
+        if detected_lang == "zh_CN":
             return (
                 "当前这轮是站内图像分析/图像推理回合，不是文献检索。绝对不要使用 `[WEB_SEARCH]`。"
                 "请直接基于现有图像与模型上下文继续，优先输出普通说明或 `[PATCH_INFERENCE]`。"
             )
-        if detected_lang == "zh-HK":
+        if detected_lang == "zh_HK":
             return (
                 "當前這輪是站內影像分析/影像推理回合，不是文獻檢索。絕對不要使用 `[WEB_SEARCH]`。"
                 "請直接基於現有影像與模型上下文繼續，優先輸出普通說明或 `[PATCH_INFERENCE]`。"
@@ -134,12 +171,12 @@ def _build_no_web_search_instruction(detected_lang: str, mode: ConversationMode)
         )
 
     if mode == ConversationMode.INTERNAL_EVALUATION:
-        if detected_lang == "zh-CN":
+        if detected_lang == "zh_CN":
             return (
                 "当前这轮是内部验证流程，不是文献检索。绝对不要使用 `[WEB_SEARCH]`。"
                 "请直接使用已有任务、模型和数据集上下文继续，优先输出 `[ANALYSIS_CONFIG]`（analysis_type: internal）、`[METRIC_CONFIG]` 或 `[QUICK_ANALYSIS_CONFIG]`。"
             )
-        if detected_lang == "zh-HK":
+        if detected_lang == "zh_HK":
             return (
                 "當前這輪是內部驗證流程，不是文獻檢索。絕對不要使用 `[WEB_SEARCH]`。"
                 "請直接使用已有任務、模型和資料集上下文繼續，優先輸出 `[ANALYSIS_CONFIG]`（analysis_type: internal）、`[METRIC_CONFIG]` 或 `[QUICK_ANALYSIS_CONFIG]`。"
@@ -151,12 +188,12 @@ def _build_no_web_search_instruction(detected_lang: str, mode: ConversationMode)
         )
 
     if mode == ConversationMode.EXTERNAL_EVALUATION:
-        if detected_lang == "zh-CN":
+        if detected_lang == "zh_CN":
             return (
                 "当前这轮是外部评测流程，不是文献检索。绝对不要使用 `[WEB_SEARCH]`。"
                 "请直接使用已有任务、模型和数据集上下文继续，优先输出 `[ANALYSIS_CONFIG]`（analysis_type: external）或 `[METRIC_CONFIG]`。"
             )
-        if detected_lang == "zh-HK":
+        if detected_lang == "zh_HK":
             return (
                 "當前這輪是外部評測流程，不是文獻檢索。絕對不要使用 `[WEB_SEARCH]`。"
                 "請直接使用已有任務、模型和資料集上下文繼續，優先輸出 `[ANALYSIS_CONFIG]`（analysis_type: external）或 `[METRIC_CONFIG]`。"
@@ -167,12 +204,12 @@ def _build_no_web_search_instruction(detected_lang: str, mode: ConversationMode)
             "prefer `[ANALYSIS_CONFIG]` (analysis_type: external) or `[METRIC_CONFIG]`."
         )
 
-    if detected_lang == "zh-CN":
+    if detected_lang == "zh_CN":
         return (
             "当前这轮是站内分析/验证/结果展示流程，不是文献检索。绝对不要使用 `[WEB_SEARCH]`。"
             "请直接使用已有任务、模型和数据集上下文继续，优先输出 `[ANALYSIS_CONFIG]`、`[METRIC_CONFIG]`、`[CHART_CONFIG]` 或 `[QUICK_ANALYSIS_CONFIG]`。"
         )
-    if detected_lang == "zh-HK":
+    if detected_lang == "zh_HK":
         return (
             "當前這輪是站內分析/驗證/結果展示流程，不是文獻檢索。絕對不要使用 `[WEB_SEARCH]`。"
             "請直接使用已有任務、模型和資料集上下文繼續，優先輸出 `[ANALYSIS_CONFIG]`、`[METRIC_CONFIG]`、`[CHART_CONFIG]` 或 `[QUICK_ANALYSIS_CONFIG]`。"
@@ -193,7 +230,12 @@ def _prepare_generation_messages(
     prepared_messages = messages.copy()
     if disable_web_search:
         prepared_messages = prepared_messages + [
-            {"role": "user", "content": _build_no_web_search_instruction(detected_lang, conversation_mode)}
+            {
+                "role": "user",
+                "content": _build_no_web_search_instruction(
+                    detected_lang, conversation_mode
+                ),
+            }
         ]
     return prepared_messages
 
@@ -209,7 +251,7 @@ def _should_stream_sniffed_response(
 
 
 def _strip_tool_blocks(text: str) -> str:
-    return _TOOL_BLOCK_RE.sub('', text or '').strip()
+    return _TOOL_BLOCK_RE.sub("", text or "").strip()
 
 
 def _looks_like_training_model_recommendation_output(text: str) -> bool:
@@ -222,16 +264,42 @@ def _looks_like_training_model_recommendation_output(text: str) -> bool:
         return True
 
     model_keywords = (
-        "uni", "uni2", "virchow", "virchow2", "resnet50", "abmil", "clam",
-        "transmil", "conch", "phikon", "smartccs", "smartcyto", "unet",
-        "segformer", "conv_decoder", "mit_b", "mlp", "attention",
+        "uni",
+        "uni2",
+        "virchow",
+        "virchow2",
+        "resnet50",
+        "abmil",
+        "clam",
+        "transmil",
+        "conch",
+        "phikon",
+        "smartccs",
+        "smartcyto",
+        "unet",
+        "segformer",
+        "conv_decoder",
+        "mit_b",
+        "mlp",
+        "attention",
     )
-    recommendation_keywords = ("recommend", "recommended", "建议", "建議", "推荐", "推薦", "最适合", "最適合")
+    recommendation_keywords = (
+        "recommend",
+        "recommended",
+        "建议",
+        "建議",
+        "推荐",
+        "推薦",
+        "最适合",
+        "最適合",
+    )
 
     has_model_keyword = any(keyword in normalized for keyword in model_keywords)
     if "[options]" in normalized and has_model_keyword:
         return True
-    if has_model_keyword and any(keyword in normalized for keyword in recommendation_keywords):
+    if has_model_keyword and any(
+        keyword in normalized for keyword in recommendation_keywords
+    ):
         return True
     return False
 
@@ -242,13 +310,13 @@ def _build_training_recommendation_context_block(
     profile: str,
 ) -> str:
     profile_notes = {
-        "zh-CN": {
+        "zh_CN": {
             "histopathology": "本轮推荐应优先结合任务/器官匹配的 PathBench 结果，再联网查近期任务证据；不要把 UNI 或任何单一 encoder 视为普遍最优。",
             "segmentation": "本轮推荐应优先结合 PathBench / 病理分割相关证据，再联网查近期任务证据；不要默认任何单一 FM extractor。",
             "cervical_cytology": "本轮推荐对宫颈 / 妇科细胞学应优先考虑 Smart-CCS，再联网查近期任务证据。",
             "general_cytology": "本轮推荐对非宫颈 / 非妇科或通用细胞学应优先考虑 SmartCyto，再联网查同任务公开证据；不要把缺少公开命中当成反证。",
         },
-        "zh-HK": {
+        "zh_HK": {
             "histopathology": "本輪推薦應優先結合任務/器官匹配的 PathBench 結果，再聯網查近期任務證據；不要把 UNI 或任何單一 encoder 視為普遍最優。",
             "segmentation": "本輪推薦應優先結合 PathBench / 病理分割相關證據，再聯網查近期任務證據；不要預設任何單一 FM extractor。",
             "cervical_cytology": "本輪推薦對宮頸 / 婦科細胞學應優先考慮 Smart-CCS，再聯網查近期任務證據。",
@@ -264,7 +332,7 @@ def _build_training_recommendation_context_block(
     notes = profile_notes.get(detected_lang, profile_notes["en"])
     profile_note = notes.get(profile, notes.get("histopathology", ""))
 
-    if detected_lang == "zh-CN":
+    if detected_lang == "zh_CN":
         header = (
             "[TRAINING_RECOMMENDATION_CONTEXT]\n"
             "这是当前训练推荐的隐藏证据上下文。\n"
@@ -278,7 +346,7 @@ def _build_training_recommendation_context_block(
             f"7. {profile_note}\n\n"
         )
         empty = "当前没有命中的 PDF 证据；请依然保留上面的任务约束，并执行一次有针对性的联网搜索。"
-    elif detected_lang == "zh-HK":
+    elif detected_lang == "zh_HK":
         header = (
             "[TRAINING_RECOMMENDATION_CONTEXT]\n"
             "這是當前訓練推薦的隱藏證據上下文。\n"
@@ -311,14 +379,16 @@ def _build_training_recommendation_context_block(
     return f"{header}{body}\n[/TRAINING_RECOMMENDATION_CONTEXT]"
 
 
-def _build_training_recommendation_search_retry_instruction(detected_lang: str, profile: str) -> str:
-    if detected_lang == "zh-CN":
+def _build_training_recommendation_search_retry_instruction(
+    detected_lang: str, profile: str
+) -> str:
+    if detected_lang == "zh_CN":
         return (
             "你正在做训练配置推荐。先不要直接给推荐、`[OPTIONS]` 或 `[TASK_CONFIG]`。"
             "请先基于已有的 `[TRAINING_RECOMMENDATION_CONTEXT]` 执行一次 `[WEB_SEARCH]`，"
             "并先按全局任务树确认当前是 classification、survival 还是 segmentation；如果是 survival，在架构层面按与 WSI classification 相同的 encoder + aggregator / MIL 路线理解，主要区别在 objective / loss；再综合 PDF / RAG 证据与外部搜索结果给出结论；不要把这些依据表述成本地数据或内部偏好，也不要输出 Local PDF、本地证据、URL、论文标题或页码。"
         )
-    if detected_lang == "zh-HK":
+    if detected_lang == "zh_HK":
         return (
             "你正在做訓練配置推薦。先不要直接給推薦、`[OPTIONS]` 或 `[TASK_CONFIG]`。"
             "請先基於已有的 `[TRAINING_RECOMMENDATION_CONTEXT]` 執行一次 `[WEB_SEARCH]`，"
@@ -334,19 +404,19 @@ def _build_training_recommendation_search_retry_instruction(detected_lang: str, 
 def _sanitize_training_recommendation_output(text: str) -> str:
     sanitized = text or ""
     leak_patterns = (
-        r'\[[^\]]*(?:local|bundled|internal|hidden)\s+(?:pdf(?:-rag)?|evidence|knowledge\s*base)[^\]]*\]',
-        r'\([^\)]*(?:local|bundled|internal|hidden)\s+(?:pdf(?:-rag)?|evidence|knowledge\s*base)[^\)]*\)',
-        r'\b(?:local|bundled|internal|hidden)\s+(?:pdf(?:-rag)?|evidence|knowledge\s*base)\b(?:\s*[,;:]\s*(?:p\.?\s*\d+(?:\s*[-–]\s*\d+)?|page\s*\d+))?',
-        r'\[[^\]]*(?:本地\s*PDF(?:-RAG)?|本地证据|本地證據|内置\s*PDF(?:-RAG)?|內置\s*PDF(?:-RAG)?|内置证据|內置證據|隐藏证据|隱藏證據|内置知识库|內置知識庫)[^\]]*\]',
-        r'（[^）]*(?:本地\s*PDF(?:-RAG)?|本地证据|本地證據|内置\s*PDF(?:-RAG)?|內置\s*PDF(?:-RAG)?|内置证据|內置證據|隐藏证据|隱藏證據|内置知识库|內置知識庫)[^）]*）',
-        r'(?:本地\s*PDF(?:-RAG)?|本地证据|本地證據|内置\s*PDF(?:-RAG)?|內置\s*PDF(?:-RAG)?|内置证据|內置證據|隐藏证据|隱藏證據|内置知识库|內置知識庫)(?:\s*[，,；;：:]\s*(?:p\.?\s*\d+(?:\s*[-–]\s*\d+)?|第?\s*\d+\s*[页頁]))?',
+        r"\[[^\]]*(?:local|bundled|internal|hidden)\s+(?:pdf(?:-rag)?|evidence|knowledge\s*base)[^\]]*\]",
+        r"\([^\)]*(?:local|bundled|internal|hidden)\s+(?:pdf(?:-rag)?|evidence|knowledge\s*base)[^\)]*\)",
+        r"\b(?:local|bundled|internal|hidden)\s+(?:pdf(?:-rag)?|evidence|knowledge\s*base)\b(?:\s*[,;:]\s*(?:p\.?\s*\d+(?:\s*[-–]\s*\d+)?|page\s*\d+))?",
+        r"\[[^\]]*(?:本地\s*PDF(?:-RAG)?|本地证据|本地證據|内置\s*PDF(?:-RAG)?|內置\s*PDF(?:-RAG)?|内置证据|內置證據|隐藏证据|隱藏證據|内置知识库|內置知識庫)[^\]]*\]",
+        r"（[^）]*(?:本地\s*PDF(?:-RAG)?|本地证据|本地證據|内置\s*PDF(?:-RAG)?|內置\s*PDF(?:-RAG)?|内置证据|內置證據|隐藏证据|隱藏證據|内置知识库|內置知識庫)[^）]*）",
+        r"(?:本地\s*PDF(?:-RAG)?|本地证据|本地證據|内置\s*PDF(?:-RAG)?|內置\s*PDF(?:-RAG)?|内置证据|內置證據|隐藏证据|隱藏證據|内置知识库|內置知識庫)(?:\s*[，,；;：:]\s*(?:p\.?\s*\d+(?:\s*[-–]\s*\d+)?|第?\s*\d+\s*[页頁]))?",
     )
     for pattern in leak_patterns:
         sanitized = re.sub(pattern, "", sanitized, flags=re.IGNORECASE)
-    sanitized = re.sub(r'\n{3,}', '\n\n', sanitized)
-    sanitized = re.sub(r'[ \t]{2,}', ' ', sanitized)
-    sanitized = re.sub(r'[ \t]+([,，.。;；:：)）])', r'\1', sanitized)
-    sanitized = re.sub(r'([（(])[ \t]+', r'\1', sanitized)
+    sanitized = re.sub(r"\n{3,}", "\n\n", sanitized)
+    sanitized = re.sub(r"[ \t]{2,}", " ", sanitized)
+    sanitized = re.sub(r"[ \t]+([,，.。;；:：)）])", r"\1", sanitized)
+    sanitized = re.sub(r"([（(])[ \t]+", r"\1", sanitized)
     return sanitized.strip()
 
 
@@ -412,7 +482,9 @@ def _get_ai_service_error_text(detected_lang: str) -> str:
         "en": "❌ AI service is temporarily unavailable. Please try again, or check your local vLLM, API key, and network connection.",
         "en_US": "❌ AI service is temporarily unavailable. Please try again, or check your local vLLM, API key, and network connection.",
     }
-    return error_messages.get(normalized, error_messages.get(normalized.split("_")[0], error_messages["en"]))
+    return error_messages.get(
+        normalized, error_messages.get(normalized.split("_")[0], error_messages["en"])
+    )
 
 
 def _normalize_lang_key(detected_lang: str) -> str:
@@ -496,7 +568,9 @@ def _get_read_failure_reason_text(detected_lang: str, error_code: str | None) ->
         },
     }
     base = messages.get(lang, messages["en"])
-    return base.get(error_code or "", base.get("unexpected_error", "An unexpected issue occurred."))
+    return base.get(
+        error_code or "", base.get("unexpected_error", "An unexpected issue occurred.")
+    )
 
 
 def _build_read_failure_instruction(
@@ -526,7 +600,11 @@ def _build_read_failure_instruction(
             if source_type in {"github", "gitlab", "gitee"}
             else "不要假装已经读取到当前页面未提供的内容。"
         )
-        detail_line = f"\n补充信息：{detail}" if detail else (f"\n补充信息：{exception_detail}" if exception_detail else "")
+        detail_line = (
+            f"\n补充信息：{detail}"
+            if detail
+            else (f"\n补充信息：{exception_detail}" if exception_detail else "")
+        )
         return (
             f"未能成功读取《{article_title}》对应的{source_label}（{article_url}）。"
             f"原因：{reason}{detail_line}\n\n"
@@ -545,7 +623,11 @@ def _build_read_failure_instruction(
             if source_type in {"github", "gitlab", "gitee"}
             else "不要假裝已經讀取到當前頁面未提供的內容。"
         )
-        detail_line = f"\n補充資訊：{detail}" if detail else (f"\n補充資訊：{exception_detail}" if exception_detail else "")
+        detail_line = (
+            f"\n補充資訊：{detail}"
+            if detail
+            else (f"\n補充資訊：{exception_detail}" if exception_detail else "")
+        )
         return (
             f"未能成功讀取《{article_title}》對應的{source_label}（{article_url}）。"
             f"原因：{reason}{detail_line}\n\n"
@@ -563,7 +645,11 @@ def _build_read_failure_instruction(
         if source_type in {"github", "gitlab", "gitee"}
         else "Do not pretend to have read content that was not actually retrieved."
     )
-    detail_line = f"\nAdditional detail: {detail}" if detail else (f"\nAdditional detail: {exception_detail}" if exception_detail else "")
+    detail_line = (
+        f"\nAdditional detail: {detail}"
+        if detail
+        else (f"\nAdditional detail: {exception_detail}" if exception_detail else "")
+    )
     return (
         f"The {source_label} for '{article_title}' ({article_url}) could not be retrieved automatically. "
         f"Reason: {reason}{detail_line}\n\n"
@@ -645,7 +731,10 @@ async def _require_conversation_write_access(
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     if not check_data_ownership(conversation.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to modify this conversation")
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to modify this conversation",
+        )
 
 
 def _is_segmentation_task(task_type: Optional[str]) -> bool:
@@ -657,11 +746,13 @@ def _normalize_label_names(labels: List[str]) -> List[str]:
 
 
 def _extract_segmentation_label_names(categories: List[Dict[str, Any]]) -> List[str]:
-    return _normalize_label_names([
-        str(category.get("name", "")).strip()
-        for category in categories
-        if category.get("name")
-    ])
+    return _normalize_label_names(
+        [
+            str(category.get("name", "")).strip()
+            for category in categories
+            if category.get("name")
+        ]
+    )
 
 
 async def _get_patch_model_for_chat(
@@ -674,21 +765,32 @@ async def _get_patch_model_for_chat(
     if not trained_model:
         raise HTTPException(status_code=404, detail="Trained model not found")
     if not check_data_ownership(trained_model.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to use this model")
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to use this model"
+        )
 
     training_task = await TrainingTaskRepository.get_by_id(db, trained_model.task_id)
     if not training_task or not training_task.data_group:
-        raise HTTPException(status_code=400, detail="Training task metadata is incomplete")
+        raise HTTPException(
+            status_code=400, detail="Training task metadata is incomplete"
+        )
 
     data_type = training_task.data_group.data_type
     task_type = training_task.data_group.task_type
     if data_type != "patch":
-        raise HTTPException(status_code=400, detail="Only patch models are supported for chat image inference")
+        raise HTTPException(
+            status_code=400,
+            detail="Only patch models are supported for chat image inference",
+        )
 
     if inference_type == "classification" and _is_segmentation_task(task_type):
-        raise HTTPException(status_code=400, detail="Selected model is not a patch classification model")
+        raise HTTPException(
+            status_code=400, detail="Selected model is not a patch classification model"
+        )
     if inference_type == "segmentation" and not _is_segmentation_task(task_type):
-        raise HTTPException(status_code=400, detail="Selected model is not a patch segmentation model")
+        raise HTTPException(
+            status_code=400, detail="Selected model is not a patch segmentation model"
+        )
 
     return trained_model
 
@@ -731,7 +833,7 @@ def _normalize_task_config_blocks(response_text: str) -> str:
     if "[TASK_CONFIG]" not in response_text:
         return response_text
 
-    pattern = re.compile(r'\[TASK_CONFIG\](.*?)\[/TASK_CONFIG\]', re.DOTALL)
+    pattern = re.compile(r"\[TASK_CONFIG\](.*?)\[/TASK_CONFIG\]", re.DOTALL)
 
     def _replace(match: re.Match[str]) -> str:
         raw_json = match.group(1).strip()
@@ -841,14 +943,26 @@ def _extract_latest_training_snapshot(logs: List[Any]) -> Optional[str]:
     return None
 
 
-def _get_segmentation_model_spec(model: Any, training_task: Optional[TrainingTask]) -> Dict[str, str | bool]:
-    model_config = training_task.model_config if training_task and isinstance(training_task.model_config, dict) else {}
+def _get_segmentation_model_spec(
+    model: Any, training_task: Optional[TrainingTask]
+) -> Dict[str, str | bool]:
+    model_config = (
+        training_task.model_config
+        if training_task and isinstance(training_task.model_config, dict)
+        else {}
+    )
     task_architecture = str(model_config.get("architecture") or "").strip()
     task_backbone = str(model_config.get("backbone") or "").strip()
     saved_architecture = str(getattr(model, "aggregator", "") or "").strip()
     saved_backbone = str(getattr(model, "feature_extractor", "") or "").strip()
-    is_complete = bool(task_architecture and task_backbone and saved_architecture and saved_backbone)
-    is_consistent = is_complete and task_architecture == saved_architecture and task_backbone == saved_backbone
+    is_complete = bool(
+        task_architecture and task_backbone and saved_architecture and saved_backbone
+    )
+    is_consistent = (
+        is_complete
+        and task_architecture == saved_architecture
+        and task_backbone == saved_backbone
+    )
     return {
         "task_architecture": task_architecture,
         "task_backbone": task_backbone,
@@ -873,7 +987,13 @@ def _get_external_validation_compatibility_error(
 ) -> Optional[str]:
     model_is_survival = model_task_type == "survival"
     model_is_segmentation = _is_segmentation_task(model_task_type)
-    model_classes = set(_normalize_label_names((training_task.classes if training_task and training_task.classes else None) or model.classes or []))
+    model_classes = set(
+        _normalize_label_names(
+            (training_task.classes if training_task and training_task.classes else None)
+            or model.classes
+            or []
+        )
+    )
     model_extractor = str(getattr(model, "feature_extractor", "") or "").strip()
     model_embed_dim = extractor_embed_dim.get(model_extractor, 0)
 
@@ -909,9 +1029,13 @@ def _get_external_validation_compatibility_error(
             return "target dataset is the source training dataset"
 
         model_segmentation_labels = _normalize_label_names(
-            (training_task.classes if training_task and training_task.classes else None) or model.classes or []
+            (training_task.classes if training_task and training_task.classes else None)
+            or model.classes
+            or []
         )
-        dataset_segmentation_labels = _normalize_label_names(dataset_meta.get("segmentation_labels", []))
+        dataset_segmentation_labels = _normalize_label_names(
+            dataset_meta.get("segmentation_labels", [])
+        )
         if not model_segmentation_labels or not dataset_segmentation_labels:
             return "segmentation labels missing"
         if model_segmentation_labels != dataset_segmentation_labels:
@@ -923,13 +1047,18 @@ def _get_external_validation_compatibility_error(
         return None
 
     if not model_is_survival:
-        dataset_labels = set(_normalize_label_names(list((dataset_meta.get("labels") or {}).keys())))
+        dataset_labels = set(
+            _normalize_label_names(list((dataset_meta.get("labels") or {}).keys()))
+        )
         if model_classes != dataset_labels:
             return "classification labels mismatch"
 
     if model_data_type == "wsi" and model_extractor and model_embed_dim > 0:
         dataset_extractors = dataset_meta.get("available_feature_extractors", []) or []
-        has_same_dim = any((extractor_embed_dim.get(extractor, 0) == model_embed_dim) for extractor in dataset_extractors)
+        has_same_dim = any(
+            (extractor_embed_dim.get(extractor, 0) == model_embed_dim)
+            for extractor in dataset_extractors
+        )
         if not has_same_dim:
             return "feature extractor embedding dimension mismatch"
 
@@ -941,6 +1070,7 @@ def _get_external_validation_compatibility_error(
         return "target dataset is part of training data"
 
     return None
+
 
 # Maximum PDF papers to include in the AI supplement response (awaited tasks).
 # ALL PDFs found in search results are started as background tasks (so they get
@@ -982,14 +1112,14 @@ _PDF_SUPPLEMENT_PROMPTS = {
     ),
     "zh_CN": (
         "以下是后台解析的 PDF 论文完整内容。"
-        "每篇论文都标有 [Paper N] 编号，当用户问\"哪一篇\"时，请通过标题/URL 对应编号来回答。"
+        '每篇论文都标有 [Paper N] 编号，当用户问"哪一篇"时，请通过标题/URL 对应编号来回答。'
         "请用具体细节和论文引用来补充你之前的回答。\n\n"
         "## 严格 Grounding 规则（必须遵守）\n"
         "1. 你的回答**必须完全基于**下方论文内容。**禁止**使用训练知识补充论文中不存在的信息。\n"
         "2. 每个事实性陈述**必须**标注来源：[N, p.Y]（仅当能看到 `--- Page Y ---` 标记时）"
         "或 [N]（无页码标记时）。N 是论文编号。**绝对不要**猜测或捏造页码。\n"
         "3. 如果用户问的信息**不在**已提供的论文内容中，你**必须**说："
-        "\"我在已检索的论文内容中没有找到这个信息，您可以让我搜索特定页面或章节。\"\n"
+        '"我在已检索的论文内容中没有找到这个信息，您可以让我搜索特定页面或章节。"\n'
         "4. 如果某篇 PDF 下载或解析失败，**必须**明确告知用户，**不得**用训练知识替代回答。\n\n"
         "## 图片规则\n"
         "如果论文内容中包含 Markdown 图片链接（如 ![fig](http://...)），你**必须**将这些链接原样放入回答中，"
@@ -1059,7 +1189,7 @@ _READ_ARTICLE_PROMPTS = {
         "2. 每个事实性陈述**必须**标注来源：[N, p.Y]，其中 N 是搜索结果编号，"
         "Y 是页码（仅当能看到 `--- Page Y ---` 标记时）。**绝对不要**猜测页码。\n"
         "3. 如果用户问的信息**不在**文章内容中，请说："
-        "\"我在已检索的文章内容中没有找到这个信息。\"\n"
+        '"我在已检索的文章内容中没有找到这个信息。"\n'
         "4. 如果文章下载或解析失败，**必须**明确告知用户。\n\n"
         "## 图片规则\n"
         "如果内容中包含 Markdown 图片链接（如 ![fig](http://...)），请原样放入回答中。"
@@ -1197,7 +1327,7 @@ def _collect_pdf_urls_from_contexts(messages: list[dict]) -> list[str]:
 
     Returns a deduplicated list of URLs preserving first-seen order.
     """
-    pdf_ctx_re = re.compile(r'\[PDF_CONTEXT\]\n?([\s\S]*?)\n?\[/PDF_CONTEXT\]')
+    pdf_ctx_re = re.compile(r"\[PDF_CONTEXT\]\n?([\s\S]*?)\n?\[/PDF_CONTEXT\]")
     seen: dict[str, None] = {}  # ordered dict for dedup
     for msg in messages:
         if msg.get("role") != "user":
@@ -1205,7 +1335,7 @@ def _collect_pdf_urls_from_contexts(messages: list[dict]) -> list[str]:
         raw = extract_text_from_content(msg.get("content", ""))
         m = pdf_ctx_re.search(raw)
         if m:
-            urls = re.findall(r'- \*\*URL\*\*: (https?://[^\s\n]+)', m.group(1))
+            urls = re.findall(r"- \*\*URL\*\*: (https?://[^\s\n]+)", m.group(1))
             for u in urls:
                 seen.setdefault(u, None)
     return list(seen.keys())
@@ -1232,10 +1362,9 @@ def _replace_images_with_fig_aliases(md_content: str, url_hash: str) -> str:
 
     # Canonical file list — sorted, excluding any fig-* aliases or meta files
     image_files = sorted(
-        f.name for f in images_dir.iterdir()
-        if f.is_file()
-        and not f.name.startswith('fig-')
-        and not f.name.startswith('_')
+        f.name
+        for f in images_dir.iterdir()
+        if f.is_file() and not f.name.startswith("fig-") and not f.name.startswith("_")
     )
     if not image_files:
         return md_content
@@ -1245,28 +1374,30 @@ def _replace_images_with_fig_aliases(md_content: str, url_hash: str) -> str:
 
     def _replacer(match: re.Match) -> str:
         alt = match.group(1)
-        prefix = match.group(2)          # up to and including …/pdf-images/hash/
+        prefix = match.group(2)  # up to and including …/pdf-images/hash/
         filename_with_ext = match.group(3)  # e.g. "abc123…def.jpg"
 
         fig_num = file_to_fig.get(filename_with_ext)
         if fig_num is None:
             return match.group(0)  # unknown file — leave as-is
 
-        ext = filename_with_ext.rsplit('.', 1)[-1]
+        ext = filename_with_ext.rsplit(".", 1)[-1]
         new_alt = alt.strip() if alt.strip() else f"Figure {fig_num}"
         return f"![{new_alt}]({prefix}fig-{fig_num}.{ext})"
 
     # Pattern: ![alt](…/pdf-images/{url_hash}/filename.ext)
     pattern = (
-        r'!\[([^\]]*)\]\('
-        r'((?:[^\)]*?/)?pdf-images/' + re.escape(url_hash) + r'/)'
-        r'([^/\)\s]+)'
-        r'\)'
+        r"!\[([^\]]*)\]\("
+        r"((?:[^\)]*?/)?pdf-images/" + re.escape(url_hash) + r"/)"
+        r"([^/\)\s]+)"
+        r"\)"
     )
     return re.sub(pattern, _replacer, md_content, flags=re.IGNORECASE)
 
 
-def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lang: str = "en") -> str:
+def _build_merged_pdf_context(
+    all_urls: list[str], user_query: str, detected_lang: str = "en"
+) -> str:
     """Build a single merged PDF context from all unique URLs with BM25 page selection.
 
     This replaces the old per-block `_enhance_pdf_context_for_query` with a
@@ -1289,17 +1420,19 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
     paper_metas: list[dict] = []
     for idx, url in enumerate(all_urls, 1):
         meta = get_cached_pdf_meta(url) or {}
-        title = meta.get('title', 'Unknown')
-        parse_method = meta.get('parse_method')
+        title = meta.get("title", "Unknown")
+        parse_method = meta.get("parse_method")
 
         # Determine academic status from cache meta (persisted by process_pdf_url).
         # If not in cache (legacy), re-detect from cached markdown + source type.
-        if 'is_academic' in meta:
-            is_academic = meta['is_academic']
+        if "is_academic" in meta:
+            is_academic = meta["is_academic"]
         else:
             cached_md = get_cached_markdown(url)
             src_type = detect_source_type(url)
-            is_academic = is_academic_content(cached_md or "", src_type) if cached_md else False
+            is_academic = (
+                is_academic_content(cached_md or "", src_type) if cached_md else False
+            )
 
         label = "Paper" if is_academic else "Doc"
 
@@ -1314,11 +1447,16 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
         registry_lines.append(
             f"- [{label} {idx}] {title} ({url}) | Images: {image_status}"
         )
-        paper_metas.append({
-            'url': url, 'meta': meta, 'title': title,
-            'parse_method': parse_method, 'image_count': image_count,
-            'is_academic': is_academic,
-        })
+        paper_metas.append(
+            {
+                "url": url,
+                "meta": meta,
+                "title": title,
+                "parse_method": parse_method,
+                "image_count": image_count,
+                "is_academic": is_academic,
+            }
+        )
 
         logger.info(
             f"[BM25] {label} {idx} '{title}': parse_method={parse_method}, "
@@ -1334,12 +1472,12 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
 
     # ── Per-document rebuild ─────────────────────────────────────────────────
     for paper_idx, pd in enumerate(paper_metas, 1):
-        url = pd['url']
-        meta = pd['meta']
-        title = pd['title']
-        page_count = meta.get('page_count')
-        parse_method = pd['parse_method']
-        is_academic = pd.get('is_academic', False)
+        url = pd["url"]
+        meta = pd["meta"]
+        title = pd["title"]
+        page_count = meta.get("page_count")
+        parse_method = pd["parse_method"]
+        is_academic = pd.get("is_academic", False)
         label = "Paper" if is_academic else "Doc"
         content_type = "Academic Paper" if is_academic else "General Document"
         page_info = f"{page_count} pages" if page_count else "page count unknown"
@@ -1354,7 +1492,9 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
         # Read full cached markdown (always re-reads from disk → picks up newer high-quality cache)
         full_md = get_cached_markdown(url)
         if not full_md:
-            enhanced_parts.append("[Content not available — cache may have expired]\n---\n")
+            enhanced_parts.append(
+                "[Content not available — cache may have expired]\n---\n"
+            )
             continue
 
         # 改动 9: Replace hash-based image filenames with fig-N aliases.
@@ -1393,7 +1533,9 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
                 char_count += len(first_text)
 
             # Add vector-retrieved chunks, sorted by page then chunk_index
-            sorted_chunks = sorted(vector_results, key=lambda c: (c["page_num"], c["chunk_index"]))
+            sorted_chunks = sorted(
+                vector_results, key=lambda c: (c["page_num"], c["chunk_index"])
+            )
             seen_chunks = set()
             for chunk in sorted_chunks:
                 chunk_key = (chunk["page_num"], chunk["chunk_index"])
@@ -1431,7 +1573,7 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
             image_lines: list[str] = []
             for pn in sorted(chunk_page_nums):
                 page_content = page_map.get(pn, "")
-                for m in re.finditer(r'!\[[^\]]*\]\([^\)]+\)', page_content):
+                for m in re.finditer(r"!\[[^\]]*\]\([^\)]+\)", page_content):
                     img_md = m.group(0)
                     if img_md not in assembled_text:
                         image_lines.append(f"[From Page {pn}] {img_md}")
@@ -1443,7 +1585,9 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
                 )
                 if char_count + len(img_section) <= _PDF_MAX_CHARS_PER_PAPER:
                     content_parts.append(img_section)
-                    logger.info(f"[ImageRehydrate] Added {len(image_lines)} image links from relevant pages")
+                    logger.info(
+                        f"[ImageRehydrate] Added {len(image_lines)} image links from relevant pages"
+                    )
 
             total_p = page_count or (len(all_pages) if all_pages else 0)
             note = (
@@ -1454,10 +1598,14 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
             enhanced_parts.append("\n".join(content_parts))
         else:
             # ── BM25 fallback for documents not yet vector-indexed ────────────
-            logger.info(f"[BM25 Fallback] {label} {paper_idx}: no vector results, using BM25")
+            logger.info(
+                f"[BM25 Fallback] {label} {paper_idx}: no vector results, using BM25"
+            )
             all_pages = _split_md_into_pages(full_md)
             if not all_pages:
-                enhanced_parts.append(full_md[:_PDF_MAX_CHARS_PER_PAPER] + "\n[...truncated]\n")
+                enhanced_parts.append(
+                    full_md[:_PDF_MAX_CHARS_PER_PAPER] + "\n[...truncated]\n"
+                )
             else:
                 first_pn, first_content = all_pages[0]
                 last_pn, last_content = all_pages[-1]
@@ -1483,10 +1631,15 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
                     if char_count + len(page_text) > _PDF_MAX_CHARS_PER_PAPER:
                         remaining = _PDF_MAX_CHARS_PER_PAPER - char_count
                         if remaining > 200:
-                            content_parts.append(page_text[:remaining] + "\n[...page truncated for length]")
+                            content_parts.append(
+                                page_text[:remaining]
+                                + "\n[...page truncated for length]"
+                            )
                         break
                     if prev_pn is not None and pn > prev_pn + 1:
-                        content_parts.append(f"\n[...pages {prev_pn + 1}–{pn - 1} omitted — ask about them if needed...]\n")
+                        content_parts.append(
+                            f"\n[...pages {prev_pn + 1}–{pn - 1} omitted — ask about them if needed...]\n"
+                        )
                     content_parts.append(page_text)
                     char_count += len(page_text)
                     prev_pn = pn
@@ -1509,6 +1662,7 @@ def _build_merged_pdf_context(all_urls: list[str], user_query: str, detected_lan
 
 # Include feedback sub-router
 from .chat_feedback import router as chat_feedback_router
+
 router.include_router(chat_feedback_router)
 
 
@@ -1541,10 +1695,26 @@ def _infer_model_request_filters(user_text: str) -> Dict[str, str]:
     task_type_keywords = {
         "classification": ["classification", "classify", "classifier", "分类"],
         "survival": ["survival", "prognosis", "prognostic", "生存", "预后"],
-        "segmentation": ["segmentation", "segment", "mask", "分割", "掩膜", "勾边", "圈区域"],
+        "segmentation": [
+            "segmentation",
+            "segment",
+            "mask",
+            "分割",
+            "掩膜",
+            "勾边",
+            "圈区域",
+        ],
     }
     data_type_keywords = {
-        "wsi": ["wsi", "whole slide", "whole-slide", "全切片", "全视野", "病理大图", "大图"],
+        "wsi": [
+            "wsi",
+            "whole slide",
+            "whole-slide",
+            "全切片",
+            "全视野",
+            "病理大图",
+            "大图",
+        ],
         "patch": ["patch", "tile", "patches", "小图", "切块", "瓦片"],
     }
 
@@ -1566,7 +1736,9 @@ def _infer_model_request_filters(user_text: str) -> Dict[str, str]:
     return filters
 
 
-def _matches_model_request_filters(model_meta: Dict[str, Any], filters: Dict[str, str]) -> bool:
+def _matches_model_request_filters(
+    model_meta: Dict[str, Any], filters: Dict[str, str]
+) -> bool:
     """Return True when a model matches all inferred request filters."""
     for key, expected in filters.items():
         if expected and model_meta.get(key) != expected:
@@ -1602,7 +1774,8 @@ def _extract_images_from_content(content) -> list[str]:
 
 
 def _extract_citation_contexts(
-    ai_response: str, article_pdf_content: str,
+    ai_response: str,
+    article_pdf_content: str,
     per_paper_content: dict[int, str] | None = None,
     per_paper_source_ids: dict[int, str] | None = None,
 ) -> dict | None:
@@ -1627,12 +1800,12 @@ def _extract_citation_contexts(
     from collections import Counter
 
     # General pattern: [N, p.ANY_PAGE_DESCRIPTION] — matches p.2, p.2-3, p.2, p.4, etc.
-    citation_pattern = re.compile(r'\[(\d{1,2}),\s*(p\.[^\]]+)\]')
+    citation_pattern = re.compile(r"\[(\d{1,2}),\s*(p\.[^\]]+)\]")
     citations = citation_pattern.findall(ai_response)
 
     # Also detect bare [N] citations (no page number).
     # Negative lookbehind avoids matching inside [N, p.Y] or markdown links.
-    bare_pattern = re.compile(r'(?<![,\w])\[(\d{1,2})\](?!\()')
+    bare_pattern = re.compile(r"(?<![,\w])\[(\d{1,2})\](?!\()")
     bare_matches = set(bare_pattern.findall(ai_response))
     # Remove indices already covered by [N, p.Y] patterns
     covered_indices = {idx_str for idx_str, _ in citations}
@@ -1656,11 +1829,14 @@ def _extract_citation_contexts(
     def _best_paragraph(page_text: str, query: str, max_len: int = 200) -> str:
         """BM25-rank paragraphs of *page_text* against *query*,
         return the best-matching snippet truncated to *max_len* chars."""
+
         def _clean_snippet_text(text: str) -> str:
-            text = re.sub(r'^\s*--- Page \d+ ---\s*$', '', text, flags=re.MULTILINE)
-            text = re.sub(r'^\s*!\[[^\]]*\]\([^\)]+\)\s*$', '', text, flags=re.MULTILINE)
-            text = re.sub(r'https?://[^\s)\]]+', '', text).strip()
-            text = re.sub(r'\s+', ' ', text)
+            text = re.sub(r"^\s*--- Page \d+ ---\s*$", "", text, flags=re.MULTILINE)
+            text = re.sub(
+                r"^\s*!\[[^\]]*\]\([^\)]+\)\s*$", "", text, flags=re.MULTILINE
+            )
+            text = re.sub(r"https?://[^\s)\]]+", "", text).strip()
+            text = re.sub(r"\s+", " ", text)
             return text.strip()
 
         def _is_low_value_paragraph(text: str) -> bool:
@@ -1668,28 +1844,36 @@ def _extract_citation_contexts(
             if not compact:
                 return True
             lower = compact.lower()
-            if compact.count('@') >= 2:
+            if compact.count("@") >= 2:
                 return True
-            if any(marker in lower for marker in (
-                'correspondence:',
-                'corresponding author',
-                'orcid',
-                'all rights reserved',
-            )):
+            if any(
+                marker in lower
+                for marker in (
+                    "correspondence:",
+                    "corresponding author",
+                    "orcid",
+                    "all rights reserved",
+                )
+            ):
                 return True
-            if len(compact) <= 140 and re.match(r'^(figure|fig\.?|table)\s*[0-9ivx]+', lower):
+            if len(compact) <= 140 and re.match(
+                r"^(figure|fig\.?|table)\s*[0-9ivx]+", lower
+            ):
                 return True
-            affiliation_hits = sum(lower.count(token) for token in (
-                'department of',
-                'university',
-                'hospital',
-                'institute',
-            ))
-            if affiliation_hits >= 2 and len(re.findall(r'[\.!?]', compact)) <= 1:
+            affiliation_hits = sum(
+                lower.count(token)
+                for token in (
+                    "department of",
+                    "university",
+                    "hospital",
+                    "institute",
+                )
+            )
+            if affiliation_hits >= 2 and len(re.findall(r"[\.!?]", compact)) <= 1:
                 return True
             return False
 
-        paragraphs = [p.strip() for p in re.split(r'\n{2,}', page_text) if p.strip()]
+        paragraphs = [p.strip() for p in re.split(r"\n{2,}", page_text) if p.strip()]
         if not paragraphs:
             return _clean_snippet_text(page_text)[:max_len].strip()
 
@@ -1724,11 +1908,16 @@ def _extract_citation_contexts(
                     continue
                 n_qt = df[qt]
                 idf = math.log((N - n_qt + 0.5) / (n_qt + 0.5) + 1)
-                score += idf * (tf[qt] * (k1 + 1)) / (tf[qt] + k1 * (1 - b + b * dl / avgdl))
+                score += (
+                    idf * (tf[qt] * (k1 + 1)) / (tf[qt] + k1 * (1 - b + b * dl / avgdl))
+                )
             if score > best_score:
                 best_score = score
                 best_idx = idx
-            if not _is_low_value_paragraph(paragraphs[idx]) and score > best_non_noise_score:
+            if (
+                not _is_low_value_paragraph(paragraphs[idx])
+                and score > best_non_noise_score
+            ):
                 best_non_noise_score = score
                 best_non_noise_idx = idx
 
@@ -1761,12 +1950,12 @@ def _extract_citation_contexts(
             page_map = _single_page_map
 
         # Extract ALL page numbers mentioned in page_part (handles p.2, p.2-3, p.2, p.4, etc.)
-        page_numbers = [int(x) for x in re.findall(r'\d+', page_part)]
+        page_numbers = [int(x) for x in re.findall(r"\d+", page_part)]
         if not page_numbers:
             continue
         # For ranges like p.2-3, expand to [2, 3]
         expanded_pages: list[int] = []
-        for rng in re.findall(r'(\d+)(?:-(\d+))?', page_part):
+        for rng in re.findall(r"(\d+)(?:-(\d+))?", page_part):
             start_p = int(rng[0])
             end_p = int(rng[1]) if rng[1] else start_p
             expanded_pages.extend(range(start_p, end_p + 1))
@@ -1794,7 +1983,9 @@ def _extract_citation_contexts(
         else:
             query = ai_response[:160]
 
-        source_id = per_paper_source_ids.get(paper_idx) if per_paper_source_ids else None
+        source_id = (
+            per_paper_source_ids.get(paper_idx) if per_paper_source_ids else None
+        )
         contexts[key] = {
             "page": unique_pages[0],
             "context": _best_paragraph(page_content, query),
@@ -1826,7 +2017,9 @@ def _extract_citation_contexts(
         else:
             query = ai_response[:160]
 
-        source_id = per_paper_source_ids.get(paper_idx) if per_paper_source_ids else None
+        source_id = (
+            per_paper_source_ids.get(paper_idx) if per_paper_source_ids else None
+        )
         contexts[key] = {
             "page": 0,  # no specific page
             "context": _best_paragraph(full_content, query),
@@ -1841,7 +2034,7 @@ async def _stream_from_openai_compatible(
     base_url: str,
     api_key: str,
     model: str,
-    source_name: str = "API"
+    source_name: str = "API",
 ) -> AsyncIterator[str]:
     """
     Stream AI response from an OpenAI-compatible API endpoint.
@@ -1872,7 +2065,7 @@ async def _stream_from_openai_compatible(
                 "stream": True,
                 "temperature": 0.7,
                 "max_tokens": 2048,
-            }
+            },
         ) as response:
             await _raise_for_status_with_detail(response)
 
@@ -1905,7 +2098,9 @@ async def _stream_from_openai_compatible(
                 yield f"data: {json.dumps({'response_truncated': True})}\n\n"
 
 
-async def _check_local_vllm_available(base_url: str, api_key: str = None) -> tuple[bool, str | None]:
+async def _check_local_vllm_available(
+    base_url: str, api_key: str = None
+) -> tuple[bool, str | None]:
     """
     Check if local vLLM server is available and get the first available model.
 
@@ -1931,10 +2126,7 @@ async def _check_local_vllm_available(base_url: str, api_key: str = None) -> tup
 
 
 async def _call_ai_complete(
-    messages: List[Dict],
-    base_url: str,
-    api_key: str,
-    model: str
+    messages: List[Dict], base_url: str, api_key: str, model: str
 ) -> str:
     """
     Call AI completion API (non-streaming) and return the full response content.
@@ -1962,7 +2154,7 @@ async def _call_ai_complete(
                 "stream": False,
                 "temperature": 0.7,
                 "max_tokens": 2048,
-            }
+            },
         )
         await _raise_for_status_with_detail(response)
         data = response.json()
@@ -1972,7 +2164,9 @@ async def _call_ai_complete(
         return ""
 
 
-async def _execute_exa_search(query: str, exa_api_key: str, num_results: int = 5) -> Dict:
+async def _execute_exa_search(
+    query: str, exa_api_key: str, num_results: int = 5
+) -> Dict:
     """
     Execute Exa search and return results.
 
@@ -1984,10 +2178,7 @@ async def _execute_exa_search(query: str, exa_api_key: str, num_results: int = 5
     Returns:
         Dict with query and results array
     """
-    headers = {
-        "Content-Type": "application/json",
-        "x-api-key": exa_api_key
-    }
+    headers = {"Content-Type": "application/json", "x-api-key": exa_api_key}
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
@@ -1997,10 +2188,8 @@ async def _execute_exa_search(query: str, exa_api_key: str, num_results: int = 5
                 "query": query,
                 "num_results": num_results,
                 "type": "auto",
-                "contents": {
-                    "text": True
-                }
-            }
+                "contents": {"text": True},
+            },
         )
         response.raise_for_status()
         data = response.json()
@@ -2008,22 +2197,25 @@ async def _execute_exa_search(query: str, exa_api_key: str, num_results: int = 5
         # Extract results
         results = []
         for item in data.get("results", []):
-            results.append({
-                "title": item.get("title", ""),
-                "url": item.get("url", ""),
-                "snippet": item.get("text", "")[:2000]  # Extended snippet for better AI context
-            })
+            results.append(
+                {
+                    "title": item.get("title", ""),
+                    "url": item.get("url", ""),
+                    "snippet": item.get("text", "")[
+                        :2000
+                    ],  # Extended snippet for better AI context
+                }
+            )
 
-        return {
-            "query": query,
-            "results": results
-        }
+        return {"query": query, "results": results}
 
 
 # ── Client disconnect detection for immediate cancellation ──────────────────
 
+
 class ClientDisconnectedError(Exception):
     """Raised when the SSE client disconnects during a long-running operation."""
+
     pass
 
 
@@ -2087,11 +2279,11 @@ def _deduplicate_search_results(results: List[Dict]) -> List[Dict]:
     if not results:
         return results
 
-    _bracket_re = re.compile(r'\[.*?\]')
-    _word_re = re.compile(r'[a-zA-Z0-9]{3,}')
+    _bracket_re = re.compile(r"\[.*?\]")
+    _word_re = re.compile(r"[a-zA-Z0-9]{3,}")
 
     def _title_words(title: str) -> set:
-        title = _bracket_re.sub('', title)
+        title = _bracket_re.sub("", title)
         return set(w.lower() for w in _word_re.findall(title))
 
     def _source_priority(result: Dict) -> int:
@@ -2195,14 +2387,28 @@ async def stream_ai_response(
 
     # Local vLLM settings
     local_vllm_enabled = global_settings.get("local_vllm_enabled", False)
-    local_vllm_base_url = global_settings.get("local_vllm_base_url", "http://127.0.0.1:8000/v1")
+    local_vllm_base_url = global_settings.get(
+        "local_vllm_base_url", "http://127.0.0.1:8000/v1"
+    )
     local_vllm_model = global_settings.get("local_vllm_model", "")
     local_vllm_api_key = global_settings.get("local_vllm_api_key", "")
 
     # OpenRouter settings (fallback)
-    openrouter_api_key = api_key or global_settings.get("openrouter_api_key") or os.environ.get("OPENROUTER_API_KEY")
-    openrouter_base_url = base_url or global_settings.get("openrouter_base_url") or os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    openrouter_model = model or global_settings.get("openrouter_model") or os.environ.get("OPENROUTER_MODEL", "qwen/qwen3.5-plus-02-15")
+    openrouter_api_key = (
+        api_key
+        or global_settings.get("openrouter_api_key")
+        or os.environ.get("OPENROUTER_API_KEY")
+    )
+    openrouter_base_url = (
+        base_url
+        or global_settings.get("openrouter_base_url")
+        or os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    )
+    openrouter_model = (
+        model
+        or global_settings.get("openrouter_model")
+        or os.environ.get("OPENROUTER_MODEL", "qwen/qwen3.5-plus-02-15")
+    )
 
     # Exa search settings
     exa_api_key = global_settings.get("exa_api_key", "")
@@ -2212,7 +2418,9 @@ async def stream_ai_response(
     detected_model = None
     if local_vllm_enabled and local_vllm_base_url:
         logger.info(f"Checking local vLLM server at {local_vllm_base_url}...")
-        is_available, detected_model = await _check_local_vllm_available(local_vllm_base_url, local_vllm_api_key)
+        is_available, detected_model = await _check_local_vllm_available(
+            local_vllm_base_url, local_vllm_api_key
+        )
         if is_available:
             use_local = True
             logger.info("Local vLLM server is online, using local server")
@@ -2225,7 +2433,9 @@ async def stream_ai_response(
         effective_base_url = local_vllm_base_url
         effective_api_key = local_vllm_api_key
         if not effective_model:
-            logger.error("No model specified and auto-detect failed, falling back to OpenRouter")
+            logger.error(
+                "No model specified and auto-detect failed, falling back to OpenRouter"
+            )
             use_local = False
 
     if not use_local:
@@ -2255,7 +2465,12 @@ After saving, return here and start chatting!"""
     provider_name = "Local vLLM" if use_local else "OpenRouter"
 
     def _switch_to_remote_fallback(reason: Exception, *, stage: str) -> bool:
-        nonlocal use_local, effective_model, effective_base_url, effective_api_key, provider_name
+        nonlocal \
+            use_local, \
+            effective_model, \
+            effective_base_url, \
+            effective_api_key, \
+            provider_name
         if not use_local or not openrouter_api_key:
             return False
         if not _should_fallback_from_local_vllm_error(reason):
@@ -2274,11 +2489,21 @@ After saving, return here and start chatting!"""
     # Tool loop: up to 5 iterations (web search + read article)
     # Need enough iterations for: search → re-search → read article → stream summary
     max_tool_iterations = 5
-    current_messages = _prepare_generation_messages(messages, detected_lang, disable_web_search, conversation_mode)
-    _requires_training_recommendation_search = _has_training_recommendation_context(current_messages)
-    article_pdf_content: str | None = None  # raw PDF markdown (with page markers) for citation context extraction
-    _per_paper_pdf_content: dict[int, str] | None = None  # per-paper content for multi-paper follow-ups
-    _per_paper_source_ids: dict[int, str] | None = None  # stable source ids aligned with per-paper content
+    current_messages = _prepare_generation_messages(
+        messages, detected_lang, disable_web_search, conversation_mode
+    )
+    _requires_training_recommendation_search = _has_training_recommendation_context(
+        current_messages
+    )
+    article_pdf_content: str | None = (
+        None  # raw PDF markdown (with page markers) for citation context extraction
+    )
+    _per_paper_pdf_content: dict[int, str] | None = (
+        None  # per-paper content for multi-paper follow-ups
+    )
+    _per_paper_source_ids: dict[int, str] | None = (
+        None  # stable source ids aligned with per-paper content
+    )
     _current_read_reference_card: str | None = None
 
     # ── Pre-populate PDF context for follow-up citation support ──────────
@@ -2297,9 +2522,9 @@ After saving, return here and start chatting!"""
                 _per_paper_pdf_content[idx] = cached_md
             _per_paper_source_ids[idx] = _get_url_hash(url)
             meta = get_cached_pdf_meta(url) or {}
-            title = meta.get('title', 'Unknown')
+            title = meta.get("title", "Unknown")
             src_type = detect_source_type(url)
-            is_acad = meta.get('is_academic', False)
+            is_acad = meta.get("is_academic", False)
             if not is_acad and cached_md:
                 is_acad = is_academic_content(cached_md, src_type)
             _followup_reference_cards.append(
@@ -2324,10 +2549,10 @@ After saving, return here and start chatting!"""
     full_response = ""
     _final_response_truncated = False
     _search_count = 0  # Track consecutive web searches to prevent infinite loops
+    _search_artifacts_emitted = False
     _MAX_SEARCHES = 2  # Max web searches per user message
 
     for iteration in range(max_tool_iterations):
-
         # ── Streaming path: yield tokens directly to the client ──────────
         if _stream_next_iteration:
             try:
@@ -2356,14 +2581,22 @@ After saving, return here and start chatting!"""
                     yield chunk
                 full_response = streamed_response
             except ClientDisconnectedError:
-                logger.info("Client disconnected during streaming AI completion — stopping")
+                logger.info(
+                    "Client disconnected during streaming AI completion — stopping"
+                )
                 return
             except Exception as e:
-                if not streamed_response and _switch_to_remote_fallback(e, stage="streaming AI completion"):
-                    logger.info("Retrying streaming AI completion with remote fallback after local vLLM failure")
+                if not streamed_response and _switch_to_remote_fallback(
+                    e, stage="streaming AI completion"
+                ):
+                    logger.info(
+                        "Retrying streaming AI completion with remote fallback after local vLLM failure"
+                    )
                     continue
                 if _is_context_length_exceeded_error(e):
-                    logger.warning(f"Context length exceeded during streaming AI completion: {e}")
+                    logger.warning(
+                        f"Context length exceeded during streaming AI completion: {e}"
+                    )
                     yield f"data: {json.dumps({'context_limit': True})}\n\n"
                     yield "data: [DONE]\n\n"
                     return
@@ -2377,12 +2610,16 @@ After saving, return here and start chatting!"""
             # isn't left staring at a blank message.
             if not full_response.strip():
                 _EMPTY_STREAM_FALLBACK = {
-                    "zh-CN": "抱歉，生成回复时出现了问题。请再发一条消息让我重试 😊",
-                    "zh-HK": "抱歉，生成回覆時出現了問題。請再發一條訊息讓我重試 😊",
+                    "zh_CN": "抱歉，生成回复时出现了问题。请再发一条消息让我重试 😊",
+                    "zh_HK": "抱歉，生成回覆時出現了問題。請再發一條訊息讓我重試 😊",
                     "en": "Sorry, something went wrong while generating the response. Please send another message so I can try again 😊",
                 }
-                fb = _EMPTY_STREAM_FALLBACK.get(detected_lang, _EMPTY_STREAM_FALLBACK["en"])
-                logger.warning(f"Streaming path produced empty response — emitting fallback")
+                fb = _EMPTY_STREAM_FALLBACK.get(
+                    detected_lang, _EMPTY_STREAM_FALLBACK["en"]
+                )
+                logger.warning(
+                    f"Streaming path produced empty response — emitting fallback"
+                )
                 yield f"data: {json.dumps({'content': fb})}\n\n"
 
             # Streaming path always breaks after emitting — no tool detection needed
@@ -2407,7 +2644,10 @@ After saving, return here and start chatting!"""
             # Without this, the streaming early-return would skip the
             # _followup_reference_cards emission at the end of the function.
             reference_cards_to_emit = list(_followup_reference_cards)
-            if _current_read_reference_card and _current_read_reference_card not in reference_cards_to_emit:
+            if (
+                _current_read_reference_card
+                and _current_read_reference_card not in reference_cards_to_emit
+            ):
                 reference_cards_to_emit.append(_current_read_reference_card)
             if reference_cards_to_emit:
                 ref_block = "\n".join(reference_cards_to_emit)
@@ -2484,8 +2724,12 @@ After saving, return here and start chatting!"""
             logger.info("Client disconnected during AI completion — stopping")
             return
         except Exception as e:
-            if not is_streaming_to_client and _switch_to_remote_fallback(e, stage="AI completion"):
-                logger.info("Retrying AI completion with remote fallback after local vLLM failure")
+            if not is_streaming_to_client and _switch_to_remote_fallback(
+                e, stage="AI completion"
+            ):
+                logger.info(
+                    "Retrying AI completion with remote fallback after local vLLM failure"
+                )
                 continue
             if _is_context_length_exceeded_error(e):
                 logger.warning(f"Context length exceeded during AI completion: {e}")
@@ -2512,7 +2756,9 @@ After saving, return here and start chatting!"""
                 pending_sse_chunks = []
 
         full_response = content_so_far
-        _final_response_truncated = iteration_response_truncated and bool(full_response.strip())
+        _final_response_truncated = iteration_response_truncated and bool(
+            full_response.strip()
+        )
 
         # Mark if response was already streamed to client.
         # Do NOT break here — always continue to tool detection below.
@@ -2522,11 +2768,12 @@ After saving, return here and start chatting!"""
             _response_already_streamed = True
 
         # Check if AI requested web search
-        search_match = json.loads('null')
+        search_match = json.loads("null")
         _search_json_error = False
         try:
             import re
-            pattern = r'\[WEB_SEARCH\](.*?)\[/WEB_SEARCH\]'
+
+            pattern = r"\[WEB_SEARCH\](.*?)\[/WEB_SEARCH\]"
             match = re.search(pattern, full_response, re.DOTALL)
             if match:
                 search_match = json.loads(match.group(1).strip())
@@ -2534,7 +2781,9 @@ After saving, return here and start chatting!"""
             # #19: AI produced malformed JSON in tool block — flag for retry
             _search_json_error = True
             search_match = None
-            logger.warning(f"Malformed JSON in [WEB_SEARCH] block: {full_response[:200]}")
+            logger.warning(
+                f"Malformed JSON in [WEB_SEARCH] block: {full_response[:200]}"
+            )
         except Exception:
             search_match = None
 
@@ -2547,15 +2796,23 @@ After saving, return here and start chatting!"""
                         {"role": "assistant", "content": cleaned_response}
                     ]
                     current_messages = current_messages + [
-                        {"role": "user", "content": _build_no_web_search_instruction(detected_lang, conversation_mode)}
+                        {
+                            "role": "user",
+                            "content": _build_no_web_search_instruction(
+                                detected_lang, conversation_mode
+                            ),
+                        }
                     ]
                 continue
             current_messages = current_messages + [
                 {"role": "assistant", "content": full_response},
-                {"role": "user", "content": (
-                    "Your [WEB_SEARCH] tool call contained invalid JSON. "
-                    "Please re-format and try again with valid JSON."
-                )}
+                {
+                    "role": "user",
+                    "content": (
+                        "Your [WEB_SEARCH] tool call contained invalid JSON. "
+                        "Please re-format and try again with valid JSON."
+                    ),
+                },
             ]
             continue
 
@@ -2576,14 +2833,21 @@ After saving, return here and start chatting!"""
                         {"role": "assistant", "content": cleaned_response}
                     ]
                 current_messages = current_messages + [
-                    {"role": "user", "content": _build_no_web_search_instruction(detected_lang, conversation_mode)},
+                    {
+                        "role": "user",
+                        "content": _build_no_web_search_instruction(
+                            detected_lang, conversation_mode
+                        ),
+                    },
                 ]
                 continue
 
-            cached_article_matches = find_cached_articles_by_title(query, max_results=ai_num_results)
+            cached_article_matches = find_cached_articles_by_title(
+                query, max_results=ai_num_results
+            )
             if cached_article_matches:
                 if _response_already_streamed:
-                    yield f"data: {json.dumps({'content': '__CLEAR_CONTENT__'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'search_clear'})}\n\n"
 
                 logger.info(
                     f"Using {len(cached_article_matches)} locally cached article match(es) for WEB_SEARCH query: {query}"
@@ -2595,6 +2859,7 @@ After saving, return here and start chatting!"""
                     "results": cached_article_matches,
                 }
                 yield f"data: {json.dumps({'type': 'web_search_result', 'result': local_search_results})}\n\n"
+                _search_artifacts_emitted = True
 
                 local_results_text = _format_search_results_for_ai(local_search_results)
                 if len(cached_article_matches) == 1:
@@ -2612,37 +2877,50 @@ After saving, return here and start chatting!"""
 
                 current_messages = current_messages + [
                     {"role": "assistant", "content": full_response},
-                    {"role": "user", "content": (
-                        f"I found locally cached article matches for '{query}':\n{local_results_text}\n\n"
-                        f"{cache_instruction}"
-                    )}
+                    {
+                        "role": "user",
+                        "content": (
+                            f"I found locally cached article matches for '{query}':\n{local_results_text}\n\n"
+                            f"{cache_instruction}"
+                        ),
+                    },
                 ]
                 continue
 
             # #2: AI wants to search but Exa API key is not configured
             if not exa_api_key:
-                logger.warning("AI requested [WEB_SEARCH] but no Exa API key is configured")
+                logger.warning(
+                    "AI requested [WEB_SEARCH] but no Exa API key is configured"
+                )
                 current_messages = current_messages + [
                     {"role": "assistant", "content": full_response},
-                    {"role": "user", "content": (
-                        "Web search is currently unavailable (API key not configured). "
-                        "Please answer the user's question using your existing knowledge. "
-                        "Do NOT attempt to use [WEB_SEARCH] again."
-                    )}
+                    {
+                        "role": "user",
+                        "content": (
+                            "Web search is currently unavailable (API key not configured). "
+                            "Please answer the user's question using your existing knowledge. "
+                            "Do NOT attempt to use [WEB_SEARCH] again."
+                        ),
+                    },
                 ]
                 continue
 
             # #4: Enforce search count limit
             _search_count += 1
             if _search_count > _MAX_SEARCHES:
-                logger.info(f"Search limit reached ({_MAX_SEARCHES}), forcing AI to answer with existing results")
+                logger.info(
+                    f"Search limit reached ({_MAX_SEARCHES}), forcing AI to answer with existing results"
+                )
                 current_messages = current_messages + [
                     {"role": "assistant", "content": full_response},
-                    {"role": "user", "content": (
-                        f"You have already performed {_MAX_SEARCHES} web searches. "
-                        "Please synthesize the information from the results you already have "
-                        "and provide your answer now. Do NOT search again."
-                    )}
+                    {
+                        "role": "user",
+                        "content": (
+                            f"You have already performed {_MAX_SEARCHES} web searches. "
+                            "Please synthesize the information from the results you already have "
+                            "and provide your answer now. Do NOT search again."
+                        ),
+                    },
                 ]
                 continue
 
@@ -2651,9 +2929,10 @@ After saving, return here and start chatting!"""
             # frontend to clear it so the search results appear cleanly
             # instead of being concatenated with the initial text.
             if _response_already_streamed:
-                yield f"data: {json.dumps({'content': '__CLEAR_CONTENT__'})}\n\n"
+                yield f"data: {json.dumps({'type': 'search_clear'})}\n\n"
 
             yield f"data: {json.dumps({'type': 'search_status', 'query': query, 'reason': reason})}\n\n"
+            _search_artifacts_emitted = True
 
             # Execute Exa search
             try:
@@ -2664,7 +2943,9 @@ After saving, return here and start chatting!"""
 
                 # Deduplicate results — the same paper often appears via
                 # multiple mirrors (PubMed, nature.com, arxiv, lab pages…).
-                search_results["results"] = _deduplicate_search_results(search_results["results"])
+                search_results["results"] = _deduplicate_search_results(
+                    search_results["results"]
+                )
 
                 # #1/#5: Handle empty search results explicitly
                 if not search_results["results"]:
@@ -2674,12 +2955,15 @@ After saving, return here and start chatting!"""
                     yield f"data: {json.dumps({'type': 'web_search_result', 'result': search_results})}\n\n"
                     current_messages = current_messages + [
                         {"role": "assistant", "content": full_response},
-                        {"role": "user", "content": (
-                            f"The web search for '{query}' returned NO results. "
-                            "Please answer the user's question using your existing knowledge, "
-                            "or suggest alternative search terms the user could try. "
-                            "Do NOT fabricate references or citations."
-                        )}
+                        {
+                            "role": "user",
+                            "content": (
+                                f"The web search for '{query}' returned NO results. "
+                                "Please answer the user's question using your existing knowledge, "
+                                "or suggest alternative search terms the user could try. "
+                                "Do NOT fabricate references or citations."
+                            ),
+                        },
                     ]
                     continue
 
@@ -2693,18 +2977,21 @@ After saving, return here and start chatting!"""
                 # Add search results to messages for next AI iteration
                 current_messages = current_messages + [
                     {"role": "assistant", "content": full_response},
-                    {"role": "user", "content": (
-                        f"Here are the search results for '{query}':\n{results_text}\n\n"
-                        "NOTE: These results contain SNIPPETS (partial text), NOT full articles. "
-                        "Synthesize the information, cite sources using inline [N] references matching the result numbers above, "
-                        "and generate [REFERENCE] blocks. "
-                        "If the user wants to read a full article, use the [READ_ARTICLE] tool.\n"
-                        "IMPORTANT: Each result above includes a 'reference type' hint (paper or webpage). "
-                        "Use `type: paper` ONLY for academic papers/journals; use `type: webpage` for GitHub repos, blogs, documentation, HuggingFace, and all other non-academic sources.\n"
-                        "CRITICAL: If a blog or other secondary webpage merely discusses a paper, do NOT present that webpage as the original paper or journal source. "
-                        "When multiple results refer to the same paper, prefer the academic publisher / journal / PubMed / PMC / arXiv URL for both `[REFERENCE]` and `[READ_ARTICLE]`. "
-                        "If you only cite a secondary source, label it honestly as `type: webpage` and describe it as a secondary report, not the original publication."
-                    )}
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Here are the search results for '{query}':\n{results_text}\n\n"
+                            "NOTE: These results contain SNIPPETS (partial text), NOT full articles. "
+                            "Synthesize the information, cite sources using inline [N] references matching the result numbers above, "
+                            "and generate [REFERENCE] blocks. "
+                            "If the user wants to read a full article, use the [READ_ARTICLE] tool.\n"
+                            "IMPORTANT: Each result above includes a 'reference type' hint (paper or webpage). "
+                            "Use `type: paper` ONLY for academic papers/journals; use `type: webpage` for GitHub repos, blogs, documentation, HuggingFace, and all other non-academic sources.\n"
+                            "CRITICAL: If a blog or other secondary webpage merely discusses a paper, do NOT present that webpage as the original paper or journal source. "
+                            "When multiple results refer to the same paper, prefer the academic publisher / journal / PubMed / PMC / arXiv URL for both `[REFERENCE]` and `[READ_ARTICLE]`. "
+                            "If you only cite a secondary source, label it honestly as `type: webpage` and describe it as a secondary report, not the original publication."
+                        ),
+                    },
                 ]
                 continue
 
@@ -2717,11 +3004,14 @@ After saving, return here and start chatting!"""
                 yield f"data: {json.dumps({'type': 'search_status', 'query': query, 'reason': reason, 'status': 'timeout'})}\n\n"
                 current_messages = current_messages + [
                     {"role": "assistant", "content": full_response},
-                    {"role": "user", "content": (
-                        f"The web search for '{query}' timed out. "
-                        "Please answer the user's question using your existing knowledge. "
-                        "Do NOT attempt to use [WEB_SEARCH] again."
-                    )}
+                    {
+                        "role": "user",
+                        "content": (
+                            f"The web search for '{query}' timed out. "
+                            "Please answer the user's question using your existing knowledge. "
+                            "Do NOT attempt to use [WEB_SEARCH] again."
+                        ),
+                    },
                 ]
                 continue
             except Exception as e:
@@ -2733,7 +3023,7 @@ After saving, return here and start chatting!"""
         # ── Check for [READ_ARTICLE] ──
         read_article_match = None
         try:
-            ra_pattern = r'\[READ_ARTICLE\](.*?)\[/READ_ARTICLE\]'
+            ra_pattern = r"\[READ_ARTICLE\](.*?)\[/READ_ARTICLE\]"
             ra_match = re.search(ra_pattern, full_response, re.DOTALL)
             if ra_match:
                 read_article_match = json.loads(ra_match.group(1).strip())
@@ -2743,7 +3033,7 @@ After saving, return here and start chatting!"""
         if read_article_match:
             # If text was already streamed before the tool block, clear it.
             if _response_already_streamed:
-                yield f"data: {json.dumps({'content': '__CLEAR_CONTENT__'})}\n\n"
+                yield f"data: {json.dumps({'type': 'search_clear'})}\n\n"
 
             article_url = read_article_match.get("url", "")
             article_title = read_article_match.get("title", "Unknown")
@@ -2756,6 +3046,7 @@ After saving, return here and start chatting!"""
             has_cache = get_cached_markdown(article_url) is not None
             initial_status = "parsing" if has_cache else "downloading"
             yield f"data: {json.dumps({'type': 'pdf_status', 'url': article_url, 'title': article_title, 'status': initial_status})}\n\n"
+            _search_artifacts_emitted = True
 
             try:
                 _active_pdf_url = article_url
@@ -2771,7 +3062,7 @@ After saving, return here and start chatting!"""
                                 base_url=effective_base_url,
                                 api_key=effective_api_key,
                                 model=effective_model,
-                                use_cache=True
+                                use_cache=True,
                             ),
                             request,
                         )
@@ -2780,7 +3071,9 @@ After saving, return here and start chatting!"""
                     _HEARTBEAT_INTERVAL = 10  # seconds
                     while not _pdf_task.done():
                         try:
-                            await asyncio.wait_for(asyncio.shield(_pdf_task), timeout=_HEARTBEAT_INTERVAL)
+                            await asyncio.wait_for(
+                                asyncio.shield(_pdf_task), timeout=_HEARTBEAT_INTERVAL
+                            )
                         except asyncio.TimeoutError:
                             # Task still running — emit heartbeat to keep connection alive
                             yield f"data: {json.dumps({'type': 'pdf_status', 'url': article_url, 'title': article_title, 'status': 'parsing'})}\n\n"
@@ -2799,25 +3092,31 @@ After saving, return here and start chatting!"""
                 # Emit PDF_PARSE_STATUS: completed or error
                 if pdf_result.get("success"):
                     pdf_status = {
-                        "url": article_url, "title": article_title,
+                        "url": article_url,
+                        "title": article_title,
                         "status": "completed",
                         "from_cache": pdf_result.get("from_cache", False),
                         "parse_method": pdf_result.get("parse_method"),
                     }
                 else:
                     pdf_status = {
-                        "url": article_url, "title": article_title,
-                        "status": pdf_result.get("error", "unknown_error")
+                        "url": article_url,
+                        "title": article_title,
+                        "status": pdf_result.get("error", "unknown_error"),
                     }
                 yield f"data: {json.dumps({'type': 'pdf_parse_result', 'result': pdf_status})}\n\n"
 
                 if pdf_result.get("success"):
                     # Build article content for AI
-                    content = pdf_result.get("pdf_content") or pdf_result.get("summary") or ""
+                    content = (
+                        pdf_result.get("pdf_content") or pdf_result.get("summary") or ""
+                    )
                     # 改动 9b: Replace hash-based image filenames with fig-N aliases
                     # (first-read path — same as 改动 9 in _build_merged_pdf_context)
                     _first_read_url_hash = _get_url_hash(article_url)
-                    content = _replace_images_with_fig_aliases(content, _first_read_url_hash)
+                    content = _replace_images_with_fig_aliases(
+                        content, _first_read_url_hash
+                    )
                     # Save raw PDF content (with page markers) for citation context extraction
                     article_pdf_content = content
                     _per_paper_pdf_content = {1: content}
@@ -2829,14 +3128,22 @@ After saving, return here and start chatting!"""
                     if len(content) > _PDF_MAX_CHARS:
                         head = content[:_PDF_HEAD_CHARS]
                         tail = content[-_PDF_TAIL_CHARS:]
-                        content = head + "\n\n...[middle pages omitted for length]...\n\n" + tail
+                        content = (
+                            head
+                            + "\n\n...[middle pages omitted for length]...\n\n"
+                            + tail
+                        )
 
                     # Build metadata
                     page_count = pdf_result.get("page_count")
-                    page_info = f"{page_count} pages" if page_count else "page count unknown"
+                    page_info = (
+                        f"{page_count} pages" if page_count else "page count unknown"
+                    )
                     is_academic = pdf_result.get("is_academic", False)
                     label = "Paper" if is_academic else "Doc"
-                    ref_label = f"[{label}]" if not article_index else f"[{article_index}]"
+                    ref_label = (
+                        f"[{label}]" if not article_index else f"[{article_index}]"
+                    )
 
                     article_parts = [
                         f"### {ref_label} {article_title}\n"
@@ -2851,7 +3158,10 @@ After saving, return here and start chatting!"""
                         _current_read_reference_card = format_reference_card(
                             article_title,
                             article_url,
-                            str(pdf_result.get("source_type") or detect_source_type(article_url)),
+                            str(
+                                pdf_result.get("source_type")
+                                or detect_source_type(article_url)
+                            ),
                             bool(pdf_result.get("is_academic", False)),
                         )
 
@@ -2861,11 +3171,15 @@ After saving, return here and start chatting!"""
                     yield f"data: {json.dumps({'pdf_context': article_text})}\n\n"
 
                     # Inject article content into conversation
-                    prompt_map = _READ_ARTICLE_PROMPTS if bool(pdf_result.get("is_academic", False)) else _READ_DOCUMENT_PROMPTS
+                    prompt_map = (
+                        _READ_ARTICLE_PROMPTS
+                        if bool(pdf_result.get("is_academic", False))
+                        else _READ_DOCUMENT_PROMPTS
+                    )
                     read_prompt = prompt_map.get(detected_lang, prompt_map["en"])
                     current_messages = current_messages + [
                         {"role": "assistant", "content": full_response},
-                        {"role": "user", "content": f"{read_prompt}\n\n{article_text}"}
+                        {"role": "user", "content": f"{read_prompt}\n\n{article_text}"},
                     ]
                     _stream_next_iteration = True
                     continue
@@ -2873,19 +3187,26 @@ After saving, return here and start chatting!"""
                     # PDF failed — let AI know; use smart-streaming (NOT the
                     # dumb streaming path) so tool blocks like [WEB_SEARCH]
                     # can still be detected if the AI wants to retry.
-                    source_type = str(pdf_result.get("source_type") or detect_source_type(article_url))
-                    error_detail = str(pdf_result.get("error_detail") or "").strip() or None
+                    source_type = str(
+                        pdf_result.get("source_type") or detect_source_type(article_url)
+                    )
+                    error_detail = (
+                        str(pdf_result.get("error_detail") or "").strip() or None
+                    )
                     error_code = str(pdf_result.get("error_code") or "").strip() or None
                     current_messages = current_messages + [
                         {"role": "assistant", "content": full_response},
-                        {"role": "user", "content": _build_read_failure_instruction(
-                            detected_lang,
-                            article_title=article_title,
-                            article_url=article_url,
-                            source_type=source_type,
-                            error_code=error_code,
-                            error_detail=error_detail,
-                        )}
+                        {
+                            "role": "user",
+                            "content": _build_read_failure_instruction(
+                                detected_lang,
+                                article_title=article_title,
+                                article_url=article_url,
+                                source_type=source_type,
+                                error_code=error_code,
+                                error_detail=error_detail,
+                            ),
+                        },
                     ]
                     # Keep _stream_next_iteration = False so smart-streaming
                     # can detect any follow-up tool calls (e.g. [WEB_SEARCH]).
@@ -2898,19 +3219,26 @@ After saving, return here and start chatting!"""
                 return
             except Exception as e:
                 logger.error(f"READ_ARTICLE error for {article_url}: {e}")
-                pdf_status = {"url": article_url, "title": article_title, "status": "download_failed"}
+                pdf_status = {
+                    "url": article_url,
+                    "title": article_title,
+                    "status": "download_failed",
+                }
                 yield f"data: {json.dumps({'type': 'pdf_parse_result', 'result': pdf_status})}\n\n"
                 # Add error context so the next AI call can inform the user
                 current_messages = current_messages + [
                     {"role": "assistant", "content": full_response},
-                    {"role": "user", "content": _build_read_failure_instruction(
-                        detected_lang,
-                        article_title=article_title,
-                        article_url=article_url,
-                        source_type=detect_source_type(article_url),
-                        error_code='unexpected_error',
-                        exception_text=str(e),
-                    )}
+                    {
+                        "role": "user",
+                        "content": _build_read_failure_instruction(
+                            detected_lang,
+                            article_title=article_title,
+                            article_url=article_url,
+                            source_type=detect_source_type(article_url),
+                            error_code="unexpected_error",
+                            exception_text=str(e),
+                        ),
+                    },
                 ]
                 # Keep _stream_next_iteration = False so smart-streaming
                 # can detect any follow-up tool calls (e.g. [WEB_SEARCH]).
@@ -2935,24 +3263,22 @@ After saving, return here and start chatting!"""
             ]
             continue
 
+        _original_response = full_response
+
         normalized_response = _normalize_task_config_blocks(full_response)
         if normalized_response != full_response:
             full_response = normalized_response
-            if is_streaming_to_client:
-                yield f"data: {json.dumps({'content': '__CLEAR_CONTENT__'})}\n\n"
-                _CHUNK_SIZE = 80
-                for i in range(0, len(full_response), _CHUNK_SIZE):
-                    yield f"data: {json.dumps({'content': full_response[i:i+_CHUNK_SIZE]})}\n\n"
 
         if _requires_training_recommendation_search:
             sanitized_response = _sanitize_training_recommendation_output(full_response)
             if sanitized_response != full_response:
                 full_response = sanitized_response
-                if is_streaming_to_client:
-                    yield f"data: {json.dumps({'content': '__CLEAR_CONTENT__'})}\n\n"
-                    _CHUNK_SIZE = 80
-                    for i in range(0, len(full_response), _CHUNK_SIZE):
-                        yield f"data: {json.dumps({'content': full_response[i:i+_CHUNK_SIZE]})}\n\n"
+
+        if full_response != _original_response and is_streaming_to_client:
+            yield f"data: {json.dumps({'content': '__CLEAR_CONTENT__'})}\n\n"
+            _CHUNK_SIZE = 80
+            for i in range(0, len(full_response), _CHUNK_SIZE):
+                yield f"data: {json.dumps({'content': full_response[i : i + _CHUNK_SIZE]})}\n\n"
 
         # No tool requested — break out of loop
         break
@@ -2960,34 +3286,34 @@ After saving, return here and start chatting!"""
     # ── Emit final AI response ──
     final_response_text = full_response or ""
     if _requires_training_recommendation_search:
-        final_response_text = _sanitize_training_recommendation_output(final_response_text)
+        final_response_text = _sanitize_training_recommendation_output(
+            final_response_text
+        )
 
     # If the loop exhausted without streaming a proper response (e.g. the last
     # iteration set _stream_next_iteration but ran out of iterations, or the
     # buffered response is just a raw tool-call block), emit a friendly fallback
     # so the user isn't left staring at a dead chat.
     _has_dangling_tool_block = (
-        "[READ_ARTICLE]" in final_response_text
-        or "[WEB_SEARCH]" in final_response_text
+        "[READ_ARTICLE]" in final_response_text or "[WEB_SEARCH]" in final_response_text
     )
     # Trigger fallback when:
     # - Response was NOT streamed and is empty/has dangling tool blocks, OR
     # - Response WAS "streamed" but contained only whitespace (nothing visible)
     _response_effectively_empty = (
-        not final_response_text.strip()
-        or _has_dangling_tool_block
+        not final_response_text.strip() or _has_dangling_tool_block
     )
     _needs_fallback = (
         (not _response_already_streamed and _response_effectively_empty)
         or (_response_already_streamed and not final_response_text.strip())
-    )
+    ) and not _search_artifacts_emitted
     if _needs_fallback:
         _FALLBACK_MSGS = {
-            "zh-CN": (
+            "zh_CN": (
                 "抱歉，这次请求在处理中断了，未能完整完成。"
                 "您可以再发一条消息让我重试，或者换一种说法试试看 😊"
             ),
-            "zh-HK": (
+            "zh_HK": (
                 "抱歉，這次請求在處理途中中斷了，未能完整完成。"
                 "您可以再發一條訊息讓我重試，或者換一種說法試試看 😊"
             ),
@@ -3004,7 +3330,7 @@ After saving, return here and start chatting!"""
             if cleaned:
                 _CHUNK_SIZE = 80
                 for i in range(0, len(cleaned), _CHUNK_SIZE):
-                    yield f"data: {json.dumps({'content': cleaned[i:i+_CHUNK_SIZE]})}\n\n"
+                    yield f"data: {json.dumps({'content': cleaned[i : i + _CHUNK_SIZE]})}\n\n"
                 yield f"data: {json.dumps({'content': chr(10) + chr(10)})}\n\n"
         yield f"data: {json.dumps({'content': fallback_msg})}\n\n"
         final_response_text = fallback_msg  # for citation context below
@@ -3013,9 +3339,13 @@ After saving, return here and start chatting!"""
         # Buffered response (tool-call iteration that fell through) — emit now
         _CHUNK_SIZE = 80
         for i in range(0, len(final_response_text), _CHUNK_SIZE):
-            yield f"data: {json.dumps({'content': final_response_text[i:i+_CHUNK_SIZE]})}\n\n"
+            yield f"data: {json.dumps({'content': final_response_text[i : i + _CHUNK_SIZE]})}\n\n"
 
-    if _final_response_truncated and final_response_text.strip() and not _needs_fallback:
+    if (
+        _final_response_truncated
+        and final_response_text.strip()
+        and not _needs_fallback
+    ):
         yield f"data: {json.dumps({'response_truncated': True})}\n\n"
 
     # Inject CITATION_CONTEXTS before [DONE] if article was read
@@ -3036,7 +3366,10 @@ After saving, return here and start chatting!"""
     # Emit reference cards for follow-up messages so frontend can build
     # citationMap with paper title/URL for InlineCitation tooltips.
     reference_cards_to_emit = list(_followup_reference_cards)
-    if _current_read_reference_card and _current_read_reference_card not in reference_cards_to_emit:
+    if (
+        _current_read_reference_card
+        and _current_read_reference_card not in reference_cards_to_emit
+    ):
         reference_cards_to_emit.append(_current_read_reference_card)
     if reference_cards_to_emit:
         ref_block = "\n".join(reference_cards_to_emit)
@@ -3049,7 +3382,7 @@ After saving, return here and start chatting!"""
 async def create_conversation(
     req: CreateConversationRequest,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Create a new conversation for the current user"""
     conversation_id = f"conv_{uuid.uuid4().hex[:16]}"
@@ -3068,11 +3401,13 @@ async def list_conversations(
     skip: int = 0,
     limit: int = 50,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """List all conversations for the current user"""
     user_id = str(user.id)
-    conversations = await ChatRepository.get_user_conversations(db, user_id, skip, limit)
+    conversations = await ChatRepository.get_user_conversations(
+        db, user_id, skip, limit
+    )
     total = await ChatRepository.count_user_conversations(db, user_id)
     return {"items": [conv.to_dict() for conv in conversations], "total": total}
 
@@ -3081,7 +3416,7 @@ async def list_conversations(
 async def get_conversation(
     conversation_id: str,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get a conversation with all messages. Users can only view their own conversations."""
     conversation = await ChatRepository.get_conversation(db, conversation_id)
@@ -3090,13 +3425,16 @@ async def get_conversation(
 
     # Check ownership
     if not check_data_ownership(conversation.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to view this conversation")
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to view this conversation",
+        )
 
     # Sort messages by id to ensure chronological order (defense-in-depth)
     sorted_messages = sorted(conversation.messages, key=lambda m: m.id)
     return {
         **conversation.to_dict(),
-        "messages": [msg.to_dict() for msg in sorted_messages]
+        "messages": [msg.to_dict() for msg in sorted_messages],
     }
 
 
@@ -3104,7 +3442,7 @@ async def get_conversation(
 async def delete_conversation(
     conversation_id: str,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Delete a conversation. Users can only delete their own conversations."""
     conversation = await ChatRepository.get_conversation(db, conversation_id)
@@ -3113,7 +3451,10 @@ async def delete_conversation(
 
     # Check ownership
     if not check_data_ownership(conversation.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to delete this conversation")
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to delete this conversation",
+        )
 
     await cleanup_conversation_chat_patch_tasks(conversation_id)
     success = await ChatRepository.delete_conversation(db, conversation_id)
@@ -3129,7 +3470,7 @@ async def update_message(
     message_id: int,
     req: UpdateMessageRequest,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Update a message's content. Used to persist task submission status."""
     # First check conversation exists and user owns it
@@ -3138,10 +3479,14 @@ async def update_message(
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     if not check_data_ownership(conversation.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to update this message")
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to update this message"
+        )
 
     # Update the message
-    message = await ChatRepository.update_message(db, message_id, req.content, req.metadata)
+    message = await ChatRepository.update_message(
+        db, message_id, req.content, req.metadata
+    )
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
 
@@ -3154,7 +3499,7 @@ async def delete_messages_from(
     conversation_id: str,
     message_id: int,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Delete a message and all subsequent messages in a conversation.
@@ -3167,16 +3512,24 @@ async def delete_messages_from(
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     if not check_data_ownership(conversation.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to delete messages in this conversation")
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to delete messages in this conversation",
+        )
 
     await cleanup_chat_patch_tasks_from_message(conversation_id, message_id)
     # Delete the message and all subsequent messages
-    deleted_count = await ChatRepository.delete_messages_from_id(db, conversation_id, message_id)
+    deleted_count = await ChatRepository.delete_messages_from_id(
+        db, conversation_id, message_id
+    )
     if deleted_count == 0:
         raise HTTPException(status_code=404, detail="Message not found")
 
     await db.commit()
-    return {"message": f"Deleted {deleted_count} message(s)", "deleted_count": deleted_count}
+    return {
+        "message": f"Deleted {deleted_count} message(s)",
+        "deleted_count": deleted_count,
+    }
 
 
 @router.post("/conversations/{conversation_id}/messages")
@@ -3184,7 +3537,7 @@ async def add_message(
     conversation_id: str,
     req: AddMessageRequest,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Add a message to a conversation. Used to persist task submission success messages."""
     # First check conversation exists and user owns it
@@ -3193,7 +3546,10 @@ async def add_message(
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     if not check_data_ownership(conversation.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to add messages to this conversation")
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to add messages to this conversation",
+        )
 
     # Add the message
     message_data = {
@@ -3217,11 +3573,16 @@ async def start_chat_patch_inference(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     if not check_data_ownership(conversation.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to modify this conversation")
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to modify this conversation",
+        )
     if not any(message.id == req.message_id for message in conversation.messages):
         raise HTTPException(status_code=404, detail="Message not found")
 
-    trained_model = await _get_patch_model_for_chat(db, req.model_id, user, req.inference_type)
+    trained_model = await _get_patch_model_for_chat(
+        db, req.model_id, user, req.inference_type
+    )
     task = await create_chat_patch_task(
         conversation_id=req.conversation_id,
         message_id=req.message_id,
@@ -3245,7 +3606,9 @@ async def get_chat_patch_inference_status(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     if task.user_id != str(user.id) and not user.is_admin():
-        raise HTTPException(status_code=403, detail="You don't have permission to view this task")
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to view this task"
+        )
     return task.to_public_dict()
 
 
@@ -3260,21 +3623,37 @@ async def cancel_chat_patch_inference_on_exit(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     if not check_data_ownership(conversation.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to modify this conversation")
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to modify this conversation",
+        )
 
-    target_message = next((message for message in conversation.messages if message.id == req.message_id), None)
+    target_message = next(
+        (message for message in conversation.messages if message.id == req.message_id),
+        None,
+    )
     if not target_message:
         raise HTTPException(status_code=404, detail="Message not found")
 
-    task_snapshots = await cancel_chat_patch_tasks_for_message(req.conversation_id, req.message_id)
-    task_updates = {snapshot["task_id"]: snapshot for snapshot in task_snapshots if snapshot.get("task_id")}
+    task_snapshots = await cancel_chat_patch_tasks_for_message(
+        req.conversation_id, req.message_id
+    )
+    task_updates = {
+        snapshot["task_id"]: snapshot
+        for snapshot in task_snapshots
+        if snapshot.get("task_id")
+    }
 
-    updated_content = _apply_patch_inference_exit_updates(target_message.content, task_updates)
+    updated_content = _apply_patch_inference_exit_updates(
+        target_message.content, task_updates
+    )
     updated_message = updated_content != target_message.content
     if updated_message:
         await ChatRepository.update_message(db, req.message_id, updated_content)
 
-    last_message = max(conversation.messages, key=lambda message: message.id, default=None)
+    last_message = max(
+        conversation.messages, key=lambda message: message.id, default=None
+    )
     cancel_message = req.cancel_message.strip()
     added_cancel_message = False
     if cancel_message and not (
@@ -3282,11 +3661,14 @@ async def cancel_chat_patch_inference_on_exit(
         and last_message.role == "assistant"
         and (last_message.content or "").strip() == cancel_message
     ):
-        await ChatRepository.add_message(db, {
-            "conversation_id": req.conversation_id,
-            "role": "assistant",
-            "content": cancel_message,
-        })
+        await ChatRepository.add_message(
+            db,
+            {
+                "conversation_id": req.conversation_id,
+                "role": "assistant",
+                "content": cancel_message,
+            },
+        )
         added_cancel_message = True
 
     await db.commit()
@@ -3303,7 +3685,7 @@ async def chat_with_ai(
     request: Request,
     user: User = Depends(current_active_user),
     user_id_filter: Optional[str] = Depends(get_user_id_filter),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Chat with AI assistant (streaming).
@@ -3315,7 +3697,7 @@ async def chat_with_ai(
     - X-OpenRouter-API-Key: OpenRouter API key
     - X-OpenRouter-Base-URL: OpenRouter base URL
     - X-OpenRouter-Model: Model name
-    - X-Language: Frontend i18n language code (e.g. en-US, zh-CN, zh-HK)
+    - X-Language: Frontend i18n language code (e.g. en_US, zh_CN, zh_HK)
     - X-Timezone: IANA timezone string from the browser (e.g. Asia/Shanghai)
     """
     # Get AI configuration from request headers
@@ -3323,12 +3705,12 @@ async def chat_with_ai(
     base_url = request.headers.get("X-OpenRouter-Base-URL")
     model = request.headers.get("X-OpenRouter-Model")
 
-    # Read the frontend i18n language preference. Maps frontend codes (en-US / zh-CN / zh-HK)
+    # Read the frontend i18n language preference. Maps frontend codes (en_US / zh_CN / zh_HK)
     # to the backend prompt language codes (en / zh_CN / zh_HK).
     _LANG_HEADER_MAP = {
-        "en-US": "en",
-        "zh-CN": "zh_CN",
-        "zh-HK": "zh_HK",
+        "en_US": "en",
+        "zh_CN": "zh_CN",
+        "zh_HK": "zh_HK",
     }
     ui_lang_header = request.headers.get("X-Language", "")
     ui_lang = _LANG_HEADER_MAP.get(ui_lang_header) if ui_lang_header else None
@@ -3349,7 +3731,9 @@ async def chat_with_ai(
     temp_permissions = []
     elevated_dataset_ids = None
     if not user.is_admin():
-        temp_permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
+        temp_permissions = await DatasetPermissionRepository.get_valid_by_user(
+            db, str(user.id)
+        )
         if temp_permissions:
             elevated_dataset_ids = [perm.dataset_id for perm in temp_permissions]
 
@@ -3365,20 +3749,34 @@ async def chat_with_ai(
     # Fetch user's trained models. Keep a larger internal scan window so we can
     # deterministically filter for the current request, but only expose a small
     # recent subset to the LLM/UI context for performance.
-    trained_models = await TrainedModelRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter)
-    trained_models_total = await TrainedModelRepository.count(db, user_id=user_id_filter)
+    trained_models = await TrainedModelRepository.get_all(
+        db, limit=100, offset=0, user_id=user_id_filter
+    )
+    trained_models_total = await TrainedModelRepository.count(
+        db, user_id=user_id_filter
+    )
 
     # Fetch user's training tasks (recent 10 for context, with counts)
-    training_tasks = await TrainingTaskRepository.get_all(db, limit=10, offset=0, user_id=user_id_filter)
-    training_tasks_stats = await TrainingTaskRepository.get_status_counts(db, user_id=user_id_filter)
+    training_tasks = await TrainingTaskRepository.get_all(
+        db, limit=10, offset=0, user_id=user_id_filter
+    )
+    training_tasks_stats = await TrainingTaskRepository.get_status_counts(
+        db, user_id=user_id_filter
+    )
 
     # Fetch user's inference tasks (recent 10 for context, with counts)
-    inference_tasks = await AITaskRepository.get_recent(db, limit=10, user_id=user_id_filter)
-    inference_tasks_stats = await AITaskRepository.get_status_counts(db, user_id=user_id_filter)
+    inference_tasks = await AITaskRepository.get_recent(
+        db, limit=10, user_id=user_id_filter
+    )
+    inference_tasks_stats = await AITaskRepository.get_status_counts(
+        db, user_id=user_id_filter
+    )
 
     # Format user data context for System Prompt
     wsi_count = stats["total_count"]
-    stats_datasets = stats["datasets"]  # Keep original reference; `datasets` may be overwritten later
+    stats_datasets = stats[
+        "datasets"
+    ]  # Keep original reference; `datasets` may be overwritten later
     rich_datasets_map = {dataset["dataset_id"]: dataset for dataset in rich_datasets}
     datasets = stats_datasets
     data_type_dist = stats["data_types"]
@@ -3393,40 +3791,54 @@ async def chat_with_ai(
     if datasets:
         datasets_details = []
         for d in datasets:
-            ds_name = d['dataset_name']
-            ds_id = d.get('dataset_id', 'unknown')
-            ds_count = d['file_count']
-            ds_type = d.get('data_type', 'unknown')
-            ds_labels = d.get('labels', {})
-            ds_survival = d.get('survival_count', 0)
-            ds_event_status = d.get('event_status', {})
-            ds_access_type = d.get('access_type', 'own')
+            ds_name = d["dataset_name"]
+            ds_id = d.get("dataset_id", "unknown")
+            ds_count = d["file_count"]
+            ds_type = d.get("data_type", "unknown")
+            ds_labels = d.get("labels", {})
+            ds_survival = d.get("survival_count", 0)
+            ds_event_status = d.get("event_status", {})
+            ds_access_type = d.get("access_type", "own")
             rich_ds = rich_datasets_map.get(ds_id, {})
-            ds_task_type = rich_ds.get('task_type') or d.get('group_task_type', 'unknown')
-            is_segmentation_dataset = _is_segmentation_task(ds_task_type) or _is_segmentation_task(d.get('group_task_type'))
+            ds_task_type = rich_ds.get("task_type") or d.get(
+                "group_task_type", "unknown"
+            )
+            is_segmentation_dataset = _is_segmentation_task(
+                ds_task_type
+            ) or _is_segmentation_task(d.get("group_task_type"))
             effective_ds_labels = {} if is_segmentation_dataset else ds_labels
-            ds_aggregation_level = rich_ds.get('aggregation_level', '')
-            ds_split_counts = rich_ds.get('predefined_split_counts') or d.get('predefined_split_counts', {})
-            ds_split_unit = rich_ds.get('predefined_split_unit') or ('cases' if ds_aggregation_level == 'case' else 'files')
-            ds_train_split = int(ds_split_counts.get('train', 0) or 0)
-            ds_val_split = int(ds_split_counts.get('val', 0) or 0)
-            ds_test_split = int(ds_split_counts.get('test', 0) or 0)
-            ds_has_splits = d.get('has_predefined_splits', False) or any(
+            ds_aggregation_level = rich_ds.get("aggregation_level", "")
+            ds_split_counts = rich_ds.get("predefined_split_counts") or d.get(
+                "predefined_split_counts", {}
+            )
+            ds_split_unit = rich_ds.get("predefined_split_unit") or (
+                "cases" if ds_aggregation_level == "case" else "files"
+            )
+            ds_train_split = int(ds_split_counts.get("train", 0) or 0)
+            ds_val_split = int(ds_split_counts.get("val", 0) or 0)
+            ds_test_split = int(ds_split_counts.get("test", 0) or 0)
+            ds_has_splits = d.get("has_predefined_splits", False) or any(
                 count > 0 for count in (ds_train_split, ds_val_split, ds_test_split)
             )
-            ds_segmentation_labels = _extract_segmentation_label_names(rich_ds.get('coco_categories', []) or [])
-            d['task_type'] = ds_task_type
-            d['labels'] = effective_ds_labels
-            d['aggregation_level'] = ds_aggregation_level
-            d['segmentation_labels'] = ds_segmentation_labels
+            ds_segmentation_labels = _extract_segmentation_label_names(
+                rich_ds.get("coco_categories", []) or []
+            )
+            d["task_type"] = ds_task_type
+            d["labels"] = effective_ds_labels
+            d["aggregation_level"] = ds_aggregation_level
+            d["segmentation_labels"] = ds_segmentation_labels
 
             # Build info parts
-            labels_str = ", ".join([f"{lbl}({cnt})" for lbl, cnt in effective_ds_labels.items()]) if effective_ds_labels else "none"
+            labels_str = (
+                ", ".join([f"{lbl}({cnt})" for lbl, cnt in effective_ds_labels.items()])
+                if effective_ds_labels
+                else "none"
+            )
 
             # Format survival data with event_status distribution
             if ds_survival > 0 and ds_event_status:
-                event_count = ds_event_status.get('event', 0)
-                censored_count = ds_event_status.get('censored', 0)
+                event_count = ds_event_status.get("event", 0)
+                censored_count = ds_event_status.get("censored", 0)
                 survival_str = f", survival_data={ds_survival} (event={event_count}, censored={censored_count})"
             elif ds_survival > 0:
                 survival_str = f", survival_data={ds_survival}"
@@ -3436,7 +3848,8 @@ async def chat_with_ai(
             splits_str = (
                 f", has_predefined_splits=true, predefined_split_distribution({ds_split_unit})="
                 f"[train:{ds_train_split}, val:{ds_val_split}, test:{ds_test_split}]"
-                if ds_has_splits else ""
+                if ds_has_splits
+                else ""
             )
 
             # Determine supported task types based on data
@@ -3445,25 +3858,32 @@ async def chat_with_ai(
                 task_types.append("classification")
             if ds_survival > 0:
                 task_types.append("survival")
-            ds_group_task_type = d.get('group_task_type', '')
+            ds_group_task_type = d.get("group_task_type", "")
             if _is_segmentation_task(ds_group_task_type) or is_segmentation_dataset:
                 task_types.append("segmentation")
-            task_types_str = f", supported_tasks=[{', '.join(task_types)}]" if task_types else ""
-            aggregation_str = f", aggregation_level={ds_aggregation_level}" if ds_aggregation_level else ""
+            task_types_str = (
+                f", supported_tasks=[{', '.join(task_types)}]" if task_types else ""
+            )
+            aggregation_str = (
+                f", aggregation_level={ds_aggregation_level}"
+                if ds_aggregation_level
+                else ""
+            )
             segmentation_labels_str = (
                 f", segmentation_labels=[{', '.join(ds_segmentation_labels)}]"
-                if ds_segmentation_labels else ""
+                if ds_segmentation_labels
+                else ""
             )
-            ds_source = rich_ds.get('source_organ') or d.get('source_organ')
+            ds_source = rich_ds.get("source_organ") or d.get("source_organ")
             if isinstance(ds_source, str):
                 ds_source = ds_source.strip()
 
-            if ds_id != 'unknown':
+            if ds_id != "unknown":
                 dataset_wsi_ids = await DatasetRepository.get_wsi_ids(db, ds_id)
             else:
                 dataset_wsi_ids = []
             dataset_wsi_ids_per_dataset[ds_id] = dataset_wsi_ids
-            d['wsi_ids'] = dataset_wsi_ids
+            d["wsi_ids"] = dataset_wsi_ids
 
             # For WSI datasets, scan feature cache to find available extractors (for external validation compatibility)
             available_extractors = []
@@ -3477,18 +3897,26 @@ async def chat_with_ai(
                             if extractor_dir.is_dir():
                                 for params_hash_dir in extractor_dir.iterdir():
                                     if params_hash_dir.is_dir():
-                                        feat_file = params_hash_dir / f"{first_wsi_id}.pt"
+                                        feat_file = (
+                                            params_hash_dir / f"{first_wsi_id}.pt"
+                                        )
                                         if feat_file.exists():
-                                            available_extractors.append(extractor_dir.name)
+                                            available_extractors.append(
+                                                extractor_dir.name
+                                            )
                                             break  # Found for this extractor, move to next
                     if available_extractors:
                         available_extractors_str = f", available_extractors=[{', '.join(available_extractors)}]"
             # Store for model compatibility lookup
             available_extractors_per_dataset[ds_id] = available_extractors
-            d['available_feature_extractors'] = available_extractors
+            d["available_feature_extractors"] = available_extractors
 
             # Add access type marker for elevated (temporary permission) datasets
-            access_marker = " [ELEVATED ACCESS - temporary permission]" if ds_access_type == "elevated" else ""
+            access_marker = (
+                " [ELEVATED ACCESS - temporary permission]"
+                if ds_access_type == "elevated"
+                else ""
+            )
 
             datasets_details.append(
                 f"  - {ds_name} (dataset_id={ds_id}){access_marker}: {ds_count} files, type={ds_type}, "
@@ -3514,10 +3942,23 @@ async def chat_with_ai(
     # Format trained models info (with detailed info for external validation)
     # Embedding dimension mapping for feature extractors
     EXTRACTOR_EMBED_DIM = {
-        "resnet50": 2048, "vit_l_16": 1024, "conch": 512, "uni": 1024, "uni2": 1536,
-        "virchow": 1280, "virchow2": 1280, "plip": 512, "phikon": 1024, "phikon2": 1024,
-        "patho_clip": 512, "openmidnight": 1536, "conch15": 512, "H-Optimus-1": 1536,
-        "H-Optimus-0": 1536, "mSTAR": 1024, "GPFM": 1024,
+        "resnet50": 2048,
+        "vit_l_16": 1024,
+        "conch": 512,
+        "uni": 1024,
+        "uni2": 1536,
+        "virchow": 1280,
+        "virchow2": 1280,
+        "plip": 512,
+        "phikon": 1024,
+        "phikon2": 1024,
+        "patho_clip": 512,
+        "openmidnight": 1536,
+        "conch15": 512,
+        "H-Optimus-1": 1536,
+        "H-Optimus-0": 1536,
+        "mSTAR": 1024,
+        "GPFM": 1024,
     }
 
     latest_user_text = ""
@@ -3539,21 +3980,28 @@ async def chat_with_ai(
         source_dataset_ids_map: Dict[str, Optional[str]] = {}
         if task_ids:
             from sqlalchemy import select
+
             # Eager load data_group (for data_type / task_type), no need to load datasets relation
-            stmt = select(TrainingTask).options(
-                selectinload(TrainingTask.data_group)
-            ).where(TrainingTask.task_id.in_(task_ids))
+            stmt = (
+                select(TrainingTask)
+                .options(selectinload(TrainingTask.data_group))
+                .where(TrainingTask.task_id.in_(task_ids))
+            )
             result = await db.execute(stmt)
             tasks = result.scalars().all()
             for task in tasks:
                 training_tasks_map[task.task_id] = task
 
-            training_wsi_ids_raw = await TrainingTaskRepository.get_wsi_ids_batch(db, task_ids)
+            training_wsi_ids_raw = await TrainingTaskRepository.get_wsi_ids_batch(
+                db, task_ids
+            )
             training_wsi_ids_map = {
                 task_id: set(wsi_ids)
                 for task_id, wsi_ids in training_wsi_ids_raw.items()
             }
-            source_dataset_ids_map = await TrainingTaskRepository.get_source_dataset_ids_batch(db, task_ids)
+            source_dataset_ids_map = (
+                await TrainingTaskRepository.get_source_dataset_ids_batch(db, task_ids)
+            )
 
             # Batch-query the actual dataset_ids used in each training task
             # Join TrainingTaskWSI → WSISlide to get the real training datasets
@@ -3562,7 +4010,7 @@ async def chat_with_ai(
                 .join(WSISlide, TrainingTaskWSI.wsi_id == WSISlide.wsi_id)
                 .where(
                     TrainingTaskWSI.task_id.in_(task_ids),
-                    WSISlide.dataset_id.isnot(None)
+                    WSISlide.dataset_id.isnot(None),
                 )
                 .distinct()
             )
@@ -3593,7 +4041,9 @@ async def chat_with_ai(
                 data_type = "unknown"
                 task_type = "unknown"
             # Resolve training dataset names / sources using the stats_datasets lookup
-            dataset_id_to_name = {ds["dataset_id"]: ds["dataset_name"] for ds in stats_datasets}
+            dataset_id_to_name = {
+                ds["dataset_id"]: ds["dataset_name"] for ds in stats_datasets
+            }
             dataset_id_to_source = {}
             for ds in stats_datasets:
                 ds_id = ds.get("dataset_id")
@@ -3606,7 +4056,9 @@ async def chat_with_ai(
                 if ds_source:
                     dataset_id_to_source[ds_id] = ds_source
             training_dataset_names = [
-                dataset_id_to_name[did] for did in training_dataset_ids if did in dataset_id_to_name
+                dataset_id_to_name[did]
+                for did in training_dataset_ids
+                if did in dataset_id_to_name
             ]
             training_dataset_sources = []
             seen_sources = set()
@@ -3628,8 +4080,12 @@ async def chat_with_ai(
                 for ds in stats_datasets:
                     cand_id = ds["dataset_id"]
                     cand_name = ds["dataset_name"]
-                    ds["available_feature_extractors"] = available_extractors_per_dataset.get(cand_id, [])
-                    ds["wsi_ids"] = dataset_wsi_ids_per_dataset.get(cand_id, ds.get("wsi_ids", []))
+                    ds["available_feature_extractors"] = (
+                        available_extractors_per_dataset.get(cand_id, [])
+                    )
+                    ds["wsi_ids"] = dataset_wsi_ids_per_dataset.get(
+                        cand_id, ds.get("wsi_ids", [])
+                    )
                     compatibility_error = _get_external_validation_compatibility_error(
                         model=m,
                         training_task=training_task,
@@ -3660,7 +4116,9 @@ async def chat_with_ai(
             if _is_segmentation_task(task_type):
                 segmentation_spec = _get_segmentation_model_spec(m, training_task)
                 if segmentation_spec["task_architecture"]:
-                    info_parts.append(f"architecture={segmentation_spec['task_architecture']}")
+                    info_parts.append(
+                        f"architecture={segmentation_spec['task_architecture']}"
+                    )
                 if segmentation_spec["task_backbone"]:
                     info_parts.append(f"backbone={segmentation_spec['task_backbone']}")
                 if source_dataset_id:
@@ -3677,7 +4135,9 @@ async def chat_with_ai(
                 info_parts.append(f"source={', '.join(training_dataset_sources)}")
 
             if training_dataset_names:
-                info_parts.append(f"trained_on_dataset={', '.join(training_dataset_names)}")
+                info_parts.append(
+                    f"trained_on_dataset={', '.join(training_dataset_names)}"
+                )
 
             info_parts.append(f"trained_on_task={model_task_id}")
 
@@ -3691,12 +4151,14 @@ async def chat_with_ai(
             if m.created_at:
                 info_parts.append(f"created_at={m.created_at.isoformat()}Z")
 
-            model_summaries.append({
-                "id": model_id,
-                "task_type": task_type,
-                "data_type": data_type,
-                "line": f"  - {model_name} ({', '.join(info_parts)})",
-            })
+            model_summaries.append(
+                {
+                    "id": model_id,
+                    "task_type": task_type,
+                    "data_type": data_type,
+                    "line": f"  - {model_name} ({', '.join(info_parts)})",
+                }
+            )
 
         recent_model_summaries = model_summaries[:MAX_MODELS_IN_CHAT_CONTEXT]
         models_sections = [
@@ -3708,7 +4170,8 @@ async def chat_with_ai(
 
         if inferred_model_filters:
             matching_model_summaries = [
-                summary for summary in model_summaries
+                summary
+                for summary in model_summaries
                 if _matches_model_request_filters(summary, inferred_model_filters)
             ][:MAX_MODELS_IN_CHAT_CONTEXT]
             filter_summary = _format_model_filter_summary(inferred_model_filters)
@@ -3716,25 +4179,32 @@ async def chat_with_ai(
                 f"  MATCHING CURRENT REQUEST (preferred for this turn; newest first; filters={filter_summary}):"
             )
             if matching_model_summaries:
-                models_sections.extend(summary["line"] for summary in matching_model_summaries)
+                models_sections.extend(
+                    summary["line"] for summary in matching_model_summaries
+                )
             else:
                 models_sections.append("  - None")
 
             matching_model_ids = {summary["id"] for summary in matching_model_summaries}
             other_recent_models = [
-                summary for summary in recent_model_summaries
+                summary
+                for summary in recent_model_summaries
                 if summary["id"] not in matching_model_ids
             ]
             if other_recent_models:
                 models_sections.append(
                     f"  OTHER RECENT MODELS (newest first; max {MAX_MODELS_IN_CHAT_CONTEXT}):"
                 )
-                models_sections.extend(summary["line"] for summary in other_recent_models)
+                models_sections.extend(
+                    summary["line"] for summary in other_recent_models
+                )
         else:
             models_sections.append(
                 f"  RECENT MODELS (newest first; max {MAX_MODELS_IN_CHAT_CONTEXT}):"
             )
-            models_sections.extend(summary["line"] for summary in recent_model_summaries)
+            models_sections.extend(
+                summary["line"] for summary in recent_model_summaries
+            )
 
         models_list = "\n".join(models_sections)
         models_count = trained_models_total
@@ -3762,11 +4232,15 @@ async def chat_with_ai(
             # Format expiration info
             expires_info = ""
             if perm.expires_at:
-                expires_info = f", expires: {perm.expires_at.strftime('%Y-%m-%d %H:%M UTC')}"
+                expires_info = (
+                    f", expires: {perm.expires_at.strftime('%Y-%m-%d %H:%M UTC')}"
+                )
             else:
                 expires_info = ", no expiration"
 
-            temp_perms_details.append(f"  - **{dataset_name}** (dataset_id={perm.dataset_id}): {perm.permission_level} access{expires_info}")
+            temp_perms_details.append(
+                f"  - **{dataset_name}** (dataset_id={perm.dataset_id}): {perm.permission_level} access{expires_info}"
+            )
         temp_perms_list = "\n".join(temp_perms_details)
     else:
         temp_perms_list = "  None"
@@ -3784,22 +4258,29 @@ async def chat_with_ai(
         from backend.common.progress_store import get_all_progress
 
         active_task_ids = [
-            t.task_id for t in training_tasks
+            t.task_id
+            for t in training_tasks
             if str(getattr(t, "status", "") or "").lower() in ACTIVE_TRAINING_STATUSES
         ]
         live_progress_map = await get_all_progress() if active_task_ids else {}
         recent_logs_by_task_id: Dict[str, List[Any]] = {}
         if active_task_ids:
             recent_logs_batches = await asyncio.gather(
-                *(TrainingLogRepository.get_recent(db, task_id, count=20) for task_id in active_task_ids)
+                *(
+                    TrainingLogRepository.get_recent(db, task_id, count=20)
+                    for task_id in active_task_ids
+                )
             )
             recent_logs_by_task_id = {
-                task_id: logs for task_id, logs in zip(active_task_ids, recent_logs_batches)
+                task_id: logs
+                for task_id, logs in zip(active_task_ids, recent_logs_batches)
             }
 
         training_tasks_details = []
         for t in training_tasks:
-            created_str = t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "unknown"
+            created_str = (
+                t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "unknown"
+            )
             status_lower = str(t.status or "").lower()
             # Get task_type and data_type from DataGroup relationship
             if t.data_group:
@@ -3818,7 +4299,9 @@ async def chat_with_ai(
                 if progress_value is not None:
                     detail_parts.append(f"progress={progress_value}%")
 
-                latest_snapshot = _extract_latest_training_snapshot(recent_logs_by_task_id.get(t.task_id, []))
+                latest_snapshot = _extract_latest_training_snapshot(
+                    recent_logs_by_task_id.get(t.task_id, [])
+                )
                 if latest_snapshot:
                     detail_parts.append(latest_snapshot)
 
@@ -3827,7 +4310,9 @@ async def chat_with_ai(
                 + "; ".join(detail_parts)
             )
         if training_tasks_total > 10:
-            training_tasks_details.append(f"  ... and {training_tasks_total - 10} more tasks")
+            training_tasks_details.append(
+                f"  ... and {training_tasks_total - 10} more tasks"
+            )
         training_tasks_list = "\n".join(training_tasks_details)
     else:
         training_tasks_list = "  None - user has not created any training tasks yet"
@@ -3839,20 +4324,29 @@ async def chat_with_ai(
 
     if inference_tasks:
         inference_task_wsi_map = await WSIRepository.get_by_ids_with_dataset(
-            db,
-            [t.wsi_id for t in inference_tasks if t.wsi_id]
+            db, [t.wsi_id for t in inference_tasks if t.wsi_id]
         )
         inference_tasks_details = []
         for t in inference_tasks:
-            created_str = t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "unknown"
+            created_str = (
+                t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "unknown"
+            )
             task_wsi = inference_task_wsi_map.get(t.wsi_id)
-            dataset_name = task_wsi.dataset.name if task_wsi and task_wsi.dataset and task_wsi.dataset.name else "unknown dataset"
-            dataset_id = task_wsi.dataset_id if task_wsi and task_wsi.dataset_id else "unknown"
+            dataset_name = (
+                task_wsi.dataset.name
+                if task_wsi and task_wsi.dataset and task_wsi.dataset.name
+                else "unknown dataset"
+            )
+            dataset_id = (
+                task_wsi.dataset_id if task_wsi and task_wsi.dataset_id else "unknown"
+            )
             inference_tasks_details.append(
                 f"  - [{t.status.upper()}] {t.task_type} on {t.wsi_id} (dataset={dataset_name}, dataset_id={dataset_id}, id={t.task_id}): created={created_str}"
             )
         if inference_tasks_total > 10:
-            inference_tasks_details.append(f"  ... and {inference_tasks_total - 10} more tasks")
+            inference_tasks_details.append(
+                f"  ... and {inference_tasks_total - 10} more tasks"
+            )
         inference_tasks_list = "\n".join(inference_tasks_details)
     else:
         inference_tasks_list = "  None - user has not run any inference tasks yet"
@@ -3905,7 +4399,7 @@ async def chat_with_ai(
 
         system_prompt = {
             "role": "system",
-            "content": base_system_prompt + user_data_context
+            "content": base_system_prompt + user_data_context,
         }
         messages.insert(0, system_prompt)
 
@@ -3945,11 +4439,13 @@ async def chat_with_ai(
                     break
 
     if user_query_for_bm25 and all_pdf_urls:
-        merged_ctx = _build_merged_pdf_context(all_pdf_urls, user_query_for_bm25, detected_lang)
+        merged_ctx = _build_merged_pdf_context(
+            all_pdf_urls, user_query_for_bm25, detected_lang
+        )
         merged_content = f"[PDF_CONTEXT]\n{merged_ctx}\n[/PDF_CONTEXT]"
 
         # Remove all old [PDF_CONTEXT] messages
-        _pdf_ctx_re = re.compile(r'\[PDF_CONTEXT\]\n?[\s\S]*?\n?\[/PDF_CONTEXT\]')
+        _pdf_ctx_re = re.compile(r"\[PDF_CONTEXT\]\n?[\s\S]*?\n?\[/PDF_CONTEXT\]")
         first_ctx_idx: int | None = None
         indices_to_remove: list[int] = []
         for i, msg in enumerate(messages):
@@ -3981,9 +4477,16 @@ async def chat_with_ai(
     conversation_mode = detect_conversation_mode(req.messages)
     search_policy = resolve_search_policy(conversation_mode)
     disable_web_search = search_policy == SearchPolicy.DENY
-    if looks_like_training_recommendation_query(latest_user_text) and not disable_web_search:
-        training_recommendation_profile = detect_training_recommendation_profile(latest_user_text)
-        bundled_ctx = await build_training_recommendation_evidence_context(latest_user_text, detected_lang)
+    if (
+        looks_like_training_recommendation_query(latest_user_text)
+        and not disable_web_search
+    ):
+        training_recommendation_profile = detect_training_recommendation_profile(
+            latest_user_text
+        )
+        bundled_ctx = await build_training_recommendation_evidence_context(
+            latest_user_text, detected_lang
+        )
 
         training_context_message = {
             "role": "user",
@@ -4046,7 +4549,9 @@ async def chat_with_ai(
                                             "role": "user",
                                             "content": f"[PDF_CONTEXT]\n{data['pdf_context']}\n[/PDF_CONTEXT]",
                                         }
-                                        await ChatRepository.add_message(db_session, message_data)
+                                        await ChatRepository.add_message(
+                                            db_session, message_data
+                                        )
                                         await db_session.commit()
                                     finally:
                                         await db_session.close()
@@ -4066,13 +4571,17 @@ async def chat_with_ai(
                     if req.conversation_id and full_response:
                         async for db_session in get_db():
                             try:
-                                save_content = _prepare_content_for_persistence(full_response)
+                                save_content = _prepare_content_for_persistence(
+                                    full_response
+                                )
                                 message_data = {
                                     "conversation_id": req.conversation_id,
                                     "role": "assistant",
                                     "content": save_content,
                                 }
-                                saved_message = await ChatRepository.add_message(db_session, message_data)
+                                saved_message = await ChatRepository.add_message(
+                                    db_session, message_data
+                                )
                                 await db_session.commit()
                                 saved_to_db = True
                                 # Send message_id back to frontend so it can update the message ID
@@ -4091,7 +4600,11 @@ async def chat_with_ai(
                     if chunk.startswith("data: "):
                         try:
                             data = json.loads(chunk[6:])
-                            if "content" in data and data["content"] is not None:
+                            if data.get("type") == "search_clear":
+                                # Search-related clear: keep existing content
+                                # (pre-search text is valid, new response appends after search)
+                                pass
+                            elif "content" in data and data["content"] is not None:
                                 if data["content"] == "__CLEAR_CONTENT__":
                                     full_response = ""
                                 else:
@@ -4121,11 +4634,15 @@ async def chat_with_ai(
                             }
                             await ChatRepository.add_message(db_session, message_data)
                             await db_session.commit()
-                            logger.info(f"Saved cancelled assistant response on stream interruption")
+                            logger.info(
+                                f"Saved cancelled assistant response on stream interruption"
+                            )
                         finally:
                             await db_session.close()
                 except Exception as e:
-                    logger.warning(f"Failed to save cancelled response on disconnect: {e}")
+                    logger.warning(
+                        f"Failed to save cancelled response on disconnect: {e}"
+                    )
 
     return StreamingResponse(
         stream_with_persistence(),
@@ -4133,21 +4650,19 @@ async def chat_with_ai(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
+            "X-Accel-Buffering": "no",
+        },
     )
-
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # PDF image serving
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 @router.get("/pdf-images/{url_hash}/{filename}")
 async def serve_pdf_image(
-    url_hash: str,
-    filename: str,
-    user: User = Depends(get_user_from_header_or_param)
+    url_hash: str, filename: str, user: User = Depends(get_user_from_header_or_param)
 ):
     """Serve extracted PDF images from persistent cache.
 
@@ -4157,7 +4672,7 @@ async def serve_pdf_image(
     """
     # Prevent path traversal: url_hash must be hex chars only; filename must be
     # a plain filename with no directory separators or parent-dir references.
-    if not re.match(r'^[0-9a-f]+$', url_hash, re.IGNORECASE):
+    if not re.match(r"^[0-9a-f]+$", url_hash, re.IGNORECASE):
         raise HTTPException(status_code=400, detail="Invalid url_hash")
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
