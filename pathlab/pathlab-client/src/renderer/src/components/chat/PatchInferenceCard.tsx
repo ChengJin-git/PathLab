@@ -180,27 +180,20 @@ export function PatchInferenceCard({ config, conversationId, messageId, referenc
             )}
             {effectiveRun.status === 'completed' && type === 'segmentation' && (
               <div className="space-y-2">
-                {effectiveRun.result?.overlay_image_data_url ? (
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1">
-                      <div className="text-xs text-gray-500">{t('chatComponents.patchInference.originalImage')}</div>
-                      {selectedImage
-                        ? <img src={selectedImage} alt="original" className="w-full rounded-lg object-cover" />
-                        : <div className="w-full aspect-square rounded-lg bg-gray-100" />
-                      }
-                    </div>
-                    <div className="space-y-1">
-                      <div className="text-xs text-gray-500">{t('chatComponents.patchInference.segmentationOverlay')}</div>
-                      <img src={effectiveRun.result.overlay_image_data_url} alt="segmentation overlay" className="w-full rounded-lg object-cover" />
-                    </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <div className="text-xs text-gray-500">{t('chatComponents.patchInference.originalImage')}</div>
+                    <img src={selectedImage ?? ''} alt="original" className="w-full rounded-lg object-cover" />
                   </div>
-                ) : (
-                  <div className="space-y-1 text-xs text-gray-600">
-                    {(effectiveRun.result?.coverage_by_class ?? []).map(item => <div key={item.label} className="flex justify-between"><span>{item.label}</span><span>{(item.coverage_ratio * 100).toFixed(1)}%</span></div>)}
-                    {!effectiveRun.result?.coverage_by_class?.length && <div>{t('chatComponents.patchInference.noSegmentationMask')}</div>}
+                  <div className="space-y-1">
+                    <div className="text-xs text-gray-500">{t('chatComponents.patchInference.segmentationOverlay')}</div>
+                    {effectiveRun.result?.overlay_image_data_url
+                      ? <img src={effectiveRun.result.overlay_image_data_url} alt="segmentation overlay" className="w-full rounded-lg object-cover" />
+                      : <div className="text-xs text-gray-400">{t('chatComponents.patchInference.noSegmentationMask')}</div>
+                    }
                   </div>
-                )}
-                {effectiveRun.result?.coverage_by_class && effectiveRun.result.coverage_by_class.length > 0 && effectiveRun.result.overlay_image_data_url && (
+                </div>
+                {!!effectiveRun.result?.coverage_by_class?.length && (
                   <div className="flex flex-wrap gap-x-3 gap-y-1">
                     {effectiveRun.result.coverage_by_class.map((item, idx) => (
                       <div key={item.label} className="flex items-center gap-1 text-xs text-gray-600">
