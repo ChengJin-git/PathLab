@@ -110,7 +110,6 @@ export default function NewTaskPage() {
     case_id: string
     age?: number
     gender?: string
-    source?: string
     event_time?: number
     event_status?: number
   } | null>(null)
@@ -303,8 +302,8 @@ export default function NewTaskPage() {
   }
 
   // ========== Delete Handlers ==========
-  const handleDeleteClick = (wsi_id: string, label: string, original_filename?: string) => {
-    setWsiToDelete({ wsi_id, label, original_filename })
+  const handleDeleteClick = (wsi_id: string, label?: string, original_filename?: string) => {
+    setWsiToDelete({ wsi_id, label: label ?? '', original_filename })
     setShowDeleteModal(true)
   }
 
@@ -359,7 +358,6 @@ export default function NewTaskPage() {
       case_id: wsi.case_id || '',
       age: wsi.age ?? undefined,
       gender: wsi.gender ?? undefined,
-      source: wsi.source ?? undefined,
       event_time: wsi.event_time ?? undefined,
       event_status: wsi.event_status ?? undefined,
     })
@@ -371,7 +369,6 @@ export default function NewTaskPage() {
     case_id: string
     age: string
     gender: string
-    source: string
     event_time: string
     event_status: string
   }) => {
@@ -388,7 +385,6 @@ export default function NewTaskPage() {
         case_id: data.case_id,
         age: age,
         gender: data.gender,
-        source: data.source,
         event_time: event_time,
         event_status: event_status,
       })
@@ -418,7 +414,6 @@ export default function NewTaskPage() {
     case_id: string
     age: string
     gender: string
-    source: string
     event_time: string
     event_status: string
   }) => {
@@ -429,7 +424,6 @@ export default function NewTaskPage() {
       data.case_id ||
       data.age ||
       data.gender ||
-      data.source ||
       data.event_time ||
       data.event_status
 
@@ -449,7 +443,6 @@ export default function NewTaskPage() {
         case_id: data.case_id || undefined,
         age: age,
         gender: data.gender || undefined,
-        source: data.source || undefined,
         event_time: event_time,
         event_status: event_status,
       }
@@ -799,11 +792,8 @@ export default function NewTaskPage() {
               setSplitStrategy={trainingConfig.setSplitStrategy}
               kFoldSplits={trainingConfig.kFoldSplits}
               setKFoldSplits={trainingConfig.setKFoldSplits}
-              randomSeed={trainingConfig.randomSeed}
-              setRandomSeed={trainingConfig.setRandomSeed}
               hasPreDefinedSplits={dataSelection.hasPreDefinedSplits}
               predefinedSplitCounts={dataSelection.predefinedSplitCounts}
-              classDistribution={splitValidation.classDistribution}
               kFoldValidation={splitValidation.kFoldValidation}
               randomSplitValidation={splitValidation.randomSplitValidation}
               canProceed={canProceedStep2}

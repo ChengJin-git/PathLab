@@ -1648,6 +1648,7 @@
     "exportLabelsWithSplit": "导出标签并划分数据集",
     "exportSuccess": "标签导出成功",
     "exportFailed": "导出标签失败",
+    "exportFallbackNonStratified": "分层划分样本不足，已自动降级为非分层拆分并完成导出。",
     "splitRatios": "数据集划分比例",
     "train": "训练集",
     "val": "验证集",

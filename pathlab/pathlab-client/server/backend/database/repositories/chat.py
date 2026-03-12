@@ -100,7 +100,8 @@ class ChatRepository:
     async def update_message(
         db: AsyncSession,
         message_id: int,
-        content: str
+        content: str,
+        extra_metadata: Optional[Dict] = None
     ) -> Optional[ChatMessage]:
         """Update a message's content"""
         result = await db.execute(
@@ -109,6 +110,9 @@ class ChatRepository:
         message = result.scalar_one_or_none()
         if message:
             message.content = content
+            if extra_metadata is not None:
+                existing = message.extra_metadata or {}
+                message.extra_metadata = {**existing, **extra_metadata}
             await db.flush()
             await db.refresh(message)
         return message

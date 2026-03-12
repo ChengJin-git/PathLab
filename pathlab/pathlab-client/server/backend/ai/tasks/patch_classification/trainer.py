@@ -28,6 +28,10 @@ from sklearn.metrics import (
 from backend.ai.tasks.base import BaseTrainer
 from backend.ai.extractors import get_extractor
 from backend.ai.classifiers import get_classifier
+from backend.ai.utils.patch_resize import (
+    build_patch_classification_transform,
+    resolve_patch_resize_size,
+)
 from backend.ai.schemas import TaskType, TaskStatus, TrainResponse, FeatureExtractionResponse
 from backend.ai.utils.patch_dataset import PatchDatasetFromDB
 from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size
@@ -989,11 +993,13 @@ class PatchClassificationTrainer(BaseTrainer):
         extractor_name: str,
     ) -> Tuple[DataLoader, Optional[DataLoader], Optional[DataLoader]]:
         """Build train/val/test dataloaders."""
-        # Get transforms from extractor - train with augmentation, eval without
         extractor = get_extractor(extractor_name, pretrained=True, hf_token=self.hf_token)
-        train_transform = extractor.get_transforms(mode="train")
-        eval_transform = extractor.get_transforms(mode="eval")
-        del extractor  # Free memory
+        try:
+            target_size = resolve_patch_resize_size(extractor_name, hf_token=self.hf_token)
+            train_transform = build_patch_classification_transform(extractor, target_size, mode="train")
+            eval_transform = build_patch_classification_transform(extractor, target_size, mode="eval")
+        finally:
+            del extractor
 
         train_dataset = PatchDatasetFromDB(
             annotations=train_items,
@@ -1267,10 +1273,13 @@ class PatchClassificationTrainer(BaseTrainer):
         ai_results_root = self.uploads_root / "ai_results"
         num_classes = len(classes)
 
-        # Get transforms for inference using actual extractor
+        # Get transforms for inference using actual extractor resize rules
         extractor_temp = get_extractor(extractor_name, pretrained=False, hf_token=self.hf_token)
-        fm_transform = extractor_temp.get_transforms()
-        del extractor_temp
+        try:
+            target_size = resolve_patch_resize_size(extractor_name, hf_token=self.hf_token)
+            fm_transform = build_patch_classification_transform(extractor_temp, target_size, mode="eval")
+        finally:
+            del extractor_temp
 
         # Get CAM extractor for heatmap generation
         cam_extractor = get_cam_extractor(extractor_name)

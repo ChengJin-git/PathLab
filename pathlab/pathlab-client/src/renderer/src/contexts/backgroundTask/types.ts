@@ -87,7 +87,6 @@ export interface UploadTaskFile {
     case_id?: string
     age?: number
     gender?: string
-    source?: string
     // Survival analysis fields
     event_time?: number
     event_status?: number

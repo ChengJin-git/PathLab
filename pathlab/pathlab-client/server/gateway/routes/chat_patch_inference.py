@@ -19,6 +19,11 @@ from PIL import Image
 from backend.common.config import Config
 from backend.database import safe_session
 from backend.database.repositories import TrainedModelRepository, TrainingTaskRepository
+from backend.ai.utils.patch_resize import (
+    DEFAULT_NON_FM_PATCH_RESIZE,
+    build_patch_classification_transform,
+    resolve_patch_resize_size,
+)
 
 from ..task_queue import TaskType, get_task_queue
 
@@ -312,14 +317,15 @@ async def _run_patch_classification(task: ChatPatchTask, assigned_device: Option
 
         extractor = get_extractor(extractor_name, pretrained=True).to(device)
         extractor.eval()
-        return extractor, linear_probes
+        resize_size = resolve_patch_resize_size(extractor_name)
+        return extractor, linear_probes, resize_size
 
-    extractor, linear_probes = await asyncio.to_thread(_load_models)
+    extractor, linear_probes, resize_size = await asyncio.to_thread(_load_models)
     await _update_task(task.task_id, progress=35)
 
     def _infer_single_image() -> Dict[str, Any]:
         image = Image.open(task.image_path).convert("RGB")
-        image_tensor = extractor.get_transforms()(image).unsqueeze(0).to(device)
+        image_tensor = build_patch_classification_transform(extractor, resize_size)(image).unsqueeze(0).to(device)
         with torch.inference_mode():
             features = extractor(image_tensor)
             logits_list = [probe(features) for probe in linear_probes]
@@ -359,6 +365,8 @@ async def _run_patch_segmentation(task: ChatPatchTask, assigned_device: Optional
     checkpoint_path = trained_model.model_path
 
     def _load_model():
+        from backend.ai.segmentors.specs import is_fm_segmentation_backbone
+
         checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
         checkpoint_config = checkpoint.get("config", {})
         task_model_cfg = (training_task.model_config or {}) if training_task else {}
@@ -383,6 +391,7 @@ async def _run_patch_segmentation(task: ChatPatchTask, assigned_device: Optional
         model = model.to(device)
         model.eval()
         norm_mean, norm_std = segmentor.get_normalization_params()
+        resize_size = resolve_patch_resize_size(backbone, is_segmentation_backbone=True)
 
         class_names = _normalize_labels(
             (training_task.classes if training_task else None)
@@ -392,16 +401,16 @@ async def _run_patch_segmentation(task: ChatPatchTask, assigned_device: Optional
         )
         if not class_names:
             class_names = [f"Class {idx + 1}" for idx in range(num_classes)]
-        return model, norm_mean, norm_std, class_names
+        return model, norm_mean, norm_std, class_names, resize_size
 
-    model, norm_mean, norm_std, class_names = await asyncio.to_thread(_load_model)
+    model, norm_mean, norm_std, class_names, resize_size = await asyncio.to_thread(_load_model)
     await _update_task(task.task_id, progress=35)
 
     def _infer_single_image() -> Dict[str, Any]:
         image = Image.open(task.image_path).convert("RGB")
         image_tensor = v2.ToImage()(image)
         image_tensor = v2.ToDtype(torch.float32, scale=True)(image_tensor)
-        image_tensor = v2.Resize((1024, 1024), antialias=True)(image_tensor)
+        image_tensor = v2.Resize((resize_size, resize_size), antialias=True)(image_tensor)
         image_tensor = v2.Normalize(
             mean=norm_mean or [0.485, 0.456, 0.406],
             std=norm_std or [0.229, 0.224, 0.225],

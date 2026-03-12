@@ -644,7 +644,6 @@ export default function RegisterPage() {
           case_id: (uiMeta.case_id && uiMeta.case_id.trim()) ? uiMeta.case_id : csvMeta.case_id,
           age: (uiMeta.age && uiMeta.age.trim()) ? uiMeta.age : csvMeta.age,
           gender: (uiMeta.gender && uiMeta.gender.trim()) ? uiMeta.gender : csvMeta.gender,
-          source: resolvedDatasetSource,
           event_time: (uiMeta.event_time && uiMeta.event_time.trim()) ? uiMeta.event_time : csvMeta.event_time,
           event_status: (uiMeta.event_status && uiMeta.event_status.trim()) ? uiMeta.event_status : csvMeta.event_status
         }
@@ -713,7 +712,6 @@ export default function RegisterPage() {
             case_id: finalMeta.case_id ? String(finalMeta.case_id) : undefined,
             age,
             gender: finalMeta.gender ? String(finalMeta.gender) : undefined,
-            source: finalMeta.source ? String(finalMeta.source) : undefined,
             event_time: eventTime,
             event_status: eventStatus
           },

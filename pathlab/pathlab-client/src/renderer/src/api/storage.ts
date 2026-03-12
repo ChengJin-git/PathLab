@@ -766,7 +766,6 @@ export interface StartBatchUpdateMetadataRequest {
   case_id?: string
   age?: number
   gender?: string
-  source?: string
   event_time?: number
   event_status?: number
 }

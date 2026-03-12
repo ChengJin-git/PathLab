@@ -116,7 +116,6 @@ class UploadByPathRequest(BaseModel):
     wsi_id: Optional[str] = None
     age: Optional[int] = None
     gender: Optional[str] = None
-    source: Optional[str] = None
     # Survival analysis fields
     event_time: Optional[float] = None  # Time to event (days/months)
     event_status: Optional[int] = None  # 1 = event occurred, 0 = censored
@@ -128,7 +127,6 @@ class WSIMetadataUpdateRequest(BaseModel):
     case_id: Optional[str] = None
     age: Optional[int] = None
     gender: Optional[str] = None
-    source: Optional[str] = None
     # Survival analysis fields
     event_time: Optional[float] = None  # Time to event (days/months)
     event_status: Optional[int] = None  # 1 = event occurred, 0 = censored
@@ -162,6 +160,7 @@ class CreateConversationRequest(BaseModel):
 class UpdateMessageRequest(BaseModel):
     """Request model for updating a message's content"""
     content: str
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class AddMessageRequest(BaseModel):
@@ -293,7 +292,6 @@ class StartBatchUpdateMetadataRequest(BaseModel):
     case_id: Optional[str] = None
     age: Optional[int] = None
     gender: Optional[str] = None
-    source: Optional[str] = None
     # Survival analysis fields
     event_time: Optional[float] = None
     event_status: Optional[int] = None

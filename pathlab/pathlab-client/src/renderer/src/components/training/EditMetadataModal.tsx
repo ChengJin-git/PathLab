@@ -4,7 +4,7 @@
  * Modal for editing metadata of a single slide.
  */
 
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Edit2 } from 'lucide-react'
 import { TaskType } from '../../constants/training'
@@ -15,7 +15,6 @@ export interface WSIEditInfo {
   case_id?: string
   age?: number
   gender?: string
-  source?: string
   event_time?: number
   event_status?: number
 }
@@ -29,7 +28,6 @@ export interface EditMetadataModalProps {
     case_id: string
     age: string
     gender: string
-    source: string
     event_time: string
     event_status: string
   }) => void
@@ -42,7 +40,6 @@ export function EditMetadataModal({ taskType, editingWSI, updating, onConfirm, o
   const [caseId, setCaseId] = useState('')
   const [age, setAge] = useState('')
   const [gender, setGender] = useState('')
-  const [source, setSource] = useState('')
   const [eventTime, setEventTime] = useState('')
   const [eventStatus, setEventStatus] = useState('')
 
@@ -51,13 +48,12 @@ export function EditMetadataModal({ taskType, editingWSI, updating, onConfirm, o
     setCaseId(editingWSI.case_id || '')
     setAge(editingWSI.age?.toString() || '')
     setGender(editingWSI.gender || '')
-    setSource(editingWSI.source || '')
     setEventTime(editingWSI.event_time?.toString() || '')
     setEventStatus(editingWSI.event_status?.toString() || '')
   }, [editingWSI])
 
   const handleSubmit = () => {
-    onConfirm({ label, case_id: caseId, age, gender, source, event_time: eventTime, event_status: eventStatus })
+    onConfirm({ label, case_id: caseId, age, gender, event_time: eventTime, event_status: eventStatus })
   }
 
   const isSurvival = taskType === 'survival'
@@ -159,16 +155,6 @@ export function EditMetadataModal({ taskType, editingWSI, updating, onConfirm, o
           />
         </div>
 
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">{t('training.editMetadata.source')}</label>
-          <input
-            type="text"
-            value={source}
-            onChange={(e) => setSource(e.target.value)}
-            placeholder={t('training.editMetadata.sourcePlaceholder')}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          />
-        </div>
 
         <div className="flex gap-3">
           <button

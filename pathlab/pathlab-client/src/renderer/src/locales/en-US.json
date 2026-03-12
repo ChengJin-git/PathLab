@@ -1648,6 +1648,7 @@
     "exportLabelsWithSplit": "Export Labels with Split",
     "exportSuccess": "Labels exported successfully",
     "exportFailed": "Failed to export labels",
+    "exportFallbackNonStratified": "Insufficient samples for stratified splitting. Export automatically fell back to a non-stratified split.",
     "splitRatios": "Split Ratios",
     "train": "Train",
     "val": "Val",

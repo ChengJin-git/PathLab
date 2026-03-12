@@ -54,9 +54,14 @@ from .chat_pdf import (
 from .chat_pdf_vectorstore import search_pdf_chunks
 from .chat_training_recommendation import (
     build_training_recommendation_evidence_context,
-    detect_no_web_search_mode,
     detect_training_recommendation_profile,
     looks_like_training_recommendation_query,
+)
+from .chat_intent_policy import (
+    ConversationMode,
+    SearchPolicy,
+    detect_conversation_mode,
+    resolve_search_policy,
 )
 
 router = APIRouter(tags=["Chat & Conversations"])
@@ -91,10 +96,8 @@ def _has_training_recommendation_context(messages: list[dict]) -> bool:
     return False
 
 
-def _build_no_web_search_instruction(detected_lang: str, no_web_search_mode: str | None) -> str:
-    mode = no_web_search_mode or "analysis_results"
-
-    if mode == "image_visualization":
+def _build_no_web_search_instruction(detected_lang: str, mode: ConversationMode) -> str:
+    if mode == ConversationMode.IMAGE_VISUALIZATION:
         if detected_lang == "zh-CN":
             return (
                 "当前这轮是站内图像/热力图浏览回合，不是训练推荐，也不是文献检索。"
@@ -113,7 +116,7 @@ def _build_no_web_search_instruction(detected_lang: str, no_web_search_mode: str
             "prefer `[IMAGE_RECOMMENDATION]`, and only ask for any remaining visualization-specific details if needed."
         )
 
-    if mode == "patch_inference":
+    if mode == ConversationMode.PATCH_INFERENCE:
         if detected_lang == "zh-CN":
             return (
                 "当前这轮是站内图像分析/图像推理回合，不是文献检索。绝对不要使用 `[WEB_SEARCH]`。"
@@ -128,6 +131,40 @@ def _build_no_web_search_instruction(detected_lang: str, no_web_search_mode: str
             "This turn is for in-app image analysis/inference, not literature search. "
             "Do NOT use `[WEB_SEARCH]`. Continue using the existing image and model context, "
             "prefer normal guidance or `[PATCH_INFERENCE]` when appropriate."
+        )
+
+    if mode == ConversationMode.INTERNAL_EVALUATION:
+        if detected_lang == "zh-CN":
+            return (
+                "当前这轮是内部验证流程，不是文献检索。绝对不要使用 `[WEB_SEARCH]`。"
+                "请直接使用已有任务、模型和数据集上下文继续，优先输出 `[ANALYSIS_CONFIG]`（analysis_type: internal）、`[METRIC_CONFIG]` 或 `[QUICK_ANALYSIS_CONFIG]`。"
+            )
+        if detected_lang == "zh-HK":
+            return (
+                "當前這輪是內部驗證流程，不是文獻檢索。絕對不要使用 `[WEB_SEARCH]`。"
+                "請直接使用已有任務、模型和資料集上下文繼續，優先輸出 `[ANALYSIS_CONFIG]`（analysis_type: internal）、`[METRIC_CONFIG]` 或 `[QUICK_ANALYSIS_CONFIG]`。"
+            )
+        return (
+            "This turn is for in-app internal validation, not literature search. "
+            "Do NOT use `[WEB_SEARCH]`. Continue with the existing task/model/dataset context, "
+            "prefer `[ANALYSIS_CONFIG]` (analysis_type: internal), `[METRIC_CONFIG]`, or `[QUICK_ANALYSIS_CONFIG]`."
+        )
+
+    if mode == ConversationMode.EXTERNAL_EVALUATION:
+        if detected_lang == "zh-CN":
+            return (
+                "当前这轮是外部评测流程，不是文献检索。绝对不要使用 `[WEB_SEARCH]`。"
+                "请直接使用已有任务、模型和数据集上下文继续，优先输出 `[ANALYSIS_CONFIG]`（analysis_type: external）或 `[METRIC_CONFIG]`。"
+            )
+        if detected_lang == "zh-HK":
+            return (
+                "當前這輪是外部評測流程，不是文獻檢索。絕對不要使用 `[WEB_SEARCH]`。"
+                "請直接使用已有任務、模型和資料集上下文繼續，優先輸出 `[ANALYSIS_CONFIG]`（analysis_type: external）或 `[METRIC_CONFIG]`。"
+            )
+        return (
+            "This turn is for in-app external evaluation, not literature search. "
+            "Do NOT use `[WEB_SEARCH]`. Continue with the existing task/model/dataset context, "
+            "prefer `[ANALYSIS_CONFIG]` (analysis_type: external) or `[METRIC_CONFIG]`."
         )
 
     if detected_lang == "zh-CN":
@@ -151,12 +188,12 @@ def _prepare_generation_messages(
     messages: List[Dict],
     detected_lang: str,
     disable_web_search: bool,
-    no_web_search_mode: str | None,
+    conversation_mode: ConversationMode,
 ) -> List[Dict]:
     prepared_messages = messages.copy()
     if disable_web_search:
         prepared_messages = prepared_messages + [
-            {"role": "user", "content": _build_no_web_search_instruction(detected_lang, no_web_search_mode)}
+            {"role": "user", "content": _build_no_web_search_instruction(detected_lang, conversation_mode)}
         ]
     return prepared_messages
 
@@ -2105,7 +2142,12 @@ def _deduplicate_search_results(results: List[Dict]) -> List[Dict]:
 
 def _format_search_results_for_ai(search_results: Dict) -> str:
     """Format search-like results for the next AI iteration."""
-    results_text = f"\n\n[WEB_SEARCH_RESULT]\n{json.dumps(search_results)}\n[/WEB_SEARCH_RESULT]\n\n"
+    query = str(search_results.get("query", "") or "")
+    source = str(search_results.get("source", "web") or "web")
+    results_text = "\n\nSEARCH_RESULTS_CONTEXT\n"
+    if query:
+        results_text += f"Query: {query}\n"
+    results_text += f"Source: {source}\n"
     results_text += "Search results:\n"
     for idx, result in enumerate(search_results.get("results", []), 1):
         r_url = str(result.get("url", "") or "")
@@ -2129,7 +2171,7 @@ async def stream_ai_response(
     detected_lang: str = "en",
     request: Request = None,
     disable_web_search: bool = False,
-    no_web_search_mode: str | None = None,
+    conversation_mode: ConversationMode = ConversationMode.GENERAL_CHAT,
 ) -> AsyncIterator[str]:
     """
     Stream AI response using OpenAI-compatible API with Exa search support.
@@ -2232,7 +2274,7 @@ After saving, return here and start chatting!"""
     # Tool loop: up to 5 iterations (web search + read article)
     # Need enough iterations for: search → re-search → read article → stream summary
     max_tool_iterations = 5
-    current_messages = _prepare_generation_messages(messages, detected_lang, disable_web_search, no_web_search_mode)
+    current_messages = _prepare_generation_messages(messages, detected_lang, disable_web_search, conversation_mode)
     _requires_training_recommendation_search = _has_training_recommendation_context(current_messages)
     article_pdf_content: str | None = None  # raw PDF markdown (with page markers) for citation context extraction
     _per_paper_pdf_content: dict[int, str] | None = None  # per-paper content for multi-paper follow-ups
@@ -2505,7 +2547,7 @@ After saving, return here and start chatting!"""
                         {"role": "assistant", "content": cleaned_response}
                     ]
                     current_messages = current_messages + [
-                        {"role": "user", "content": _build_no_web_search_instruction(detected_lang, no_web_search_mode)}
+                        {"role": "user", "content": _build_no_web_search_instruction(detected_lang, conversation_mode)}
                     ]
                 continue
             current_messages = current_messages + [
@@ -2526,7 +2568,7 @@ After saving, return here and start chatting!"""
 
             if disable_web_search:
                 logger.info(
-                    f"Blocking [WEB_SEARCH] for no-search mode {no_web_search_mode!r} (query={query!r}, reason={reason!r})"
+                    f"Blocking [WEB_SEARCH] for mode {conversation_mode.value!r} (query={query!r}, reason={reason!r})"
                 )
                 cleaned_response = _strip_tool_blocks(full_response)
                 if cleaned_response:
@@ -2534,7 +2576,7 @@ After saving, return here and start chatting!"""
                         {"role": "assistant", "content": cleaned_response}
                     ]
                 current_messages = current_messages + [
-                    {"role": "user", "content": _build_no_web_search_instruction(detected_lang, no_web_search_mode)},
+                    {"role": "user", "content": _build_no_web_search_instruction(detected_lang, conversation_mode)},
                 ]
                 continue
 
@@ -2552,8 +2594,7 @@ After saving, return here and start chatting!"""
                     "source": "local_cache",
                     "results": cached_article_matches,
                 }
-                web_search_result_block = json.dumps(local_search_results)
-                yield f"data: {json.dumps({'content': f'[WEB_SEARCH_RESULT]{web_search_result_block}[/WEB_SEARCH_RESULT]'})}\n\n"
+                yield f"data: {json.dumps({'type': 'web_search_result', 'result': local_search_results})}\n\n"
 
                 local_results_text = _format_search_results_for_ai(local_search_results)
                 if len(cached_article_matches) == 1:
@@ -2612,9 +2653,7 @@ After saving, return here and start chatting!"""
             if _response_already_streamed:
                 yield f"data: {json.dumps({'content': '__CLEAR_CONTENT__'})}\n\n"
 
-            # Emit search status to frontend
-            search_status = json.dumps({"query": query, "reason": reason})
-            yield f"data: {json.dumps({'content': f'[SEARCH_STATUS]{search_status}[/SEARCH_STATUS]'})}\n\n"
+            yield f"data: {json.dumps({'type': 'search_status', 'query': query, 'reason': reason})}\n\n"
 
             # Execute Exa search
             try:
@@ -2632,7 +2671,7 @@ After saving, return here and start chatting!"""
                     logger.info(f"Exa search returned 0 results for query: {query}")
                     # Emit empty result to frontend so search card shows "no results"
                     web_search_result_block = json.dumps(search_results)
-                    yield f"data: {json.dumps({'content': f'[WEB_SEARCH_RESULT]{web_search_result_block}[/WEB_SEARCH_RESULT]'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'web_search_result', 'result': search_results})}\n\n"
                     current_messages = current_messages + [
                         {"role": "assistant", "content": full_response},
                         {"role": "user", "content": (
@@ -2644,9 +2683,9 @@ After saving, return here and start chatting!"""
                     ]
                     continue
 
-                # Emit web search results to frontend so UI can display completion status
                 web_search_result_block = json.dumps(search_results)
-                yield f"data: {json.dumps({'content': f'[WEB_SEARCH_RESULT]{web_search_result_block}[/WEB_SEARCH_RESULT]'})}\n\n"
+                yield f"data: {json.dumps({'type': 'web_search_result', 'result': search_results})}\n\n"
+                yield f"data: {json.dumps({'type': 'search_phase', 'phase': 'summarizing'})}\n\n"
 
                 # Format search results for AI — include source type hints
                 results_text = _format_search_results_for_ai(search_results)
@@ -2675,8 +2714,7 @@ After saving, return here and start chatting!"""
             except httpx.TimeoutException:
                 # #3: Search timeout — update frontend card and let AI answer with existing knowledge
                 logger.warning(f"Exa search timed out for query: {query}")
-                failed_status = json.dumps({"query": query, "reason": reason, "status": "timeout"})
-                yield f"data: {json.dumps({'content': f'[SEARCH_STATUS]{failed_status}[/SEARCH_STATUS]'})}\n\n"
+                yield f"data: {json.dumps({'type': 'search_status', 'query': query, 'reason': reason, 'status': 'timeout'})}\n\n"
                 current_messages = current_messages + [
                     {"role": "assistant", "content": full_response},
                     {"role": "user", "content": (
@@ -2689,8 +2727,7 @@ After saving, return here and start chatting!"""
             except Exception as e:
                 logger.error(f"Exa search error: {e}")
                 # Emit failed status so frontend search card updates
-                failed_status = json.dumps({"query": query, "reason": reason, "status": "error"})
-                yield f"data: {json.dumps({'content': f'[SEARCH_STATUS]{failed_status}[/SEARCH_STATUS]'})}\n\n"
+                yield f"data: {json.dumps({'type': 'search_status', 'query': query, 'reason': reason, 'status': 'error'})}\n\n"
                 break
 
         # ── Check for [READ_ARTICLE] ──
@@ -2718,8 +2755,7 @@ After saving, return here and start chatting!"""
             # Emit PDF_PARSE_STATUS: "downloading" (uncached) or "parsing" (cached)
             has_cache = get_cached_markdown(article_url) is not None
             initial_status = "parsing" if has_cache else "downloading"
-            pdf_status = {"url": article_url, "title": article_title, "status": initial_status}
-            yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
+            yield f"data: {json.dumps({'type': 'pdf_status', 'url': article_url, 'title': article_title, 'status': initial_status})}\n\n"
 
             try:
                 _active_pdf_url = article_url
@@ -2747,8 +2783,7 @@ After saving, return here and start chatting!"""
                             await asyncio.wait_for(asyncio.shield(_pdf_task), timeout=_HEARTBEAT_INTERVAL)
                         except asyncio.TimeoutError:
                             # Task still running — emit heartbeat to keep connection alive
-                            hb_status = {"url": article_url, "title": article_title, "status": "parsing"}
-                            yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(hb_status)}[/PDF_PARSE_STATUS]'})}\n\n"
+                            yield f"data: {json.dumps({'type': 'pdf_status', 'url': article_url, 'title': article_title, 'status': 'parsing'})}\n\n"
                     pdf_result = await _pdf_task
                 finally:
                     _active_pdf_url = None
@@ -2759,8 +2794,7 @@ After saving, return here and start chatting!"""
 
                 # For uncached PDFs: transition downloading → parsing → completed
                 if not has_cache and pdf_result.get("success"):
-                    pdf_status = {"url": article_url, "title": article_title, "status": "parsing"}
-                    yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'pdf_status', 'url': article_url, 'title': article_title, 'status': 'parsing'})}\n\n"
 
                 # Emit PDF_PARSE_STATUS: completed or error
                 if pdf_result.get("success"):
@@ -2775,7 +2809,7 @@ After saving, return here and start chatting!"""
                         "url": article_url, "title": article_title,
                         "status": pdf_result.get("error", "unknown_error")
                     }
-                yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
+                yield f"data: {json.dumps({'type': 'pdf_parse_result', 'result': pdf_status})}\n\n"
 
                 if pdf_result.get("success"):
                     # Build article content for AI
@@ -2865,7 +2899,7 @@ After saving, return here and start chatting!"""
             except Exception as e:
                 logger.error(f"READ_ARTICLE error for {article_url}: {e}")
                 pdf_status = {"url": article_url, "title": article_title, "status": "download_failed"}
-                yield f"data: {json.dumps({'content': f'[PDF_PARSE_STATUS]{json.dumps(pdf_status)}[/PDF_PARSE_STATUS]'})}\n\n"
+                yield f"data: {json.dumps({'type': 'pdf_parse_result', 'result': pdf_status})}\n\n"
                 # Add error context so the next AI call can inform the user
                 current_messages = current_messages + [
                     {"role": "assistant", "content": full_response},
@@ -3107,7 +3141,7 @@ async def update_message(
         raise HTTPException(status_code=403, detail="You don't have permission to update this message")
 
     # Update the message
-    message = await ChatRepository.update_message(db, message_id, req.content)
+    message = await ChatRepository.update_message(db, message_id, req.content, req.metadata)
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
 
@@ -3944,8 +3978,10 @@ async def chat_with_ai(
 
     # ── Evidence-backed training recommendation context ──────────────────────
     training_recommendation_profile: str | None = None
-    no_web_search_mode = detect_no_web_search_mode(req.messages)
-    if looks_like_training_recommendation_query(latest_user_text) and not no_web_search_mode:
+    conversation_mode = detect_conversation_mode(req.messages)
+    search_policy = resolve_search_policy(conversation_mode)
+    disable_web_search = search_policy == SearchPolicy.DENY
+    if looks_like_training_recommendation_query(latest_user_text) and not disable_web_search:
         training_recommendation_profile = detect_training_recommendation_profile(latest_user_text)
         bundled_ctx = await build_training_recommendation_evidence_context(latest_user_text, detected_lang)
 
@@ -3969,44 +4005,7 @@ async def chat_with_ai(
             messages.append(training_context_message)
 
     # Stream AI response
-    def _strip_internal_status_blocks(content: str) -> str:
-        """Strip frontend-only status blocks before saving to DB.
-
-        [SEARCH_STATUS] is stripped — it is a transient "searching…" indicator
-        that has no meaning once the stream ends.
-
-        [WEB_SEARCH_RESULT] is kept in DB so that the SearchCompletedCard can be
-        re-displayed when the user reopens the conversation.  The frontend's
-        sanitizeConfigBlocksForAI() already strips ALL WEB_SEARCH_RESULT blocks
-        before sending history to the AI, so the AI will never misinterpret them
-        as pre-existing search results.
-
-        [PDF_PARSE_STATUS] blocks with status "parsing" (in-progress) are stripped
-        since they have no meaning after the stream ends.  Completed/failed blocks
-        ARE kept so the frontend can display the PDF parsed card when the user
-        reopens the conversation.  The frontend's sanitizeConfigBlocksForAI()
-        already strips ALL PDF_PARSE_STATUS blocks before sending history to the AI,
-        so there is no risk of the AI misinterpreting them.
-        """
-        import re as _re
-        import json as _json
-        content = _re.sub(r'\[SEARCH_STATUS\][\s\S]*?\[/SEARCH_STATUS\]', '', content)
-
-        # Only strip in-progress ("parsing"/"downloading") PDF status blocks; keep completed/failed ones.
-        def _strip_parsing_only(m: re.Match) -> str:
-            try:
-                data = _json.loads(m.group(1).strip())
-                if data.get('status') in ('parsing', 'downloading'):
-                    return ''
-            except Exception:
-                pass
-            return m.group(0)
-
-        content = _re.sub(
-            r'\[PDF_PARSE_STATUS\]([\s\S]*?)\[/PDF_PARSE_STATUS\]',
-            _strip_parsing_only,
-            content
-        )
+    def _prepare_content_for_persistence(content: str) -> str:
         if _has_training_recommendation_context(messages):
             content = _sanitize_training_recommendation_output(content)
         return content.strip()
@@ -4029,8 +4028,8 @@ async def chat_with_ai(
                 model,
                 detected_lang,
                 request,
-                disable_web_search=bool(no_web_search_mode),
-                no_web_search_mode=no_web_search_mode,
+                disable_web_search=disable_web_search,
+                conversation_mode=conversation_mode,
             ):
                 # Intercept pdf_context event: persist it as a hidden user message,
                 # and also forward the event so the frontend can mirror that hidden
@@ -4067,9 +4066,7 @@ async def chat_with_ai(
                     if req.conversation_id and full_response:
                         async for db_session in get_db():
                             try:
-                                # Strip internal-only status blocks before persisting so that
-                                # on the next turn the AI won't mistake them for existing search results.
-                                save_content = _strip_internal_status_blocks(full_response)
+                                save_content = _prepare_content_for_persistence(full_response)
                                 message_data = {
                                     "conversation_id": req.conversation_id,
                                     "role": "assistant",
@@ -4110,7 +4107,7 @@ async def chat_with_ai(
                 cancel_text = _get_generation_cancelled_text(detected_lang)
                 # If there was partial content, append cancel notice after it
                 if full_response.strip():
-                    save_content = _strip_internal_status_blocks(full_response)
+                    save_content = _prepare_content_for_persistence(full_response)
                     save_content = f"{save_content}\n\n---\n\n{cancel_text}"
                 else:
                     save_content = cancel_text

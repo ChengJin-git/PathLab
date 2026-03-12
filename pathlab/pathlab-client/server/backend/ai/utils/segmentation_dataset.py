@@ -10,10 +10,16 @@ from PIL import Image
 import cv2
 
 
-def get_transforms(split: str, size: Tuple[int, int] = (1024, 1024), normalization_mean: Optional[list] = None, normalization_std: Optional[list] = None) -> Callable:
+def get_transforms(split: str, size: Tuple[int, int] = (512, 512), normalization_mean: Optional[list] = None, normalization_std: Optional[list] = None) -> Callable:
     """
     Get transforms for segmentation tasks.
-    
+
+    Note:
+        Patch segmentation callers should prefer resolving size via
+        ``backend.ai.utils.patch_resize.resolve_patch_resize_size`` so FM
+        backbones use their native input size while non-FM backbones default
+        to 512.
+
     Args:
         split: "train", "val", or "test"
         size: Target size (H, W)

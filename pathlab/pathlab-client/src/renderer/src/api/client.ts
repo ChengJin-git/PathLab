@@ -393,6 +393,11 @@ export async function apiFetchBlob(
   }, context)
 }
 
+export interface DownloadApiFileResult {
+  filename: string
+  headers: Headers
+}
+
 /**
  * Download a file response with auth/error handling and Content-Disposition filename support.
  */
@@ -402,7 +407,7 @@ export async function downloadApiFile(
   options?: RequestInit,
   context?: string,
   skipAuth: boolean = false
-): Promise<void> {
+): Promise<DownloadApiFileResult> {
   return runApiRequest(async () => {
     const response = await fetchWithAuth(url, options, skipAuth)
     const okResponse = await ensureSuccessfulResponse(response, context)
@@ -412,6 +417,10 @@ export async function downloadApiFile(
       fallbackFilename
     )
     downloadBlobFile(blob, filename)
+    return {
+      filename,
+      headers: okResponse.headers
+    }
   }, context)
 }
 

@@ -146,7 +146,6 @@ export function useTaskActions(params: TaskActionsParams) {
               case_id: file.metadata?.case_id,
               age: file.metadata?.age,
               gender: file.metadata?.gender,
-              source: file.metadata?.source,
               event_time: file.metadata?.event_time,
               event_status: file.metadata?.event_status,
               signal: abortController.signal
@@ -161,7 +160,6 @@ export function useTaskActions(params: TaskActionsParams) {
               case_id: file.metadata?.case_id,
               age: file.metadata?.age,
               gender: file.metadata?.gender,
-              source: file.metadata?.source,
               event_time: file.metadata?.event_time,
               event_status: file.metadata?.event_status,
               associatedFiles: file.associatedFiles,

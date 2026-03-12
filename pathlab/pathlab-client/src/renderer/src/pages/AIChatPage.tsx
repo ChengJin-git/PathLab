@@ -17,7 +17,10 @@ import {
   type Conversation,
   type ConversationWithMessages,
   type ChatMessage,
-  type ChatMessageContent
+  type ChatMessageContent,
+  type MessageArtifacts,
+  type WebSearchResultEvent,
+  type PdfParseResultEvent
 } from '../api'
 import { useVoiceSession } from '../lib/useVoiceSession'
 import { formatFileSize } from '../lib/utils'
@@ -51,7 +54,6 @@ import { parseCancelTaskConfig } from '../components/chat/CancelTaskCard'
 import { removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
 import { removeModelListBlock } from '../components/chat/ModelListCard'
 import { parsePatchInferenceConfig, removePatchInferenceBlock } from '../components/chat/PatchInferenceCard'
-import { removePdfParseStatusBlock } from '../components/chat/SearchingStatus'
 import { parseRenameTaskConfig, removeRenameTaskBlock } from '../components/chat/RenameTaskCard'
 import { MULTIMODAL_MODELS } from '../components/settings/GeneralTab'
 import { BEFORE_LOGOUT_EVENT } from '../contexts/AuthContext'
@@ -65,6 +67,7 @@ interface Message {
   images?: string[] // base64 images for display
   timestamp: Date
   csvAttachments?: { fileName: string; content: string }[] // CSV file contents for processing
+  artifacts?: MessageArtifacts
 }
 
 interface ImageAttachment {
@@ -192,7 +195,6 @@ export default function AIChatPage() {
   // idle → thinking (waiting for first chunk) → streaming (receiving chunks) → idle
   type GenerationPhase = 'idle' | 'thinking' | 'streaming'
   const [generationPhase, setGenerationPhase] = useState<GenerationPhase>('idle')
-  // Derived booleans for backward compatibility with existing read sites
   const isLoading = generationPhase === 'thinking'
   const isGenerating = generationPhase !== 'idle'
   const generationPhaseRef = useRef<GenerationPhase>('idle')
@@ -400,8 +402,11 @@ export default function AIChatPage() {
       id: String(msg.id),
       role: msg.role as 'user' | 'assistant',
       content: msg.content,
-      ...((msg as { metadata?: { images?: string[] } | null }).metadata?.images?.length
-        ? { images: (msg as { metadata?: { images?: string[] } | null }).metadata!.images }
+      ...((msg as { metadata?: { images?: string[]; artifacts?: MessageArtifacts } | null }).metadata?.images?.length
+        ? { images: (msg as { metadata?: { images?: string[]; artifacts?: MessageArtifacts } | null }).metadata!.images }
+        : {}),
+      ...((msg as { metadata?: { images?: string[]; artifacts?: MessageArtifacts } | null }).metadata?.artifacts
+        ? { artifacts: (msg as { metadata?: { images?: string[]; artifacts?: MessageArtifacts } | null }).metadata!.artifacts }
         : {}),
       timestamp: new Date(msg.created_at)
     }))
@@ -1371,6 +1376,100 @@ export default function AIChatPage() {
             ...prev.slice(assistantIndex)
           ]
         })
+      }, (event) => {
+        const currentId = trackingId
+        setMessages(prev => prev.map(m => {
+          if (m.id !== currentId) return m
+          const prev_search = m.artifacts?.search
+          return {
+            ...m,
+            artifacts: {
+              ...m.artifacts,
+              search: {
+                statuses: [...(prev_search?.statuses ?? []), event],
+                phase: 'searching',
+                pdfStatuses: prev_search?.pdfStatuses ?? [],
+                webSearchResults: prev_search?.webSearchResults ?? [],
+                pdfParseResults: prev_search?.pdfParseResults ?? [],
+              }
+            }
+          }
+        }))
+      }, (event) => {
+        const currentId = trackingId
+        setMessages(prev => prev.map(m => {
+          if (m.id !== currentId) return m
+          const prev_search = m.artifacts?.search
+          return {
+            ...m,
+            artifacts: {
+              ...m.artifacts,
+              search: {
+                statuses: prev_search?.statuses ?? [],
+                phase: prev_search?.phase ?? 'idle',
+                pdfStatuses: [...(prev_search?.pdfStatuses ?? []), event],
+                webSearchResults: prev_search?.webSearchResults ?? [],
+                pdfParseResults: prev_search?.pdfParseResults ?? [],
+              }
+            }
+          }
+        }))
+      }, () => {
+        const currentId = trackingId
+        setMessages(prev => prev.map(m => {
+          if (m.id !== currentId) return m
+          const prev_search = m.artifacts?.search
+          if (!prev_search) return m
+          return {
+            ...m,
+            artifacts: {
+              ...m.artifacts,
+              search: { ...prev_search, phase: 'summarizing' }
+            }
+          }
+        }))
+      }, (event: WebSearchResultEvent) => {
+        const currentId = trackingId
+        setMessages(prev => prev.map(m => {
+          if (m.id !== currentId) return m
+          const prev_search = m.artifacts?.search
+          return {
+            ...m,
+            artifacts: {
+              ...m.artifacts,
+              search: {
+                statuses: prev_search?.statuses ?? [],
+                phase: prev_search?.phase ?? 'idle',
+                pdfStatuses: prev_search?.pdfStatuses ?? [],
+                webSearchResults: [...(prev_search?.webSearchResults ?? []), event],
+                pdfParseResults: prev_search?.pdfParseResults ?? [],
+              }
+            }
+          }
+        }))
+      }, (event: PdfParseResultEvent) => {
+        const currentId = trackingId
+        setMessages(prev => prev.map(m => {
+          if (m.id !== currentId) return m
+          const prev_search = m.artifacts?.search
+          const existing = prev_search?.pdfParseResults ?? []
+          const updated = existing.some(p => p.url === event.url)
+            ? existing.map(p => p.url === event.url ? event : p)
+            : [...existing, event]
+          return {
+            ...m,
+            artifacts: {
+              ...m.artifacts,
+              search: {
+                statuses: prev_search?.statuses ?? [],
+                phase: prev_search?.phase ?? 'idle',
+                pdfStatuses: prev_search?.pdfStatuses ?? [],
+                webSearchResults: prev_search?.webSearchResults ?? [],
+                pdfParseResults: updated,
+              }
+            }
+          }
+        }))
       })
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -1436,6 +1535,19 @@ export default function AIChatPage() {
       }
       if (generationIdRef.current === currentGenerationId) {
         setGenerationPhase('idle')
+        const doneTrackingId = trackingId
+        setMessages(prev => prev.map(m => {
+          if (m.id !== doneTrackingId) return m
+          const prev_search = m.artifacts?.search
+          if (!prev_search) return m
+          return {
+            ...m,
+            artifacts: {
+              ...m.artifacts,
+              search: { ...prev_search, phase: 'done' }
+            }
+          }
+        }))
         abortControllerRef.current = null
 
         // Persist the final message content (including cancel/error text) to backend.
@@ -1451,7 +1563,7 @@ export default function AIChatPage() {
             const isBackendId = !isNaN(numericId) && numericId < 1000000000
             try {
               if (isBackendId) {
-                await updateMessage(conversationId, numericId, finalMsg.content)
+                await updateMessage(conversationId, numericId, finalMsg.content, finalMsg.artifacts ?? undefined)
               } else {
                 const saved = await addMessage(conversationId, 'assistant', finalMsg.content)
                 setMessages(prev => prev.map(m =>
@@ -1676,8 +1788,6 @@ export default function AIChatPage() {
     cleaned = removeVoiceControlBlock(cleaned)
     cleaned = removeModelListBlock(cleaned)
     cleaned = removePatchInferenceBlock(cleaned)
-    // Remove PDF_PARSE_STATUS blocks - internal status tags
-    cleaned = removePdfParseStatusBlock(cleaned)
     // Remove CONTEXT_LIMIT block - UI-only warning card
     cleaned = removeContextLimitBlock(cleaned)
     // Remove RESPONSE_TRUNCATED block - UI-only warning card
@@ -2653,6 +2763,7 @@ export default function AIChatPage() {
                         conversationId={currentConversationId || undefined}
                         referenceImages={referenceImages}
                         onMessageContentReplace={replaceMessageContent}
+                        searchArtifacts={message.artifacts ?? null}
                       />
                         )
                       })()

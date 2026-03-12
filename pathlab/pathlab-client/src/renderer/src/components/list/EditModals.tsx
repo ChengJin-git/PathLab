@@ -1,4 +1,3 @@
-import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Edit, X, Users, FileImage } from 'lucide-react'
 import { Button } from '../ui/button'
@@ -13,7 +12,6 @@ export interface EditMetadataModalProps {
     case_id: string
     age?: number
     gender?: string
-    source?: string
     event_time?: number
     event_status?: number
   }
@@ -49,7 +47,6 @@ export function EditMetadataModal({
   // Different task types show different fields
   const isClassification = datasetType === 'classification'
   const isSurvival = datasetType === 'survival'
-  const isSegmentation = datasetType === 'segmentation'
   const isImageDataset = visualType === 'images'
 
   return (
@@ -184,7 +181,6 @@ export function BatchEditModal({
   // Different task types show different fields
   const isClassification = datasetType === 'classification'
   const isSurvival = datasetType === 'survival'
-  const isSegmentation = datasetType === 'segmentation'
   const isImageDataset = visualType === 'images'
 
   return (

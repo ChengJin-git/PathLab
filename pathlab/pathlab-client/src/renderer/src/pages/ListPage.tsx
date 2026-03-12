@@ -130,7 +130,6 @@ export default function ListPage() {
     case_id: string
     age?: number
     gender?: string
-    source?: string
     event_time?: number
     event_status?: number
   } | null>(null)
@@ -624,7 +623,6 @@ export default function ListPage() {
             case_id: metadata?.case_id || undefined,
             age: age,
             gender: metadata?.gender || undefined,
-            source: resolvedDatasetSource || undefined,
             onProgress: (progress) => {
               setUploadingFiles(prev => {
                 const updated = new Map(prev)
@@ -789,7 +787,6 @@ export default function ListPage() {
       case_id: wsi.case_id,
       age: wsi.age,
       gender: wsi.gender,
-      source: wsi.source,
       event_time: wsi.event_time,
       event_status: wsi.event_status
     })
@@ -974,8 +971,11 @@ export default function ListPage() {
       // Direct export without modal
       setExporting(true)
       try {
-        await exportDatasetLabels(dataset.dataset_id!)
+        const result = await exportDatasetLabels(dataset.dataset_id!)
         toastSuccess(t('listPage.exportSuccess'))
+        if (result.headers.get('X-PathLab-Export-Split-Fallback') === 'non_stratified') {
+          toastSuccess(t('listPage.exportFallbackNonStratified'))
+        }
       } catch (error) {
         console.error('Failed to export labels:', error)
         toastError(t('listPage.exportFailed'))
@@ -994,8 +994,11 @@ export default function ListPage() {
 
     setExporting(true)
     try {
-      await exportDatasetLabels(exportingDataset.dataset_id!, options)
+      const result = await exportDatasetLabels(exportingDataset.dataset_id!, options)
       toastSuccess(t('listPage.exportSuccess'))
+      if (result.headers.get('X-PathLab-Export-Split-Fallback') === 'non_stratified') {
+        toastSuccess(t('listPage.exportFallbackNonStratified'))
+      }
     } catch (error) {
       console.error('Failed to export labels:', error)
       toastError(t('listPage.exportFailed'))

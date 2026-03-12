@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete as sql_delete
+from sklearn.exceptions import NotFittedError
 
 from backend.database import get_db
 from backend.database.repositories import (
@@ -93,6 +94,148 @@ def _build_segmentation_wsi_lookups(wsis) -> tuple[Dict[str, str], Dict[str, str
 
 def _get_wsi_data_type(wsi) -> str:
     return get_effective_wsi_data_type(wsi)
+
+
+def _is_split_stratification_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return isinstance(exc, (ValueError, NotFittedError)) and any(
+        token in message
+        for token in (
+            "least populated class",
+            "n_splits",
+            "test_size",
+            "train_size",
+            "number of groups",
+            "minimum number of groups",
+            "inconsistent numbers of samples",
+        )
+    )
+
+
+def _build_export_fieldnames(task_type: str) -> List[str]:
+    common = ["filename", "case_id", "age", "gender", "split"]
+    if task_type == "survival":
+        return ["filename", "event_time", "event_status", "case_id", "age", "gender", "split"]
+    if task_type == SEGMENTATION_TASK_TYPE:
+        return common
+    return ["filename", "label", *common[1:]]
+
+
+def _build_export_row(wsi, task_type: str, split_value: str) -> Dict[str, object]:
+    row: Dict[str, object] = {
+        "filename": wsi.original_filename,
+        "case_id": wsi.case_id or "",
+        "age": wsi.age if wsi.age is not None else "",
+        "gender": wsi.gender or "",
+        "split": split_value,
+    }
+    if task_type == "survival":
+        row["event_time"] = wsi.event_time if wsi.event_time is not None else ""
+        row["event_status"] = wsi.event_status if wsi.event_status is not None else ""
+    elif task_type != SEGMENTATION_TASK_TYPE:
+        row["label"] = wsi.label or ""
+    return row
+
+
+def _generate_split_assignments(
+    wsis,
+    *,
+    dataset_id: str,
+    aggregation_level: str,
+    task_type: str,
+    strategy: str,
+    n_splits: int,
+    seed: int,
+    stratified: bool,
+    train_ratio: float,
+    val_ratio: float,
+    test_ratio: float,
+    segmentation_multilabels: Dict[str, Set[str]],
+) -> tuple[Dict[str, str], bool]:
+    split_kwargs: Dict[str, object] = {
+        "strategy": strategy,
+        "seed": seed,
+    }
+    if strategy == "k_fold":
+        split_kwargs["n_splits"] = n_splits
+    else:
+        split_kwargs["ratios"] = {"train": train_ratio, "val": val_ratio, "test": test_ratio}
+
+    if task_type == "survival":
+        labels = {wsi.wsi_id: str(wsi.event_status) for wsi in wsis if wsi.event_status is not None}
+    elif task_type == SEGMENTATION_TASK_TYPE:
+        labels = {}
+    else:
+        labels = {wsi.wsi_id: wsi.label for wsi in wsis if wsi.label}
+
+    wsi_ids = [wsi.wsi_id for wsi in wsis]
+
+    try:
+        if aggregation_level == "case":
+            case_id_map = {wsi.wsi_id: wsi.case_id or wsi.wsi_id for wsi in wsis}
+            case_labels: Dict[str, str] = {}
+            for wsi in wsis:
+                case_id = wsi.case_id or wsi.wsi_id
+                if case_id in case_labels:
+                    continue
+                if task_type == "survival" and wsi.event_status is not None:
+                    case_labels[case_id] = str(wsi.event_status)
+                elif task_type != SEGMENTATION_TASK_TYPE and wsi.label:
+                    case_labels[case_id] = wsi.label
+            return (
+                split_case_dataset(
+                    wsi_ids=wsi_ids,
+                    case_id_map=case_id_map,
+                    multilabels=segmentation_multilabels if task_type == SEGMENTATION_TASK_TYPE else None,
+                    labels=case_labels if stratified and task_type != SEGMENTATION_TASK_TYPE else None,
+                    **split_kwargs,
+                ),
+                False,
+            )
+
+        return (
+            split_wsi_dataset(
+                wsi_ids=wsi_ids,
+                multilabels=segmentation_multilabels if task_type == SEGMENTATION_TASK_TYPE else None,
+                labels=labels if stratified and task_type != SEGMENTATION_TASK_TYPE else None,
+                **split_kwargs,
+            ),
+            False,
+        )
+    except Exception as exc:
+        if _is_split_stratification_error(exc):
+            logger.warning(
+                "Export label split fallback triggered: dataset_id=%s, task_type=%s, aggregation_level=%s, strategy=%s, stratified=%s. "
+                "Reason=%s. Falling back to non-stratified split generation.",
+                dataset_id,
+                task_type,
+                aggregation_level,
+                strategy,
+                stratified,
+                exc,
+            )
+            if aggregation_level == "case":
+                case_id_map = {wsi.wsi_id: wsi.case_id or wsi.wsi_id for wsi in wsis}
+                return (
+                    split_case_dataset(
+                        wsi_ids=wsi_ids,
+                        case_id_map=case_id_map,
+                        multilabels=segmentation_multilabels if task_type == SEGMENTATION_TASK_TYPE else None,
+                        labels=None,
+                        **split_kwargs,
+                    ),
+                    True,
+                )
+            return (
+                split_wsi_dataset(
+                    wsi_ids=wsi_ids,
+                    multilabels=segmentation_multilabels if task_type == SEGMENTATION_TASK_TYPE else None,
+                    labels=None,
+                    **split_kwargs,
+                ),
+                True,
+            )
+        raise
 
 
 def _mark_coco_image_matches(
@@ -987,7 +1130,7 @@ async def update_wsi_metadata(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Update WSI metadata (label, case_id, age, gender, source).
+    Update WSI metadata (label, case_id, age, gender, event_time, event_status).
     All authenticated users can update their own WSI metadata, admin can update any.
 
     Args:
@@ -1026,8 +1169,6 @@ async def update_wsi_metadata(
             wsi.age = req.age
         if req.gender is not None:
             wsi.gender = req.gender
-        if req.source is not None:
-            wsi.source = req.source
         # Survival analysis fields
         if req.event_time is not None:
             wsi.event_time = req.event_time
@@ -1430,6 +1571,7 @@ async def export_dataset_labels(
 
     # Determine splits
     splits: Dict[str, str] = {}
+    split_fallback_applied = False
 
     if has_predefined_splits:
         # Use predefined splits
@@ -1459,62 +1601,24 @@ async def export_dataset_labels(
             strategy,
         )
 
-        split_kwargs: Dict[str, object] = {
-            "strategy": strategy,
-            "seed": seed,
-        }
-        if strategy == "k_fold":
-            split_kwargs["n_splits"] = n_splits
-        else:
-            split_kwargs["ratios"] = {"train": train_ratio, "val": val_ratio, "test": test_ratio}
-
         segmentation_multilabels: Dict[str, Set[str]] = {}
         if task_type == SEGMENTATION_TASK_TYPE:
             segmentation_multilabels = await _load_segmentation_multilabels(db, dataset_id, wsis)
 
-        # Build labels dict for stratification
-        if task_type == "survival":
-            # For survival, stratify by event_status
-            labels = {wsi.wsi_id: str(wsi.event_status) for wsi in wsis if wsi.event_status is not None}
-        elif task_type == SEGMENTATION_TASK_TYPE:
-            labels = {}
-        else:
-            # For classification, stratify by label
-            labels = {wsi.wsi_id: wsi.label for wsi in wsis if wsi.label}
-
-        wsi_ids = [wsi.wsi_id for wsi in wsis]
-
-        if aggregation_level == "case":
-            # Case-level: ensure all slides from same case are in same split
-            case_id_map = {wsi.wsi_id: wsi.case_id or wsi.wsi_id for wsi in wsis}
-
-            # For case-level, labels need to be keyed by case_id
-            case_labels: Dict[str, str] = {}
-            for wsi in wsis:
-                case_id = wsi.case_id or wsi.wsi_id
-                if case_id not in case_labels:
-                    if task_type == "survival":
-                        if wsi.event_status is not None:
-                            case_labels[case_id] = str(wsi.event_status)
-                    elif task_type != SEGMENTATION_TASK_TYPE:
-                        if wsi.label:
-                            case_labels[case_id] = wsi.label
-
-            splits = split_case_dataset(
-                wsi_ids=wsi_ids,
-                case_id_map=case_id_map,
-                multilabels=segmentation_multilabels if task_type == SEGMENTATION_TASK_TYPE else None,
-                labels=case_labels if stratified and task_type != SEGMENTATION_TASK_TYPE else None,
-                **split_kwargs,
-            )
-        else:
-            # File-level: split at slide level
-            splits = split_wsi_dataset(
-                wsi_ids=wsi_ids,
-                multilabels=segmentation_multilabels if task_type == SEGMENTATION_TASK_TYPE else None,
-                labels=labels if stratified and task_type != SEGMENTATION_TASK_TYPE else None,
-                **split_kwargs,
-            )
+        splits, split_fallback_applied = _generate_split_assignments(
+            wsis,
+            dataset_id=dataset_id,
+            aggregation_level=aggregation_level,
+            task_type=task_type,
+            strategy=strategy,
+            n_splits=n_splits,
+            seed=seed,
+            stratified=stratified,
+            train_ratio=train_ratio,
+            val_ratio=val_ratio,
+            test_ratio=test_ratio,
+            segmentation_multilabels=segmentation_multilabels,
+        )
 
         logger.info(f"Generated splits for {len(splits)} items")
     else:
@@ -1524,15 +1628,7 @@ async def export_dataset_labels(
     # Generate CSV using streaming to avoid memory issues
     def generate_csv():
         buffer = io.StringIO()
-
-        if task_type == "survival":
-            fieldnames = ["filename", "event_time", "event_status", "case_id", "age", "gender", "source", "split"]
-        elif task_type == SEGMENTATION_TASK_TYPE:
-            fieldnames = ["filename", "case_id", "age", "gender", "source", "split"]
-        else:
-            fieldnames = ["filename", "label", "case_id", "age", "gender", "source", "split"]
-
-        writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+        writer = csv.DictWriter(buffer, fieldnames=_build_export_fieldnames(task_type))
         writer.writeheader()
         yield buffer.getvalue()
         buffer.seek(0)
@@ -1540,7 +1636,6 @@ async def export_dataset_labels(
 
         # Write one row per file, grouped by case_id for case-level datasets
         if aggregation_level == "case":
-            # Group by case_id so files from the same case appear together
             case_groups: Dict[str, List] = {}
             for wsi in wsis:
                 case_id = wsi.case_id or wsi.wsi_id
@@ -1552,19 +1647,11 @@ async def export_dataset_labels(
             ordered_wsis = wsis
 
         for wsi in ordered_wsis:
-            row = {
-                "filename": wsi.original_filename,
-                "case_id": wsi.case_id or "",
-                "age": wsi.age if wsi.age is not None else "",
-                "gender": wsi.gender or "",
-                "split": splits.get(wsi.wsi_id, "unknown")
-            }
-            if task_type == "survival":
-                row["event_time"] = wsi.event_time if wsi.event_time is not None else ""
-                row["event_status"] = wsi.event_status if wsi.event_status is not None else ""
-            elif task_type != SEGMENTATION_TASK_TYPE:
-                row["label"] = wsi.label or ""
-
+            row = _build_export_row(
+                wsi,
+                task_type=task_type,
+                split_value=splits.get(wsi.wsi_id, "unknown"),
+            )
             writer.writerow(row)
             yield buffer.getvalue()
             buffer.seek(0)
@@ -1573,12 +1660,16 @@ async def export_dataset_labels(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{dataset.name}_labels_{timestamp}.csv"
 
+    response_headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"'
+    }
+    if split_fallback_applied:
+        response_headers["X-PathLab-Export-Split-Fallback"] = "non_stratified"
+
     return StreamingResponse(
         generate_csv(),
         media_type="text/csv",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        }
+        headers=response_headers,
     )
 
 
