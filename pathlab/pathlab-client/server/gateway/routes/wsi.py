@@ -1594,11 +1594,8 @@ async def export_dataset_labels(
 
         # Generate new splits using training logic
         logger.info(
-            "Generating splits for dataset %s: aggregation_level=%s, task_type=%s, strategy=%s",
-            dataset_id,
-            aggregation_level,
-            task_type,
-            strategy,
+            f"Generating splits for dataset {dataset_id}: aggregation_level={aggregation_level}, "
+            f"task_type={task_type}, strategy={strategy}"
         )
 
         segmentation_multilabels: Dict[str, Set[str]] = {}
