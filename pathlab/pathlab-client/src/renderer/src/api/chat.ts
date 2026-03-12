@@ -297,6 +297,7 @@ export interface ChatPatchInferenceTaskResult {
   coverage_by_class?: Array<{ label: string; coverage_ratio: number }>
   has_positive_mask?: boolean
   mask_shape?: [number, number]
+  overlay_image_data_url?: string
 }
 
 export interface ChatPatchInferenceTask {

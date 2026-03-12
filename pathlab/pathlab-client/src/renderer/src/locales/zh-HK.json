@@ -2536,7 +2536,9 @@
 	      "startFailed": "啟動圖像推理失敗",
 	      "failed": "圖像推理失敗。",
 	      "noModel": "目前沒有可用的圖像推理模型。",
-      "noSegmentationMask": "未檢測到陽性分割區域。"
+      "noSegmentationMask": "未檢測到陽性分割區域。",
+      "segmentationOverlay": "分割疊加圖",
+      "originalImage": "原圖"
     },
     "referenceCard": {
       "references": "參考文獻",

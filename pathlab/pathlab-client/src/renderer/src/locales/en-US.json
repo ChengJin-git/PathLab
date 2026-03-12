@@ -2544,7 +2544,9 @@
 	      "startFailed": "Failed to start image inference",
 	      "failed": "Image inference failed.",
 	      "noModel": "No compatible image inference model is available.",
-      "noSegmentationMask": "No positive segmentation mask was detected."
+      "noSegmentationMask": "No positive segmentation mask was detected.",
+      "segmentationOverlay": "Segmentation overlay",
+      "originalImage": "Original"
     },
     "referenceCard": {
       "references": "References",

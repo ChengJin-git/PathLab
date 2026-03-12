@@ -51,6 +51,17 @@ export function removePatchInferenceBlock(content: string): string {
   return content.replace(/\[PATCH_INFERENCE\][\s\S]*?\[\/PATCH_INFERENCE\]/g, '').trim()
 }
 
+const SEG_PALETTE = [
+  'rgb(255,100,100)',
+  'rgb(100,200,255)',
+  'rgb(120,255,120)',
+  'rgb(255,220,80)',
+  'rgb(200,100,255)',
+  'rgb(255,160,50)',
+  'rgb(80,255,220)',
+  'rgb(255,80,200)',
+]
+
 const toRun = (task: ChatPatchInferenceTask): PatchInferenceRun => ({
   task_id: task.task_id,
   model_id: task.model_id,
@@ -158,7 +169,7 @@ export function PatchInferenceCard({ config, conversationId, messageId, referenc
               <span className="truncate">{effectiveRun.model_name}</span>
               <span className="text-xs px-2 py-1 rounded-full bg-blue-50 text-blue-700">{statusLabel}</span>
             </div>
-            {isBusy && <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden"><div className="h-full bg-blue-500" style={{ width: `${effectiveRun.progress ?? 15}%` }} /></div>}
+            {isBusy && <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden"><div className="h-full bg-blue-500 transition-all duration-700 ease-in-out" style={{ width: `${effectiveRun.progress ?? 15}%` }} /></div>}
             {effectiveRun.status === 'completed' && type === 'classification' && effectiveRun.result?.predicted_label && (
               <div className="space-y-1">
                 <div className="flex items-center gap-2 text-green-700"><CheckCircle2 className="w-4 h-4" />{effectiveRun.result.predicted_label}</div>
@@ -168,9 +179,38 @@ export function PatchInferenceCard({ config, conversationId, messageId, referenc
               </div>
             )}
             {effectiveRun.status === 'completed' && type === 'segmentation' && (
-              <div className="space-y-1 text-xs text-gray-600">
-                {(effectiveRun.result?.coverage_by_class ?? []).map(item => <div key={item.label} className="flex justify-between"><span>{item.label}</span><span>{(item.coverage_ratio * 100).toFixed(1)}%</span></div>)}
-                {!effectiveRun.result?.coverage_by_class?.length && <div>{t('chatComponents.patchInference.noSegmentationMask')}</div>}
+              <div className="space-y-2">
+                {effectiveRun.result?.overlay_image_data_url ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <div className="text-xs text-gray-500">{t('chatComponents.patchInference.originalImage')}</div>
+                      {selectedImage
+                        ? <img src={selectedImage} alt="original" className="w-full rounded-lg object-cover" />
+                        : <div className="w-full aspect-square rounded-lg bg-gray-100" />
+                      }
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-xs text-gray-500">{t('chatComponents.patchInference.segmentationOverlay')}</div>
+                      <img src={effectiveRun.result.overlay_image_data_url} alt="segmentation overlay" className="w-full rounded-lg object-cover" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1 text-xs text-gray-600">
+                    {(effectiveRun.result?.coverage_by_class ?? []).map(item => <div key={item.label} className="flex justify-between"><span>{item.label}</span><span>{(item.coverage_ratio * 100).toFixed(1)}%</span></div>)}
+                    {!effectiveRun.result?.coverage_by_class?.length && <div>{t('chatComponents.patchInference.noSegmentationMask')}</div>}
+                  </div>
+                )}
+                {effectiveRun.result?.coverage_by_class && effectiveRun.result.coverage_by_class.length > 0 && effectiveRun.result.overlay_image_data_url && (
+                  <div className="flex flex-wrap gap-x-3 gap-y-1">
+                    {effectiveRun.result.coverage_by_class.map((item, idx) => (
+                      <div key={item.label} className="flex items-center gap-1 text-xs text-gray-600">
+                        <span className="inline-block w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: SEG_PALETTE[idx % SEG_PALETTE.length] }} />
+                        <span>{item.label}</span>
+                        <span className="text-gray-400">{(item.coverage_ratio * 100).toFixed(1)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             {(effectiveRun.status === 'failed' || effectiveRun.status === 'cancelled') && (

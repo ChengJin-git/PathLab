@@ -2544,7 +2544,9 @@
 	      "startFailed": "启动图像推理失败",
 	      "failed": "图像推理失败。",
 	      "noModel": "当前没有可用的图像推理模型。",
-      "noSegmentationMask": "未检测到阳性分割区域。"
+      "noSegmentationMask": "未检测到阳性分割区域。",
+      "segmentationOverlay": "分割叠加图",
+      "originalImage": "原图"
     },
     "referenceCard": {
       "references": "参考文献",

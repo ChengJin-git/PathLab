@@ -94,8 +94,12 @@ async def create_chat_patch_task(
         raise RuntimeError("Task queue is not initialized")
 
     task_id = f"chat_patch_{uuid.uuid4().hex}"
-    task_dir = Config.get_uploads_dir() / "chat_patch_inference" / conversation_id / task_id
-    image_path = await asyncio.to_thread(_persist_image_data_url, image_data_url, task_dir)
+    task_dir = (
+        Config.get_uploads_dir() / "chat_patch_inference" / conversation_id / task_id
+    )
+    image_path = await asyncio.to_thread(
+        _persist_image_data_url, image_data_url, task_dir
+    )
 
     task = ChatPatchTask(
         task_id=task_id,
@@ -210,7 +214,9 @@ async def cancel_chat_patch_tasks_for_message(
     return snapshots
 
 
-async def _run_chat_patch_task(task_id: str, assigned_device: Optional[str] = None) -> None:
+async def _run_chat_patch_task(
+    task_id: str, assigned_device: Optional[str] = None
+) -> None:
     await _update_task(task_id, status="running", progress=5, error=None)
     try:
         task = await get_chat_patch_task(task_id)
@@ -224,7 +230,9 @@ async def _run_chat_patch_task(task_id: str, assigned_device: Optional[str] = No
         else:
             raise ValueError(f"Unsupported inference type: {task.inference_type}")
 
-        await _update_task(task_id, status="completed", progress=100, result=result, error=None)
+        await _update_task(
+            task_id, status="completed", progress=100, result=result, error=None
+        )
     except asyncio.CancelledError:
         await _update_task(task_id, status="cancelled", error="Task cancelled")
         raise
@@ -268,7 +276,9 @@ def _cleanup_task_files(task: ChatPatchTask) -> None:
         shutil.rmtree(task_root, ignore_errors=True)
 
 
-async def _run_patch_classification(task: ChatPatchTask, assigned_device: Optional[str]) -> Dict[str, Any]:
+async def _run_patch_classification(
+    task: ChatPatchTask, assigned_device: Optional[str]
+) -> Dict[str, Any]:
     import numpy as np
     import torch
     import torch.nn as nn
@@ -293,14 +303,18 @@ async def _run_patch_classification(task: ChatPatchTask, assigned_device: Option
     num_folds = int(config.get("num_folds", 5)) if is_kfold else 1
 
     def _load_models():
-        extractor_name = config.get("extractor") or trained_model.feature_extractor or "resnet50"
+        extractor_name = (
+            config.get("extractor") or trained_model.feature_extractor or "resnet50"
+        )
         linear_probes = []
 
         if is_kfold:
             for fold_idx in range(num_folds):
                 ckpt_path = model_dir / f"fold_{fold_idx}" / "linear_probe.pth"
                 checkpoint = torch.load(ckpt_path, map_location=device)
-                feature_dim = checkpoint.get("feature_dim") or checkpoint.get("extractor_dim")
+                feature_dim = checkpoint.get("feature_dim") or checkpoint.get(
+                    "extractor_dim"
+                )
                 probe = nn.Linear(feature_dim, checkpoint["num_classes"]).to(device)
                 probe.load_state_dict(checkpoint["state_dict"])
                 probe.eval()
@@ -309,7 +323,9 @@ async def _run_patch_classification(task: ChatPatchTask, assigned_device: Option
             ckpt_path = model_dir / "linear_probe.pth"
             checkpoint = torch.load(ckpt_path, map_location=device)
             extractor_name = checkpoint.get("extractor_name", extractor_name)
-            feature_dim = checkpoint.get("extractor_dim") or checkpoint.get("feature_dim")
+            feature_dim = checkpoint.get("extractor_dim") or checkpoint.get(
+                "feature_dim"
+            )
             probe = nn.Linear(feature_dim, checkpoint["num_classes"]).to(device)
             probe.load_state_dict(checkpoint["state_dict"])
             probe.eval()
@@ -325,7 +341,11 @@ async def _run_patch_classification(task: ChatPatchTask, assigned_device: Option
 
     def _infer_single_image() -> Dict[str, Any]:
         image = Image.open(task.image_path).convert("RGB")
-        image_tensor = build_patch_classification_transform(extractor, resize_size)(image).unsqueeze(0).to(device)
+        image_tensor = (
+            build_patch_classification_transform(extractor, resize_size)(image)
+            .unsqueeze(0)
+            .to(device)
+        )
         with torch.inference_mode():
             features = extractor(image_tensor)
             logits_list = [probe(features) for probe in linear_probes]
@@ -333,7 +353,9 @@ async def _run_patch_classification(task: ChatPatchTask, assigned_device: Option
             probs = F.softmax(logits, dim=-1).squeeze(0).detach().cpu().numpy()
 
         top_indices = np.argsort(probs)[::-1][: min(3, len(classes))]
-        probabilities = {classes[idx]: round(float(probs[idx]), 4) for idx in range(len(classes))}
+        probabilities = {
+            classes[idx]: round(float(probs[idx]), 4) for idx in range(len(classes))
+        }
         return {
             "predicted_label": classes[int(np.argmax(probs))],
             "probabilities": probabilities,
@@ -349,7 +371,9 @@ async def _run_patch_classification(task: ChatPatchTask, assigned_device: Option
     return result
 
 
-async def _run_patch_segmentation(task: ChatPatchTask, assigned_device: Optional[str]) -> Dict[str, Any]:
+async def _run_patch_segmentation(
+    task: ChatPatchTask, assigned_device: Optional[str]
+) -> Dict[str, Any]:
     import torch
     from torchvision.transforms import v2
     from backend.ai.segmentors import Segmentor
@@ -360,22 +384,37 @@ async def _run_patch_segmentation(task: ChatPatchTask, assigned_device: Optional
         trained_model = await TrainedModelRepository.get_by_id(db, task.model_id)
         if not trained_model:
             raise ValueError(f"Trained model not found: {task.model_id}")
-        training_task = await TrainingTaskRepository.get_by_id(db, trained_model.task_id)
+        training_task = await TrainingTaskRepository.get_by_id(
+            db, trained_model.task_id
+        )
 
     checkpoint_path = trained_model.model_path
 
     def _load_model():
         from backend.ai.segmentors.specs import is_fm_segmentation_backbone
 
-        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        checkpoint = torch.load(
+            checkpoint_path, map_location=device, weights_only=False
+        )
         checkpoint_config = checkpoint.get("config", {})
         task_model_cfg = (training_task.model_config or {}) if training_task else {}
         dataset_cfg = checkpoint_config.get("dataset", {})
 
-        architecture = checkpoint_config.get("architecture") or task_model_cfg.get("architecture") or "unet"
-        backbone = checkpoint_config.get("backbone") or task_model_cfg.get("backbone") or trained_model.feature_extractor or "resnet50"
+        architecture = (
+            checkpoint_config.get("architecture")
+            or task_model_cfg.get("architecture")
+            or "unet"
+        )
+        backbone = (
+            checkpoint_config.get("backbone")
+            or task_model_cfg.get("backbone")
+            or trained_model.feature_extractor
+            or "resnet50"
+        )
         in_channels = int(dataset_cfg.get("channels", 3))
-        num_classes = int(dataset_cfg.get("classes") or len(trained_model.classes or []) or 1)
+        num_classes = int(
+            dataset_cfg.get("classes") or len(trained_model.classes or []) or 1
+        )
 
         segmentor = Segmentor(
             architecture=architecture,
@@ -403,14 +442,20 @@ async def _run_patch_segmentation(task: ChatPatchTask, assigned_device: Optional
             class_names = [f"Class {idx + 1}" for idx in range(num_classes)]
         return model, norm_mean, norm_std, class_names, resize_size
 
-    model, norm_mean, norm_std, class_names, resize_size = await asyncio.to_thread(_load_model)
+    model, norm_mean, norm_std, class_names, resize_size = await asyncio.to_thread(
+        _load_model
+    )
     await _update_task(task.task_id, progress=35)
 
     def _infer_single_image() -> Dict[str, Any]:
+        import numpy as np
+
         image = Image.open(task.image_path).convert("RGB")
         image_tensor = v2.ToImage()(image)
         image_tensor = v2.ToDtype(torch.float32, scale=True)(image_tensor)
-        image_tensor = v2.Resize((resize_size, resize_size), antialias=True)(image_tensor)
+        image_tensor = v2.Resize((resize_size, resize_size), antialias=True)(
+            image_tensor
+        )
         image_tensor = v2.Normalize(
             mean=norm_mean or [0.485, 0.456, 0.406],
             std=norm_std or [0.229, 0.224, 0.225],
@@ -422,12 +467,49 @@ async def _run_patch_segmentation(task: ChatPatchTask, assigned_device: Optional
             probabilities = torch.sigmoid(logits).squeeze(0).detach().cpu()
             binary_mask = (probabilities > 0.5).to(torch.uint8)
 
-        coverage_ratios = [round(float(binary_mask[idx].float().mean().item()), 4) for idx in range(binary_mask.shape[0])]
+        coverage_ratios = [
+            round(float(binary_mask[idx].float().mean().item()), 4)
+            for idx in range(binary_mask.shape[0])
+        ]
         positive_classes = [
             {"label": class_names[idx], "coverage_ratio": coverage_ratios[idx]}
             for idx in range(min(len(class_names), len(coverage_ratios)))
             if coverage_ratios[idx] > 0
         ]
+
+        # Build overlay image: original image resized to mask resolution, with
+        # semi-transparent per-class colour blended on top.
+        num_vis_classes = binary_mask.shape[0]
+        _PALETTE = [
+            (255, 100, 100),
+            (100, 200, 255),
+            (120, 255, 120),
+            (255, 220, 80),
+            (200, 100, 255),
+            (255, 160, 50),
+            (80, 255, 220),
+            (255, 80, 200),
+        ]
+        mask_h, mask_w = int(binary_mask.shape[-2]), int(binary_mask.shape[-1])
+        base_img = image.resize((mask_w, mask_h), Image.LANCZOS)
+        base_arr = np.array(base_img, dtype=np.float32)
+        overlay = base_arr.copy()
+
+        for idx in range(num_vis_classes):
+            colour = _PALETTE[idx % len(_PALETTE)]
+            m = binary_mask[idx].numpy().astype(bool)
+            if not m.any():
+                continue
+            colour_layer = np.zeros_like(base_arr)
+            colour_layer[m] = colour
+            overlay[m] = base_arr[m] * 0.5 + colour_layer[m] * 0.5
+
+        overlay_img = Image.fromarray(np.clip(overlay, 0, 255).astype(np.uint8))
+        buf = BytesIO()
+        overlay_img.save(buf, format="PNG", optimize=True)
+        overlay_b64 = "data:image/png;base64," + base64.b64encode(
+            buf.getvalue()
+        ).decode("ascii")
 
         return {
             "class_names": class_names,
@@ -436,8 +518,11 @@ async def _run_patch_segmentation(task: ChatPatchTask, assigned_device: Optional
                 {"label": class_names[idx], "coverage_ratio": coverage_ratios[idx]}
                 for idx in range(min(len(class_names), len(coverage_ratios)))
             ],
-            "has_positive_mask": any(item["coverage_ratio"] > 0 for item in positive_classes),
-            "mask_shape": [int(binary_mask.shape[-2]), int(binary_mask.shape[-1])],
+            "has_positive_mask": any(
+                item["coverage_ratio"] > 0 for item in positive_classes
+            ),
+            "mask_shape": [mask_h, mask_w],
+            "overlay_image_data_url": overlay_b64,
         }
 
     result = await asyncio.to_thread(_infer_single_image)
