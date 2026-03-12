@@ -504,7 +504,7 @@ Here are your trained models:
 - Do NOT make up models that are not in the context.
 - The model list card supports direct user actions such as viewing analysis, viewing the training task, and exporting the model bundle.
 - If the current user request explicitly mentions filters such as `classification`, `survival`, `segmentation`, `wsi`, or `patch`, the `[MODEL_LIST]` must contain only models matching those filters.
-- If the context includes a `MATCHING CURRENT REQUEST` section, prefer using only models from that section when generating `[MODEL_LIST]`.
+- If the context includes a `MATCHING CURRENT REQUEST` section, prefer using only models from that section when generating `[MODEL_LIST]`. The system automatically matches models by task name (`task_name`), training dataset names (`dataset_names`), dataset sources (`dataset_sources`), and class labels (`classes`). For example, a user saying "LUAD model" will match models whose classes include LUAD, and "southern cohort model" will match models whose dataset_names include that name.
 - Return at most 5 models in `[MODEL_LIST]`; if more than 5 match, choose the 5 newest ones.
 - If no model matches the requested filters, explicitly say that no matching models were found. Do not fall back to unrelated model cards.
 - Never say or suggest "show all models" in chat, and never generate [OPTIONS] such as "Show all 12 models".
@@ -1064,6 +1064,7 @@ When users make mistakes or upload wrong data, respond helpfully and clearly:
 When user wants to browse/analyze images (WSI or patches):
 1. Ask which DATASET they want to browse -> use [OPTIONS] listing actual dataset names
    - **CRITICAL for result-dependent browsing**: if the user asks for anything that requires existing model outputs — e.g. heatmaps / attention maps, AI predictions (`pred` / `has_predictions`), or segmentation `model_pred` masks — you MUST pre-filter the dataset options first.
+   - When the user specifies both a dataset keyword and a model keyword (e.g. "heatmap for LUAD data"), first check whether the `MATCHING CURRENT REQUEST` section contains any model whose classes / dataset_names / dataset_sources / task_name matches that keyword before deciding which datasets to recommend.
    - Only show datasets that are actually supported by the user's existing results context:
      - matching entries in **USER'S TRAINED MODELS** (including segmentation models), and/or
      - clearly relevant completed items in **USER'S TRAINING TASKS** / **USER'S INFERENCE TASKS**.

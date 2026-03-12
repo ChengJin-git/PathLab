@@ -1680,19 +1680,12 @@ def extract_text_from_content(content) -> str:
     return ""
 
 
-def _infer_model_request_filters(user_text: str) -> Dict[str, str]:
-    """Infer model task/data type filters from the latest user text.
-
-    Returns a dict with optional `task_type` / `data_type` values when a
-    single clear intent is detected. If multiple conflicting intents are
-    present (for example both classification and segmentation), that filter is
-    omitted to avoid over-filtering.
-    """
+def _infer_model_request_filters(user_text: str) -> Dict[str, Any]:
     normalized_text = (user_text or "").strip().lower()
     if not normalized_text:
         return {}
 
-    task_type_keywords = {
+    task_type_keywords: Dict[str, List[str]] = {
         "classification": ["classification", "classify", "classifier", "分类"],
         "survival": ["survival", "prognosis", "prognostic", "生存", "预后"],
         "segmentation": [
@@ -1705,7 +1698,7 @@ def _infer_model_request_filters(user_text: str) -> Dict[str, str]:
             "圈区域",
         ],
     }
-    data_type_keywords = {
+    data_type_keywords: Dict[str, List[str]] = {
         "wsi": [
             "wsi",
             "whole slide",
@@ -1718,6 +1711,76 @@ def _infer_model_request_filters(user_text: str) -> Dict[str, str]:
         "patch": ["patch", "tile", "patches", "小图", "切块", "瓦片"],
     }
 
+    _SURVIVAL_SIGNAL_WORDS = {
+        "event",
+        "censored",
+        "risk",
+        "high risk",
+        "low risk",
+        "intermediate",
+        "event_status",
+        "risk_group",
+        "生存期",
+        "事件",
+        "删失",
+    }
+
+    _STOP_WORDS = {
+        "the",
+        "a",
+        "an",
+        "in",
+        "on",
+        "of",
+        "with",
+        "for",
+        "and",
+        "or",
+        "my",
+        "me",
+        "i",
+        "is",
+        "are",
+        "was",
+        "were",
+        "have",
+        "has",
+        "that",
+        "this",
+        "to",
+        "from",
+        "by",
+        "be",
+        "can",
+        "at",
+        "model",
+        "models",
+        "data",
+        "dataset",
+        "image",
+        "images",
+        "图像",
+        "模型",
+        "数据集",
+        "数据",
+        "heatmap",
+        "热力图",
+        "热图",
+        "attention",
+        "注意力",
+        "给",
+        "我",
+        "看",
+        "show",
+        "display",
+        "view",
+        "find",
+        "get",
+        "list",
+        "all",
+        "some",
+    }
+
     def _detect_single_match(keyword_map: Dict[str, List[str]]) -> Optional[str]:
         matches = [
             value
@@ -1726,33 +1789,81 @@ def _infer_model_request_filters(user_text: str) -> Dict[str, str]:
         ]
         return matches[0] if len(matches) == 1 else None
 
-    filters: Dict[str, str] = {}
+    filters: Dict[str, Any] = {}
     task_type = _detect_single_match(task_type_keywords)
     data_type = _detect_single_match(data_type_keywords)
     if task_type:
         filters["task_type"] = task_type
     if data_type:
         filters["data_type"] = data_type
+
+    all_indicator_tokens: set = set()
+    for tokens in task_type_keywords.values():
+        all_indicator_tokens.update(tokens)
+    for tokens in data_type_keywords.values():
+        all_indicator_tokens.update(tokens)
+
+    import re as _re
+
+    raw_tokens = _re.split(r"[\s,;/|，；、。\-]+", normalized_text)
+
+    text_keywords: List[str] = []
+    seen: set = set()
+    for tok in raw_tokens:
+        tok = tok.strip()
+        if not tok or len(tok) < 2:
+            continue
+        if tok in seen:
+            continue
+        seen.add(tok)
+        if any(tok == ind or tok in ind for ind in all_indicator_tokens):
+            continue
+        if tok in _SURVIVAL_SIGNAL_WORDS:
+            continue
+        if tok in _STOP_WORDS:
+            continue
+        text_keywords.append(tok)
+
+    if text_keywords:
+        filters["text_keywords"] = text_keywords
+
     return filters
 
 
 def _matches_model_request_filters(
-    model_meta: Dict[str, Any], filters: Dict[str, str]
+    model_meta: Dict[str, Any], filters: Dict[str, Any]
 ) -> bool:
-    """Return True when a model matches all inferred request filters."""
     for key, expected in filters.items():
-        if expected and model_meta.get(key) != expected:
-            return False
+        if key in ("task_type", "data_type"):
+            if expected and model_meta.get(key) != expected:
+                return False
+        elif key == "text_keywords":
+            searchable_lists: List[List[str]] = [
+                model_meta.get("classes", []),
+                model_meta.get("dataset_names", []),
+                model_meta.get("dataset_sources", []),
+            ]
+            task_name_str: str = model_meta.get("task_name", "")
+            for kw in expected:
+                kw_lower = kw.lower()
+                in_list = any(
+                    kw_lower in item
+                    for field_list in searchable_lists
+                    for item in field_list
+                )
+                if not in_list and kw_lower not in task_name_str:
+                    return False
     return True
 
 
-def _format_model_filter_summary(filters: Dict[str, str]) -> str:
-    """Format inferred model filters for prompt context."""
+def _format_model_filter_summary(filters: Dict[str, Any]) -> str:
     parts = []
     if filters.get("task_type"):
         parts.append(f"task_type={filters['task_type']}")
     if filters.get("data_type"):
         parts.append(f"data_type={filters['data_type']}")
+    if filters.get("text_keywords"):
+        parts.append(f"keywords={','.join(filters['text_keywords'])}")
     return ", ".join(parts)
 
 
@@ -4156,6 +4267,16 @@ async def chat_with_ai(
                     "id": model_id,
                     "task_type": task_type,
                     "data_type": data_type,
+                    # Extra fields for richer filter matching (used by
+                    # _matches_model_request_filters to surface models by
+                    # label/dataset/task_name even when they fall outside the
+                    # MAX_MODELS_IN_CHAT_CONTEXT recent-model window).
+                    "classes": [c.lower() for c in model_classes],
+                    "dataset_names": [n.lower() for n in training_dataset_names],
+                    "dataset_sources": [s.lower() for s in training_dataset_sources],
+                    "task_name": (training_task.task_name or "").lower()
+                    if training_task
+                    else "",
                     "line": f"  - {model_name} ({', '.join(info_parts)})",
                 }
             )
